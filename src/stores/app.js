@@ -1,11 +1,15 @@
 // PROTOTYPE — in-memory state + simulated jobs. Nothing persists.
 import { defineStore } from 'pinia'
-import { makeWorld, generateSegments, PALETTE } from '../mock/data'
+import { makeWorld, generateSegments, PALETTE, DISCOVERABLE_VOICES, voiceRef } from '../mock/data'
 
 let jobSeq = 100
 export const isScripted = (c) => c.scripting === 'done' || c.scripting === 'fallback'
 export const isNarrated = (c) => c.narration === 'done' || c.narration === 'stale'
 export const norm = (n) => n.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim()
+export { voiceRef }
+// how many requests a text needs on an endpoint with a per-request character limit (0 = unlimited)
+export const partsFor = (text, ep) => ep?.maxChars ? Math.max(1, Math.ceil(text.length / ep.maxChars)) : 1
+const GENDER = { m: 'male', f: 'female', n: 'neutral' }
 const ago = (min) => Date.now() - min * 60000
 function collapseChunk(segs) {
   const start = 4 + Math.floor(Math.random() * Math.max(1, segs.length - 12)), n = 5 + Math.floor(Math.random() * 4)
@@ -83,13 +87,39 @@ export const useApp = defineStore('app', {
     },
     recentJobs: (s) => [...s.jobs].reverse().slice(0, 12),
     enabledEndpoints: (s) => s.endpoints.filter(e => e.enabled),
-    // a character with no voice of their own is read in the Narrator's voice
-    effectiveVoice: (s) => (bookId, name) => {
-      const cast = s.characters[bookId] ?? []
-      const c = cast.find(x => x.name === name)
-      if (c?.voice) return { voice: c.voice, own: true }
-      return { voice: cast.find(x => x.name === 'Narrator')?.voice ?? null, own: false }
+    // voice ref `<endpointId>/<voiceId>` → { endpoint, voice } or null when either side was removed
+    resolveVoice: (s) => (ref) => {
+      if (!ref) return null
+      const i = ref.indexOf('/')
+      const ep = s.endpoints.find(e => e.id === ref.slice(0, i))
+      const v = ep?.voices.find(v => v.id === ref.slice(i + 1))
+      return ep && v ? { endpoint: ep, voice: v } : null
     },
+    voiceLabel() { return (ref) => { const r = this.resolveVoice(ref); return r ? `${r.voice.label} · ${r.endpoint.name}` : ref ? `${ref.split('/')[1]} (missing)` : '' } },
+    // every voice on every endpoint, grouped for the pickers; paused endpoints stay listed but disabled
+    voiceOptions: (s) => s.endpoints.flatMap(e => e.voices.map(v => ({
+      value: voiceRef(e.id, v.id), label: v.label, group: e.enabled ? e.name : `${e.name} · paused`, hint: GENDER[v.gender] ?? '', disabled: !e.enabled,
+    }))),
+    // a character with no voice of their own is read in the Narrator's voice
+    effectiveVoice() { return (bookId, name) => {
+      const cast = this.characters[bookId] ?? []
+      const c = cast.find(x => x.name === name)
+      const ref = c?.voice || cast.find(x => x.name === 'Narrator')?.voice || null
+      const r = this.resolveVoice(ref)
+      return { ref, own: !!c?.voice, voice: r?.voice.id ?? null, label: r ? r.voice.label : ref ? 'missing' : null, endpoint: r?.endpoint ?? null }
+    } },
+    // speakers whose voice can't be rendered right now: voice/endpoint gone, endpoint paused, key missing
+    routingIssues() { return (bookId) => {
+      const out = []
+      for (const c of this.characters[bookId] ?? []) {
+        if (!c.voice) continue
+        const r = this.resolveVoice(c.voice)
+        if (!r) out.push({ name: c.name, ref: c.voice, reason: 'voice no longer exists', kind: 'missing' })
+        else if (!r.endpoint.enabled) out.push({ name: c.name, ref: c.voice, reason: `${r.endpoint.name} is paused`, kind: 'paused', endpoint: r.endpoint })
+        else if (r.endpoint.needsKey && !r.endpoint.apiKey) out.push({ name: c.name, ref: c.voice, reason: `${r.endpoint.name} has no API key`, kind: 'nokey', endpoint: r.endpoint })
+      }
+      return out
+    } },
     scriptEstimate: (s) => (bookId, ids) => {
       const chs = (s.chapters[bookId] ?? []).filter(c => ids.includes(c.id))
       const chars = chs.reduce((a, c) => a + c.words * 5.6, 0)
@@ -120,14 +150,25 @@ export const useApp = defineStore('app', {
       const seen = new Set()
       return out.filter(x => { const k = x.from; if (seen.has(k)) return false; seen.add(k); return true })
     },
-    estimate: (s) => (bookId, ids) => {
-      let chars = 0
-      for (const id of ids) for (const seg of s.segments[`${bookId}:${id}`] ?? []) chars += seg.text.length
-      const enabled = s.endpoints.filter(e => e.enabled)
-      const price = enabled.length ? enabled.reduce((a, e) => a + e.price, 0) / enabled.length : 0
-      const stale = ids.reduce((a, id) => a + (s.segments[`${bookId}:${id}`] ?? []).filter(x => x.audio.status === 'stale').length, 0)
-      return { chapters: ids.length, chars, seconds: chars / 15.5, cost: chars / 1e6 * price, endpoints: enabled.length, stale }
-    },
+    // Cost and load are per endpoint: each segment goes to the endpoint that owns its speaker's voice,
+    // and a segment longer than that endpoint's limit becomes several requests.
+    estimate() { return (bookId, ids) => {
+      const per = {}   // endpointId → { endpoint, chars, segments, requests, split }
+      let chars = 0, segments = 0, unrouted = 0, stale = 0
+      for (const id of ids) for (const seg of this.segments[`${bookId}:${id}`] ?? []) {
+        chars += seg.text.length; segments++
+        if (seg.audio.status === 'stale') stale++
+        const ep = this.effectiveVoice(bookId, seg.speaker).endpoint
+        if (!ep) { unrouted++; continue }
+        const e = per[ep.id] ??= { endpoint: ep, chars: 0, segments: 0, requests: 0, split: 0 }
+        const parts = partsFor(seg.text, ep)
+        e.chars += seg.text.length; e.segments++; e.requests += parts; if (parts > 1) e.split++
+      }
+      const rows = Object.values(per)
+      const cost = rows.reduce((a, e) => a + e.chars / 1e6 * e.endpoint.price, 0)
+      return { chapters: ids.length, chars, segments, seconds: chars / 15.5, cost, stale, unrouted,
+        requests: rows.reduce((a, e) => a + e.requests, 0), split: rows.reduce((a, e) => a + e.split, 0), endpoints: this.endpoints.filter(e => e.enabled).length, per: rows }
+    } },
   },
 
   actions: {
@@ -305,14 +346,44 @@ export const useApp = defineStore('app', {
     },
     deleteCharacter(bookId, name) { this.mergeCharacter(bookId, name, 'Narrator') },
     autoAssignByGender(bookId) {
-      const byGender = { m: ['onyx', 'echo', 'ash', 'fable'], f: ['nova', 'shimmer', 'coral', 'sage'], n: ['alloy', 'verse'], '?': ['alloy', 'ballad'] }
+      // pool = voices on enabled endpoints, grouped by the gender tag the endpoint's voice list carries
+      const all = this.enabledEndpoints.flatMap(e => e.voices.map(v => ({ ref: voiceRef(e.id, v.id), gender: v.gender })))
+      if (!all.length) return
+      const byGender = { m: all.filter(v => v.gender === 'm'), f: all.filter(v => v.gender === 'f'), n: all.filter(v => v.gender === 'n') }
       const used = {}
       for (const c of this.characters[bookId]) {
         if (c.voice || c.name === 'Narrator') continue
-        const pool = byGender[c.gender] ?? byGender['?']
+        const pool = byGender[c.gender]?.length ? byGender[c.gender] : all
         const i = used[c.gender] = (used[c.gender] ?? 0) + 1
-        c.voice = pool[i % pool.length]
+        c.voice = pool[i % pool.length].ref
       }
+    },
+
+    // ---------- endpoints & their voices ----------
+    addEndpoint() {
+      this.endpoints.push({ id: 'ep' + Date.now(), name: 'New endpoint', baseUrl: 'https://', apiKey: '', model: 'gpt-4o-mini-tts', concurrency: 1, enabled: false, latency: 1500, failRate: 0.03, price: 12, needsKey: true, maxChars: 0, voices: [], history: [], failures: 0, rateLimits: 0, backoffUntil: 0, fetching: false })
+      return this.endpoints[this.endpoints.length - 1]
+    },
+    removeEndpoint(id) { this.endpoints = this.endpoints.filter(e => e.id !== id) },   // characters keep a dangling ref → shown as "missing"
+    addVoice(ep, { id, label, gender }) {
+      id = (id ?? '').trim(); if (!id || ep.voices.some(v => v.id === id)) return false
+      ep.voices.push({ id, label: (label ?? '').trim() || id, gender: gender ?? 'n' }); return true
+    },
+    removeVoice(ep, id) { ep.voices = ep.voices.filter(v => v.id !== id) },
+    // simulated GET /v1/audio/voices — most OpenAI-compatible servers (Kokoro-FastAPI, Orpheus…) expose one
+    fetchVoices(ep) {
+      ep.fetching = true
+      return new Promise(res => setTimeout(() => {
+        const added = DISCOVERABLE_VOICES.filter(v => !ep.voices.some(x => x.id === v.id)).map(v => ({ ...v }))
+        ep.voices.push(...added); ep.fetching = false; res(added.length)
+      }, 900))
+    },
+    // how many segments of this book a limit would split, for the endpoint card
+    splitCount(bookId, ep) {
+      if (!ep.maxChars) return 0
+      let n = 0
+      for (const k of Object.keys(this.segments)) if (k.startsWith(bookId + ':')) for (const s of this.segments[k]) if (this.effectiveVoice(bookId, s.speaker).endpoint?.id === ep.id && s.text.length > ep.maxChars) n++
+      return n
     },
     _replaceSpeaker(bookId, from, to) {
       for (const k of Object.keys(this.segments)) {
@@ -362,34 +433,42 @@ export const useApp = defineStore('app', {
           if (!segs.some(s => s.audio.status === 'generating')) { c.narration = segs.every(s => s.audio.status === 'done') ? 'done' : 'failed'; this._finish(job, 'cancelled'); return done() }
           return setTimeout(tick, 200)
         }
-        for (const ep of this.enabledEndpoints) {
+        // A segment is rendered by the endpoint that owns its speaker's voice (falling back to the
+        // Narrator's). Long text is split into `parts` requests against that endpoint's limit.
+        for (const next of segs.filter(s => s.audio.status === 'queued')) {
+          const route = this.effectiveVoice(bookId, next.speaker)
+          const ep = route.endpoint
+          if (!ep || !ep.enabled || (ep.needsKey && !ep.apiKey)) {
+            next.audio = { status: 'failed', endpoint: ep?.id ?? null, ms: 0, duration: 0, error: !route.ref ? 'no voice for speaker' : !ep ? `voice ${route.ref} no longer exists` : !ep.enabled ? `${ep.name} is paused` : `${ep.name} has no API key` }
+            continue
+          }
           if (ep.backoffUntil > Date.now()) continue
           const active = segs.filter(s => s.audio.status === 'generating' && s.audio.endpoint === ep.id).length
-          let slots = ep.concurrency - active
-          while (slots-- > 0) {
-            const next = segs.find(s => s.audio.status === 'queued')
-            if (!next) break
-            next.audio.status = 'generating'; next.audio.endpoint = ep.id; next.audio.startedAt = Date.now()
-            const dur = ep.latency * rnd(0.5, 1.1) + next.text.length * 6
-            setTimeout(() => {
-              if (Math.random() < 0.03) {   // rate limited → back off, put the segment back
-                ep.backoffUntil = Date.now() + 4000; ep.rateLimits = (ep.rateLimits ?? 0) + 1
-                next.audio = { status: 'queued', endpoint: null, ms: 0, duration: 0 }; return
-              }
-              const fail = Math.random() < ep.failRate
-              next.audio.status = fail ? 'failed' : 'done'
-              next.audio.ms = Math.round(dur)
-              next.audio.duration = fail ? 0 : next.text.split(' ').length / 2.6
-              ep.history = [...(ep.history ?? []), { t: Date.now(), ms: Math.round(dur), ok: !fail }].slice(-40)
-              if (fail) ep.failures = (ep.failures ?? 0) + 1
-            }, dur)
-          }
+          if (active >= ep.concurrency) continue
+          const parts = partsFor(next.text, ep)
+          next.audio = { status: 'generating', endpoint: ep.id, ms: 0, duration: 0, startedAt: Date.now(), parts, voice: route.voice }
+          const dur = ep.latency * rnd(0.5, 1.1) * parts + next.text.length * 6
+          setTimeout(() => {
+            if (Math.random() < 0.03) {   // rate limited → back off, put the segment back
+              ep.backoffUntil = Date.now() + 4000; ep.rateLimits = (ep.rateLimits ?? 0) + 1
+              next.audio = { status: 'queued', endpoint: null, ms: 0, duration: 0 }; return
+            }
+            const fail = Math.random() < ep.failRate
+            next.audio.status = fail ? 'failed' : 'done'
+            next.audio.ms = Math.round(dur)
+            next.audio.duration = fail ? 0 : next.text.split(' ').length / 2.6
+            if (fail) next.audio.error = parts > 1 ? `part ${1 + Math.floor(Math.random() * parts)}/${parts} failed` : 'server error'
+            ep.history = [...(ep.history ?? []), { t: Date.now(), ms: Math.round(dur), ok: !fail }].slice(-40)
+            if (fail) ep.failures = (ep.failures ?? 0) + 1
+          }, dur)
         }
         const pending = segs.filter(s => s.audio.status === 'queued' || s.audio.status === 'generating')
         const finished = segs.length - pending.length
         c.narrationProgress = Math.round(finished / segs.length * 100); job.progress = c.narrationProgress
-        const stalled = !this.enabledEndpoints.some(e => e.backoffUntil <= Date.now()) && !segs.some(s => s.audio.status === 'generating') && this.enabledEndpoints.length === 0
+        // stalled: nothing in flight and no queued segment can be placed (everything it needs is paused)
+        const stalled = !segs.some(s => s.audio.status === 'generating') && !segs.some(s => s.audio.status === 'queued' && this.effectiveVoice(bookId, s.speaker).endpoint?.enabled)
         if (pending.length === 0 || stalled) {
+          for (const s of segs) if (s.audio.status === 'queued') s.audio = { ...s.audio, status: 'failed', error: 'no endpoint available for this voice' }
           const failed = segs.some(s => s.audio.status !== 'done')
           c.narration = failed ? 'failed' : 'done'
           c.duration = segs.reduce((a, s) => a + s.audio.duration, 0)

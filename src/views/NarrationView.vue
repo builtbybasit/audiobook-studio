@@ -31,7 +31,7 @@ const ready = computed(() => chapter.value && isScripted(chapter.value) && chapt
       </TabsList>
       <div v-show="!collapsed" class="max-h-[420px] overflow-auto">
         <TabsContent value="voices"><VoiceTable :book-id="bookId" /></TabsContent>
-        <TabsContent value="endpoints"><EndpointPanel /></TabsContent>
+        <TabsContent value="endpoints"><EndpointPanel :book-id="bookId" /></TabsContent>
       </div>
     </TabsRoot>
 
@@ -49,7 +49,7 @@ const ready = computed(() => chapter.value && isScripted(chapter.value) && chapt
         <EmptyState v-else-if="chapter && !isScripted(chapter)" icon="♪" :title="chapter.title" body="This chapter has no script yet. Script it first, then narrate.">
           <RouterLink :to="`/book/${bookId}/scripting`" class="btn-ghost">Go to Scripting</RouterLink>
         </EmptyState>
-        <EmptyState v-else icon="♪" :title="chapter?.title" :body="`${app.segmentsOf(bookId, opened).length} segments ready. They will be spread across ${app.enabledEndpoints.length} enabled endpoint${app.enabledEndpoints.length === 1 ? '' : 's'}.`">
+        <EmptyState v-else icon="♪" :title="chapter?.title" :body="`${app.segmentsOf(bookId, opened).length} segments ready. Each goes to the endpoint that owns its speaker’s voice; ${app.estimate(bookId, [opened]).per.map(e => `${e.endpoint.name}: ${e.requests} request${e.requests === 1 ? '' : 's'}`).join(', ') || 'no voices routed yet'}.`">
           <button class="btn-primary" @click="app.runNarration(bookId, [opened])">Narrate this chapter</button>
         </EmptyState>
       </div>

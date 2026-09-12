@@ -3,14 +3,16 @@
 // Narrator's voice unless given one. Search, "unassigned only", auto-assign by gender.
 import { computed, ref } from 'vue'
 import { useApp } from '../../stores/app'
-import { VOICES } from '../../mock/data'
 import { speak } from '../../composables/usePlayer'
 import { UiSelect, UiCheckbox, UiTooltip } from '../../ui'
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from 'reka-ui'
-const voiceOpts = VOICES.map(v => ({ value: v, label: v }))
 
 const props = defineProps({ bookId: String })
 const app = useApp()
+// voices come from the endpoints (Endpoints tab); grouped per endpoint, paused endpoints listed but disabled
+const voiceOpts = computed(() => app.voiceOptions)
+const missing = (c) => c.voice && !app.resolveVoice(c.voice)
+const issueOf = (c) => app.routingIssues(props.bookId).find(i => i.name === c.name)
 const q = ref('')
 const unassignedOnly = ref(false)
 const showMinor = ref(false)
@@ -30,7 +32,7 @@ const sample = (c) => c.name === 'Narrator' ? 'The mountain mist thinned as dawn
 <template>
   <div class="p-3">
     <div class="mb-3 flex flex-wrap items-center gap-2">
-      <div class="text-sm"><b>{{ assigned }}</b> of {{ all.length }} voices assigned <span class="text-zinc-500">· the rest fall back to the Narrator’s voice ({{ narrator?.voice ?? 'unset' }})</span></div>
+      <div class="text-sm"><b>{{ assigned }}</b> of {{ all.length }} voices assigned <span class="text-zinc-500">· the rest fall back to the Narrator’s voice ({{ narrator?.voice ? app.voiceLabel(narrator.voice) : 'unset' }}) · {{ voiceOpts.filter(o => !o.disabled).length }} voices on {{ app.enabledEndpoints.length }} endpoint{{ app.enabledEndpoints.length === 1 ? '' : 's' }}</span></div>
       <div class="ml-auto flex items-center gap-2">
         <input v-model="q" class="input w-44 py-1" placeholder="Find a speaker…" />
         <label class="flex items-center gap-1.5 text-xs"><UiCheckbox v-model="unassignedOnly" /> Unassigned only</label>
@@ -40,6 +42,7 @@ const sample = (c) => c.name === 'Narrator' ? 'The mountain mist thinned as dawn
     </div>
 
     <div v-if="!narrator?.voice" class="mb-3 rounded-md border border-amber-400 bg-amber-400/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">Assign the Narrator’s voice first: every unvoiced character borrows it.</div>
+    <div v-if="!voiceOpts.length" class="mb-3 rounded-md border border-amber-400 bg-amber-400/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">No endpoint has any voices yet. Open the Endpoints tab and fetch or add voices — the pickers here only list voices that exist on an endpoint.</div>
 
     <div class="grid grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-3">
       <div v-for="c in major" :key="c.name" class="rounded-lg border p-3 text-sm" :class="c.isNew ? 'border-dashed border-amber-400' : 'border-zinc-200 dark:border-zinc-800'" :style="{ borderTopColor: c.color, borderTopWidth: '3px' }">
@@ -55,9 +58,13 @@ const sample = (c) => c.name === 'Narrator' ? 'The mountain mist thinned as dawn
           <button v-else class="rounded border border-dashed border-zinc-300 px-2 py-0.5 italic text-zinc-400 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700" @click="revealed = new Set([...revealed, c.name])">description hidden — spoilers · show</button>
         </div>
         <div class="mt-2 flex items-center gap-1.5">
-          <UiSelect v-model="c.voice" :options="voiceOpts" null-value="Narrator’s voice" class="min-w-0 flex-1" block />
+          <UiSelect v-model="c.voice" :options="voiceOpts" null-value="Narrator’s voice" class="min-w-0 flex-1" block :class="issueOf(c) && 'ring-1 ring-amber-400 rounded-md'">
+            <template #value="{ label }"><span v-if="missing(c)" class="text-amber-600">{{ c.voice.split('/')[1] }} — missing</span><template v-else>{{ label }}</template></template>
+          </UiSelect>
           <UiTooltip text="Prototype: plays a browser voice, not the real TTS voice"><button class="btn-ghost btn-xs" :disabled="!app.effectiveVoice(bookId, c.name).voice" @click="speak(sample(c), app.effectiveVoice(bookId, c.name).voice)">▶<span class="text-[9px] text-zinc-400">demo</span></button></UiTooltip>
         </div>
+        <div v-if="issueOf(c)" class="mt-1 text-[11px] text-amber-600">⚠ {{ issueOf(c).reason }}<template v-if="issueOf(c).kind === 'paused'"> · <button class="underline" @click="issueOf(c).endpoint.enabled = true">resume it</button> or pick another voice</template><template v-else-if="issueOf(c).kind === 'missing'"> · pick another voice</template></div>
+        <div v-else-if="c.voice" class="mt-1 truncate text-[11px] text-zinc-400">on {{ app.resolveVoice(c.voice).endpoint.name }}<template v-if="app.resolveVoice(c.voice).endpoint.maxChars"> · splits over {{ app.resolveVoice(c.voice).endpoint.maxChars }} chars</template></div>
         <input v-model="c.style" class="input mt-1.5 w-full py-1 text-xs" placeholder="style: e.g. gravelly, elderly; speaks slowly" />
       </div>
     </div>
@@ -73,7 +80,9 @@ const sample = (c) => c.name === 'Narrator' ? 'The mountain mist thinned as dawn
             <td class="py-1 pl-3"><span class="rounded-full px-2 py-0.5 text-xs" :style="{ background: c.color + '33', color: c.color }">{{ c.name }}</span></td>
             <td class="w-20 text-xs text-zinc-500">{{ genderLabel[c.gender] ?? 'unknown' }}</td>
             <td class="w-16 font-mono text-xs text-zinc-400">{{ counts[c.name] ?? 0 }} seg</td>
-            <td class="w-52 py-1 pr-3 text-right"><UiSelect v-model="c.voice" :options="voiceOpts" null-value="Narrator’s voice" size="xs" block /></td>
+            <td class="w-56 py-1 pr-3 text-right"><UiSelect v-model="c.voice" :options="voiceOpts" null-value="Narrator’s voice" size="xs" block :class="issueOf(c) && 'ring-1 ring-amber-400 rounded-md'">
+              <template #value="{ label }"><span v-if="missing(c)" class="text-amber-600">{{ c.voice.split('/')[1] }} — missing</span><template v-else>{{ label }}</template></template>
+            </UiSelect></td>
           </tr>
         </table>
       </CollapsibleContent>

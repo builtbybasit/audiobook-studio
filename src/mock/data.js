@@ -1,6 +1,14 @@
 // PROTOTYPE — mock world. Deterministic pseudo-random so reloads look the same.
 
-export const VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'nova', 'sage', 'shimmer', 'verse']
+// Voices belong to an endpoint (each TTS server exposes its own list). A character stores a voice
+// *ref* — `<endpointId>/<voiceId>` — so narration knows which endpoint must render that speaker.
+const g = (id, gender, label) => ({ id, gender, label: label ?? id })
+export const OPENAI_VOICES = [g('alloy', 'n'), g('ash', 'm'), g('ballad', 'm'), g('coral', 'f'), g('echo', 'm'), g('fable', 'n'), g('onyx', 'm'), g('nova', 'f'), g('sage', 'f'), g('shimmer', 'f'), g('verse', 'm')]
+export const KOKORO_VOICES = [g('af_heart', 'f', 'Heart'), g('af_bella', 'f', 'Bella'), g('af_nicole', 'f', 'Nicole'), g('am_adam', 'm', 'Adam'), g('am_michael', 'm', 'Michael'), g('bf_emma', 'f', 'Emma'), g('bm_george', 'm', 'George'), g('bm_lewis', 'm', 'Lewis')]
+export const AZURE_VOICES = [g('alloy', 'n'), g('echo', 'm'), g('fable', 'n'), g('onyx', 'm'), g('nova', 'f'), g('shimmer', 'f')]
+// what a "Fetch voices from server" call would return for a fresh OpenAI-compatible endpoint (e.g. Kokoro-FastAPI, Orpheus, Piper bridges)
+export const DISCOVERABLE_VOICES = [g('tara', 'f', 'Tara'), g('leah', 'f', 'Leah'), g('jess', 'f', 'Jess'), g('leo', 'm', 'Leo'), g('dan', 'm', 'Dan'), g('mia', 'f', 'Mia'), g('zac', 'm', 'Zac'), g('zoe', 'f', 'Zoe')]
+export const voiceRef = (epId, voiceId) => `${epId}/${voiceId}`
 
 export const DIRECTIONS = [
   'calm, measured', 'urgent, breathless', 'whispered, hesitant', 'dry, amused', 'cold and clipped',
@@ -114,7 +122,9 @@ export function generateSegments(bookId, chapterId, opts = {}) {
   for (let i = 0; i < n; i++) {
     const roll = r()
     if (roll < 0.42 || i === 0) {
-      segs.push({ type: 'narration', speaker: 'Narrator', text: pick(book.narration, r) })
+      // real scripts have long descriptive paragraphs; about a quarter of narration runs 300–1200 chars (mock lines are short, so several are joined)
+      const paras = r() < 0.25 ? 3 + Math.floor(r() * 10) : 1
+      segs.push({ type: 'narration', speaker: 'Narrator', text: Array.from({ length: paras }, () => pick(book.narration, r)).join(' ') })
     } else if (roll < 0.55) {
       const who = pick(Object.keys(book.thought), r)
       segs.push({ type: 'thought', speaker: who, text: pick(book.thought[who], r) })
@@ -149,11 +159,30 @@ export function makeWorld() {
   const segments = {}
   const r = rng(42)
 
+  // Each endpoint carries its own voice list and a per-request character limit (many small TTS
+  // servers degrade or truncate past a few hundred chars; OpenAI caps at 4096). 0 = no limit.
+  const endpoints = [
+    { id: 'openai', name: 'OpenAI (main)', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-••••••••••••4f2a', model: 'gpt-4o-mini-tts', concurrency: 3, enabled: true, latency: 1400, failRate: 0.01, price: 12, needsKey: true, maxChars: 4096, voices: OPENAI_VOICES.map(v => ({ ...v })), history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 1100 + Math.round(Math.sin(i / 3) * 300 + (i % 7) * 60), ok: i % 11 !== 4 })), failures: 2, rateLimits: 1, backoffUntil: 0 },
+    { id: 'local', name: 'Local Kokoro', baseUrl: 'http://127.0.0.1:8880/v1', apiKey: '', model: 'kokoro', concurrency: 2, enabled: true, latency: 2600, failRate: 0.025, price: 0, needsKey: false, maxChars: 500, voices: KOKORO_VOICES.map(v => ({ ...v })), history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 2200 + Math.round(Math.cos(i / 4) * 500 + (i % 5) * 90), ok: i % 6 !== 2 })), failures: 5, rateLimits: 0, backoffUntil: 0 },
+    { id: 'proxy', name: 'Azure proxy', baseUrl: 'https://tts-proxy.internal/v1', apiKey: '', model: 'tts-1-hd', concurrency: 1, enabled: false, latency: 1900, failRate: 0.05, price: 15, needsKey: true, maxChars: 3000, voices: AZURE_VOICES.map(v => ({ ...v })), history: [], failures: 0, rateLimits: 0, backoffUntil: 0 },
+  ]
+  const oa = (v) => voiceRef('openai', v), kk = (v) => voiceRef('local', v)
+  // seeded casting: OpenAI for dialogue, the free local Kokoro for the Narrator on two books (cheap
+  // narration, premium dialogue); one Drowned character sits on the paused Azure proxy → a blocker to fix.
+  const seedVoice = { m: ['onyx', 'echo', 'ash', 'ballad', 'verse'], f: ['nova', 'shimmer', 'coral', 'sage'], n: ['alloy', 'fable'], '?': ['alloy'] }
+  const narratorVoice = { cliche: kk('bm_george'), starforge: oa('sage'), drowned: kk('bf_emma') }
+  const routeOf = (bookId, speaker) => {
+    const cast = characters[bookId]
+    const ref = cast.find(c => c.name === speaker)?.voice || cast.find(c => c.name === 'Narrator').voice
+    return endpoints.find(e => e.id === ref.split('/')[0])
+  }
+
+
   for (const b of BOOKS) {
     books.push({ id: b.id, title: b.title, author: b.author, cover: b.cover, addedAt: '2026-08-2' + books.length, volumes: makeVolumes(b) })
     chapters[b.id] = makeChapters(b, r)
     characters[b.id] = [
-      ...b.cast.map((c, i) => ({ ...c, voice: VOICES[(i * 3 + books.length) % VOICES.length], style: '', color: PALETTE[i % PALETTE.length], major: true })),
+      ...b.cast.map((c, i) => ({ ...c, voice: c.name === 'Narrator' ? narratorVoice[b.id] : oa(seedVoice[c.gender][i % seedVoice[c.gender].length]), style: '', color: PALETTE[i % PALETTE.length], major: true })),
       ...b.minor.map(([name, gender], i) => ({ name, aliases: [], gender, description: '', voice: null, style: '', color: PALETTE[(i + 5) % PALETTE.length], major: false })),
     ]
   }
@@ -168,7 +197,7 @@ export function makeWorld() {
       if (c.id <= narrated) {
         c.narration = 'done'; c.narrationProgress = 100
         const segs = segments[`${bookId}:${c.id}`]
-        segs.forEach((s, i) => { s.audio = { status: 'done', endpoint: ['openai', 'local', 'proxy'][i % 3], ms: 900 + i * 37, duration: s.text.split(' ').length / 2.6 } })
+        segs.forEach((s, i) => { const ep = routeOf(b.id, s.speaker); s.audio = { status: 'done', endpoint: ep.id, ms: 900 + i * 37, duration: s.text.split(' ').length / 2.6, parts: ep.maxChars && s.text.length > ep.maxChars ? Math.ceil(s.text.length / ep.maxChars) : undefined } })
         c.duration = segs.reduce((a, s) => a + s.audio.duration, 0)
       }
     }
@@ -190,19 +219,17 @@ export function makeWorld() {
   // ch 2 of Cliché: two segments edited after narration → stale
   chapters.cliche[1].narration = 'stale'
   segments['cliche:2'][3].audio.status = 'stale'; segments['cliche:2'][8].audio.status = 'stale'
-  segments['cliche:4'].forEach((s, i) => { s.audio = { status: i % 9 === 4 ? 'failed' : 'done', endpoint: ['openai', 'local'][i % 2], ms: 800 + i * 20, duration: i % 9 === 4 ? 0 : s.text.split(' ').length / 2.6 } })
+  segments['cliche:4'].forEach((s, i) => { const ep = routeOf('cliche', s.speaker); s.audio = { status: i % 9 === 4 ? 'failed' : 'done', endpoint: ep.id, ms: 800 + i * 20, duration: i % 9 === 4 ? 0 : s.text.split(' ').length / 2.6, error: i % 9 === 4 ? 'server error' : undefined } })
 
-  const endpoints = [
-    { id: 'openai', name: 'OpenAI (main)', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-••••••••••••4f2a', model: 'gpt-4o-mini-tts', concurrency: 3, enabled: true, latency: 1400, failRate: 0.03, price: 12, needsKey: true, history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 1100 + Math.round(Math.sin(i / 3) * 300 + (i % 7) * 60), ok: i % 11 !== 4 })), failures: 2, rateLimits: 1, backoffUntil: 0 },
-    { id: 'local', name: 'Local Kokoro', baseUrl: 'http://127.0.0.1:8880/v1', apiKey: '', model: 'kokoro', concurrency: 2, enabled: true, latency: 2600, failRate: 0.08, price: 0, needsKey: false, history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 2200 + Math.round(Math.cos(i / 4) * 500 + (i % 5) * 90), ok: i % 6 !== 2 })), failures: 5, rateLimits: 0, backoffUntil: 0 },
-    { id: 'proxy', name: 'Azure proxy', baseUrl: 'https://tts-proxy.internal/v1', apiKey: '', model: 'tts-1-hd', concurrency: 1, enabled: false, latency: 1900, failRate: 0.05, price: 15, needsKey: true, history: [], failures: 0, rateLimits: 0, backoffUntil: 0 },
-  ]
 
   const exports = [
     { id: 1, bookId: 'starforge', filename: 'Ashes of the Starforge.m4b', title: 'Ashes of the Starforge', series: 'Ashes of the Starforge', volume: null, author: 'M. R. Halloway', narrator: 'OpenAI TTS · multi-voice', year: 2026, description: '', chapterIds: chapters.starforge.slice(0, 15).map(c => c.id), chapters: 15, duration: chapters.starforge.slice(0, 15).reduce((a, c) => a + c.duration, 0), bitrate: 96, size: 156, createdAt: '2026-09-04 21:14', version: 1, replaces: null, status: 'done' },
     { id: 2, bookId: 'cliche', filename: 'The Cliché Cultivation World - Vol. 1.m4b', title: 'The Cliché Cultivation World · Vol. 1', series: 'The Cliché Cultivation World', volume: { number: 1, name: 'Vol. 1 · Outer Sect', of: 3 }, author: 'Unknown Daoist', narrator: 'OpenAI TTS · multi-voice', year: 2026, description: '', chapterIds: [1], chapters: 1, duration: chapters.cliche.slice(0, 1).reduce((a, c) => a + c.duration, 0), bitrate: 96, size: 11, createdAt: '2026-09-08 09:02', version: 1, replaces: null, status: 'replaced' },
     { id: 3, bookId: 'cliche', filename: 'The Cliché Cultivation World - Vol. 1.m4b', title: 'The Cliché Cultivation World · Vol. 1', series: 'The Cliché Cultivation World', volume: { number: 1, name: 'Vol. 1 · Outer Sect', of: 3 }, author: 'Unknown Daoist', narrator: 'OpenAI TTS · multi-voice', year: 2026, description: '', chapterIds: [1, 2], chapters: 2, duration: chapters.cliche.slice(0, 2).reduce((a, c) => a + c.duration, 0), bitrate: 96, size: 21, createdAt: '2026-09-10 18:40', version: 2, replaces: 2, status: 'done' },
   ]
+
+  const orphan = characters.drowned.filter(c => c.major && c.name !== 'Narrator')[1]
+  if (orphan) orphan.voice = voiceRef('proxy', 'onyx')
 
   return { books, chapters, characters, segments, endpoints, exports }
 }

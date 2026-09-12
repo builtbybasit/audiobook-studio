@@ -174,7 +174,7 @@ watch(open, v => { if (v) focus.value = v })
           <button v-else class="rounded border border-dashed border-zinc-300 px-2 py-1 italic text-zinc-400 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700" @click="revealed = new Set([...revealed, c.name])">description hidden — spoilers · show</button>
         </div>
         <div class="mt-2 flex items-center gap-1 pl-4 text-[11px]">
-          <span class="mr-auto text-zinc-500">voice: <b class="text-zinc-700 dark:text-zinc-300">{{ app.effectiveVoice(bookId, c.name).voice }}</b><span v-if="!app.effectiveVoice(bookId, c.name).own"> (Narrator’s)</span></span>
+          <span class="mr-auto truncate text-zinc-500">voice: <b class="text-zinc-700 dark:text-zinc-300">{{ app.voiceLabel(app.effectiveVoice(bookId, c.name).ref) || 'unset' }}</b><span v-if="!app.effectiveVoice(bookId, c.name).own && app.effectiveVoice(bookId, c.name).ref"> (Narrator’s)</span></span>
           <button class="rounded px-1.5 py-0.5 hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="startRename(c)">rename</button>
           <UiCombobox v-if="c.name !== 'Narrator'" action :options="cast.filter(x => x.name !== c.name).map(o => ({ value: o.name, label: o.name, color: o.color, keywords: o.aliases.join(' ') }))" placeholder="merge into…" size="xs" class="w-32" @pick="v => app.mergeCharacter(bookId, c.name, v)" />
         </div>

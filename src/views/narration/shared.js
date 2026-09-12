@@ -10,7 +10,7 @@ export function useJob(props) {
   const segments = computed(() => app.segmentsOf(props.bookId, props.chapterId))
   const cast = computed(() => app.charactersOf(props.bookId))
   const colorOf = (name) => cast.value.find(c => c.name === name)?.color ?? '#71717a'
-  const voiceOf = (name) => cast.value.find(c => c.name === name)?.voice ?? '?'
+  const voiceOf = (name) => { const v = app.effectiveVoice(props.bookId, name); return v.label ? (v.own ? v.label : `${v.label} (Narrator’s)`) : '?' }
   const epName = (id) => app.endpoints.find(e => e.id === id)?.name ?? '—'
   const stats = computed(() => {
     const s = { done: 0, failed: 0, generating: 0, queued: 0, total: segments.value.length, duration: 0 }

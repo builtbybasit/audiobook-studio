@@ -142,7 +142,7 @@ const stageLink = (j) => `/book/${j.bookId}/${j.kind === 'export' ? 'export' : j
         </div>
         <div class="card p-4 text-xs leading-relaxed text-zinc-500">
           <div class="label mb-1">Rules</div>
-          One book's chapters run <b>sequentially</b> so roster and recap carry forward. Different books can run at the same time. Within a chapter, segments are spread across every enabled endpoint up to its concurrency.
+          One book's chapters run <b>sequentially</b> so roster and recap carry forward. Different books can run at the same time. Within a chapter, each segment goes to the endpoint that owns its speaker’s voice, up to that endpoint’s concurrency; segments over an endpoint’s character limit are sent in parts.
         </div>
       </aside>
     </div>

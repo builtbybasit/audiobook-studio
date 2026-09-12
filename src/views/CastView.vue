@@ -4,12 +4,11 @@
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useApp } from '../stores/app'
-import { VOICES } from '../mock/data'
 import { UiSelect, UiCombobox, UiCheckbox } from '../ui'
-const voiceOpts = VOICES.map(v => ({ value: v, label: v }))
 const castOpts = computed(() => cast.value.map(c => ({ value: c.name, label: c.name, color: c.color, keywords: c.aliases.join(' ') })))
 
 const app = useApp()
+const voiceOpts = computed(() => app.voiceOptions)
 const bookId = useRoute().params.bookId
 const cast = computed(() => app.charactersOf(bookId))
 const stats = computed(() => app.castStats(bookId))

@@ -197,7 +197,7 @@ export function makeWorld() {
       if (c.id <= narrated) {
         c.narration = 'done'; c.narrationProgress = 100
         const segs = segments[`${bookId}:${c.id}`]
-        segs.forEach((s, i) => { const ep = routeOf(b.id, s.speaker); s.audio = { status: 'done', endpoint: ep.id, ms: 900 + i * 37, duration: s.text.split(' ').length / 2.6, parts: ep.maxChars && s.text.length > ep.maxChars ? Math.ceil(s.text.length / ep.maxChars) : undefined } })
+        segs.forEach((s, i) => { const ep = routeOf(bookId, s.speaker); s.audio = { status: 'done', endpoint: ep.id, ms: 900 + i * 37, duration: s.text.split(' ').length / 2.6, parts: ep.maxChars && s.text.length > ep.maxChars ? Math.ceil(s.text.length / ep.maxChars) : undefined } })
         c.duration = segs.reduce((a, s) => a + s.audio.duration, 0)
       }
     }

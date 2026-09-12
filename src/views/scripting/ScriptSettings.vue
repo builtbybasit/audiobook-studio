@@ -2,6 +2,7 @@
 // Run settings + estimate for scripting: LLM profile, chunk size, watermark stripping, cost/time.
 import { computed } from 'vue'
 import { useApp } from '../../stores/app'
+import { UiSelect, UiSlider, UiSwitch } from '../../ui'
 const props = defineProps({ bookId: String, selected: Array })
 const app = useApp()
 const est = computed(() => app.scriptEstimate(props.bookId, props.selected))
@@ -12,11 +13,11 @@ const fmt = (s) => s >= 3600 ? `~${Math.floor(s / 3600)}h ${Math.round(s % 3600 
     <div class="label mb-1.5">Run settings</div>
     <div class="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1.5">
       <span class="text-zinc-500">Profile</span>
-      <select v-model="app.scriptSettings.profile" class="input py-0.5 text-xs"><option v-for="p in app.profiles" :key="p.id" :value="p.id">{{ p.name }} · {{ p.model }}</option></select>
+      <UiSelect v-model="app.scriptSettings.profile" :options="app.profiles.map(p => ({ value: p.id, label: p.name, hint: p.model }))" size="xs" block />
       <span class="text-zinc-500">Chunk</span>
-      <div class="flex items-center gap-2"><input type="range" min="2000" max="12000" step="500" v-model.number="app.scriptSettings.chunkChars" class="flex-1 accent-violet-600" /><span class="w-12 font-mono">{{ (app.scriptSettings.chunkChars / 1000).toFixed(1) }}k</span></div>
+      <div class="flex items-center gap-2"><UiSlider v-model="app.scriptSettings.chunkChars" :min="2000" :max="12000" :step="500" label="Chunk size" /><span class="w-12 font-mono">{{ (app.scriptSettings.chunkChars / 1000).toFixed(1) }}k</span></div>
       <span class="text-zinc-500">Watermarks</span>
-      <label class="flex items-center gap-1"><input type="checkbox" v-model="app.scriptSettings.stripWatermarks" class="accent-violet-600" /> strip site boilerplate</label>
+      <UiSwitch v-model="app.scriptSettings.stripWatermarks" label="strip site boilerplate" />
     </div>
     <div v-if="est.profile && !est.profile.apiKey && est.profile.inPrice" class="mt-2 text-amber-600">⚠ {{ est.profile.name }} has no API key.</div>
     <div class="label mb-1 mt-3">This run</div>

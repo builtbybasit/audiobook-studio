@@ -4,6 +4,7 @@
 import { computed, ref } from 'vue'
 import { useApp, isNarrated } from '../stores/app'
 import StatusDot from './StatusDot.vue'
+import { UiCheckbox, UiSelect } from '../ui'
 
 const props = defineProps({
   bookId: String,
@@ -83,14 +84,14 @@ const counts = computed(() => {
 
     <div class="flex items-center gap-1 border-b border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
       <input v-model="q" class="input min-w-0 flex-1 py-0.5 text-xs" placeholder="Find chapter… (title or #)" />
-      <select v-if="multi" class="input w-24 py-0.5 text-xs" @change="jump(Number($event.target.value)); $event.target.value = ''"><option value="" disabled selected>Jump to…</option><option v-for="v in volumes" :key="v.id" :value="v.id">{{ v.name.split('·')[0].trim() }}</option></select>
+      <UiSelect v-if="multi" :model-value="undefined" :options="volumes.map(v => ({ value: v.id, label: v.name.split('·')[0].trim() }))" placeholder="Jump to…" size="xs" class="w-24" @update:model-value="jump" />
     </div>
 
     <div class="min-h-0 flex-1 overflow-auto py-1">
       <div v-if="!visible.length" class="px-3 py-4 text-center text-xs text-zinc-500">No chapter matches “{{ q }}”.</div>
       <template v-for="v in visible" :key="v.id">
         <div v-if="multi" :id="`vol-${bookId}-${v.id}`" class="sticky top-0 z-10 flex items-center gap-2 border-y border-zinc-100 bg-zinc-50 px-3 py-1.5 text-xs dark:border-zinc-800 dark:bg-zinc-900">
-          <input type="checkbox" class="accent-violet-600" :checked="volState(v).all" :indeterminate.prop="volState(v).some" @change="toggleVol(v)" />
+          <UiCheckbox :model-value="volState(v).all ? true : volState(v).some ? 'indeterminate' : false" size="xs" @update:model-value="toggleVol(v)" />
           <button class="min-w-0 flex-1 truncate text-left font-semibold" @click="toggleCollapse(v.id)">
             <span class="mr-1 text-zinc-400">{{ collapsed.has(v.id) ? '▸' : '▾' }}</span>{{ v.name }}
           </button>
@@ -100,7 +101,7 @@ const counts = computed(() => {
           <div v-for="c in v.chapters" :key="c.id"
             class="group flex items-center gap-2 px-3 py-1.5 text-sm"
             :class="[openedId === c.id ? 'bg-violet-50 dark:bg-violet-500/10' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60', !selectable(c) && 'opacity-50']">
-            <input type="checkbox" class="accent-violet-600" :checked="modelValue.includes(c.id)" :disabled="!selectable(c)" @click="toggle(c.id, $event)" />
+            <UiCheckbox :model-value="modelValue.includes(c.id)" :disabled="!selectable(c)" @click="toggle(c.id, $event)" />
             <StatusDot :status="statusOf(c)" />
             <button class="min-w-0 flex-1 truncate text-left" :class="openedId === c.id && 'font-semibold'" @click="emit('open', c.id)">
               <span class="mr-1.5 font-mono text-[11px] text-zinc-400">{{ String(c.id).padStart(2, '0') }}</span>{{ c.title }}

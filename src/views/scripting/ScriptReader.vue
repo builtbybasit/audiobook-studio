@@ -8,6 +8,10 @@ import { useScript, TYPES } from './shared'
 import { DIRECTIONS } from '../../mock/data'
 import { useReader } from '../../stores/reader'
 import ReaderSettings from '../../components/ReaderSettings.vue'
+import { UiSelect, UiCombobox, UiToggleGroup, UiTooltip } from '../../ui'
+const typeOpts = TYPES.map(t => ({ value: t, label: t }))
+const speakerOpts = computed(() => [...inChapter.value.map(c => ({ value: c.name, label: c.name, color: c.color, group: 'In this chapter', hint: counts.value[c.name] + ' lines', keywords: c.aliases.join(' ') })), ...rest.value.map(c => ({ value: c.name, label: c.name, color: c.color, group: 'Rest of cast', keywords: c.aliases.join(' ') }))])
+const filterOpts = computed(() => [{ value: '', label: 'All speakers' }, ...inChapter.value.map(c => ({ value: c.name, label: c.name, color: c.color, hint: counts.value[c.name] + '' }))])
 
 const props = defineProps({ bookId: String, chapterId: Number })
 const { app, segments, cast, counts, inChapter, colorOf } = useScript(props)
@@ -48,7 +52,8 @@ function moveFocus(d) {
 }
 function onKey(e) {
   const t = e.target
-  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) || t.isContentEditable) { if (e.key === 'Escape') { t.blur(); open.value = null } return }
+  // inside a field: let the widget (combobox/select) handle Escape itself; a second Escape closes the editor
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) || t.isContentEditable || t.closest?.('[role=listbox],[role=option]')) { if (e.key === 'Escape' && t.getAttribute('role') !== 'combobox') t.blur(); return }
   if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); moveFocus(1) }
   else if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); moveFocus(-1) }
   else if (e.key === 'Enter' && focus.value) { open.value = open.value === focus.value ? null : focus.value }
@@ -77,11 +82,8 @@ watch(open, v => { if (v) focus.value = v })
           <ReaderSettings />
         </div>
         <div class="mt-3 flex items-center gap-2">
-          <div class="flex overflow-hidden rounded-md border border-zinc-300 text-xs dark:border-zinc-700">
-            <button class="px-2.5 py-1" :class="mode === 'all' ? 'bg-violet-600 text-white' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'" @click="mode = 'all'">Everything</button>
-            <button class="px-2.5 py-1" :class="mode === 'dialogue' ? 'bg-violet-600 text-white' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'" @click="mode = 'dialogue'">Dialogue only</button>
-          </div>
-          <select v-model="speaker" class="input py-1 text-xs"><option value="">All speakers</option><option v-for="c in inChapter" :key="c.name" :value="c.name">{{ c.name }} ({{ counts[c.name] }})</option></select>
+          <UiToggleGroup v-model="mode" :options="[{ value: 'all', label: 'Everything' }, { value: 'dialogue', label: 'Dialogue only' }]" />
+          <UiSelect v-model="speaker" :options="filterOpts" size="xs" class="w-44" />
           <span class="ml-auto text-[11px] text-zinc-400">{{ rows.length }} shown · click any line to edit</span>
         </div>
       </div>
@@ -134,11 +136,9 @@ watch(open, v => { if (v) focus.value = v })
             </div>
             <!-- inline editor -->
             <div v-if="open === s.id" class="-mt-1 mb-4 grid grid-cols-[1fr_1fr_2fr_auto] items-end gap-2 rounded-md border border-violet-300 bg-white p-2 font-sans text-xs leading-normal dark:border-violet-500/40 dark:bg-zinc-900" @click.stop>
-              <label>Speaker<select :value="s.speaker" class="input mt-1 w-full py-0.5" @change="app.setSpeaker(bookId, chapterId, s.id, $event.target.value)">
-                <optgroup label="In this chapter"><option v-for="c in inChapter" :key="c.name">{{ c.name }}</option></optgroup>
-                <optgroup label="Rest of cast"><option v-for="c in rest" :key="c.name">{{ c.name }}</option></optgroup></select></label>
-              <label>Type<select v-model="s.type" class="input mt-1 w-full py-0.5"><option v-for="t in TYPES" :key="t">{{ t }}</option></select></label>
-              <label>Direction<input v-model="s.direction" list="dirs" class="input mt-1 w-full py-0.5" placeholder="e.g. whispered, hesitant" /></label>
+              <label>Speaker<UiCombobox :model-value="s.speaker" :options="speakerOpts" size="xs" class="mt-1" block @update:model-value="v => app.setSpeaker(bookId, chapterId, s.id, v)" /></label>
+              <label>Type<UiSelect :model-value="s.type" :options="typeOpts" size="xs" class="mt-1" block @update:model-value="v => app.updateSegment(bookId, chapterId, s.id, { type: v })" /></label>
+              <label>Direction<input :value="s.direction" list="dirs" class="input mt-1 w-full py-0.5" placeholder="e.g. whispered, hesitant" @change="app.updateSegment(bookId, chapterId, s.id, { direction: $event.target.value })" /></label>
               <button class="btn-ghost btn-xs" @click="open = null">Done</button>
             </div>
           </template>
@@ -176,9 +176,7 @@ watch(open, v => { if (v) focus.value = v })
         <div class="mt-2 flex items-center gap-1 pl-4 text-[11px]">
           <span class="mr-auto text-zinc-500">voice: <b class="text-zinc-700 dark:text-zinc-300">{{ app.effectiveVoice(bookId, c.name).voice }}</b><span v-if="!app.effectiveVoice(bookId, c.name).own"> (Narrator’s)</span></span>
           <button class="rounded px-1.5 py-0.5 hover:bg-zinc-100 dark:hover:bg-zinc-800" @click="startRename(c)">rename</button>
-          <select v-if="c.name !== 'Narrator'" class="rounded bg-transparent px-1 py-0.5 hover:bg-zinc-100 dark:hover:bg-zinc-800" @change="app.mergeCharacter(bookId, c.name, $event.target.value)">
-            <option disabled selected>merge into…</option><option v-for="o in cast.filter(x => x.name !== c.name)" :key="o.name">{{ o.name }}</option>
-          </select>
+          <UiCombobox v-if="c.name !== 'Narrator'" action :options="cast.filter(x => x.name !== c.name).map(o => ({ value: o.name, label: o.name, color: o.color, keywords: o.aliases.join(' ') }))" placeholder="merge into…" size="xs" class="w-32" @pick="v => app.mergeCharacter(bookId, c.name, v)" />
         </div>
       </div>
 

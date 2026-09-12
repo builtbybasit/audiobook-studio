@@ -8,6 +8,7 @@ import ChapterPicker from '../components/ChapterPicker.vue'
 import VoiceTable from './narration/VoiceTable.vue'
 import EndpointPanel from './narration/EndpointPanel.vue'
 import RunEstimate from './narration/RunEstimate.vue'
+import { TabsContent, TabsList, TabsRoot, TabsTrigger } from 'reka-ui'
 import JobLedger from './narration/JobLedger.vue'
 const app = useApp()
 const bookId = useRoute().params.bookId
@@ -22,17 +23,17 @@ const ready = computed(() => chapter.value && isScripted(chapter.value) && chapt
 
 <template>
   <div class="flex flex-col gap-4 p-4">
-    <div class="card shrink-0">
-      <div class="flex items-center gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
-        <button class="px-3 py-2 text-sm" :class="tab === 'voices' ? 'border-b-2 border-violet-500 font-semibold' : 'text-zinc-500'" @click="tab = 'voices'; collapsed = false">Voices <span class="text-zinc-400">{{ app.charactersOf(bookId).length }}</span></button>
-        <button class="px-3 py-2 text-sm" :class="tab === 'endpoints' ? 'border-b-2 border-violet-500 font-semibold' : 'text-zinc-500'" @click="tab = 'endpoints'; collapsed = false">Endpoints <span class="text-zinc-400">{{ app.enabledEndpoints.length }}/{{ app.endpoints.length }} on</span></button>
+    <TabsRoot v-model="tab" class="card shrink-0" @update:model-value="collapsed = false">
+      <TabsList class="flex items-center gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
+        <TabsTrigger value="voices" class="border-b-2 border-transparent px-3 py-2 text-sm text-zinc-500 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:data-[state=active]:text-zinc-100">Voices <span class="text-zinc-400">{{ app.charactersOf(bookId).length }}</span></TabsTrigger>
+        <TabsTrigger value="endpoints" class="border-b-2 border-transparent px-3 py-2 text-sm text-zinc-500 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:data-[state=active]:text-zinc-100">Endpoints <span class="text-zinc-400">{{ app.enabledEndpoints.length }}/{{ app.endpoints.length }} on</span></TabsTrigger>
         <button class="ml-auto px-3 py-2 text-xs text-zinc-500" @click="collapsed = !collapsed">{{ collapsed ? '▾ expand' : '▴ collapse' }}</button>
-      </div>
+      </TabsList>
       <div v-show="!collapsed" class="max-h-[420px] overflow-auto">
-        <VoiceTable v-if="tab === 'voices'" :book-id="bookId" />
-        <EndpointPanel v-else />
+        <TabsContent value="voices"><VoiceTable :book-id="bookId" /></TabsContent>
+        <TabsContent value="endpoints"><EndpointPanel /></TabsContent>
       </div>
-    </div>
+    </TabsRoot>
 
     <div class="grid h-[680px] min-h-0 grid-cols-[300px_1fr] gap-4">
       <div class="flex min-h-0 flex-col gap-3">

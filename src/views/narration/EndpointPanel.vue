@@ -2,6 +2,7 @@
 // Endpoint pool with health: latency sparkline, failure & rate-limit counts, backoff state, pause/resume.
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useApp } from '../../stores/app'
+import { UiSlider } from '../../ui'
 const app = useApp()
 const now = ref(Date.now()); let t
 onMounted(() => { t = setInterval(() => now.value = Date.now(), 500) }); onUnmounted(() => clearInterval(t))
@@ -46,7 +47,7 @@ const healthCls = { healthy: 'text-emerald-500', degraded: 'text-amber-500', 'ba
           <span class="text-zinc-500">Model</span><input v-model="e.model" class="input py-0.5 font-mono" />
           <span class="text-zinc-500">Price</span><div class="flex items-center gap-1"><span>$</span><input v-model.number="e.price" type="number" class="input w-20 py-0.5" /><span class="text-zinc-400">per 1M chars</span></div>
           <span class="text-zinc-500">Concurrency</span>
-          <div class="flex items-center gap-2"><input type="range" v-model.number="e.concurrency" min="1" max="8" class="flex-1 accent-violet-600" /><span class="w-4 font-mono">{{ e.concurrency }}</span></div>
+          <div class="flex items-center gap-2"><UiSlider v-model="e.concurrency" :min="1" :max="8" label="Concurrency" /><span class="w-4 font-mono">{{ e.concurrency }}</span></div>
         </div>
       </div>
       <button class="grid min-h-28 place-items-center rounded-lg border border-dashed border-zinc-300 text-sm text-zinc-500 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700" @click="add">＋ Add endpoint</button>

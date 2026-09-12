@@ -6,6 +6,8 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useApp, isNarrated } from '../stores/app'
 import EmptyState from '../components/EmptyState.vue'
+import { UiSelect, UiSwitch } from '../ui'
+import { TabsContent, TabsList, TabsRoot, TabsTrigger } from 'reka-ui'
 import ChapterPicker from '../components/ChapterPicker.vue'
 
 const app = useApp()
@@ -58,13 +60,13 @@ function rebuild(e) {
     </EmptyState>
     <div v-else class="grid min-h-0 grid-cols-[1fr_340px] grid-rows-[minmax(0,1fr)] gap-4">
       <!-- left: settings -->
-      <div class="card flex min-h-0 flex-col">
-        <div class="flex items-center gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
-          <button v-for="t in ['metadata', 'chapters', 'options']" :key="t" class="px-3 py-2 text-sm capitalize" :class="tab === t ? 'border-b-2 border-violet-500 font-semibold' : 'text-zinc-500'" @click="tab = t">{{ t }}</button>
-        </div>
+      <TabsRoot v-model="tab" class="card flex min-h-0 flex-col">
+        <TabsList class="flex items-center gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
+          <TabsTrigger v-for="t in ['metadata', 'chapters', 'options']" :key="t" :value="t" class="border-b-2 border-transparent px-3 py-2 text-sm capitalize text-zinc-500 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:data-[state=active]:text-zinc-100">{{ t }}</TabsTrigger>
+        </TabsList>
         <div class="min-h-0 flex-1 overflow-auto p-5">
           <!-- metadata -->
-          <div v-if="tab === 'metadata'" class="space-y-4">
+          <TabsContent value="metadata" class="space-y-4">
             <div class="grid grid-cols-2 gap-3 text-sm">
               <label>Title<input v-model="meta.title" class="input mt-1 w-full" /></label>
               <label>Series <span class="text-zinc-400">(novel)</span><input v-model="meta.series" class="input mt-1 w-full" /></label>
@@ -76,21 +78,20 @@ function rebuild(e) {
             </div>
 
             <div v-if="multi" class="rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800">
-              <label class="flex items-start gap-2"><input type="checkbox" v-model="meta.splitPerVolume" class="mt-1 accent-violet-600" />
-                <span><b>One file per volume</b><br /><span class="text-xs text-zinc-500">Each M4B gets series = “{{ meta.series }}”, volume N of {{ book.volumes.length }}, and the volume name as subtitle. Players group them as a series.</span></span></label>
+              <UiSwitch v-model="meta.splitPerVolume" class="items-start"><span class="text-sm"><b>One file per volume</b><br /><span class="text-xs text-zinc-500">Each M4B gets series = “{{ meta.series }}”, volume N of {{ book.volumes.length }}, and the volume name as subtitle. Players group them as a series.</span></span></UiSwitch>
             </div>
 
             <div class="flex items-center gap-4">
               <div class="h-24 w-16 shrink-0 rounded-md" :style="{ background: `linear-gradient(160deg, ${book.cover[0]}, ${book.cover[1]})` }"></div>
               <div class="text-sm"><div class="font-medium">Cover</div><div class="text-xs text-zinc-500">From the EPUB, embedded in every file.</div><label class="btn-ghost btn-xs mt-2 cursor-pointer">Replace…<input type="file" class="hidden" /></label></div>
             </div>
-          </div>
+          </TabsContent>
 
           <!-- chapters -->
-          <div v-else-if="tab === 'chapters'">
+          <TabsContent value="chapters">
             <div class="mb-2 flex items-center justify-between">
               <div class="label">Chapter titles in the file</div>
-              <label v-if="multi && !meta.splitPerVolume" class="flex items-center gap-1 text-xs text-zinc-500"><input type="checkbox" v-model="meta.volPrefix" class="accent-violet-600" /> prefix with volume</label>
+              <UiSwitch v-if="multi && !meta.splitPerVolume" v-model="meta.volPrefix" label="prefix with volume" class="text-zinc-500" />
             </div>
             <div class="rounded-md border border-zinc-200 text-sm dark:border-zinc-800">
               <div v-for="c in selChapters" :key="c.id" class="flex items-center gap-2 border-b border-zinc-100 px-2 py-1 last:border-0 dark:border-zinc-800">
@@ -101,16 +102,16 @@ function rebuild(e) {
               </div>
               <div v-if="!selChapters.length" class="p-3 text-zinc-500">No chapters selected.</div>
             </div>
-          </div>
+          </TabsContent>
 
           <!-- options -->
-          <div v-else class="grid grid-cols-3 gap-3 text-sm">
-            <label>Format<select class="input mt-1 w-full"><option>M4B (AAC)</option><option disabled>MP3 (soon)</option></select></label>
-            <label>Bitrate<select v-model.number="meta.bitrate" class="input mt-1 w-full"><option :value="64">64 kbps</option><option :value="96">96 kbps</option><option :value="128">128 kbps</option></select></label>
+          <TabsContent value="options" class="grid grid-cols-3 gap-3 text-sm">
+            <label>Format<UiSelect model-value="m4b" :options="[{ value: 'm4b', label: 'M4B (AAC)' }, { value: 'mp3', label: 'MP3 (soon)', disabled: true }]" class="mt-1" block /></label>
+            <label>Bitrate<UiSelect v-model="meta.bitrate" :options="[{ value: 64, label: '64 kbps' }, { value: 96, label: '96 kbps' }, { value: 128, label: '128 kbps' }]" class="mt-1" block /></label>
             <div></div>
             <label>Gap between segments (s)<input v-model.number="meta.gapSeg" type="number" step="0.05" class="input mt-1 w-full" /></label>
             <label>Gap between chapters (s)<input v-model.number="meta.gapCh" type="number" step="0.5" class="input mt-1 w-full" /></label>
-          </div>
+          </TabsContent>
         </div>
 
         <!-- build plan -->
@@ -127,7 +128,7 @@ function rebuild(e) {
           </div>
           <div v-if="!plan.length" class="text-sm text-zinc-500">Select narrated chapters on the left.</div>
         </div>
-      </div>
+      </TabsRoot>
 
       <!-- right: exports -->
       <div class="card min-h-0 overflow-auto p-4">

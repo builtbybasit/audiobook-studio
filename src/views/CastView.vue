@@ -5,6 +5,9 @@ import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useApp } from '../stores/app'
 import { VOICES } from '../mock/data'
+import { UiSelect, UiCombobox, UiCheckbox } from '../ui'
+const voiceOpts = VOICES.map(v => ({ value: v, label: v }))
+const castOpts = computed(() => cast.value.map(c => ({ value: c.name, label: c.name, color: c.color, keywords: c.aliases.join(' ') })))
 
 const app = useApp()
 const bookId = useRoute().params.bookId
@@ -37,8 +40,8 @@ const genderLabel = { m: 'male', f: 'female', n: 'neutral', '?': 'unknown' }
       <div><h1 class="text-2xl font-semibold">Cast</h1><p class="text-sm text-zinc-500">{{ cast.length }} speakers across {{ total }} chapters · {{ cast.filter(c => c.isNew).length }} unreviewed · {{ cast.filter(c => c.voice).length }} voiced</p></div>
       <div class="flex items-center gap-2">
         <input v-model="q" class="input w-48" placeholder="Find a speaker…" />
-        <label class="flex items-center gap-1 text-xs"><input type="checkbox" v-model="onlyNew" class="accent-violet-600" /> unreviewed only</label>
-        <select v-model="sort" class="input"><option value="lines">Most lines</option><option value="first">First appearance</option><option value="name">Name</option></select>
+        <label class="flex items-center gap-1.5 text-xs"><UiCheckbox v-model="onlyNew" /> unreviewed only</label>
+        <UiSelect v-model="sort" :options="[{ value: 'lines', label: 'Most lines' }, { value: 'first', label: 'First appearance' }, { value: 'name', label: 'Name' }]" />
       </div>
     </div>
 
@@ -57,7 +60,7 @@ const genderLabel = { m: 'male', f: 'female', n: 'neutral', '?': 'unknown' }
 
     <div v-if="sel.size" class="flex items-center gap-2 rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-sm dark:border-violet-500/40 dark:bg-violet-500/10">
       <b>{{ sel.size }} selected</b> → merge into
-      <select class="input py-0.5 text-xs" @change="mergeSelectedInto($event.target.value)"><option disabled selected>choose…</option><option v-for="c in cast" :key="c.name">{{ c.name }}</option></select>
+      <UiCombobox action :options="castOpts.filter(o => !sel.has(o.value))" placeholder="choose a speaker…" size="xs" class="w-56" @pick="mergeSelectedInto" />
       <button class="ml-auto text-xs text-zinc-500" @click="sel = new Set()">clear</button>
     </div>
 
@@ -66,7 +69,7 @@ const genderLabel = { m: 'male', f: 'female', n: 'neutral', '?': 'unknown' }
         <thead class="bg-zinc-50 text-left text-[11px] uppercase tracking-wider text-zinc-500 dark:bg-zinc-900"><tr><th class="w-8 px-3 py-2"></th><th>Speaker</th><th class="w-20">Gender</th><th class="w-16 pr-4 text-right">Lines</th><th class="w-44 pl-2">Chapters</th><th class="w-36">Voice</th><th class="w-24"></th></tr></thead>
         <tbody>
           <tr v-for="{ c, st } in rows" :key="c.name" class="border-t border-zinc-100 dark:border-zinc-800/70" :class="c.isNew && 'bg-amber-400/5'">
-            <td class="px-3"><input v-if="c.name !== 'Narrator'" type="checkbox" class="accent-violet-600" :checked="sel.has(c.name)" @change="toggle(c.name)" /></td>
+            <td class="px-3"><UiCheckbox v-if="c.name !== 'Narrator'" :model-value="sel.has(c.name)" @update:model-value="toggle(c.name)" /></td>
             <td class="py-2">
               <div class="flex items-center gap-2">
                 <span class="h-2.5 w-2.5 shrink-0 rounded-full" :style="{ background: c.color }"></span>
@@ -85,7 +88,7 @@ const genderLabel = { m: 'male', f: 'female', n: 'neutral', '?': 'unknown' }
               </div>
               <div class="text-[10px] text-zinc-400">{{ st.chapters.size }} ch · first ch {{ st.first ?? '—' }}</div>
             </td>
-            <td><select v-model="c.voice" class="input w-full py-0.5 text-xs" :class="!c.voice && 'italic text-zinc-400'"><option :value="null">Narrator’s voice</option><option v-for="v in VOICES" :key="v" :value="v">{{ v }}</option></select></td>
+            <td class="py-1 pr-2"><UiSelect v-model="c.voice" :options="voiceOpts" null-value="Narrator’s voice" size="xs" block /></td>
             <td class="pr-3 text-right">
               <button class="text-xs text-zinc-400 hover:text-violet-500" @click="startRename(c)">rename</button>
               <button v-if="c.name !== 'Narrator'" class="ml-2 text-xs text-zinc-400 hover:text-red-500" @click="app.deleteCharacter(bookId, c.name)" title="Merge into Narrator">✕</button>

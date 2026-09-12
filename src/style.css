@@ -11,3 +11,8 @@ body { @apply bg-zinc-100 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-z
 .card { @apply rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900; }
 .input { @apply rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-500; }
 .label { @apply text-[11px] font-semibold uppercase tracking-wider text-zinc-500; }
+
+/* reka-ui wrappers */
+.ui-select-trigger { @apply inline-flex items-center rounded-md border border-zinc-300 bg-white px-2 text-left dark:border-zinc-700 dark:bg-zinc-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 data-[state=open]:ring-2 data-[state=open]:ring-violet-500 disabled:opacity-40; }
+.ui-popup { @apply z-50 overflow-hidden rounded-lg border border-zinc-200 bg-white text-sm shadow-xl dark:border-zinc-700 dark:bg-zinc-900; }
+.ui-item { @apply relative flex cursor-default select-none items-center rounded px-2 py-1 text-sm outline-none data-[highlighted]:bg-violet-50 dark:data-[highlighted]:bg-violet-500/15 data-[disabled]:opacity-40 data-[state=checked]:font-medium; }

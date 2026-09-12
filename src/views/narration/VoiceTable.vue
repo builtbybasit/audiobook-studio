@@ -5,6 +5,9 @@ import { computed, ref } from 'vue'
 import { useApp } from '../../stores/app'
 import { VOICES } from '../../mock/data'
 import { speak } from '../../composables/usePlayer'
+import { UiSelect, UiCheckbox, UiTooltip } from '../../ui'
+import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from 'reka-ui'
+const voiceOpts = VOICES.map(v => ({ value: v, label: v }))
 
 const props = defineProps({ bookId: String })
 const app = useApp()
@@ -30,7 +33,7 @@ const sample = (c) => c.name === 'Narrator' ? 'The mountain mist thinned as dawn
       <div class="text-sm"><b>{{ assigned }}</b> of {{ all.length }} voices assigned <span class="text-zinc-500">· the rest fall back to the Narrator’s voice ({{ narrator?.voice ?? 'unset' }})</span></div>
       <div class="ml-auto flex items-center gap-2">
         <input v-model="q" class="input w-44 py-1" placeholder="Find a speaker…" />
-        <label class="flex items-center gap-1 text-xs"><input type="checkbox" v-model="unassignedOnly" class="accent-violet-600" /> Unassigned only</label>
+        <label class="flex items-center gap-1.5 text-xs"><UiCheckbox v-model="unassignedOnly" /> Unassigned only</label>
         <button class="btn-ghost btn-xs" @click="app.autoAssignByGender(bookId)">Auto-assign all by gender</button>
         <RouterLink :to="`/book/${bookId}/cast`" class="btn-ghost btn-xs">Full cast →</RouterLink>
       </div>
@@ -52,24 +55,28 @@ const sample = (c) => c.name === 'Narrator' ? 'The mountain mist thinned as dawn
           <button v-else class="rounded border border-dashed border-zinc-300 px-2 py-0.5 italic text-zinc-400 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700" @click="revealed = new Set([...revealed, c.name])">description hidden — spoilers · show</button>
         </div>
         <div class="mt-2 flex items-center gap-1.5">
-          <select v-model="c.voice" class="input min-w-0 flex-1 py-1"><option :value="null">Narrator’s voice</option><option v-for="v in VOICES" :key="v" :value="v">{{ v }}</option></select>
-          <button class="btn-ghost btn-xs" :disabled="!app.effectiveVoice(bookId, c.name).voice" title="Prototype: plays a browser voice, not the real TTS voice" @click="speak(sample(c), app.effectiveVoice(bookId, c.name).voice)">▶<span class="text-[9px] text-zinc-400">demo</span></button>
+          <UiSelect v-model="c.voice" :options="voiceOpts" null-value="Narrator’s voice" class="min-w-0 flex-1" block />
+          <UiTooltip text="Prototype: plays a browser voice, not the real TTS voice"><button class="btn-ghost btn-xs" :disabled="!app.effectiveVoice(bookId, c.name).voice" @click="speak(sample(c), app.effectiveVoice(bookId, c.name).voice)">▶<span class="text-[9px] text-zinc-400">demo</span></button></UiTooltip>
         </div>
         <input v-model="c.style" class="input mt-1.5 w-full py-1 text-xs" placeholder="style: e.g. gravelly, elderly; speaks slowly" />
       </div>
     </div>
 
-    <button class="mt-3 flex w-full items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-left text-sm hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/60" @click="showMinor = !showMinor">
-      <span class="text-zinc-400">{{ showMinor ? '▾' : '▸' }}</span><b>Minor cast ({{ minor.length }})</b>
-      <span class="text-xs text-zinc-500">{{ minor.filter(c => c.voice).length }} assigned · rest use the Narrator’s voice</span>
-    </button>
-    <table v-if="showMinor" class="mt-1 w-full text-sm">
-      <tr v-for="c in minor" :key="c.name" class="border-t border-zinc-100 dark:border-zinc-800/70">
-        <td class="py-1 pl-3"><span class="rounded-full px-2 py-0.5 text-xs" :style="{ background: c.color + '33', color: c.color }">{{ c.name }}</span></td>
-        <td class="w-20 text-xs text-zinc-500">{{ genderLabel[c.gender] ?? 'unknown' }}</td>
-        <td class="w-16 font-mono text-xs text-zinc-400">{{ counts[c.name] ?? 0 }} seg</td>
-        <td class="w-52 pr-3 text-right"><select v-model="c.voice" class="input w-full py-0.5 text-xs" :class="!c.voice && 'italic text-zinc-400'"><option :value="null">Narrator’s voice</option><option v-for="v in VOICES" :key="v" :value="v">{{ v }}</option></select></td>
-      </tr>
-    </table>
+    <CollapsibleRoot v-model:open="showMinor" class="mt-3">
+      <CollapsibleTrigger class="flex w-full items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-left text-sm hover:bg-zinc-50 data-[state=open]:rounded-b-none dark:border-zinc-800 dark:hover:bg-zinc-800/60">
+        <span class="text-zinc-400">{{ showMinor ? '▾' : '▸' }}</span><b>Minor cast ({{ minor.length }})</b>
+        <span class="text-xs text-zinc-500">{{ minor.filter(c => c.voice).length }} assigned · rest use the Narrator’s voice</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent class="rounded-b-lg border border-t-0 border-zinc-200 dark:border-zinc-800">
+        <table class="w-full text-sm">
+          <tr v-for="c in minor" :key="c.name" class="border-t border-zinc-100 first:border-0 dark:border-zinc-800/70">
+            <td class="py-1 pl-3"><span class="rounded-full px-2 py-0.5 text-xs" :style="{ background: c.color + '33', color: c.color }">{{ c.name }}</span></td>
+            <td class="w-20 text-xs text-zinc-500">{{ genderLabel[c.gender] ?? 'unknown' }}</td>
+            <td class="w-16 font-mono text-xs text-zinc-400">{{ counts[c.name] ?? 0 }} seg</td>
+            <td class="w-52 py-1 pr-3 text-right"><UiSelect v-model="c.voice" :options="voiceOpts" null-value="Narrator’s voice" size="xs" block /></td>
+          </tr>
+        </table>
+      </CollapsibleContent>
+    </CollapsibleRoot>
   </div>
 </template>

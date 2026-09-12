@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { useApp } from '../stores/app'
 import MiniBar from '../components/MiniBar.vue'
 import EmptyState from '../components/EmptyState.vue'
+import { UiSelect } from '../ui'
+import { DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from 'reka-ui'
 const app = useApp()
 const router = useRouter()
 const dragging = ref(false)
@@ -65,10 +67,13 @@ function stageOf(p) {
     </div>
 
     <!-- add dialog -->
-    <div v-if="pending" class="fixed inset-0 z-40 grid place-items-center bg-black/40" @click.self="pending = null">
-      <div class="card w-[420px] p-5 text-sm shadow-2xl">
-        <div class="label mb-1">Add EPUB</div>
-        <div class="mb-4 truncate font-mono text-xs text-zinc-500">{{ pending.file }}</div>
+    <DialogRoot :open="!!pending" @update:open="v => { if (!v) pending = null }">
+      <DialogPortal>
+        <DialogOverlay class="fixed inset-0 z-40 bg-black/40" />
+        <DialogContent class="card fixed left-1/2 top-1/2 z-50 w-[420px] -translate-x-1/2 -translate-y-1/2 p-5 text-sm shadow-2xl focus:outline-none">
+        <DialogTitle class="label mb-1">Add EPUB</DialogTitle>
+        <DialogDescription class="mb-4 truncate font-mono text-xs text-zinc-500">{{ pending?.file }}</DialogDescription>
+        <template v-if="pending">
         <div class="mb-3 grid grid-cols-2 gap-2">
           <button class="rounded-lg border p-3 text-left" :class="pending.mode === 'new' ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10' : 'border-zinc-200 dark:border-zinc-800'" @click="pending.mode = 'new'">
             <div class="font-medium">New novel</div><div class="text-xs text-zinc-500">Standalone book, its own cast.</div>
@@ -81,11 +86,13 @@ function stageOf(p) {
           <label class="block text-xs">Title<input v-model="pending.title" class="input mt-1 w-full" /></label>
         </template>
         <template v-else>
-          <label class="block text-xs">Novel<select v-model="pending.bookId" class="input mt-1 w-full"><option v-for="b in app.books" :key="b.id" :value="b.id">{{ b.title }} ({{ b.volumes.length }} vol.)</option></select></label>
+          <label class="block text-xs">Novel<UiSelect v-model="pending.bookId" :options="app.books.map(b => ({ value: b.id, label: b.title, hint: b.volumes.length + ' vol.' }))" class="mt-1" block /></label>
           <label class="mt-2 block text-xs">Volume name<input v-model="pending.volName" class="input mt-1 w-full" /></label>
         </template>
         <div class="mt-4 flex justify-end gap-2"><button class="btn-ghost" @click="pending = null">Cancel</button><button class="btn-primary" @click="confirmAdd">Add</button></div>
-      </div>
-    </div>
+        </template>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
   </div>
 </template>

@@ -3,6 +3,7 @@ import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useApp } from './stores/app'
 import JobIndicator from './components/JobIndicator.vue'
+import { TooltipProvider } from 'reka-ui'
 
 const app = useApp()
 const route = useRoute()
@@ -21,6 +22,7 @@ const p = computed(() => app.currentBookId ? app.progress(app.currentBookId) : n
 </script>
 
 <template>
+  <TooltipProvider :delay-duration="300">
   <div class="flex h-screen">
     <aside class="flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
       <div class="flex items-center gap-2 px-4 py-4">
@@ -88,4 +90,5 @@ const p = computed(() => app.currentBookId ? app.progress(app.currentBookId) : n
       </main>
     </div>
   </div>
+  </TooltipProvider>
 </template>

@@ -37,6 +37,11 @@ Ideas borrowed from the older narrata web UI: major/minor cast split with Narrat
 - Endpoints back off for a few seconds on a simulated rate limit; health strip shows latency sparkline, ok rate, failures, 429s.
 - Reader keyboard: `j`/`k` move, `↵` edit, `1–9` assign speaker, `c` toggle cast.
 
+## UI primitives
+
+Form controls are built on [reka-ui](https://reka-ui.com) (headless, accessible) with thin styled wrappers in `src/ui/`:
+`UiSelect` (grouped items, colour dots, hints, a `null-value` option), `UiCombobox` (searchable, grouped, `action` mode for "merge into…"), `UiSlider`, `UiCheckbox` (tri-state), `UiSwitch`, `UiToggleGroup`, `UiTooltip`. Tabs, Popover, Dialog, Collapsible and TooltipProvider are used directly from reka-ui. Reka forbids `''` as a Select item value — the wrapper maps it to a sentinel.
+
 ## Things to try
 
 - Scripting: *The Cliché Cultivation World* has three volumes — collapse them in the chapter list. Tick unscripted chapters on *Letters from the Drowned City* and run; new chapters sometimes surface an alias (dashed "new") to merge. Hide the cast with the Cast button, change type with `Aa`.

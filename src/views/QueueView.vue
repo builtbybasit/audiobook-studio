@@ -17,6 +17,7 @@ const queued = computed(() => app.jobs.filter(j => j.status === 'queued'))
 const history = computed(() => app.jobs.filter(j => j.finishedAt).sort((a, b) => b.finishedAt - a.finishedAt))
 const counts = computed(() => ({ running: running.value.length, queued: queued.value.length, done: app.jobs.filter(j => j.status === 'done').length, failed: app.jobs.filter(j => j.status === 'failed').length }))
 const filter = ref('all')
+const retryable = computed(() => history.value.filter(j => j.status === 'failed' && j.kind !== 'export' && chapter(j)?.[j.kind] === 'failed').length)
 const shown = computed(() => filter.value === 'all' ? history.value : history.value.filter(j => j.status === filter.value))
 
 const book = (j) => app.bookById(j.bookId)
@@ -38,7 +39,7 @@ const stageLink = (j) => `/book/${j.bookId}/${j.kind === 'export' ? 'export' : j
         <h1 class="text-2xl font-semibold">Queue</h1>
         <p class="text-sm text-zinc-500">Every job across the library. Chapters of one book run in order; endpoints work in parallel within a chapter.</p>
       </div>
-      <button class="btn-ghost" :disabled="!history.length" @click="app.clearFinished()">Clear finished</button>
+
     </div>
 
     <div class="grid grid-cols-4 gap-3">
@@ -52,7 +53,8 @@ const stageLink = (j) => `/book/${j.bookId}/${j.kind === 'export' ? 'export' : j
       <div class="min-w-0 space-y-5">
         <!-- running -->
         <section class="card">
-          <div class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"><span class="label">Running now</span><span class="text-xs text-zinc-400">{{ running.length }}</span></div>
+          <div class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"><span class="label">Running now</span><span class="text-xs text-zinc-400">{{ running.length }}</span>
+            <button v-if="app.activeJobs.length" class="ml-auto whitespace-nowrap text-xs text-zinc-400 hover:text-red-500" @click="app.cancelAll()">cancel all ({{ app.activeJobs.length }})</button></div>
           <div v-if="!running.length" class="px-4 py-6 text-sm text-zinc-500">Idle. Start scripting, narration, or an export from a book.</div>
           <div v-for="j in running" :key="j.id" class="border-b border-zinc-100 px-4 py-3 last:border-0 dark:border-zinc-800/70">
             <div class="flex items-center gap-3">
@@ -76,7 +78,8 @@ const stageLink = (j) => `/book/${j.bookId}/${j.kind === 'export' ? 'export' : j
 
         <!-- queued -->
         <section class="card">
-          <div class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"><span class="label">Up next</span><span class="text-xs text-zinc-400">{{ queued.length }}</span></div>
+          <div class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"><span class="label">Up next</span><span class="text-xs text-zinc-400">{{ queued.length }}</span>
+            <button v-if="queued.length" class="ml-auto whitespace-nowrap text-xs text-zinc-400 hover:text-red-500" @click="queued.forEach(j => app.cancelJob(j.id))">cancel queued</button></div>
           <div v-if="!queued.length" class="px-4 py-4 text-sm text-zinc-500">Nothing waiting.</div>
           <div v-for="(j, i) in queued" :key="j.id" class="flex items-center gap-3 border-b border-zinc-100 px-4 py-2 text-sm last:border-0 dark:border-zinc-800/70">
             <span class="w-5 font-mono text-xs text-zinc-400">{{ i + 1 }}</span>
@@ -91,8 +94,12 @@ const stageLink = (j) => `/book/${j.bookId}/${j.kind === 'export' ? 'export' : j
         <section class="card">
           <div class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800">
             <span class="label">History</span>
-            <div class="ml-auto flex gap-1">
+            <div class="ml-3 flex gap-1">
               <button v-for="f in ['all', 'done', 'failed', 'cancelled']" :key="f" class="rounded px-2 py-0.5 text-xs capitalize" :class="filter === f ? 'bg-zinc-200 dark:bg-zinc-700' : 'text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800'" @click="filter = f">{{ f }}</button>
+            </div>
+            <div class="ml-auto flex items-center gap-3 whitespace-nowrap text-xs">
+              <button v-if="retryable" class="text-violet-500 hover:underline" @click="app.retryAllFailed()">↻ retry failed ({{ retryable }})</button>
+              <button v-if="history.length" class="text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100" @click="app.clearFinished()">clear</button>
             </div>
           </div>
           <div v-if="!shown.length" class="px-4 py-4 text-sm text-zinc-500">No {{ filter === 'all' ? '' : filter }} jobs yet.</div>

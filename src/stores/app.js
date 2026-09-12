@@ -111,6 +111,18 @@ export const useApp = defineStore('app', {
       if (job.kind === 'narration') { const c = this.chapter(job.bookId, job.chapterId); c.narration === 'failed' && this.segmentsOf(job.bookId, c.id).some(x => x.audio.status === 'done') ? this.retryFailed(job.bookId, c.id) : this.runNarration(job.bookId, [c.id]) }
     },
     clearFinished() { this.jobs = this.jobs.filter(j => !j.finishedAt) },
+    cancelAll() { for (const j of this.jobs.filter(j => j.status === 'queued')) this.cancelJob(j.id); for (const j of this.jobs.filter(j => j.status === 'running')) this.cancelJob(j.id) },
+    retryAllFailed() {
+      // one retry per chapter, grouped by book so each book's chapters queue in order
+      const seen = new Set()
+      for (const j of this.jobs.filter(j => j.status === 'failed' && j.kind !== 'export')) {
+        const key = `${j.kind}:${j.bookId}:${j.chapterId}`
+        if (seen.has(key)) continue; seen.add(key)
+        const c = this.chapter(j.bookId, j.chapterId)
+        if (j.kind === 'scripting' && c.scripting === 'failed') this.retryJob(j.id)
+        if (j.kind === 'narration' && c.narration === 'failed') this.retryJob(j.id)
+      }
+    },
 
     // ---------- library ----------
     _blankChapters(count, volumeId, startAt, prefix = 'Chapter') {

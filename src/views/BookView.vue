@@ -1,11 +1,12 @@
 <script setup>
 // Book overview: volumes, pipeline progress per stage, cast summary, latest exports, and what to do next.
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useApp, isScripted, isNarrated } from '../stores/app'
 
 const app = useApp()
 const bookId = useRoute().params.bookId
+const router = useRouter()
 const book = computed(() => app.bookById(bookId))
 const chapters = computed(() => app.chaptersOf(bookId))
 const p = computed(() => app.progress(bookId))
@@ -14,6 +15,9 @@ const unreviewed = computed(() => cast.value.filter(c => c.isNew).length)
 const unvoiced = computed(() => cast.value.filter(c => !c.voice && c.major).length)
 const suggestions = computed(() => app.mergeSuggestions(bookId).length)
 const exportsHere = computed(() => app.exports.filter(e => e.bookId === bookId && e.status === 'done'))
+const editing = ref(null), draft = ref(''), removing = ref(null)
+function saveName(v) { app.renameVolume(bookId, v.id, draft.value); editing.value = null }
+function remove(v) { const r = app.removeVolume(bookId, v.id); removing.value = null; if (r === 'book') router.push('/library') }
 const volStats = (v) => { const chs = chapters.value.filter(c => c.volumeId === v.id); return { n: chs.length, scripted: chs.filter(isScripted).length, narrated: chs.filter(isNarrated).length } }
 const fmt = (s) => s >= 3600 ? `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, '0')}m` : `${Math.floor(s / 60)}m`
 const runtime = computed(() => chapters.value.reduce((a, c) => a + c.duration, 0))
@@ -38,7 +42,7 @@ const next = computed(() => {
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl space-y-5 p-6">
+  <div v-if="book" class="mx-auto max-w-6xl space-y-5 p-6">
     <div class="flex gap-5">
       <div class="h-40 w-28 shrink-0 rounded-lg shadow-lg" :style="{ background: `linear-gradient(160deg, ${book.cover[0]}, ${book.cover[1]})` }"></div>
       <div class="min-w-0 flex-1">
@@ -74,10 +78,15 @@ const next = computed(() => {
     <div class="grid grid-cols-[1fr_340px] gap-4">
       <div class="card">
         <div class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"><span class="label">Volumes</span><label class="ml-auto cursor-pointer text-xs text-zinc-400 hover:text-violet-500">＋ add volume<input type="file" accept=".epub" class="hidden" @change="e => app.addVolume(bookId, e.target.files?.[0]?.name ?? 'volume.epub')" /></label></div>
-        <div v-for="v in book.volumes" :key="v.id" class="flex items-center gap-4 border-b border-zinc-100 px-4 py-3 last:border-0 dark:border-zinc-800/70">
-          <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-zinc-100 font-mono text-sm dark:bg-zinc-800">{{ v.id }}</span>
-          <div class="min-w-0 flex-1">
-            <div class="truncate text-sm font-medium">{{ v.name }}</div>
+        <div v-for="(v, vi) in book.volumes" :key="v.id" class="border-b border-zinc-100 px-4 py-3 last:border-0 dark:border-zinc-800/70">
+          <div class="flex items-center gap-4">
+          <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-zinc-100 font-mono text-sm dark:bg-zinc-800">{{ vi + 1 }}</span>
+          <div class="group min-w-0 flex-1">
+            <form v-if="editing === v.id" class="flex items-center gap-1" @submit.prevent="saveName(v)">
+              <input v-model="draft" class="input w-64 py-0.5 text-sm" autofocus @keydown.esc="editing = null" />
+              <button class="btn-primary btn-xs" type="submit">Save</button><button class="btn-ghost btn-xs" type="button" @click="editing = null">Cancel</button>
+            </form>
+            <div v-else class="flex items-center gap-2"><span class="truncate text-sm font-medium">{{ v.name }}</span><button class="text-[11px] text-zinc-400 opacity-0 hover:text-violet-500 group-hover:opacity-100" title="rename volume" @click="editing = v.id; draft = v.name">rename</button></div>
             <div class="truncate font-mono text-[11px] text-zinc-400">{{ v.file }} · ch {{ v.from }}–{{ v.to }}</div>
           </div>
           <div class="w-40 text-xs text-zinc-500">
@@ -85,6 +94,12 @@ const next = computed(() => {
             <div class="h-1 rounded bg-zinc-200 dark:bg-zinc-800"><div class="h-1 rounded bg-amber-500" :style="{ width: volStats(v).scripted / volStats(v).n * 100 + '%' }"></div></div>
             <div class="mt-1 flex justify-between"><span>narrated</span><span>{{ volStats(v).narrated }}/{{ volStats(v).n }}</span></div>
             <div class="h-1 rounded bg-zinc-200 dark:bg-zinc-800"><div class="h-1 rounded bg-sky-500" :style="{ width: volStats(v).narrated / volStats(v).n * 100 + '%' }"></div></div>
+          </div>
+          <button class="text-[11px] text-zinc-400 hover:text-red-500" title="remove this volume (wrong EPUB?)" @click="removing = removing === v.id ? null : v.id">remove</button>
+          </div>
+          <div v-if="removing === v.id" class="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-red-300 bg-red-500/5 px-3 py-2 text-xs dark:border-red-500/40">
+            <span>Remove <b>{{ v.name }}</b> ({{ v.file }})? Its {{ volStats(v).n }} chapters<template v-if="volStats(v).scripted"> · {{ volStats(v).scripted }} scripted</template><template v-if="volStats(v).narrated"> · {{ volStats(v).narrated }} narrated</template> are deleted and the rest are renumbered.<template v-if="book.volumes.length === 1"> This is the only volume, so the novel is removed from the library.</template></span>
+            <span class="ml-auto flex gap-1"><button class="btn-ghost btn-xs" @click="removing = null">Keep</button><button class="rounded-md bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-500" @click="remove(v)">Remove volume</button></span>
           </div>
         </div>
       </div>

@@ -1,4 +1,5 @@
 // PROTOTYPE — mock world. Deterministic pseudo-random so reloads look the same.
+import { splitText } from '../lib/split.js'
 
 // Voices belong to an endpoint (each TTS server exposes its own list). A character stores a voice
 // *ref* — `<endpointId>/<voiceId>` — so narration knows which endpoint must render that speaker.
@@ -162,15 +163,16 @@ export function makeWorld() {
   // Each endpoint carries its own voice list and a per-request character limit (many small TTS
   // servers degrade or truncate past a few hundred chars; OpenAI caps at 4096). 0 = no limit.
   const endpoints = [
-    { id: 'openai', name: 'OpenAI (main)', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-••••••••••••4f2a', model: 'gpt-4o-mini-tts', concurrency: 3, enabled: true, latency: 1400, failRate: 0.01, price: 12, needsKey: true, maxChars: 4096, voices: OPENAI_VOICES.map(v => ({ ...v })), history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 1100 + Math.round(Math.sin(i / 3) * 300 + (i % 7) * 60), ok: i % 11 !== 4 })), failures: 2, rateLimits: 1, backoffUntil: 0 },
-    { id: 'local', name: 'Local Kokoro', baseUrl: 'http://127.0.0.1:8880/v1', apiKey: '', model: 'kokoro', concurrency: 2, enabled: true, latency: 2600, failRate: 0.025, price: 0, needsKey: false, maxChars: 500, voices: KOKORO_VOICES.map(v => ({ ...v })), history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 2200 + Math.round(Math.cos(i / 4) * 500 + (i % 5) * 90), ok: i % 6 !== 2 })), failures: 5, rateLimits: 0, backoffUntil: 0 },
-    { id: 'proxy', name: 'Azure proxy', baseUrl: 'https://tts-proxy.internal/v1', apiKey: '', model: 'tts-1-hd', concurrency: 1, enabled: false, latency: 1900, failRate: 0.05, price: 15, needsKey: true, maxChars: 3000, voices: AZURE_VOICES.map(v => ({ ...v })), history: [], failures: 0, rateLimits: 0, backoffUntil: 0 },
+    { id: 'openai', name: 'OpenAI (main)', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-••••••••••••4f2a', model: 'gpt-4o-mini-tts', concurrency: 3, enabled: true, latency: 1400, failRate: 0.01, price: 12, needsKey: true, maxChars: 4096, splitAt: 'sentence', voices: OPENAI_VOICES.map(v => ({ ...v })), history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 1100 + Math.round(Math.sin(i / 3) * 300 + (i % 7) * 60), ok: i % 11 !== 4 })), failures: 2, rateLimits: 1, backoffUntil: 0 },
+    { id: 'local', name: 'Local Kokoro', baseUrl: 'http://127.0.0.1:8880/v1', apiKey: '', model: 'kokoro', concurrency: 2, enabled: true, latency: 2600, failRate: 0.025, price: 0, needsKey: false, maxChars: 500, splitAt: 'sentence', voices: KOKORO_VOICES.map(v => ({ ...v })), history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 2200 + Math.round(Math.cos(i / 4) * 500 + (i % 5) * 90), ok: i % 6 !== 2 })), failures: 5, rateLimits: 0, backoffUntil: 0 },
+    { id: 'proxy', name: 'Azure proxy', baseUrl: 'https://tts-proxy.internal/v1', apiKey: '', model: 'tts-1-hd', concurrency: 1, enabled: false, latency: 1900, failRate: 0.05, price: 15, needsKey: true, maxChars: 3000, splitAt: 'clause', voices: AZURE_VOICES.map(v => ({ ...v })), history: [], failures: 0, rateLimits: 0, backoffUntil: 0 },
   ]
   const oa = (v) => voiceRef('openai', v), kk = (v) => voiceRef('local', v)
   // seeded casting: OpenAI for dialogue, the free local Kokoro for the Narrator on two books (cheap
   // narration, premium dialogue); one Drowned character sits on the paused Azure proxy → a blocker to fix.
   const seedVoice = { m: ['onyx', 'echo', 'ash', 'ballad', 'verse'], f: ['nova', 'shimmer', 'coral', 'sage'], n: ['alloy', 'fable'], '?': ['alloy'] }
   const narratorVoice = { cliche: kk('bm_george'), starforge: oa('sage'), drowned: kk('bf_emma') }
+  const seedCuts = (text, ep) => { const cuts = splitText(text, ep.maxChars, ep.splitAt); return cuts.length > 1 ? { parts: cuts.length, splitAt: ep.splitAt, cuts: cuts.map(c => ({ from: c.from, to: c.to, at: c.at, fallback: c.fallback })) } : {} }
   const routeOf = (bookId, speaker) => {
     const cast = characters[bookId]
     const ref = cast.find(c => c.name === speaker)?.voice || cast.find(c => c.name === 'Narrator').voice
@@ -197,7 +199,7 @@ export function makeWorld() {
       if (c.id <= narrated) {
         c.narration = 'done'; c.narrationProgress = 100
         const segs = segments[`${bookId}:${c.id}`]
-        segs.forEach((s, i) => { const ep = routeOf(bookId, s.speaker); s.audio = { status: 'done', endpoint: ep.id, ms: 900 + i * 37, duration: s.text.split(' ').length / 2.6, parts: ep.maxChars && s.text.length > ep.maxChars ? Math.ceil(s.text.length / ep.maxChars) : undefined } })
+        segs.forEach((s, i) => { const ep = routeOf(bookId, s.speaker); s.audio = { status: 'done', endpoint: ep.id, ms: 900 + i * 37, duration: s.text.split(' ').length / 2.6, ...seedCuts(s.text, ep) } })
         c.duration = segs.reduce((a, s) => a + s.audio.duration, 0)
       }
     }

@@ -1,14 +1,14 @@
 // PROTOTYPE — in-memory state + simulated jobs. Nothing persists.
 import { defineStore } from 'pinia'
 import { makeWorld, generateSegments, PALETTE, DISCOVERABLE_VOICES, voiceRef } from '../mock/data'
+import { splitText, partsFor } from '../lib/split'
 
 let jobSeq = 100
 export const isScripted = (c) => c.scripting === 'done' || c.scripting === 'fallback'
 export const isNarrated = (c) => c.narration === 'done' || c.narration === 'stale'
 export const norm = (n) => n.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim()
 export { voiceRef }
-// how many requests a text needs on an endpoint with a per-request character limit (0 = unlimited)
-export const partsFor = (text, ep) => ep?.maxChars ? Math.max(1, Math.ceil(text.length / ep.maxChars)) : 1
+export { partsFor }
 const GENDER = { m: 'male', f: 'female', n: 'neutral' }
 const ago = (min) => Date.now() - min * 60000
 function collapseChunk(segs) {
@@ -224,7 +224,7 @@ export const useApp = defineStore('app', {
       const count = 12 + Math.floor(Math.random() * 10)
       this.books.push({ id, title: title || file.replace(/\.epub$/i, ''), author: 'Unknown', cover: ['#1e293b', '#94a3b8'], addedAt: 'just now', volumes: [{ id: 1, name: title || file.replace(/\.epub$/i, ''), file, from: 1, to: count }] })
       this.chapters[id] = this._blankChapters(count, 1, 1)
-      this.characters[id] = [{ name: 'Narrator', aliases: [], gender: 'n', description: 'Narration, thoughts, and every speaker without a voice of their own.', voice: 'alloy', style: '', color: PALETTE[0], major: true }]
+      this.characters[id] = [{ name: 'Narrator', aliases: [], gender: 'n', description: 'Narration, thoughts, and every speaker without a voice of their own.', voice: this.voiceOptions.find(o => !o.disabled)?.value ?? null, style: '', color: PALETTE[0], major: true }]
       return id
     },
     // A novel split across several EPUBs: each file becomes a volume, chapters keep numbering continuously
@@ -237,6 +237,45 @@ export const useApp = defineStore('app', {
       const vol = { id: book.volumes.length + 1, name: name || `Vol. ${book.volumes.length + 1}`, file, from, to: from + count - 1 }
       book.volumes.push(vol)
       chs.push(...this._blankChapters(count, vol.id, from))
+    },
+
+    renameVolume(bookId, volId, name) {
+      const v = this.bookById(bookId)?.volumes.find(v => v.id === volId)
+      if (v && name.trim()) v.name = name.trim()
+    },
+    // Remove a volume (wrong EPUB added): its chapters, segments, jobs and exports go; the remaining
+    // chapters are renumbered so numbering stays continuous. Removing the last volume removes the novel.
+    removeVolume(bookId, volId) {
+      const book = this.bookById(bookId); if (!book) return null
+      if (book.volumes.length <= 1) { this.removeBook(bookId); return 'book' }
+      const gone = new Set(this.chapters[bookId].filter(c => c.volumeId === volId).map(c => c.id))
+      for (const j of this.jobs) if (j.bookId === bookId && gone.has(j.chapterId) && (j.status === 'running' || j.status === 'queued')) this.cancelJob(j.id)
+      this.jobs = this.jobs.filter(j => !(j.bookId === bookId && gone.has(j.chapterId)))
+      const keep = this.chapters[bookId].filter(c => !gone.has(c.id))
+      const map = {}; keep.forEach((c, i) => { map[c.id] = i + 1 })
+      const segs = {}
+      for (const [k, v] of Object.entries(this.segments)) {
+        if (!k.startsWith(bookId + ':')) { segs[k] = v; continue }
+        const old = Number(k.split(':')[1]); if (map[old]) segs[key(bookId, map[old])] = v
+      }
+      this.segments = segs
+      keep.forEach(c => { c.id = map[c.id]; c.index = c.id })
+      this.chapters[bookId] = keep
+      book.volumes = book.volumes.filter(v => v.id !== volId)
+      let from = 1
+      for (const v of book.volumes) { const n = keep.filter(c => c.volumeId === v.id).length; v.from = from; v.to = from + n - 1; from += n; keep.filter(c => c.volumeId === v.id).forEach((c, i) => c.volumeIndex = i + 1) }
+      this.exports = this.exports.map(e => e.bookId !== bookId ? e : { ...e, chapterIds: e.chapterIds.filter(id => !gone.has(id)).map(id => map[id]) }).filter(e => e.bookId !== bookId || e.chapterIds.length)
+      for (const e of this.exports) if (e.bookId === bookId) e.chapters = e.chapterIds.length
+      return 'volume'
+    },
+    removeBook(bookId) {
+      for (const j of this.jobs) if (j.bookId === bookId && (j.status === 'running' || j.status === 'queued')) this.cancelJob(j.id)
+      this.jobs = this.jobs.filter(j => j.bookId !== bookId)
+      this.books = this.books.filter(b => b.id !== bookId)
+      delete this.chapters[bookId]; delete this.characters[bookId]
+      this.segments = Object.fromEntries(Object.entries(this.segments).filter(([k]) => !k.startsWith(bookId + ':')))
+      this.exports = this.exports.filter(e => e.bookId !== bookId)
+      if (this.currentBookId === bookId) this.currentBookId = null
     },
 
     // ---------- demo ----------
@@ -361,7 +400,7 @@ export const useApp = defineStore('app', {
 
     // ---------- endpoints & their voices ----------
     addEndpoint() {
-      this.endpoints.push({ id: 'ep' + Date.now(), name: 'New endpoint', baseUrl: 'https://', apiKey: '', model: 'gpt-4o-mini-tts', concurrency: 1, enabled: false, latency: 1500, failRate: 0.03, price: 12, needsKey: true, maxChars: 0, voices: [], history: [], failures: 0, rateLimits: 0, backoffUntil: 0, fetching: false })
+      this.endpoints.push({ id: 'ep' + Date.now(), name: 'New endpoint', baseUrl: 'https://', apiKey: '', model: 'gpt-4o-mini-tts', concurrency: 1, enabled: false, latency: 1500, failRate: 0.03, price: 12, needsKey: true, maxChars: 0, splitAt: 'sentence', voices: [], history: [], failures: 0, rateLimits: 0, backoffUntil: 0, fetching: false })
       return this.endpoints[this.endpoints.length - 1]
     },
     removeEndpoint(id) { this.endpoints = this.endpoints.filter(e => e.id !== id) },   // characters keep a dangling ref → shown as "missing"
@@ -445,8 +484,9 @@ export const useApp = defineStore('app', {
           if (ep.backoffUntil > Date.now()) continue
           const active = segs.filter(s => s.audio.status === 'generating' && s.audio.endpoint === ep.id).length
           if (active >= ep.concurrency) continue
-          const parts = partsFor(next.text, ep)
-          next.audio = { status: 'generating', endpoint: ep.id, ms: 0, duration: 0, startedAt: Date.now(), parts, voice: route.voice }
+          const cuts = splitText(next.text, ep.maxChars, ep.splitAt)
+          const parts = cuts.length
+          next.audio = { status: 'generating', endpoint: ep.id, ms: 0, duration: 0, startedAt: Date.now(), parts, voice: route.voice, cuts: parts > 1 ? cuts.map(c => ({ from: c.from, to: c.to, at: c.at, fallback: c.fallback })) : undefined, splitAt: ep.splitAt }
           const dur = ep.latency * rnd(0.5, 1.1) * parts + next.text.length * 6
           setTimeout(() => {
             if (Math.random() < 0.03) {   // rate limited → back off, put the segment back

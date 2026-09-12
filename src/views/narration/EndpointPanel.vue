@@ -7,6 +7,8 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useApp } from '../../stores/app'
 import { speak } from '../../composables/usePlayer'
 import { UiSlider, UiSelect, UiTooltip } from '../../ui'
+import { SPLIT_MODES, splitText } from '../../lib/split'
+import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from 'reka-ui'
 const props = defineProps({ bookId: String })
 const app = useApp()
 const now = ref(Date.now()); let t
@@ -22,6 +24,15 @@ function submit(e) {
   if (app.addVoice(e, f)) { f.id = ''; f.label = '' }
 }
 const splitOf = (e) => app.splitCount(props.bookId, e)
+const MODE_OPTS = SPLIT_MODES.map(m => ({ value: m.value, label: m.label, hint: m.hint }))
+const AT = { sentence: 'sentence end', clause: 'clause', word: 'word', char: 'hard cut' }
+// the longest segment of the open book routed to this endpoint, cut with its current settings
+const longest = (e) => {
+  let best = null
+  for (const k of Object.keys(app.segments)) if (k.startsWith(props.bookId + ':')) for (const s of app.segments[k]) if (app.effectiveVoice(props.bookId, s.speaker).endpoint?.id === e.id && (!best || s.text.length > best.text.length)) best = s
+  return best
+}
+const preview = (e) => { const s = longest(e); return s ? { seg: s, parts: splitText(s.text, e.maxChars, e.splitAt) } : null }
 const usedBy = (e, v) => (app.characters[props.bookId] ?? []).filter(c => c.voice === `${e.id}/${v.id}`).map(c => c.name)
 const GENDER_CH = { m: '♂', f: '♀', n: '◦' }
 
@@ -72,7 +83,7 @@ const inUse = computed(() => { const m = {}; for (const c of app.characters[prop
           <div class="flex items-center gap-2">
             <input v-model.number="e.maxChars" type="number" min="0" step="50" class="input w-20 py-0.5 font-mono" placeholder="0" />
             <UiSelect :model-value="LIMITS.some(l => l.value === e.maxChars) ? e.maxChars : undefined" :options="LIMITS" placeholder="preset" size="xs" class="w-24" @update:model-value="v => e.maxChars = v" />
-            <UiTooltip text="Segments longer than this are cut at sentence ends, sent as several requests, and joined. 0 = send whole segments.">
+            <UiTooltip text="Segments longer than this are cut, sent as several requests, and the audio joined. 0 = send whole segments.">
               <span class="text-zinc-400">
                 <template v-if="!e.maxChars">whole segments</template>
                 <template v-else-if="splitOf(e)"><span class="text-amber-600">{{ splitOf(e) }} segment{{ splitOf(e) === 1 ? '' : 's' }} in this book would be split</span></template>
@@ -80,7 +91,25 @@ const inUse = computed(() => { const m = {}; for (const c of app.characters[prop
               </span>
             </UiTooltip>
           </div>
+          <template v-if="e.maxChars">
+            <span class="self-center text-zinc-500">Cut at</span>
+            <div class="flex items-center gap-2">
+              <UiSelect v-model="e.splitAt" :options="MODE_OPTS" size="xs" class="w-36" />
+              <span class="text-zinc-400">falls back to the next finer boundary when none fits</span>
+            </div>
+          </template>
         </div>
+        <CollapsibleRoot v-if="e.maxChars && preview(e)?.parts.length > 1" class="mt-2 text-xs">
+          <CollapsibleTrigger class="text-zinc-400 hover:text-violet-500 data-[state=open]:text-violet-500">▸ preview: longest routed segment ({{ preview(e).seg.text.length }} chars, {{ preview(e).seg.speaker }}) → {{ preview(e).parts.length }} requests</CollapsibleTrigger>
+          <CollapsibleContent>
+            <ol class="mt-1 space-y-1">
+              <li v-for="(pt, i) in preview(e).parts" :key="i" class="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-800">
+                <div class="mb-0.5 flex gap-2 font-mono text-[10px] text-zinc-400"><span>part {{ i + 1 }}</span><span>{{ pt.text.length }} ch</span><span v-if="pt.at" :class="pt.fallback && 'text-amber-600'">cut at {{ AT[pt.at] }}{{ pt.fallback ? ' (no ' + AT[e.splitAt] + ' in range)' : '' }}</span></div>
+                <div class="line-clamp-2 text-zinc-600 dark:text-zinc-400">{{ pt.text }}</div>
+              </li>
+            </ol>
+          </CollapsibleContent>
+        </CollapsibleRoot>
 
         <!-- voices -->
         <div class="mt-3 border-t border-zinc-100 pt-2 dark:border-zinc-800">

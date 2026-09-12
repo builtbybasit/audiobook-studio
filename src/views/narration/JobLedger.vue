@@ -10,6 +10,9 @@ const props = defineProps({ bookId: String, chapterId: Number })
 const { app, chapter, segments, colorOf, voiceOf, epName, stats } = useJob(props)
 const { p, play, pause, seek } = usePlayer()
 const filter = ref('all')
+const expanded = ref(new Set())
+const toggleParts = (id) => { const n = new Set(expanded.value); n.has(id) ? n.delete(id) : n.add(id); expanded.value = n }
+const AT = { sentence: 'sentence', clause: 'clause', word: 'word', char: 'hard cut' }
 const rows = computed(() => filter.value === 'all' ? segments.value : segments.value.filter(s => s.audio.status === filter.value))
 const FILTERS = ['all', 'done', 'generating', 'queued', 'failed', 'stale']
 const count = (f) => f === 'all' ? stats.value.total : segments.value.filter(s => s.audio.status === f).length
@@ -47,12 +50,13 @@ function scrub(e) { const frac = e.offsetX / e.currentTarget.clientWidth; if (p.
       <table class="w-full table-fixed text-sm">
         <thead class="sticky top-0 bg-zinc-50 text-left text-[11px] uppercase tracking-wider text-zinc-500 dark:bg-zinc-900"><tr><th class="w-10 px-3 py-2">#</th><th class="w-6"></th><th class="w-32">Speaker</th><th>Text</th><th class="w-28">Endpoint</th><th class="w-14 text-right">Took</th><th class="w-14 text-right">Audio</th><th class="w-24"></th></tr></thead>
         <tbody>
-          <tr v-for="s in rows" :key="s.id" :id="'row-' + s.id" class="border-t border-zinc-100 dark:border-zinc-800/70" :class="currentId === s.id && 'bg-violet-50 dark:bg-violet-500/10'">
+          <template v-for="s in rows" :key="s.id">
+          <tr :id="'row-' + s.id" class="border-t border-zinc-100 dark:border-zinc-800/70" :class="currentId === s.id && 'bg-violet-50 dark:bg-violet-500/10'">
             <td class="px-3 font-mono text-[11px] text-zinc-400">{{ s.id }}</td>
             <td><span class="inline-block h-2.5 w-2.5 rounded-full" :class="STATUS_BG[s.audio.status]" :title="s.audio.status"></span></td>
             <td class="py-1.5"><div class="flex items-center gap-1.5"><span class="h-2 w-2 shrink-0 rounded-full" :style="{ background: colorOf(s.speaker) }"></span><span class="truncate">{{ s.speaker }}</span></div><div class="pl-3.5 text-[10px] text-zinc-400">{{ voiceOf(s.speaker) }}</div></td>
             <td class="truncate py-1.5 pr-3 text-zinc-600 dark:text-zinc-300" :class="s.type === 'thought' && 'italic'"><div class="line-clamp-1">{{ s.text }}</div><div class="flex gap-2 text-[10px]"><span v-if="s.direction" class="text-violet-500">[{{ s.direction }}]</span><span v-if="s.audio.status === 'stale'" class="text-amber-600">edited after narration — audio is from the old script</span><span v-if="s.fallback" class="text-amber-600">unverified chunk</span><span v-if="s.audio.error" class="text-red-500">{{ s.audio.error }}</span></div></td>
-            <td class="text-xs"><div class="truncate">{{ epName(s.audio.endpoint) }}</div><div v-if="s.audio.parts > 1" class="text-[10px] text-zinc-400" :title="`${s.text.length} chars, over the endpoint’s per-request limit — sent as ${s.audio.parts} requests and joined`">{{ s.audio.parts }} parts · {{ s.text.length }} ch</div></td>
+            <td class="text-xs"><div class="truncate">{{ epName(s.audio.endpoint) }}</div><button v-if="s.audio.parts > 1" class="text-[10px] text-zinc-400 hover:text-violet-500" :title="`${s.text.length} chars, over the endpoint’s per-request limit — sent as ${s.audio.parts} requests and joined. Click to see the cuts.`" @click="toggleParts(s.id)">{{ expanded.has(s.id) ? '▾' : '▸' }} {{ s.audio.parts }} parts · {{ s.text.length }} ch</button></td>
             <td class="text-right font-mono text-xs text-zinc-500">{{ s.audio.ms ? (s.audio.ms / 1000).toFixed(1) + 's' : '' }}</td>
             <td class="text-right font-mono text-xs text-zinc-500">{{ s.audio.duration ? s.audio.duration.toFixed(1) + 's' : '' }}</td>
             <td class="pr-3 text-right">
@@ -64,6 +68,19 @@ function scrub(e) { const frac = e.offsetX / e.currentTarget.clientWidth; if (p.
               <span v-else-if="s.audio.status === 'generating'" class="text-[11px] text-violet-500">…</span>
             </td>
           </tr>
+          <tr v-if="expanded.has(s.id) && s.audio.cuts" class="bg-zinc-50 dark:bg-zinc-900/60">
+            <td></td><td></td>
+            <td colspan="6" class="px-2 py-2 pr-4">
+              <div class="mb-1 text-[10px] uppercase tracking-wider text-zinc-400">sent as {{ s.audio.cuts.length }} requests · cut at {{ AT[s.audio.splitAt] ?? s.audio.splitAt }} · joined after</div>
+              <ol class="space-y-1">
+                <li v-for="(c, i) in s.audio.cuts" :key="i" class="flex gap-3 text-xs">
+                  <span class="w-16 shrink-0 whitespace-nowrap font-mono text-[10px] text-zinc-400">{{ i + 1 }} · {{ c.to - c.from }} ch</span>
+                  <span class="min-w-0 flex-1 text-zinc-600 dark:text-zinc-300">{{ s.text.slice(c.from, c.to) }}<span v-if="c.at" class="ml-2 font-mono text-[10px]" :class="c.fallback ? 'text-amber-600' : 'text-zinc-400'">⌁ {{ AT[c.at] }}{{ c.fallback ? ' (fallback)' : '' }}</span></span>
+                </li>
+              </ol>
+            </td>
+          </tr>
+          </template>
         </tbody>
       </table>
       <div v-if="!rows.length" class="p-8 text-center text-sm text-zinc-500">No {{ filter }} segments.</div>

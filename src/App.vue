@@ -16,7 +16,7 @@ const stages = [
   { key: 'narration', label: 'Narration', icon: '♪', to: (b) => `/book/${b}/narration` },
   { key: 'export', label: 'Export', icon: '⤓', to: (b) => `/book/${b}/export` },
 ]
-const activeKey = computed(() => route.path.split('/').pop())
+const activeKey = computed(() => route.path.match(/^\/book\/[^/]+$/) ? 'overview' : route.path.split('/').pop())
 const p = computed(() => app.currentBookId ? app.progress(app.currentBookId) : null)
 </script>
 
@@ -62,8 +62,12 @@ const p = computed(() => app.currentBookId ? app.progress(app.currentBookId) : n
 
       <div v-if="app.book" class="mx-3 mt-5 rounded-lg border border-zinc-200 p-3 text-xs dark:border-zinc-800">
         <div class="label mb-1">Open book</div>
-        <div class="font-medium leading-snug">{{ app.book.title }}</div>
+        <RouterLink :to="`/book/${app.book.id}`" class="block font-medium leading-snug hover:text-violet-500" :class="activeKey === 'overview' && 'text-violet-600 dark:text-violet-300'">{{ app.book.title }}</RouterLink>
         <div class="text-zinc-500">{{ app.book.author }}</div>
+        <div class="mt-2 flex gap-2">
+          <RouterLink :to="`/book/${app.book.id}`" class="rounded border border-zinc-200 px-2 py-0.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800" :class="activeKey === 'overview' && 'border-violet-400'">Overview</RouterLink>
+          <RouterLink :to="`/book/${app.book.id}/cast`" class="rounded border border-zinc-200 px-2 py-0.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800" :class="activeKey === 'cast' && 'border-violet-400'">Cast <span class="text-zinc-400">{{ app.charactersOf(app.book.id).length }}</span></RouterLink>
+        </div>
       </div>
 
       <div class="mt-auto p-3">

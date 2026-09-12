@@ -3,12 +3,13 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useApp } from '../stores/app'
 import MiniBar from '../components/MiniBar.vue'
+import EmptyState from '../components/EmptyState.vue'
 const app = useApp()
 const router = useRouter()
 const dragging = ref(false)
 const pending = ref(null)   // { file, mode: 'new' | 'volume', bookId, title, volName }
 
-function open(b) { app.currentBookId = b.id; router.push(`/book/${b.id}/scripting`) }
+function open(b) { app.currentBookId = b.id; router.push(`/book/${b.id}`) }
 function addFake(e, bookId = null) {
   const file = e?.target?.files?.[0]?.name ?? e?.dataTransfer?.files?.[0]?.name ?? 'Untitled Upload.epub'
   const guess = file.replace(/\.epub$/i, '')
@@ -44,6 +45,7 @@ function stageOf(p) {
       Drop .epub files here — a new novel, or another volume of one you already have
     </div>
 
+    <EmptyState v-if="!app.books.length" icon="▤" title="No books yet" body="Add an EPUB to start. Each file becomes a novel, or a volume of one you already have." />
     <div class="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-4">
       <button v-for="b in app.books" :key="b.id" class="card group overflow-hidden text-left transition-shadow hover:shadow-lg hover:shadow-violet-500/10" @click="open(b)">
         <div class="relative aspect-[3/4] p-4" :style="{ background: `linear-gradient(160deg, ${b.cover[0]}, ${b.cover[1]})` }">

@@ -2,7 +2,8 @@
 // Narration stage: voices + endpoints on top, chapter picker + run estimate + job ledger below.
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { useApp } from '../stores/app'
+import { useApp, isScripted, isNarrated } from '../stores/app'
+import EmptyState from '../components/EmptyState.vue'
 import ChapterPicker from '../components/ChapterPicker.vue'
 import VoiceTable from './narration/VoiceTable.vue'
 import EndpointPanel from './narration/EndpointPanel.vue'
@@ -13,9 +14,10 @@ const bookId = useRoute().params.bookId
 const tab = ref('voices')
 const collapsed = ref(false)
 const selected = ref([])
-const opened = ref(app.chaptersOf(bookId).find(c => c.narration === 'failed')?.id ?? app.chaptersOf(bookId).find(c => c.narration === 'done')?.id ?? 1)
+const opened = ref(app.chaptersOf(bookId).find(c => c.narration === 'stale')?.id ?? app.chaptersOf(bookId).find(c => c.narration === 'failed')?.id ?? app.chaptersOf(bookId).find(isNarrated)?.id ?? 1)
+const anyScripted = computed(() => app.chaptersOf(bookId).some(isScripted))
 const chapter = computed(() => app.chapter(bookId, opened.value))
-const ready = computed(() => chapter.value?.scripting === 'done' && chapter.value.narration !== 'none')
+const ready = computed(() => chapter.value && isScripted(chapter.value) && chapter.value.narration !== 'none')
 </script>
 
 <template>
@@ -34,21 +36,21 @@ const ready = computed(() => chapter.value?.scripting === 'done' && chapter.valu
 
     <div class="grid h-[680px] min-h-0 grid-cols-[300px_1fr] gap-4">
       <div class="flex min-h-0 flex-col gap-3">
-        <div class="min-h-0 flex-1"><ChapterPicker :book-id="bookId" stage="narration" v-model="selected" :opened-id="opened" run-label="Narrate" :selectable="c => c.scripting === 'done'" @open="id => opened = id" @run="ids => app.runNarration(bookId, ids)" /></div>
+        <div class="min-h-0 flex-1"><ChapterPicker :book-id="bookId" stage="narration" v-model="selected" :opened-id="opened" run-label="Narrate" :selectable="c => isScripted(c)" @open="id => opened = id" @run="ids => app.runNarration(bookId, ids)" /></div>
         <div class="card shrink-0 p-3"><RunEstimate :book-id="bookId" :selected="selected" /></div>
       </div>
       <div class="min-h-0 min-w-0">
         <JobLedger v-if="ready" :book-id="bookId" :chapter-id="opened" :key="opened" />
-        <div v-else class="card grid h-full place-items-center text-center">
-          <div class="max-w-sm">
-            <div class="mb-1 text-lg font-medium">{{ chapter?.title }}</div>
-            <p v-if="chapter?.scripting !== 'done'" class="text-sm text-zinc-500">This chapter has no script yet. Script it first.</p>
-            <template v-else>
-              <p class="text-sm text-zinc-500">{{ app.segmentsOf(bookId, opened).length }} segments ready. Narration will spread them across {{ app.enabledEndpoints.length }} enabled endpoint(s).</p>
-              <button class="btn-primary mt-4" @click="app.runNarration(bookId, [opened])">Narrate this chapter</button>
-            </template>
-          </div>
-        </div>
+        <EmptyState v-else-if="!anyScripted" icon="♪" title="Nothing to narrate yet" body="Narration needs a script. Script at least one chapter first, then assign voices here."
+          :steps="['Script chapters in stage 1', 'Assign a voice to the Narrator and the main cast above', 'Enable an endpoint and press Narrate']">
+          <RouterLink :to="`/book/${bookId}/scripting`" class="btn-primary">Go to Scripting</RouterLink>
+        </EmptyState>
+        <EmptyState v-else-if="chapter && !isScripted(chapter)" icon="♪" :title="chapter.title" body="This chapter has no script yet. Script it first, then narrate.">
+          <RouterLink :to="`/book/${bookId}/scripting`" class="btn-ghost">Go to Scripting</RouterLink>
+        </EmptyState>
+        <EmptyState v-else icon="♪" :title="chapter?.title" :body="`${app.segmentsOf(bookId, opened).length} segments ready. They will be spread across ${app.enabledEndpoints.length} enabled endpoint${app.enabledEndpoints.length === 1 ? '' : 's'}.`">
+          <button class="btn-primary" @click="app.runNarration(bookId, [opened])">Narrate this chapter</button>
+        </EmptyState>
       </div>
     </div>
   </div>

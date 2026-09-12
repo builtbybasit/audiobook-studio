@@ -4,14 +4,17 @@
 // volume metadata (series / volume N of M).
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { useApp } from '../stores/app'
+import { useApp, isNarrated } from '../stores/app'
+import EmptyState from '../components/EmptyState.vue'
 import ChapterPicker from '../components/ChapterPicker.vue'
 
 const app = useApp()
 const bookId = useRoute().params.bookId
 const book = computed(() => app.bookById(bookId))
 const multi = computed(() => book.value.volumes.length > 1)
-const selected = ref(app.chaptersOf(bookId).filter(c => c.narration === 'done').map(c => c.id))
+const selected = ref(app.chaptersOf(bookId).filter(isNarrated).map(c => c.id))
+const anyNarrated = computed(() => app.chaptersOf(bookId).some(isNarrated))
+const staleSelected = computed(() => selChapters.value.filter(c => c.narration === 'stale').length)
 const meta = reactive({
   title: book.value.title, series: book.value.title, author: book.value.author, narrator: 'OpenAI TTS · multi-voice',
   year: new Date().getFullYear(), description: '', filename: book.value.title,
@@ -47,9 +50,13 @@ function rebuild(e) {
 
 <template>
   <div class="grid h-full grid-cols-[300px_1fr] grid-rows-[minmax(0,1fr)] gap-4 p-4">
-    <ChapterPicker :book-id="bookId" stage="export" v-model="selected" run-label="Build audiobook" :selectable="c => c.narration === 'done'" @run="ids => app.buildExport(bookId, ids, meta)" />
+    <ChapterPicker :book-id="bookId" stage="export" v-model="selected" run-label="Build audiobook" :selectable="c => isNarrated(c)" @run="ids => app.buildExport(bookId, ids, meta)" />
 
-    <div class="grid min-h-0 grid-cols-[1fr_340px] grid-rows-[minmax(0,1fr)] gap-4">
+    <EmptyState v-if="!anyNarrated" icon="⤓" title="Nothing narrated yet" body="An audiobook is built from narrated chapters. Narrate at least one chapter, then come back to build an M4B."
+      :steps="['Script chapters', 'Assign voices and narrate', 'Build — rebuild later as more chapters finish']">
+      <RouterLink :to="`/book/${bookId}/narration`" class="btn-primary">Go to Narration</RouterLink>
+    </EmptyState>
+    <div v-else class="grid min-h-0 grid-cols-[1fr_340px] grid-rows-[minmax(0,1fr)] gap-4">
       <!-- left: settings -->
       <div class="card flex min-h-0 flex-col">
         <div class="flex items-center gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
@@ -109,6 +116,7 @@ function rebuild(e) {
         <!-- build plan -->
         <div class="border-t border-zinc-200 px-5 py-3 dark:border-zinc-800">
           <div class="label mb-1.5">Will build {{ plan.length }} file{{ plan.length === 1 ? '' : 's' }}</div>
+          <div v-if="staleSelected" class="mb-2 rounded-md bg-amber-400/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300">⚠ {{ staleSelected }} selected chapter{{ staleSelected > 1 ? 's have' : ' has' }} stale audio (edited after narration). <RouterLink :to="`/book/${bookId}/narration`" class="underline">Re-narrate first</RouterLink> or the old audio is used.</div>
           <div v-for="p in plan" :key="p.filename" class="flex items-center gap-2 py-1 text-sm">
             <span class="text-zinc-400">⤓</span>
             <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ p.filename }}</span>

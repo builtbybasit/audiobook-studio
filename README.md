@@ -8,6 +8,12 @@ pnpm install
 pnpm prototype        # opens http://localhost:5173
 ```
 
+## Pages
+
+- **Library** → **Book overview** (volumes, per-stage progress, cast summary, "what next") → stages **Scripting / Narration / Export**.
+- **Cast** (per book): every speaker across all chapters, line counts, first appearance, merge suggestions for near-duplicate names, bulk merge.
+- **Queue**: all jobs across books with cancel / retry / remove, endpoint pool utilisation.
+
 ## Stages
 
 Library → Scripting → Narration → Export. Pick a book in Library; the other stages unlock for it.
@@ -23,6 +29,13 @@ Six structural variants were prototyped (three per screen) and compared via a `?
 | Narration job | **Ledger** — filterable per-segment log with sticky player | failures and playback are the everyday task; the timeline and per-endpoint lanes were prettier but less useful |
 
 Ideas borrowed from the older narrata web UI: major/minor cast split with Narrator-voice fallback, auto-assign by gender, spoiler-hidden descriptions, a "This run" cost estimate with blockers, endpoint price / no-key badges, per-chapter segment counts, reader filters.
+
+## States worth knowing
+
+- Scripting: `done`, `fallback` (a chunk didn't verify → kept whole as narration, retry per chunk from the reader), `failed` (nothing kept; try smaller chunks).
+- Narration: `done`, `stale` (script edited after narration → "Re-narrate changed" renders only those segments), `failed` (per-segment retry).
+- Endpoints back off for a few seconds on a simulated rate limit; health strip shows latency sparkline, ok rate, failures, 429s.
+- Reader keyboard: `j`/`k` move, `↵` edit, `1–9` assign speaker, `c` toggle cast.
 
 ## Things to try
 

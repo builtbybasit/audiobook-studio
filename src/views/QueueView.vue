@@ -130,6 +130,7 @@ const stageLink = (j) => `/book/${j.bookId}/${j.kind === 'export' ? 'export' : j
             <div class="flex items-center gap-2 text-sm">
               <span class="h-2 w-2 rounded-full" :class="e.enabled ? 'bg-emerald-500' : 'bg-zinc-400'"></span>
               <span class="min-w-0 flex-1 truncate" :class="!e.enabled && 'text-zinc-400'">{{ e.name }}</span>
+              <span v-if="e.backoffUntil > Date.now()" class="text-[10px] text-violet-500">backing off</span>
               <span class="font-mono text-xs text-zinc-500">{{ app.endpointLoad[e.id].active }}/{{ e.concurrency }}</span>
             </div>
             <div class="mt-1 flex gap-0.5">

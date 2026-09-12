@@ -1,0 +1,113 @@
+<script setup>
+// Book overview: volumes, pipeline progress per stage, cast summary, latest exports, and what to do next.
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+import { useApp, isScripted, isNarrated } from '../stores/app'
+
+const app = useApp()
+const bookId = useRoute().params.bookId
+const book = computed(() => app.bookById(bookId))
+const chapters = computed(() => app.chaptersOf(bookId))
+const p = computed(() => app.progress(bookId))
+const cast = computed(() => app.charactersOf(bookId))
+const unreviewed = computed(() => cast.value.filter(c => c.isNew).length)
+const unvoiced = computed(() => cast.value.filter(c => !c.voice && c.major).length)
+const suggestions = computed(() => app.mergeSuggestions(bookId).length)
+const exportsHere = computed(() => app.exports.filter(e => e.bookId === bookId && e.status === 'done'))
+const volStats = (v) => { const chs = chapters.value.filter(c => c.volumeId === v.id); return { n: chs.length, scripted: chs.filter(isScripted).length, narrated: chs.filter(isNarrated).length } }
+const fmt = (s) => s >= 3600 ? `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, '0')}m` : `${Math.floor(s / 60)}m`
+const runtime = computed(() => chapters.value.reduce((a, c) => a + c.duration, 0))
+
+// the single most useful next action
+const next = computed(() => {
+  const failedS = chapters.value.filter(c => c.scripting === 'failed').length
+  const failedN = chapters.value.filter(c => c.narration === 'failed').length
+  if (p.value.scripted === 0) return { text: 'Nothing is scripted yet. Run scripting on the first few chapters to extract the cast.', to: 'scripting', label: 'Start scripting' }
+  if (unreviewed.value) return { text: `${unreviewed.value} newly detected speaker${unreviewed.value > 1 ? 's' : ''} need${unreviewed.value > 1 ? '' : 's'} review — probably aliases to merge.`, to: 'cast', label: 'Review cast' }
+  if (failedS) return { text: `${failedS} chapter${failedS > 1 ? 's' : ''} failed scripting.`, to: 'scripting', label: 'Retry scripting' }
+  if (p.value.fallback) return { text: `${p.value.fallback} chapter${p.value.fallback > 1 ? 's' : ''} kept a chunk as plain narration because it didn’t verify.`, to: 'scripting', label: 'Inspect fallbacks' }
+  if (unvoiced.value) return { text: `${unvoiced.value} main character${unvoiced.value > 1 ? 's' : ''} still use${unvoiced.value > 1 ? '' : 's'} the Narrator’s voice.`, to: 'narration', label: 'Assign voices' }
+  if (p.value.stale) return { text: `${p.value.stale} chapter${p.value.stale > 1 ? 's' : ''} edited after narration — audio is stale.`, to: 'narration', label: 'Re-narrate changes' }
+  if (failedN) return { text: `${failedN} chapter${failedN > 1 ? 's' : ''} have failed segments.`, to: 'narration', label: 'Retry narration' }
+  if (p.value.narrated < p.value.scripted) return { text: `${p.value.scripted - p.value.narrated} scripted chapter${p.value.scripted - p.value.narrated > 1 ? 's are' : ' is'} not narrated yet.`, to: 'narration', label: 'Narrate' }
+  if (p.value.scripted < p.value.total) return { text: `${p.value.total - p.value.scripted} chapter${p.value.total - p.value.scripted > 1 ? 's' : ''} still to script.`, to: 'scripting', label: 'Continue scripting' }
+  const fresh = exportsHere.value.some(e => app.newSince(e).length)
+  if (!exportsHere.value.length || fresh) return { text: fresh ? 'New chapters narrated since the last audiobook build.' : 'Everything is narrated. Build the audiobook.', to: 'export', label: fresh ? 'Rebuild audiobook' : 'Build audiobook' }
+  return { text: 'This book is complete and exported.', to: 'export', label: 'Exports' }
+})
+</script>
+
+<template>
+  <div class="mx-auto max-w-6xl space-y-5 p-6">
+    <div class="flex gap-5">
+      <div class="h-40 w-28 shrink-0 rounded-lg shadow-lg" :style="{ background: `linear-gradient(160deg, ${book.cover[0]}, ${book.cover[1]})` }"></div>
+      <div class="min-w-0 flex-1">
+        <h1 class="font-serif text-3xl">{{ book.title }}</h1>
+        <div class="text-zinc-500">{{ book.author }} · {{ chapters.length }} chapters · {{ book.volumes.length }} volume{{ book.volumes.length > 1 ? 's' : '' }} · {{ cast.length }} speakers<span v-if="runtime"> · {{ fmt(runtime) }} narrated</span></div>
+        <div class="mt-4 flex items-center gap-3 rounded-lg border border-violet-300 bg-violet-50 px-4 py-3 dark:border-violet-500/40 dark:bg-violet-500/10">
+          <span class="text-lg">→</span>
+          <span class="flex-1 text-sm">{{ next.text }}</span>
+          <RouterLink :to="`/book/${bookId}/${next.to}`" class="btn-primary whitespace-nowrap">{{ next.label }}</RouterLink>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-3 gap-4">
+      <RouterLink :to="`/book/${bookId}/scripting`" class="card p-4 hover:border-violet-400">
+        <div class="flex items-baseline justify-between"><span class="label">1 · Scripting</span><span class="font-mono text-xs text-zinc-500">{{ p.scripted }}/{{ p.total }}</span></div>
+        <div class="mt-2 h-1.5 rounded bg-zinc-200 dark:bg-zinc-800"><div class="h-1.5 rounded bg-amber-500" :style="{ width: p.scripted / p.total * 100 + '%' }"></div></div>
+        <div class="mt-2 text-xs text-zinc-500"><span v-if="p.fallback" class="text-amber-600">{{ p.fallback }} with fallback chunks · </span>{{ chapters.filter(c => c.scripting === 'failed').length }} failed</div>
+      </RouterLink>
+      <RouterLink :to="`/book/${bookId}/narration`" class="card p-4 hover:border-violet-400">
+        <div class="flex items-baseline justify-between"><span class="label">2 · Narration</span><span class="font-mono text-xs text-zinc-500">{{ p.narrated }}/{{ p.total }}</span></div>
+        <div class="mt-2 h-1.5 rounded bg-zinc-200 dark:bg-zinc-800"><div class="h-1.5 rounded bg-sky-500" :style="{ width: p.narrated / p.total * 100 + '%' }"></div></div>
+        <div class="mt-2 text-xs text-zinc-500"><span v-if="p.stale" class="text-amber-600">{{ p.stale }} stale · </span>{{ chapters.filter(c => c.narration === 'failed').length }} failed · {{ cast.filter(c => c.voice).length }}/{{ cast.length }} voiced</div>
+      </RouterLink>
+      <RouterLink :to="`/book/${bookId}/export`" class="card p-4 hover:border-violet-400">
+        <div class="flex items-baseline justify-between"><span class="label">3 · Export</span><span class="font-mono text-xs text-zinc-500">{{ exportsHere.length }} file{{ exportsHere.length === 1 ? '' : 's' }}</span></div>
+        <div v-if="exportsHere.length" class="mt-2 truncate font-mono text-xs">{{ exportsHere[0].filename }} <span class="text-zinc-400">v{{ exportsHere[0].version }}</span></div>
+        <div v-else class="mt-2 text-xs text-zinc-500">No audiobook built yet.</div>
+        <div class="mt-2 text-xs" :class="exportsHere.some(e => app.newSince(e).length) ? 'text-violet-500' : 'text-zinc-500'">{{ exportsHere.some(e => app.newSince(e).length) ? 'new chapters since last build' : (exportsHere.length ? 'up to date' : '') }}</div>
+      </RouterLink>
+    </div>
+
+    <div class="grid grid-cols-[1fr_340px] gap-4">
+      <div class="card">
+        <div class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"><span class="label">Volumes</span><label class="ml-auto cursor-pointer text-xs text-zinc-400 hover:text-violet-500">＋ add volume<input type="file" accept=".epub" class="hidden" @change="e => app.addVolume(bookId, e.target.files?.[0]?.name ?? 'volume.epub')" /></label></div>
+        <div v-for="v in book.volumes" :key="v.id" class="flex items-center gap-4 border-b border-zinc-100 px-4 py-3 last:border-0 dark:border-zinc-800/70">
+          <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-zinc-100 font-mono text-sm dark:bg-zinc-800">{{ v.id }}</span>
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-sm font-medium">{{ v.name }}</div>
+            <div class="truncate font-mono text-[11px] text-zinc-400">{{ v.file }} · ch {{ v.from }}–{{ v.to }}</div>
+          </div>
+          <div class="w-40 text-xs text-zinc-500">
+            <div class="flex justify-between"><span>scripted</span><span>{{ volStats(v).scripted }}/{{ volStats(v).n }}</span></div>
+            <div class="h-1 rounded bg-zinc-200 dark:bg-zinc-800"><div class="h-1 rounded bg-amber-500" :style="{ width: volStats(v).scripted / volStats(v).n * 100 + '%' }"></div></div>
+            <div class="mt-1 flex justify-between"><span>narrated</span><span>{{ volStats(v).narrated }}/{{ volStats(v).n }}</span></div>
+            <div class="h-1 rounded bg-zinc-200 dark:bg-zinc-800"><div class="h-1 rounded bg-sky-500" :style="{ width: volStats(v).narrated / volStats(v).n * 100 + '%' }"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="space-y-4">
+        <RouterLink :to="`/book/${bookId}/cast`" class="card block p-4 hover:border-violet-400">
+          <div class="flex items-baseline justify-between"><span class="label">Cast</span><span class="text-xs text-zinc-500">open →</span></div>
+          <div class="mt-2 flex flex-wrap gap-1">
+            <span v-for="c in cast.filter(c => c.major).slice(0, 8)" :key="c.name" class="rounded-full px-2 py-0.5 text-xs" :style="{ background: c.color + '33', color: c.color }">{{ c.name }}</span>
+            <span class="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-500 dark:bg-zinc-800">+{{ cast.filter(c => !c.major).length }} minor</span>
+          </div>
+          <div class="mt-2 text-xs text-zinc-500">
+            <span v-if="unreviewed" class="text-amber-600">{{ unreviewed }} unreviewed · </span>
+            <span v-if="suggestions" class="text-violet-500">{{ suggestions }} merge suggestion{{ suggestions > 1 ? 's' : '' }} · </span>
+            {{ cast.filter(c => c.voice).length }} voiced
+          </div>
+        </RouterLink>
+        <div class="card p-4 text-xs text-zinc-500">
+          <div class="label mb-1">Scripting profile</div>
+          <div class="text-sm text-zinc-900 dark:text-zinc-100">{{ app.profiles.find(x => x.id === app.scriptSettings.profile)?.name }} · <span class="font-mono">{{ app.profiles.find(x => x.id === app.scriptSettings.profile)?.model }}</span></div>
+          <div class="mt-1">{{ app.scriptSettings.chunkChars.toLocaleString() }} chars/chunk · watermarks {{ app.scriptSettings.stripWatermarks ? 'stripped' : 'kept' }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

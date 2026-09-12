@@ -179,12 +179,23 @@ export function makeWorld() {
   chapters.drowned[1].scripting = 'failed'
   delete segments['drowned:2']
   chapters.cliche[3].narration = 'failed'
+  // ch 7 of Cliché: one chunk failed verification and was kept whole as narration
+  chapters.cliche[6].scripting = 'fallback'
+  { const segs = segments['cliche:7']; const run = segs.slice(9, 15)
+    segs.splice(9, 6, { id: 0, type: 'narration', speaker: 'Narrator', text: run.map(x => x.type === 'dialogue' ? `“${x.text}”` : x.text).join(' '), direction: '', fallback: true, fallbackCount: 6, fallbackMismatch: run[2].text.slice(0, 40), audio: { status: 'none', endpoint: null, ms: 0, duration: 0 } })
+    segs.forEach((x, i) => x.id = i + 1) }
+  // ch 12 of Cliché: the LLM emitted the alias "Ning" as its own speaker → merge suggestion on the Cast page
+  { let n = 0; for (const seg of segments['cliche:12']) if (seg.speaker === 'Ji Ning' && n < 3) { seg.speaker = 'Ning'; n++ } }
+  characters.cliche.push({ name: 'Ning', aliases: [], gender: '?', description: '', voice: null, style: '', color: PALETTE[7], major: false, isNew: true })
+  // ch 2 of Cliché: two segments edited after narration → stale
+  chapters.cliche[1].narration = 'stale'
+  segments['cliche:2'][3].audio.status = 'stale'; segments['cliche:2'][8].audio.status = 'stale'
   segments['cliche:4'].forEach((s, i) => { s.audio = { status: i % 9 === 4 ? 'failed' : 'done', endpoint: ['openai', 'local'][i % 2], ms: 800 + i * 20, duration: i % 9 === 4 ? 0 : s.text.split(' ').length / 2.6 } })
 
   const endpoints = [
-    { id: 'openai', name: 'OpenAI (main)', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-••••••••••••4f2a', model: 'gpt-4o-mini-tts', concurrency: 3, enabled: true, latency: 1400, failRate: 0.03, price: 12, needsKey: true },
-    { id: 'local', name: 'Local Kokoro', baseUrl: 'http://127.0.0.1:8880/v1', apiKey: '', model: 'kokoro', concurrency: 2, enabled: true, latency: 2600, failRate: 0.08, price: 0, needsKey: false },
-    { id: 'proxy', name: 'Azure proxy', baseUrl: 'https://tts-proxy.internal/v1', apiKey: '', model: 'tts-1-hd', concurrency: 1, enabled: false, latency: 1900, failRate: 0.05, price: 15, needsKey: true },
+    { id: 'openai', name: 'OpenAI (main)', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-••••••••••••4f2a', model: 'gpt-4o-mini-tts', concurrency: 3, enabled: true, latency: 1400, failRate: 0.03, price: 12, needsKey: true, history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 1100 + Math.round(Math.sin(i / 3) * 300 + (i % 7) * 60), ok: i % 11 !== 4 })), failures: 2, rateLimits: 1, backoffUntil: 0 },
+    { id: 'local', name: 'Local Kokoro', baseUrl: 'http://127.0.0.1:8880/v1', apiKey: '', model: 'kokoro', concurrency: 2, enabled: true, latency: 2600, failRate: 0.08, price: 0, needsKey: false, history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 2200 + Math.round(Math.cos(i / 4) * 500 + (i % 5) * 90), ok: i % 6 !== 2 })), failures: 5, rateLimits: 0, backoffUntil: 0 },
+    { id: 'proxy', name: 'Azure proxy', baseUrl: 'https://tts-proxy.internal/v1', apiKey: '', model: 'tts-1-hd', concurrency: 1, enabled: false, latency: 1900, failRate: 0.05, price: 15, needsKey: true, history: [], failures: 0, rateLimits: 0, backoffUntil: 0 },
   ]
 
   const exports = [

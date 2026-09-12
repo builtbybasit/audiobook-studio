@@ -3,7 +3,7 @@
 // speaker pill and the voice direction. Right rail (toggleable) = the cast *in this chapter* with
 // aliases, spoiler-hidden descriptions and inline rename/merge; the rest of the cast is collapsed.
 // Any segment can be clicked to edit speaker / type / direction in place. Typography via the Aa menu.
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useScript, TYPES } from './shared'
 import { DIRECTIONS } from '../../mock/data'
 import { useReader } from '../../stores/reader'
@@ -37,6 +37,28 @@ function nextNew() {
   if (s) { open.value = s.id; document.getElementById('seg-' + s.id)?.scrollIntoView({ block: 'center', behavior: 'smooth' }) }
 }
 const unresolved = computed(() => inChapter.value.filter(c => c.isNew).length)
+const fallbacks = computed(() => segments.value.filter(s => s.fallback))
+
+// keyboard: j/k or ↑/↓ move, Enter edit, Esc close, 1–9 assign speaker (in-chapter order), c toggles cast
+const focus = ref(null)
+function moveFocus(d) {
+  const ids = rows.value.map(r => r.id); const i = ids.indexOf(focus.value)
+  focus.value = ids[Math.max(0, Math.min(ids.length - 1, i < 0 ? 0 : i + d))] ?? null
+  document.getElementById('seg-' + focus.value)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+}
+function onKey(e) {
+  const t = e.target
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName) || t.isContentEditable) { if (e.key === 'Escape') { t.blur(); open.value = null } return }
+  if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); moveFocus(1) }
+  else if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); moveFocus(-1) }
+  else if (e.key === 'Enter' && focus.value) { open.value = open.value === focus.value ? null : focus.value }
+  else if (e.key === 'Escape') { open.value = null }
+  else if (e.key === 'c') { reader.showCast = !reader.showCast }
+  else if (/^[1-9]$/.test(e.key) && focus.value) { const c = inChapter.value[Number(e.key) - 1]; if (c) app.setSpeaker(props.bookId, props.chapterId, focus.value, c.name) }
+}
+onMounted(() => window.addEventListener('keydown', onKey))
+onUnmounted(() => window.removeEventListener('keydown', onKey))
+watch(open, v => { if (v) focus.value = v })
 </script>
 
 <template>
@@ -64,26 +86,45 @@ const unresolved = computed(() => inChapter.value.filter(c => c.isNew).length)
         </div>
       </div>
 
+      <div v-if="fallbacks.length" class="flex items-center gap-3 border-b border-amber-300 bg-amber-400/10 px-6 py-2 text-xs text-amber-700 dark:border-amber-500/40 dark:text-amber-300">
+        <span>⚠</span>
+        <span class="flex-1"><b>{{ fallbacks.length }} chunk{{ fallbacks.length > 1 ? 's' : '' }} didn’t verify</b> — the model’s split couldn’t be matched back to the source text, so {{ fallbacks.length > 1 ? 'they were' : 'it was' }} kept whole and will be read by the Narrator. Nothing is missing from the audio, but dialogue inside won’t get character voices.</span>
+        <button class="btn-ghost btn-xs border-amber-400" @click="document.getElementById('seg-' + fallbacks[0].id)?.scrollIntoView({ block: 'center', behavior: 'smooth' }); focus = fallbacks[0].id">Show</button>
+      </div>
       <div class="min-h-0 flex-1 overflow-auto px-6 py-5">
         <div class="mx-auto" :class="[reader.widthClass, reader.fontClass]" :style="{ fontSize: reader.size + 'px', lineHeight: reader.lineHeight }">
           <template v-for="s in rows" :key="s.id">
+            <!-- unverified chunk kept whole -->
+            <div v-if="s.fallback" :id="'seg-' + s.id" class="mb-3 rounded-lg border border-dashed border-amber-400 bg-amber-400/5 px-4 py-3" :class="focus === s.id && 'ring-2 ring-amber-400'">
+              <div class="mb-1 flex items-center gap-2 font-sans text-xs leading-normal">
+                <span class="rounded bg-amber-400/20 px-1.5 py-0.5 font-semibold text-amber-700 dark:text-amber-300">unverified chunk · read as narration</span>
+                <span class="text-zinc-500">~{{ s.fallbackCount }} segments collapsed</span>
+                <span v-if="s.fallbackRetrying" class="ml-auto text-violet-500">re-splitting…</span>
+                <button v-else class="btn-ghost btn-xs ml-auto" @click="app.retryChunk(bookId, chapterId, s.id)">↻ Re-split this chunk</button>
+              </div>
+              <p class="text-zinc-700 dark:text-zinc-300">{{ s.text }}</p>
+              <details class="mt-2 font-sans text-[11px] leading-normal text-zinc-500"><summary class="cursor-pointer">Why it failed</summary>
+                <div class="mt-1 rounded bg-white p-2 font-mono dark:bg-zinc-900">verify: reconstructed text diverged near <span class="bg-red-500/15 text-red-600">“{{ s.fallbackMismatch }}…”</span> after 2 retries → kept chunk whole (no prose dropped)</div>
+              </details>
+            </div>
             <!-- narration: plain prose -->
-            <p v-if="s.type === 'narration'" :id="'seg-' + s.id"
+            <p v-else-if="s.type === 'narration'" :id="'seg-' + s.id"
               class="-mx-2 mb-3 cursor-text rounded px-2 py-0.5 transition-colors"
-              :class="open === s.id ? 'bg-violet-50 ring-1 ring-violet-300 dark:bg-violet-500/10 dark:ring-violet-500/40' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'"
+              :class="open === s.id ? 'bg-violet-50 ring-1 ring-violet-300 dark:bg-violet-500/10 dark:ring-violet-500/40' : focus === s.id ? 'ring-1 ring-zinc-400' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'"
               @click="open = open === s.id ? null : s.id">
               {{ s.text }}<span v-if="s.direction" class="ml-2 font-sans text-[11px] leading-none text-violet-500/80">[{{ s.direction }}]</span>
             </p>
             <!-- dialogue / thought: card -->
             <div v-else :id="'seg-' + s.id" class="mb-3 cursor-pointer rounded-lg border-l-[3px] bg-zinc-50 px-4 py-2.5 transition-colors dark:bg-zinc-800/50"
               :style="{ borderLeftColor: colorOf(s.speaker) }"
-              :class="open === s.id ? 'ring-1 ring-violet-300 dark:ring-violet-500/40' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'"
+              :class="open === s.id ? 'ring-1 ring-violet-300 dark:ring-violet-500/40' : focus === s.id ? 'ring-1 ring-zinc-400' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'"
               @click="open = open === s.id ? null : s.id">
               <div class="mb-1 flex items-center gap-2 font-sans text-xs leading-normal">
                 <span class="rounded-full px-2 py-0.5 font-medium" :style="{ background: colorOf(s.speaker) + '33', color: colorOf(s.speaker) }">
                   <span class="opacity-70">{{ s.type === 'thought' ? '…' : '“' }}</span> {{ s.speaker }}
                 </span>
                 <span v-if="cast.find(c => c.name === s.speaker)?.isNew" class="rounded bg-amber-400/20 px-1 text-[10px] font-semibold text-amber-600">unreviewed</span>
+                <span v-if="s.audio.status === 'stale'" class="rounded bg-amber-400/20 px-1 text-[10px] font-semibold text-amber-600" title="Edited after narration — audio no longer matches">audio stale</span>
                 <span v-if="s.direction" class="truncate italic text-zinc-500">— {{ s.direction }}</span>
                 <span v-else class="italic text-zinc-300 dark:text-zinc-600">— no direction</span>
               </div>
@@ -105,6 +146,10 @@ const unresolved = computed(() => inChapter.value.filter(c => c.isNew).length)
         </div>
       </div>
       <datalist id="dirs"><option v-for="d in DIRECTIONS" :key="d" :value="d" /></datalist>
+      <div class="border-t border-zinc-200 px-6 py-1 font-sans text-[11px] text-zinc-400 dark:border-zinc-800">
+        <kbd class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">j</kbd>/<kbd class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">k</kbd> move · <kbd class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">↵</kbd> edit · <kbd class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">1</kbd>–<kbd class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">9</kbd> assign speaker
+        <span class="ml-1">(<template v-for="(c, i) in inChapter.slice(0, 9)" :key="c.name"><span v-if="i" class="mx-0.5">·</span><b>{{ i + 1 }}</b> {{ c.name.split(' ')[0] }}</template>)</span> · <kbd class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">c</kbd> cast
+      </div>
     </div>
 
     <!-- cast rail -->

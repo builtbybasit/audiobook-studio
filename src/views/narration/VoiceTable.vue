@@ -32,6 +32,7 @@ const sample = (c) => c.name === 'Narrator' ? 'The mountain mist thinned as dawn
         <input v-model="q" class="input w-44 py-1" placeholder="Find a speaker…" />
         <label class="flex items-center gap-1 text-xs"><input type="checkbox" v-model="unassignedOnly" class="accent-violet-600" /> Unassigned only</label>
         <button class="btn-ghost btn-xs" @click="app.autoAssignByGender(bookId)">Auto-assign all by gender</button>
+        <RouterLink :to="`/book/${bookId}/cast`" class="btn-ghost btn-xs">Full cast →</RouterLink>
       </div>
     </div>
 
@@ -52,7 +53,7 @@ const sample = (c) => c.name === 'Narrator' ? 'The mountain mist thinned as dawn
         </div>
         <div class="mt-2 flex items-center gap-1.5">
           <select v-model="c.voice" class="input min-w-0 flex-1 py-1"><option :value="null">Narrator’s voice</option><option v-for="v in VOICES" :key="v" :value="v">{{ v }}</option></select>
-          <button class="btn-ghost btn-xs" :disabled="!app.effectiveVoice(bookId, c.name).voice" @click="speak(sample(c), app.effectiveVoice(bookId, c.name).voice)">▶</button>
+          <button class="btn-ghost btn-xs" :disabled="!app.effectiveVoice(bookId, c.name).voice" title="Prototype: plays a browser voice, not the real TTS voice" @click="speak(sample(c), app.effectiveVoice(bookId, c.name).voice)">▶<span class="text-[9px] text-zinc-400">demo</span></button>
         </div>
         <input v-model="c.style" class="input mt-1.5 w-full py-1 text-xs" placeholder="style: e.g. gravelly, elderly; speaks slowly" />
       </div>

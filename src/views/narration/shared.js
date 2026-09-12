@@ -1,7 +1,7 @@
 import { computed } from 'vue'
 import { useApp } from '../../stores/app'
 
-export const STATUS_BG = { none: 'bg-zinc-300 dark:bg-zinc-700', queued: 'bg-zinc-400 dark:bg-zinc-600', generating: 'bg-violet-500 animate-pulse', done: 'bg-emerald-500', failed: 'bg-red-500' }
+export const STATUS_BG = { none: 'bg-zinc-300 dark:bg-zinc-700', queued: 'bg-zinc-400 dark:bg-zinc-600', generating: 'bg-violet-500 animate-pulse', done: 'bg-emerald-500', failed: 'bg-red-500', stale: 'bg-amber-500' }
 export const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 
 export function useJob(props) {

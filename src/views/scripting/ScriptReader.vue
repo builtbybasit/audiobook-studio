@@ -1,14 +1,19 @@
 <script setup>
-// Variant A — "Reader": narration flows as prose; dialogue and thought are lifted into cards with a
-// speaker pill and the voice direction. Right rail = the cast *in this chapter* with aliases,
-// spoiler-hidden descriptions and inline rename/merge; the rest of the book's cast is collapsed.
-// Any segment can be clicked to edit speaker / type / direction in place.
+// Script reader: narration flows as prose; dialogue and thought are lifted into cards with a
+// speaker pill and the voice direction. Right rail (toggleable) = the cast *in this chapter* with
+// aliases, spoiler-hidden descriptions and inline rename/merge; the rest of the cast is collapsed.
+// Any segment can be clicked to edit speaker / type / direction in place. Typography via the Aa menu.
 import { computed, ref } from 'vue'
 import { useScript, TYPES } from './shared'
 import { DIRECTIONS } from '../../mock/data'
+import { useReader } from '../../stores/reader'
+import ReaderSettings from '../../components/ReaderSettings.vue'
 
 const props = defineProps({ bookId: String, chapterId: Number })
 const { app, segments, cast, counts, inChapter, colorOf } = useScript(props)
+const reader = useReader()
+const volume = computed(() => app.volumeOf(props.bookId, props.chapterId))
+const multiVolume = computed(() => app.volumesOf(props.bookId).length > 1)
 
 const mode = ref('all')          // all | dialogue
 const speaker = ref('')          // '' = everyone
@@ -35,17 +40,19 @@ const unresolved = computed(() => inChapter.value.filter(c => c.isNew).length)
 </script>
 
 <template>
-  <div class="grid h-full grid-cols-[1fr_300px] gap-4">
+  <div class="grid h-full gap-4" :class="reader.showCast ? 'grid-cols-[1fr_300px]' : 'grid-cols-1'">
     <!-- reader -->
     <div class="card flex min-h-0 min-w-0 flex-col">
       <div class="border-b border-zinc-200 px-6 pb-3 pt-4 dark:border-zinc-800">
         <div class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
-            <div class="label">Chapter {{ chapter.id }}</div>
+            <div class="label"><span v-if="multiVolume">{{ volume?.name }} · </span>Chapter {{ chapter.id }}<span v-if="multiVolume" class="font-normal normal-case tracking-normal text-zinc-400"> (ch. {{ chapter.volumeIndex }} of this volume)</span></div>
             <h2 class="truncate font-serif text-2xl">{{ chapter.title }}</h2>
             <div class="mt-0.5 text-xs text-zinc-500">{{ segments.length }} segments · {{ inChapter.length }} speakers · {{ (chars / 1000).toFixed(1) }}k chars · <span class="font-mono">chapter_{{ String(chapter.id).padStart(3, '0') }}.json</span></div>
           </div>
           <button v-if="unresolved" class="btn-ghost btn-xs border-amber-400 text-amber-600" @click="nextNew">⚠ {{ unresolved }} unreviewed speaker{{ unresolved > 1 ? 's' : '' }} → jump</button>
+          <button class="btn-ghost btn-xs" :class="reader.showCast && 'bg-zinc-200 dark:bg-zinc-800'" @click="reader.showCast = !reader.showCast">☺ Cast <span class="text-zinc-400">{{ inChapter.length }}</span></button>
+          <ReaderSettings />
         </div>
         <div class="mt-3 flex items-center gap-2">
           <div class="flex overflow-hidden rounded-md border border-zinc-300 text-xs dark:border-zinc-700">
@@ -58,34 +65,34 @@ const unresolved = computed(() => inChapter.value.filter(c => c.isNew).length)
       </div>
 
       <div class="min-h-0 flex-1 overflow-auto px-6 py-5">
-        <div class="mx-auto max-w-2xl">
+        <div class="mx-auto" :class="[reader.widthClass, reader.fontClass]" :style="{ fontSize: reader.size + 'px', lineHeight: reader.lineHeight }">
           <template v-for="s in rows" :key="s.id">
             <!-- narration: plain prose -->
             <p v-if="s.type === 'narration'" :id="'seg-' + s.id"
-              class="-mx-2 mb-3 cursor-text rounded px-2 py-0.5 font-serif text-[16px] leading-7 transition-colors"
+              class="-mx-2 mb-3 cursor-text rounded px-2 py-0.5 transition-colors"
               :class="open === s.id ? 'bg-violet-50 ring-1 ring-violet-300 dark:bg-violet-500/10 dark:ring-violet-500/40' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'"
               @click="open = open === s.id ? null : s.id">
-              {{ s.text }}<span v-if="s.direction" class="ml-2 font-sans text-[11px] text-violet-500/80">[{{ s.direction }}]</span>
+              {{ s.text }}<span v-if="s.direction" class="ml-2 font-sans text-[11px] leading-none text-violet-500/80">[{{ s.direction }}]</span>
             </p>
             <!-- dialogue / thought: card -->
             <div v-else :id="'seg-' + s.id" class="mb-3 cursor-pointer rounded-lg border-l-[3px] bg-zinc-50 px-4 py-2.5 transition-colors dark:bg-zinc-800/50"
               :style="{ borderLeftColor: colorOf(s.speaker) }"
               :class="open === s.id ? 'ring-1 ring-violet-300 dark:ring-violet-500/40' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'"
               @click="open = open === s.id ? null : s.id">
-              <div class="mb-1 flex items-center gap-2 text-xs">
+              <div class="mb-1 flex items-center gap-2 font-sans text-xs leading-normal">
                 <span class="rounded-full px-2 py-0.5 font-medium" :style="{ background: colorOf(s.speaker) + '33', color: colorOf(s.speaker) }">
                   <span class="opacity-70">{{ s.type === 'thought' ? '…' : '“' }}</span> {{ s.speaker }}
                 </span>
                 <span v-if="cast.find(c => c.name === s.speaker)?.isNew" class="rounded bg-amber-400/20 px-1 text-[10px] font-semibold text-amber-600">unreviewed</span>
-                <span v-if="s.direction" class="truncate font-serif italic text-zinc-500">— {{ s.direction }}</span>
-                <span v-else class="font-serif italic text-zinc-300 dark:text-zinc-600">— no direction</span>
+                <span v-if="s.direction" class="truncate italic text-zinc-500">— {{ s.direction }}</span>
+                <span v-else class="italic text-zinc-300 dark:text-zinc-600">— no direction</span>
               </div>
-              <p class="font-serif text-[16px] leading-7" :class="s.type === 'thought' ? 'italic text-zinc-600 dark:text-zinc-300' : ''">
+              <p :class="s.type === 'thought' ? 'italic text-zinc-600 dark:text-zinc-300' : ''">
                 <template v-if="s.type === 'dialogue'">‘{{ s.text }}’</template><template v-else>{{ s.text }}</template>
               </p>
             </div>
             <!-- inline editor -->
-            <div v-if="open === s.id" class="-mt-1 mb-4 grid grid-cols-[1fr_1fr_2fr_auto] items-end gap-2 rounded-md border border-violet-300 bg-white p-2 text-xs dark:border-violet-500/40 dark:bg-zinc-900" @click.stop>
+            <div v-if="open === s.id" class="-mt-1 mb-4 grid grid-cols-[1fr_1fr_2fr_auto] items-end gap-2 rounded-md border border-violet-300 bg-white p-2 font-sans text-xs leading-normal dark:border-violet-500/40 dark:bg-zinc-900" @click.stop>
               <label>Speaker<select :value="s.speaker" class="input mt-1 w-full py-0.5" @change="app.setSpeaker(bookId, chapterId, s.id, $event.target.value)">
                 <optgroup label="In this chapter"><option v-for="c in inChapter" :key="c.name">{{ c.name }}</option></optgroup>
                 <optgroup label="Rest of cast"><option v-for="c in rest" :key="c.name">{{ c.name }}</option></optgroup></select></label>
@@ -101,7 +108,7 @@ const unresolved = computed(() => inChapter.value.filter(c => c.isNew).length)
     </div>
 
     <!-- cast rail -->
-    <div class="card min-h-0 overflow-auto p-3">
+    <div v-if="reader.showCast" class="card min-h-0 overflow-auto p-3">
       <div class="label mb-2">In this chapter · {{ inChapter.length }} speakers</div>
       <div v-for="c in inChapter" :key="c.name" class="mb-2 rounded-lg border p-3 text-sm transition-colors"
         :class="[speaker === c.name ? 'border-violet-400 bg-violet-50 dark:bg-violet-500/10' : 'border-zinc-200 dark:border-zinc-800', c.isNew && 'border-dashed border-amber-400']">

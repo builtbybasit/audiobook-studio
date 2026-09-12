@@ -1,5 +1,5 @@
 <script setup>
-// Job view C — "Ledger": a dense vertical log, one row per segment, with filters. Sticky player
+// Job ledger: a dense vertical log, one row per segment, with filters. Sticky player
 // at the bottom follows the row you play. Optimised for "find the failures and listen back".
 import { computed, ref } from 'vue'
 import { useJob, STATUS_BG, fmt } from './shared'

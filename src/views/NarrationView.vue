@@ -1,30 +1,15 @@
 <script setup>
-// PROTOTYPE — Narration stage. Voices + endpoints on top (collapsible), chapter picker + job view below.
-// Three structural variants for the job view, switchable via ?variant=
-//   A Timeline — segments as a proportional strip, colour = status, scrub-and-play
-//   B Lanes    — one column per endpoint; watch work flow through the pool
-//   C Ledger   — dense vertical log, filterable, with a sticky chapter player
+// Narration stage: voices + endpoints on top, chapter picker + run estimate + job ledger below.
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useApp } from '../stores/app'
 import ChapterPicker from '../components/ChapterPicker.vue'
-import PrototypeSwitcher from '../prototype/PrototypeSwitcher.vue'
-import { useVariant } from '../prototype/useVariant'
 import VoiceTable from './narration/VoiceTable.vue'
 import EndpointPanel from './narration/EndpointPanel.vue'
 import RunEstimate from './narration/RunEstimate.vue'
-import JobA from './narration/JobA.vue'
-import JobB from './narration/JobB.vue'
-import JobC from './narration/JobC.vue'
-
-const VARIANTS = [
-  { key: 'A', name: 'Timeline', comp: JobA },
-  { key: 'B', name: 'Lanes', comp: JobB },
-  { key: 'C', name: 'Ledger', comp: JobC },
-]
+import JobLedger from './narration/JobLedger.vue'
 const app = useApp()
 const bookId = useRoute().params.bookId
-const { current } = useVariant(VARIANTS)
 const tab = ref('voices')
 const collapsed = ref(false)
 const selected = ref([])
@@ -53,7 +38,7 @@ const ready = computed(() => chapter.value?.scripting === 'done' && chapter.valu
         <div class="card shrink-0 p-3"><RunEstimate :book-id="bookId" :selected="selected" /></div>
       </div>
       <div class="min-h-0 min-w-0">
-        <component v-if="ready" :is="current.comp" :book-id="bookId" :chapter-id="opened" :key="current.key + ':' + opened" />
+        <JobLedger v-if="ready" :book-id="bookId" :chapter-id="opened" :key="opened" />
         <div v-else class="card grid h-full place-items-center text-center">
           <div class="max-w-sm">
             <div class="mb-1 text-lg font-medium">{{ chapter?.title }}</div>
@@ -66,6 +51,5 @@ const ready = computed(() => chapter.value?.scripting === 'done' && chapter.valu
         </div>
       </div>
     </div>
-    <PrototypeSwitcher :variants="VARIANTS" screen="Narration job" />
   </div>
 </template>

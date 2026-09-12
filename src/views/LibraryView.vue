@@ -6,13 +6,19 @@ import MiniBar from '../components/MiniBar.vue'
 const app = useApp()
 const router = useRouter()
 const dragging = ref(false)
+const pending = ref(null)   // { file, mode: 'new' | 'volume', bookId, title, volName }
 
 function open(b) { app.currentBookId = b.id; router.push(`/book/${b.id}/scripting`) }
-function addFake() {
-  const id = 'new' + Date.now()
-  app.books.push({ id, title: 'Untitled Upload.epub', author: 'Unknown', cover: ['#1e293b', '#94a3b8'], addedAt: 'just now' })
-  app.chapters[id] = Array.from({ length: 15 }, (_, i) => ({ id: i + 1, index: i + 1, title: `Chapter ${i + 1}`, words: 3000, scripting: 'none', scriptingProgress: 0, narration: 'none', narrationProgress: 0, duration: 0 }))
-  app.characters[id] = [{ name: 'Narrator', aliases: [], gender: 'n', voice: 'alloy', style: '', color: '#a78bfa' }]
+function addFake(e, bookId = null) {
+  const file = e?.target?.files?.[0]?.name ?? e?.dataTransfer?.files?.[0]?.name ?? 'Untitled Upload.epub'
+  const guess = file.replace(/\.epub$/i, '')
+  pending.value = { file, mode: bookId ? 'volume' : 'new', bookId: bookId ?? app.books[0]?.id, title: guess, volName: guess }
+}
+function confirmAdd() {
+  const p = pending.value
+  if (p.mode === 'new') app.addNovel(p.file, p.title)
+  else app.addVolume(p.bookId, p.file, p.volName)
+  pending.value = null
 }
 function stageOf(p) {
   if (p.exported) return { label: 'Exported', cls: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' }
@@ -29,13 +35,13 @@ function stageOf(p) {
         <h1 class="text-2xl font-semibold">Library</h1>
         <p class="text-sm text-zinc-500">{{ app.books.length }} books · pick one to start scripting</p>
       </div>
-      <label class="btn-primary cursor-pointer">＋ Add EPUB<input type="file" accept=".epub" class="hidden" @change="addFake" /></label>
+      <label class="btn-primary cursor-pointer">＋ Add EPUB<input type="file" accept=".epub" class="hidden" @change="addFake($event)" /></label>
     </div>
 
     <div class="mb-6 grid place-items-center rounded-xl border-2 border-dashed px-6 py-8 text-sm text-zinc-500 transition-colors"
       :class="dragging ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10' : 'border-zinc-300 dark:border-zinc-700'"
-      @dragover.prevent="dragging = true" @dragleave="dragging = false" @drop.prevent="dragging = false; addFake()">
-      Drop .epub files here
+      @dragover.prevent="dragging = true" @dragleave="dragging = false" @drop.prevent="dragging = false; addFake($event)">
+      Drop .epub files here — a new novel, or another volume of one you already have
     </div>
 
     <div class="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-4">
@@ -47,12 +53,37 @@ function stageOf(p) {
           <span v-if="app.progress(b.id).running" class="absolute bottom-3 right-3 h-2 w-2 animate-pulse rounded-full bg-emerald-400"></span>
         </div>
         <div class="space-y-1.5 p-3 text-xs">
-          <div class="flex justify-between"><span class="text-zinc-500">Chapters</span><span>{{ app.progress(b.id).total }}</span></div>
+          <div class="flex justify-between"><span class="text-zinc-500">Chapters</span><span>{{ app.progress(b.id).total }}<span v-if="b.volumes.length > 1" class="text-zinc-400"> · {{ b.volumes.length }} vols</span></span></div>
           <MiniBar label="Scripted" :n="app.progress(b.id).scripted" :of="app.progress(b.id).total" color="bg-amber-500" />
           <MiniBar label="Narrated" :n="app.progress(b.id).narrated" :of="app.progress(b.id).total" color="bg-sky-500" />
           <div class="flex justify-between"><span class="text-zinc-500">Exports</span><span>{{ app.progress(b.id).exported }}</span></div>
+          <label class="mt-1 block cursor-pointer text-center text-[11px] text-zinc-400 hover:text-violet-500" @click.stop>＋ add volume<input type="file" accept=".epub" class="hidden" @change="addFake($event, b.id)" /></label>
         </div>
       </button>
+    </div>
+
+    <!-- add dialog -->
+    <div v-if="pending" class="fixed inset-0 z-40 grid place-items-center bg-black/40" @click.self="pending = null">
+      <div class="card w-[420px] p-5 text-sm shadow-2xl">
+        <div class="label mb-1">Add EPUB</div>
+        <div class="mb-4 truncate font-mono text-xs text-zinc-500">{{ pending.file }}</div>
+        <div class="mb-3 grid grid-cols-2 gap-2">
+          <button class="rounded-lg border p-3 text-left" :class="pending.mode === 'new' ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10' : 'border-zinc-200 dark:border-zinc-800'" @click="pending.mode = 'new'">
+            <div class="font-medium">New novel</div><div class="text-xs text-zinc-500">Standalone book, its own cast.</div>
+          </button>
+          <button class="rounded-lg border p-3 text-left" :class="pending.mode === 'volume' ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10' : 'border-zinc-200 dark:border-zinc-800'" @click="pending.mode = 'volume'">
+            <div class="font-medium">Next volume of…</div><div class="text-xs text-zinc-500">Continues an existing novel: shared cast, continuous chapter numbers.</div>
+          </button>
+        </div>
+        <template v-if="pending.mode === 'new'">
+          <label class="block text-xs">Title<input v-model="pending.title" class="input mt-1 w-full" /></label>
+        </template>
+        <template v-else>
+          <label class="block text-xs">Novel<select v-model="pending.bookId" class="input mt-1 w-full"><option v-for="b in app.books" :key="b.id" :value="b.id">{{ b.title }} ({{ b.volumes.length }} vol.)</option></select></label>
+          <label class="mt-2 block text-xs">Volume name<input v-model="pending.volName" class="input mt-1 w-full" /></label>
+        </template>
+        <div class="mt-4 flex justify-end gap-2"><button class="btn-ghost" @click="pending = null">Cancel</button><button class="btn-primary" @click="confirmAdd">Add</button></div>
+      </div>
     </div>
   </div>
 </template>

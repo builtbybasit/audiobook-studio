@@ -8,7 +8,10 @@ const app = useApp()
 const bookId = useRoute().params.bookId
 const book = computed(() => app.bookById(bookId))
 const selected = ref(app.chaptersOf(bookId).filter(c => c.narration === 'done').map(c => c.id))
-const meta = reactive({ title: book.value.title, author: book.value.author, narrator: 'OpenAI TTS · multi-voice', bitrate: 96, gapSeg: 0.35, gapCh: 2.0, cover: true })
+const meta = reactive({ title: book.value.title, author: book.value.author, narrator: 'OpenAI TTS · multi-voice', bitrate: 96, gapSeg: 0.35, gapCh: 2.0, cover: true, volPrefix: true })
+const multi = computed(() => book.value.volumes.length > 1)
+const volName = (c) => book.value.volumes.find(v => v.id === c.volumeId)?.name ?? ''
+const shortVol = (c) => volName(c).split('·')[0].trim()
 const exportsHere = computed(() => app.exports.filter(e => e.bookId === bookId))
 const totalDur = computed(() => app.chaptersOf(bookId).filter(c => selected.value.includes(c.id)).reduce((a, c) => a + c.duration, 0))
 const fmt = (s) => `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, '0')}m`
@@ -47,10 +50,14 @@ const estSize = computed(() => Math.round(totalDur.value * meta.bitrate / 8 / 10
           </div>
         </div>
         <div>
-          <div class="label mb-2">Chapter titles</div>
+          <div class="mb-2 flex items-center justify-between">
+            <div class="label">Chapter titles <span v-if="multi" class="font-normal normal-case tracking-normal text-zinc-400">· one M4B across {{ book.volumes.length }} volumes</span></div>
+            <label v-if="multi" class="flex items-center gap-1 text-xs text-zinc-500"><input type="checkbox" v-model="meta.volPrefix" class="accent-violet-600" /> prefix with volume</label>
+          </div>
           <div class="max-h-56 overflow-auto rounded-md border border-zinc-200 text-sm dark:border-zinc-800">
             <div v-for="c in app.chaptersOf(bookId).filter(c => selected.includes(c.id))" :key="c.id" class="flex items-center gap-2 border-b border-zinc-100 px-2 py-1 last:border-0 dark:border-zinc-800">
               <span class="font-mono text-[11px] text-zinc-400">{{ String(c.id).padStart(2, '0') }}</span>
+              <span v-if="multi && meta.volPrefix" class="shrink-0 text-xs text-zinc-400">{{ shortVol(c) }} ·</span>
               <input v-model="c.title" class="flex-1 bg-transparent focus:outline-none" />
             </div>
             <div v-if="!selected.length" class="p-3 text-zinc-500">No chapters selected.</div>
@@ -62,6 +69,7 @@ const estSize = computed(() => Math.round(totalDur.value * meta.bitrate / 8 / 10
         <div class="card p-4 text-sm">
           <div class="label mb-2">Summary</div>
           <div class="flex justify-between py-0.5"><span class="text-zinc-500">Chapters</span><span>{{ selected.length }}</span></div>
+          <div v-if="multi" class="flex justify-between py-0.5"><span class="text-zinc-500">Volumes</span><span>{{ new Set(app.chaptersOf(bookId).filter(c => selected.includes(c.id)).map(c => c.volumeId)).size }} of {{ book.volumes.length }}</span></div>
           <div class="flex justify-between py-0.5"><span class="text-zinc-500">Runtime</span><span>{{ fmt(totalDur) }}</span></div>
           <div class="flex justify-between py-0.5"><span class="text-zinc-500">Est. size</span><span>{{ estSize }} MB</span></div>
         </div>

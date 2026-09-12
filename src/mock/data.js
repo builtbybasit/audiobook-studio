@@ -18,6 +18,7 @@ function rng(seed) {
 const BOOKS = [
   {
     id: 'cliche', title: 'The Cliché Cultivation World', author: 'Unknown Daoist', count: 24, cover: ['#4c1d95', '#a78bfa'],
+    volumes: [['Vol. 1 · Outer Sect', 'Cliche Cultivation World - Vol 1.epub', 8], ['Vol. 2 · Down the Mountain', 'Cliche Cultivation World - Vol 2.epub', 8], ['Vol. 3 · The Tournament Arc', 'Cliche Cultivation World - Vol 3.epub', 8]],
     cast: [
       { name: 'Narrator', aliases: [], gender: 'n', description: 'Narration, thoughts, and every speaker without a voice of their own.' },
       { name: 'Ji Ning', aliases: ['Ning', 'Junior Brother Ji'], gender: 'm', description: 'Outer-sect disciple who has read too many cultivation novels and knows exactly which cliché he is living through. Dry, self-aware, secretly earnest.' },
@@ -38,6 +39,7 @@ const BOOKS = [
   },
   {
     id: 'starforge', title: 'Ashes of the Starforge', author: 'M. R. Halloway', count: 18, cover: ['#7c2d12', '#fb923c'],
+    volumes: [['Ashes of the Starforge', 'Ashes of the Starforge.epub', 18]],
     cast: [
       { name: 'Narrator', aliases: [], gender: 'n', description: 'Narration, thoughts, and every speaker without a voice of their own.' },
       { name: 'Captain Idris Vale', aliases: ['Vale', 'the Captain'], gender: 'm', description: 'Salvage captain running on debt and stubbornness. Clipped, decisive, allergic to being told the odds.' },
@@ -58,6 +60,7 @@ const BOOKS = [
   },
   {
     id: 'drowned', title: 'Letters from the Drowned City', author: 'Ines Varga', count: 22, cover: ['#134e4a', '#2dd4bf'],
+    volumes: [['Part One · High Water', 'Drowned City 1.epub', 11], ['Part Two · What the Tide Keeps', 'Drowned City 2.epub', 11]],
     cast: [
       { name: 'Narrator', aliases: [], gender: 'n', description: 'Narration, thoughts, and every speaker without a voice of their own.' },
       { name: 'Wren', aliases: [], gender: 'f', description: 'Nineteen, stubborn, still writing letters to someone who left when the water was at the first step. Quiet until she is not.' },
@@ -78,12 +81,19 @@ const BOOKS = [
 
 const MINOR_LINES = ['Yes, my lord.', 'This way, please.', 'You cannot go in there.', 'Coin first. Then we talk.', 'Did you hear that?', 'It was not me, I swear it.', 'Move along. Nothing to see.', 'They say the elder has not slept in a week.', 'Sold! To the gentleman at the back.', 'Careful. The steps are wet.']
 
+export function makeVolumes(book) {
+  let from = 1
+  return book.volumes.map(([name, file, n], i) => { const v = { id: i + 1, name, file, from, to: from + n - 1 }; from += n; return v })
+}
+
 function makeChapters(book, r) {
   const list = []
+  const vols = makeVolumes(book)
   for (let i = 1; i <= book.count; i++) {
     const t = book.titles[(i - 1) % book.titles.length]
+    const vol = vols.find(v => i >= v.from && i <= v.to)
     list.push({
-      id: i, index: i,
+      id: i, index: i, volumeId: vol?.id ?? 1, volumeIndex: vol ? i - vol.from + 1 : i,
       title: i > book.titles.length ? `${t} (II)` : t,
       words: 2200 + Math.floor(r() * 2400),
       scripting: 'none', scriptingProgress: 0,
@@ -140,7 +150,7 @@ export function makeWorld() {
   const r = rng(42)
 
   for (const b of BOOKS) {
-    books.push({ id: b.id, title: b.title, author: b.author, cover: b.cover, addedAt: '2026-08-2' + books.length })
+    books.push({ id: b.id, title: b.title, author: b.author, cover: b.cover, addedAt: '2026-08-2' + books.length, volumes: makeVolumes(b) })
     chapters[b.id] = makeChapters(b, r)
     characters[b.id] = [
       ...b.cast.map((c, i) => ({ ...c, voice: VOICES[(i * 3 + books.length) % VOICES.length], style: '', color: PALETTE[i % PALETTE.length], major: true })),

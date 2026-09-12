@@ -20,6 +20,8 @@ export const useApp = defineStore('app', {
     chaptersOf: (s) => (id) => s.chapters[id] ?? [],
     chapter: (s) => (bookId, chId) => (s.chapters[bookId] ?? []).find(c => c.id === chId),
     charactersOf: (s) => (id) => s.characters[id] ?? [],
+    volumesOf: (s) => (id) => s.books.find(b => b.id === id)?.volumes ?? [],
+    volumeOf: (s) => (bookId, chId) => { const c = (s.chapters[bookId] ?? []).find(c => c.id === chId); return s.books.find(b => b.id === bookId)?.volumes.find(v => v.id === c?.volumeId) },
     segmentsOf: (s) => (bookId, chId) => s.segments[key(bookId, chId)] ?? [],
     progress: (s) => (id) => {
       const ch = s.chapters[id] ?? []
@@ -60,6 +62,30 @@ export const useApp = defineStore('app', {
     _sequential(jobs, start) {
       const next = () => { const j = jobs.shift(); if (j) start(j, next) }
       next()
+    },
+
+    // ---------- library ----------
+    _blankChapters(count, volumeId, startAt, prefix = 'Chapter') {
+      return Array.from({ length: count }, (_, i) => ({ id: startAt + i, index: startAt + i, volumeId, volumeIndex: i + 1, title: `${prefix} ${i + 1}`, words: 3000, scripting: 'none', scriptingProgress: 0, narration: 'none', narrationProgress: 0, duration: 0 }))
+    },
+    addNovel(file, title) {
+      const id = 'new' + Date.now()
+      const count = 12 + Math.floor(Math.random() * 10)
+      this.books.push({ id, title: title || file.replace(/\.epub$/i, ''), author: 'Unknown', cover: ['#1e293b', '#94a3b8'], addedAt: 'just now', volumes: [{ id: 1, name: title || file.replace(/\.epub$/i, ''), file, from: 1, to: count }] })
+      this.chapters[id] = this._blankChapters(count, 1, 1)
+      this.characters[id] = [{ name: 'Narrator', aliases: [], gender: 'n', description: 'Narration, thoughts, and every speaker without a voice of their own.', voice: 'alloy', style: '', color: PALETTE[0], major: true }]
+      return id
+    },
+    // A novel split across several EPUBs: each file becomes a volume, chapters keep numbering continuously
+    // so roster / recap continuity can carry across the volume boundary.
+    addVolume(bookId, file, name) {
+      const book = this.bookById(bookId)
+      const chs = this.chapters[bookId]
+      const count = 8 + Math.floor(Math.random() * 8)
+      const from = chs.length + 1
+      const vol = { id: book.volumes.length + 1, name: name || `Vol. ${book.volumes.length + 1}`, file, from, to: from + count - 1 }
+      book.volumes.push(vol)
+      chs.push(...this._blankChapters(count, vol.id, from))
     },
 
     // ---------- scripting ----------

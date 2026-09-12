@@ -3,13 +3,31 @@ import { defineStore } from 'pinia'
 import { makeWorld, generateSegments, PALETTE } from '../mock/data'
 
 let jobSeq = 100
+const ago = (min) => Date.now() - min * 60000
+// History from "earlier today" so the Queue page has done / failed / cancelled rows to act on.
+function seedJobs() {
+  const mk = (kind, bookId, chapterId, label, status, startMin, secs) => ({ id: jobSeq++, kind, bookId, chapterId, label, status, progress: status === 'done' ? 100 : status === 'failed' ? 100 : 40, queuedAt: ago(startMin + 1), startedAt: ago(startMin), finishedAt: ago(startMin) + secs * 1000, cancelled: status === 'cancelled' })
+  return [
+    mk('export', 'starforge', null, 'Build M4B · 18 ch', 'done', 95, 214),
+    mk('narration', 'starforge', 18, 'Narrate · ch 18', 'done', 118, 71),
+    mk('narration', 'starforge', 17, 'Narrate · ch 17', 'done', 121, 64),
+    mk('scripting', 'cliche', 12, 'Script · ch 12', 'done', 41, 26),
+    mk('scripting', 'cliche', 11, 'Script · ch 11', 'done', 42, 24),
+    mk('narration', 'cliche', 4, 'Narrate · ch 4', 'failed', 33, 58),
+    mk('narration', 'cliche', 3, 'Narrate · ch 3', 'done', 35, 61),
+    mk('scripting', 'drowned', 2, 'Script · ch 2', 'failed', 12, 31),
+    mk('scripting', 'drowned', 1, 'Script · ch 1', 'done', 13, 27),
+    mk('narration', 'drowned', 1, 'Narrate · ch 1', 'cancelled', 9, 12),
+  ]
+}
 const key = (b, c) => `${b}:${c}`
 const rnd = (a, b) => a + Math.random() * (b - a)
 
 export const useApp = defineStore('app', {
   state: () => ({
     ...makeWorld(),
-    jobs: [],
+    jobs: seedJobs(),
+    _kicked: false,
     dark: window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true,
     currentBookId: null,
   }),
@@ -34,6 +52,16 @@ export const useApp = defineStore('app', {
       }
     },
     activeJobs: (s) => s.jobs.filter(j => j.status === 'running' || j.status === 'queued'),
+    endpointLoad: (s) => {
+      const load = Object.fromEntries(s.endpoints.map(e => [e.id, { active: 0, done: 0, failed: 0 }]))
+      for (const segs of Object.values(s.segments)) for (const seg of segs) {
+        const l = load[seg.audio.endpoint]; if (!l) continue
+        if (seg.audio.status === 'generating') l.active++
+        else if (seg.audio.status === 'done') l.done++
+        else if (seg.audio.status === 'failed') l.failed++
+      }
+      return load
+    },
     recentJobs: (s) => [...s.jobs].reverse().slice(0, 12),
     enabledEndpoints: (s) => s.endpoints.filter(e => e.enabled),
     // a character with no voice of their own is read in the Narrator's voice
@@ -55,14 +83,34 @@ export const useApp = defineStore('app', {
   actions: {
     // ---------- shared ----------
     addJob(kind, bookId, label, chapterId = null) {
-      const job = { id: jobSeq++, kind, bookId, chapterId, label, status: 'queued', progress: 0, startedAt: null }
-      this.jobs.push(job)
-      return job
+      this.jobs.push({ id: jobSeq++, kind, bookId, chapterId, label, status: 'queued', progress: 0, queuedAt: Date.now(), startedAt: null, finishedAt: null, cancelled: false })
+      return this.jobs[this.jobs.length - 1]   // the reactive proxy — mutations on it must be observable
     },
+    removeJob(id) { const j = this.jobs.find(j => j.id === id); if (j && (j.finishedAt || j.status === 'queued')) { if (j.status === 'queued') this.cancelJob(id); this.jobs = this.jobs.filter(x => x.id !== id) } },
     _sequential(jobs, start) {
-      const next = () => { const j = jobs.shift(); if (j) start(j, next) }
+      const next = () => { const j = jobs.shift(); if (!j) return; if (j.status === 'cancelled') return next(); start(j, next) }
       next()
     },
+    _finish(job, status) { job.status = status; job.finishedAt = Date.now() },
+    cancelJob(id) {
+      const job = this.jobs.find(j => j.id === id)
+      if (!job || job.finishedAt) return
+      job.cancelled = true
+      const c = job.chapterId ? this.chapter(job.bookId, job.chapterId) : null
+      if (job.status === 'queued') {
+        this._finish(job, 'cancelled')
+        if (c && job.kind === 'scripting') c.scripting = 'none'
+        if (c && job.kind === 'narration') c.narration = c.duration ? 'done' : 'none'
+      }
+      // running jobs notice `cancelled` on their next tick
+    },
+    retryJob(id) {
+      const job = this.jobs.find(j => j.id === id)
+      if (!job) return
+      if (job.kind === 'scripting') this.runScripting(job.bookId, [job.chapterId])
+      if (job.kind === 'narration') { const c = this.chapter(job.bookId, job.chapterId); c.narration === 'failed' && this.segmentsOf(job.bookId, c.id).some(x => x.audio.status === 'done') ? this.retryFailed(job.bookId, c.id) : this.runNarration(job.bookId, [c.id]) }
+    },
+    clearFinished() { this.jobs = this.jobs.filter(j => !j.finishedAt) },
 
     // ---------- library ----------
     _blankChapters(count, volumeId, startAt, prefix = 'Chapter') {
@@ -88,6 +136,15 @@ export const useApp = defineStore('app', {
       chs.push(...this._blankChapters(count, vol.id, from))
     },
 
+    // ---------- demo ----------
+    demoKick() {
+      if (this._kicked) return; this._kicked = true
+      setTimeout(() => {
+        this.runScripting('drowned', [3, 4, 5])
+        this.runNarration('cliche', [5, 6])
+      }, 1200)
+    },
+
     // ---------- scripting ----------
     runScripting(bookId, ids) {
       const chs = this.chapters[bookId].filter(c => ids.includes(c.id) && c.scripting !== 'running' && c.scripting !== 'queued')
@@ -96,13 +153,14 @@ export const useApp = defineStore('app', {
         const c = this.chapter(bookId, job.chapterId)
         c.scripting = 'running'; job.status = 'running'; job.startedAt = Date.now()
         const t = setInterval(() => {
+          if (job.cancelled) { clearInterval(t); c.scripting = 'none'; c.scriptingProgress = 0; this._finish(job, 'cancelled'); return done() }
           c.scriptingProgress = Math.min(100, c.scriptingProgress + rnd(5, 16))
           job.progress = c.scriptingProgress
           if (c.scriptingProgress >= 100) {
             clearInterval(t)
             const fail = Math.random() < 0.07
             c.scripting = fail ? 'failed' : 'done'
-            job.status = fail ? 'failed' : 'done'
+            this._finish(job, fail ? 'failed' : 'done')
             if (!fail) {
               this.segments[key(bookId, c.id)] = generateSegments(bookId, c.id, { aliasNoise: true })
               this._absorbCast(bookId, c.id)
@@ -200,6 +258,11 @@ export const useApp = defineStore('app', {
       c.narration = 'running'; job.status = 'running'; job.startedAt = Date.now()
       const segs = this.segmentsOf(bookId, c.id)
       const tick = () => {
+        if (job.cancelled) {
+          for (const s of segs) if (s.audio.status === 'queued') s.audio.status = 'none'
+          if (!segs.some(s => s.audio.status === 'generating')) { c.narration = segs.every(s => s.audio.status === 'done') ? 'done' : 'failed'; this._finish(job, 'cancelled'); return done() }
+          return setTimeout(tick, 200)
+        }
         for (const ep of this.enabledEndpoints) {
           const active = segs.filter(s => s.audio.status === 'generating' && s.audio.endpoint === ep.id).length
           let slots = ep.concurrency - active
@@ -224,7 +287,7 @@ export const useApp = defineStore('app', {
           const failed = segs.some(s => s.audio.status !== 'done')
           c.narration = failed ? 'failed' : 'done'
           c.duration = segs.reduce((a, s) => a + s.audio.duration, 0)
-          job.status = failed ? 'failed' : 'done'
+          this._finish(job, failed ? 'failed' : 'done')
           done(); return
         }
         setTimeout(tick, 200)
@@ -237,15 +300,16 @@ export const useApp = defineStore('app', {
       const book = this.bookById(bookId)
       const chs = this.chapters[bookId].filter(c => ids.includes(c.id))
       const job = this.addJob('export', bookId, `Build M4B · ${chs.length} ch`)
-      const entry = { id: Date.now(), bookId, title: meta.title || book.title, chapters: chs.length, duration: chs.reduce((a, c) => a + c.duration, 0), bitrate: meta.bitrate, size: 0, createdAt: new Date().toISOString().slice(0, 16).replace('T', ' '), status: 'building', progress: 0 }
-      this.exports.unshift(entry)
+      this.exports.unshift({ id: Date.now(), bookId, title: meta.title || book.title, chapters: chs.length, duration: chs.reduce((a, c) => a + c.duration, 0), bitrate: meta.bitrate, size: 0, createdAt: new Date().toISOString().slice(0, 16).replace('T', ' '), status: 'building', progress: 0 })
+      const entry = this.exports[0]
       job.status = 'running'; job.startedAt = Date.now()
       const t = setInterval(() => {
+        if (job.cancelled) { clearInterval(t); this.exports = this.exports.filter(e => e !== entry); this._finish(job, 'cancelled'); return }
         entry.progress = Math.min(100, entry.progress + rnd(3, 9)); job.progress = entry.progress
         if (entry.progress >= 100) {
           clearInterval(t)
           entry.status = 'done'; entry.size = Math.round(entry.duration * meta.bitrate / 8 / 1024 * 1.04)
-          job.status = 'done'
+          this._finish(job, 'done')
         }
       }, 180)
       return entry

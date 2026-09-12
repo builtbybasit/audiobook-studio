@@ -52,6 +52,14 @@ const p = computed(() => app.currentBookId ? app.progress(app.currentBookId) : n
         </template>
       </nav>
 
+      <div class="mx-2 mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
+        <RouterLink to="/queue" class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800" :class="activeKey === 'queue' && 'bg-violet-50 font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300'">
+          <span class="grid h-6 w-6 place-items-center rounded-md border border-zinc-300 text-xs dark:border-zinc-700">≡</span>
+          <span class="flex-1">Queue</span>
+          <span v-if="app.activeJobs.length" class="flex items-center gap-1 text-[11px] text-emerald-500"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500"></span>{{ app.activeJobs.length }}</span>
+        </RouterLink>
+      </div>
+
       <div v-if="app.book" class="mx-3 mt-5 rounded-lg border border-zinc-200 p-3 text-xs dark:border-zinc-800">
         <div class="label mb-1">Open book</div>
         <div class="font-medium leading-snug">{{ app.book.title }}</div>

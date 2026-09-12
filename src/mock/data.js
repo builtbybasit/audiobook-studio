@@ -188,7 +188,9 @@ export function makeWorld() {
   ]
 
   const exports = [
-    { id: 1, bookId: 'starforge', title: 'Ashes of the Starforge', chapters: 18, duration: chapters.starforge.reduce((a, c) => a + c.duration, 0), bitrate: 96, size: 187, createdAt: '2026-09-04 21:14', status: 'done' },
+    { id: 1, bookId: 'starforge', filename: 'Ashes of the Starforge.m4b', title: 'Ashes of the Starforge', series: 'Ashes of the Starforge', volume: null, author: 'M. R. Halloway', narrator: 'OpenAI TTS · multi-voice', year: 2026, description: '', chapterIds: chapters.starforge.slice(0, 15).map(c => c.id), chapters: 15, duration: chapters.starforge.slice(0, 15).reduce((a, c) => a + c.duration, 0), bitrate: 96, size: 156, createdAt: '2026-09-04 21:14', version: 1, replaces: null, status: 'done' },
+    { id: 2, bookId: 'cliche', filename: 'The Cliché Cultivation World - Vol. 1.m4b', title: 'The Cliché Cultivation World · Vol. 1', series: 'The Cliché Cultivation World', volume: { number: 1, name: 'Vol. 1 · Outer Sect', of: 3 }, author: 'Unknown Daoist', narrator: 'OpenAI TTS · multi-voice', year: 2026, description: '', chapterIds: [1], chapters: 1, duration: chapters.cliche.slice(0, 1).reduce((a, c) => a + c.duration, 0), bitrate: 96, size: 11, createdAt: '2026-09-08 09:02', version: 1, replaces: null, status: 'replaced' },
+    { id: 3, bookId: 'cliche', filename: 'The Cliché Cultivation World - Vol. 1.m4b', title: 'The Cliché Cultivation World · Vol. 1', series: 'The Cliché Cultivation World', volume: { number: 1, name: 'Vol. 1 · Outer Sect', of: 3 }, author: 'Unknown Daoist', narrator: 'OpenAI TTS · multi-voice', year: 2026, description: '', chapterIds: [1, 2], chapters: 2, duration: chapters.cliche.slice(0, 2).reduce((a, c) => a + c.duration, 0), bitrate: 96, size: 21, createdAt: '2026-09-10 18:40', version: 2, replaces: 2, status: 'done' },
   ]
 
   return { books, chapters, characters, segments, endpoints, exports }

@@ -15,7 +15,7 @@ const hasScript = computed(() => chapter.value?.scripting === 'done')
 </script>
 
 <template>
-  <div class="grid h-full grid-cols-[300px_1fr] gap-4 p-4">
+  <div class="grid h-full grid-cols-[300px_1fr] grid-rows-[minmax(0,1fr)] gap-4 p-4">
     <ChapterPicker :book-id="bookId" stage="scripting" v-model="selected" :opened-id="opened" run-label="Run scripting" @open="id => opened = id" @run="ids => app.runScripting(bookId, ids)" />
 
     <div class="min-h-0 min-w-0">

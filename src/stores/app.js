@@ -47,7 +47,7 @@ export const useApp = defineStore('app', {
         total: ch.length,
         scripted: ch.filter(c => c.scripting === 'done').length,
         narrated: ch.filter(c => c.narration === 'done').length,
-        exported: s.exports.filter(e => e.bookId === id).length,
+        exported: s.exports.filter(e => e.bookId === id && e.status === 'done').length,
         running: ch.some(c => c.scripting === 'running' || c.narration === 'running'),
       }
     },
@@ -308,11 +308,37 @@ export const useApp = defineStore('app', {
     },
 
     // ---------- export ----------
+    // An export is identified by its filename. Building again with the same filename replaces the
+    // previous audiobook (version bump, old entry kept as 'replaced'). With splitPerVolume, one
+    // file is built per volume, each carrying volume metadata.
     buildExport(bookId, ids, meta) {
       const book = this.bookById(bookId)
       const chs = this.chapters[bookId].filter(c => ids.includes(c.id))
-      const job = this.addJob('export', bookId, `Build M4B · ${chs.length} ch`)
-      this.exports.unshift({ id: Date.now(), bookId, title: meta.title || book.title, chapters: chs.length, duration: chs.reduce((a, c) => a + c.duration, 0), bitrate: meta.bitrate, size: 0, createdAt: new Date().toISOString().slice(0, 16).replace('T', ' '), status: 'building', progress: 0 })
+      if (!chs.length) return []
+      const groups = meta.splitPerVolume
+        ? book.volumes.map((v, i) => ({ vol: v, index: i + 1, chapters: chs.filter(c => c.volumeId === v.id) })).filter(g => g.chapters.length)
+        : [{ vol: null, index: null, chapters: chs }]
+      return groups.map(g => this._buildOne(bookId, g, meta))
+    },
+    exportFilename(meta, vol) {
+      const base = (meta.filename || meta.title || 'audiobook').replace(/\.m4b$/i, '')
+      return vol ? `${base} - ${vol.name.split('·')[0].trim()}.m4b` : `${base}.m4b`
+    },
+    _buildOne(bookId, g, meta) {
+      const book = this.bookById(bookId)
+      const filename = this.exportFilename(meta, g.vol)
+      const prev = this.exports.find(e => e.bookId === bookId && e.filename === filename && e.status === 'done')
+      const job = this.addJob('export', bookId, `Build ${filename}`)
+      this.exports.unshift({
+        id: Date.now() + Math.random(), bookId, filename,
+        title: g.vol ? `${meta.title} · ${g.vol.name.split('·')[0].trim()}` : meta.title,
+        series: meta.series, volume: g.vol ? { number: g.index, name: g.vol.name, of: book.volumes.length } : null,
+        author: meta.author, narrator: meta.narrator, year: meta.year, description: meta.description,
+        chapterIds: g.chapters.map(c => c.id), chapters: g.chapters.length,
+        duration: g.chapters.reduce((a, c) => a + c.duration, 0), bitrate: meta.bitrate, size: 0,
+        createdAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
+        version: prev ? prev.version + 1 : 1, replaces: prev?.id ?? null, status: 'building', progress: 0,
+      })
       const entry = this.exports[0]
       job.status = 'running'; job.startedAt = Date.now()
       const t = setInterval(() => {
@@ -321,10 +347,18 @@ export const useApp = defineStore('app', {
         if (entry.progress >= 100) {
           clearInterval(t)
           entry.status = 'done'; entry.size = Math.round(entry.duration * meta.bitrate / 8 / 1024 * 1.04)
+          if (prev) prev.status = 'replaced'
           this._finish(job, 'done')
         }
       }, 180)
       return entry
+    },
+    deleteExport(id) { this.exports = this.exports.filter(e => e.id !== id) },
+    // narrated chapters that a finished export doesn't contain yet (new volume arrived, more chapters narrated)
+    newSince(exp) {
+      const narrated = this.chaptersOf(exp.bookId).filter(c => c.narration === 'done').map(c => c.id)
+      const scope = exp.volume ? this.chaptersOf(exp.bookId).filter(c => c.narration === 'done' && this.bookById(exp.bookId).volumes[exp.volume.number - 1]?.id === c.volumeId).map(c => c.id) : narrated
+      return scope.filter(id => !exp.chapterIds.includes(id))
     },
   },
 })

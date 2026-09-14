@@ -154,7 +154,7 @@ async function toggleNotify() {
     <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div class="min-w-0 space-y-5">
         <!-- running -->
-        <section class="card">
+        <section class="card overflow-hidden">
           <div
             class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"
           >
@@ -171,66 +171,71 @@ async function toggleNotify() {
           <div v-if="!running.length" class="px-4 py-6 text-sm text-zinc-500">
             Idle. Start scripting, narration, or an export from a book.
           </div>
-          <div
-            v-for="j in running"
-            :key="j.id"
-            class="cursor-pointer border-b border-zinc-100 px-4 py-3 last:border-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-900"
-            @click="openRow($event, j)"
-          >
-            <div class="flex items-center gap-3">
-              <span
-                class="grid h-8 w-8 place-items-center rounded-lg bg-violet-500/15 text-violet-500"
-                ><component :is="icon[j.kind]" class="icon"
-              /></span>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2 text-sm">
-                  <button
-                    class="font-semibold capitalize hover:text-violet-500 hover:underline"
-                    :aria-label="`View activity for ${j.label}`"
-                    @click="selectedId = j.id"
-                  >
-                    {{ j.kind }}</button
-                  ><span class="truncate text-zinc-500"
-                    >· {{ book(j)?.title
-                    }}<span v-if="chapter(j)">
-                      · ch {{ chapter(j)!.id }} {{ chapter(j)!.title }}</span
-                    ></span
-                  >
+          <div class="max-h-80 overflow-y-auto">
+            <div
+              v-for="j in running"
+              :key="j.id"
+              class="cursor-pointer border-b border-zinc-100 px-4 py-3 last:border-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-900"
+              @click="openRow($event, j)"
+            >
+              <div class="flex items-center gap-3">
+                <span
+                  class="grid h-8 w-8 place-items-center rounded-lg bg-violet-500/15 text-violet-500"
+                  ><component :is="icon[j.kind]" class="icon"
+                /></span>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-2 text-sm">
+                    <button
+                      class="font-semibold capitalize hover:text-violet-500 hover:underline"
+                      :aria-label="`View activity for ${j.label}`"
+                      @click="selectedId = j.id"
+                    >
+                      {{ j.kind }}</button
+                    ><span class="truncate text-zinc-500"
+                      >· {{ book(j)?.title
+                      }}<span v-if="chapter(j)">
+                        · ch {{ chapter(j)!.id }} {{ chapter(j)!.title }}</span
+                      ></span
+                    >
+                  </div>
+                  <div class="mt-1.5 h-1.5 rounded bg-zinc-200 dark:bg-zinc-800">
+                    <div
+                      class="h-1.5 rounded bg-violet-500 transition-all"
+                      :style="{ width: j.progress + '%' }"
+                    ></div>
+                  </div>
                 </div>
-                <div class="mt-1.5 h-1.5 rounded bg-zinc-200 dark:bg-zinc-800">
-                  <div
-                    class="h-1.5 rounded bg-violet-500 transition-all"
-                    :style="{ width: j.progress + '%' }"
-                  ></div>
+                <div class="w-24 text-right font-mono text-xs text-zinc-500">
+                  {{ Math.round(j.progress) }}% · {{ elapsed(j) }}
                 </div>
+                <RouterLink :to="stageLink(j)" class="btn-ghost btn-xs">Open</RouterLink>
+                <button class="btn-ghost btn-xs" @click="selectedId = j.id">Activity</button>
+                <button class="btn-ghost btn-xs text-red-500" @click="app.cancelJob(j.id)">
+                  Cancel
+                </button>
               </div>
-              <div class="w-24 text-right font-mono text-xs text-zinc-500">
-                {{ Math.round(j.progress) }}% · {{ elapsed(j) }}
+              <div
+                v-if="j.kind === 'narration'"
+                class="mt-2 flex gap-3 pl-11 text-xs text-zinc-500"
+              >
+                <span
+                  ><b class="text-emerald-500">{{ segStats(j).done }}</b> done</span
+                >
+                <span
+                  ><b class="text-violet-500">{{ segStats(j).gen }}</b> generating</span
+                >
+                <span
+                  ><b :class="segStats(j).failed ? 'text-red-500' : ''">{{ segStats(j).failed }}</b>
+                  failed</span
+                >
+                <span>of {{ segStats(j).total }} segments</span>
               </div>
-              <RouterLink :to="stageLink(j)" class="btn-ghost btn-xs">Open</RouterLink>
-              <button class="btn-ghost btn-xs" @click="selectedId = j.id">Activity</button>
-              <button class="btn-ghost btn-xs text-red-500" @click="app.cancelJob(j.id)">
-                Cancel
-              </button>
-            </div>
-            <div v-if="j.kind === 'narration'" class="mt-2 flex gap-3 pl-11 text-xs text-zinc-500">
-              <span
-                ><b class="text-emerald-500">{{ segStats(j).done }}</b> done</span
-              >
-              <span
-                ><b class="text-violet-500">{{ segStats(j).gen }}</b> generating</span
-              >
-              <span
-                ><b :class="segStats(j).failed ? 'text-red-500' : ''">{{ segStats(j).failed }}</b>
-                failed</span
-              >
-              <span>of {{ segStats(j).total }} segments</span>
             </div>
           </div>
         </section>
 
         <!-- queued -->
-        <section class="card">
+        <section class="card overflow-hidden">
           <div
             class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"
           >
@@ -245,36 +250,38 @@ async function toggleNotify() {
             </button>
           </div>
           <div v-if="!queued.length" class="px-4 py-4 text-sm text-zinc-500">Nothing waiting.</div>
-          <div
-            v-for="(j, i) in queued"
-            :key="j.id"
-            class="flex cursor-pointer items-center gap-3 border-b border-zinc-100 px-4 py-2 text-sm last:border-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-900"
-            @click="openRow($event, j)"
-          >
-            <span class="w-5 font-mono text-xs text-zinc-400">{{ i + 1 }}</span>
-            <component :is="icon[j.kind]" class="icon-sm text-zinc-400" />
-            <button
-              class="min-w-0 flex-1 truncate text-left hover:text-violet-500 hover:underline"
-              :aria-label="`View activity for ${j.label}`"
-              @click="selectedId = j.id"
+          <div class="max-h-80 overflow-y-auto">
+            <div
+              v-for="(j, i) in queued"
+              :key="j.id"
+              class="flex cursor-pointer items-center gap-3 border-b border-zinc-100 px-4 py-2 text-sm last:border-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-900"
+              @click="openRow($event, j)"
             >
-              {{ j.label }} <span class="text-zinc-500">· {{ book(j)?.title }}</span>
-            </button>
-            <button class="text-xs text-zinc-400 hover:text-red-500" @click="app.cancelJob(j.id)">
-              cancel
-            </button>
-            <button
-              class="text-xs text-zinc-400 hover:text-red-500"
-              title="Cancel and remove"
-              @click="app.removeJob(j.id)"
-            >
-              <CloseIcon class="icon-sm" />
-            </button>
+              <span class="w-5 font-mono text-xs text-zinc-400">{{ i + 1 }}</span>
+              <component :is="icon[j.kind]" class="icon-sm text-zinc-400" />
+              <button
+                class="min-w-0 flex-1 truncate text-left hover:text-violet-500 hover:underline"
+                :aria-label="`View activity for ${j.label}`"
+                @click="selectedId = j.id"
+              >
+                {{ j.label }} <span class="text-zinc-500">· {{ book(j)?.title }}</span>
+              </button>
+              <button class="text-xs text-zinc-400 hover:text-red-500" @click="app.cancelJob(j.id)">
+                cancel
+              </button>
+              <button
+                class="text-xs text-zinc-400 hover:text-red-500"
+                title="Cancel and remove"
+                @click="app.removeJob(j.id)"
+              >
+                <CloseIcon class="icon-sm" />
+              </button>
+            </div>
           </div>
         </section>
 
         <!-- history -->
-        <section class="card">
+        <section class="card overflow-hidden">
           <div
             class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"
           >
@@ -314,63 +321,65 @@ async function toggleNotify() {
           <div v-if="!shown.length" class="px-4 py-4 text-sm text-zinc-500">
             No {{ filter === "all" ? "" : filter }} jobs yet.
           </div>
-          <table v-else class="w-full text-sm">
-            <tbody>
-              <tr
-                v-for="j in shown"
-                :key="j.id"
-                class="cursor-pointer border-b border-zinc-100 last:border-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-900"
-                @click="openRow($event, j)"
-              >
-                <td class="w-8 py-2 pl-4">
-                  <StatusDot :status="j.status === 'cancelled' ? 'none' : j.status" />
-                </td>
-                <td class="w-6 text-zinc-400">
-                  <component :is="icon[j.kind]" class="icon-sm" />
-                </td>
-                <td class="py-2">
-                  <button
-                    class="text-left hover:text-violet-500 hover:underline"
-                    :aria-label="`View activity for ${j.label}`"
-                    @click="selectedId = j.id"
-                  >
-                    {{ j.label }}
-                  </button>
-                  <div class="text-xs text-zinc-500">{{ book(j)?.title }}</div>
-                </td>
-                <td
-                  class="w-24 text-xs capitalize"
-                  :class="{
-                    'text-emerald-500': j.status === 'done',
-                    'text-red-500': j.status === 'failed',
-                    'text-zinc-400': j.status === 'cancelled',
-                  }"
+          <div v-else class="max-h-[28rem] overflow-y-auto">
+            <table class="w-full text-sm">
+              <tbody>
+                <tr
+                  v-for="j in shown"
+                  :key="j.id"
+                  class="cursor-pointer border-b border-zinc-100 last:border-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-900"
+                  @click="openRow($event, j)"
                 >
-                  {{ j.status }}
-                </td>
-                <td class="w-20 text-right font-mono text-xs text-zinc-500">{{ elapsed(j) }}</td>
-                <td class="w-24 text-right font-mono text-xs text-zinc-400">
-                  {{ clock(j.finishedAt!) }}
-                </td>
-                <td class="w-28 pr-4 text-right">
-                  <button
-                    v-if="j.status !== 'done' && j.kind !== 'export'"
-                    class="btn-ghost btn-xs"
-                    @click="app.retryJob(j.id)"
+                  <td class="w-8 py-2 pl-4">
+                    <StatusDot :status="j.status === 'cancelled' ? 'none' : j.status" />
+                  </td>
+                  <td class="w-6 text-zinc-400">
+                    <component :is="icon[j.kind]" class="icon-sm" />
+                  </td>
+                  <td class="py-2">
+                    <button
+                      class="text-left hover:text-violet-500 hover:underline"
+                      :aria-label="`View activity for ${j.label}`"
+                      @click="selectedId = j.id"
+                    >
+                      {{ j.label }}
+                    </button>
+                    <div class="text-xs text-zinc-500">{{ book(j)?.title }}</div>
+                  </td>
+                  <td
+                    class="w-24 text-xs capitalize"
+                    :class="{
+                      'text-emerald-500': j.status === 'done',
+                      'text-red-500': j.status === 'failed',
+                      'text-zinc-400': j.status === 'cancelled',
+                    }"
                   >
-                    <RetryIcon class="icon-sm" /> Retry
-                  </button>
-                  <button
-                    class="ml-1 rounded px-1.5 py-0.5 text-xs text-zinc-400 hover:bg-zinc-100 hover:text-red-500 dark:hover:bg-zinc-800"
-                    title="Remove from history"
-                    @click="app.removeJob(j.id)"
-                  >
-                    <CloseIcon class="icon-sm" />
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                    {{ j.status }}
+                  </td>
+                  <td class="w-20 text-right font-mono text-xs text-zinc-500">{{ elapsed(j) }}</td>
+                  <td class="w-24 text-right font-mono text-xs text-zinc-400">
+                    {{ clock(j.finishedAt!) }}
+                  </td>
+                  <td class="w-28 pr-4 text-right">
+                    <button
+                      v-if="j.status !== 'done' && j.kind !== 'export'"
+                      class="btn-ghost btn-xs"
+                      @click="app.retryJob(j.id)"
+                    >
+                      <RetryIcon class="icon-sm" /> Retry
+                    </button>
+                    <button
+                      class="ml-1 rounded px-1.5 py-0.5 text-xs text-zinc-400 hover:bg-zinc-100 hover:text-red-500 dark:hover:bg-zinc-800"
+                      title="Remove from history"
+                      @click="app.removeJob(j.id)"
+                    >
+                      <CloseIcon class="icon-sm" />
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </section>
       </div>
 

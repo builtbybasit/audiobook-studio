@@ -1,10 +1,10 @@
-<script setup>
+<script setup lang="ts">
 // "This run" panel: what the current chapter selection will cost before pressing Narrate. Cost and
 // request counts are per endpoint, because each speaker's voice pins its lines to one endpoint and
 // long segments split against that endpoint's per-request limit.
 import { computed } from "vue";
-import { useApp, keyring } from "../../stores/app";
-const props = defineProps({ bookId: String, selected: Array });
+import { useApp, keyring } from "@/stores/app";
+const props = defineProps<{ bookId: string; selected: number[] }>();
 const app = useApp();
 const est = computed(() => app.estimate(props.bookId, props.selected));
 const cast = computed(() => app.charactersOf(props.bookId));
@@ -21,7 +21,7 @@ const blockers = computed(() => {
     b.push(
       `Over the $${book.budget.cap} budget cap: $${app.spent(props.bookId).toFixed(2)} spent + $${est.value.cost.toFixed(2)} for this run.`,
     );
-  const byReason = {};
+  const byReason: Record<string, string[]> = {};
   for (const i of issues.value) (byReason[i.reason] ??= []).push(i.name);
   for (const [reason, names] of Object.entries(byReason))
     b.push(
@@ -29,11 +29,11 @@ const blockers = computed(() => {
     );
   return b;
 });
-const fmt = (s) =>
+const fmt = (s: number) =>
   s >= 3600
     ? `~${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`
     : `~${Math.round(s / 60)}m`;
-const k = (n) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n));
+const k = (n: number) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n));
 defineExpose({ blockers });
 </script>
 <template>

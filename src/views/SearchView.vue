@@ -1,15 +1,16 @@
-<script setup>
+<script setup lang="ts">
 // Script search across every scripted chapter of the book: text, speaker, direction. Results open the
 // reader at that exact segment.
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { useApp, isScripted } from "../stores/app";
-import { UiSelect, UiToggleGroup } from "../ui";
+import { useApp, isScripted } from "@/stores/app";
+import { UiSelect, UiToggleGroup } from "@/ui";
 import { useFilter } from "reka-ui";
+import { useBookId } from "@/router";
 const app = useApp();
 const route = useRoute();
 const router = useRouter();
-const bookId = route.params.bookId;
+const bookId = useBookId();
 const q = ref(String(route.query.q ?? ""));
 const speaker = ref("");
 const type = ref("all");
@@ -43,10 +44,10 @@ const results = computed(() => {
   return out;
 });
 const total = computed(() => results.value.reduce((a, r) => a + r.hits.length, 0));
-function mark(text) {
+function mark(text: string): { t: string; hit?: boolean }[] {
   const s = q.value.trim();
   if (!s) return [{ t: text }];
-  const parts = [];
+  const parts: { t: string; hit?: boolean }[] = [];
   let i = 0;
   const lower = text.toLowerCase(),
     needle = s.toLowerCase();
@@ -62,7 +63,7 @@ function mark(text) {
   }
   return parts;
 }
-const colorOf = (n) => cast.value.find((c) => c.name === n)?.color ?? "#71717a";
+const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#71717a";
 </script>
 <template>
   <div class="mx-auto max-w-4xl space-y-4 p-4 sm:p-6">

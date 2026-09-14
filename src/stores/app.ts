@@ -1,13 +1,51 @@
 // PROTOTYPE — in-memory state + simulated jobs. Nothing persists.
 import { defineStore } from "pinia";
-import { makeWorld, generateSegments, PALETTE, DISCOVERABLE_VOICES, voiceRef } from "../mock/data";
-import { splitText, partsFor } from "../lib/split";
-import { keyring } from "../lib/keyring";
+import { makeWorld, generateSegments, PALETTE, DISCOVERABLE_VOICES, voiceRef } from "@/mock/data";
+import { splitText, partsFor } from "@/lib/split";
+import { keyring } from "@/lib/keyring";
 import { toast as tf } from "vue-toastflow";
+import type { ToastButton } from "vue-toastflow";
+import type {
+  Book,
+  CastStat,
+  Chapter,
+  Character,
+  EffectiveVoice,
+  Endpoint,
+  EndpointEstimate,
+  EndpointLoad,
+  Eta,
+  ExportItem,
+  ExportMeta,
+  ExportVolume,
+  Gender,
+  Job,
+  JobKind,
+  JobStatus,
+  MergeSuggestion,
+  NarrationEstimate,
+  Profile,
+  ReqError,
+  ResolvedVoice,
+  RoutingIssue,
+  ScriptDiff,
+  ScriptEstimate,
+  ScriptSettings,
+  Segment,
+  SegmentMap,
+  SettingsFile,
+  ToastOptions,
+  UndoEntry,
+  Voice,
+  VoiceOption,
+  VoiceRef,
+  Volume,
+  World,
+} from "@/types";
 export { keyring };
-const clone = (x) => JSON.parse(JSON.stringify(x));
-const AVG_JOB = { scripting: 25, narration: 60, export: 120 }; // seconds, until we have history
-const ERRORS = [
+const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
+const AVG_JOB: Record<JobKind, number> = { scripting: 25, narration: 60, export: 120 }; // seconds, until we have history
+const ERRORS: ReqError[] = [
   {
     code: 500,
     message: "server error",
@@ -22,22 +60,24 @@ const ERRORS = [
 ];
 
 let jobSeq = 100;
-export const isScripted = (c) => c.scripting === "done" || c.scripting === "fallback";
-export const isNarrated = (c) => c.narration === "done" || c.narration === "stale";
-export const norm = (n) =>
+export const isScripted = (c: Chapter): boolean =>
+  c.scripting === "done" || c.scripting === "fallback";
+export const isNarrated = (c: Chapter): boolean =>
+  c.narration === "done" || c.narration === "stale";
+export const norm = (n: string): string =>
   n
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, "")
     .trim();
 export { voiceRef };
 export { partsFor };
-const GENDER = { m: "male", f: "female", n: "neutral" };
-const ago = (min) => Date.now() - min * 60000;
-function collapseChunk(segs) {
+const GENDER: Partial<Record<Gender, string>> = { m: "male", f: "female", n: "neutral" };
+const ago = (min: number): number => Date.now() - min * 60000;
+function collapseChunk(segs: Segment[]): Segment[] {
   const start = 4 + Math.floor(Math.random() * Math.max(1, segs.length - 12)),
     n = 5 + Math.floor(Math.random() * 4);
   const run = segs.slice(start, start + n);
-  const merged = {
+  const merged: Segment = {
     id: 0,
     type: "narration",
     speaker: "Narrator",
@@ -53,8 +93,16 @@ function collapseChunk(segs) {
   return out;
 }
 // History from "earlier today" so the Queue page has done / failed / cancelled rows to act on.
-function seedJobs() {
-  const mk = (kind, bookId, chapterId, label, status, startMin, secs) => ({
+function seedJobs(): Job[] {
+  const mk = (
+    kind: JobKind,
+    bookId: string,
+    chapterId: number | null,
+    label: string,
+    status: JobStatus,
+    startMin: number,
+    secs: number,
+  ): Job => ({
     id: jobSeq++,
     kind,
     bookId,
@@ -80,9 +128,9 @@ function seedJobs() {
     mk("narration", "drowned", 1, "Narrate · ch 1", "cancelled", 9, 12),
   ];
 }
-const key = (b, c) => `${b}:${c}`;
+const key = (b: string, c: number): string => `${b}:${c}`;
 // simulate a re-run of the LLM: same prose, but ~10% of dialogue re-attributed and one narration pair merged
-function reseg(segs) {
+function reseg(segs: Segment[]): Segment[] {
   const speakers = [...new Set(segs.filter((x) => x.type === "dialogue").map((x) => x.speaker))];
   const out = segs.map((x) => ({ ...x }));
   out.forEach((x, i) => {
@@ -100,10 +148,32 @@ function reseg(segs) {
   });
   return out;
 }
-const rnd = (a, b) => a + Math.random() * (b - a);
+const rnd = (a: number, b: number): number => a + Math.random() * (b - a);
+
+/** One output file of a build: the whole selection, or one volume of it. */
+interface ExportGroup {
+  vol: Volume | null;
+  index: number;
+  chapters: Chapter[];
+}
+
+interface AppState extends World {
+  profiles: Profile[];
+  scriptSettings: ScriptSettings;
+  jobs: Job[];
+  /** most recent last */
+  _undo: UndoEntry[];
+  /** `${bookId}:${chId}` → segments before the last re-script, for the diff panel */
+  _previous: SegmentMap;
+  /** browser notifications when a book's run finishes */
+  notify: boolean;
+  _kicked: boolean;
+  dark: boolean;
+  currentBookId: string | null;
+}
 
 export const useApp = defineStore("app", {
-  state: () => ({
+  state: (): AppState => ({
     ...makeWorld(),
     profiles: [
       {
@@ -145,18 +215,38 @@ export const useApp = defineStore("app", {
   }),
 
   getters: {
-    book: (s) => s.books.find((b) => b.id === s.currentBookId),
-    bookById: (s) => (id) => s.books.find((b) => b.id === id),
-    chaptersOf: (s) => (id) => s.chapters[id] ?? [],
-    chapter: (s) => (bookId, chId) => (s.chapters[bookId] ?? []).find((c) => c.id === chId),
-    charactersOf: (s) => (id) => s.characters[id] ?? [],
-    volumesOf: (s) => (id) => s.books.find((b) => b.id === id)?.volumes ?? [],
-    volumeOf: (s) => (bookId, chId) => {
-      const c = (s.chapters[bookId] ?? []).find((c) => c.id === chId);
-      return s.books.find((b) => b.id === bookId)?.volumes.find((v) => v.id === c?.volumeId);
-    },
-    segmentsOf: (s) => (bookId, chId) => s.segments[key(bookId, chId)] ?? [],
-    progress: (s) => (id) => {
+    book: (s): Book | undefined => s.books.find((b) => b.id === s.currentBookId),
+    bookById:
+      (s) =>
+      (id: string): Book | undefined =>
+        s.books.find((b) => b.id === id),
+    chaptersOf:
+      (s) =>
+      (id: string): Chapter[] =>
+        s.chapters[id] ?? [],
+    chapter:
+      (s) =>
+      (bookId: string, chId: number): Chapter | undefined =>
+        (s.chapters[bookId] ?? []).find((c) => c.id === chId),
+    charactersOf:
+      (s) =>
+      (id: string): Character[] =>
+        s.characters[id] ?? [],
+    volumesOf:
+      (s) =>
+      (id: string): Volume[] =>
+        s.books.find((b) => b.id === id)?.volumes ?? [],
+    volumeOf:
+      (s) =>
+      (bookId: string, chId: number): Volume | undefined => {
+        const c = (s.chapters[bookId] ?? []).find((c) => c.id === chId);
+        return s.books.find((b) => b.id === bookId)?.volumes.find((v) => v.id === c?.volumeId);
+      },
+    segmentsOf:
+      (s) =>
+      (bookId: string, chId: number): Segment[] =>
+        s.segments[key(bookId, chId)] ?? [],
+    progress: (s) => (id: string) => {
       const all = s.chapters[id] ?? [];
       const ch = all.filter((c) => !c.excluded);
       return {
@@ -171,8 +261,8 @@ export const useApp = defineStore("app", {
       };
     },
     activeJobs: (s) => s.jobs.filter((j) => j.status === "running" || j.status === "queued"),
-    endpointLoad: (s) => {
-      const load = Object.fromEntries(
+    endpointLoad: (s): Record<string, EndpointLoad> => {
+      const load: Record<string, EndpointLoad> = Object.fromEntries(
         s.endpoints.map((e) => [
           e.id,
           { active: 0, done: 0, failed: 0, backoff: e.backoffUntil > Date.now() },
@@ -180,7 +270,7 @@ export const useApp = defineStore("app", {
       );
       for (const segs of Object.values(s.segments))
         for (const seg of segs) {
-          const l = load[seg.audio.endpoint];
+          const l = seg.audio.endpoint ? load[seg.audio.endpoint] : undefined;
           if (!l) continue;
           if (seg.audio.status === "generating") l.active++;
           else if (seg.audio.status === "done") l.done++;
@@ -191,14 +281,16 @@ export const useApp = defineStore("app", {
     recentJobs: (s) => [...s.jobs].reverse().slice(0, 12),
     enabledEndpoints: (s) => s.endpoints.filter((e) => e.enabled),
     // voice ref `<endpointId>/<voiceId>` → { endpoint, voice } or null when either side was removed
-    resolveVoice: (s) => (ref) => {
-      if (!ref) return null;
-      const i = ref.indexOf("/");
-      const ep = s.endpoints.find((e) => e.id === ref.slice(0, i));
-      const v = ep?.voices.find((v) => v.id === ref.slice(i + 1));
-      return ep && v ? { endpoint: ep, voice: v } : null;
-    },
-    voiceLabel() {
+    resolveVoice:
+      (s) =>
+      (ref: VoiceRef | null | undefined): ResolvedVoice | null => {
+        if (!ref) return null;
+        const i = ref.indexOf("/");
+        const ep = s.endpoints.find((e) => e.id === ref.slice(0, i));
+        const v = ep?.voices.find((v) => v.id === ref.slice(i + 1));
+        return ep && v ? { endpoint: ep, voice: v } : null;
+      },
+    voiceLabel(): (ref: VoiceRef | null | undefined) => string {
       return (ref) => {
         const r = this.resolveVoice(ref);
         return r
@@ -209,7 +301,7 @@ export const useApp = defineStore("app", {
       };
     },
     // every voice on every endpoint, grouped for the pickers; paused endpoints stay listed but disabled
-    voiceOptions: (s) =>
+    voiceOptions: (s): VoiceOption[] =>
       s.endpoints.flatMap((e) =>
         e.voices.map((v) => ({
           value: voiceRef(e.id, v.id),
@@ -220,7 +312,7 @@ export const useApp = defineStore("app", {
         })),
       ),
     // a character with no voice of their own is read in the Narrator's voice
-    effectiveVoice() {
+    effectiveVoice(): (bookId: string, name: string) => EffectiveVoice {
       return (bookId, name) => {
         const cast = this.characters[bookId] ?? [];
         const c = cast.find((x) => x.name === name);
@@ -236,9 +328,9 @@ export const useApp = defineStore("app", {
       };
     },
     // speakers whose voice can't be rendered right now: voice/endpoint gone, endpoint paused, key missing
-    routingIssues() {
+    routingIssues(): (bookId: string) => RoutingIssue[] {
       return (bookId) => {
-        const out = [];
+        const out: RoutingIssue[] = [];
         for (const c of this.characters[bookId] ?? []) {
           if (!c.voice) continue;
           const r = this.resolveVoice(c.voice);
@@ -247,14 +339,14 @@ export const useApp = defineStore("app", {
               name: c.name,
               ref: c.voice,
               reason: "voice no longer exists",
-              kind: "missing",
+              kind: "missing" as const,
             });
           else if (!r.endpoint.enabled)
             out.push({
               name: c.name,
               ref: c.voice,
               reason: `${r.endpoint.name} is paused`,
-              kind: "paused",
+              kind: "paused" as const,
               endpoint: r.endpoint,
             });
           else if (r.endpoint.needsKey && !keyring.has(r.endpoint.id))
@@ -262,88 +354,99 @@ export const useApp = defineStore("app", {
               name: c.name,
               ref: c.voice,
               reason: `${r.endpoint.name} has no API key`,
-              kind: "nokey",
+              kind: "nokey" as const,
               endpoint: r.endpoint,
             });
         }
         return out;
       };
     },
-    scriptEstimate: (s) => (bookId, ids) => {
-      const chs = (s.chapters[bookId] ?? []).filter((c) => ids.includes(c.id));
-      const chars = chs.reduce((a, c) => a + c.words * 5.6, 0);
-      const chunks = chs.reduce(
-        (a, c) => a + Math.ceil((c.words * 5.6) / s.scriptSettings.chunkChars),
-        0,
-      );
-      const p = s.profiles.find((p) => p.id === s.scriptSettings.profile);
-      const inTok = (chars / 4) * 1.6,
-        outTok = (chars / 4) * 1.15; // prompt + context carry-over; re-emitted text + labels
-      return {
-        chapters: chs.length,
-        chars,
-        chunks,
-        seconds: chunks * (p?.secPerChunk ?? 10),
-        cost: (inTok * (p?.inPrice ?? 0) + outTok * (p?.outPrice ?? 0)) / 1e6,
-        profile: p,
-      };
-    },
+    scriptEstimate:
+      (s) =>
+      (bookId: string, ids: number[]): ScriptEstimate => {
+        const chs = (s.chapters[bookId] ?? []).filter((c) => ids.includes(c.id));
+        const chars = chs.reduce((a, c) => a + c.words * 5.6, 0);
+        const chunks = chs.reduce(
+          (a, c) => a + Math.ceil((c.words * 5.6) / s.scriptSettings.chunkChars),
+          0,
+        );
+        const p = s.profiles.find((p) => p.id === s.scriptSettings.profile);
+        const inTok = (chars / 4) * 1.6;
+        const outTok = (chars / 4) * 1.15; // prompt + context carry-over; re-emitted text + labels
+        return {
+          chapters: chs.length,
+          chars,
+          chunks,
+          seconds: chunks * (p?.secPerChunk ?? 10),
+          cost: (inTok * (p?.inPrice ?? 0) + outTok * (p?.outPrice ?? 0)) / 1e6,
+          profile: p,
+        };
+      },
     // raw chapter text (mock: rebuilt from the generator) for the picker's peek
-    rawText: () => (bookId, chId) =>
-      generateSegments(bookId, chId)
-        .map((x) => x.text)
-        .join("\n\n"),
+    rawText:
+      () =>
+      (bookId: string, chId: number): string =>
+        generateSegments(bookId, chId)
+          .map((x) => x.text)
+          .join("\n\n"),
     // what the last re-script changed, by matching segments on text
-    scriptDiff: (s) => (bookId, chId) => {
-      const prev = s._previous[key(bookId, chId)];
-      if (!prev) return null;
-      const cur = s.segments[key(bookId, chId)] ?? [];
-      const byText = (arr) => {
-        const m = new Map();
-        for (const x of arr) m.set(x.text, x);
-        return m;
-      };
-      const pm = byText(prev),
-        cm = byText(cur);
-      const speaker = [],
-        direction = [];
-      for (const [t, c] of cm) {
-        const p = pm.get(t);
-        if (!p) continue;
-        if (p.speaker !== c.speaker)
-          speaker.push({ id: c.id, text: t, from: p.speaker, to: c.speaker });
-        else if ((p.direction || "") !== (c.direction || ""))
-          direction.push({ id: c.id, text: t, from: p.direction, to: c.direction });
-      }
-      const added = cur.filter((c) => !pm.has(c.text)),
-        removed = prev.filter((p) => !cm.has(p.text));
-      return {
-        speaker,
-        direction,
-        added,
-        removed,
-        total: speaker.length + direction.length + added.length + removed.length,
-        prevCount: prev.length,
-        curCount: cur.length,
-      };
-    },
+    scriptDiff:
+      (s) =>
+      (bookId: string, chId: number): ScriptDiff | null => {
+        const prev = s._previous[key(bookId, chId)];
+        if (!prev) return null;
+        const cur = s.segments[key(bookId, chId)] ?? [];
+        const byText = (arr: Segment[]): Map<string, Segment> => {
+          const m = new Map<string, Segment>();
+          for (const x of arr) m.set(x.text, x);
+          return m;
+        };
+        const pm = byText(prev);
+        const cm = byText(cur);
+        const speaker: ScriptDiff["speaker"] = [];
+        const direction: ScriptDiff["direction"] = [];
+        for (const [t, c] of cm) {
+          const p = pm.get(t);
+          if (!p) continue;
+          if (p.speaker !== c.speaker)
+            speaker.push({ id: c.id, text: t, from: p.speaker, to: c.speaker });
+          else if ((p.direction || "") !== (c.direction || ""))
+            direction.push({ id: c.id, text: t, from: p.direction, to: c.direction });
+        }
+        const added = cur.filter((c) => !pm.has(c.text));
+        const removed = prev.filter((p) => !cm.has(p.text));
+        return {
+          speaker,
+          direction,
+          added,
+          removed,
+          total: speaker.length + direction.length + added.length + removed.length,
+          prevCount: prev.length,
+          curCount: cur.length,
+        };
+      },
     // money already rendered for a book (sum of each clip's recorded cost)
-    spent: (s) => (bookId) => {
-      let t = 0;
-      for (const [k, segs] of Object.entries(s.segments))
-        if (k.startsWith(bookId + ":"))
-          for (const x of segs) if (x.audio.cost && x.audio.status !== "failed") t += x.audio.cost;
-      return t;
-    },
+    spent:
+      (s) =>
+      (bookId: string): number => {
+        let t = 0;
+        for (const [k, segs] of Object.entries(s.segments))
+          if (k.startsWith(bookId + ":"))
+            for (const x of segs)
+              if (x.audio.cost && x.audio.status !== "failed") t += x.audio.cost;
+        return t;
+      },
     // rough finish time for everything active: per-book chains run in parallel, so take the longest chain
-    eta: (s) => {
-      const hist = {};
+    eta: (s): Eta | null => {
+      const hist: Partial<Record<JobKind, number[]>> = {};
       for (const j of s.jobs)
         if (j.status === "done" && j.startedAt && j.finishedAt)
           (hist[j.kind] ??= []).push((j.finishedAt - j.startedAt) / 1000);
-      const avg = (k) =>
-        hist[k]?.length ? hist[k].reduce((a, b) => a + b, 0) / hist[k].length : (AVG_JOB[k] ?? 60);
-      const perBook = {};
+      const avg = (k: JobKind): number => {
+        const h = hist[k];
+        return h?.length ? h.reduce((a, b) => a + b, 0) / h.length : (AVG_JOB[k] ?? 60);
+      };
+      const perBook: Record<string, number> = {};
       for (const j of s.jobs) {
         if (j.status !== "running" && j.status !== "queued") continue;
         const secs =
@@ -355,67 +458,71 @@ export const useApp = defineStore("app", {
         ? { seconds, at: Date.now() + seconds * 1000, books: Object.keys(perBook).length }
         : null;
     },
-    castStats: (s) => (bookId) => {
-      const stats = {};
-      for (const c of s.chapters[bookId] ?? [])
-        for (const seg of s.segments[`${bookId}:${c.id}`] ?? []) {
-          const st = (stats[seg.speaker] ??= { lines: 0, chapters: new Set(), first: c.id });
-          st.lines++;
-          st.chapters.add(c.id);
-          if (c.id < st.first) st.first = c.id;
-        }
-      return stats;
-    },
+    castStats:
+      (s) =>
+      (bookId: string): Record<string, CastStat> => {
+        const stats: Record<string, CastStat> = {};
+        for (const c of s.chapters[bookId] ?? [])
+          for (const seg of s.segments[`${bookId}:${c.id}`] ?? []) {
+            const st = (stats[seg.speaker] ??= { lines: 0, chapters: new Set(), first: c.id });
+            st.lines++;
+            st.chapters.add(c.id);
+            if (c.id < st.first) st.first = c.id;
+          }
+        return stats;
+      },
     // near-duplicate names worth merging: alias matches, one name contained in another, shared surname-ish token
-    mergeSuggestions: (s) => (bookId) => {
-      const cast = s.characters[bookId] ?? [];
-      const out = [];
-      for (const a of cast)
-        for (const b of cast) {
-          if (a === b || a.name === "Narrator" || b.name === "Narrator") continue;
-          const na = norm(a.name),
-            nb = norm(b.name);
-          if (
-            a.major &&
-            !b.major &&
-            b.aliases.length === 0 &&
-            a.aliases.some((x) => norm(x) === nb)
-          )
-            out.push({
-              from: b.name,
-              into: a.name,
-              reason: `“${b.name}” is a known alias of ${a.name}`,
-            });
-          else if (!b.major && na !== nb && na.split(" ").includes(nb) && nb.length > 2)
-            out.push({
-              from: b.name,
-              into: a.name,
-              reason: `“${b.name}” looks like a short form of ${a.name}`,
-            });
-          else if (!b.major && b.isNew && na !== nb && na.includes(nb) && nb.length > 3)
-            out.push({
-              from: b.name,
-              into: a.name,
-              reason: `“${b.name}” is contained in ${a.name}`,
-            });
-        }
-      const seen = new Set();
-      return out.filter((x) => {
-        const k = x.from;
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      });
-    },
+    mergeSuggestions:
+      (s) =>
+      (bookId: string): MergeSuggestion[] => {
+        const cast = s.characters[bookId] ?? [];
+        const out: MergeSuggestion[] = [];
+        for (const a of cast)
+          for (const b of cast) {
+            if (a === b || a.name === "Narrator" || b.name === "Narrator") continue;
+            const na = norm(a.name);
+            const nb = norm(b.name);
+            if (
+              a.major &&
+              !b.major &&
+              b.aliases.length === 0 &&
+              a.aliases.some((x) => norm(x) === nb)
+            )
+              out.push({
+                from: b.name,
+                into: a.name,
+                reason: `“${b.name}” is a known alias of ${a.name}`,
+              });
+            else if (!b.major && na !== nb && na.split(" ").includes(nb) && nb.length > 2)
+              out.push({
+                from: b.name,
+                into: a.name,
+                reason: `“${b.name}” looks like a short form of ${a.name}`,
+              });
+            else if (!b.major && b.isNew && na !== nb && na.includes(nb) && nb.length > 3)
+              out.push({
+                from: b.name,
+                into: a.name,
+                reason: `“${b.name}” is contained in ${a.name}`,
+              });
+          }
+        const seen = new Set<string>();
+        return out.filter((x) => {
+          const k = x.from;
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      },
     // Cost and load are per endpoint: each segment goes to the endpoint that owns its speaker's voice,
     // and a segment longer than that endpoint's limit becomes several requests.
-    estimate() {
+    estimate(): (bookId: string, ids: number[]) => NarrationEstimate {
       return (bookId, ids) => {
-        const per = {}; // endpointId → { endpoint, chars, segments, requests, split }
-        let chars = 0,
-          segments = 0,
-          unrouted = 0,
-          stale = 0;
+        const per: Record<string, EndpointEstimate> = {};
+        let chars = 0;
+        let segments = 0;
+        let unrouted = 0;
+        let stale = 0;
         for (const id of ids)
           for (const seg of this.segments[`${bookId}:${id}`] ?? []) {
             chars += seg.text.length;
@@ -462,8 +569,9 @@ export const useApp = defineStore("app", {
     // ---------- toasts & undo ----------
     // Thin wrapper over Toastflow so the rest of the app never imports it. `undo` makes the toast
     // undoable (↻, Undo button, 10 s, ⌘Z); `action` adds a second button; `timeout: 0` sticks.
-    toast(msg, { kind = "info", undo = null, action = null, timeout, description = "" } = {}) {
-      const type =
+    toast(msg: string, opts: ToastOptions = {}): string {
+      const { kind = "info", undo = null, action = null, timeout, description = "" } = opts;
+      const type = (
         {
           info: "info",
           warn: "warning",
@@ -471,9 +579,10 @@ export const useApp = defineStore("app", {
           error: "error",
           success: "success",
           loading: "loading",
-        }[kind] ?? "info";
-      const buttons = [];
-      const entry = undo ? { label: msg, revert: undo, toastId: null } : null;
+        } as const
+      )[kind];
+      const buttons: ToastButton[] = [];
+      const entry: UndoEntry | null = undo ? { label: msg, revert: undo, toastId: null } : null;
       if (entry)
         buttons.push({
           id: "undo",
@@ -503,35 +612,46 @@ export const useApp = defineStore("app", {
       }
       return id;
     },
-    dismissToast(id) {
+    dismissToast(id: string): void {
       tf.dismiss(id);
     },
-    _revert(entry) {
+    _revert(entry: UndoEntry): void {
       if (!this._undo.includes(entry)) return;
       entry.revert();
       this._undo = this._undo.filter((u) => u !== entry);
       if (entry.toastId != null) tf.dismiss(entry.toastId);
       tf.show({ type: "success", title: "Undone", description: entry.label, duration: 3000 });
     },
-    undoLast() {
+    undoLast(): boolean {
       const u = this._undo.at(-1);
       if (!u) return false;
       this._revert(u);
       return true;
     },
     // long-running work: one toast that goes loading → success / error (Toastflow's promise helper)
-    toastLoading(promise, { loading, success, error }) {
+    toastLoading<T>(
+      promise: Promise<T>,
+      {
+        loading,
+        success,
+        error,
+      }: {
+        loading: string;
+        success: string | ((r: T) => string);
+        error?: string | ((e: unknown) => string);
+      },
+    ): Promise<T> {
       const result = tf.loading(() => promise, {
         loading: { title: loading, duration: 0, progressBar: false },
-        success: (r) => ({
-          type: "success",
+        success: (r: T) => ({
+          type: "success" as const,
           title: typeof success === "function" ? success(r) : success,
           duration: 5000,
         }),
-        error: (e) => ({
-          type: "error",
+        error: (e: unknown) => ({
+          type: "error" as const,
           title: typeof error === "function" ? error(e) : (error ?? "Failed"),
-          description: e?.message ?? "",
+          description: e instanceof Error ? e.message : "",
           duration: 9000,
         }),
       });
@@ -539,9 +659,9 @@ export const useApp = defineStore("app", {
       return result;
     },
     // snapshots used by undo: the cast + every segment of a book (speakers live in both)
-    _castSnapshot(bookId) {
+    _castSnapshot(bookId: string): () => void {
       const chars = clone(this.characters[bookId]);
-      const segs = {};
+      const segs: SegmentMap = {};
       for (const [k, v] of Object.entries(this.segments))
         if (k.startsWith(bookId + ":")) segs[k] = clone(v);
       return () => {
@@ -549,26 +669,26 @@ export const useApp = defineStore("app", {
         for (const [k, v] of Object.entries(segs)) this.segments[k] = v;
       };
     },
-    _bookSnapshot(bookId) {
+    _bookSnapshot(bookId: string): () => void {
       const i = this.books.findIndex((b) => b.id === bookId);
-      const book = clone(this.books[i]),
-        chapters = clone(this.chapters[bookId]),
-        chars = clone(this.characters[bookId]);
-      const segs = {};
+      const book = clone(this.books[i]);
+      const chapters = clone(this.chapters[bookId]);
+      const chars = clone(this.characters[bookId]);
+      const segs: SegmentMap = {};
       for (const [k, v] of Object.entries(this.segments))
         if (k.startsWith(bookId + ":")) segs[k] = clone(v);
-      const exports = clone(this.exports.filter((e) => e.bookId === bookId)),
-        jobs = clone(
-          this.jobs.filter(
-            (j) => j.bookId === bookId && j.status !== "running" && j.status !== "queued",
-          ),
-        );
+      const exports = clone(this.exports.filter((e) => e.bookId === bookId));
+      const jobs = clone(
+        this.jobs.filter(
+          (j) => j.bookId === bookId && j.status !== "running" && j.status !== "queued",
+        ),
+      );
       return () => {
         if (!this.books.some((b) => b.id === bookId))
           this.books.splice(Math.min(i, this.books.length), 0, book);
         else
           Object.assign(
-            this.books.find((b) => b.id === bookId),
+            this.books.find((b) => b.id === bookId)!,
             book,
           );
         this.chapters[bookId] = chapters;
@@ -587,12 +707,12 @@ export const useApp = defineStore("app", {
     },
 
     // ---------- chapters ----------
-    setExcluded(bookId, chId, v) {
+    setExcluded(bookId: string, chId: number, v: boolean): void {
       const c = this.chapter(bookId, chId);
       if (c) c.excluded = v;
     },
     // apply one direction to every line of a speaker in a chapter (marks rendered ones stale)
-    applyDirection(bookId, chId, speaker, direction) {
+    applyDirection(bookId: string, chId: number, speaker: string, direction: string): number {
       let n = 0;
       for (const s of this.segmentsOf(bookId, chId))
         if (s.speaker === speaker && (s.direction || "") !== direction) {
@@ -611,7 +731,7 @@ export const useApp = defineStore("app", {
     },
 
     // ---------- budget & pause ----------
-    pauseBook(bookId) {
+    pauseBook(bookId: string): void {
       for (const j of this.jobs)
         if (j.bookId === bookId && (j.status === "running" || j.status === "queued"))
           this.cancelJob(j.id);
@@ -623,15 +743,15 @@ export const useApp = defineStore("app", {
         timeout: 5000,
       });
     },
-    resumeBook(bookId) {
+    resumeBook(bookId: string): void {
       const b = this.bookById(bookId);
       if (b?.budget) b.budget.paused = false;
     },
-    setBudgetCap(bookId, cap) {
+    setBudgetCap(bookId: string, cap: number | null): void {
       const b = this.bookById(bookId);
       if (b) (b.budget ??= { cap: null, paused: false }).cap = cap || null;
     },
-    _blocked(bookId, kind) {
+    _blocked(bookId: string, kind: string): boolean {
       const b = this.bookById(bookId);
       if (b?.budget?.paused) {
         this.toast(`${b.title} is paused — resume it from the overview to ${kind}`, {
@@ -643,7 +763,7 @@ export const useApp = defineStore("app", {
     },
 
     // ---------- settings (endpoints & profiles, keys excluded) ----------
-    exportSettings() {
+    exportSettings(): SettingsFile {
       return {
         version: 1,
         exportedAt: new Date().toISOString(),
@@ -662,12 +782,18 @@ export const useApp = defineStore("app", {
         scriptSettings: { ...this.scriptSettings },
       };
     },
-    importSettings(obj) {
+    importSettings(obj: Partial<SettingsFile> | null | undefined): void {
       if (!obj || !Array.isArray(obj.endpoints)) throw new Error("not a settings file");
       let n = 0;
       for (const e of obj.endpoints) {
         const cur = this.endpoints.find((x) => x.id === e.id);
-        const fresh = { history: [], failures: 0, rateLimits: 0, backoffUntil: 0, ...e };
+        const fresh = {
+          history: [],
+          failures: 0,
+          rateLimits: 0,
+          backoffUntil: 0,
+          ...e,
+        } as Endpoint;
         if (cur) Object.assign(cur, fresh);
         else this.endpoints.push(fresh);
         n++;
@@ -686,7 +812,7 @@ export const useApp = defineStore("app", {
     },
 
     // ---------- shared ----------
-    addJob(kind, bookId, label, chapterId = null) {
+    addJob(kind: JobKind, bookId: string, label: string, chapterId: number | null = null): Job {
       this.jobs.push({
         id: jobSeq++,
         kind,
@@ -702,14 +828,14 @@ export const useApp = defineStore("app", {
       });
       return this.jobs[this.jobs.length - 1]; // the reactive proxy — mutations on it must be observable
     },
-    removeJob(id) {
+    removeJob(id: number): void {
       const j = this.jobs.find((j) => j.id === id);
       if (j && (j.finishedAt || j.status === "queued")) {
         if (j.status === "queued") this.cancelJob(id);
         this.jobs = this.jobs.filter((x) => x.id !== id);
       }
     },
-    _sequential(jobs, start) {
+    _sequential(jobs: Job[], start: (job: Job, next: () => void) => void): void {
       const next = () => {
         const j = jobs.shift();
         if (!j) return;
@@ -718,11 +844,11 @@ export const useApp = defineStore("app", {
       };
       next();
     },
-    _finish(job, status) {
+    _finish(job: Job, status: JobStatus): void {
       job.status = status;
       job.finishedAt = Date.now();
     },
-    cancelJob(id) {
+    cancelJob(id: number): void {
       const job = this.jobs.find((j) => j.id === id);
       if (!job || job.finishedAt) return;
       job.cancelled = true;
@@ -734,12 +860,14 @@ export const useApp = defineStore("app", {
       }
       // running jobs notice `cancelled` on their next tick
     },
-    retryJob(id) {
+    retryJob(id: number): void {
       const job = this.jobs.find((j) => j.id === id);
       if (!job) return;
+      if (job.chapterId == null) return;
       if (job.kind === "scripting") this.runScripting(job.bookId, [job.chapterId]);
       if (job.kind === "narration") {
         const c = this.chapter(job.bookId, job.chapterId);
+        if (!c) return;
         if (
           c.narration === "failed" &&
           this.segmentsOf(job.bookId, c.id).some((x) => x.audio.status === "done")
@@ -748,29 +876,35 @@ export const useApp = defineStore("app", {
         else this.runNarration(job.bookId, [c.id]);
       }
     },
-    clearFinished() {
+    clearFinished(): void {
       this.jobs = this.jobs.filter((j) => !j.finishedAt);
     },
-    cancelAll() {
+    cancelAll(): void {
       for (const j of this.jobs.filter((j) => j.status === "queued")) this.cancelJob(j.id);
       for (const j of this.jobs.filter((j) => j.status === "running")) this.cancelJob(j.id);
     },
-    retryAllFailed() {
+    retryAllFailed(): void {
       // one retry per chapter, grouped by book so each book's chapters queue in order
-      const seen = new Set();
+      const seen = new Set<string>();
       for (const j of this.jobs.filter((j) => j.status === "failed" && j.kind !== "export")) {
         const key = `${j.kind}:${j.bookId}:${j.chapterId}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        const c = this.chapter(j.bookId, j.chapterId);
+        const c = j.chapterId == null ? undefined : this.chapter(j.bookId, j.chapterId);
+        if (!c) continue;
         if (j.kind === "scripting" && c.scripting === "failed") this.retryJob(j.id);
         if (j.kind === "narration" && c.narration === "failed") this.retryJob(j.id);
       }
     },
 
     // ---------- library ----------
-    _blankChapters(count, volumeId, startAt, prefix = "Chapter") {
-      return Array.from({ length: count }, (_, i) => ({
+    _blankChapters(
+      count: number,
+      volumeId: number,
+      startAt: number,
+      prefix = "Chapter",
+    ): Chapter[] {
+      return Array.from({ length: count }, (_, i): Chapter => ({
         id: startAt + i,
         index: startAt + i,
         volumeId,
@@ -784,7 +918,7 @@ export const useApp = defineStore("app", {
         duration: 0,
       }));
     },
-    addNovel(file, title) {
+    addNovel(file: string, title?: string): string {
       const id = "new" + Date.now();
       const count = 12 + Math.floor(Math.random() * 10);
       this.books.push({
@@ -812,12 +946,13 @@ export const useApp = defineStore("app", {
     },
     // A novel split across several EPUBs: each file becomes a volume, chapters keep numbering continuously
     // so roster / recap continuity can carry across the volume boundary.
-    addVolume(bookId, file, name) {
+    addVolume(bookId: string, file: string, name?: string): void {
       const book = this.bookById(bookId);
+      if (!book) return;
       const chs = this.chapters[bookId];
       const count = 8 + Math.floor(Math.random() * 8);
       const from = chs.length + 1;
-      const vol = {
+      const vol: Volume = {
         id: book.volumes.length + 1,
         name: name || `Vol. ${book.volumes.length + 1}`,
         file,
@@ -828,13 +963,13 @@ export const useApp = defineStore("app", {
       chs.push(...this._blankChapters(count, vol.id, from));
     },
 
-    renameVolume(bookId, volId, name) {
+    renameVolume(bookId: string, volId: number, name: string): void {
       const v = this.bookById(bookId)?.volumes.find((v) => v.id === volId);
       if (v && name.trim()) v.name = name.trim();
     },
     // Remove a volume (wrong EPUB added): its chapters, segments, jobs and exports go; the remaining
     // chapters are renumbered so numbering stays continuous. Removing the last volume removes the novel.
-    removeVolume(bookId, volId) {
+    removeVolume(bookId: string, volId: number): "book" | "volume" | null {
       const book = this.bookById(bookId);
       if (!book) return null;
       if (book.volumes.length <= 1) {
@@ -849,11 +984,14 @@ export const useApp = defineStore("app", {
       for (const j of this.jobs)
         if (
           j.bookId === bookId &&
+          j.chapterId != null &&
           gone.has(j.chapterId) &&
           (j.status === "running" || j.status === "queued")
         )
           this.cancelJob(j.id);
-      this.jobs = this.jobs.filter((j) => !(j.bookId === bookId && gone.has(j.chapterId)));
+      this.jobs = this.jobs.filter(
+        (j) => !(j.bookId === bookId && j.chapterId != null && gone.has(j.chapterId)),
+      );
       book.volumes = book.volumes.filter((v) => v.id !== volId);
       this._renumber(
         bookId,
@@ -863,7 +1001,7 @@ export const useApp = defineStore("app", {
       return "volume";
     },
     // Volumes are sortable: chapters follow the volume order and are renumbered continuously.
-    moveVolume(bookId, volId, toIndex) {
+    moveVolume(bookId: string, volId: number, toIndex: number): void {
       const book = this.bookById(bookId);
       if (!book) return;
       const from = book.volumes.findIndex((v) => v.id === volId);
@@ -883,13 +1021,14 @@ export const useApp = defineStore("app", {
       );
     },
     // give `ordered` chapters ids 1..n in that order; re-key segments, remap jobs/exports, fix volume ranges
-    _renumber(bookId, ordered) {
+    _renumber(bookId: string, ordered: Chapter[]): void {
       const book = this.bookById(bookId);
-      const map = {};
+      if (!book) return;
+      const map: Record<number, number> = {};
       ordered.forEach((c, i) => {
         map[c.id] = i + 1;
       });
-      const segs = {};
+      const segs: SegmentMap = {};
       for (const [k, v] of Object.entries(this.segments)) {
         if (!k.startsWith(bookId + ":")) {
           segs[k] = v;
@@ -924,7 +1063,7 @@ export const useApp = defineStore("app", {
         .filter((e) => e.bookId !== bookId || e.chapterIds.length);
       for (const e of this.exports) if (e.bookId === bookId) e.chapters = e.chapterIds.length;
     },
-    removeBook(bookId) {
+    removeBook(bookId: string): void {
       const revert = this._bookSnapshot(bookId);
       const title = this.bookById(bookId)?.title;
       for (const j of this.jobs)
@@ -943,7 +1082,7 @@ export const useApp = defineStore("app", {
     },
 
     // ---------- demo ----------
-    demoKick() {
+    demoKick(): void {
       if (this._kicked) return;
       this._kicked = true;
       setTimeout(() => {
@@ -953,7 +1092,7 @@ export const useApp = defineStore("app", {
     },
 
     // ---------- scripting ----------
-    runScripting(bookId, ids, { keepEdits = false } = {}) {
+    runScripting(bookId: string, ids: number[], { keepEdits = false } = {}): void {
       if (this._blocked(bookId, "script")) return;
       const chs = this.chapters[bookId].filter(
         (c) =>
@@ -974,7 +1113,7 @@ export const useApp = defineStore("app", {
         return this.addJob("scripting", bookId, `Script · ch ${c.id}`, c.id);
       });
       this._sequential(jobs, (job, done) => {
-        const c = this.chapter(bookId, job.chapterId);
+        const c = this.chapter(bookId, job.chapterId!)!;
         c.scripting = "running";
         job.status = "running";
         job.startedAt = Date.now();
@@ -1025,7 +1164,7 @@ export const useApp = defineStore("app", {
       });
     },
     // Re-run the LLM on just the chunk that fell back. Simulated: replaced by properly split segments.
-    retryChunk(bookId, chId, segId) {
+    retryChunk(bookId: string, chId: number, segId: number): void {
       const segs = this.segmentsOf(bookId, chId);
       const i = segs.findIndex((x) => x.id === segId);
       if (i < 0 || !segs[i].fallback) return;
@@ -1042,13 +1181,13 @@ export const useApp = defineStore("app", {
         const j = cur.findIndex((x) => x.id === segId);
         cur.splice(j, 1, ...fresh);
         cur.forEach((x, k) => (x.id = k + 1));
-        const c = this.chapter(bookId, chId);
+        const c = this.chapter(bookId, chId)!;
         if (!cur.some((x) => x.fallback)) c.scripting = "done";
         this._absorbCast(bookId, chId);
         this._finish(job, "done");
       }, 2500);
     },
-    _absorbCast(bookId, chId) {
+    _absorbCast(bookId: string, chId: number): void {
       const cast = this.characters[bookId];
       for (const s of this.segmentsOf(bookId, chId)) {
         if (!cast.some((c) => c.name === s.speaker)) {
@@ -1066,7 +1205,7 @@ export const useApp = defineStore("app", {
         }
       }
     },
-    setSpeaker(bookId, chId, segId, speaker) {
+    setSpeaker(bookId: string, chId: number, segId: number, speaker: string): void {
       const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
       if (s && s.speaker !== speaker) {
         s.speaker = speaker;
@@ -1074,46 +1213,50 @@ export const useApp = defineStore("app", {
         this._markStale(bookId, chId, s);
       }
     },
-    updateSegment(bookId, chId, segId, patch) {
+    updateSegment(bookId: string, chId: number, segId: number, patch: Partial<Segment>): void {
       const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
       if (!s) return;
-      const changed = Object.keys(patch).some((k) => s[k] !== patch[k]);
+      const changed = (Object.keys(patch) as (keyof Segment)[]).some((k) => s[k] !== patch[k]);
       Object.assign(s, patch);
       if (changed) {
         s.edited = true;
         this._markStale(bookId, chId, s);
       }
     },
-    dismissDiff(bookId, chId) {
+    dismissDiff(bookId: string, chId: number): void {
       delete this._previous[key(bookId, chId)];
     },
     // edited after narration → existing audio no longer matches the script
-    _markStale(bookId, chId, s) {
+    _markStale(bookId: string, chId: number, s: Segment): void {
       if (s.audio.status === "done" || s.audio.status === "stale") {
         s.audio.status = "stale";
         const c = this.chapter(bookId, chId);
-        if (c.narration === "done") c.narration = "stale";
+        if (c?.narration === "done") c.narration = "stale";
       }
     },
-    renarrateStale(bookId, chId) {
+    renarrateStale(bookId: string, chId: number): void {
       for (const s of this.segmentsOf(bookId, chId))
         if (s.audio.status === "stale")
           s.audio = { status: "queued", endpoint: null, ms: 0, duration: 0 };
       this._resume(bookId, chId);
     },
-    renameCharacter(bookId, from, to) {
+    renameCharacter(bookId: string, from: string, to: string): void {
       to = (to ?? "").trim();
       if (!to || from === to) return;
       const cast = this.characters[bookId];
-      if (cast.some((c) => c.name === to)) return this.mergeCharacter(bookId, from, to);
+      if (cast.some((c) => c.name === to)) {
+        this.mergeCharacter(bookId, from, to);
+        return;
+      }
       const revert = this._castSnapshot(bookId);
       const c = cast.find((x) => x.name === from);
+      if (!c) return;
       c.name = to;
       c.isNew = false;
       this._replaceSpeaker(bookId, from, to);
       this.toast(`Renamed “${from}” to “${to}”`, { undo: revert });
     },
-    mergeCharacter(bookId, from, into, { silent = false } = {}) {
+    mergeCharacter(bookId: string, from: string, into: string, { silent = false } = {}): void {
       if (from === into) return;
       const cast = this.characters[bookId];
       const src = cast.find((c) => c.name === from);
@@ -1129,7 +1272,7 @@ export const useApp = defineStore("app", {
           undo: revert,
         });
     },
-    mergeMany(bookId, names, into) {
+    mergeMany(bookId: string, names: string[], into: string): void {
       const revert = this._castSnapshot(bookId);
       let n = 0;
       for (const name of names)
@@ -1139,7 +1282,7 @@ export const useApp = defineStore("app", {
         }
       if (n) this.toast(`Merged ${n} speaker${n === 1 ? "" : "s"} into ${into}`, { undo: revert });
     },
-    deleteCharacter(bookId, name) {
+    deleteCharacter(bookId: string, name: string): void {
       const revert = this._castSnapshot(bookId);
       const n = this.lineCounts(bookId)[name] ?? 0;
       this.mergeCharacter(bookId, name, "Narrator", { silent: true });
@@ -1147,28 +1290,29 @@ export const useApp = defineStore("app", {
         undo: revert,
       });
     },
-    autoAssignByGender(bookId) {
+    autoAssignByGender(bookId: string): void {
       // pool = voices on enabled endpoints, grouped by the gender tag the endpoint's voice list carries
       const all = this.enabledEndpoints.flatMap((e) =>
         e.voices.map((v) => ({ ref: voiceRef(e.id, v.id), gender: v.gender })),
       );
       if (!all.length) return;
-      const byGender = {
+      const byGender: Partial<Record<Gender, typeof all>> = {
         m: all.filter((v) => v.gender === "m"),
         f: all.filter((v) => v.gender === "f"),
         n: all.filter((v) => v.gender === "n"),
       };
-      const used = {};
+      const used: Partial<Record<Gender, number>> = {};
       for (const c of this.characters[bookId]) {
         if (c.voice || c.name === "Narrator") continue;
-        const pool = byGender[c.gender]?.length ? byGender[c.gender] : all;
+        const byG = byGender[c.gender];
+        const pool = byG?.length ? byG : all;
         const i = (used[c.gender] = (used[c.gender] ?? 0) + 1);
         c.voice = pool[i % pool.length].ref;
       }
     },
 
     // ---------- endpoints & their voices ----------
-    addEndpoint() {
+    addEndpoint(): Endpoint {
       this.endpoints.push({
         id: "ep" + Date.now(),
         name: "New endpoint",
@@ -1191,7 +1335,7 @@ export const useApp = defineStore("app", {
       });
       return this.endpoints[this.endpoints.length - 1];
     },
-    removeEndpoint(id) {
+    removeEndpoint(id: string): void {
       // characters keep a dangling ref → shown as "missing" until undone or re-picked
       const i = this.endpoints.findIndex((e) => e.id === id);
       if (i < 0) return;
@@ -1201,13 +1345,13 @@ export const useApp = defineStore("app", {
         undo: () => this.endpoints.splice(Math.min(i, this.endpoints.length), 0, e),
       });
     },
-    addVoice(ep, { id, label, gender }) {
+    addVoice(ep: Endpoint, { id, label, gender }: Partial<Voice>): boolean {
       id = (id ?? "").trim();
       if (!id || ep.voices.some((v) => v.id === id)) return false;
       ep.voices.push({ id, label: (label ?? "").trim() || id, gender: gender ?? "n" });
       return true;
     },
-    removeVoice(ep, id) {
+    removeVoice(ep: Endpoint, id: string): void {
       const i = ep.voices.findIndex((v) => v.id === id);
       if (i < 0) return;
       const v = ep.voices[i];
@@ -1217,9 +1361,9 @@ export const useApp = defineStore("app", {
       });
     },
     // simulated GET /v1/audio/voices — most OpenAI-compatible servers (Kokoro-FastAPI, Orpheus…) expose one
-    fetchVoices(ep) {
+    fetchVoices(ep: Endpoint): Promise<number> {
       ep.fetching = true;
-      const work = new Promise((res, rej) =>
+      const work = new Promise<number>((res, rej) =>
         setTimeout(() => {
           ep.fetching = false;
           if (!/^https?:\/\/.+\..+/.test(ep.baseUrl) && !/127\.0\.0\.1|localhost/.test(ep.baseUrl))
@@ -1240,7 +1384,7 @@ export const useApp = defineStore("app", {
       return work.catch(() => 0);
     },
     // how many segments of this book a limit would split, for the endpoint card
-    splitCount(bookId, ep) {
+    splitCount(bookId: string, ep: Endpoint): number {
       if (!ep.maxChars) return 0;
       let n = 0;
       for (const k of Object.keys(this.segments))
@@ -1253,7 +1397,7 @@ export const useApp = defineStore("app", {
               n++;
       return n;
     },
-    _replaceSpeaker(bookId, from, to) {
+    _replaceSpeaker(bookId: string, from: string, to: string): void {
       for (const k of Object.keys(this.segments)) {
         if (!k.startsWith(bookId + ":")) continue;
         const chId = Number(k.split(":")[1]);
@@ -1264,8 +1408,8 @@ export const useApp = defineStore("app", {
           }
       }
     },
-    lineCounts(bookId, chId = null) {
-      const counts = {};
+    lineCounts(bookId: string, chId: number | null = null): Record<string, number> {
+      const counts: Record<string, number> = {};
       const keys = chId
         ? [key(bookId, chId)]
         : Object.keys(this.segments).filter((k) => k.startsWith(bookId + ":"));
@@ -1275,7 +1419,7 @@ export const useApp = defineStore("app", {
     },
 
     // ---------- narration ----------
-    runNarration(bookId, ids) {
+    runNarration(bookId: string, ids: number[]): void {
       if (this._blocked(bookId, "narrate")) return;
       const chs = this.chapters[bookId].filter(
         (c) =>
@@ -1290,30 +1434,30 @@ export const useApp = defineStore("app", {
         return this.addJob("narration", bookId, `Narrate · ch ${c.id}`, c.id);
       });
       this._sequential(jobs, (job, done) => {
-        const c = this.chapter(bookId, job.chapterId);
+        const c = this.chapter(bookId, job.chapterId!)!;
         for (const s of this.segmentsOf(bookId, c.id))
           s.audio = { status: "queued", endpoint: null, ms: 0, duration: 0 };
         this._dispatch(bookId, c, job, done);
       });
     },
-    retrySegment(bookId, chId, segId) {
+    retrySegment(bookId: string, chId: number, segId: number): void {
       const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
       if (s) s.audio = { status: "queued", endpoint: null, ms: 0, duration: 0 };
       this._resume(bookId, chId);
     },
-    retryFailed(bookId, chId) {
+    retryFailed(bookId: string, chId: number): void {
       for (const s of this.segmentsOf(bookId, chId))
         if (s.audio.status === "failed")
           s.audio = { status: "queued", endpoint: null, ms: 0, duration: 0 };
       this._resume(bookId, chId);
     },
-    _resume(bookId, chId) {
+    _resume(bookId: string, chId: number): void {
       const c = this.chapter(bookId, chId);
-      if (c.narration === "running") return;
+      if (!c || c.narration === "running") return;
       const job = this.addJob("narration", bookId, `Retry · ch ${c.id}`, c.id);
       this._dispatch(bookId, c, job, () => {});
     },
-    _dispatch(bookId, c, job, done) {
+    _dispatch(bookId: string, c: Chapter, job: Job, done: () => void): void {
       c.narration = "running";
       job.status = "running";
       job.startedAt = Date.now();
@@ -1374,8 +1518,8 @@ export const useApp = defineStore("app", {
                 : undefined,
             splitAt: ep.splitAt,
             // audit trail: exactly what this clip was rendered with, so later edits can be compared against it
-            voiceRef: route.ref,
-            voice: route.voice,
+            voiceRef: route.ref ?? undefined,
+            voice: route.voice ?? undefined,
             model: ep.model,
             direction: next.direction,
             style: who?.style ?? "",
@@ -1457,12 +1601,13 @@ export const useApp = defineStore("app", {
     // An export is identified by its filename. Building again with the same filename replaces the
     // previous audiobook (version bump, old entry kept as 'replaced'). With splitPerVolume, one
     // file is built per volume, each carrying volume metadata.
-    buildExport(bookId, ids, meta) {
+    buildExport(bookId: string, ids: number[], meta: ExportMeta): ExportItem[] {
       if (this._blocked(bookId, "build")) return [];
       const book = this.bookById(bookId);
+      if (!book) return [];
       const chs = this.chapters[bookId].filter((c) => ids.includes(c.id));
       if (!chs.length) return [];
-      const groups = meta.splitPerVolume
+      const groups: ExportGroup[] = meta.splitPerVolume
         ? book.volumes
             .map((v, i) => ({
               vol: v,
@@ -1470,15 +1615,15 @@ export const useApp = defineStore("app", {
               chapters: chs.filter((c) => c.volumeId === v.id),
             }))
             .filter((g) => g.chapters.length)
-        : [{ vol: null, index: null, chapters: chs }];
+        : [{ vol: null, index: 0, chapters: chs }];
       return groups.map((g) => this._buildOne(bookId, g, meta));
     },
-    exportFilename(meta, vol) {
+    exportFilename(meta: ExportMeta, vol: Volume | null): string {
       const base = (meta.filename || meta.title || "audiobook").replace(/\.m4b$/i, "");
       return vol ? `${base} - ${vol.name.split("·")[0].trim()}.m4b` : `${base}.m4b`;
     },
-    _buildOne(bookId, g, meta) {
-      const book = this.bookById(bookId);
+    _buildOne(bookId: string, g: ExportGroup, meta: ExportMeta): ExportItem {
+      const book = this.bookById(bookId)!;
       const filename = this.exportFilename(meta, g.vol);
       const prev = this.exports.find(
         (e) => e.bookId === bookId && e.filename === filename && e.status === "done",
@@ -1490,7 +1635,9 @@ export const useApp = defineStore("app", {
         filename,
         title: g.vol ? `${meta.title} · ${g.vol.name.split("·")[0].trim()}` : meta.title,
         series: meta.series,
-        volume: g.vol ? { number: g.index, name: g.vol.name, of: book.volumes.length } : null,
+        volume: g.vol
+          ? ({ number: g.index, name: g.vol.name, of: book.volumes.length } satisfies ExportVolume)
+          : null,
         author: meta.author,
         narrator: meta.narrator,
         year: meta.year,
@@ -1518,7 +1665,7 @@ export const useApp = defineStore("app", {
           this._finish(job, "cancelled");
           return;
         }
-        entry.progress = Math.min(100, entry.progress + rnd(3, 9));
+        entry.progress = Math.min(100, (entry.progress ?? 0) + rnd(3, 9));
         job.progress = entry.progress;
         if (entry.progress >= 100) {
           clearInterval(t);
@@ -1530,7 +1677,7 @@ export const useApp = defineStore("app", {
       }, 180);
       return entry;
     },
-    deleteExport(id) {
+    deleteExport(id: number): void {
       const i = this.exports.findIndex((e) => e.id === id);
       if (i < 0) return;
       const e = this.exports[i];
@@ -1540,7 +1687,7 @@ export const useApp = defineStore("app", {
       });
     },
     // narrated chapters that a finished export doesn't contain yet (new volume arrived, more chapters narrated)
-    newSince(exp) {
+    newSince(exp: ExportItem): number[] {
       const narrated = this.chaptersOf(exp.bookId)
         .filter(isNarrated)
         .map((c) => c.id);
@@ -1549,7 +1696,7 @@ export const useApp = defineStore("app", {
             .filter(
               (c) =>
                 isNarrated(c) &&
-                this.bookById(exp.bookId).volumes[exp.volume.number - 1]?.id === c.volumeId,
+                this.bookById(exp.bookId)?.volumes[exp.volume!.number - 1]?.id === c.volumeId,
             )
             .map((c) => c.id)
         : narrated;

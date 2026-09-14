@@ -1,5 +1,5 @@
-<script setup>
-defineProps({ label: String, n: Number, of: Number, color: String });
+<script setup lang="ts">
+defineProps<{ label?: string; n?: number; of?: number; color?: string }>();
 </script>
 <template>
   <div>
@@ -11,7 +11,7 @@ defineProps({ label: String, n: Number, of: Number, color: String });
       <div
         class="h-1 rounded"
         :class="color"
-        :style="{ width: (of ? (n / of) * 100 : 0) + '%' }"
+        :style="{ width: (of ? ((n ?? 0) / of) * 100 : 0) + '%' }"
       ></div>
     </div>
   </div>

@@ -6,11 +6,12 @@
   "scripts": {
     "dev": "vite",
     "prototype": "vite --open",
+    "typecheck": "vue-tsc --build",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "build": "vite build",
+    "build": "vue-tsc --build && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -22,10 +23,13 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^26.5.1",
     "@vitejs/plugin-vue": "^5.2.1",
     "oxfmt": "^0.67.0",
     "oxlint": "^1.82.0",
     "tailwindcss": "^4.0.0",
-    "vite": "^6.0.5"
+    "typescript": "6.0.3",
+    "vite": "^6.0.5",
+    "vue-tsc": "^3.3.11"
   }
 }

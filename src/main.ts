@@ -1,12 +1,12 @@
 import { createApp } from "vue";
 import { createPinia } from "pinia";
-import App from "./App.vue";
-import { router } from "./router";
-import { useReader, saveReader } from "./stores/reader";
-import { useApp } from "./stores/app";
-import { keyring } from "./lib/keyring";
-import "./style.css";
-import "./toasts.css";
+import App from "@/App.vue";
+import { router } from "@/router";
+import { useReader, saveReader } from "@/stores/reader";
+import { useApp } from "@/stores/app";
+import { keyring } from "@/lib/keyring";
+import "@/style.css";
+import "@/toasts.css";
 import { createToastflow } from "vue-toastflow";
 
 const pinia = createPinia();

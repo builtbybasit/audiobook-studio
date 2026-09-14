@@ -1,7 +1,7 @@
-<script setup>
+<script setup lang="ts">
 import { SwitchRoot, SwitchThumb } from "reka-ui";
-defineProps({ modelValue: Boolean, disabled: Boolean, label: String });
-const emit = defineEmits(["update:modelValue"]);
+defineProps<{ modelValue?: boolean; disabled?: boolean; label?: string }>();
+const emit = defineEmits<{ "update:modelValue": [boolean] }>();
 </script>
 <template>
   <label

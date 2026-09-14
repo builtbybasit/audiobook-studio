@@ -1,23 +1,24 @@
-<script setup>
+<script setup lang="ts">
 // Queue: every job across every book. Running now (with live detail), the pending queue (cancellable),
 // endpoint utilisation, and history with retry. A clock tick keeps elapsed times moving.
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { useApp } from "../stores/app";
-import StatusDot from "../components/StatusDot.vue";
+import { useApp } from "@/stores/app";
+import StatusDot from "@/components/StatusDot.vue";
+import type { Job, JobKind } from "@/types";
 
 const app = useApp();
 const now = ref(Date.now());
-let t;
+let t: ReturnType<typeof setInterval>;
 onMounted(() => {
   t = setInterval(() => (now.value = Date.now()), 500);
 });
 onUnmounted(() => clearInterval(t));
 
-const icon = { scripting: "✎", narration: "♪", export: "⤓" };
+const icon: Record<JobKind, string> = { scripting: "✎", narration: "♪", export: "⤓" };
 const running = computed(() => app.jobs.filter((j) => j.status === "running"));
 const queued = computed(() => app.jobs.filter((j) => j.status === "queued"));
 const history = computed(() =>
-  app.jobs.filter((j) => j.finishedAt).sort((a, b) => b.finishedAt - a.finishedAt),
+  app.jobs.filter((j) => j.finishedAt).sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0)),
 );
 const counts = computed(() => ({
   running: running.value.length,
@@ -36,14 +37,16 @@ const shown = computed(() =>
   filter.value === "all" ? history.value : history.value.filter((j) => j.status === filter.value),
 );
 
-const book = (j) => app.bookById(j.bookId);
-const chapter = (j) => (j.chapterId ? app.chapter(j.bookId, j.chapterId) : null);
-const elapsed = (j) => fmtDur(((j.finishedAt ?? now.value) - (j.startedAt ?? now.value)) / 1000);
-const fmtDur = (s) =>
+const book = (j: Job) => app.bookById(j.bookId);
+const chapter = (j: Job) => (j.chapterId ? app.chapter(j.bookId, j.chapterId) : null);
+const elapsed = (j: Job) =>
+  fmtDur(((j.finishedAt ?? now.value) - (j.startedAt ?? now.value)) / 1000);
+const fmtDur = (s: number) =>
   s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
-const clock = (ts) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-function segStats(j) {
-  const segs = app.segmentsOf(j.bookId, j.chapterId);
+const clock = (ts: number) =>
+  new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function segStats(j: Job) {
+  const segs = j.chapterId == null ? [] : app.segmentsOf(j.bookId, j.chapterId);
   return {
     total: segs.length,
     done: segs.filter((s) => s.audio.status === "done").length,
@@ -51,7 +54,7 @@ function segStats(j) {
     failed: segs.filter((s) => s.audio.status === "failed").length,
   };
 }
-const stageLink = (j) => `/book/${j.bookId}/${j.kind === "export" ? "export" : j.kind}`;
+const stageLink = (j: Job) => `/book/${j.bookId}/${j.kind === "export" ? "export" : j.kind}`;
 const eta = computed(() => {
   const _tick = now.value; // re-read the estimate as the clock advances
   return app.eta;
@@ -166,7 +169,7 @@ async function toggleNotify() {
                   ><span class="truncate text-zinc-500"
                     >· {{ book(j)?.title
                     }}<span v-if="chapter(j)">
-                      · ch {{ chapter(j).id }} {{ chapter(j).title }}</span
+                      · ch {{ chapter(j)!.id }} {{ chapter(j)!.title }}</span
                     ></span
                   >
                 </div>
@@ -193,7 +196,7 @@ async function toggleNotify() {
                 ><b class="text-violet-500">{{ segStats(j).gen }}</b> generating</span
               >
               <span
-                ><b :class="segStats(j).failed && 'text-red-500'">{{ segStats(j).failed }}</b>
+                ><b :class="segStats(j).failed ? 'text-red-500' : ''">{{ segStats(j).failed }}</b>
                 failed</span
               >
               <span>of {{ segStats(j).total }} segments</span>
@@ -308,7 +311,7 @@ async function toggleNotify() {
                 </td>
                 <td class="w-20 text-right font-mono text-xs text-zinc-500">{{ elapsed(j) }}</td>
                 <td class="w-24 text-right font-mono text-xs text-zinc-400">
-                  {{ clock(j.finishedAt) }}
+                  {{ clock(j.finishedAt!) }}
                 </td>
                 <td class="w-28 pr-4 text-right">
                   <button

@@ -1,10 +1,10 @@
-<script setup>
+<script setup lang="ts">
 // Voice picker for a character: a popover with search, gender filter, voices grouped by endpoint
 // (paused ones listed but disabled), "used by N" and an inline demo button. Built on reka Popover +
 // Listbox so arrows/Enter work. v-model is the voice ref (`endpointId/voiceId`) or null.
 import { computed, ref, watch } from "vue";
-import { useApp } from "../stores/app";
-import { speak } from "../composables/usePlayer";
+import { useApp } from "@/stores/app";
+import { speak } from "@/composables/usePlayer";
 import {
   ListboxContent,
   ListboxFilter,
@@ -18,17 +18,21 @@ import {
   PopoverTrigger,
   useFilter,
 } from "reka-ui";
-import { UiToggleGroup } from "../ui";
+import { UiToggleGroup } from "@/ui";
+import type { Gender, VoiceRef } from "@/types";
 
-const props = defineProps({
-  modelValue: { default: null },
-  bookId: String,
-  nullLabel: { type: String, default: "Narrator’s voice" },
-  size: { type: String, default: "sm" },
-  block: Boolean,
-  speaker: String,
-});
-const emit = defineEmits(["update:modelValue"]);
+const props = withDefaults(
+  defineProps<{
+    modelValue?: VoiceRef | null;
+    bookId: string;
+    nullLabel?: string;
+    size?: "xs" | "sm";
+    block?: boolean;
+    speaker?: string;
+  }>(),
+  { modelValue: null, nullLabel: "Narrator’s voice", size: "sm", speaker: undefined },
+);
+const emit = defineEmits<{ "update:modelValue": [VoiceRef | null] }>();
 const app = useApp();
 const open = ref(false);
 const q = ref("");
@@ -44,7 +48,7 @@ watch(open, (o) => {
 const current = computed(() => app.resolveVoice(props.modelValue));
 const missing = computed(() => props.modelValue && !current.value);
 const usedBy = computed(() => {
-  const m = {};
+  const m: Record<VoiceRef, string[]> = {};
   for (const c of app.charactersOf(props.bookId)) if (c.voice) (m[c.voice] ??= []).push(c.name);
   return m;
 });
@@ -63,9 +67,9 @@ const rows = computed(() =>
     }))
     .filter((g) => g.voices.length),
 );
-const G = { m: "♂", f: "♀", n: "◦" };
-function pick(v) {
-  emit("update:modelValue", v === "__null__" ? null : v);
+const G: Partial<Record<Gender, string>> = { m: "♂", f: "♀", n: "◦" };
+function pick(v: unknown) {
+  emit("update:modelValue", v === "__null__" ? null : String(v));
   open.value = false;
 }
 const sample =
@@ -89,7 +93,7 @@ defineExpose({ open });
       <span class="min-w-0 flex-1 truncate text-left">
         <template v-if="missing"
           ><span class="not-italic text-amber-600"
-            >{{ modelValue.split("/")[1] }} — missing</span
+            >{{ modelValue!.split("/")[1] }} — missing</span
           ></template
         >
         <template v-else-if="current"

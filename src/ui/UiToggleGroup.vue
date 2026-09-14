@@ -1,13 +1,17 @@
-<script setup>
+<script setup lang="ts">
 // Single-select segmented control. options: [{ value, label, class? }]
 import { ToggleGroupItem, ToggleGroupRoot } from "reka-ui";
-defineProps({
-  modelValue: { default: undefined },
-  options: { type: Array, default: () => [] },
-  size: { type: String, default: "xs" },
-  block: Boolean,
-});
-const emit = defineEmits(["update:modelValue"]);
+import type { UiOption } from "@/ui/types";
+withDefaults(
+  defineProps<{
+    modelValue?: string | number | null;
+    options?: UiOption[];
+    size?: "xs" | "sm";
+    block?: boolean;
+  }>(),
+  { modelValue: undefined, options: () => [], size: "xs" },
+);
+const emit = defineEmits<{ "update:modelValue": [string | number | null] }>();
 </script>
 <template>
   <ToggleGroupRoot
@@ -17,8 +21,8 @@ const emit = defineEmits(["update:modelValue"]);
     :class="block && 'grid w-full'"
     :style="block ? { gridTemplateColumns: `repeat(${options.length}, minmax(0,1fr))` } : {}"
     @update:model-value="
-      (v) => {
-        if (v != null && v !== '') emit('update:modelValue', v);
+      (v: unknown) => {
+        if (v != null && v !== '') emit('update:modelValue', v as string | number);
       }
     "
   >

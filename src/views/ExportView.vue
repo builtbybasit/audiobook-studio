@@ -1,19 +1,21 @@
-<script setup>
+<script setup lang="ts">
 // Export: assemble narrated chapters into M4B files. Repeatable — as volumes arrive, rebuild with the
 // same filename to replace the previous audiobook (versioned), or split one file per volume with
 // volume metadata (series / volume N of M).
 import { computed, reactive, ref, watch } from "vue";
-import { useRoute } from "vue-router";
-import { useApp, isNarrated } from "../stores/app";
-import { usePlayer } from "../composables/usePlayer";
-import EmptyState from "../components/EmptyState.vue";
-import { UiSelect, UiSwitch } from "../ui";
+import { useApp, isNarrated } from "@/stores/app";
+import { useBookId } from "@/router";
+import { usePlayer } from "@/composables/usePlayer";
+import EmptyState from "@/components/EmptyState.vue";
+import { UiSelect, UiSwitch } from "@/ui";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
-import ChapterPicker from "../components/ChapterPicker.vue";
+import ChapterPicker from "@/components/ChapterPicker.vue";
+import type { Chapter, ExportItem } from "@/types";
 
 const app = useApp();
-const bookId = useRoute().params.bookId;
-const book = computed(() => app.bookById(bookId));
+const bookId = useBookId();
+// the router only reaches this view with a real book id
+const book = computed(() => app.bookById(bookId)!);
 const multi = computed(() => book.value.volumes.length > 1);
 const selected = ref(
   app
@@ -38,7 +40,7 @@ const meta = reactive({
   gapCh: 2.0,
   volPrefix: true,
   splitPerVolume: false,
-  cover: null,
+  cover: null as string | null,
   markers: true,
   markerPattern: "{n}. {title}",
 });
@@ -49,29 +51,31 @@ const PATTERNS = [
   { value: "{title}", label: "The Silent Peak" },
   { value: "Chapter {n}", label: "Chapter 1" },
 ];
-const marker = (c, i) =>
+const marker = (c: Chapter, i: number) =>
   meta.markerPattern
-    .replace("{n}", i + 1)
+    .replace("{n}", String(i + 1))
     .replace(
       "{title}",
       (multi.value && meta.volPrefix && !meta.splitPerVolume ? shortVol(volName(c)) + " · " : "") +
         c.title,
     );
-function pickCover(e) {
-  const f = e.target.files?.[0];
+function pickCover(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const f = input.files?.[0];
   if (!f) return;
   const r = new FileReader();
-  r.onload = () => (meta.cover = r.result);
+  r.onload = () => (meta.cover = String(r.result));
   r.readAsDataURL(f);
-  e.target.value = "";
+  input.value = "";
 }
-const pathOf = (e) => `~/Audiobooks/${(e.series || e.title).replace(/[/:]/g, "-")}/${e.filename}`;
-function copyPath(e) {
+const pathOf = (e: ExportItem) =>
+  `~/Audiobooks/${(e.series || e.title).replace(/[/:]/g, "-")}/${e.filename}`;
+function copyPath(e: ExportItem) {
   navigator.clipboard?.writeText(pathOf(e));
   app.toast("Path copied", { kind: "success", timeout: 2500 });
 }
-function download(e) {
-  const work = new Promise((res) => setTimeout(res, 1800));
+function download(e: ExportItem) {
+  const work = new Promise<void>((res) => setTimeout(res, 1800));
   app.toastLoading(work, {
     loading: `Preparing ${e.filename} (${e.size} MB)…`,
     success: `${e.filename} is ready`,
@@ -84,13 +88,13 @@ const selChapters = computed(() =>
   app.chaptersOf(bookId).filter((c) => selected.value.includes(c.id)),
 );
 const totalDur = computed(() => selChapters.value.reduce((a, c) => a + c.duration, 0));
-const fmt = (s) =>
+const fmt = (s: number) =>
   s >= 3600
     ? `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, "0")}m`
     : `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s`;
-const estSize = (dur) => Math.round(((dur * meta.bitrate) / 8 / 1024) * 1.04);
-const volName = (c) => book.value.volumes.find((v) => v.id === c.volumeId)?.name ?? "";
-const shortVol = (name) => name.split("·")[0].trim();
+const estSize = (dur: number) => Math.round(((dur * meta.bitrate) / 8 / 1024) * 1.04);
+const volName = (c: Chapter) => book.value.volumes.find((v) => v.id === c.volumeId)?.name ?? "";
+const shortVol = (name: string) => name.split("·")[0].trim();
 
 // what will be built: one plan entry per output file
 const plan = computed(() => {
@@ -112,18 +116,18 @@ const plan = computed(() => {
     }))
     .filter((p) => p.chapters.length);
 });
-const existing = (filename) =>
+const existing = (filename: string) =>
   app.exports.find((e) => e.bookId === bookId && e.filename === filename && e.status === "done");
 
 const exportsHere = computed(() =>
   app.exports.filter((e) => e.bookId === bookId && e.status !== "replaced"),
 );
-const olderOf = (e) =>
+const olderOf = (e: ExportItem) =>
   app.exports.filter(
     (x) => x.bookId === bookId && x.filename === e.filename && x.status === "replaced",
   );
-const showOld = ref(new Set());
-function rebuild(e) {
+const showOld = ref(new Set<number>());
+function rebuild(e: ExportItem) {
   // same filename, previous chapters + everything narrated since
   const ids = [...new Set([...e.chapterIds, ...app.newSince(e)])];
   const m = {
@@ -134,7 +138,7 @@ function rebuild(e) {
     splitPerVolume: false,
   };
   if (e.volume) {
-    const v = book.value.volumes[e.volume.number - 1];
+    const v = book.value.volumes[e.volume.number - 1]!;
     app._buildOne(
       bookId,
       {
@@ -414,8 +418,8 @@ function rebuild(e) {
             <span
               v-if="existing(p.filename)"
               class="rounded bg-amber-400/20 px-1.5 text-[10px] font-semibold text-amber-600"
-              :title="`Replaces v${existing(p.filename).version} from ${existing(p.filename).createdAt}`"
-              >replaces v{{ existing(p.filename).version }}</span
+              :title="`Replaces v${existing(p.filename)!.version} from ${existing(p.filename)!.createdAt}`"
+              >replaces v{{ existing(p.filename)!.version }}</span
             >
             <span
               v-else

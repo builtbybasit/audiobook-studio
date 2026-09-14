@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Job ledger: one row per segment, filterable. Sticky player at the bottom plays the stitched chapter:
 // a scrubber drawn from segment boundaries (colour = speaker), the current row highlighted and kept in
 // view. Stale rows (edited after narration) can be re-rendered on their own. Each rendered row expands
@@ -6,15 +6,17 @@
 // failures, the HTTP status + body with a "copy request" for debugging.
 // Keyboard: j/k move, ↵/p play, r retry, i details.
 import { computed, ref, watch } from "vue";
-import { useJob, STATUS_BG, fmt } from "./shared";
-import { usePlayer } from "../../composables/usePlayer";
+import { useJob, STATUS_BG, fmt } from "@/views/narration/shared";
+import { usePlayer } from "@/composables/usePlayer";
+import type { Segment } from "@/types";
 
-const props = defineProps({ bookId: String, chapterId: Number });
-const { app, chapter, segments, colorOf, voiceOf, epName, stats } = useJob(props);
+const props = defineProps<{ bookId: string; chapterId: number }>();
+const { app, segments, colorOf, voiceOf, epName, stats } = useJob(props);
+const chapter = computed(() => app.chapter(props.bookId, props.chapterId)!);
 const { p, play, pause, seek } = usePlayer();
 const filter = ref("all");
-const expanded = ref(new Set());
-const toggleDetails = (id) => {
+const expanded = ref(new Set<number>());
+const toggleDetails = (id: number) => {
   const n = new Set(expanded.value);
   if (n.has(id)) n.delete(id);
   else n.add(id);
@@ -27,7 +29,7 @@ const rows = computed(() =>
     : segments.value.filter((s) => s.audio.status === filter.value),
 );
 const FILTERS = ["all", "done", "generating", "queued", "failed", "stale"];
-const count = (f) =>
+const count = (f: string) =>
   f === "all" ? stats.value.total : segments.value.filter((s) => s.audio.status === f).length;
 
 const timeline = computed(() => {
@@ -52,14 +54,14 @@ watch(currentId, (id) => {
   if (id && p.playing)
     document.getElementById("row-" + id)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 });
-function playFrom(s) {
+function playFrom(s: Segment) {
   const x = timeline.value.find((x) => x.s.id === s.id);
   if (!x) return;
   play("chapter", total.value);
   p.pos = x.start;
 }
-function scrub(e) {
-  const frac = e.offsetX / e.currentTarget.clientWidth;
+function scrub(e: MouseEvent) {
+  const frac = e.offsetX / (e.currentTarget as HTMLElement).clientWidth;
   if (p.id !== "chapter") {
     play("chapter", total.value);
     pause();
@@ -68,7 +70,7 @@ function scrub(e) {
 }
 
 // what differs between the clip and the script now (the reason a row is stale, made explicit)
-function drift(s) {
+function drift(s: Segment) {
   const a = s.audio;
   if (!a.at) return [];
   const out = [];
@@ -83,8 +85,9 @@ function drift(s) {
     out.push(`style: “${a.style || "—"}” → “${who?.style || "—"}”`);
   return out;
 }
-const clock = (ts) => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-function requestOf(s) {
+const clock = (ts: number) =>
+  new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function requestOf(s: Segment) {
   const ep = app.endpoints.find((e) => e.id === s.audio.endpoint);
   return JSON.stringify(
     {
@@ -103,13 +106,14 @@ function requestOf(s) {
     2,
   );
 }
-function copyReq(s) {
+function copyReq(s: Segment) {
   navigator.clipboard?.writeText(requestOf(s));
   app.toast("Request copied as JSON", { kind: "success", timeout: 2500 });
 }
-function onRowKey(e, s) {
-  const list = [...e.currentTarget.parentElement.querySelectorAll("tr[data-row]")];
-  const i = list.indexOf(e.currentTarget);
+function onRowKey(e: KeyboardEvent, s: Segment) {
+  const row = e.currentTarget as HTMLElement;
+  const list = [...(row.parentElement?.querySelectorAll<HTMLElement>("tr[data-row]") ?? [])];
+  const i = list.indexOf(row);
   if (e.key === "ArrowDown" || e.key === "j") {
     e.preventDefault();
     list[i + 1]?.focus();
@@ -250,7 +254,7 @@ function onRowKey(e, s) {
               </td>
               <td class="text-xs">
                 <div class="truncate">{{ epName(s.audio.endpoint) }}</div>
-                <div v-if="s.audio.parts > 1" class="text-[10px] text-zinc-400">
+                <div v-if="(s.audio.parts ?? 0) > 1" class="text-[10px] text-zinc-400">
                   {{ s.audio.parts }} parts · {{ s.text.length }} ch
                 </div>
               </td>
@@ -353,8 +357,8 @@ function onRowKey(e, s) {
                 </div>
                 <div v-if="s.audio.cuts" class="mt-1">
                   <div class="mb-1 text-[10px] uppercase tracking-wider text-zinc-400">
-                    sent as {{ s.audio.cuts.length }} requests · cut at
-                    {{ AT[s.audio.splitAt] ?? s.audio.splitAt }} · joined after
+                    sent as {{ s.audio.cuts!.length }} requests · cut at
+                    {{ (s.audio.splitAt && AT[s.audio.splitAt]) ?? s.audio.splitAt }} · joined after
                   </div>
                   <ol class="space-y-1">
                     <li v-for="(c, i) in s.audio.cuts" :key="i" class="flex gap-3">

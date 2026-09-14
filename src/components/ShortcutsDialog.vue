@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // "?" anywhere outside a field, or the palette entry, opens the shortcut reference.
 import {
   DialogContent,

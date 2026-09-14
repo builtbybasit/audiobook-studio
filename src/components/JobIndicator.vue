@@ -1,6 +1,6 @@
-<script setup>
+<script setup lang="ts">
 // Top-bar glance at the queue; click-through to the Queue page.
-import { useApp } from "../stores/app";
+import { useApp } from "@/stores/app";
 const app = useApp();
 </script>
 

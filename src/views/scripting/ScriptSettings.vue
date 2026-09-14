@@ -1,13 +1,13 @@
-<script setup>
+<script setup lang="ts">
 // Run settings + estimate for scripting: LLM profile, chunk size, watermark stripping, cost/time.
 import { computed } from "vue";
-import { useApp } from "../../stores/app";
-import { UiSelect, UiSlider, UiSwitch } from "../../ui";
-import { keyring } from "../../lib/keyring";
-const props = defineProps({ bookId: String, selected: Array });
+import { useApp } from "@/stores/app";
+import { UiSelect, UiSlider, UiSwitch } from "@/ui";
+import { keyring } from "@/lib/keyring";
+const props = defineProps<{ bookId: string; selected: number[] }>();
 const app = useApp();
 const est = computed(() => app.scriptEstimate(props.bookId, props.selected));
-const fmt = (s) =>
+const fmt = (s: number) =>
   s >= 3600
     ? `~${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`
     : s >= 60
@@ -49,7 +49,9 @@ const fmt = (s) =>
         :placeholder="
           keyring.has('profile:' + est.profile.id) ? '' : 'paste API key (kept in memory only)'
         "
-        @input="keyring.set('profile:' + est.profile.id, $event.target.value)"
+        @input="
+          keyring.set('profile:' + est.profile!.id, ($event.target as HTMLInputElement).value)
+        "
       /><span v-if="!keyring.has('profile:' + est.profile.id)" class="text-amber-600"
         >⚠ no key</span
       >

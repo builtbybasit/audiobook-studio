@@ -1,9 +1,10 @@
-<script setup>
+<script setup lang="ts">
 // ⌘K / Ctrl+K command palette: reka Dialog + Listbox with a filter. Jump to any page, book, chapter,
 // speaker or endpoint, or run the common actions (script pending, narrate, retry failed, toggle theme…).
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { useApp, isScripted, isNarrated } from "../stores/app";
+import type { RouteLocationRaw } from "vue-router";
+import { useApp, isScripted, isNarrated } from "@/stores/app";
 import {
   DialogContent,
   DialogDescription,
@@ -25,12 +26,12 @@ const router = useRouter();
 const route = useRoute();
 const open = ref(false);
 const q = ref("");
-const content = ref(null);
+const content = ref<{ $el?: HTMLElement } | null>(null);
 const { contains } = useFilter({ sensitivity: "base" });
 const isMac = /Mac|iPhone/.test(navigator.platform);
 const mod = isMac ? "⌘" : "Ctrl";
 
-function onKey(e) {
+function onKey(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
     open.value = !open.value;
@@ -45,11 +46,21 @@ watch(open, (o) => {
 const bookId = computed(() => app.currentBookId);
 const book = computed(() => app.book);
 const chs = computed(() => (bookId.value ? app.chaptersOf(bookId.value) : []));
-const go = (to) => () => router.push(to);
+const go = (to: RouteLocationRaw) => () => router.push(to);
 
-// { id, group, label, hint?, keywords?, run } — order = default order when the query is empty
+/** One row of the palette; the default order is the order they are pushed. */
+interface Command {
+  id: string;
+  group: string;
+  label: string;
+  hint?: string;
+  keywords?: string;
+  /** speaker swatch, on Speakers rows */
+  color?: string;
+  run: () => void;
+}
 const commands = computed(() => {
-  const out = [];
+  const out: Command[] = [];
   const b = bookId.value;
   out.push({
     id: "nav-library",
@@ -69,7 +80,7 @@ const commands = computed(() => {
     out.push({
       id: "nav-overview",
       group: "Go to",
-      label: `Overview · ${book.value.title}`,
+      label: `Overview · ${book.value!.title}`,
       run: go(`/book/${b}`),
     });
     out.push({
@@ -230,7 +241,7 @@ const commands = computed(() => {
     out.push({
       id: "act-undo",
       group: "Actions",
-      label: `Undo: ${app._undo.at(-1).label}`,
+      label: `Undo: ${app._undo.at(-1)!.label}`,
       hint: `${mod} Z`,
       run: () => app.undoLast(),
     });
@@ -238,11 +249,11 @@ const commands = computed(() => {
     out.push({
       id: "act-pause",
       group: "Actions",
-      label: book.value.budget?.paused
-        ? `Resume ${book.value.title}`
-        : `Pause everything on ${book.value.title}`,
+      label: book.value!.budget?.paused
+        ? `Resume ${book.value!.title}`
+        : `Pause everything on ${book.value!.title}`,
       keywords: "budget stop",
-      run: () => (book.value.budget?.paused ? app.resumeBook(b) : app.pauseBook(b)),
+      run: () => (book.value!.budget?.paused ? app.resumeBook(b) : app.pauseBook(b)),
     });
   // books
   for (const bk of app.books)
@@ -269,7 +280,7 @@ const commands = computed(() => {
       group: "Chapters",
       label: `${String(c.id).padStart(2, "0")} · ${c.title}`,
       hint: state,
-      keywords: `chapter ${c.id} ${app.volumeOf(b, c.id)?.name ?? ""}`,
+      keywords: `chapter ${c.id} ${app.volumeOf(b!, c.id)?.name ?? ""}`,
       run: go({ path: `/book/${b}/${stage}`, query: { ch: c.id } }),
     });
   }
@@ -327,7 +338,7 @@ const filtered = computed(() => {
     : commands.value;
   // without a query keep it short: nav + actions + a few of each big group
   const cap = s ? 40 : 8;
-  const seen = {};
+  const seen: Record<string, number> = {};
   return list.filter(
     (c) =>
       (seen[c.group] = (seen[c.group] ?? 0) + 1) <=
@@ -335,21 +346,21 @@ const filtered = computed(() => {
   );
 });
 const groups = computed(() => {
-  const m = new Map();
+  const m = new Map<string, Command[]>();
   for (const c of filtered.value) {
     if (!m.has(c.group)) m.set(c.group, []);
-    m.get(c.group).push(c);
+    m.get(c.group)!.push(c);
   }
   return [...m.entries()];
 });
 
-function run(id) {
+function run(id: string) {
   const c = filtered.value.find((c) => c.id === id) ?? commands.value.find((c) => c.id === id);
   if (!c) return;
   open.value = false;
   nextTick(() => c.run());
 }
-function onFilterKey(e) {
+function onFilterKey(e: KeyboardEvent) {
   if (e.key === "Enter" && !content.value?.$el?.querySelector("[data-highlighted]")) {
     e.preventDefault();
     if (filtered.value[0]) run(filtered.value[0].id);
@@ -371,7 +382,11 @@ defineExpose({ open });
           >Jump anywhere or run an action. Type to filter, arrows to move, Enter to
           run.</DialogDescription
         >
-        <ListboxRoot :model-value="undefined" highlight-on-hover @update:model-value="run">
+        <ListboxRoot
+          :model-value="undefined"
+          highlight-on-hover
+          @update:model-value="(v) => run(String(v))"
+        >
           <div class="flex items-center gap-2 border-b border-zinc-200 px-3 dark:border-zinc-800">
             <span class="text-zinc-400">⌕</span>
             <ListboxFilter

@@ -1,6 +1,6 @@
-<script setup>
+<script setup lang="ts">
 import { TooltipContent, TooltipPortal, TooltipRoot, TooltipTrigger } from "reka-ui";
-defineProps({ text: String, side: { type: String, default: "top" } });
+defineProps<{ text?: string; side?: "top" | "right" | "bottom" | "left" }>();
 </script>
 <template>
   <TooltipRoot>

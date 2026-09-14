@@ -1,11 +1,12 @@
-<script setup>
+<script setup lang="ts">
 // Book-wide cast: every speaker across all chapters with line counts, first appearance, chapter spread,
 // aliases and voice. Merge suggestions for near-duplicate names; bulk merge; rename inline.
 import { computed, ref } from "vue";
-import { useRoute } from "vue-router";
-import { useApp } from "../stores/app";
-import { UiSelect, UiCombobox, UiCheckbox } from "../ui";
-import VoicePicker from "../components/VoicePicker.vue";
+import { useApp } from "@/stores/app";
+import { useBookId } from "@/router";
+import { UiSelect, UiCombobox, UiCheckbox } from "@/ui";
+import VoicePicker from "@/components/VoicePicker.vue";
+import type { Character } from "@/types";
 const castOpts = computed(() =>
   cast.value.map((c) => ({
     value: c.name,
@@ -17,15 +18,15 @@ const castOpts = computed(() =>
 
 const app = useApp();
 const voiceOpts = computed(() => app.voiceOptions);
-const bookId = useRoute().params.bookId;
+const bookId = useBookId();
 const cast = computed(() => app.charactersOf(bookId));
 const stats = computed(() => app.castStats(bookId));
 const suggestions = computed(() => app.mergeSuggestions(bookId));
 const q = ref("");
 const sort = ref("lines");
 const onlyNew = ref(false);
-const sel = ref(new Set());
-const editing = ref(null);
+const sel = ref(new Set<string>());
+const editing = ref<string | null>(null);
 const draft = ref("");
 const total = computed(() => app.chaptersOf(bookId).length);
 
@@ -38,7 +39,10 @@ const rows = computed(() =>
         c.aliases.some((a) => a.toLowerCase().includes(q.value.toLowerCase())),
     )
     .filter((c) => !onlyNew.value || c.isNew)
-    .map((c) => ({ c, st: stats.value[c.name] ?? { lines: 0, chapters: new Set(), first: null } }))
+    .map((c) => ({
+      c,
+      st: stats.value[c.name] ?? { lines: 0, chapters: new Set<number>(), first: 0 },
+    }))
     .sort((a, b) =>
       sort.value === "lines"
         ? b.st.lines - a.st.lines
@@ -48,25 +52,24 @@ const rows = computed(() =>
     ),
 );
 
-function toggle(name) {
+function toggle(name: string) {
   const s = new Set(sel.value);
   if (s.has(name)) s.delete(name);
   else s.add(name);
   sel.value = s;
 }
-function mergeSelectedInto(into) {
-  app.mergeMany(bookId, [...sel.value], into);
+function mergeSelectedInto(into: string | number | null) {
+  app.mergeMany(bookId, [...sel.value], String(into));
   sel.value = new Set();
 }
-const pickers = ref({});
-function onRowKey(e, c) {
-  if (
-    ["INPUT", "TEXTAREA"].includes(e.target.tagName) ||
-    e.target.closest("[role=dialog],[role=listbox]")
-  )
+const pickers = ref<Record<string, { open: boolean } | null>>({});
+function onRowKey(e: KeyboardEvent, c: Character) {
+  const t = e.target as HTMLElement;
+  if (["INPUT", "TEXTAREA"].includes(t.tagName) || t.closest("[role=dialog],[role=listbox]"))
     return;
-  const list = [...e.currentTarget.parentElement.querySelectorAll("tr[data-row]")];
-  const i = list.indexOf(e.currentTarget);
+  const row = e.currentTarget as HTMLElement;
+  const list = [...(row.parentElement?.querySelectorAll<HTMLElement>("tr[data-row]") ?? [])];
+  const i = list.indexOf(row);
   if (e.key === "ArrowDown" || e.key === "j") {
     e.preventDefault();
     list[i + 1]?.focus();
@@ -85,9 +88,16 @@ function onRowKey(e, c) {
     toggle(c.name);
   }
 }
-function startRename(c) {
+function startRename(c: Character) {
   editing.value = c.name;
   draft.value = c.name;
+}
+/** Dismiss a merge suggestion: the name stays as its own character. */
+function keepSuggestion(name: string) {
+  const c = app.characters[bookId]?.find((x) => x.name === name);
+  if (!c) return;
+  c.isNew = false;
+  c.keep = true;
 }
 function commit() {
   if (editing.value) app.renameCharacter(bookId, editing.value, draft.value);
@@ -175,15 +185,7 @@ const genderLabel = { m: "male", f: "female", n: "neutral", "?": "unknown" };
         <button class="btn-primary btn-xs" @click="app.mergeCharacter(bookId, s.from, s.into)">
           Merge
         </button>
-        <button
-          class="btn-ghost btn-xs"
-          @click="
-            app.characters[bookId].find((c) => c.name === s.from).isNew = false;
-            app.characters[bookId].find((c) => c.name === s.from).keep = true;
-          "
-        >
-          Keep separate
-        </button>
+        <button class="btn-ghost btn-xs" @click="keepSuggestion(s.from)">Keep separate</button>
       </div>
     </div>
 
@@ -290,7 +292,7 @@ const genderLabel = { m: "male", f: "female", n: "neutral", "?": "unknown" };
             </td>
             <td class="py-1 pr-2">
               <VoicePicker
-                :ref="(el) => (pickers[c.name] = el)"
+                :ref="(el) => (pickers[c.name] = el as { open: boolean } | null)"
                 v-model="c.voice"
                 :book-id="bookId"
                 :speaker="c.name"

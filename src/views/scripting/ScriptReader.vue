@@ -1,16 +1,17 @@
-<script setup>
+<script setup lang="ts">
 // Script reader: narration flows as prose; dialogue and thought are lifted into cards with a
 // speaker pill and the voice direction. Right rail (toggleable) = the cast *in this chapter* with
 // aliases, spoiler-hidden descriptions and inline rename/merge; the rest of the cast is collapsed.
 // Any segment can be clicked to edit speaker / type / direction in place. Typography via the Aa menu.
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { useScript, TYPES } from "./shared";
-import { DIRECTIONS } from "../../mock/data";
-import { useReader } from "../../stores/reader";
-import ReaderSettings from "../../components/ReaderSettings.vue";
-import { UiSelect, UiCombobox, UiToggleGroup, UiTooltip, UiSwitch } from "../../ui";
+import { useScript, TYPES } from "@/views/scripting/shared";
+import { DIRECTIONS } from "@/mock/data";
+import { useReader } from "@/stores/reader";
+import ReaderSettings from "@/components/ReaderSettings.vue";
+import { UiSelect, UiCombobox, UiToggleGroup, UiTooltip, UiSwitch } from "@/ui";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
+import type { Character, Gender, Segment, SegmentType } from "@/types";
 const typeOpts = TYPES.map((t) => ({ value: t, label: t }));
 const speakerOpts = computed(() => [
   ...inChapter.value.map((c) => ({
@@ -39,7 +40,7 @@ const filterOpts = computed(() => [
   })),
 ]);
 
-const props = defineProps({ bookId: String, chapterId: Number });
+const props = defineProps<{ bookId: string; chapterId: number }>();
 const { app, segments, cast, counts, inChapter, colorOf } = useScript(props);
 const reader = useReader();
 const volume = computed(() => app.volumeOf(props.bookId, props.chapterId));
@@ -47,10 +48,10 @@ const multiVolume = computed(() => app.volumesOf(props.bookId).length > 1);
 
 const mode = ref("all"); // all | dialogue
 const speaker = ref(""); // '' = everyone
-const open = ref(null);
+const open = ref<number | null>(null);
 const showRest = ref(false);
-const revealed = ref(new Set());
-const editingName = ref(null);
+const revealed = ref(new Set<string>());
+const editingName = ref<string | null>(null);
 const draft = ref("");
 
 const rows = computed(() =>
@@ -61,13 +62,13 @@ const rows = computed(() =>
   ),
 );
 const rest = computed(() => cast.value.filter((c) => !counts.value[c.name]));
-const chapter = computed(() => app.chapter(props.bookId, props.chapterId));
+const chapter = computed(() => app.chapter(props.bookId, props.chapterId)!);
 const chars = computed(() => segments.value.reduce((a, s) => a + s.text.length, 0));
 
-function jumpToSpeaker(name) {
+function jumpToSpeaker(name: string) {
   speaker.value = speaker.value === name ? "" : name;
 }
-function startRename(c) {
+function startRename(c: Character) {
   editingName.value = c.name;
   draft.value = c.name;
 }
@@ -88,7 +89,7 @@ const route = useRoute();
 
 // directions: presets + everything already used in this book, free text allowed
 const dirOpts = computed(() => {
-  const used = new Map();
+  const used = new Map<string, number>();
   for (const k of Object.keys(app.segments))
     if (k.startsWith(props.bookId + ":"))
       for (const x of app.segments[k])
@@ -105,7 +106,8 @@ const dirOpts = computed(() => {
     })),
   ];
 });
-const sameSpeakerCount = (s) =>
+const GENDER_LABEL: Partial<Record<Gender, string>> = { m: "male", f: "female", n: "neutral" };
+const sameSpeakerCount = (s: Segment) =>
   segments.value.filter((x) => x.speaker === s.speaker && x.id !== s.id).length;
 
 // stale nudge: lines edited after narration, whose audio is now out of date
@@ -121,7 +123,7 @@ function rescript() {
   rescriptOpen.value = false;
   app.runScripting(props.bookId, [props.chapterId], { keepEdits: keepEdits.value });
 }
-function jumpTo(id) {
+function jumpTo(id: number) {
   focus.value = id;
   open.value = null;
   nextTick(() =>
@@ -130,17 +132,17 @@ function jumpTo(id) {
 }
 
 // keyboard: j/k or ↑/↓ move, Enter edit, Esc close, 1–9 assign speaker (in-chapter order), c toggles cast
-const focus = ref(null);
-function moveFocus(d) {
+const focus = ref<number | null>(null);
+function moveFocus(d: number) {
   const ids = rows.value.map((r) => r.id);
-  const i = ids.indexOf(focus.value);
+  const i = focus.value == null ? -1 : ids.indexOf(focus.value);
   focus.value = ids[Math.max(0, Math.min(ids.length - 1, i < 0 ? 0 : i + d))] ?? null;
   document
     .getElementById("seg-" + focus.value)
     ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
-function onKey(e) {
-  const t = e.target;
+function onKey(e: KeyboardEvent) {
+  const t = e.target as HTMLElement;
   // inside a field: let the widget (combobox/select) handle Escape itself; a second Escape closes the editor
   if (
     ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) ||
@@ -164,7 +166,7 @@ function onKey(e) {
     reader.showCast = !reader.showCast;
   } else if (e.key === "/" && !e.shiftKey) {
     e.preventDefault();
-    document.querySelector('input[placeholder^="Find chapter"]')?.focus();
+    document.querySelector<HTMLInputElement>('input[placeholder^="Find chapter"]')?.focus();
   } else if (/^[1-9]$/.test(e.key) && focus.value) {
     const c = inChapter.value[Number(e.key) - 1];
     if (c) app.setSpeaker(props.bookId, props.chapterId, focus.value, c.name);
@@ -315,15 +317,7 @@ watch(open, (v) => {
           Narrator. Nothing is missing from the audio, but dialogue inside won’t get character
           voices.</span
         >
-        <button
-          class="btn-ghost btn-xs border-amber-400"
-          @click="
-            document
-              .getElementById('seg-' + fallbacks[0].id)
-              ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            focus = fallbacks[0].id;
-          "
-        >
+        <button class="btn-ghost btn-xs border-amber-400" @click="jumpTo(fallbacks[0].id)">
           Show
         </button>
       </div>
@@ -514,7 +508,7 @@ watch(open, (v) => {
                   size="xs"
                   class="mt-1"
                   block
-                  @update:model-value="(v) => app.setSpeaker(bookId, chapterId, s.id, v)"
+                  @update:model-value="(v) => app.setSpeaker(bookId, chapterId, s.id, String(v))"
               /></label>
               <label
                 >Type<UiSelect
@@ -524,7 +518,7 @@ watch(open, (v) => {
                   class="mt-1"
                   block
                   @update:model-value="
-                    (v) => app.updateSegment(bookId, chapterId, s.id, { type: v })
+                    (v) => app.updateSegment(bookId, chapterId, s.id, { type: v as SegmentType })
                   "
               /></label>
               <label class="col-span-2 2xl:col-span-1"
@@ -539,7 +533,7 @@ watch(open, (v) => {
                     class="min-w-0 flex-1"
                     block
                     @update:model-value="
-                      (v) => app.updateSegment(bookId, chapterId, s.id, { direction: v })
+                      (v) => app.updateSegment(bookId, chapterId, s.id, { direction: String(v) })
                     "
                   />
                   <UiTooltip
@@ -624,9 +618,7 @@ watch(open, (v) => {
           >
             {{ c.name }}
           </button>
-          <span class="text-[11px] text-zinc-400">{{
-            { m: "male", f: "female", n: "neutral" }[c.gender] ?? "unknown"
-          }}</span>
+          <span class="text-[11px] text-zinc-400">{{ GENDER_LABEL[c.gender] ?? "unknown" }}</span>
         </div>
         <div class="mt-1 flex flex-wrap items-center gap-1 pl-4 text-[11px] text-zinc-500">
           <span>{{ counts[c.name] }} lines</span>
@@ -694,7 +686,7 @@ watch(open, (v) => {
             placeholder="merge into…"
             size="xs"
             class="w-28"
-            @pick="(v) => app.mergeCharacter(bookId, c.name, v)"
+            @pick="(v) => app.mergeCharacter(bookId, c.name, String(v))"
           />
         </div>
       </div>

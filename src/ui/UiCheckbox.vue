@@ -1,12 +1,18 @@
-<script setup>
+<script setup lang="ts">
 // modelValue: true | false | 'indeterminate'
 import { CheckboxIndicator, CheckboxRoot } from "reka-ui";
-defineProps({
-  modelValue: { default: false },
-  disabled: Boolean,
-  size: { type: String, default: "sm" },
-});
-const emit = defineEmits(["update:modelValue", "click"]);
+withDefaults(
+  defineProps<{
+    modelValue?: boolean | "indeterminate";
+    disabled?: boolean;
+    size?: "xs" | "sm";
+  }>(),
+  { modelValue: false, size: "sm" },
+);
+const emit = defineEmits<{
+  "update:modelValue": [boolean | "indeterminate"];
+  click: [MouseEvent];
+}>();
 </script>
 <template>
   <CheckboxRoot
@@ -15,7 +21,7 @@ const emit = defineEmits(["update:modelValue", "click"]);
     class="grid shrink-0 place-items-center rounded border border-zinc-400 bg-white transition-colors data-[state=checked]:border-violet-600 data-[state=checked]:bg-violet-600 data-[state=indeterminate]:border-violet-600 data-[state=indeterminate]:bg-violet-600 disabled:opacity-40 dark:border-zinc-600 dark:bg-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400"
     :class="size === 'xs' ? 'h-3.5 w-3.5' : 'h-4 w-4'"
     @update:model-value="(v) => emit('update:modelValue', v)"
-    @click="(e) => emit('click', e)"
+    @click="(e: MouseEvent) => emit('click', e)"
   >
     <CheckboxIndicator
       class="text-white leading-none"

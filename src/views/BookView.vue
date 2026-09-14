@@ -1,13 +1,16 @@
-<script setup>
+<script setup lang="ts">
 // Book overview: volumes, pipeline progress per stage, cast summary, latest exports, and what to do next.
 import { computed, ref } from "vue";
-import { useRoute, useRouter } from "vue-router";
-import { useApp, isScripted, isNarrated } from "../stores/app";
+import { useRouter } from "vue-router";
+import { useApp, isScripted, isNarrated } from "@/stores/app";
+import type { Volume } from "@/types";
+import { useBookId } from "@/router";
 
 const app = useApp();
-const bookId = useRoute().params.bookId;
+const bookId = useBookId();
 const router = useRouter();
-const book = computed(() => app.bookById(bookId));
+// the router only reaches this view with a real book id
+const book = computed(() => app.bookById(bookId)!);
 const chapters = computed(() => app.chaptersOf(bookId));
 const p = computed(() => app.progress(bookId));
 const cast = computed(() => app.charactersOf(bookId));
@@ -17,32 +20,32 @@ const suggestions = computed(() => app.mergeSuggestions(bookId).length);
 const exportsHere = computed(() =>
   app.exports.filter((e) => e.bookId === bookId && e.status === "done"),
 );
-const editing = ref(null),
-  draft = ref(""),
-  removing = ref(null);
-const dragging = ref(null),
-  dragOver = ref(null);
-function drop(toIndex) {
+const editing = ref<number | null>(null);
+const draft = ref("");
+const removing = ref<number | null>(null);
+const dragging = ref<number | null>(null);
+const dragOver = ref<number | null>(null);
+function drop(toIndex: number) {
   if (dragging.value != null) app.moveVolume(bookId, dragging.value, toIndex);
   dragging.value = null;
   dragOver.value = null;
 }
-function saveName(v) {
+function saveName(v: Volume) {
   app.renameVolume(bookId, v.id, draft.value);
   editing.value = null;
 }
-function remove(v) {
+function remove(v: Volume) {
   const r = app.removeVolume(bookId, v.id);
   removing.value = null;
   if (r === "book") router.push("/library");
 }
 const budget = computed(() => book.value.budget ?? { cap: null, paused: false });
 const spent = computed(() => app.spent(bookId));
-const capInput = ref(book.value.budget?.cap ?? "");
+const capInput = ref<number | string>(book.value.budget?.cap ?? "");
 function setCap() {
   app.setBudgetCap(bookId, Number(capInput.value) || null);
 }
-const volStats = (v) => {
+const volStats = (v: Volume) => {
   const chs = chapters.value.filter((c) => c.volumeId === v.id);
   return {
     n: chs.length,
@@ -50,7 +53,7 @@ const volStats = (v) => {
     narrated: chs.filter(isNarrated).length,
   };
 };
-const fmt = (s) =>
+const fmt = (s: number) =>
   s >= 3600
     ? `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, "0")}m`
     : `${Math.floor(s / 60)}m`;
@@ -231,7 +234,13 @@ const next = computed(() => {
               type="file"
               accept=".epub"
               class="hidden"
-              @change="(e) => app.addVolume(bookId, e.target.files?.[0]?.name ?? 'volume.epub')"
+              @change="
+                (e: Event) =>
+                  app.addVolume(
+                    bookId,
+                    (e.target as HTMLInputElement).files?.[0]?.name ?? 'volume.epub',
+                  )
+              "
           /></label>
         </div>
         <div

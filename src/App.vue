@@ -1,14 +1,14 @@
-<script setup>
+<script setup lang="ts">
 // App shell. Desktop: fixed sidebar. Narrow (< lg): top bar with a menu button that opens the same
 // sidebar as a drawer. Also hosts the palette, toasts, the shortcuts dialog, global ⌘Z / ? keys,
 // the "book finished" notifications and the document title (active job count).
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { useApp } from "./stores/app";
-import JobIndicator from "./components/JobIndicator.vue";
-import CommandPalette from "./components/CommandPalette.vue";
-import Toasts from "./components/Toasts.vue";
-import ShortcutsDialog from "./components/ShortcutsDialog.vue";
+import { useApp } from "@/stores/app";
+import JobIndicator from "@/components/JobIndicator.vue";
+import CommandPalette from "@/components/CommandPalette.vue";
+import Toasts from "@/components/Toasts.vue";
+import ShortcutsDialog from "@/components/ShortcutsDialog.vue";
 import { TooltipProvider } from "reka-ui";
 
 const app = useApp();
@@ -19,7 +19,7 @@ const shortcuts = ref(false);
 watch(
   () => route.params.bookId,
   (id) => {
-    if (id) app.currentBookId = id;
+    if (id) app.currentBookId = String(id);
   },
   { immediate: true },
 );
@@ -44,7 +44,7 @@ watch(
 
 // a book's run finished (it had active jobs, now none) → toast, and a browser notification if enabled
 const activeByBook = computed(() => {
-  const m = {};
+  const m: Record<string, number> = {};
   for (const j of app.activeJobs) m[j.bookId] = (m[j.bookId] ?? 0) + 1;
   return m;
 });
@@ -56,8 +56,8 @@ watch(activeByBook, (now, before) => {
     const recent = app.jobs.filter(
       (j) => j.bookId === id && j.finishedAt && Date.now() - j.finishedAt < 5 * 60000,
     );
-    const failed = recent.filter((j) => j.status === "failed").length,
-      cancelled = recent.filter((j) => j.status === "cancelled").length;
+    const failed = recent.filter((j) => j.status === "failed").length;
+    const cancelled = recent.filter((j) => j.status === "cancelled").length;
     if (recent.length && recent.every((j) => j.status === "cancelled")) continue;
     const desc = `${recent.length - failed - cancelled} done${failed ? ` · ${failed} failed` : ""}`;
     app.toast(`${b.title}: run finished`, {
@@ -80,8 +80,8 @@ watch(activeByBook, (now, before) => {
 import { useRouter } from "vue-router";
 const router = useRouter();
 
-function onKey(e) {
-  const t = e.target;
+function onKey(e: KeyboardEvent) {
+  const t = e.target as HTMLElement;
   if (["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) || t.isContentEditable) return;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
     if (app.undoLast()) e.preventDefault();
@@ -102,7 +102,7 @@ onUnmounted(() => {
   window.removeEventListener("open-shortcuts", openShortcuts);
 });
 
-const stages = [
+const stages: { key: string; label: string; icon: string; to: (b: string | null) => string }[] = [
   { key: "library", label: "Library", icon: "▤", to: () => "/library" },
   { key: "scripting", label: "Scripting", icon: "✎", to: (b) => `/book/${b}/scripting` },
   { key: "narration", label: "Narration", icon: "♪", to: (b) => `/book/${b}/narration` },
@@ -112,7 +112,7 @@ const activeKey = computed(() =>
   route.path.match(/^\/book\/[^/]+$/) ? "overview" : route.path.split("/").pop(),
 );
 const p = computed(() => (app.currentBookId ? app.progress(app.currentBookId) : null));
-const palette = ref(null);
+const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
 const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
 </script>
 
@@ -274,7 +274,7 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
           <div class="flex items-center gap-2">
             <button
               class="flex items-center gap-2 rounded-md border border-zinc-200 px-2.5 py-1 text-xs text-zinc-500 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
-              @click="palette.open = true"
+              @click="palette && (palette.open = true)"
             >
               ⌕<span class="hidden sm:inline"> Jump or run…</span>
               <kbd

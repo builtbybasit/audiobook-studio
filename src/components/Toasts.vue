@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Toast stack on Toastflow's runtime (queue, timers, pause on hover, swipe, Escape, focus handling,
 // live regions) with our own card through the headless slot. Nothing from the library's CSS is
 // loaded; layout and motion live in src/toasts.css.
@@ -12,7 +12,7 @@
 //  · buttons are real buttons with focus rings; Escape inside a toast dismisses it
 import { computed } from "vue";
 import { ToastContainer } from "vue-toastflow";
-import { useApp } from "../stores/app";
+import { useApp } from "@/stores/app";
 const app = useApp();
 const isMac = /Mac|iPhone/.test(navigator.platform);
 const newestUndoId = computed(() => app._undo.at(-1)?.toastId);
@@ -45,8 +45,8 @@ const ICON_CLS = {
   loading: "text-violet-500",
   custom: "text-zinc-400",
 };
-const isUndo = (t) => t.theme === "undo";
-const btnCls = (b) =>
+const isUndo = (t: { theme?: string }) => t.theme === "undo";
+const btnCls = (b: { id?: string }) =>
   b.id === "undo"
     ? "border-violet-500 bg-violet-600 text-white hover:bg-violet-500 focus-visible:ring-violet-400"
     : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100 focus-visible:ring-violet-400 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700";

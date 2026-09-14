@@ -1,23 +1,24 @@
-<script setup>
+<script setup lang="ts">
 // Endpoint pool as master/detail: a compact list on the left (health, voices, on/off), the selected
 // endpoint's full settings on the right — connection, key (kept in the keyring, not the store),
 // price, concurrency, per-request limit + cut strategy with a preview, the voice list, last error.
 // Settings export/import writes a JSON without keys.
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
-import { useApp, keyring } from "../../stores/app";
-import { speak } from "../../composables/usePlayer";
-import { UiSlider, UiSelect, UiSwitch, UiTooltip } from "../../ui";
-import { SPLIT_MODES, splitText } from "../../lib/split";
+import { useApp, keyring } from "@/stores/app";
+import { speak } from "@/composables/usePlayer";
+import { UiSlider, UiSelect, UiSwitch, UiTooltip } from "@/ui";
+import { SPLIT_MODES, splitText } from "@/lib/split";
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "reka-ui";
-const props = defineProps({ bookId: String });
+import type { Endpoint, Gender, Segment, SplitMode, Voice } from "@/types";
+const props = defineProps<{ bookId: string }>();
 const app = useApp();
 const now = ref(Date.now());
-let t;
+let t: ReturnType<typeof setInterval>;
 onMounted(() => {
   t = setInterval(() => (now.value = Date.now()), 500);
 });
 onUnmounted(() => clearInterval(t));
-const selectedId = ref(app.endpoints[0]?.id ?? null);
+const selectedId = ref<string | null>(app.endpoints[0]?.id ?? null);
 const e = computed(() => app.endpoints.find((x) => x.id === selectedId.value) ?? app.endpoints[0]);
 watch(
   () => app.endpoints.length,
@@ -27,9 +28,17 @@ watch(
   },
 );
 
-const draft = reactive({});
-const form = (e) => (draft[e.id] ??= { id: "", label: "", gender: "n", open: false });
-const GENDERS = [
+/** Per-endpoint "add a voice" form state, kept out of the store. */
+interface VoiceDraft {
+  id: string;
+  label: string;
+  gender: Gender;
+  open: boolean;
+}
+const draft = reactive<Record<string, VoiceDraft>>({});
+const form = (e: Endpoint): VoiceDraft =>
+  (draft[e.id] ??= { id: "", label: "", gender: "n", open: false });
+const GENDERS: { value: Gender; label: string }[] = [
   { value: "f", label: "female" },
   { value: "m", label: "male" },
   { value: "n", label: "neutral" },
@@ -43,28 +52,33 @@ const LIMITS = [
   { value: 4096, label: "4,096" },
 ];
 const MODE_OPTS = SPLIT_MODES.map((m) => ({ value: m.value, label: m.label, hint: m.hint }));
-const AT = { sentence: "sentence end", clause: "clause", word: "word", char: "hard cut" };
-function submit(e) {
+const AT: Record<SplitMode, string> = {
+  sentence: "sentence end",
+  clause: "clause",
+  word: "word",
+  char: "hard cut",
+};
+function submit(e: Endpoint) {
   const f = form(e);
   if (app.addVoice(e, f)) {
     f.id = "";
     f.label = "";
   }
 }
-const usedBy = (e, v) =>
+const usedBy = (e: Endpoint, v: Voice) =>
   (app.characters[props.bookId] ?? [])
     .filter((c) => c.voice === `${e.id}/${v.id}`)
     .map((c) => c.name);
 const inUse = computed(() => {
-  const m = {};
+  const m: Record<string, number> = {};
   for (const c of app.characters[props.bookId] ?? [])
     if (c.voice) m[c.voice.split("/")[0]] = (m[c.voice.split("/")[0]] ?? 0) + 1;
   return m;
 });
-const GENDER_CH = { m: "♂", f: "♀", n: "◦" };
-const splitOf = (e) => app.splitCount(props.bookId, e);
-const longest = (e) => {
-  let best = null;
+const GENDER_CH: Partial<Record<Gender, string>> = { m: "♂", f: "♀", n: "◦" };
+const splitOf = (e: Endpoint) => app.splitCount(props.bookId, e);
+const longest = (e: Endpoint): Segment | null => {
+  let best: Segment | null = null;
   for (const k of Object.keys(app.segments))
     if (k.startsWith(props.bookId + ":"))
       for (const s of app.segments[k])
@@ -75,12 +89,13 @@ const longest = (e) => {
           best = s;
   return best;
 };
-const preview = (e) => {
+const preview = (e: Endpoint) => {
   const s = longest(e);
   return s ? { seg: s, parts: splitText(s.text, e.maxChars, e.splitAt) } : null;
 };
+const cutPreview = computed(() => preview(e.value));
 
-function spark(e) {
+function spark(e: Endpoint) {
   const h = (e.history ?? []).slice(-30);
   if (!h.length) return "";
   const max = Math.max(...h.map((x) => x.ms)) || 1;
@@ -91,16 +106,16 @@ function spark(e) {
     )
     .join(" ");
 }
-const avg = (e) => {
+const avg = (e: Endpoint) => {
   const h = (e.history ?? []).slice(-30);
   return h.length ? Math.round(h.reduce((a, x) => a + x.ms, 0) / h.length) : null;
 };
-const okRate = (e) => {
+const okRate = (e: Endpoint) => {
   const h = (e.history ?? []).slice(-30);
   return h.length ? Math.round((h.filter((x) => x.ok).length / h.length) * 100) : null;
 };
-const backoff = (e) => Math.max(0, Math.ceil((e.backoffUntil - now.value) / 1000));
-const health = (e) =>
+const backoff = (e: Endpoint) => Math.max(0, Math.ceil((e.backoffUntil - now.value) / 1000));
+const health = (e: Endpoint) =>
   !e.enabled
     ? "paused"
     : backoff(e)
@@ -108,19 +123,19 @@ const health = (e) =>
       : (okRate(e) ?? 100) < 85
         ? "degraded"
         : "healthy";
-const healthCls = {
+const healthCls: Record<string, string> = {
   healthy: "text-emerald-500",
   degraded: "text-amber-500",
   "backing off": "text-violet-500",
   paused: "text-zinc-400",
 };
-const dotCls = {
+const dotCls: Record<string, string> = {
   healthy: "bg-emerald-500",
   degraded: "bg-amber-500",
   "backing off": "bg-violet-500 animate-pulse",
   paused: "bg-zinc-400",
 };
-const ago = (ts) => {
+const ago = (ts: number) => {
   const s = Math.round((now.value - ts) / 1000);
   return s < 60
     ? `${s}s ago`
@@ -145,19 +160,23 @@ function exportSettings() {
     timeout: 4000,
   });
 }
-function importSettings(ev) {
-  const f = ev.target.files?.[0];
+function importSettings(ev: Event) {
+  const input = ev.target as HTMLInputElement;
+  const f = input.files?.[0];
   if (!f) return;
-  f.text().then((txt) => {
+  f.text().then((txt: string) => {
     try {
       app.importSettings(JSON.parse(txt));
     } catch (err) {
-      app.toast("Could not import settings", { kind: "error", description: err.message });
+      app.toast("Could not import settings", {
+        kind: "error",
+        description: err instanceof Error ? err.message : String(err),
+      });
     }
   });
-  ev.target.value = "";
+  input.value = "";
 }
-function copyErr(e) {
+function copyErr(e: Endpoint) {
   navigator.clipboard?.writeText(
     JSON.stringify(
       { endpoint: e.baseUrl + "/audio/speech", model: e.model, lastError: e.lastError },
@@ -286,7 +305,7 @@ function copyErr(e) {
         <div class="grid flex-1 grid-cols-3 gap-2 text-[11px] leading-tight">
           <div>
             <div class="text-zinc-400">latency</div>
-            <div class="font-mono">{{ avg(e) ? (avg(e) / 1000).toFixed(1) + "s" : "—" }}</div>
+            <div class="font-mono">{{ avg(e) ? (avg(e)! / 1000).toFixed(1) + "s" : "—" }}</div>
           </div>
           <div>
             <div class="text-zinc-400">ok rate</div>
@@ -330,7 +349,7 @@ function copyErr(e) {
             :placeholder="
               e.needsKey ? 'paste key — kept in memory, never saved or exported' : 'not needed'
             "
-            @input="keyring.set(e.id, $event.target.value)"
+            @input="keyring.set(e.id, ($event.target as HTMLInputElement).value)"
           />
           <span
             v-if="e.needsKey && !keyring.has(e.id)"
@@ -376,7 +395,7 @@ function copyErr(e) {
             placeholder="preset"
             size="xs"
             class="w-24"
-            @update:model-value="(v) => (e.maxChars = v)"
+            @update:model-value="(v) => (e.maxChars = Number(v))"
           />
           <UiTooltip
             text="Segments longer than this are cut, sent as several requests, and the audio joined. 0 = send whole segments."
@@ -403,16 +422,20 @@ function copyErr(e) {
           </div>
         </template>
       </div>
-      <CollapsibleRoot v-if="e.maxChars && preview(e)?.parts.length > 1" class="mt-2 text-xs">
+      <CollapsibleRoot
+        v-if="e.maxChars && (cutPreview?.parts.length ?? 0) > 1"
+        class="mt-2 text-xs"
+      >
         <CollapsibleTrigger
           class="text-zinc-400 hover:text-violet-500 data-[state=open]:text-violet-500"
-          >▸ preview: longest routed segment ({{ preview(e).seg.text.length }} chars,
-          {{ preview(e).seg.speaker }}) → {{ preview(e).parts.length }} requests</CollapsibleTrigger
+          >▸ preview: longest routed segment ({{ cutPreview!.seg.text.length }} chars,
+          {{ cutPreview!.seg.speaker }}) →
+          {{ cutPreview!.parts.length }} requests</CollapsibleTrigger
         >
         <CollapsibleContent>
           <ol class="mt-1 space-y-1">
             <li
-              v-for="(pt, i) in preview(e).parts"
+              v-for="(pt, i) in cutPreview!.parts"
               :key="i"
               class="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-800"
             >
@@ -456,7 +479,9 @@ function copyErr(e) {
             v-for="v in e.voices"
             :key="v.id"
             class="group inline-flex items-center gap-1 rounded-full border border-zinc-200 py-0.5 pl-2 pr-1 text-[11px] dark:border-zinc-700"
-            :class="usedBy(e, v).length && 'border-violet-400 bg-violet-50 dark:bg-violet-500/10'"
+            :class="
+              usedBy(e, v).length ? 'border-violet-400 bg-violet-50 dark:bg-violet-500/10' : ''
+            "
             :title="usedBy(e, v).length ? 'used by ' + usedBy(e, v).join(', ') : v.id"
           >
             <span class="text-zinc-400">{{ GENDER_CH[v.gender] ?? "◦" }}</span>

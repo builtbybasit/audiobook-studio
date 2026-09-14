@@ -1,66 +1,82 @@
-<script setup>
+<script setup lang="ts">
 // Shared chapter selector: checkboxes + per-stage status. Chapters are grouped by volume when a
 // novel spans several EPUBs; each volume header can collapse and select/deselect its chapters.
 // Each row has a peek (raw text preview) and can be skipped (excluded from every stage).
 // Keyboard: ↑↓ move, space ticks, ↵ opens, / focuses search.
 import { computed, ref } from "vue";
-import { useApp, isNarrated } from "../stores/app";
-import StatusDot from "./StatusDot.vue";
-import { UiCheckbox, UiSelect } from "../ui";
+import { useApp, isNarrated } from "@/stores/app";
+import StatusDot from "@/components/StatusDot.vue";
+import { UiCheckbox, UiSelect } from "@/ui";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
+import type { Chapter, Volume } from "@/types";
 
-const props = defineProps({
-  bookId: String,
-  stage: String, // 'scripting' | 'narration' | 'export'
-  modelValue: { type: Array, default: () => [] },
-  openedId: Number,
-  runLabel: { type: String, default: "Run" },
-  selectable: { type: Function, default: () => true },
-});
-const emit = defineEmits(["update:modelValue", "open", "run"]);
+const props = withDefaults(
+  defineProps<{
+    bookId: string;
+    stage: "scripting" | "narration" | "export";
+    modelValue?: number[];
+    openedId?: number | null;
+    runLabel?: string;
+    /** which chapters this stage may act on */
+    selectable?: (c: Chapter) => boolean;
+  }>(),
+  {
+    modelValue: () => [],
+    openedId: null,
+    runLabel: "Run",
+    selectable: () => true,
+  },
+);
+const emit = defineEmits<{
+  "update:modelValue": [number[]];
+  open: [number];
+  run: [number[]];
+}>();
 const app = useApp();
 const chapters = computed(() => app.chaptersOf(props.bookId));
 const volumes = computed(() => app.volumesOf(props.bookId));
 const grouped = computed(() =>
   volumes.value.map((v) => ({ ...v, chapters: chapters.value.filter((c) => c.volumeId === v.id) })),
 );
+/** A volume plus the chapters that belong to it, as rendered by the list. */
+type VolumeRow = Volume & { chapters: Chapter[] };
 const multi = computed(() => volumes.value.length > 1);
-const collapsed = ref(new Set());
+const collapsed = ref(new Set<number>());
 const q = ref("");
-const search = ref(null);
-const lastClicked = ref(null);
-const canPick = (c) => props.selectable(c) && !c.excluded;
-const matches = (c) =>
+const search = ref<HTMLInputElement | null>(null);
+const lastClicked = ref<number | null>(null);
+const canPick = (c: Chapter) => props.selectable(c) && !c.excluded;
+const matches = (c: Chapter) =>
   !q.value || c.title.toLowerCase().includes(q.value.toLowerCase()) || String(c.id) === q.value;
 const visible = computed(() =>
   grouped.value
     .map((v) => ({ ...v, chapters: v.chapters.filter(matches) }))
     .filter((v) => v.chapters.length),
 );
-function jump(id) {
+function jump(id: string | number | null) {
   document
     .getElementById(`vol-${props.bookId}-${id}`)
     ?.scrollIntoView({ block: "start", behavior: "smooth" });
   const s = new Set(collapsed.value);
-  s.delete(id);
+  s.delete(Number(id));
   collapsed.value = s;
 }
 
-function statusOf(c) {
+function statusOf(c: Chapter): string {
   if (props.stage === "scripting") return c.scripting;
   if (props.stage === "narration") return c.narration;
   return isNarrated(c) ? (c.narration === "stale" ? "stale" : "done") : "none";
 }
-const isDone = (c) => ["done", "fallback", "stale"].includes(statusOf(c));
-function progressOf(c) {
+const isDone = (c: Chapter) => ["done", "fallback", "stale"].includes(statusOf(c));
+function progressOf(c: Chapter) {
   return props.stage === "scripting" ? c.scriptingProgress : c.narrationProgress;
 }
-function toggle(id, e) {
+function toggle(id: number, e?: MouseEvent | KeyboardEvent) {
   const set = new Set(props.modelValue);
   if (e?.shiftKey && lastClicked.value != null) {
     const ids = chapters.value.filter(canPick).map((c) => c.id);
-    const a = ids.indexOf(lastClicked.value),
-      b = ids.indexOf(id);
+    const a = ids.indexOf(lastClicked.value);
+    const b = ids.indexOf(id);
     const on = !set.has(id);
     for (const x of ids.slice(Math.min(a, b), Math.max(a, b) + 1)) {
       if (on) set.add(x);
@@ -86,7 +102,7 @@ function pending() {
     chapters.value.filter((c) => canPick(c) && !isDone(c)).map((c) => c.id),
   );
 }
-function volState(v) {
+function volState(v: VolumeRow) {
   const ids = v.chapters.filter(canPick).map((c) => c.id);
   const n = ids.filter((id) => props.modelValue.includes(id)).length;
   return {
@@ -95,21 +111,28 @@ function volState(v) {
     done: v.chapters.filter(isDone).length,
   };
 }
-function toggleVol(v) {
+function toggleVol(v: VolumeRow) {
   const ids = v.chapters.filter(canPick).map((c) => c.id);
   const set = new Set(props.modelValue);
   if (volState(v).all) ids.forEach((id) => set.delete(id));
   else ids.forEach((id) => set.add(id));
   emit("update:modelValue", [...set]);
 }
-function toggleCollapse(id) {
+function toggleCollapse(id: number) {
   const s = new Set(collapsed.value);
   if (s.has(id)) s.delete(id);
   else s.add(id);
   collapsed.value = s;
 }
 const counts = computed(() => {
-  const out = { done: 0, failed: 0, running: 0, stale: 0, fallback: 0, excluded: 0 };
+  const out: Record<string, number> = {
+    done: 0,
+    failed: 0,
+    running: 0,
+    stale: 0,
+    fallback: 0,
+    excluded: 0,
+  };
   for (const c of chapters.value) {
     if (c.excluded) {
       out.excluded++;
@@ -122,9 +145,10 @@ const counts = computed(() => {
   return out;
 });
 // keyboard on the list: rows are focusable; arrows move, space ticks, enter opens
-function onRowKey(e, c) {
-  const rows = [...e.currentTarget.closest("[data-list]").querySelectorAll("[data-row]")];
-  const i = rows.indexOf(e.currentTarget);
+function onRowKey(e: KeyboardEvent, c: Chapter) {
+  const el = e.currentTarget as HTMLElement;
+  const rows = [...(el.closest("[data-list]")?.querySelectorAll<HTMLElement>("[data-row]") ?? [])];
+  const i = rows.indexOf(el);
   if (e.key === "ArrowDown" || e.key === "j") {
     e.preventDefault();
     rows[i + 1]?.focus();
@@ -139,13 +163,13 @@ function onRowKey(e, c) {
     emit("open", c.id);
   }
 }
-function onListKey(e) {
+function onListKey(e: KeyboardEvent) {
   if (e.key === "/") {
     e.preventDefault();
     search.value?.focus();
   }
 }
-function skip(c, v) {
+function skip(c: Chapter, v: boolean) {
   app.setExcluded(props.bookId, c.id, v);
   if (v && props.modelValue.includes(c.id))
     emit(
@@ -153,7 +177,7 @@ function skip(c, v) {
       props.modelValue.filter((x) => x !== c.id),
     );
 }
-const peek = (c) => {
+const peek = (c: Chapter) => {
   const t = app.rawText(props.bookId, c.id);
   return t.length > 700 ? t.slice(0, 700) + "…" : t;
 };

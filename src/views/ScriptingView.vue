@@ -1,17 +1,18 @@
-<script setup>
+<script setup lang="ts">
 // Scripting stage: chapter picker + run settings on the left, script reader on the right.
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { useApp, isScripted } from "../stores/app";
-import ChapterPicker from "../components/ChapterPicker.vue";
-import EmptyState from "../components/EmptyState.vue";
-import ScriptReader from "./scripting/ScriptReader.vue";
-import ScriptSettings from "./scripting/ScriptSettings.vue";
+import { useApp, isScripted } from "@/stores/app";
+import ChapterPicker from "@/components/ChapterPicker.vue";
+import EmptyState from "@/components/EmptyState.vue";
+import ScriptReader from "@/views/scripting/ScriptReader.vue";
+import ScriptSettings from "@/views/scripting/ScriptSettings.vue";
+import { useBookId } from "@/router";
 
 const app = useApp();
 const route = useRoute();
-const bookId = route.params.bookId;
-const selected = ref([]);
+const bookId = useBookId();
+const selected = ref<number[]>([]);
 const opened = ref(
   Number(route.query.ch) ||
     (app.chaptersOf(bookId).find((c) => c.scripting === "fallback")?.id ??

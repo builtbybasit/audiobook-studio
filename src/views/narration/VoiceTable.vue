@@ -1,27 +1,28 @@
-<script setup>
+<script setup lang="ts">
 // Cast → voice assignment. Main cast as cards; minor cast collapsed and falling back to the
 // Narrator's voice unless given one. Search, "unassigned only", auto-assign by gender.
 import { computed, ref } from "vue";
-import { useApp } from "../../stores/app";
-import { speak } from "../../composables/usePlayer";
-import { UiSelect, UiCheckbox, UiTooltip } from "../../ui";
-import VoicePicker from "../../components/VoicePicker.vue";
+import { useApp } from "@/stores/app";
+import { speak } from "@/composables/usePlayer";
+import { UiSelect, UiCheckbox, UiTooltip } from "@/ui";
+import VoicePicker from "@/components/VoicePicker.vue";
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "reka-ui";
+import type { Character, Gender } from "@/types";
 
-const props = defineProps({ bookId: String });
+const props = defineProps<{ bookId: string }>();
 const app = useApp();
 // voices come from the endpoints (Endpoints tab); grouped per endpoint, paused endpoints listed but disabled
 const voiceOpts = computed(() => app.voiceOptions);
-const missing = (c) => c.voice && !app.resolveVoice(c.voice);
-const issueOf = (c) => app.routingIssues(props.bookId).find((i) => i.name === c.name);
+const missing = (c: Character) => c.voice && !app.resolveVoice(c.voice);
+const issueOf = (c: Character) => app.routingIssues(props.bookId).find((i) => i.name === c.name);
 const q = ref("");
 const unassignedOnly = ref(false);
 const showMinor = ref(false);
-const revealed = ref(new Set());
+const revealed = ref(new Set<string>());
 
 const all = computed(() => app.charactersOf(props.bookId));
 const counts = computed(() => app.lineCounts(props.bookId));
-const match = (c) =>
+const match = (c: Character) =>
   (!q.value ||
     c.name.toLowerCase().includes(q.value.toLowerCase()) ||
     c.aliases.some((a) => a.toLowerCase().includes(q.value.toLowerCase()))) &&
@@ -35,8 +36,13 @@ const minor = computed(() =>
 );
 const assigned = computed(() => all.value.filter((c) => c.voice).length);
 const narrator = computed(() => all.value.find((c) => c.name === "Narrator"));
-const genderLabel = { m: "male", f: "female", n: "neutral", "?": "unknown" };
-const sample = (c) =>
+const genderLabel: Record<Gender, string> = {
+  m: "male",
+  f: "female",
+  n: "neutral",
+  "?": "unknown",
+};
+const sample = (c: Character) =>
   c.name === "Narrator"
     ? "The mountain mist thinned as dawn crept over the outer sect grounds."
     : "I have not come to fight. Give me three days, that is all I ask.";
@@ -127,24 +133,26 @@ const sample = (c) =>
             ><button
               class="btn-ghost btn-xs"
               :disabled="!app.effectiveVoice(bookId, c.name).voice"
-              @click="speak(sample(c), app.effectiveVoice(bookId, c.name).voice)"
+              @click="speak(sample(c), app.effectiveVoice(bookId, c.name).voice ?? '')"
             >
               ▶<span class="text-[9px] text-zinc-400">demo</span>
             </button></UiTooltip
           >
         </div>
         <div v-if="issueOf(c)" class="mt-1 text-[11px] text-amber-600">
-          ⚠ {{ issueOf(c).reason
-          }}<template v-if="issueOf(c).kind === 'paused'">
+          ⚠ {{ issueOf(c)!.reason
+          }}<template v-if="issueOf(c)!.kind === 'paused'">
             ·
-            <button class="underline" @click="issueOf(c).endpoint.enabled = true">resume it</button>
+            <button class="underline" @click="issueOf(c)!.endpoint!.enabled = true">
+              resume it
+            </button>
             or pick another voice</template
-          ><template v-else-if="issueOf(c).kind === 'missing'"> · pick another voice</template>
+          ><template v-else-if="issueOf(c)!.kind === 'missing'"> · pick another voice</template>
         </div>
         <div v-else-if="c.voice" class="mt-1 truncate text-[11px] text-zinc-400">
-          on {{ app.resolveVoice(c.voice).endpoint.name
-          }}<template v-if="app.resolveVoice(c.voice).endpoint.maxChars">
-            · splits over {{ app.resolveVoice(c.voice).endpoint.maxChars }} chars</template
+          on {{ app.resolveVoice(c.voice)!.endpoint.name
+          }}<template v-if="app.resolveVoice(c.voice)!.endpoint.maxChars">
+            · splits over {{ app.resolveVoice(c.voice)!.endpoint.maxChars }} chars</template
           >
         </div>
         <input

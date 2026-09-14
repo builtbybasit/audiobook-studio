@@ -1,15 +1,18 @@
-<script setup>
+<script setup lang="ts">
 import { computed } from "vue";
 import { SliderRange, SliderRoot, SliderThumb, SliderTrack } from "reka-ui";
-const props = defineProps({
-  modelValue: Number,
-  min: { type: Number, default: 0 },
-  max: { type: Number, default: 100 },
-  step: { type: Number, default: 1 },
-  disabled: Boolean,
-  label: String,
-});
-const emit = defineEmits(["update:modelValue"]);
+const props = withDefaults(
+  defineProps<{
+    modelValue?: number;
+    min?: number;
+    max?: number;
+    step?: number;
+    disabled?: boolean;
+    label?: string;
+  }>(),
+  { modelValue: undefined, min: 0, max: 100, step: 1, label: undefined },
+);
+const emit = defineEmits<{ "update:modelValue": [number] }>();
 const arr = computed({
   get: () => [props.modelValue ?? props.min],
   set: (v) => emit("update:modelValue", v[0]),

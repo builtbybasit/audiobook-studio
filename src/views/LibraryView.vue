@@ -1,10 +1,11 @@
-<script setup>
+<script setup lang="ts">
 import { ref } from "vue";
 import { useRouter } from "vue-router";
-import { useApp } from "../stores/app";
-import MiniBar from "../components/MiniBar.vue";
-import EmptyState from "../components/EmptyState.vue";
-import { UiSelect } from "../ui";
+import { useApp } from "@/stores/app";
+import type { Book, BookProgress } from "@/types";
+import MiniBar from "@/components/MiniBar.vue";
+import EmptyState from "@/components/EmptyState.vue";
+import { UiSelect } from "@/ui";
 import {
   DialogContent,
   DialogDescription,
@@ -16,31 +17,42 @@ import {
 const app = useApp();
 const router = useRouter();
 const dragging = ref(false);
-const pending = ref(null); // { file, mode: 'new' | 'volume', bookId, title, volName }
+/** The add-a-file dialog: what was dropped, and whether it becomes a new novel or a new volume. */
+interface PendingAdd {
+  file: string;
+  mode: "new" | "volume";
+  bookId: string;
+  title: string;
+  volName: string;
+}
+const pending = ref<PendingAdd | null>(null);
 
-function open(b) {
+function open(b: Book) {
   app.currentBookId = b.id;
   router.push(`/book/${b.id}`);
 }
-function addFake(e, bookId = null) {
+function addFake(e: Event | DragEvent | null, bookId: string | null = null) {
   const file =
-    e?.target?.files?.[0]?.name ?? e?.dataTransfer?.files?.[0]?.name ?? "Untitled Upload.epub";
+    (e?.target as HTMLInputElement | null)?.files?.[0]?.name ??
+    (e as DragEvent | null)?.dataTransfer?.files?.[0]?.name ??
+    "Untitled Upload.epub";
   const guess = file.replace(/\.epub$/i, "");
   pending.value = {
     file,
     mode: bookId ? "volume" : "new",
-    bookId: bookId ?? app.books[0]?.id,
+    bookId: bookId ?? app.books[0]?.id ?? "",
     title: guess,
     volName: guess,
   };
 }
 function confirmAdd() {
   const p = pending.value;
+  if (!p) return;
   if (p.mode === "new") app.addNovel(p.file, p.title);
   else app.addVolume(p.bookId, p.file, p.volName);
   pending.value = null;
 }
-function stageOf(p) {
+function stageOf(p: BookProgress) {
   if (p.exported)
     return { label: "Exported", cls: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" };
   if (p.narrated)

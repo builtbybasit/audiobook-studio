@@ -1,8 +1,8 @@
-<script setup>
+<script setup lang="ts">
 // "Aa" popover (reka Popover): font family, size, line height, column width. Reset restores defaults.
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
-import { useReader } from "../stores/reader";
-import { UiSlider, UiToggleGroup } from "../ui";
+import { useReader } from "@/stores/reader";
+import { UiSlider, UiToggleGroup } from "@/ui";
 const reader = useReader();
 </script>
 

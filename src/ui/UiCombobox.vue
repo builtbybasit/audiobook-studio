@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Searchable picker (reka Combobox) for long lists such as the cast. Options as in UiSelect.
 // `action` mode: shows a placeholder, emits `pick` and resets — for "merge into…" style controls.
 // `custom` mode: free text is allowed — Enter or blur commits whatever was typed when it matches no option.
@@ -17,17 +17,26 @@ import {
   ComboboxTrigger,
   ComboboxViewport,
 } from "reka-ui";
+import type { UiOption } from "@/ui/types";
 
-const props = defineProps({
-  modelValue: { default: undefined },
-  options: { type: Array, default: () => [] },
-  placeholder: { type: String, default: "Search…" },
-  action: Boolean,
-  custom: Boolean,
-  size: { type: String, default: "sm" },
-  block: Boolean,
-});
-const emit = defineEmits(["update:modelValue", "pick"]);
+const props = withDefaults(
+  defineProps<{
+    modelValue?: string | number | null;
+    options?: UiOption[];
+    placeholder?: string;
+    /** the box is a command launcher: picking emits `pick` and clears, rather than binding a value */
+    action?: boolean;
+    /** allow a value typed by hand that isn't in `options` */
+    custom?: boolean;
+    size?: "xs" | "sm";
+    block?: boolean;
+  }>(),
+  { modelValue: undefined, options: () => [], placeholder: "Search…", size: "sm" },
+);
+const emit = defineEmits<{
+  "update:modelValue": [string | number | null];
+  pick: [string | number | null];
+}>();
 const term = ref("");
 const open = ref(false);
 const inner = computed({
@@ -38,14 +47,14 @@ const inner = computed({
         (props.custom && props.modelValue
           ? { value: props.modelValue, label: String(props.modelValue) }
           : null)),
-  set: (o) => {
+  set: (o: UiOption | null) => {
     if (!o) return;
     if (props.action) emit("pick", o.value);
     else emit("update:modelValue", o.value);
     term.value = "";
   },
 });
-function commitCustom(e) {
+function commitCustom(): boolean {
   if (!props.custom) return false;
   const v = term.value.trim();
   if (
@@ -60,10 +69,11 @@ function commitCustom(e) {
   }
   return false;
 }
-function onKey(e) {
+function onKey(e: KeyboardEvent) {
+  const input = e.target as HTMLInputElement;
   if (e.key === "Escape") {
     open.value = false;
-    e.target.blur();
+    input.blur();
     return;
   }
   if (e.key === "Enter") {
@@ -75,10 +85,10 @@ function onKey(e) {
       e.preventDefault();
       inner.value = first;
       open.value = false;
-      e.target.blur();
-    } else if (commitCustom(e)) {
+      input.blur();
+    } else if (commitCustom()) {
       e.preventDefault();
-      e.target.blur();
+      input.blur();
     }
   }
 }
@@ -123,8 +133,8 @@ const groups = computed(() => {
         class="min-w-0 flex-1 bg-transparent placeholder-zinc-400 focus:outline-none"
         :class="action && 'italic'"
         @focus="
-          (e) => {
-            e.target.select();
+          (e: FocusEvent) => {
+            (e.target as HTMLInputElement).select();
             open = true;
           }
         "

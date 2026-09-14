@@ -1,10 +1,17 @@
 // Fake audio player: advances a position counter so variants can show playback without real audio.
 import { reactive, onUnmounted } from "vue";
 
+export interface PlayerState {
+  id: string | null;
+  pos: number;
+  len: number;
+  playing: boolean;
+}
+
 export function usePlayer() {
-  const p = reactive({ id: null, pos: 0, len: 0, playing: false });
-  let t = null;
-  function play(id, len) {
+  const p = reactive<PlayerState>({ id: null, pos: 0, len: 0, playing: false });
+  let t: ReturnType<typeof setInterval> | undefined;
+  function play(id: string, len: number): void {
     if (p.id === id && p.playing) return pause();
     if (p.id !== id) {
       p.pos = 0;
@@ -21,18 +28,18 @@ export function usePlayer() {
       }
     }, 100);
   }
-  function pause() {
+  function pause(): void {
     p.playing = false;
     clearInterval(t);
   }
-  function seek(frac) {
+  function seek(frac: number): void {
     p.pos = frac * p.len;
   }
   onUnmounted(() => clearInterval(t));
   return { p, play, pause, seek };
 }
 
-export function speak(text, voice) {
+export function speak(text: string, voice: string): void {
   // Voice preview: real audio via the browser's own TTS so the button does *something*.
   try {
     const u = new SpeechSynthesisUtterance(text);
@@ -42,7 +49,7 @@ export function speak(text, voice) {
     speechSynthesis.speak(u);
   } catch {}
 }
-function hash(s) {
+function hash(s: string): number {
   let h = 0;
   for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0;
   return h;

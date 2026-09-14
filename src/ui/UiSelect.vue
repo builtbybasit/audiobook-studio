@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 // Select built on reka-ui. Options: [{ value, label, group?, disabled?, color? }]. `nullValue` lets a
 // v-model of null map to a real option (reka needs a concrete value), e.g. "Narrator’s voice".
 import { computed } from "vue";
@@ -15,20 +15,31 @@ import {
   SelectValue,
   SelectViewport,
 } from "reka-ui";
+import type { UiOption } from "@/ui/types";
 
-const props = defineProps({
-  modelValue: { default: undefined },
-  options: { type: Array, default: () => [] },
-  placeholder: { type: String, default: "Choose…" },
-  nullValue: { default: undefined }, // option value that stands for null
-  size: { type: String, default: "sm" }, // 'xs' | 'sm'
-  disabled: Boolean,
-  block: Boolean,
-});
-const emit = defineEmits(["update:modelValue"]);
+const props = withDefaults(
+  defineProps<{
+    modelValue?: string | number | null;
+    options?: UiOption[];
+    placeholder?: string;
+    /** option value that stands for null */
+    nullValue?: string | number;
+    size?: "xs" | "sm";
+    disabled?: boolean;
+    block?: boolean;
+  }>(),
+  {
+    modelValue: undefined,
+    options: () => [],
+    placeholder: "Choose…",
+    nullValue: undefined,
+    size: "sm",
+  },
+);
+const emit = defineEmits<{ "update:modelValue": [string | number | null] }>();
 const NULL = "__null__";
 const EMPTY = "__empty__"; // reka forbids '' as an item value; map it
-const key = (v) => (v === "" ? EMPTY : String(v));
+const key = (v: string | number | null): string => (v === "" ? EMPTY : String(v));
 const inner = computed({
   get: () =>
     props.modelValue == null
@@ -36,18 +47,18 @@ const inner = computed({
         ? NULL
         : undefined
       : key(props.modelValue),
-  set: (v) => {
+  set: (v: string | undefined) => {
     if (v === NULL) return emit("update:modelValue", null);
     const opt = props.options.find((o) => key(o.value) === v);
-    emit("update:modelValue", opt ? opt.value : v);
+    emit("update:modelValue", opt ? opt.value : (v ?? null));
   },
 });
 const groups = computed(() => {
-  const map = new Map();
+  const map = new Map<string, UiOption[]>();
   for (const o of props.options) {
     const g = o.group ?? "";
     if (!map.has(g)) map.set(g, []);
-    map.get(g).push(o);
+    map.get(g)!.push(o);
   }
   return [...map.entries()];
 });

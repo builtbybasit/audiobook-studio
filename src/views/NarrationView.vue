@@ -1,18 +1,19 @@
-<script setup>
+<script setup lang="ts">
 // Narration stage: voices + endpoints on top, chapter picker + run estimate + job ledger below.
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { useApp, isScripted, isNarrated } from "../stores/app";
-import EmptyState from "../components/EmptyState.vue";
-import ChapterPicker from "../components/ChapterPicker.vue";
-import VoiceTable from "./narration/VoiceTable.vue";
-import EndpointPanel from "./narration/EndpointPanel.vue";
-import RunEstimate from "./narration/RunEstimate.vue";
+import { useApp, isScripted, isNarrated } from "@/stores/app";
+import EmptyState from "@/components/EmptyState.vue";
+import ChapterPicker from "@/components/ChapterPicker.vue";
+import VoiceTable from "@/views/narration/VoiceTable.vue";
+import EndpointPanel from "@/views/narration/EndpointPanel.vue";
+import RunEstimate from "@/views/narration/RunEstimate.vue";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
-import JobLedger from "./narration/JobLedger.vue";
+import JobLedger from "@/views/narration/JobLedger.vue";
+import { useBookId } from "@/router";
 const app = useApp();
 const route = useRoute();
-const bookId = route.params.bookId;
+const bookId = useBookId();
 const tab = ref("voices");
 const collapsed = ref(false);
 const selected = ref([]);

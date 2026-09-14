@@ -1,9 +1,9 @@
-<script setup>
-defineProps({
-  icon: { type: String, default: "·" },
-  title: String,
-  body: String,
-  steps: { type: Array, default: () => [] },
+<script setup lang="ts">
+withDefaults(defineProps<{ icon?: string; title?: string; body?: string; steps?: string[] }>(), {
+  icon: "·",
+  title: undefined,
+  body: undefined,
+  steps: () => [],
 });
 </script>
 <template>

@@ -1,10 +1,58 @@
 // PROTOTYPE — mock world. Deterministic pseudo-random so reloads look the same.
-import { splitText } from "../lib/split.js";
+import { splitText } from "@/lib/split";
+import type {
+  Book,
+  Chapter,
+  Character,
+  Endpoint,
+  ExportItem,
+  Gender,
+  Segment,
+  SegmentMap,
+  SegmentType,
+  Voice,
+  VoiceRef,
+  Volume,
+  World,
+} from "@/types";
+
+/** A deterministic pseudo-random source; same seed ⇒ same world on every reload. */
+type Rng = () => number;
+
+/** One character as written in the seed data, before voices and colours are assigned. */
+interface CastSeed {
+  name: string;
+  aliases: string[];
+  gender: Gender;
+  description: string;
+}
+
+/** The hand-authored source for one book; `makeWorld` expands it into the real entities. */
+interface BookSeed {
+  id: string;
+  title: string;
+  author: string;
+  count: number;
+  cover: [string, string];
+  /** [volume name, source file, chapter count] */
+  volumes: [string, string, number][];
+  cast: CastSeed[];
+  /** [name, gender] for walk-on speakers */
+  minor: [string, Gender][];
+  titles: string[];
+  narration: string[];
+  thought: Record<string, string[]>;
+  dialogue: Record<string, string[]>;
+}
 
 // Voices belong to an endpoint (each TTS server exposes its own list). A character stores a voice
 // *ref* — `<endpointId>/<voiceId>` — so narration knows which endpoint must render that speaker.
-const g = (id, gender, label) => ({ id, gender, label: label ?? id });
-export const OPENAI_VOICES = [
+const g = (id: string, gender: Gender, label?: string): Voice => ({
+  id,
+  gender,
+  label: label ?? id,
+});
+export const OPENAI_VOICES: Voice[] = [
   g("alloy", "n"),
   g("ash", "m"),
   g("ballad", "m"),
@@ -17,7 +65,7 @@ export const OPENAI_VOICES = [
   g("shimmer", "f"),
   g("verse", "m"),
 ];
-export const KOKORO_VOICES = [
+export const KOKORO_VOICES: Voice[] = [
   g("af_heart", "f", "Heart"),
   g("af_bella", "f", "Bella"),
   g("af_nicole", "f", "Nicole"),
@@ -27,7 +75,7 @@ export const KOKORO_VOICES = [
   g("bm_george", "m", "George"),
   g("bm_lewis", "m", "Lewis"),
 ];
-export const AZURE_VOICES = [
+export const AZURE_VOICES: Voice[] = [
   g("alloy", "n"),
   g("echo", "m"),
   g("fable", "n"),
@@ -36,7 +84,7 @@ export const AZURE_VOICES = [
   g("shimmer", "f"),
 ];
 // what a "Fetch voices from server" call would return for a fresh OpenAI-compatible endpoint (e.g. Kokoro-FastAPI, Orpheus, Piper bridges)
-export const DISCOVERABLE_VOICES = [
+export const DISCOVERABLE_VOICES: Voice[] = [
   g("tara", "f", "Tara"),
   g("leah", "f", "Leah"),
   g("jess", "f", "Jess"),
@@ -46,9 +94,9 @@ export const DISCOVERABLE_VOICES = [
   g("zac", "m", "Zac"),
   g("zoe", "f", "Zoe"),
 ];
-export const voiceRef = (epId, voiceId) => `${epId}/${voiceId}`;
+export const voiceRef = (epId: string, voiceId: string): VoiceRef => `${epId}/${voiceId}`;
 
-export const DIRECTIONS = [
+export const DIRECTIONS: string[] = [
   "calm, measured",
   "urgent, breathless",
   "whispered, hesitant",
@@ -66,7 +114,7 @@ export const DIRECTIONS = [
   "muttered under breath",
 ];
 
-export const PALETTE = [
+export const PALETTE: string[] = [
   "#a78bfa",
   "#f472b6",
   "#34d399",
@@ -79,12 +127,12 @@ export const PALETTE = [
   "#4ade80",
 ];
 
-function rng(seed) {
+function rng(seed: number): Rng {
   let s = seed % 2147483647 || 1;
   return () => (s = (s * 16807) % 2147483647) / 2147483647;
 }
 
-const BOOKS = [
+const BOOKS: BookSeed[] = [
   {
     id: "cliche",
     title: "The Cliché Cultivation World",
@@ -409,7 +457,7 @@ const BOOKS = [
   },
 ];
 
-const MINOR_LINES = [
+const MINOR_LINES: string[] = [
   "Yes, my lord.",
   "This way, please.",
   "You cannot go in there.",
@@ -422,17 +470,17 @@ const MINOR_LINES = [
   "Careful. The steps are wet.",
 ];
 
-export function makeVolumes(book) {
+export function makeVolumes(book: BookSeed): Volume[] {
   let from = 1;
   return book.volumes.map(([name, file, n], i) => {
-    const v = { id: i + 1, name, file, from, to: from + n - 1 };
+    const v: Volume = { id: i + 1, name, file, from, to: from + n - 1 };
     from += n;
     return v;
   });
 }
 
-function makeChapters(book, r) {
-  const list = [];
+function makeChapters(book: BookSeed, r: Rng): Chapter[] {
+  const list: Chapter[] = [];
   const vols = makeVolumes(book);
   for (let i = 1; i <= book.count; i++) {
     const t = book.titles[(i - 1) % book.titles.length];
@@ -454,13 +502,17 @@ function makeChapters(book, r) {
   return list;
 }
 
-export function generateSegments(bookId, chapterId, opts = {}) {
-  const book = BOOKS.find((b) => b.id === bookId);
+export function generateSegments(
+  bookId: string,
+  chapterId: number,
+  opts: { aliasNoise?: boolean } = {},
+): Segment[] {
+  const book = BOOKS.find((b) => b.id === bookId)!;
   const r = rng(bookId.length * 977 + chapterId * 131);
   const speakers = Object.keys(book.dialogue);
   const n = 24 + Math.floor(r() * 14);
-  const segs = [];
-  let last = null;
+  const segs: { type: SegmentType; speaker: string; text: string }[] = [];
+  let last: string | null = null;
   for (let i = 0; i < n; i++) {
     const roll = r();
     if (roll < 0.42 || i === 0) {
@@ -500,20 +552,20 @@ export function generateSegments(bookId, chapterId, opts = {}) {
   }));
 }
 
-function pick(arr, r) {
+function pick<T>(arr: T[], r: Rng): T {
   return arr[Math.floor(r() * arr.length)];
 }
 
-export function makeWorld() {
-  const books = [];
-  const chapters = {};
-  const characters = {};
-  const segments = {};
+export function makeWorld(): World {
+  const books: Book[] = [];
+  const chapters: Record<string, Chapter[]> = {};
+  const characters: Record<string, Character[]> = {};
+  const segments: SegmentMap = {};
   const r = rng(42);
 
   // Each endpoint carries its own voice list and a per-request character limit (many small TTS
   // servers degrade or truncate past a few hundred chars; OpenAI caps at 4096). 0 = no limit.
-  const endpoints = [
+  const endpoints: Endpoint[] = [
     {
       id: "openai",
       name: "OpenAI (main)",
@@ -580,18 +632,22 @@ export function makeWorld() {
       backoffUntil: 0,
     },
   ];
-  const oa = (v) => voiceRef("openai", v),
-    kk = (v) => voiceRef("local", v);
+  const oa = (v: string): VoiceRef => voiceRef("openai", v);
+  const kk = (v: string): VoiceRef => voiceRef("local", v);
   // seeded casting: OpenAI for dialogue, the free local Kokoro for the Narrator on two books (cheap
   // narration, premium dialogue); one Drowned character sits on the paused Azure proxy → a blocker to fix.
-  const seedVoice = {
+  const seedVoice: Record<Gender, string[]> = {
     m: ["onyx", "echo", "ash", "ballad", "verse"],
     f: ["nova", "shimmer", "coral", "sage"],
     n: ["alloy", "fable"],
     "?": ["alloy"],
   };
-  const narratorVoice = { cliche: kk("bm_george"), starforge: oa("sage"), drowned: kk("bf_emma") };
-  const seedCuts = (text, ep) => {
+  const narratorVoice: Record<string, VoiceRef> = {
+    cliche: kk("bm_george"),
+    starforge: oa("sage"),
+    drowned: kk("bf_emma"),
+  };
+  const seedCuts = (text: string, ep: Endpoint) => {
     const cuts = splitText(text, ep.maxChars, ep.splitAt);
     return cuts.length > 1
       ? {
@@ -601,10 +657,10 @@ export function makeWorld() {
         }
       : {};
   };
-  const seedAudit = (bookId, s, ep, i) => {
+  const seedAudit = (bookId: string, s: Segment, ep: Endpoint, i: number) => {
     const cast = characters[bookId];
     const c = cast.find((x) => x.name === s.speaker);
-    const ref = c?.voice || cast.find((x) => x.name === "Narrator").voice;
+    const ref = (c?.voice || cast.find((x) => x.name === "Narrator")!.voice)!;
     return {
       voiceRef: ref,
       voice: ref.split("/")[1],
@@ -616,11 +672,11 @@ export function makeWorld() {
       cost: (s.text.length / 1e6) * ep.price,
     };
   };
-  const routeOf = (bookId, speaker) => {
+  const routeOf = (bookId: string, speaker: string): Endpoint => {
     const cast = characters[bookId];
-    const ref =
-      cast.find((c) => c.name === speaker)?.voice || cast.find((c) => c.name === "Narrator").voice;
-    return endpoints.find((e) => e.id === ref.split("/")[0]);
+    const ref = (cast.find((c) => c.name === speaker)?.voice ||
+      cast.find((c) => c.name === "Narrator")!.voice)!;
+    return endpoints.find((e) => e.id === ref.split("/")[0])!;
   };
 
   for (const b of BOOKS) {
@@ -658,7 +714,7 @@ export function makeWorld() {
   }
 
   // seed pipeline state so every screen has something to show
-  const seed = (bookId, scripted, narrated) => {
+  const seed = (bookId: string, scripted: number, narrated: number): void => {
     for (const c of chapters[bookId]) {
       if (c.id <= scripted) {
         c.scripting = "done";
@@ -756,7 +812,7 @@ export function makeWorld() {
   notes.excluded = true;
   notes.words = 900;
 
-  const exports = [
+  const exports: ExportItem[] = [
     {
       id: 1,
       bookId: "starforge",

@@ -1,6 +1,7 @@
 // PROTOTYPE — mock world. Deterministic pseudo-random so reloads look the same.
 import { splitText } from "@/lib/split";
 import { speak, silenceOf, DEFAULT_PACING } from "@/lib/speech";
+import type { FishModel } from "@/lib/endpoints";
 import type {
   Book,
   LexEntry,
@@ -87,6 +88,76 @@ export const AZURE_VOICES: Voice[] = [
   g("shimmer", "f"),
 ];
 // what a "Fetch voices from server" call would return for a fresh OpenAI-compatible endpoint (e.g. Kokoro-FastAPI, Orpheus, Piper bridges)
+/** What a `GET /model?self=true` would return for a Fish Audio account — the catalogue is the
+ *  user's own voice library, so ids are reference_ids and there is no gender field, only tags.
+ *  Two entries are unusable on purpose: one is still training, one is a voice-conversion model. */
+export const FISH_MODELS: FishModel[] = [
+  {
+    _id: "fish0000000000000000000000000001",
+    title: "Narrator · warm baritone",
+    type: "tts",
+    state: "trained",
+    tags: ["male", "narration", "audiobook"],
+    languages: ["en"],
+    visibility: "private",
+  },
+  {
+    _id: "fish0000000000000000000000000002",
+    title: "Young swordsman",
+    type: "tts",
+    state: "trained",
+    tags: ["male", "youth"],
+    languages: ["en", "zh"],
+    visibility: "private",
+  },
+  {
+    _id: "fish0000000000000000000000000003",
+    title: "Sect elder",
+    type: "tts",
+    state: "trained",
+    tags: ["male", "elderly"],
+    languages: ["zh"],
+    visibility: "unlist",
+  },
+  {
+    _id: "fish0000000000000000000000000004",
+    title: "Lan’er",
+    type: "tts",
+    state: "trained",
+    tags: ["female", "youth"],
+    languages: ["zh"],
+    visibility: "private",
+  },
+  {
+    _id: "fish0000000000000000000000000005",
+    title: "Steward",
+    type: "tts",
+    state: "trained",
+    // no gender tag at all — the picker shows this one as unknown
+    tags: ["dry", "officious"],
+    languages: ["en"],
+    visibility: "private",
+  },
+  {
+    _id: "fish0000000000000000000000000006",
+    title: "Drowned City narrator (training)",
+    type: "tts",
+    state: "created",
+    tags: ["female"],
+    languages: ["en"],
+    visibility: "private",
+  },
+  {
+    _id: "fish0000000000000000000000000007",
+    title: "Voice conversion · test",
+    type: "svc",
+    state: "trained",
+    tags: [],
+    languages: ["en"],
+    visibility: "private",
+  },
+];
+
 export const DISCOVERABLE_VOICES: Voice[] = [
   g("tara", "f", "Tara"),
   g("leah", "f", "Leah"),

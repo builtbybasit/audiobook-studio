@@ -12,10 +12,12 @@ import type {
   Endpoint,
   EndpointKind,
   EndpointOps,
+  Gender,
   MetricTotals,
   Profile,
   TtsBilling,
   TtsBillingUnit,
+  Voice,
   WaitReason,
 } from "@/types";
 import { profileErrors } from "@/lib/scripting";
@@ -234,6 +236,49 @@ export const isFishAudio = (e: Pick<Endpoint, "baseUrl">): boolean =>
 
 export function ttsRequestPath(e: Pick<Endpoint, "baseUrl">): string {
   return isFishAudio(e) ? "/tts" : KIND_PATH.tts;
+}
+
+/** One entry of Fish Audio's `GET /model` response. Only the fields a voice list needs are typed;
+ *  the real payload also carries covers, samples, like counts and the author's profile. */
+export interface FishModel {
+  _id: string;
+  title: string;
+  type?: string;
+  state?: string;
+  tags?: string[];
+  languages?: string[];
+  visibility?: string;
+}
+
+/** Fish Audio serves speech under /v1 but its model catalogue at the host root, so the voice list
+ *  cannot just be appended to the base URL the way an OpenAI-compatible /audio/voices can. */
+export function fishModelsUrl(baseUrl: string): string {
+  return (
+    baseUrl
+      .trim()
+      .replace(/\/+$/, "")
+      .replace(/\/v\d+$/, "") + "/model?self=true&page_size=100"
+  );
+}
+
+/** Fish has no gender field — a voice carries free-form tags, and only some of them say. */
+function fishGender(tags: string[] = []): Gender {
+  const t = tags.map((x) => x.toLowerCase());
+  if (t.includes("male") || t.includes("man") || t.includes("boy")) return "m";
+  if (t.includes("female") || t.includes("woman") || t.includes("girl")) return "f";
+  return "?";
+}
+
+/** A Fish voice's id *is* the `reference_id` a TTS request quotes, so the `_id` is what to keep.
+ *  Anything still training, or a voice-conversion model, cannot narrate a line and is dropped. */
+export function voicesFromFishModels(items: FishModel[]): Voice[] {
+  return items
+    .filter((m) => m._id && (m.type ?? "tts") === "tts" && (m.state ?? "trained") === "trained")
+    .map((m) => ({
+      id: m._id,
+      label: m.title?.trim() || m._id,
+      gender: fishGender(m.tags),
+    }));
 }
 
 // ---------- billing ----------

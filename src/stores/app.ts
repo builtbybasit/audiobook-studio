@@ -1,11 +1,18 @@
 // PROTOTYPE — in-memory state + simulated jobs. Nothing persists.
 import { defineStore } from "pinia";
-import { makeWorld, generateSegments, PALETTE, DISCOVERABLE_VOICES, voiceRef } from "@/mock/data";
+import {
+  makeWorld,
+  generateSegments,
+  PALETTE,
+  DISCOVERABLE_VOICES,
+  FISH_MODELS,
+  voiceRef,
+} from "@/mock/data";
 import { splitText, partsFor } from "@/lib/split";
 import { speak, silenceOf, pacingOrDefault, hitsIn } from "@/lib/speech";
 import { newProfile, profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
 import { keyring } from "@/lib/keyring";
-import { presetById } from "@/lib/endpoints";
+import { fishModelsUrl, isFishAudio, presetById, voicesFromFishModels } from "@/lib/endpoints";
 import { logJob, jobWaiting, startJob } from "@/lib/jobActivity";
 import { toast as tf } from "vue-toastflow";
 import type { ToastButton } from "vue-toastflow";
@@ -2027,17 +2034,25 @@ export const useApp = defineStore("app", {
         undo: () => ep.voices.splice(Math.min(i, ep.voices.length), 0, v),
       });
     },
-    // simulated GET /v1/audio/voices — most OpenAI-compatible servers (Kokoro-FastAPI, Orpheus…) expose one
+    // Simulated voice discovery. Most OpenAI-compatible servers (Kokoro-FastAPI, Orpheus…) expose
+    // GET /audio/voices; Fish Audio instead has a per-account model catalogue at the host root,
+    // which is authenticated and returns far more than voices, so it is mapped down to the few
+    // fields a voice picker needs.
     fetchVoices(ep: Endpoint): Promise<number> {
       ep.fetching = true;
+      const fish = isFishAudio(ep);
+      const url = fish ? fishModelsUrl(ep.baseUrl) : `${ep.baseUrl}/audio/voices`;
       const work = new Promise<number>((res, rej) =>
         setTimeout(() => {
           ep.fetching = false;
           if (!/^https?:\/\/.+\..+/.test(ep.baseUrl) && !/127\.0\.0\.1|localhost/.test(ep.baseUrl))
-            return rej(new Error(`GET ${ep.baseUrl}/audio/voices — could not connect`));
-          const added = DISCOVERABLE_VOICES.filter(
-            (v) => !ep.voices.some((x) => x.id === v.id),
-          ).map((v) => ({ ...v }));
+            return rej(new Error(`GET ${url} — could not connect`));
+          // the catalogue is the account's own library, so it is never readable anonymously
+          if (fish && !keyring.has(ep.id)) return rej(new Error(`GET ${url} — 401 Unauthorized`));
+          const found = fish ? voicesFromFishModels(FISH_MODELS) : DISCOVERABLE_VOICES;
+          const added = found
+            .filter((v) => !ep.voices.some((x) => x.id === v.id))
+            .map((v) => ({ ...v }));
           ep.voices.push(...added);
           res(added.length);
         }, 1200),
@@ -2046,7 +2061,10 @@ export const useApp = defineStore("app", {
         loading: `Fetching voices from ${ep.name}…`,
         success: (n) =>
           n ? `${n} voice${n === 1 ? "" : "s"} added to ${ep.name}` : `${ep.name}: no new voices`,
-        error: () => `${ep.name}: voice list unavailable`,
+        error: (e) =>
+          fish && String(e).includes("401")
+            ? `${ep.name}: set the API key first — the voice library is per account`
+            : `${ep.name}: voice list unavailable`,
       });
       return work.catch(() => 0);
     },

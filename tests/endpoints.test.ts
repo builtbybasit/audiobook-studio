@@ -3,15 +3,19 @@ import { newProfile, profileErrors } from "../src/lib/scripting";
 import { splitText } from "../src/lib/split";
 import {
   ensureOps,
+  fishModelsUrl,
   healthOf,
+  isFishAudio,
   maybeMoney,
   money,
   perMillionChars,
   pricingLabel,
   sanitize,
   ttsCost,
+  ttsRequestPath,
   unifyEndpoint,
   unifyProfile,
+  voicesFromFishModels,
 } from "../src/lib/endpoints";
 import type { UnifiedEndpoint } from "../src/lib/endpoints";
 import { FixtureEndpointService, seriesFrom } from "../src/services/endpoints";
@@ -394,4 +398,51 @@ test("an endpoint added in this session starts with no invented history", async 
     "7d",
   );
   expect(rows).toEqual([]);
+});
+
+// ---------- Fish Audio ----------
+
+test("a Fish Audio host is recognised, and a lookalike path is not", () => {
+  expect(isFishAudio({ baseUrl: "https://api.fish.audio/v1" })).toBe(true);
+  expect(isFishAudio({ baseUrl: "https://fish.audio" })).toBe(true);
+  expect(isFishAudio({ baseUrl: "https://api.openai.com/v1" })).toBe(false);
+  expect(isFishAudio({ baseUrl: "http://127.0.0.1:8880/v1" })).toBe(false);
+  // a host that merely mentions fish.audio in its path must not be treated as Fish
+  expect(isFishAudio({ baseUrl: "https://evil.example/fish.audio/v1" })).toBe(false);
+});
+
+test("Fish Audio speech is /tts, everything else keeps /audio/speech", () => {
+  expect(ttsRequestPath({ baseUrl: "https://api.fish.audio/v1" })).toBe("/tts");
+  expect(ttsRequestPath({ baseUrl: "https://api.openai.com/v1" })).toBe("/audio/speech");
+});
+
+test("the model catalogue hangs off the host, not the versioned speech base", () => {
+  const want = "https://api.fish.audio/model?self=true&page_size=100";
+  expect(fishModelsUrl("https://api.fish.audio/v1")).toBe(want);
+  expect(fishModelsUrl("https://api.fish.audio/v1/")).toBe(want);
+  expect(fishModelsUrl("  https://api.fish.audio  ")).toBe(want);
+});
+
+test("a model list becomes voices, dropping what cannot narrate a line", () => {
+  const voices = voicesFromFishModels([
+    { _id: "a", title: "Narrator", type: "tts", state: "trained", tags: ["Male", "audiobook"] },
+    { _id: "b", title: "Lan’er", type: "tts", state: "trained", tags: ["female"] },
+    { _id: "c", title: "Steward", type: "tts", state: "trained", tags: ["dry"] },
+    { _id: "d", title: "Still training", type: "tts", state: "created", tags: ["female"] },
+    { _id: "e", title: "Conversion", type: "svc", state: "trained", tags: [] },
+  ]);
+  expect(voices.map((v) => v.id)).toEqual(["a", "b", "c"]);
+  // the reference_id is the id a TTS request quotes, so it is what is kept
+  expect(voices[0]).toEqual({ id: "a", label: "Narrator", gender: "m" });
+  expect(voices[1].gender).toBe("f");
+  // Fish has no gender field; an untagged voice is unknown rather than guessed
+  expect(voices[2].gender).toBe("?");
+});
+
+test("a voice with no title falls back to its reference_id", () => {
+  expect(voicesFromFishModels([{ _id: "xyz", title: "   " }])[0]).toEqual({
+    id: "xyz",
+    label: "xyz",
+    gender: "?",
+  });
 });

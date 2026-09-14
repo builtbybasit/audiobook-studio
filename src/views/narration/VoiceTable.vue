@@ -5,6 +5,7 @@ import { computed, ref } from 'vue'
 import { useApp } from '../../stores/app'
 import { speak } from '../../composables/usePlayer'
 import { UiSelect, UiCheckbox, UiTooltip } from '../../ui'
+import VoicePicker from '../../components/VoicePicker.vue'
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from 'reka-ui'
 
 const props = defineProps({ bookId: String })
@@ -44,7 +45,7 @@ const sample = (c) => c.name === 'Narrator' ? 'The mountain mist thinned as dawn
     <div v-if="!narrator?.voice" class="mb-3 rounded-md border border-amber-400 bg-amber-400/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">Assign the Narrator’s voice first: every unvoiced character borrows it.</div>
     <div v-if="!voiceOpts.length" class="mb-3 rounded-md border border-amber-400 bg-amber-400/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">No endpoint has any voices yet. Open the Endpoints tab and fetch or add voices — the pickers here only list voices that exist on an endpoint.</div>
 
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-3">
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3">
       <div v-for="c in major" :key="c.name" class="rounded-lg border p-3 text-sm" :class="c.isNew ? 'border-dashed border-amber-400' : 'border-zinc-200 dark:border-zinc-800'" :style="{ borderTopColor: c.color, borderTopWidth: '3px' }">
         <div class="flex items-center gap-2">
           <span class="h-2.5 w-2.5 rounded-full" :style="{ background: c.color }"></span>
@@ -58,9 +59,7 @@ const sample = (c) => c.name === 'Narrator' ? 'The mountain mist thinned as dawn
           <button v-else class="rounded border border-dashed border-zinc-300 px-2 py-0.5 italic text-zinc-400 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700" @click="revealed = new Set([...revealed, c.name])">description hidden — spoilers · show</button>
         </div>
         <div class="mt-2 flex items-center gap-1.5">
-          <UiSelect v-model="c.voice" :options="voiceOpts" null-value="Narrator’s voice" class="min-w-0 flex-1" block :class="issueOf(c) && 'ring-1 ring-amber-400 rounded-md'">
-            <template #value="{ label }"><span v-if="missing(c)" class="text-amber-600">{{ c.voice.split('/')[1] }} — missing</span><template v-else>{{ label }}</template></template>
-          </UiSelect>
+          <VoicePicker v-model="c.voice" :book-id="bookId" :speaker="c.name" class="min-w-0 flex-1" block />
           <UiTooltip text="Prototype: plays a browser voice, not the real TTS voice"><button class="btn-ghost btn-xs" :disabled="!app.effectiveVoice(bookId, c.name).voice" @click="speak(sample(c), app.effectiveVoice(bookId, c.name).voice)">▶<span class="text-[9px] text-zinc-400">demo</span></button></UiTooltip>
         </div>
         <div v-if="issueOf(c)" class="mt-1 text-[11px] text-amber-600">⚠ {{ issueOf(c).reason }}<template v-if="issueOf(c).kind === 'paused'"> · <button class="underline" @click="issueOf(c).endpoint.enabled = true">resume it</button> or pick another voice</template><template v-else-if="issueOf(c).kind === 'missing'"> · pick another voice</template></div>
@@ -80,9 +79,7 @@ const sample = (c) => c.name === 'Narrator' ? 'The mountain mist thinned as dawn
             <td class="py-1 pl-3"><span class="rounded-full px-2 py-0.5 text-xs" :style="{ background: c.color + '33', color: c.color }">{{ c.name }}</span></td>
             <td class="w-20 text-xs text-zinc-500">{{ genderLabel[c.gender] ?? 'unknown' }}</td>
             <td class="w-16 font-mono text-xs text-zinc-400">{{ counts[c.name] ?? 0 }} seg</td>
-            <td class="w-56 py-1 pr-3 text-right"><UiSelect v-model="c.voice" :options="voiceOpts" null-value="Narrator’s voice" size="xs" block :class="issueOf(c) && 'ring-1 ring-amber-400 rounded-md'">
-              <template #value="{ label }"><span v-if="missing(c)" class="text-amber-600">{{ c.voice.split('/')[1] }} — missing</span><template v-else>{{ label }}</template></template>
-            </UiSelect></td>
+            <td class="w-56 py-1 pr-3 text-right"><VoicePicker v-model="c.voice" :book-id="bookId" :speaker="c.name" size="xs" block /></td>
           </tr>
         </table>
       </CollapsibleContent>

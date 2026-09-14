@@ -163,9 +163,9 @@ export function makeWorld() {
   // Each endpoint carries its own voice list and a per-request character limit (many small TTS
   // servers degrade or truncate past a few hundred chars; OpenAI caps at 4096). 0 = no limit.
   const endpoints = [
-    { id: 'openai', name: 'OpenAI (main)', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-••••••••••••4f2a', model: 'gpt-4o-mini-tts', concurrency: 3, enabled: true, latency: 1400, failRate: 0.01, price: 12, needsKey: true, maxChars: 4096, splitAt: 'sentence', voices: OPENAI_VOICES.map(v => ({ ...v })), history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 1100 + Math.round(Math.sin(i / 3) * 300 + (i % 7) * 60), ok: i % 11 !== 4 })), failures: 2, rateLimits: 1, backoffUntil: 0 },
-    { id: 'local', name: 'Local Kokoro', baseUrl: 'http://127.0.0.1:8880/v1', apiKey: '', model: 'kokoro', concurrency: 2, enabled: true, latency: 2600, failRate: 0.025, price: 0, needsKey: false, maxChars: 500, splitAt: 'sentence', voices: KOKORO_VOICES.map(v => ({ ...v })), history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 2200 + Math.round(Math.cos(i / 4) * 500 + (i % 5) * 90), ok: i % 6 !== 2 })), failures: 5, rateLimits: 0, backoffUntil: 0 },
-    { id: 'proxy', name: 'Azure proxy', baseUrl: 'https://tts-proxy.internal/v1', apiKey: '', model: 'tts-1-hd', concurrency: 1, enabled: false, latency: 1900, failRate: 0.05, price: 15, needsKey: true, maxChars: 3000, splitAt: 'clause', voices: AZURE_VOICES.map(v => ({ ...v })), history: [], failures: 0, rateLimits: 0, backoffUntil: 0 },
+    { id: 'openai', name: 'OpenAI (main)', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini-tts', concurrency: 3, enabled: true, latency: 1400, failRate: 0.01, price: 12, needsKey: true, maxChars: 4096, splitAt: 'sentence', voices: OPENAI_VOICES.map(v => ({ ...v })), history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 1100 + Math.round(Math.sin(i / 3) * 300 + (i % 7) * 60), ok: i % 11 !== 4 })), failures: 2, rateLimits: 1, backoffUntil: 0 },
+    { id: 'local', name: 'Local Kokoro', baseUrl: 'http://127.0.0.1:8880/v1', model: 'kokoro', concurrency: 2, enabled: true, latency: 2600, failRate: 0.025, price: 0, needsKey: false, maxChars: 500, splitAt: 'sentence', voices: KOKORO_VOICES.map(v => ({ ...v })), history: Array.from({ length: 30 }, (_, i) => ({ t: Date.now() - (30 - i) * 60000, ms: 2200 + Math.round(Math.cos(i / 4) * 500 + (i % 5) * 90), ok: i % 6 !== 2 })), failures: 5, rateLimits: 0, backoffUntil: 0 },
+    { id: 'proxy', name: 'Azure proxy', baseUrl: 'https://tts-proxy.internal/v1', model: 'tts-1-hd', concurrency: 1, enabled: false, latency: 1900, failRate: 0.05, price: 15, needsKey: true, maxChars: 3000, splitAt: 'clause', voices: AZURE_VOICES.map(v => ({ ...v })), history: [], failures: 0, rateLimits: 0, backoffUntil: 0 },
   ]
   const oa = (v) => voiceRef('openai', v), kk = (v) => voiceRef('local', v)
   // seeded casting: OpenAI for dialogue, the free local Kokoro for the Narrator on two books (cheap
@@ -173,6 +173,8 @@ export function makeWorld() {
   const seedVoice = { m: ['onyx', 'echo', 'ash', 'ballad', 'verse'], f: ['nova', 'shimmer', 'coral', 'sage'], n: ['alloy', 'fable'], '?': ['alloy'] }
   const narratorVoice = { cliche: kk('bm_george'), starforge: oa('sage'), drowned: kk('bf_emma') }
   const seedCuts = (text, ep) => { const cuts = splitText(text, ep.maxChars, ep.splitAt); return cuts.length > 1 ? { parts: cuts.length, splitAt: ep.splitAt, cuts: cuts.map(c => ({ from: c.from, to: c.to, at: c.at, fallback: c.fallback })) } : {} }
+  const seedAudit = (bookId, s, ep, i) => { const cast = characters[bookId]; const c = cast.find(x => x.name === s.speaker); const ref = c?.voice || cast.find(x => x.name === 'Narrator').voice
+    return { voiceRef: ref, voice: ref.split('/')[1], model: ep.model, direction: s.direction, style: c?.style ?? '', type: s.type, at: Date.now() - (3600 + i * 7) * 1000, cost: s.text.length / 1e6 * ep.price } }
   const routeOf = (bookId, speaker) => {
     const cast = characters[bookId]
     const ref = cast.find(c => c.name === speaker)?.voice || cast.find(c => c.name === 'Narrator').voice
@@ -199,7 +201,7 @@ export function makeWorld() {
       if (c.id <= narrated) {
         c.narration = 'done'; c.narrationProgress = 100
         const segs = segments[`${bookId}:${c.id}`]
-        segs.forEach((s, i) => { const ep = routeOf(bookId, s.speaker); s.audio = { status: 'done', endpoint: ep.id, ms: 900 + i * 37, duration: s.text.split(' ').length / 2.6, ...seedCuts(s.text, ep) } })
+        segs.forEach((s, i) => { const ep = routeOf(bookId, s.speaker); s.audio = { status: 'done', endpoint: ep.id, ms: 900 + i * 37, duration: s.text.split(' ').length / 2.6, ...seedCuts(s.text, ep), ...seedAudit(bookId, s, ep, i) } })
         c.duration = segs.reduce((a, s) => a + s.audio.duration, 0)
       }
     }
@@ -221,7 +223,9 @@ export function makeWorld() {
   // ch 2 of Cliché: two segments edited after narration → stale
   chapters.cliche[1].narration = 'stale'
   segments['cliche:2'][3].audio.status = 'stale'; segments['cliche:2'][8].audio.status = 'stale'
-  segments['cliche:4'].forEach((s, i) => { const ep = routeOf('cliche', s.speaker); s.audio = { status: i % 9 === 4 ? 'failed' : 'done', endpoint: ep.id, ms: 800 + i * 20, duration: i % 9 === 4 ? 0 : s.text.split(' ').length / 2.6, error: i % 9 === 4 ? 'server error' : undefined } })
+  segments['cliche:4'].forEach((s, i) => { const ep = routeOf('cliche', s.speaker); s.audio = { status: i % 9 === 4 ? 'failed' : 'done', endpoint: ep.id, ms: 800 + i * 20, duration: i % 9 === 4 ? 0 : s.text.split(' ').length / 2.6, ...seedAudit('cliche', s, ep, i), error: i % 9 === 4 ? { code: 500, message: 'server error', body: '{"error":{"message":"The server had an error while processing your request.","type":"server_error"}}' } : undefined } })
+  // a chapter worth skipping: translator notes at the end of Drowned City
+  const notes = chapters.drowned[chapters.drowned.length - 1]; notes.title = 'Translator’s notes'; notes.excluded = true; notes.words = 900
 
 
   const exports = [

@@ -17,17 +17,17 @@ watch(() => route.query.ch, (ch) => { if (ch) opened.value = Number(ch) })   // 
 const chapter = computed(() => app.chapter(bookId, opened.value))
 const hasScript = computed(() => chapter.value && isScripted(chapter.value))
 const anyScripted = computed(() => app.chaptersOf(bookId).some(isScripted))
-function scriptFirst() { const ids = app.chaptersOf(bookId).slice(0, 3).map(c => c.id); selected.value = ids; app.runScripting(bookId, ids) }
+function scriptFirst() { const ids = app.chaptersOf(bookId).filter(c => !c.excluded).slice(0, 3).map(c => c.id); selected.value = ids; app.runScripting(bookId, ids) }
 </script>
 
 <template>
-  <div class="grid h-full grid-cols-[300px_1fr] grid-rows-[minmax(0,1fr)] gap-4 p-4">
+  <div class="grid gap-4 p-4 lg:h-full lg:grid-cols-[300px_1fr] lg:grid-rows-[minmax(0,1fr)]">
     <div class="flex min-h-0 flex-col gap-3">
-      <div class="min-h-0 flex-1"><ChapterPicker :book-id="bookId" stage="scripting" v-model="selected" :opened-id="opened" run-label="Run scripting" @open="id => opened = id" @run="ids => app.runScripting(bookId, ids)" /></div>
+      <div class="h-[50vh] min-h-0 lg:h-auto lg:flex-1"><ChapterPicker :book-id="bookId" stage="scripting" v-model="selected" :opened-id="opened" run-label="Run scripting" @open="id => opened = id" @run="ids => app.runScripting(bookId, ids)" /></div>
       <div class="card shrink-0 p-3"><ScriptSettings :book-id="bookId" :selected="selected" /></div>
     </div>
 
-    <div class="min-h-0 min-w-0">
+    <div class="min-h-0 min-w-0 lg:h-full">
       <ScriptReader v-if="hasScript" :book-id="bookId" :chapter-id="opened" :key="opened" />
       <EmptyState v-else-if="!anyScripted && chapter?.scripting === 'none'" icon="✎" title="Nothing scripted yet"
         body="Scripting reads each chapter with the LLM, splits it into speaker runs, and verifies nothing was dropped. Start with the first few chapters to discover the cast."

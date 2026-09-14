@@ -41,6 +41,20 @@ Ideas borrowed from the older narrata web UI: major/minor cast split with Narrat
 - **Volumes are sortable** (drag the handle or ▲▼) and can be **renamed and removed** from the book overview (wrong EPUB added). Reordering renumbers chapters so they follow the volume order. Removing one deletes its chapters, segments, jobs and export entries, renumbers the remaining chapters so numbering stays continuous, and removing the only volume removes the novel.
 - Reader keyboard: `j`/`k` move, `↵` edit, `1–9` assign speaker, `c` toggle cast.
 
+## Round three (2026-09-14): gaps, friction, responsive, backend-shaped
+
+- **Chapter peek & skip** — every picker row has a ⌕ popover with the raw text and word count and a "Skip this chapter" toggle; skipped chapters leave every stage, the run totals and the audiobook.
+- **Re-script** from the reader header: profile + chunk size, "keep my N manual edits" (re-applied where the text still matches), then a "what changed" panel (speaker / direction changes, new / gone segments, click to jump). Edited segments carry `edited: true`.
+- **Undo** — merge, rename, delete speaker, remove volume / novel / endpoint / voice, delete export all toast with Undo; `⌘Z`/`Ctrl+Z` outside a field undoes the latest. Snapshots in `_castSnapshot` / `_bookSnapshot`.
+- **Export**: custom cover, chapter markers with a title pattern and preview, listen / download / on-disk path per finished file.
+- **Script search** (`/book/:id/search`, or type ≥2 chars in the palette): text, speaker, direction across every scripted chapter; results deep-link to the segment (`?ch=&seg=`).
+- **Audit trail**: each rendered clip records voice, model, direction, style, type, time, cost. The ledger's `i` shows it and spells out what differs from the script now (why a row is stale). Failures carry HTTP status + body and a "copy request".
+- **Voice picker** popover (search, gender filter, grouped by endpoint, "N using", inline demo) replaces the flat select on Voices and Cast.
+- **Direction** is a combobox: presets + directions already used in the book, free text allowed, and "→ all <speaker>" applies it to every line of that speaker in the chapter.
+- **Stale nudge** in the reader header and the sidebar count; endpoint pool is now a master/detail list; queue shows an ETA and can notify when a book's run finishes; keyboard on picker / ledger / cast (`?` lists everything).
+- **Responsive**: sidebar becomes a drawer under `lg`, stage layouts stack, tables scroll inside their cards.
+- **Backend-shaped**: API keys live in `src/lib/keyring.js` (reactive, in-memory, never in the store or the settings file); settings export/import as JSON; per-book budget cap + "pause everything on this book"; `spent()` from recorded clip costs. Persistence and resume are left to the real backend on purpose.
+
 ## UI primitives
 
 Form controls are built on [reka-ui](https://reka-ui.com) (headless, accessible) with thin styled wrappers in `src/ui/`:

@@ -3,7 +3,7 @@
 // request counts are per endpoint, because each speaker's voice pins its lines to one endpoint and
 // long segments split against that endpoint's per-request limit.
 import { computed } from 'vue'
-import { useApp } from '../../stores/app'
+import { useApp, keyring } from '../../stores/app'
 const props = defineProps({ bookId: String, selected: Array })
 const app = useApp()
 const est = computed(() => app.estimate(props.bookId, props.selected))
@@ -15,6 +15,9 @@ const blockers = computed(() => {
   const b = []
   if (!narratorOk.value) b.push('Assign the Narrator’s voice to start.')
   if (!est.value.endpoints) b.push('Enable at least one endpoint.')
+  const book = app.bookById(props.bookId)
+  if (book?.budget?.paused) b.push('This book is paused (overview → resume).')
+  if (book?.budget?.cap && app.spent(props.bookId) + est.value.cost > book.budget.cap) b.push(`Over the $${book.budget.cap} budget cap: $${app.spent(props.bookId).toFixed(2)} spent + $${est.value.cost.toFixed(2)} for this run.`)
   const byReason = {}
   for (const i of issues.value) (byReason[i.reason] ??= []).push(i.name)
   for (const [reason, names] of Object.entries(byReason)) b.push(`${names.slice(0, 3).join(', ')}${names.length > 3 ? ` +${names.length - 3}` : ''}: ${reason}.`)

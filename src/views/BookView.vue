@@ -20,6 +20,10 @@ const dragging = ref(null), dragOver = ref(null)
 function drop(toIndex) { if (dragging.value != null) app.moveVolume(bookId, dragging.value, toIndex); dragging.value = null; dragOver.value = null }
 function saveName(v) { app.renameVolume(bookId, v.id, draft.value); editing.value = null }
 function remove(v) { const r = app.removeVolume(bookId, v.id); removing.value = null; if (r === 'book') router.push('/library') }
+const budget = computed(() => book.value.budget ?? { cap: null, paused: false })
+const spent = computed(() => app.spent(bookId))
+const capInput = ref(book.value.budget?.cap ?? '')
+function setCap() { app.setBudgetCap(bookId, Number(capInput.value) || null) }
 const volStats = (v) => { const chs = chapters.value.filter(c => c.volumeId === v.id); return { n: chs.length, scripted: chs.filter(isScripted).length, narrated: chs.filter(isNarrated).length } }
 const fmt = (s) => s >= 3600 ? `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, '0')}m` : `${Math.floor(s / 60)}m`
 const runtime = computed(() => chapters.value.reduce((a, c) => a + c.duration, 0))
@@ -44,8 +48,8 @@ const next = computed(() => {
 </script>
 
 <template>
-  <div v-if="book" class="mx-auto max-w-6xl space-y-5 p-6">
-    <div class="flex gap-5">
+  <div v-if="book" class="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
+    <div class="flex flex-col gap-5 sm:flex-row">
       <div class="h-40 w-28 shrink-0 rounded-lg shadow-lg" :style="{ background: `linear-gradient(160deg, ${book.cover[0]}, ${book.cover[1]})` }"></div>
       <div class="min-w-0 flex-1">
         <h1 class="font-serif text-3xl">{{ book.title }}</h1>
@@ -58,7 +62,7 @@ const next = computed(() => {
       </div>
     </div>
 
-    <div class="grid grid-cols-3 gap-4">
+    <div class="grid gap-4 sm:grid-cols-3">
       <RouterLink :to="`/book/${bookId}/scripting`" class="card p-4 hover:border-violet-400">
         <div class="flex items-baseline justify-between"><span class="label">1 · Scripting</span><span class="font-mono text-xs text-zinc-500">{{ p.scripted }}/{{ p.total }}</span></div>
         <div class="mt-2 h-1.5 rounded bg-zinc-200 dark:bg-zinc-800"><div class="h-1.5 rounded bg-amber-500" :style="{ width: p.scripted / p.total * 100 + '%' }"></div></div>
@@ -77,12 +81,12 @@ const next = computed(() => {
       </RouterLink>
     </div>
 
-    <div class="grid grid-cols-[1fr_340px] gap-4">
+    <div class="grid gap-4 lg:grid-cols-[1fr_340px]">
       <div class="card">
-        <div class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"><span class="label">Volumes</span><span class="text-[11px] text-zinc-400">drag or ▲▼ to reorder · chapters renumber to match</span><label class="ml-auto cursor-pointer text-xs text-zinc-400 hover:text-violet-500">＋ add volume<input type="file" accept=".epub" class="hidden" @change="e => app.addVolume(bookId, e.target.files?.[0]?.name ?? 'volume.epub')" /></label></div>
+        <div class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"><span class="label">Volumes</span><span class="hidden text-[11px] text-zinc-400 sm:inline">drag or ▲▼ to reorder · chapters renumber to match</span><label class="ml-auto cursor-pointer text-xs text-zinc-400 hover:text-violet-500">＋ add volume<input type="file" accept=".epub" class="hidden" @change="e => app.addVolume(bookId, e.target.files?.[0]?.name ?? 'volume.epub')" /></label></div>
         <div v-for="(v, vi) in book.volumes" :key="v.id" class="border-b border-zinc-100 px-4 py-3 last:border-0 dark:border-zinc-800/70" :class="[dragOver === v.id && dragging !== v.id && 'bg-violet-50 dark:bg-violet-500/10', dragging === v.id && 'opacity-40']"
           draggable="true" @dragstart="dragging = v.id" @dragend="dragging = null; dragOver = null" @dragover.prevent="dragOver = v.id" @dragleave="dragOver === v.id && (dragOver = null)" @drop.prevent="drop(vi)">
-          <div class="flex items-center gap-3">
+          <div class="flex flex-wrap items-center gap-3">
           <span class="flex flex-col items-center text-zinc-300 dark:text-zinc-600">
             <button class="text-[10px] leading-none hover:text-violet-500 disabled:invisible" :disabled="vi === 0" title="move up" @click="app.moveVolume(bookId, v.id, vi - 1)">▲</button>
             <span class="cursor-grab select-none text-sm leading-none" title="drag to reorder">⋮⋮</span>
@@ -97,7 +101,7 @@ const next = computed(() => {
             <div v-else class="flex items-center gap-2"><span class="truncate text-sm font-medium">{{ v.name }}</span><button class="text-[11px] text-zinc-400 opacity-0 hover:text-violet-500 group-hover:opacity-100" title="rename volume" @click="editing = v.id; draft = v.name">rename</button></div>
             <div class="truncate font-mono text-[11px] text-zinc-400">{{ v.file }} · ch {{ v.from }}–{{ v.to }}</div>
           </div>
-          <div class="w-40 text-xs text-zinc-500">
+          <div class="w-full text-xs text-zinc-500 sm:w-40">
             <div class="flex justify-between"><span>scripted</span><span>{{ volStats(v).scripted }}/{{ volStats(v).n }}</span></div>
             <div class="h-1 rounded bg-zinc-200 dark:bg-zinc-800"><div class="h-1 rounded bg-amber-500" :style="{ width: volStats(v).scripted / volStats(v).n * 100 + '%' }"></div></div>
             <div class="mt-1 flex justify-between"><span>narrated</span><span>{{ volStats(v).narrated }}/{{ volStats(v).n }}</span></div>
@@ -125,6 +129,13 @@ const next = computed(() => {
             {{ cast.filter(c => c.voice).length }} voiced
           </div>
         </RouterLink>
+        <div class="card p-4">
+          <div class="flex items-center justify-between"><span class="label">Budget</span><span class="text-xs" :class="budget.paused ? 'text-amber-600' : 'text-zinc-500'">{{ budget.paused ? '❚❚ paused' : 'running normally' }}</span></div>
+          <div class="mt-2 flex items-baseline gap-2 text-sm"><b class="text-lg">${{ spent.toFixed(2) }}</b><span class="text-zinc-500">spent on narration so far</span></div>
+          <div v-if="budget.cap" class="mt-1"><div class="h-1.5 rounded bg-zinc-200 dark:bg-zinc-800"><div class="h-1.5 rounded" :class="spent / budget.cap > 0.9 ? 'bg-red-500' : 'bg-amber-500'" :style="{ width: Math.min(100, spent / budget.cap * 100) + '%' }"></div></div><div class="mt-0.5 text-[11px] text-zinc-500">{{ Math.round(spent / budget.cap * 100) }}% of the ${{ budget.cap }} cap · runs that would cross it are blocked</div></div>
+          <div class="mt-2 flex items-center gap-2 text-xs"><span class="text-zinc-500">Cap $</span><input v-model="capInput" type="number" min="0" step="1" class="input w-20 py-0.5" placeholder="none" @change="setCap" /><span class="text-zinc-400">per book, narration only</span></div>
+          <button class="btn-ghost btn-xs mt-3 w-full justify-center" :class="budget.paused ? 'border-emerald-400 text-emerald-600' : 'border-amber-400 text-amber-600'" @click="budget.paused ? app.resumeBook(bookId) : app.pauseBook(bookId)">{{ budget.paused ? '▶ Resume this book' : '❚❚ Pause everything on this book' }}</button>
+        </div>
         <div class="card p-4 text-xs text-zinc-500">
           <div class="label mb-1">Scripting profile</div>
           <div class="text-sm text-zinc-900 dark:text-zinc-100">{{ app.profiles.find(x => x.id === app.scriptSettings.profile)?.name }} · <span class="font-mono">{{ app.profiles.find(x => x.id === app.scriptSettings.profile)?.model }}</span></div>

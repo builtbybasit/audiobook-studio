@@ -6,6 +6,7 @@ import ExportView from './views/ExportView.vue'
 import QueueView from './views/QueueView.vue'
 import BookView from './views/BookView.vue'
 import CastView from './views/CastView.vue'
+import SearchView from './views/SearchView.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -15,6 +16,7 @@ export const router = createRouter({
     { path: '/queue', component: QueueView },
     { path: '/book/:bookId', component: BookView },
     { path: '/book/:bookId/cast', component: CastView },
+    { path: '/book/:bookId/search', component: SearchView },
     { path: '/book/:bookId/scripting', component: ScriptingView },
     { path: '/book/:bookId/narration', component: NarrationView },
     { path: '/book/:bookId/export', component: ExportView },

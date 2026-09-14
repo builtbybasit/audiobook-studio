@@ -53,6 +53,9 @@ const commands = computed(() => {
   if (app.activeJobs.length) out.push({ id: 'act-cancel-all', group: 'Actions', label: 'Cancel all running and queued jobs', hint: `${app.activeJobs.length}`, keywords: 'stop queue', run: () => app.cancelAll() })
   out.push({ id: 'act-endpoint', group: 'Actions', label: 'Add TTS endpoint', keywords: 'server voice api', run: () => { app.addEndpoint(); if (b) router.push(`/book/${b}/narration`) } })
   out.push({ id: 'act-dark', group: 'Actions', label: app.dark ? 'Switch to light theme' : 'Switch to dark theme', keywords: 'dark light mode theme', run: () => { app.dark = !app.dark } })
+  out.push({ id: 'act-keys', group: 'Actions', label: 'Keyboard shortcuts', hint: '?', keywords: 'help keys hotkeys', run: () => window.dispatchEvent(new CustomEvent('open-shortcuts')) })
+  if (b && app._undo.length) out.push({ id: 'act-undo', group: 'Actions', label: `Undo: ${app._undo.at(-1).label}`, hint: `${mod} Z`, run: () => app.undoLast() })
+  if (b) out.push({ id: 'act-pause', group: 'Actions', label: book.value.budget?.paused ? `Resume ${book.value.title}` : `Pause everything on ${book.value.title}`, keywords: 'budget stop', run: () => book.value.budget?.paused ? app.resumeBook(b) : app.pauseBook(b) })
   // books
   for (const bk of app.books) if (bk.id !== b) out.push({ id: 'book-' + bk.id, group: 'Novels', label: bk.title, hint: `${bk.author} · ${app.chaptersOf(bk.id).length} ch`, keywords: bk.author, run: go(`/book/${bk.id}`) })
   // chapters of the open book → the stage they're at
@@ -69,7 +72,8 @@ const commands = computed(() => {
 })
 const filtered = computed(() => {
   const s = q.value.trim()
-  const list = s ? commands.value.filter(c => contains(c.label, s) || contains(c.keywords ?? '', s) || contains(c.group, s) || (c.hint && contains(c.hint, s))) : commands.value
+  const search = s.length >= 2 && bookId.value ? [{ id: 'search', group: 'Search', label: `Search the script for “${s}”`, hint: 'text · speaker · direction', run: go({ path: `/book/${bookId.value}/search`, query: { q: s } }) }] : []
+  const list = s ? [...search, ...commands.value.filter(c => contains(c.label, s) || contains(c.keywords ?? '', s) || contains(c.group, s) || (c.hint && contains(c.hint, s)))] : commands.value
   // without a query keep it short: nav + actions + a few of each big group
   const cap = s ? 40 : 8
   const seen = {}
@@ -78,7 +82,7 @@ const filtered = computed(() => {
 const groups = computed(() => { const m = new Map(); for (const c of filtered.value) { if (!m.has(c.group)) m.set(c.group, []); m.get(c.group).push(c) } return [...m.entries()] })
 
 function run(id) {
-  const c = commands.value.find(c => c.id === id); if (!c) return
+  const c = filtered.value.find(c => c.id === id) ?? commands.value.find(c => c.id === id); if (!c) return
   open.value = false
   nextTick(() => c.run())
 }

@@ -37,12 +37,12 @@ const ready = computed(() => chapter.value && isScripted(chapter.value) && chapt
       </div>
     </TabsRoot>
 
-    <div class="grid h-[680px] min-h-0 grid-cols-[300px_1fr] gap-4">
+    <div class="grid min-h-0 gap-4 lg:h-[680px] lg:grid-cols-[300px_1fr]">
       <div class="flex min-h-0 flex-col gap-3">
-        <div class="min-h-0 flex-1"><ChapterPicker :book-id="bookId" stage="narration" v-model="selected" :opened-id="opened" run-label="Narrate" :selectable="c => isScripted(c)" @open="id => opened = id" @run="ids => app.runNarration(bookId, ids)" /></div>
+        <div class="h-[50vh] min-h-0 lg:h-auto lg:flex-1"><ChapterPicker :book-id="bookId" stage="narration" v-model="selected" :opened-id="opened" run-label="Narrate" :selectable="c => isScripted(c)" @open="id => opened = id" @run="ids => app.runNarration(bookId, ids)" /></div>
         <div class="card shrink-0 p-3"><RunEstimate :book-id="bookId" :selected="selected" /></div>
       </div>
-      <div class="min-h-0 min-w-0">
+      <div class="min-h-0 min-w-0 max-lg:h-[70vh]">
         <JobLedger v-if="ready" :book-id="bookId" :chapter-id="opened" :key="opened" />
         <EmptyState v-else-if="!anyScripted" icon="♪" title="Nothing to narrate yet" body="Narration needs a script. Script at least one chapter first, then assign voices here."
           :steps="['Script chapters in stage 1', 'Assign a voice to the Narrator and the main cast above', 'Enable an endpoint and press Narrate']">

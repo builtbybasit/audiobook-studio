@@ -30,26 +30,37 @@ function segStats(j) {
   return { total: segs.length, done: segs.filter(s => s.audio.status === 'done').length, gen: segs.filter(s => s.audio.status === 'generating').length, failed: segs.filter(s => s.audio.status === 'failed').length }
 }
 const stageLink = (j) => `/book/${j.bookId}/${j.kind === 'export' ? 'export' : j.kind}`
+const eta = computed(() => { now.value; return app.eta })
+const finishAt = computed(() => eta.value ? new Date(eta.value.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null)
+const canNotify = 'Notification' in window
+async function toggleNotify() {
+  if (app.notify) { app.notify = false; return }
+  if (canNotify && Notification.permission !== 'granted') { const r = await Notification.requestPermission(); if (r !== 'granted') { app.toast('Browser notifications are blocked — you will still get in-app toasts', { kind: 'warn' }); } }
+  app.notify = true
+}
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl space-y-5 p-6">
-    <div class="flex items-end justify-between">
+  <div class="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
+    <div class="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 class="text-2xl font-semibold">Queue</h1>
         <p class="text-sm text-zinc-500">Every job across the library. Chapters of one book run in order; endpoints work in parallel within a chapter.</p>
       </div>
-
+      <div class="flex items-center gap-3 text-xs">
+        <span v-if="eta" class="rounded-md bg-violet-50 px-2 py-1 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">≈ finishes at <b>{{ finishAt }}</b> · in {{ fmtDur(eta.seconds) }}<span v-if="eta.books > 1"> · {{ eta.books }} books in parallel</span></span>
+        <button class="btn-ghost btn-xs" :class="app.notify && 'border-violet-400 text-violet-600'" @click="toggleNotify">{{ app.notify ? '🔔 notifying when a book finishes' : '🔕 notify me when a book finishes' }}</button>
+      </div>
     </div>
 
-    <div class="grid grid-cols-4 gap-3">
+    <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <div class="card p-4"><div class="label">Running</div><div class="text-2xl font-semibold text-violet-500">{{ counts.running }}</div></div>
       <div class="card p-4"><div class="label">Queued</div><div class="text-2xl font-semibold">{{ counts.queued }}</div></div>
       <div class="card p-4"><div class="label">Done</div><div class="text-2xl font-semibold text-emerald-500">{{ counts.done }}</div></div>
       <div class="card p-4"><div class="label">Failed</div><div class="text-2xl font-semibold" :class="counts.failed ? 'text-red-500' : ''">{{ counts.failed }}</div></div>
     </div>
 
-    <div class="grid grid-cols-[minmax(0,1fr)_320px] gap-5">
+    <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div class="min-w-0 space-y-5">
         <!-- running -->
         <section class="card">

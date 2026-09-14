@@ -2,10 +2,13 @@
 import { defineStore } from "pinia";
 import { makeWorld, generateSegments, PALETTE, DISCOVERABLE_VOICES, voiceRef } from "@/mock/data";
 import { splitText, partsFor } from "@/lib/split";
+import { speak, silenceOf, pacingOrDefault, hitsIn } from "@/lib/speech";
+import { newProfile, profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
 import { keyring } from "@/lib/keyring";
 import { toast as tf } from "vue-toastflow";
 import type { ToastButton } from "vue-toastflow";
 import type {
+  AudioStatus,
   Book,
   CastStat,
   Chapter,
@@ -21,9 +24,11 @@ import type {
   Gender,
   Job,
   JobKind,
+  LexEntry,
   JobStatus,
   MergeSuggestion,
   NarrationEstimate,
+  Pacing,
   Profile,
   ReqError,
   ResolvedVoice,
@@ -31,9 +36,14 @@ import type {
   ScriptDiff,
   ScriptEstimate,
   ScriptSettings,
+  ScriptEndpointTelemetry,
   Segment,
+  SegmentAudio,
   SegmentMap,
+  SegmentFlag,
+  FlagKind,
   SettingsFile,
+  Take,
   ToastOptions,
   UndoEntry,
   Voice,
@@ -72,6 +82,38 @@ export const norm = (n: string): string =>
 export { voiceRef };
 export { partsFor };
 const GENDER: Partial<Record<Gender, string>> = { m: "male", f: "female", n: "neutral" };
+/** Back to the queue without losing the take history or a comparison in progress. */
+const requeue = (a: SegmentAudio): SegmentAudio => ({
+  status: "queued",
+  endpoint: null,
+  ms: 0,
+  duration: 0,
+  ...(a.takes?.length ? { takes: a.takes } : {}),
+  ...(a.n ? { n: a.n } : {}),
+});
+/** Freeze what `audio` currently holds so it survives the next render. */
+const snapshotTake = (a: SegmentAudio): Take => ({
+  n: a.n ?? 1,
+  at: a.at ?? Date.now(),
+  ms: a.ms,
+  duration: a.duration,
+  cost: a.cost,
+  endpoint: a.endpoint,
+  voiceRef: a.voiceRef,
+  voice: a.voice,
+  model: a.model,
+  direction: a.direction,
+  style: a.style,
+  type: a.type,
+  text: a.text,
+  said: a.said,
+});
+export const FLAG_LABEL: Record<FlagKind, string> = {
+  pronunciation: "wrong pronunciation",
+  delivery: "bad delivery",
+  pause: "awkward pause",
+  other: "something else",
+};
 const ago = (min: number): number => Date.now() - min * 60000;
 function collapseChunk(segs: Segment[]): Segment[] {
   const start = 4 + Math.floor(Math.random() * Math.max(1, segs.length - 12)),
@@ -159,6 +201,14 @@ interface ExportGroup {
 
 interface AppState extends World {
   profiles: Profile[];
+  scriptTelemetry: Record<string, ScriptEndpointTelemetry>;
+  scriptUsage: {
+    bookId: string;
+    profileId: string;
+    cost: number;
+    inputTokens: number;
+    outputTokens: number;
+  }[];
   scriptSettings: ScriptSettings;
   jobs: Job[];
   /** most recent last */
@@ -176,35 +226,40 @@ export const useApp = defineStore("app", {
   state: (): AppState => ({
     ...makeWorld(),
     profiles: [
-      {
+      newProfile({
         id: "openai",
         name: "OpenAI",
+        baseUrl: "https://api.openai.com/v1",
         model: "gpt-4o-mini",
         inPrice: 0.15,
         outPrice: 0.6,
         secPerChunk: 9,
-        needsKey: true,
-      },
-      {
+        credentialId: "openai-personal",
+        quotaGroup: "openai-account",
+        spendLimit: 10,
+      }),
+      newProfile({
         id: "deepseek",
         name: "DeepSeek",
+        baseUrl: "https://api.deepseek.com/v1",
         model: "deepseek-chat",
         inPrice: 0.14,
         outPrice: 0.28,
         secPerChunk: 14,
-        needsKey: true,
-      },
-      {
+        credentialId: "deepseek",
+      }),
+      newProfile({
         id: "antigravity",
         name: "Antigravity (local)",
+        baseUrl: "http://localhost:8000/v1",
         model: "gemini-3.6-flash-low",
-        inPrice: 0,
-        outPrice: 0,
-        secPerChunk: 25,
         needsKey: false,
-      },
+        secPerChunk: 25,
+      }),
     ],
-    scriptSettings: { profile: "openai", chunkChars: 6000, stripWatermarks: true },
+    scriptSettings: { profile: "openai", stripWatermarks: true },
+    scriptUsage: [],
+    scriptTelemetry: {},
     jobs: seedJobs(),
     _undo: [], // most recent last; each { label, revert, toastId }
     _previous: {}, // `${bookId}:${chId}` → segments before the last re-script (for the diff panel)
@@ -246,6 +301,38 @@ export const useApp = defineStore("app", {
       (s) =>
       (bookId: string, chId: number): Segment[] =>
         s.segments[key(bookId, chId)] ?? [],
+    lexiconOf:
+      (s) =>
+      (bookId: string): LexEntry[] =>
+        s.lexicon[bookId] ?? [],
+    pacingOf:
+      (s) =>
+      (bookId: string): Pacing =>
+        pacingOrDefault(s.books.find((b) => b.id === bookId)?.pacing),
+    /** One line as the endpoint will receive it: the book's dictionary applied, the book untouched. */
+    spoken: (s) => (bookId: string, text: string) => speak(text, s.lexicon[bookId] ?? []),
+    /** How many times each dictionary entry actually occurs in the book's scripted text. */
+    lexUses: (s) => (bookId: string) => {
+      const list = s.lexicon[bookId] ?? [];
+      const uses: Record<number, number> = Object.fromEntries(list.map((e) => [e.id, 0]));
+      const prefix = bookId + ":";
+      for (const k of Object.keys(s.segments)) {
+        if (!k.startsWith(prefix)) continue;
+        for (const seg of s.segments[k])
+          // one entry at a time, so an entry that is currently shadowed by a longer one reads 0
+          for (const e of list) uses[e.id] += hitsIn(seg.text, [e]).length;
+      }
+      return uses;
+    },
+    /** A real line from the book that this entry would change, for the dictionary preview. */
+    lexSample: (s) => (bookId: string, entry: LexEntry) => {
+      const prefix = bookId + ":";
+      for (const k of Object.keys(s.segments)) {
+        if (!k.startsWith(prefix)) continue;
+        for (const seg of s.segments[k]) if (hitsIn(seg.text, [entry]).length) return seg.text;
+      }
+      return "";
+    },
     progress: (s) => (id: string) => {
       const all = s.chapters[id] ?? [];
       const ch = all.filter((c) => !c.excluded);
@@ -328,6 +415,36 @@ export const useApp = defineStore("app", {
       };
     },
     // speakers whose voice can't be rendered right now: voice/endpoint gone, endpoint paused, key missing
+    /** Everything a clip was rendered with that the script no longer says — empty means "still current".
+     *  One definition, so the ledger's amber line, a rejected retake and a finished render agree. */
+    clipDrift(): (bookId: string, s: Segment, a?: SegmentAudio) => string[] {
+      return (bookId, s, a = s.audio) => {
+        if (!a.at) return [];
+        const out: string[] = [];
+        if (a.text != null && a.text !== s.text)
+          out.push(
+            a.text.length === s.text.length
+              ? "text: edited"
+              : `text: ${a.text.length} → ${s.text.length} chars`,
+          );
+        const sent = a.said ?? a.text;
+        // the words themselves are unchanged but the dictionary now sends different ones
+        if (a.text === s.text && sent != null && this.spoken(bookId, s.text).text !== sent)
+          out.push("pronunciation: the dictionary changed after this clip");
+        if ((a.direction || "") !== (s.direction || ""))
+          out.push(`direction: “${a.direction || "—"}” → “${s.direction || "—"}”`);
+        if (a.type && a.type !== s.type) out.push(`type: ${a.type} → ${s.type}`);
+        const now = this.effectiveVoice(bookId, s.speaker);
+        if (a.voiceRef && now.ref !== a.voiceRef)
+          out.push(
+            `voice: ${this.voiceLabel(a.voiceRef)} → ${this.voiceLabel(now.ref) || "unset"}`,
+          );
+        const who = this.charactersOf(bookId).find((c) => c.name === s.speaker);
+        if ((a.style ?? "") !== (who?.style ?? ""))
+          out.push(`style: “${a.style || "—"}” → “${who?.style || "—"}”`);
+        return out;
+      };
+    },
     routingIssues(): (bookId: string) => RoutingIssue[] {
       return (bookId) => {
         const out: RoutingIssue[] = [];
@@ -361,27 +478,77 @@ export const useApp = defineStore("app", {
         return out;
       };
     },
-    scriptEstimate:
+    scriptSpent:
       (s) =>
-      (bookId: string, ids: number[]): ScriptEstimate => {
-        const chs = (s.chapters[bookId] ?? []).filter((c) => ids.includes(c.id));
-        const chars = chs.reduce((a, c) => a + c.words * 5.6, 0);
-        const chunks = chs.reduce(
-          (a, c) => a + Math.ceil((c.words * 5.6) / s.scriptSettings.chunkChars),
-          0,
+      (bookId: string): number =>
+        s.scriptUsage.filter((x) => x.bookId === bookId).reduce((sum, x) => sum + x.cost, 0),
+    scriptReserved:
+      (s) =>
+      (bookId: string): number =>
+        s.jobs
+          .filter((j) => j.bookId === bookId && !j.finishedAt)
+          .reduce((sum, j) => sum + (j.scriptRun?.reserved ?? 0), 0),
+    scriptEstimate() {
+      return (
+        bookId: string,
+        ids: number[],
+        retrySegmentId: number | null = null,
+      ): ScriptEstimate => {
+        const chs = this.chaptersOf(bookId).filter(
+          (c) => ids.includes(c.id) && !c.excluded && !["running", "queued"].includes(c.scripting),
         );
-        const p = s.profiles.find((p) => p.id === s.scriptSettings.profile);
-        const inTok = (chars / 4) * 1.6;
-        const outTok = (chars / 4) * 1.15; // prompt + context carry-over; re-emitted text + labels
+        const p = this.profiles.find((p) => p.id === this.scriptSettings.profile);
+        const blockers = p ? profileErrors(p) : ["Select a scripting endpoint."];
+        if (p && !p.enabled) blockers.push("This endpoint is paused. Enable it or select another.");
+        if (p?.needsKey && !keyring.has("profile:" + p.id))
+          blockers.push("Add an API key in endpoint settings.");
+        if (this.bookById(bookId)?.budget?.paused)
+          blockers.push("This book is paused. Resume it from the overview.");
+        const texts = chs.map((c) =>
+          retrySegmentId === null
+            ? this.rawText(bookId, c.id)
+            : (this.segmentsOf(bookId, c.id).find((x) => x.id === retrySegmentId)?.text ?? ""),
+        );
+        const parts =
+          p && !profileErrors(p).length ? texts.map((text) => scriptParts(text, p)) : [];
+        const tokens = parts.flat().map((text) => tokenEstimate(text, p!));
+        const inputCost = tokens.reduce((n, t) => n + t.inputCost, 0);
+        const outputCost = tokens.reduce((n, t) => n + t.outputCost, 0);
+        const scriptingRemaining =
+          (this.bookById(bookId)?.scriptBudget ?? Infinity) -
+          this.scriptSpent(bookId) -
+          this.scriptReserved(bookId);
+        const overallRemaining =
+          (this.bookById(bookId)?.budget?.cap ?? Infinity) -
+          this.spent(bookId) -
+          this.scriptReserved(bookId);
+        const remaining = Math.min(scriptingRemaining, overallRemaining);
+        if (inputCost + outputCost > remaining)
+          blockers.push("Estimated cost exceeds the remaining book budget.");
+        if (tokens.some((t) => t.outputTokens > p!.maxOutputTokens))
+          blockers.push(
+            "A chunk may exceed the output token limit. Reduce max characters or increase max output tokens.",
+          );
+        if (tokens.some((t) => t.reserve > remaining))
+          blockers.push("Budget cannot reserve one request at its output token limit.");
         return {
           chapters: chs.length,
-          chars,
-          chunks,
-          seconds: chunks * (p?.secPerChunk ?? 10),
-          cost: (inTok * (p?.inPrice ?? 0) + outTok * (p?.outPrice ?? 0)) / 1e6,
+          chars: texts.reduce((n, t) => n + t.length, 0),
+          chunks: tokens.length,
+          inputTokens: tokens.reduce((n, t) => n + t.inputTokens, 0),
+          outputTokens: tokens.reduce((n, t) => n + t.outputTokens, 0),
+          inputCost,
+          outputCost,
+          cost: inputCost + outputCost,
           profile: p,
+          blockers,
+          seconds: parts.reduce(
+            (n, xs) => n + Math.ceil(xs.length / p!.concurrency) * p!.secPerChunk,
+            0,
+          ),
         };
-      },
+      };
+    },
     // raw chapter text (mock: rebuilt from the generator) for the picker's peek
     rawText:
       () =>
@@ -429,7 +596,9 @@ export const useApp = defineStore("app", {
     spent:
       (s) =>
       (bookId: string): number => {
-        let t = 0;
+        let t = s.scriptUsage
+          .filter((x) => x.bookId === bookId)
+          .reduce((sum, x) => sum + x.cost, 0);
         for (const [k, segs] of Object.entries(s.segments))
           if (k.startsWith(bookId + ":"))
             for (const x of segs)
@@ -784,6 +953,15 @@ export const useApp = defineStore("app", {
     },
     importSettings(obj: Partial<SettingsFile> | null | undefined): void {
       if (!obj || !Array.isArray(obj.endpoints)) throw new Error("not a settings file");
+      if (obj.profiles != null && !Array.isArray(obj.profiles))
+        throw new Error("Invalid scripting endpoints");
+      const profiles = (obj.profiles ?? []).map((imported) => {
+        const existing = this.profiles.find((p) => p.id === imported?.id);
+        const profile = newProfile({ ...existing, ...imported });
+        if (profileErrors(profile).length)
+          throw new Error("Invalid scripting endpoint: " + profile.name);
+        return profile;
+      });
       let n = 0;
       for (const e of obj.endpoints) {
         const cur = this.endpoints.find((x) => x.id === e.id);
@@ -798,13 +976,13 @@ export const useApp = defineStore("app", {
         else this.endpoints.push(fresh);
         n++;
       }
-      for (const p of obj.profiles ?? []) {
+      for (const p of profiles) {
         const cur = this.profiles.find((x) => x.id === p.id);
         if (cur) Object.assign(cur, p);
         else this.profiles.push(p);
       }
       if (obj.scriptSettings) Object.assign(this.scriptSettings, obj.scriptSettings);
-      this.toast(`Imported ${n} endpoint${n === 1 ? "" : "s"}`, {
+      this.toast(`Imported ${n} narration and ${profiles.length} scripting endpoints`, {
         kind: "success",
         description: "API keys are never in the file — add them again on each endpoint.",
         timeout: 7000,
@@ -1092,8 +1270,61 @@ export const useApp = defineStore("app", {
     },
 
     // ---------- scripting ----------
-    runScripting(bookId: string, ids: number[], { keepEdits = false } = {}): void {
+    scriptingTelemetry(id: string): ScriptEndpointTelemetry {
+      return (this.scriptTelemetry[id] ??= {
+        completed: 0,
+        failures: 0,
+        rateLimits: 0,
+        backoffUntil: 0,
+        lastSuccess: 0,
+        history: [],
+      });
+    },
+    addScriptProfile(): string {
+      const p = newProfile();
+      this.profiles.push(p);
+      return p.id;
+    },
+    removeScriptProfile(id: string): void {
+      if (this.jobs.some((j) => !j.finishedAt && j.scriptRun?.profile.id === id)) {
+        this.toast("Cancel this endpoint's jobs before removing it", { kind: "warn" });
+        return;
+      }
+      const i = this.profiles.findIndex((p) => p.id === id);
+      if (i < 0) return;
+      const [p] = this.profiles.splice(i, 1);
+      const secret = keyring.get("profile:" + id);
+      keyring.set("profile:" + id, "");
+      this.toast(`Removed ${p.name}`, {
+        undo: () => {
+          this.profiles.splice(i, 0, p);
+          keyring.set("profile:" + id, secret);
+        },
+      });
+    },
+    runScripting(
+      bookId: string,
+      ids: number[],
+      {
+        keepEdits = false,
+        retrySegmentId = null,
+      }: { keepEdits?: boolean; retrySegmentId?: number | null } = {},
+    ): void {
       if (this._blocked(bookId, "script")) return;
+      const estimate = this.scriptEstimate(bookId, ids, retrySegmentId);
+      if (estimate.blockers.length) {
+        this.toast("Scripting needs attention", {
+          kind: "warn",
+          description: estimate.blockers[0],
+        });
+        return;
+      }
+      if (!estimate.chapters) return;
+      const profile = clone(estimate.profile!);
+      const textOf = (chId: number) =>
+        retrySegmentId === null
+          ? this.rawText(bookId, chId)
+          : (this.segmentsOf(bookId, chId).find((x) => x.id === retrySegmentId)?.text ?? "");
       const chs = this.chapters[bookId].filter(
         (c) =>
           ids.includes(c.id) &&
@@ -1103,37 +1334,184 @@ export const useApp = defineStore("app", {
       );
       // re-scripting: remember what we had so the reader can show what changed (and optionally re-apply manual edits)
       for (const c of chs)
-        if (this.segments[key(bookId, c.id)]?.length) {
+        if (retrySegmentId === null && this.segments[key(bookId, c.id)]?.length) {
           this._previous[key(bookId, c.id)] = clone(this.segments[key(bookId, c.id)]);
           c.rescript = { keepEdits };
         }
       const jobs = chs.map((c) => {
         c.scripting = "queued";
         c.scriptingProgress = 0;
-        return this.addJob("scripting", bookId, `Script · ch ${c.id}`, c.id);
+        const job = this.addJob("scripting", bookId, `Script · ch ${c.id} · ${profile.name}`, c.id);
+        job.scriptRun = {
+          profile: clone(profile),
+          requests: scriptParts(textOf(c.id), profile).length,
+          completed: 0,
+          active: 0,
+          reserved: 0,
+          cost: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+        };
+        return job;
       });
       this._sequential(jobs, (job, done) => {
         const c = this.chapter(bookId, job.chapterId!)!;
-        c.scripting = "running";
-        job.status = "running";
-        job.startedAt = Date.now();
+        const run = job.scriptRun!;
+        const requests = scriptParts(textOf(c.id), profile).map((text) =>
+          tokenEstimate(text, profile),
+        );
+        const active: {
+          started: number;
+          finish: number;
+          usage: ReturnType<typeof tokenEstimate>;
+        }[] = [];
+        let cursor = 0;
+        let checkedRateLimit = false;
+        const telemetry = this.scriptingTelemetry(profile.id);
         const t = setInterval(() => {
           if (job.cancelled) {
             clearInterval(t);
-            c.scripting = "none";
+            run.active = 0;
+            run.reserved = 0;
+            c.scripting = this.segmentsOf(bookId, c.id).length ? "done" : "none";
             c.scriptingProgress = 0;
             this._finish(job, "cancelled");
             return done();
           }
-          c.scriptingProgress = Math.min(100, c.scriptingProgress + rnd(5, 16));
+          // One ordered chapter per book, with concurrent chunk requests sharing the endpoint limit.
+          if (
+            this.jobs.some(
+              (j) =>
+                j.id < job.id && j.bookId === bookId && j.kind === "scripting" && !j.finishedAt,
+            )
+          )
+            return;
+          for (let i = active.length - 1; i >= 0; i--) {
+            if (active[i].finish > Date.now()) continue;
+            const { usage, started } = active.splice(i, 1)[0];
+            telemetry.completed++;
+            telemetry.lastSuccess = Date.now();
+            telemetry.history = [
+              ...telemetry.history.slice(-29),
+              { at: Date.now(), ms: Date.now() - started, ok: true },
+            ];
+            run.active--;
+            run.completed++;
+            run.reserved = Math.max(0, run.reserved - usage.reserve);
+            run.cost += usage.cost;
+            run.inputTokens += usage.inputTokens;
+            run.outputTokens += usage.outputTokens;
+            this.scriptUsage.push({
+              bookId,
+              profileId: profile.id,
+              cost: usage.cost,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+            });
+          }
+          const live = this.profiles.find((p) => p.id === profile.id);
+          let slots =
+            (live?.concurrency ?? 0) -
+            this.jobs.reduce(
+              (n, j) => n + (j.scriptRun?.profile.id === profile.id ? j.scriptRun.active : 0),
+              0,
+            );
+          while (
+            live?.enabled &&
+            telemetry.backoffUntil <= Date.now() &&
+            slots > 0 &&
+            cursor < requests.length
+          ) {
+            const usage = requests[cursor];
+            const remaining =
+              (this.bookById(bookId)?.scriptBudget ?? Infinity) -
+              this.scriptSpent(bookId) -
+              this.scriptReserved(bookId);
+            const overall =
+              (this.bookById(bookId)?.budget?.cap ?? Infinity) -
+              this.spent(bookId) -
+              this.scriptReserved(bookId);
+            if (usage.reserve > Math.min(remaining, overall)) {
+              if (!active.length) {
+                this.toast("Scripting stopped at the budget limit", {
+                  kind: "warn",
+                  description:
+                    "Increase the budget and retry this chapter. Completed request costs are retained.",
+                });
+                clearInterval(t);
+                c.scripting = "failed";
+                this._finish(job, "failed");
+                for (const pending of jobs) this.cancelJob(pending.id);
+                done();
+              }
+              break;
+            }
+            // Demo transport occasionally receives a 429 before accepting the first request.
+            // A shared retry-after window pauses dispatch across every book on this endpoint.
+            if (!checkedRateLimit) {
+              checkedRateLimit = true;
+              if (Math.random() < 0.08) {
+                const cooldown = live?.cooldownSec ?? 10;
+                telemetry.failures++;
+                telemetry.rateLimits++;
+                telemetry.backoffUntil = Date.now() + cooldown * 1000;
+                telemetry.lastError = {
+                  code: 429,
+                  message: "Rate limited",
+                  body: `{"error":{"message":"Too many requests. Retry after ${cooldown} seconds.","type":"rate_limit_error"}}`,
+                  at: Date.now(),
+                  bookId,
+                  chapterId: c.id,
+                  model: profile.model,
+                  baseUrl: profile.baseUrl,
+                };
+                telemetry.history = [
+                  ...telemetry.history.slice(-29),
+                  { at: Date.now(), ms: 0, ok: false },
+                ];
+                break;
+              }
+            }
+            cursor++;
+            slots--;
+            run.active++;
+            run.reserved += usage.reserve;
+            active.push({
+              started: Date.now(),
+              finish: Date.now() + profile.secPerChunk * 100,
+              usage,
+            });
+            c.scripting = "running";
+            job.status = "running";
+            job.startedAt ??= Date.now();
+          }
+          c.scriptingProgress = (run.completed / run.requests) * 100;
           job.progress = c.scriptingProgress;
-          if (c.scriptingProgress >= 100) {
+          if (run.completed === run.requests) {
             clearInterval(t);
             const roll = Math.random();
             const outcome = roll < 0.06 ? "failed" : roll < 0.16 ? "fallback" : "done";
             c.scripting = outcome;
             this._finish(job, outcome === "failed" ? "failed" : "done");
             if (outcome !== "failed") {
+              if (retrySegmentId !== null) {
+                const cur = this.segmentsOf(bookId, c.id);
+                const index = cur.findIndex((x) => x.id === retrySegmentId);
+                if (index >= 0) {
+                  const original = cur[index];
+                  const fresh = generateSegments(bookId, c.id).slice(
+                    0,
+                    original.fallbackCount ?? 6,
+                  );
+                  cur.splice(index, 1, ...fresh);
+                  cur.forEach((x, i) => (x.id = i + 1));
+                  c.scripting = cur.some((x) => x.fallback) ? "fallback" : "done";
+                  c.narration = c.duration ? "stale" : "none";
+                  this._absorbCast(bookId, c.id);
+                }
+                done();
+                return;
+              }
               let segs = generateSegments(bookId, c.id, { aliasNoise: true });
               if (outcome === "fallback") segs = collapseChunk(segs); // verifier couldn't reconstruct one chunk → kept whole as narration
               const prev = this._previous[key(bookId, c.id)];
@@ -1165,27 +1543,9 @@ export const useApp = defineStore("app", {
     },
     // Re-run the LLM on just the chunk that fell back. Simulated: replaced by properly split segments.
     retryChunk(bookId: string, chId: number, segId: number): void {
-      const segs = this.segmentsOf(bookId, chId);
-      const i = segs.findIndex((x) => x.id === segId);
-      if (i < 0 || !segs[i].fallback) return;
-      const seg = segs[i];
-      seg.fallbackRetrying = true;
-      const job = this.addJob("scripting", bookId, `Re-split chunk · ch ${chId}`, chId);
-      job.status = "running";
-      job.startedAt = Date.now();
-      setTimeout(() => {
-        const fresh = generateSegments(bookId, chId)
-          .slice(0, seg.fallbackCount ?? 6)
-          .map((x, k) => ({ ...x, id: seg.id + k / 100 }));
-        const cur = this.segmentsOf(bookId, chId);
-        const j = cur.findIndex((x) => x.id === segId);
-        cur.splice(j, 1, ...fresh);
-        cur.forEach((x, k) => (x.id = k + 1));
-        const c = this.chapter(bookId, chId)!;
-        if (!cur.some((x) => x.fallback)) c.scripting = "done";
-        this._absorbCast(bookId, chId);
-        this._finish(job, "done");
-      }, 2500);
+      const seg = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
+      if (!seg?.fallback) return;
+      this.runScripting(bookId, [chId], { keepEdits: true, retrySegmentId: segId });
     },
     _absorbCast(bookId: string, chId: number): void {
       const cast = this.characters[bookId];
@@ -1223,6 +1583,115 @@ export const useApp = defineStore("app", {
         this._markStale(bookId, chId, s);
       }
     },
+    // ---------- segment boundaries ----------
+    // The LLM sometimes groups two speakers into one segment, or cuts a sentence in half. These two
+    // actions fix the split by hand; both are undoable and both invalidate the audio they touch.
+    _segSnapshot(bookId: string, chId: number): () => void {
+      const before = clone(this.segments[key(bookId, chId)] ?? []);
+      const c = this.chapter(bookId, chId);
+      const narration = c?.narration;
+      const duration = c?.duration;
+      return () => {
+        this.segments[key(bookId, chId)] = before;
+        const ch = this.chapter(bookId, chId);
+        if (ch && narration) {
+          ch.narration = narration;
+          ch.duration = duration ?? ch.duration;
+        }
+      };
+    },
+    /** Chapter length is the sum of what is actually rendered, plus the silence stitched between. */
+    _retime(bookId: string, chId: number): void {
+      const c = this.chapter(bookId, chId);
+      if (!c) return;
+      const segs = this.segmentsOf(bookId, chId);
+      c.duration =
+        segs.reduce((a, s) => a + s.audio.duration, 0) + silenceOf(segs, this.pacingOf(bookId));
+    },
+    /** Cut a segment in two at character offset `at`. Returns the new segment's id. */
+    splitSegment(bookId: string, chId: number, segId: number, at: number): number | null {
+      const segs = this.segments[key(bookId, chId)];
+      const i = segs?.findIndex((x) => x.id === segId) ?? -1;
+      if (i < 0) return null;
+      const s = segs[i];
+      const head = s.text.slice(0, at).trimEnd();
+      const tail = s.text.slice(at).trimStart();
+      if (!head || !tail) return null;
+      // the whitespace the cut falls in is the prose, not padding: a paragraph break has to survive
+      // the split so that joining the halves back restores the source exactly
+      const sep = s.text.slice(head.length, s.text.length - tail.length);
+      const revert = this._segSnapshot(bookId, chId);
+      const id = Math.max(0, ...segs.map((x) => x.id)) + 1;
+      const second: Segment = {
+        ...clone(s),
+        id,
+        text: tail,
+        edited: true,
+        audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
+      };
+      delete second.candidate;
+      // a hand-split chunk is no longer the model's unverified guess, and the halves start unflagged
+      delete second.fallback;
+      delete second.fallbackCount;
+      delete second.fallbackMismatch;
+      delete second.fallbackRetrying;
+      delete second.flag;
+      s.text = head;
+      s.edited = true;
+      delete s.candidate; // a retake of the line as it was says nothing about either half
+      if (sep === " ") delete s.sep;
+      else s.sep = sep;
+      delete s.fallback;
+      delete s.fallbackCount;
+      delete s.fallbackMismatch;
+      delete s.fallbackRetrying;
+      this._markStale(bookId, chId, s);
+      // the second half has no audio at all, so a narrated chapter is no longer complete
+      const c = this.chapter(bookId, chId);
+      if (c && c.narration === "done") c.narration = "stale";
+      segs.splice(i + 1, 0, second);
+      this._retime(bookId, chId);
+      this.toast("Segment split in two", {
+        description: `#${s.id} keeps “${head.slice(0, 40)}…”, #${id} starts “${tail.slice(0, 40)}…”`,
+        undo: revert,
+      });
+      return id;
+    },
+    /** Join a segment with the one after it. The first segment's speaker, type and direction win. */
+    joinSegments(bookId: string, chId: number, segId: number): boolean {
+      const segs = this.segments[key(bookId, chId)];
+      const i = segs?.findIndex((x) => x.id === segId) ?? -1;
+      if (i < 0 || i + 1 >= segs.length) return false;
+      const a = segs[i];
+      const b = segs[i + 1];
+      const revert = this._segSnapshot(bookId, chId);
+      // put back whatever stood between them — a single space unless a split recorded otherwise
+      a.text = `${a.text.trimEnd()}${a.sep ?? " "}${b.text.trimStart()}`;
+      a.edited = true;
+      a.flag ??= b.flag;
+      delete a.candidate; // neither half's retake is a take of the joined line
+      // the pair now ends where b ended, so b's own separator becomes a's
+      if (b.sep == null) delete a.sep;
+      else a.sep = b.sep;
+      delete a.fallback;
+      delete a.fallbackCount;
+      delete a.fallbackMismatch;
+      delete a.fallbackRetrying;
+      this._markStale(bookId, chId, a);
+      const c = this.chapter(bookId, chId);
+      if (c && c.narration === "done" && b.audio.status !== "none") c.narration = "stale";
+      segs.splice(i + 1, 1);
+      this._retime(bookId, chId);
+      this.toast(`#${b.id} joined into #${a.id}`, {
+        description:
+          a.speaker === b.speaker
+            ? `Read as one ${a.type} line by ${a.speaker}.`
+            : `${b.speaker}\u2019s line is now read by ${a.speaker} \u2014 check the speaker.`,
+        kind: a.speaker === b.speaker ? "info" : "warn",
+        undo: revert,
+      });
+      return true;
+    },
     dismissDiff(bookId: string, chId: number): void {
       delete this._previous[key(bookId, chId)];
     },
@@ -1234,11 +1703,133 @@ export const useApp = defineStore("app", {
         if (c?.narration === "done") c.narration = "stale";
       }
     },
+    // "changed" is both edited-after-narration lines and halves of a hand-split segment that were
+    // never rendered at all — in a chapter that has audio, neither belongs in the finished book.
     renarrateStale(bookId: string, chId: number): void {
+      const started = this.chapter(bookId, chId)?.narration !== "none";
       for (const s of this.segmentsOf(bookId, chId))
-        if (s.audio.status === "stale")
-          s.audio = { status: "queued", endpoint: null, ms: 0, duration: 0 };
+        if (s.audio.status === "stale" || (started && s.audio.status === "none"))
+          s.audio = requeue(s.audio);
       this._resume(bookId, chId);
+    },
+    // ---------- pronunciation & pacing ----------
+    // Two ways to change how a book sounds without editing a word of it. The dictionary rewrites a
+    // term on its way to the endpoint, so the clips that were rendered with the old spelling no
+    // longer match and are marked stale. A pause is stitched between clips instead of rendered, so
+    // changing one re-times the chapter and invalidates nothing.
+    _lexSnapshot(bookId: string): () => void {
+      const before = clone(this.lexicon[bookId] ?? []);
+      const prefix = bookId + ":";
+      const keys = Object.keys(this.segments).filter((k) => k.startsWith(prefix));
+      const audio = keys.flatMap((k) =>
+        this.segments[k].map((s) => [k, s.id, s.audio.status] as const),
+      );
+      const narration = this.chaptersOf(bookId).map((c) => [c.id, c.narration] as const);
+      return () => {
+        this.lexicon[bookId] = before;
+        for (const [k, id, status] of audio) {
+          const s = this.segments[k]?.find((x) => x.id === id);
+          if (s) s.audio.status = status;
+        }
+        for (const [id, was] of narration) {
+          const c = this.chapter(bookId, id);
+          if (c) c.narration = was;
+        }
+      };
+    },
+    /** Clips that would now be sent different words read the old pronunciation — mark them stale. */
+    _lexRestale(bookId: string): number {
+      let n = 0;
+      const prefix = bookId + ":";
+      for (const k of Object.keys(this.segments)) {
+        if (!k.startsWith(prefix)) continue;
+        for (const s of this.segments[k]) {
+          const sent = s.audio.said ?? s.audio.text;
+          if (s.audio.status !== "done" || sent == null) continue;
+          if (this.spoken(bookId, s.text).text === sent) continue;
+          s.audio.status = "stale";
+          n++;
+          const c = this.chapter(bookId, Number(k.slice(prefix.length)));
+          if (c?.narration === "done") c.narration = "stale";
+        }
+      }
+      return n;
+    },
+    _lexChanged(bookId: string, revert: () => void, label: string): void {
+      const n = this._lexRestale(bookId);
+      this.toast(label, {
+        kind: n ? "warn" : "info",
+        description: n
+          ? `${n} rendered line${n === 1 ? "" : "s"} still read the old pronunciation — re-narrate to apply.`
+          : "The book text is unchanged; the endpoint is sent the respelling.",
+        undo: revert,
+      });
+    },
+    addTerm(bookId: string, term = "", say = ""): number {
+      const revert = this._lexSnapshot(bookId);
+      const list = (this.lexicon[bookId] ??= []);
+      const id = Math.max(0, ...list.map((e) => e.id)) + 1;
+      list.push({ id, term: term.trim(), say: say.trim(), enabled: true });
+      if (term.trim() && say.trim())
+        this._lexChanged(bookId, revert, `“${term.trim()}” is said “${say.trim()}”`);
+      return id;
+    },
+    updateTerm(bookId: string, id: number, patch: Partial<LexEntry>): void {
+      const e = this.lexiconOf(bookId).find((x) => x.id === id);
+      if (!e) return;
+      if (!(Object.keys(patch) as (keyof LexEntry)[]).some((k) => e[k] !== patch[k])) return;
+      const revert = this._lexSnapshot(bookId);
+      const was = { ...e };
+      Object.assign(e, patch);
+      const renamed = e.term !== was.term || e.say !== was.say;
+      this._lexChanged(
+        bookId,
+        revert,
+        patch.enabled != null && !renamed
+          ? `“${e.term}” ${e.enabled ? "is applied again" : "is no longer applied"}`
+          : `“${e.term}” is said “${e.say}”`,
+      );
+    },
+    removeTerm(bookId: string, id: number): void {
+      const list = this.lexiconOf(bookId);
+      const e = list.find((x) => x.id === id);
+      if (!e) return;
+      const revert = this._lexSnapshot(bookId);
+      list.splice(list.indexOf(e), 1);
+      if (e.term && e.say)
+        this._lexChanged(bookId, revert, `“${e.term}” removed from the dictionary`);
+    },
+    /** Silence after one line, in seconds; null goes back to the book's pacing. */
+    setPause(bookId: string, chId: number, segId: number, pause: number | null): void {
+      const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
+      if (!s) return;
+      if (pause == null) delete s.pause;
+      else s.pause = pause;
+      this._retime(bookId, chId);
+    },
+    setPacing(bookId: string, patch: Partial<Pacing>): void {
+      const b = this.bookById(bookId);
+      if (!b) return;
+      b.pacing = { ...this.pacingOf(bookId), ...patch };
+      for (const c of this.chaptersOf(bookId)) this._retime(bookId, c.id);
+    },
+    resetPacing(bookId: string): void {
+      const b = this.bookById(bookId);
+      if (!b?.pacing) return;
+      delete b.pacing;
+      for (const c of this.chaptersOf(bookId)) this._retime(bookId, c.id);
+    },
+    /** Lines in this book that carry a pause of their own. */
+    pauseOverrides(bookId: string): { chId: number; seg: Segment }[] {
+      const prefix = bookId + ":";
+      return Object.keys(this.segments)
+        .filter((k) => k.startsWith(prefix))
+        .flatMap((k) =>
+          this.segments[k]
+            .filter((s) => s.pause != null)
+            .map((seg) => ({ chId: Number(k.slice(prefix.length)), seg })),
+        )
+        .sort((a, b) => a.chId - b.chId || a.seg.id - b.seg.id);
     },
     renameCharacter(bookId: string, from: string, to: string): void {
       to = (to ?? "").trim();
@@ -1435,26 +2026,128 @@ export const useApp = defineStore("app", {
       });
       this._sequential(jobs, (job, done) => {
         const c = this.chapter(bookId, job.chapterId!)!;
-        for (const s of this.segmentsOf(bookId, c.id))
-          s.audio = { status: "queued", endpoint: null, ms: 0, duration: 0 };
+        for (const s of this.segmentsOf(bookId, c.id)) {
+          delete s.candidate; // the whole chapter is being rendered again; a pending retake is moot
+          s.audio = requeue(s.audio);
+        }
         this._dispatch(bookId, c, job, done);
       });
     },
     retrySegment(bookId: string, chId: number, segId: number): void {
       const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
-      if (s) s.audio = { status: "queued", endpoint: null, ms: 0, duration: 0 };
+      if (s) s.audio = requeue(s.audio);
       this._resume(bookId, chId);
     },
     retryFailed(bookId: string, chId: number): void {
       for (const s of this.segmentsOf(bookId, chId))
-        if (s.audio.status === "failed")
-          s.audio = { status: "queued", endpoint: null, ms: 0, duration: 0 };
+        if (s.audio.status === "failed") s.audio = requeue(s.audio);
       this._resume(bookId, chId);
     },
-    _resume(bookId: string, chId: number): void {
+
+    // ---------- audio review & retakes ----------
+    // A request can succeed and still sound wrong. The listener flags what is wrong, asks for another
+    // take, then plays the two against each other and keeps one; the loser stays in the take list.
+    // A retake renders into `segment.candidate`, never into `segment.audio`: the clip in the book keeps
+    // playing, timing the chapter and going into the export until the listener actually accepts the
+    // new one. Nothing about the book changes on the strength of a request that merely succeeded.
+    flagSegment(
+      bookId: string,
+      chId: number,
+      segId: number,
+      kind: FlagKind,
+      note: string = "",
+    ): void {
+      const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
+      if (s) s.flag = { kind, note: note.trim(), at: Date.now() } satisfies SegmentFlag;
+    },
+    clearFlag(bookId: string, chId: number, segId: number): void {
+      const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
+      if (s?.flag) delete s.flag;
+    },
+    /** Queue another render of one segment, keeping the current clip to compare against. */
+    retakeSegment(bookId: string, chId: number, segId: number): void {
+      const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
+      if (!s || !this._queueRetake(s)) return;
+      this._resume(bookId, chId, "Retake");
+    },
+    /** Every flagged segment in the chapter gets another take in one run. */
+    retakeFlagged(bookId: string, chId: number): number {
+      let n = 0;
+      for (const s of this.segmentsOf(bookId, chId)) if (s.flag && this._queueRetake(s)) n++;
+      if (n) this._resume(bookId, chId, "Retake");
+      return n;
+    },
+    _queueRetake(s: Segment): boolean {
+      if (s.candidate || ["queued", "generating"].includes(s.audio.status)) return false;
+      // nothing playable to compare against (never rendered, or it failed): this is a plain re-render
+      if (s.audio.duration <= 0) {
+        s.audio = requeue(s.audio);
+        return true;
+      }
+      s.candidate = {
+        status: "queued",
+        endpoint: null,
+        ms: 0,
+        duration: 0,
+        n: (s.audio.n ?? 1) + 1,
+      };
+      return true;
+    },
+    /** Keep the new take: it becomes the clip in the book, the old one joins the take list. */
+    acceptTake(bookId: string, chId: number, segId: number): void {
+      const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
+      const cand = s?.candidate;
+      if (!s || !cand || cand.duration <= 0) return;
+      const before = { audio: clone(s.audio), candidate: clone(cand), flag: s.flag };
+      const takes = [...(s.audio.takes ?? [])];
+      if (s.audio.duration > 0) takes.push(snapshotTake(s.audio));
+      s.audio = { ...cand, ...(takes.length ? { takes } : {}) };
+      delete s.candidate;
+      delete s.flag;
+      this._retime(bookId, chId);
+      this.toast(`Take ${s.audio.n ?? 1} kept`, {
+        kind: "success",
+        description: "It is the clip in the book now; the earlier take stays in the take list.",
+        undo: () => {
+          s.audio = before.audio;
+          s.candidate = before.candidate;
+          if (before.flag) s.flag = before.flag;
+          this._retime(bookId, chId);
+        },
+      });
+    },
+    /** Drop the new take. The clip in the book never moved, so only the take list changes. */
+    rejectTake(bookId: string, chId: number, segId: number): void {
+      const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
+      const cand = s?.candidate;
+      if (!s || !cand) return;
+      const before = { audio: clone(s.audio), candidate: clone(cand) };
+      if (cand.duration > 0)
+        s.audio.takes = [...(s.audio.takes ?? []), { ...snapshotTake(cand), rejected: true }];
+      delete s.candidate;
+      // the kept clip may have gone out of date while the retake rendered — say so rather than
+      // silently calling it current
+      const drift = this.clipDrift(bookId, s);
+      if (["done", "stale"].includes(s.audio.status))
+        s.audio.status = drift.length ? "stale" : "done";
+      if (s.audio.status === "stale") this._markStale(bookId, chId, s);
+      this.toast(cand.duration > 0 ? `Take ${s.audio.n ?? 1} kept` : "Retake discarded", {
+        description: drift.length
+          ? `The kept clip is out of date — ${drift[0]}.`
+          : cand.duration > 0
+            ? `Take ${cand.n} is marked rejected — retake again or edit the line first.`
+            : "It never produced a clip.",
+        kind: drift.length ? "warn" : "info",
+        undo: () => {
+          s.audio = before.audio;
+          s.candidate = before.candidate;
+        },
+      });
+    },
+    _resume(bookId: string, chId: number, label = "Retry"): void {
       const c = this.chapter(bookId, chId);
       if (!c || c.narration === "running") return;
-      const job = this.addJob("narration", bookId, `Retry · ch ${c.id}`, c.id);
+      const job = this.addJob("narration", bookId, `${label} · ch ${c.id}`, c.id);
       this._dispatch(bookId, c, job, () => {});
     },
     _dispatch(bookId: string, c: Chapter, job: Job, done: () => void): void {
@@ -1462,10 +2155,27 @@ export const useApp = defineStore("app", {
       job.status = "running";
       job.startedAt = Date.now();
       const segs = this.segmentsOf(bookId, c.id);
+      // A run renders two kinds of clip: a segment's own audio, and the retake standing beside it.
+      // `slot` says which one a target writes to, so a retake never lands on the book's clip.
+      type Slot = "audio" | "candidate";
+      interface Target {
+        s: Segment;
+        slot: Slot;
+      }
+      const clipOf = (t: Target): SegmentAudio => (t.slot === "audio" ? t.s.audio : t.s.candidate!);
+      const targets = (...status: AudioStatus[]): Target[] =>
+        segs.flatMap((s) => [
+          ...(status.includes(s.audio.status) ? [{ s, slot: "audio" as Slot }] : []),
+          ...(s.candidate && status.includes(s.candidate.status)
+            ? [{ s, slot: "candidate" as Slot }]
+            : []),
+        ]);
       const tick = () => {
         if (job.cancelled) {
-          for (const s of segs) if (s.audio.status === "queued") s.audio.status = "none";
-          if (!segs.some((s) => s.audio.status === "generating")) {
+          for (const t of targets("queued"))
+            if (t.slot === "candidate") delete t.s.candidate;
+            else t.s.audio.status = "none";
+          if (!targets("generating").length) {
             c.narration = segs.every((s) => s.audio.status === "done") ? "done" : "failed";
             this._finish(job, "cancelled");
             return done();
@@ -1474,43 +2184,54 @@ export const useApp = defineStore("app", {
         }
         // A segment is rendered by the endpoint that owns its speaker's voice (falling back to the
         // Narrator's). Long text is split into `parts` requests against that endpoint's limit.
-        for (const next of segs.filter((s) => s.audio.status === "queued")) {
+        for (const target of targets("queued")) {
+          const next = target.s;
+          const slot = target.slot;
+          const queued = clipOf(target);
           const route = this.effectiveVoice(bookId, next.speaker);
           const ep = route.endpoint;
-          if (!ep || !ep.enabled || (ep.needsKey && !keyring.has(ep.id))) {
-            next.audio = {
+          // A paused endpoint *holds* its work — the clip stays queued until it is resumed or the
+          // job is cancelled. That is what separates Pause from Cancel. Everything else below is a
+          // configuration error the run should report rather than wait on.
+          if (ep && !ep.enabled) continue;
+          if (!ep || (ep.needsKey && !keyring.has(ep.id))) {
+            next[slot] = {
               status: "failed",
               endpoint: ep?.id ?? null,
               ms: 0,
               duration: 0,
+              ...(queued.n ? { n: queued.n } : {}),
+              ...(queued.takes?.length ? { takes: queued.takes } : {}),
               error: {
                 code: 0,
                 message: !route.ref
                   ? "no voice for speaker"
                   : !ep
                     ? `voice ${route.ref} no longer exists`
-                    : !ep.enabled
-                      ? `${ep.name} is paused`
-                      : `${ep.name} has no API key`,
+                    : `${ep.name} has no API key`,
                 body: "",
               },
             };
             continue;
           }
           if (ep.backoffUntil > Date.now()) continue;
-          const active = segs.filter(
-            (s) => s.audio.status === "generating" && s.audio.endpoint === ep.id,
-          ).length;
+          const active = targets("generating").filter((t) => clipOf(t).endpoint === ep.id).length;
           if (active >= ep.concurrency) continue;
-          const cuts = splitText(next.text, ep.maxChars, ep.splitAt);
+          // the dictionary is applied here, on the way out: the script itself keeps the author's spelling
+          const said = this.spoken(bookId, next.text);
+          const sent = said.text;
+          const cuts = splitText(sent, ep.maxChars, ep.splitAt);
           const parts = cuts.length;
           const who = (this.characters[bookId] ?? []).find((x) => x.name === next.speaker);
-          next.audio = {
+          next[slot] = {
             status: "generating",
             endpoint: ep.id,
             ms: 0,
             duration: 0,
             startedAt: Date.now(),
+            // the take number and the history of this clip survive the render
+            ...(queued.takes?.length ? { takes: queued.takes } : {}),
+            ...(queued.n ? { n: queued.n } : {}),
             parts,
             cuts:
               parts > 1
@@ -1524,37 +2245,50 @@ export const useApp = defineStore("app", {
             direction: next.direction,
             style: who?.style ?? "",
             type: next.type,
+            text: next.text,
+            ...(said.hits.length ? { said: sent, lex: said.hits.length } : {}),
             at: Date.now(),
-            cost: (next.text.length / 1e6) * ep.price,
+            cost: (sent.length / 1e6) * ep.price,
           };
-          const dur = ep.latency * rnd(0.5, 1.1) * parts + next.text.length * 6;
+          const dur = ep.latency * rnd(0.5, 1.1) * parts + sent.length * 6;
           setTimeout(() => {
+            const clip = next[slot];
+            if (!clip) return; // the candidate was dropped while it was in flight
             if (Math.random() < 0.03) {
               // rate limited → back off, put the segment back
-              ep.backoffUntil = Date.now() + 4000;
+              const cooldown = ep.cooldownSec ?? 8;
+              ep.backoffUntil = Date.now() + cooldown * 1000;
               ep.rateLimits = (ep.rateLimits ?? 0) + 1;
               ep.lastError = {
                 code: 429,
                 message: "rate limited",
-                body: '{"error":{"message":"Rate limit reached. Please retry after 4 seconds.","type":"rate_limit_error"}}',
-                retryAfter: 4,
+                body: `{"error":{"message":"Rate limit reached. Please retry after ${cooldown} seconds.","type":"rate_limit_error"}}`,
+                retryAfter: cooldown,
                 at: Date.now(),
               };
-              next.audio = { status: "queued", endpoint: null, ms: 0, duration: 0 };
+              next[slot] = requeue(clip);
               return;
             }
             const fail = Math.random() < ep.failRate;
-            next.audio.status = fail ? "failed" : "done";
-            next.audio.ms = Math.round(dur);
-            next.audio.duration = fail ? 0 : next.text.split(" ").length / 2.6;
+            clip.ms = Math.round(dur);
+            clip.duration = fail ? 0 : sent.split(" ").length / 2.6;
+            // the script can move while a request is in flight — a clip that no longer matches what
+            // the line says now arrives stale, not done
+            clip.status = fail
+              ? "failed"
+              : this.clipDrift(bookId, next, clip).length
+                ? "stale"
+                : "done";
+            if (!fail && clip.status === "stale" && slot === "audio")
+              this._markStale(bookId, c.id, next);
             if (fail) {
               const e = ERRORS[Math.floor(Math.random() * ERRORS.length)];
-              next.audio.error = {
+              clip.error = {
                 ...e,
                 part: parts > 1 ? 1 + Math.floor(Math.random() * parts) : undefined,
                 at: Date.now(),
               };
-              ep.lastError = { ...next.audio.error };
+              ep.lastError = { ...clip.error };
             }
             ep.history = [
               ...(ep.history ?? []),
@@ -1563,31 +2297,39 @@ export const useApp = defineStore("app", {
             if (fail) ep.failures = (ep.failures ?? 0) + 1;
           }, dur);
         }
-        const pending = segs.filter(
-          (s) => s.audio.status === "queued" || s.audio.status === "generating",
-        );
-        const finished = segs.length - pending.length;
+        const pending = targets("queued", "generating");
+        const finished = segs.length - pending.filter((t) => t.slot === "audio").length;
         c.narrationProgress = Math.round((finished / segs.length) * 100);
         job.progress = c.narrationProgress;
-        // stalled: nothing in flight and no queued segment can be placed (everything it needs is paused)
+        // Pausing an endpoint holds its queued clips rather than failing them: that is the whole
+        // difference between Pause and Cancel. The run stays open, waiting, until the endpoint is
+        // resumed or the job is cancelled.
+        const held = targets("queued").some((t) => {
+          const ep = this.effectiveVoice(bookId, t.s.speaker).endpoint;
+          return !!ep && !ep.enabled;
+        });
+        // stalled: nothing in flight and no queued clip can ever be placed — the voice or its
+        // endpoint is gone, not merely paused
         const stalled =
-          !segs.some((s) => s.audio.status === "generating") &&
-          !segs.some(
-            (s) =>
-              s.audio.status === "queued" &&
-              this.effectiveVoice(bookId, s.speaker).endpoint?.enabled,
+          !held &&
+          !targets("generating").length &&
+          !targets("queued").some(
+            (t) => this.effectiveVoice(bookId, t.s.speaker).endpoint?.enabled,
           );
         if (pending.length === 0 || stalled) {
-          for (const s of segs)
-            if (s.audio.status === "queued")
-              s.audio = {
-                ...s.audio,
-                status: "failed",
-                error: { code: 0, message: "no endpoint available for this voice", body: "" },
-              };
-          const failed = segs.some((s) => s.audio.status !== "done");
-          c.narration = failed ? "failed" : "done";
-          c.duration = segs.reduce((a, s) => a + s.audio.duration, 0);
+          for (const t of targets("queued"))
+            t.s[t.slot] = {
+              ...clipOf(t),
+              status: "failed",
+              error: { code: 0, message: "no endpoint available for this voice", body: "" },
+            };
+          // a retake that failed is the listener's to discard: only the book's own clips decide
+          // whether this chapter is finished. A clip the script moved under while it rendered came
+          // back stale — that is not a failed run, it is one more line to render again.
+          const failed = segs.some((s) => !["done", "stale"].includes(s.audio.status));
+          const stale = segs.some((s) => s.audio.status === "stale");
+          c.narration = failed ? "failed" : stale ? "stale" : "done";
+          this._retime(bookId, c.id);
           this._finish(job, failed ? "failed" : "done");
           done();
           return;

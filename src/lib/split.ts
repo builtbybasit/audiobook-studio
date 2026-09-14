@@ -47,6 +47,7 @@ export function splitText(
   text: string,
   maxChars: number,
   mode: SplitMode = "sentence",
+  preserveWhitespace = false,
 ): SplitPart[] {
   if (!maxChars || text.length <= maxChars)
     return [{ text, from: 0, to: text.length, at: null, fallback: false }];
@@ -66,14 +67,14 @@ export function splitText(
     }
     const piece = rest.slice(0, cut);
     parts.push({
-      text: piece.trimEnd(),
+      text: preserveWhitespace ? piece : piece.trimEnd(),
       from: pos,
-      to: pos + piece.trimEnd().length,
+      to: pos + (preserveWhitespace ? piece.length : piece.trimEnd().length),
       at: used,
       fallback: used !== mode,
     });
     pos += cut;
-    while (text[pos] === " ") pos++;
+    if (!preserveWhitespace) while (text[pos] === " ") pos++;
   }
   parts.push({ text: text.slice(pos), from: pos, to: text.length, at: null, fallback: false });
   return parts;

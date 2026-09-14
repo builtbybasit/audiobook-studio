@@ -56,6 +56,16 @@ export interface Endpoint {
   lastError?: ReqError;
   /** true while "fetch voices from server" is in flight */
   fetching?: boolean;
+  /** what the provider actually charges for. `price` stays the per-1M-chars figure the run
+   *  estimator has always used; this says whether that figure is a conversion or the real unit. */
+  billing?: TtsBilling;
+  // operational settings — see EndpointOps; optional so older saved endpoints still load
+  timeoutSec?: number;
+  maxRetries?: number;
+  cooldownSec?: number;
+  spendLimit?: number | null;
+  credentialId?: string | null;
+  quotaGroup?: string | null;
 }
 
 export type SegmentType = "dialogue" | "narration" | "thought";
@@ -71,6 +81,38 @@ export interface Cut {
   at: SplitMode | null;
   /** true when the preferred boundary didn't exist and we fell down the chain */
   fallback: boolean;
+}
+
+/** What a listener complained about after hearing a clip. */
+export type FlagKind = "pronunciation" | "delivery" | "pause" | "other";
+
+export interface SegmentFlag {
+  kind: FlagKind;
+  note: string;
+  at: number;
+}
+
+/** A clip that was rendered and then superseded — kept so two takes can be compared. */
+export interface Take {
+  /** 1-based take number, stable for the life of the segment */
+  n: number;
+  at: number;
+  ms: number;
+  duration: number;
+  cost?: number;
+  endpoint: string | null;
+  voiceRef?: VoiceRef;
+  voice?: string;
+  model?: string;
+  direction?: string;
+  style?: string;
+  type?: SegmentType;
+  /** the text this clip was rendered from — a later split/join/edit shows up as drift */
+  text?: string;
+  /** what was sent after the dictionary, when it differed */
+  said?: string;
+  /** the user listened to it and chose the other take */
+  rejected?: boolean;
 }
 
 export interface SegmentAudio {
@@ -96,6 +138,18 @@ export interface SegmentAudio {
   type?: SegmentType;
   at?: number;
   cost?: number;
+  /** the exact text sent, so drift can tell "the script changed" from "the delivery changed" */
+  text?: string;
+  /** the text after the pronunciation dictionary, when it differed from `text` */
+  said?: string;
+  /** how many dictionary substitutions this clip carried */
+  lex?: number;
+
+  // retakes
+  /** take number of this clip; absent until the segment has been retaken at least once */
+  n?: number;
+  /** every superseded clip, oldest first */
+  takes?: Take[];
 
   error?: ReqError;
 }
@@ -115,6 +169,41 @@ export interface Segment {
   fallbackRetrying?: boolean;
   /** changed by hand; survives a re-script when "keep my edits" is on */
   edited?: boolean;
+  /** the user flagged the *audio* — wrong pronunciation, bad delivery, awkward pause */
+  flag?: SegmentFlag;
+  /** seconds of silence stitched in after this line, overriding the book's pacing; 0 = run straight on */
+  pause?: number;
+  /** A retake rendering *beside* `audio`, waiting to be kept or dropped. Nothing reads it as the
+   *  book's clip: the chapter plays, times and exports `audio` until the listener accepts this one. */
+  candidate?: SegmentAudio;
+  /** the exact whitespace that followed this segment in the source, when it isn't a single space —
+   *  a hand split records it so the join that undoes it restores the paragraph break */
+  sep?: string;
+}
+
+/** One entry of a book's pronunciation dictionary. The book text is never rewritten: the term is
+ *  swapped for `say` on the way to the endpoint, so the reader still shows the author's spelling. */
+export interface LexEntry {
+  id: number;
+  /** as it is written in the book */
+  term: string;
+  /** what the endpoint is sent instead — respell it the way it should sound */
+  say: string;
+  /** reference spelling for humans; never sent anywhere */
+  ipa?: string;
+  note?: string;
+  /** only match this capitalisation (for a term that is also an ordinary word) */
+  matchCase?: boolean;
+  /** off keeps the entry in the list without applying it */
+  enabled: boolean;
+}
+
+/** Default silence between clips, in seconds. Per-line overrides live on the segment. */
+export interface Pacing {
+  /** after a line followed by the same speaker */
+  line: number;
+  /** after a line when the next one is someone else */
+  turn: number;
 }
 
 export type ScriptingStatus = "none" | "queued" | "running" | "done" | "failed" | "fallback";
@@ -157,6 +246,9 @@ export interface Book {
   volumes: Volume[];
   /** spend ceiling and the user's pause switch; absent until either is set */
   budget?: { cap: number | null; paused: boolean };
+  scriptBudget?: number | null;
+  /** default gaps between clips; absent = the built-in pacing */
+  pacing?: Pacing;
 }
 
 export interface Character {
@@ -190,6 +282,16 @@ export interface Job {
   startedAt: number | null;
   finishedAt: number | null;
   cancelled: boolean;
+  scriptRun?: {
+    profile: Profile;
+    requests: number;
+    completed: number;
+    active: number;
+    reserved: number;
+    cost: number;
+    inputTokens: number;
+    outputTokens: number;
+  };
 }
 
 export type ExportStatus = "building" | "done" | "failed" | "replaced";
@@ -227,6 +329,26 @@ export interface ExportItem {
   progress?: number;
 }
 
+/** Session-only observations from simulated scripting requests. */
+export interface ScriptEndpointTelemetry {
+  completed: number;
+  failures: number;
+  rateLimits: number;
+  backoffUntil: number;
+  lastSuccess: number;
+  history: { at: number; ms: number; ok: boolean }[];
+  lastError?: {
+    code: number;
+    message: string;
+    body: string;
+    at: number;
+    bookId: string;
+    chapterId: number;
+    model: string;
+    baseUrl: string;
+  };
+}
+
 /** An LLM provider used for scripting (splitting prose into attributed segments). */
 export interface Profile {
   id: string;
@@ -236,13 +358,25 @@ export interface Profile {
   inPrice: number;
   /** USD per million output tokens */
   outPrice: number;
+  baseUrl: string;
+  enabled: boolean;
+  concurrency: number;
+  maxChars: number;
+  splitAt: SplitMode;
+  maxOutputTokens: number;
   secPerChunk: number;
   needsKey: boolean;
+  // operational settings — see EndpointOps; optional so older saved profiles still load
+  timeoutSec?: number;
+  maxRetries?: number;
+  cooldownSec?: number;
+  spendLimit?: number | null;
+  credentialId?: string | null;
+  quotaGroup?: string | null;
 }
 
 export interface ScriptSettings {
   profile: string;
-  chunkChars: number;
   stripWatermarks: boolean;
 }
 
@@ -279,6 +413,8 @@ export interface World {
   segments: SegmentMap;
   endpoints: Endpoint[];
   exports: ExportItem[];
+  /** per book: the pronunciation dictionary, applied at render time */
+  lexicon: Record<string, LexEntry[]>;
 }
 
 // ---------- derived shapes returned by the store's getters ----------
@@ -369,6 +505,11 @@ export interface ScriptEstimate {
   seconds: number;
   cost: number;
   profile: Profile | undefined;
+  inputTokens: number;
+  outputTokens: number;
+  inputCost: number;
+  outputCost: number;
+  blockers: string[];
 }
 
 /** Per-endpoint slice of a narration estimate. */
@@ -427,4 +568,144 @@ export interface SettingsFile {
   endpoints: Partial<Endpoint>[];
   profiles: Profile[];
   scriptSettings: ScriptSettings;
+}
+
+// ---------- endpoints page: operations, billing, request telemetry ----------
+// The app talks to two kinds of OpenAI-compatible server: a chat model that turns prose into an
+// attributed script, and a speech model that renders a line. They are configured, paused, rate
+// limited and billed the same way, so the Endpoints page treats them as one list of two kinds.
+
+export type EndpointKind = "scripting" | "tts";
+
+/** How a TTS provider bills. Not every provider bills per character. */
+export type TtsBillingUnit = "chars" | "tokens" | "minute" | "request";
+
+export interface TtsBilling {
+  unit: TtsBillingUnit;
+  /** USD per 1M chars / per 1M tokens / per audio minute / per request. `null` = not known — and
+   *  an unknown rate is never rendered as $0. */
+  rate: number | null;
+}
+
+/** Operational settings shared by both kinds. Optional on the endpoint types so anything saved
+ *  before they existed still loads; `ensureOps` fills the defaults in on first use. */
+export interface EndpointOps {
+  /** per-request wall clock, seconds */
+  timeoutSec: number;
+  /** attempts *after* the first, per request */
+  maxRetries: number;
+  /** how long dispatch holds off after a 429 with no Retry-After, seconds */
+  cooldownSec: number;
+  /** USD/day for this endpoint across every book; null = no endpoint-level limit */
+  spendLimit: number | null;
+  /** id from the credential registry; null = this endpoint's own key slot */
+  credentialId: string | null;
+  /** endpoints that share one provider rate limit and spend pool */
+  quotaGroup: string | null;
+}
+
+export type RequestStatus = "done" | "failed" | "running" | "queued" | "cancelled";
+
+/** Why a queued request has not been dispatched yet. */
+export type WaitReason = "paused" | "concurrency" | "cooldown" | "nokey" | "budget" | "ordered";
+
+export interface RequestUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  chars?: number;
+  /** rendered audio, seconds */
+  audioSeconds?: number;
+}
+
+/** One request against one endpoint — the row behind the Activity list and every chart. */
+export interface RequestRecord {
+  id: string;
+  endpointId: string;
+  kind: EndpointKind;
+  bookId: string | null;
+  chapterId: number | null;
+  label: string;
+  status: RequestStatus;
+  /** 1 = settled on the first try; >1 means it was retried */
+  attempts: number;
+  queuedAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  /** ms spent waiting on our side, before dispatch */
+  queueMs: number;
+  /** ms spent waiting on the provider, after dispatch */
+  responseMs: number;
+  waiting?: WaitReason;
+  usage: RequestUsage;
+  /** null when the endpoint's rate is unknown */
+  cost: number | null;
+  costBasis: "recorded" | "estimated" | "unknown";
+  rateLimited?: boolean;
+  error?: ReqError;
+  /** false only for rows this session actually produced */
+  simulated: boolean;
+}
+
+export type RangeKey = "1h" | "6h" | "24h" | "7d";
+
+export interface MetricBucket {
+  from: number;
+  to: number;
+  requests: number;
+  failures: number;
+  rateLimits: number;
+  /** requests in this bucket that took more than one attempt */
+  retries: number;
+  firstAttemptOk: number;
+  eventualOk: number;
+  /** mean ms waiting for a slot */
+  queueMs: number;
+  /** mean ms waiting for the provider */
+  responseMs: number;
+  p95Ms: number;
+  /** tokens/minute (scripting) or generated audio minutes per minute (TTS) */
+  throughput: number;
+  cost: number;
+  /** requests in this bucket whose cost could not be priced */
+  unknownCost: number;
+}
+
+export interface MetricTotals {
+  requests: number;
+  failures: number;
+  rateLimits: number;
+  retries: number;
+  firstAttemptOk: number;
+  eventualOk: number;
+  queueMs: number;
+  responseMs: number;
+  p95Ms: number;
+  throughput: number;
+  cost: number;
+  unknownCost: number;
+  inputTokens: number;
+  outputTokens: number;
+  chars: number;
+  audioSeconds: number;
+}
+
+export interface MetricSeries {
+  kind: EndpointKind;
+  range: RangeKey;
+  from: number;
+  to: number;
+  buckets: MetricBucket[];
+  totals: MetricTotals;
+}
+
+/** Result of an explicit, user-pressed connection test. */
+export interface ConnectionTest {
+  ok: boolean;
+  at: number;
+  ms: number;
+  message: string;
+  detail: string;
+  /** what the probe would cost at the configured rates; null when the rate is unknown */
+  cost: number | null;
+  simulated: boolean;
 }

@@ -1,13 +1,16 @@
 // PROTOTYPE — mock world. Deterministic pseudo-random so reloads look the same.
 import { splitText } from "@/lib/split";
+import { speak, silenceOf, DEFAULT_PACING } from "@/lib/speech";
 import type {
   Book,
+  LexEntry,
   Chapter,
   Character,
   Endpoint,
   ExportItem,
   Gender,
   Segment,
+  SegmentAudio,
   SegmentMap,
   SegmentType,
   Voice,
@@ -221,6 +224,7 @@ const BOOKS: BookSeed[] = [
       "Dust settled in the pill room, thick with the smell of burnt ginseng.",
       "The blade hummed once and went still.",
       "Nobody spoke for a long moment.",
+      "Lan’er waited by the gate with her sleeves rolled, as if the mountain owed her an answer.",
     ],
     thought: {
       "Ji Ning": [
@@ -576,6 +580,10 @@ export function makeWorld(): World {
       latency: 1400,
       failRate: 0.01,
       price: 12,
+      billing: { unit: "chars", rate: 12 },
+      credentialId: "openai-personal",
+      quotaGroup: "openai-account",
+      spendLimit: 5,
       needsKey: true,
       maxChars: 4096,
       splitAt: "sentence",
@@ -599,6 +607,7 @@ export function makeWorld(): World {
       latency: 2600,
       failRate: 0.025,
       price: 0,
+      billing: { unit: "chars", rate: 0 },
       needsKey: false,
       maxChars: 500,
       splitAt: "sentence",
@@ -622,6 +631,10 @@ export function makeWorld(): World {
       latency: 1900,
       failRate: 0.05,
       price: 15,
+      // billed on the audio it returns, and the rate card was never written down — the page shows
+      // this as "unknown", never as free
+      billing: { unit: "minute", rate: null },
+      credentialId: "proxy-work",
       needsKey: true,
       maxChars: 3000,
       splitAt: "clause",
@@ -647,6 +660,27 @@ export function makeWorld(): World {
     starforge: oa("sage"),
     drowned: kk("bf_emma"),
   };
+  // A book's pronunciation dictionary. These are the names a TTS engine reliably gets wrong; the
+  // prose keeps the author's spelling and only the request carries the respelling.
+  const lexicon: Record<string, LexEntry[]> = {
+    cliche: [
+      { id: 1, term: "Ji Ning", say: "Jee Ning", ipa: "dʒiː nɪŋ", enabled: true },
+      { id: 2, term: "Lan’er", say: "Lahn-urr", enabled: true, note: "one name, not two words" },
+      {
+        id: 3,
+        term: "Qi",
+        say: "chee",
+        enabled: false,
+        matchCase: true,
+        note: "off: the chapter titles read fine, and lower-case “qi” is rare",
+      },
+    ],
+    starforge: [{ id: 1, term: "Ocho", say: "Oh-cho", enabled: true }],
+    drowned: [{ id: 1, term: "Tobiah", say: "Toe-BYE-uh", enabled: true }],
+  };
+  /** rendered length of a chapter: the clips plus the silence stitched between them */
+  const timeOf = (segs: Segment[]): number =>
+    segs.reduce((a, s) => a + s.audio.duration, 0) + silenceOf(segs, DEFAULT_PACING);
   const seedCuts = (text: string, ep: Endpoint) => {
     const cuts = splitText(text, ep.maxChars, ep.splitAt);
     return cuts.length > 1
@@ -661,6 +695,7 @@ export function makeWorld(): World {
     const cast = characters[bookId];
     const c = cast.find((x) => x.name === s.speaker);
     const ref = (c?.voice || cast.find((x) => x.name === "Narrator")!.voice)!;
+    const said = speak(s.text, lexicon[bookId] ?? []);
     return {
       voiceRef: ref,
       voice: ref.split("/")[1],
@@ -668,8 +703,10 @@ export function makeWorld(): World {
       direction: s.direction,
       style: c?.style ?? "",
       type: s.type,
+      text: s.text,
+      ...(said.hits.length ? { said: said.text, lex: said.hits.length } : {}),
       at: Date.now() - (3600 + i * 7) * 1000,
-      cost: (s.text.length / 1e6) * ep.price,
+      cost: (said.text.length / 1e6) * ep.price,
     };
   };
   const routeOf = (bookId: string, speaker: string): Endpoint => {
@@ -736,7 +773,7 @@ export function makeWorld(): World {
             ...seedAudit(bookId, s, ep, i),
           };
         });
-        c.duration = segs.reduce((a, s) => a + s.audio.duration, 0);
+        c.duration = timeOf(segs);
       }
     }
   };
@@ -806,6 +843,50 @@ export function makeWorld(): World {
           : undefined,
     };
   });
+  // ch 1 of Starforge: a listened-to chapter. Two lines are flagged as bad audio and one of them has
+  // already been retaken, so the ledger opens on a take waiting to be compared.
+  {
+    const segs = segments["starforge:1"];
+    const spoken = segs.filter((x) => x.type !== "narration");
+    const bad = spoken[1] ?? segs[1];
+    const slow = spoken[3] ?? segs[3];
+    bad.flag = {
+      kind: "pronunciation",
+      note: `“${bad.text.split(" ").slice(0, 2).join(" ")}” is read as two words`,
+      at: Date.now() - 26 * 60000,
+    };
+    slow.flag = {
+      kind: "pause",
+      note: "half a second of silence mid-sentence",
+      at: Date.now() - 22 * 60000,
+    };
+    const retaken = spoken[0] ?? segs[0];
+    retaken.flag = {
+      kind: "delivery",
+      note: "flat — the line is meant to land as a threat",
+      at: Date.now() - 31 * 60000,
+    };
+    // take 2 is rendered and waiting: the ledger opens on a comparison, and until it is accepted the
+    // chapter still plays, times and exports take 1
+    const first = { ...(retaken.audio as SegmentAudio) };
+    retaken.direction = "cold, deliberate";
+    // the direction was changed on the line before the retake was asked for, so take 1 is out of date
+    retaken.audio = { ...first, status: "stale", n: 1 };
+    retaken.candidate = {
+      ...first,
+      n: 2,
+      ms: Math.round(first.ms * 1.1),
+      duration: first.duration * 1.18,
+      direction: retaken.direction,
+      at: Date.now() - 19 * 60000,
+    };
+    chapters.starforge[0].narration = "stale";
+    // pacing set by ear while listening: a beat after the threat lands, none before the answer
+    retaken.pause = 1.5;
+    if (spoken[1]) spoken[1].pause = 0;
+    chapters.starforge[0].duration = timeOf(segs);
+  }
+
   // a chapter worth skipping: translator notes at the end of Drowned City
   const notes = chapters.drowned[chapters.drowned.length - 1];
   notes.title = "Translator’s notes";
@@ -881,5 +962,5 @@ export function makeWorld(): World {
   const orphan = characters.drowned.filter((c) => c.major && c.name !== "Narrator")[1];
   if (orphan) orphan.voice = voiceRef("proxy", "onyx");
 
-  return { books, chapters, characters, segments, endpoints, exports };
+  return { books, chapters, characters, segments, endpoints, exports, lexicon };
 }

@@ -114,4 +114,24 @@ test("a voice whose endpoint is gone still fails rather than waiting forever", (
   advance(120_000);
   expect(job()!.finishedAt).not.toBeNull();
   expect(app.chapter(bookId, chapterId)!.narration).toBe("failed");
+  expect(job()!.activity!.some((e) => e.level === "error" && e.detail?.segment)).toBe(true);
+  expect(job()!.activity!.at(-1)!.message).toBe("Job failed");
+});
+
+test("narration activity keeps the segment identity and attempt across a rate-limit retry", () => {
+  app.runNarration(bookId, [chapterId]);
+  spyOn(Math, "random").mockReturnValueOnce(0).mockReturnValue(0.5);
+  advance(600_000);
+  const events = job()!.activity!;
+  const limited = events.find((e) => e.detail?.code === 429)!;
+  expect(limited).toBeDefined();
+  expect(
+    events.some(
+      (e) =>
+        e.detail?.segment === limited.detail?.segment &&
+        e.detail?.attempt === 2 &&
+        e.message.endsWith("completed"),
+    ),
+  ).toBe(true);
+  expect(events.at(-1)!.message).toBe("Job done");
 });

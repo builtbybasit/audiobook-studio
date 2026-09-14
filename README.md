@@ -12,7 +12,7 @@ pnpm prototype        # opens http://localhost:5173
 
 - **Library** → **Book overview** (volumes, per-stage progress, cast summary, "what next") → stages **Scripting / Narration / Export**.
 - **Cast** (per book): every speaker across all chapters, line counts, first appearance, merge suggestions for near-duplicate names, bulk merge.
-- **Queue**: all jobs across books with cancel / retry / remove, endpoint pool utilisation.
+- **Queue**: all jobs across books with cancel / retry / remove, endpoint pool utilisation. Click a job to open its activity log and run details.
 - **Endpoints**: every scripting and speech endpoint in one place — health, throughput, spend, request history, connection, limits and budgets.
 
 ## Stages
@@ -175,6 +175,22 @@ inside the box (`$ 12`, `0.35 s`), and `empty` lets a blank field mean something
 - Pacing: _Starforge_ ch 1 holds 1.5s after the Captain's threat and runs straight on into the reply — the ledger's scrubber draws both gaps. Set your own in the reader under **Pause after**, or `[`/`]`.
 - Endpoints: open **Endpoints** in the sidebar. _Antigravity (local)_ has never been used — it reads **Not tested**, not healthy. _Azure proxy_ is billed per audio minute at a rate nobody wrote down: its spend shows **unknown**, and the totals say how many rows they are missing. On the Overview tab switch to **Latency** and see queue wait stacked under provider response, then click a bar to filter the Activity list to those requests. Type `2500` into Concurrency on the Requests tab — the slider range follows. Start a narration run, then **Pause** _Local Kokoro_: the queue holds, the run doesn't fail, and **Resume** picks it up. **Cancel** says what it will do first.
 - Boundaries: in the reader, open a line and press `s` — click a gap to cut it, then give the second half its own speaker. `m` joins a line with the next. Try it on the unverified chunk in _Cliché_ ch 7.
+
+## Queue job activity (2026-09-14)
+
+Running, queued, and historical jobs open a right-side detail panel (full-width on mobile). Activity
+is recorded by the simulator when jobs queue, start, wait, dispatch, complete, fail, or cancel.
+Scripting events include request numbers, retry attempts, token usage, and simulated costs; narration
+events include segment/retake identity, endpoint, model, split count, response time, and errors.
+Export events record progress milestones and the completed artifact. Waiting reasons are logged only
+when they change, so a paused endpoint does not fill the log with duplicate messages.
+
+The panel separates queue time from run time, offers search and a warnings/errors filter, and expands
+each event's diagnostic fields. Run details preserve timestamps and scripting usage independently of
+later chapter changes. Copy diagnostics uses an explicit field allowlist, omits connection snapshots,
+and uses sanitized event data. Old seeded jobs explicitly have no detailed activity rather than
+inventing a request history. The latest 1,000 events are kept per job with a visible dropped count;
+removing a job or refreshing the prototype discards its log. No real provider calls or persistence.
 
 ## Scripting endpoints (2026-09-14)
 

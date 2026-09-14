@@ -2,6 +2,7 @@ import { test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 import { newProfile, profileErrors, scriptParts, tokenEstimate } from "../src/lib/scripting";
 import { useApp } from "../src/stores/app";
+import { jobDiagnostics, logJob, MAX_JOB_EVENTS } from "../src/lib/jobActivity";
 
 let callbacks = new Map<number, () => void>();
 let clock = 1000;
@@ -189,4 +190,72 @@ test("a second run for the same book waits for the first batch", () => {
   expect(app.jobs[2].scriptRun!.active).toBe(0);
   finish();
   expect(app.jobs[2].startedAt!).toBeGreaterThanOrEqual(app.jobs[1].finishedAt!);
+});
+
+test("job activity records request attempts, usage and completion across a cooldown", () => {
+  app.runScripting("cliche", [1]);
+  const job = app.jobs[0];
+  spyOn(Math, "random").mockReturnValueOnce(0).mockReturnValue(0.5);
+  tick();
+  expect(job.activity!.some((e) => e.detail?.code === 429)).toBe(true);
+  tick(12_000);
+  expect(job.activity!.find((e) => e.message === "Request 1 started")?.detail?.attempt).toBe(2);
+  finish();
+  const completions = job.activity!.filter((e) => /^Request \d+ completed$/.test(e.message));
+  expect(completions.length).toBe(job.scriptRun!.requests);
+  expect(completions.reduce((n, e) => n + Number(e.detail?.inputTokens), 0)).toBe(
+    job.scriptRun!.inputTokens,
+  );
+  expect(job.activity!.filter((e) => e.message === "Job started")).toHaveLength(1);
+  expect(job.activity!.at(-1)!.message).toBe("Job done");
+});
+
+test("paused activity does not flood the log, and cancellation is recorded once", () => {
+  app.runScripting("cliche", [1]);
+  tick();
+  app.profiles[0].enabled = false;
+  tick(3000);
+  const job = app.jobs[0];
+  const count = job.activity!.length;
+  for (let i = 0; i < 30; i++) tick();
+  expect(job.activity).toHaveLength(count);
+  expect(job.waitingReason).toBe("Endpoint is paused");
+  app.cancelJob(job.id);
+  app.cancelJob(job.id);
+  tick();
+  expect(job.activity!.filter((e) => e.message === "Cancellation requested")).toHaveLength(1);
+  expect(job.activity!.at(-1)!.message).toBe("Job cancelled");
+});
+
+test("retained diagnostics stay bounded and omit connection snapshots and credentials", () => {
+  const job = app.addJob("scripting", "cliche", "Test");
+  for (let i = 0; i < MAX_JOB_EVENTS + 2; i++) logJob(job, `Event ${i}`);
+  logJob(job, "Authorization: Bearer sk-examplecredential", "error", {
+    apiKey: "private",
+    inputTokens: 123,
+  });
+  Object.assign(job, { scriptRun: { profile: { baseUrl: "https://private.invalid" } } });
+  const exported = jobDiagnostics(job);
+  expect(job.activity).toHaveLength(MAX_JOB_EVENTS);
+  expect(job.droppedEvents).toBe(4);
+  expect(exported).not.toContain("private");
+  expect(exported).not.toContain("examplecredential");
+  expect(exported).toContain('"inputTokens": 123');
+  expect(new Set(job.activity!.map((e) => e.id)).size).toBe(MAX_JOB_EVENTS);
+});
+
+test("export jobs record milestones and the completed artifact", () => {
+  app.buildExport("starforge", [1], {
+    title: "Test book",
+    filename: "test-log",
+    bitrate: 64,
+  } as Parameters<typeof app.buildExport>[2]);
+  finish();
+  const job = app.jobs[0];
+  expect(job.status).toBe("done");
+  expect(job.activity!.some((e) => e.message === "Export 25% complete")).toBe(true);
+  expect(job.activity!.find((e) => e.message === "Export ready")!.detail?.filename).toBe(
+    "test-log.m4b",
+  );
+  expect(job.activity!.at(-1)!.message).toBe("Job done");
 });

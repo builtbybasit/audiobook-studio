@@ -270,6 +270,14 @@ export interface Character {
 export type JobKind = "scripting" | "narration" | "export";
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
+export interface JobEvent {
+  id: number;
+  at: number;
+  level: "info" | "warning" | "error";
+  message: string;
+  detail?: Record<string, string | number>;
+}
+
 export interface Job {
   id: number;
   kind: JobKind;
@@ -282,6 +290,10 @@ export interface Job {
   startedAt: number | null;
   finishedAt: number | null;
   cancelled: boolean;
+  /** Observed events from this session's simulator; absent for older sample jobs. */
+  activity?: JobEvent[];
+  droppedEvents?: number;
+  waitingReason?: string;
   scriptRun?: {
     profile: Profile;
     requests: number;

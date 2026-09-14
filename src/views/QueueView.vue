@@ -4,6 +4,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useApp } from "@/stores/app";
 import StatusDot from "@/components/StatusDot.vue";
+import JobDetails from "@/views/queue/JobDetails.vue";
 import type { Job, JobKind } from "@/types";
 import type { Component } from "vue";
 import {
@@ -15,6 +16,12 @@ import {
 } from "@lucide/vue";
 
 const app = useApp();
+const selectedId = ref<number | null>(null);
+const selectedJob = computed(() => app.jobs.find((j) => j.id === selectedId.value) ?? null);
+function openRow(event: MouseEvent, job: Job) {
+  if ((event.target as HTMLElement).closest("button, a, input")) return;
+  selectedId.value = job.id;
+}
 const now = ref(Date.now());
 let t: ReturnType<typeof setInterval>;
 onMounted(() => {
@@ -101,8 +108,7 @@ async function toggleNotify() {
       <div>
         <h1 class="text-2xl font-semibold">Queue</h1>
         <p class="text-sm text-zinc-500">
-          Every job across the library. Chapters of one book run in order; endpoints work in
-          parallel within a chapter.
+          Every job across the library. Click a job to inspect its activity, timing, and errors.
         </p>
       </div>
       <div class="flex items-center gap-3 text-xs">
@@ -168,7 +174,8 @@ async function toggleNotify() {
           <div
             v-for="j in running"
             :key="j.id"
-            class="border-b border-zinc-100 px-4 py-3 last:border-0 dark:border-zinc-800/70"
+            class="cursor-pointer border-b border-zinc-100 px-4 py-3 last:border-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-900"
+            @click="openRow($event, j)"
           >
             <div class="flex items-center gap-3">
               <span
@@ -177,7 +184,12 @@ async function toggleNotify() {
               /></span>
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 text-sm">
-                  <b class="capitalize">{{ j.kind }}</b
+                  <button
+                    class="font-semibold capitalize hover:text-violet-500 hover:underline"
+                    :aria-label="`View activity for ${j.label}`"
+                    @click="selectedId = j.id"
+                  >
+                    {{ j.kind }}</button
                   ><span class="truncate text-zinc-500"
                     >· {{ book(j)?.title
                     }}<span v-if="chapter(j)">
@@ -196,6 +208,7 @@ async function toggleNotify() {
                 {{ Math.round(j.progress) }}% · {{ elapsed(j) }}
               </div>
               <RouterLink :to="stageLink(j)" class="btn-ghost btn-xs">Open</RouterLink>
+              <button class="btn-ghost btn-xs" @click="selectedId = j.id">Activity</button>
               <button class="btn-ghost btn-xs text-red-500" @click="app.cancelJob(j.id)">
                 Cancel
               </button>
@@ -235,13 +248,18 @@ async function toggleNotify() {
           <div
             v-for="(j, i) in queued"
             :key="j.id"
-            class="flex items-center gap-3 border-b border-zinc-100 px-4 py-2 text-sm last:border-0 dark:border-zinc-800/70"
+            class="flex cursor-pointer items-center gap-3 border-b border-zinc-100 px-4 py-2 text-sm last:border-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-900"
+            @click="openRow($event, j)"
           >
             <span class="w-5 font-mono text-xs text-zinc-400">{{ i + 1 }}</span>
             <component :is="icon[j.kind]" class="icon-sm text-zinc-400" />
-            <span class="min-w-0 flex-1 truncate"
-              >{{ j.label }} <span class="text-zinc-500">· {{ book(j)?.title }}</span></span
+            <button
+              class="min-w-0 flex-1 truncate text-left hover:text-violet-500 hover:underline"
+              :aria-label="`View activity for ${j.label}`"
+              @click="selectedId = j.id"
             >
+              {{ j.label }} <span class="text-zinc-500">· {{ book(j)?.title }}</span>
+            </button>
             <button class="text-xs text-zinc-400 hover:text-red-500" @click="app.cancelJob(j.id)">
               cancel
             </button>
@@ -301,7 +319,8 @@ async function toggleNotify() {
               <tr
                 v-for="j in shown"
                 :key="j.id"
-                class="border-b border-zinc-100 last:border-0 dark:border-zinc-800/70"
+                class="cursor-pointer border-b border-zinc-100 last:border-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-900"
+                @click="openRow($event, j)"
               >
                 <td class="w-8 py-2 pl-4">
                   <StatusDot :status="j.status === 'cancelled' ? 'none' : j.status" />
@@ -310,7 +329,13 @@ async function toggleNotify() {
                   <component :is="icon[j.kind]" class="icon-sm" />
                 </td>
                 <td class="py-2">
-                  <div>{{ j.label }}</div>
+                  <button
+                    class="text-left hover:text-violet-500 hover:underline"
+                    :aria-label="`View activity for ${j.label}`"
+                    @click="selectedId = j.id"
+                  >
+                    {{ j.label }}
+                  </button>
                   <div class="text-xs text-zinc-500">{{ book(j)?.title }}</div>
                 </td>
                 <td
@@ -403,5 +428,6 @@ async function toggleNotify() {
         </div>
       </aside>
     </div>
+    <JobDetails :job="selectedJob" :now="now" @close="selectedId = null" />
   </div>
 </template>

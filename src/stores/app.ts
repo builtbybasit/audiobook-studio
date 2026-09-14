@@ -5,6 +5,7 @@ import { splitText, partsFor } from "@/lib/split";
 import { speak, silenceOf, pacingOrDefault, hitsIn } from "@/lib/speech";
 import { newProfile, profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
 import { keyring } from "@/lib/keyring";
+import { logJob, jobWaiting, startJob } from "@/lib/jobActivity";
 import { toast as tf } from "vue-toastflow";
 import type { ToastButton } from "vue-toastflow";
 import type {
@@ -1004,7 +1005,9 @@ export const useApp = defineStore("app", {
         finishedAt: null,
         cancelled: false,
       });
-      return this.jobs[this.jobs.length - 1]; // the reactive proxy — mutations on it must be observable
+      const job = this.jobs[this.jobs.length - 1]; // mutate the reactive proxy
+      logJob(job, "Job queued");
+      return job;
     },
     removeJob(id: number): void {
       const j = this.jobs.find((j) => j.id === id);
@@ -1023,13 +1026,24 @@ export const useApp = defineStore("app", {
       next();
     },
     _finish(job: Job, status: JobStatus): void {
+      if (job.finishedAt !== null) return;
       job.status = status;
       job.finishedAt = Date.now();
+      job.waitingReason = "";
+      logJob(job, `Job ${status}`, status === "failed" ? "error" : "info", {
+        elapsedMs: job.startedAt === null ? 0 : job.finishedAt - job.startedAt,
+      });
     },
     cancelJob(id: number): void {
       const job = this.jobs.find((j) => j.id === id);
-      if (!job || job.finishedAt) return;
+      if (!job || job.finishedAt || job.cancelled) return;
       job.cancelled = true;
+      logJob(job, "Cancellation requested", "warning", {
+        behavior:
+          job.kind === "narration"
+            ? "In-flight clips finish; queued clips will not start"
+            : "Stops on the next scheduler tick",
+      });
       const c = job.chapterId ? this.chapter(job.bookId, job.chapterId) : null;
       if (job.status === "queued") {
         this._finish(job, "cancelled");
@@ -1352,6 +1366,14 @@ export const useApp = defineStore("app", {
           inputTokens: 0,
           outputTokens: 0,
         };
+        logJob(job, "Scripting plan prepared", "info", {
+          endpoint: profile.name,
+          model: profile.model,
+          requests: job.scriptRun.requests,
+          characters: textOf(c.id).length,
+          concurrency: profile.concurrency,
+        });
+        jobWaiting(job, "Chapter has not been dispatched yet");
         return job;
       });
       this._sequential(jobs, (job, done) => {
@@ -1361,12 +1383,14 @@ export const useApp = defineStore("app", {
           tokenEstimate(text, profile),
         );
         const active: {
+          request: number;
           started: number;
           finish: number;
           usage: ReturnType<typeof tokenEstimate>;
         }[] = [];
         let cursor = 0;
         let checkedRateLimit = false;
+        let retriedFirstRequest = false;
         const telemetry = this.scriptingTelemetry(profile.id);
         const t = setInterval(() => {
           if (job.cancelled) {
@@ -1384,11 +1408,20 @@ export const useApp = defineStore("app", {
               (j) =>
                 j.id < job.id && j.bookId === bookId && j.kind === "scripting" && !j.finishedAt,
             )
-          )
+          ) {
+            jobWaiting(job, "An earlier chapter in this book is still scripting");
             return;
+          }
           for (let i = active.length - 1; i >= 0; i--) {
             if (active[i].finish > Date.now()) continue;
-            const { usage, started } = active.splice(i, 1)[0];
+            const { usage, started, request } = active.splice(i, 1)[0];
+            logJob(job, `Request ${request} completed`, "info", {
+              request,
+              responseMs: Date.now() - started,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              costUSD: usage.cost,
+            });
             telemetry.completed++;
             telemetry.lastSuccess = Date.now();
             telemetry.history = [
@@ -1416,6 +1449,20 @@ export const useApp = defineStore("app", {
               (n, j) => n + (j.scriptRun?.profile.id === profile.id ? j.scriptRun.active : 0),
               0,
             );
+          jobWaiting(
+            job,
+            cursor >= requests.length
+              ? ""
+              : !live
+                ? "Endpoint no longer available"
+                : !live.enabled
+                  ? "Endpoint is paused"
+                  : telemetry.backoffUntil > Date.now()
+                    ? "Rate-limit cooldown"
+                    : slots <= 0
+                      ? "Endpoint concurrency is full"
+                      : "",
+          );
           while (
             live?.enabled &&
             telemetry.backoffUntil <= Date.now() &&
@@ -1440,6 +1487,10 @@ export const useApp = defineStore("app", {
                 });
                 clearInterval(t);
                 c.scripting = "failed";
+                logJob(job, "Remaining budget cannot cover the next request", "error", {
+                  requiredUSD: usage.reserve,
+                  remainingUSD: Math.min(remaining, overall),
+                });
                 this._finish(job, "failed");
                 for (const pending of jobs) this.cancelJob(pending.id);
                 done();
@@ -1451,6 +1502,7 @@ export const useApp = defineStore("app", {
             if (!checkedRateLimit) {
               checkedRateLimit = true;
               if (Math.random() < 0.08) {
+                retriedFirstRequest = true;
                 const cooldown = live?.cooldownSec ?? 10;
                 telemetry.failures++;
                 telemetry.rateLimits++;
@@ -1465,6 +1517,12 @@ export const useApp = defineStore("app", {
                   model: profile.model,
                   baseUrl: profile.baseUrl,
                 };
+                logJob(
+                  job,
+                  `Request ${cursor + 1} rate limited; retry after ${cooldown}s`,
+                  "warning",
+                  { request: cursor + 1, attempt: 1, code: 429, endpoint: profile.name },
+                );
                 telemetry.history = [
                   ...telemetry.history.slice(-29),
                   { at: Date.now(), ms: 0, ok: false },
@@ -1476,14 +1534,20 @@ export const useApp = defineStore("app", {
             slots--;
             run.active++;
             run.reserved += usage.reserve;
+            startJob(job);
+            logJob(job, `Request ${cursor} started`, "info", {
+              request: cursor,
+              attempt: cursor === 1 && retriedFirstRequest ? 2 : 1,
+              endpoint: profile.name,
+              reservedUSD: usage.reserve,
+            });
             active.push({
+              request: cursor,
               started: Date.now(),
               finish: Date.now() + profile.secPerChunk * 100,
               usage,
             });
             c.scripting = "running";
-            job.status = "running";
-            job.startedAt ??= Date.now();
           }
           c.scriptingProgress = (run.completed / run.requests) * 100;
           job.progress = c.scriptingProgress;
@@ -1492,6 +1556,14 @@ export const useApp = defineStore("app", {
             const roll = Math.random();
             const outcome = roll < 0.06 ? "failed" : roll < 0.16 ? "fallback" : "done";
             c.scripting = outcome;
+            if (outcome !== "done")
+              logJob(
+                job,
+                outcome === "failed"
+                  ? "Script verification failed"
+                  : "An unverified chunk was kept as narration for review",
+                outcome === "failed" ? "error" : "warning",
+              );
             this._finish(job, outcome === "failed" ? "failed" : "done");
             if (outcome !== "failed") {
               if (retrySegmentId !== null) {
@@ -2022,7 +2094,9 @@ export const useApp = defineStore("app", {
       const jobs = chs.map((c) => {
         c.narration = "queued";
         c.narrationProgress = 0;
-        return this.addJob("narration", bookId, `Narrate · ch ${c.id}`, c.id);
+        const job = this.addJob("narration", bookId, `Narrate · ch ${c.id}`, c.id);
+        jobWaiting(job, "Chapter has not been dispatched yet");
+        return job;
       });
       this._sequential(jobs, (job, done) => {
         const c = this.chapter(bookId, job.chapterId!)!;
@@ -2152,9 +2226,10 @@ export const useApp = defineStore("app", {
     },
     _dispatch(bookId: string, c: Chapter, job: Job, done: () => void): void {
       c.narration = "running";
-      job.status = "running";
-      job.startedAt = Date.now();
+      jobWaiting(job, "");
+      startJob(job);
       const segs = this.segmentsOf(bookId, c.id);
+      const attempts = new Map<string, number>();
       // A run renders two kinds of clip: a segment's own audio, and the retake standing beside it.
       // `slot` says which one a target writes to, so a retake never lands on the book's clip.
       type Slot = "audio" | "candidate";
@@ -2170,6 +2245,10 @@ export const useApp = defineStore("app", {
             ? [{ s, slot: "candidate" as Slot }]
             : []),
         ]);
+      logJob(job, "Narration plan prepared", "info", {
+        clips: targets("queued").length,
+        segments: segs.length,
+      });
       const tick = () => {
         if (job.cancelled) {
           for (const t of targets("queued"))
@@ -2184,6 +2263,7 @@ export const useApp = defineStore("app", {
         }
         // A segment is rendered by the endpoint that owns its speaker's voice (falling back to the
         // Narrator's). Long text is split into `parts` requests against that endpoint's limit.
+        const waiting = new Set<string>();
         for (const target of targets("queued")) {
           const next = target.s;
           const slot = target.slot;
@@ -2193,7 +2273,10 @@ export const useApp = defineStore("app", {
           // A paused endpoint *holds* its work — the clip stays queued until it is resumed or the
           // job is cancelled. That is what separates Pause from Cancel. Everything else below is a
           // configuration error the run should report rather than wait on.
-          if (ep && !ep.enabled) continue;
+          if (ep && !ep.enabled) {
+            waiting.add(`${ep.name} is paused`);
+            continue;
+          }
           if (!ep || (ep.needsKey && !keyring.has(ep.id))) {
             next[slot] = {
               status: "failed",
@@ -2212,16 +2295,44 @@ export const useApp = defineStore("app", {
                 body: "",
               },
             };
+            logJob(job, `Segment ${next.id}: ${next[slot]!.error!.message}`, "error", {
+              segment: next.id,
+              target: slot,
+            });
             continue;
           }
-          if (ep.backoffUntil > Date.now()) continue;
+          if (ep.backoffUntil > Date.now()) {
+            waiting.add(`${ep.name}: rate-limit cooldown`);
+            continue;
+          }
           const active = targets("generating").filter((t) => clipOf(t).endpoint === ep.id).length;
-          if (active >= ep.concurrency) continue;
+          if (active >= ep.concurrency) {
+            waiting.add(`${ep.name}: concurrency full (${ep.concurrency})`);
+            continue;
+          }
           // the dictionary is applied here, on the way out: the script itself keeps the author's spelling
           const said = this.spoken(bookId, next.text);
           const sent = said.text;
           const cuts = splitText(sent, ep.maxChars, ep.splitAt);
           const parts = cuts.length;
+          const attemptKey = `${next.id}:${slot}`;
+          const attempt = (attempts.get(attemptKey) ?? 0) + 1;
+          attempts.set(attemptKey, attempt);
+          const diagnostic = {
+            segment: next.id,
+            target: slot,
+            attempt,
+            endpoint: ep.name,
+            model: ep.model,
+            parts,
+            characters: sent.length,
+          };
+          logJob(
+            job,
+            `Segment ${next.id}${slot === "candidate" ? " retake" : ""} started`,
+            "info",
+            diagnostic,
+          );
           const who = (this.characters[bookId] ?? []).find((x) => x.name === next.speaker);
           next[slot] = {
             status: "generating",
@@ -2253,7 +2364,15 @@ export const useApp = defineStore("app", {
           const dur = ep.latency * rnd(0.5, 1.1) * parts + sent.length * 6;
           setTimeout(() => {
             const clip = next[slot];
-            if (!clip) return; // the candidate was dropped while it was in flight
+            if (!clip) {
+              logJob(
+                job,
+                `Segment ${next.id} result discarded; retake was removed`,
+                "warning",
+                diagnostic,
+              );
+              return;
+            }
             if (Math.random() < 0.03) {
               // rate limited → back off, put the segment back
               const cooldown = ep.cooldownSec ?? 8;
@@ -2266,6 +2385,10 @@ export const useApp = defineStore("app", {
                 retryAfter: cooldown,
                 at: Date.now(),
               };
+              logJob(job, `Segment ${next.id} rate limited; retry after ${cooldown}s`, "warning", {
+                ...diagnostic,
+                code: 429,
+              });
               next[slot] = requeue(clip);
               return;
             }
@@ -2295,8 +2418,20 @@ export const useApp = defineStore("app", {
               { t: Date.now(), ms: Math.round(dur), ok: !fail },
             ].slice(-40);
             if (fail) ep.failures = (ep.failures ?? 0) + 1;
+            logJob(
+              job,
+              `Segment ${next.id} ${fail ? "failed" : clip.status === "stale" ? "completed with outdated audio" : "completed"}`,
+              fail ? "error" : clip.status === "stale" ? "warning" : "info",
+              {
+                ...diagnostic,
+                responseMs: clip.ms,
+                audioSeconds: clip.duration,
+                ...(clip.error ? { code: clip.error.code, error: clip.error.message } : {}),
+              },
+            );
           }, dur);
         }
+        jobWaiting(job, [...waiting].sort().join("; "));
         const pending = targets("queued", "generating");
         const finished = segs.length - pending.filter((t) => t.slot === "audio").length;
         c.narrationProgress = Math.round((finished / segs.length) * 100);
@@ -2317,12 +2452,17 @@ export const useApp = defineStore("app", {
             (t) => this.effectiveVoice(bookId, t.s.speaker).endpoint?.enabled,
           );
         if (pending.length === 0 || stalled) {
-          for (const t of targets("queued"))
+          for (const t of targets("queued")) {
             t.s[t.slot] = {
               ...clipOf(t),
               status: "failed",
               error: { code: 0, message: "no endpoint available for this voice", body: "" },
             };
+            logJob(job, `Segment ${t.s.id} failed: no endpoint available for this voice`, "error", {
+              segment: t.s.id,
+              target: t.slot,
+            });
+          }
           // a retake that failed is the listener's to discard: only the book's own clips decide
           // whether this chapter is finished. A clip the script moved under while it rendered came
           // back stale — that is not a failed run, it is one more line to render again.
@@ -2398,8 +2538,13 @@ export const useApp = defineStore("app", {
         progress: 0,
       });
       const entry = this.exports[0];
-      job.status = "running";
-      job.startedAt = Date.now();
+      startJob(job);
+      logJob(job, "Export build started", "info", {
+        filename,
+        chapters: g.chapters.length,
+        bitrateKbps: meta.bitrate,
+      });
+      let milestone = 0;
       const t = setInterval(() => {
         if (job.cancelled) {
           clearInterval(t);
@@ -2409,11 +2554,21 @@ export const useApp = defineStore("app", {
         }
         entry.progress = Math.min(100, (entry.progress ?? 0) + rnd(3, 9));
         job.progress = entry.progress;
+        const reached = Math.floor(entry.progress / 25) * 25;
+        if (reached > milestone && reached < 100) {
+          milestone = reached;
+          logJob(job, `Export ${reached}% complete`);
+        }
         if (entry.progress >= 100) {
           clearInterval(t);
           entry.status = "done";
           entry.size = Math.round(((entry.duration * meta.bitrate) / 8 / 1024) * 1.04);
           if (prev) prev.status = "replaced";
+          logJob(job, "Export ready", "info", {
+            filename,
+            sizeMB: entry.size,
+            audioSeconds: entry.duration,
+          });
           this._finish(job, "done");
         }
       }, 180);

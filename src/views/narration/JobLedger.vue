@@ -42,7 +42,7 @@ function requestOf(s) {
   const ep = app.endpoints.find(e => e.id === s.audio.endpoint)
   return JSON.stringify({ POST: (ep?.baseUrl ?? '') + '/audio/speech', headers: { Authorization: 'Bearer <key>' }, body: { model: s.audio.model, voice: s.audio.voice, input: s.text, instructions: [s.audio.style, s.audio.direction].filter(Boolean).join('; ') || undefined, response_format: 'wav' }, error: s.audio.error }, null, 2)
 }
-function copyReq(s) { navigator.clipboard?.writeText(requestOf(s)); app.toast('Request copied as JSON', { timeout: 2000 }) }
+function copyReq(s) { navigator.clipboard?.writeText(requestOf(s)); app.toast('Request copied as JSON', { kind: 'success', timeout: 2500 }) }
 function onRowKey(e, s) {
   const list = [...e.currentTarget.parentElement.querySelectorAll('tr[data-row]')]; const i = list.indexOf(e.currentTarget)
   if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); list[i + 1]?.focus() }

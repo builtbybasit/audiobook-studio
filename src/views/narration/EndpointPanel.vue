@@ -44,14 +44,14 @@ const ago = (ts) => { const s = Math.round((now.value - ts) / 1000); return s < 
 function exportSettings() {
   const blob = new Blob([JSON.stringify(app.exportSettings(), null, 2)], { type: 'application/json' })
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'audiobook-studio-settings.json'; a.click(); URL.revokeObjectURL(a.href)
-  app.toast('Settings exported (API keys are never included)', { timeout: 3000 })
+  app.toast('Settings exported', { kind: 'success', description: 'audiobook-studio-settings.json — API keys are never included.', timeout: 4000 })
 }
 function importSettings(ev) {
   const f = ev.target.files?.[0]; if (!f) return
-  f.text().then(txt => { try { app.importSettings(JSON.parse(txt)) } catch (err) { app.toast('Could not import: ' + err.message, { kind: 'error' }) } })
+  f.text().then(txt => { try { app.importSettings(JSON.parse(txt)) } catch (err) { app.toast('Could not import settings', { kind: 'error', description: err.message }) } })
   ev.target.value = ''
 }
-function copyErr(e) { navigator.clipboard?.writeText(JSON.stringify({ endpoint: e.baseUrl + '/audio/speech', model: e.model, lastError: e.lastError }, null, 2)); app.toast('Copied last error + request details', { timeout: 2000 }) }
+function copyErr(e) { navigator.clipboard?.writeText(JSON.stringify({ endpoint: e.baseUrl + '/audio/speech', model: e.model, lastError: e.lastError }, null, 2)); app.toast('Copied', { kind: 'success', description: 'Last error and request details are on the clipboard.', timeout: 2500 }) }
 </script>
 <template>
   <div class="grid gap-3 p-3 lg:grid-cols-[260px_minmax(0,1fr)]">

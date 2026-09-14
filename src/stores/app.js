@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import { makeWorld, generateSegments, PALETTE, DISCOVERABLE_VOICES, voiceRef } from '../mock/data'
 import { splitText, partsFor } from '../lib/split'
 import { keyring } from '../lib/keyring'
+import { toast as tf } from 'vue-toastflow'
 export { keyring }
 const clone = (x) => JSON.parse(JSON.stringify(x))
 const AVG_JOB = { scripting: 25, narration: 60, export: 120 }   // seconds, until we have history
@@ -67,8 +68,7 @@ export const useApp = defineStore('app', {
     ],
     scriptSettings: { profile: 'openai', chunkChars: 6000, stripWatermarks: true },
     jobs: seedJobs(),
-    toasts: [],
-    _undo: [],            // most recent last; each { label, revert }
+    _undo: [],            // most recent last; each { label, revert, toastId }
     _previous: {},        // `${bookId}:${chId}` → segments before the last re-script (for the diff panel)
     notify: false,        // browser notifications when a book's run finishes
     _kicked: false,
@@ -225,17 +225,40 @@ export const useApp = defineStore('app', {
 
   actions: {
     // ---------- toasts & undo ----------
-    toast(msg, { kind = 'info', undo = null, action = null, timeout } = {}) {
-      timeout ??= undo ? 10000 : 6000
-      const t = { id: Date.now() + Math.random(), msg, kind, undo, action }
-      this.toasts.push(t)
-      if (undo) this._undo = [...this._undo.slice(-9), { label: msg, revert: undo }]
-      if (timeout) setTimeout(() => this.dismissToast(t.id), timeout)
-      return t
+    // Thin wrapper over Toastflow so the rest of the app never imports it. `undo` makes the toast
+    // undoable (↻, Undo button, 10 s, ⌘Z); `action` adds a second button; `timeout: 0` sticks.
+    toast(msg, { kind = 'info', undo = null, action = null, timeout, description = '' } = {}) {
+      const type = { info: 'info', warn: 'warning', warning: 'warning', error: 'error', success: 'success', loading: 'loading' }[kind] ?? 'info'
+      const buttons = []
+      const entry = undo ? { label: msg, revert: undo, toastId: null } : null
+      if (entry) buttons.push({ id: 'undo', label: 'Undo', ariaLabel: `Undo: ${msg}`, dismissAfterClick: true, onClick: () => this._revert(entry) })
+      if (action) buttons.push({ id: 'action', label: action.label, dismissAfterClick: true, onClick: () => action.run() })
+      const id = tf.show({
+        type, title: msg, description, theme: entry ? 'undo' : undefined,
+        duration: timeout ?? (entry ? 10000 : type === 'error' ? 9000 : 6000),
+        buttons: buttons.length ? { alignment: 'bottom-left', buttons } : undefined,
+      })
+      if (entry) { entry.toastId = id; this._undo = [...this._undo.slice(-9), entry] }
+      return id
     },
-    dismissToast(id) { this.toasts = this.toasts.filter(t => t.id !== id) },
-    undoToast(id) { const t = this.toasts.find(t => t.id === id); if (!t?.undo) return; t.undo(); this._undo = this._undo.filter(u => u.revert !== t.undo); this.dismissToast(id); this.toast('Undone: ' + t.msg, { timeout: 3000 }) },
-    undoLast() { const u = this._undo.pop(); if (!u) return false; u.revert(); this.toasts = this.toasts.filter(t => t.undo !== u.revert); this.toast('Undone: ' + u.label, { timeout: 3000 }); return true },
+    dismissToast(id) { tf.dismiss(id) },
+    _revert(entry) {
+      if (!this._undo.includes(entry)) return
+      entry.revert(); this._undo = this._undo.filter(u => u !== entry)
+      if (entry.toastId != null) tf.dismiss(entry.toastId)
+      tf.show({ type: 'success', title: 'Undone', description: entry.label, duration: 3000 })
+    },
+    undoLast() { const u = this._undo.at(-1); if (!u) return false; this._revert(u); return true },
+    // long-running work: one toast that goes loading → success / error (Toastflow's promise helper)
+    toastLoading(promise, { loading, success, error }) {
+      const result = tf.loading(() => promise, {
+        loading: { title: loading, duration: 0, progressBar: false },
+        success: (r) => ({ type: 'success', title: typeof success === 'function' ? success(r) : success, duration: 5000 }),
+        error: (e) => ({ type: 'error', title: typeof error === 'function' ? error(e) : error ?? 'Failed', description: e?.message ?? '', duration: 9000 }),
+      })
+      result.catch(() => {})   // the error toast is the handling; callers decide what else to do with `promise`
+      return result
+    },
     // snapshots used by undo: the cast + every segment of a book (speakers live in both)
     _castSnapshot(bookId) {
       const chars = clone(this.characters[bookId]); const segs = {}
@@ -262,7 +285,7 @@ export const useApp = defineStore('app', {
     applyDirection(bookId, chId, speaker, direction) {
       let n = 0
       for (const s of this.segmentsOf(bookId, chId)) if (s.speaker === speaker && (s.direction || '') !== direction) { s.direction = direction; s.edited = true; this._markStale(bookId, chId, s); n++ }
-      if (n) this.toast(`Direction “${direction}” applied to ${n} ${speaker} line${n === 1 ? '' : 's'}`, { timeout: 3000 })
+      if (n) this.toast(`Direction applied to ${n} ${speaker} line${n === 1 ? '' : 's'}`, { kind: 'success', description: `“${direction}” — rendered lines are now stale`, timeout: 4000 })
       return n
     },
 
@@ -270,7 +293,7 @@ export const useApp = defineStore('app', {
     pauseBook(bookId) {
       for (const j of this.jobs) if (j.bookId === bookId && (j.status === 'running' || j.status === 'queued')) this.cancelJob(j.id)
       const b = this.bookById(bookId); if (b) (b.budget ??= { cap: null, paused: false }).paused = true
-      this.toast(`${b?.title}: everything paused`, { timeout: 3000 })
+      this.toast(`${b?.title}: everything paused`, { kind: 'warn', description: 'Running and queued jobs were cancelled. Resume from the overview.', timeout: 5000 })
     },
     resumeBook(bookId) { const b = this.bookById(bookId); if (b?.budget) b.budget.paused = false },
     setBudgetCap(bookId, cap) { const b = this.bookById(bookId); if (b) (b.budget ??= { cap: null, paused: false }).cap = cap || null },
@@ -290,7 +313,7 @@ export const useApp = defineStore('app', {
       for (const e of obj.endpoints) { const cur = this.endpoints.find(x => x.id === e.id); const fresh = { history: [], failures: 0, rateLimits: 0, backoffUntil: 0, ...e }; cur ? Object.assign(cur, fresh) : this.endpoints.push(fresh); n++ }
       for (const p of obj.profiles ?? []) { const cur = this.profiles.find(x => x.id === p.id); cur ? Object.assign(cur, p) : this.profiles.push(p) }
       if (obj.scriptSettings) Object.assign(this.scriptSettings, obj.scriptSettings)
-      this.toast(`Imported ${n} endpoint${n === 1 ? '' : 's'} — API keys are never in the file, add them again`, { timeout: 6000 })
+      this.toast(`Imported ${n} endpoint${n === 1 ? '' : 's'}`, { kind: 'success', description: 'API keys are never in the file — add them again on each endpoint.', timeout: 7000 })
     },
 
     // ---------- shared ----------
@@ -586,10 +609,14 @@ export const useApp = defineStore('app', {
     // simulated GET /v1/audio/voices — most OpenAI-compatible servers (Kokoro-FastAPI, Orpheus…) expose one
     fetchVoices(ep) {
       ep.fetching = true
-      return new Promise(res => setTimeout(() => {
+      const work = new Promise((res, rej) => setTimeout(() => {
+        ep.fetching = false
+        if (!/^https?:\/\/.+\..+/.test(ep.baseUrl) && !/127\.0\.0\.1|localhost/.test(ep.baseUrl)) return rej(new Error(`GET ${ep.baseUrl}/audio/voices — could not connect`))
         const added = DISCOVERABLE_VOICES.filter(v => !ep.voices.some(x => x.id === v.id)).map(v => ({ ...v }))
-        ep.voices.push(...added); ep.fetching = false; res(added.length)
-      }, 900))
+        ep.voices.push(...added); res(added.length)
+      }, 1200))
+      this.toastLoading(work, { loading: `Fetching voices from ${ep.name}…`, success: (n) => n ? `${n} voice${n === 1 ? '' : 's'} added to ${ep.name}` : `${ep.name}: no new voices`, error: () => `${ep.name}: voice list unavailable` })
+      return work.catch(() => 0)
     },
     // how many segments of this book a limit would split, for the endpoint card
     splitCount(bookId, ep) {

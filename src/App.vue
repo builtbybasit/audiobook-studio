@@ -30,9 +30,9 @@ watch(activeByBook, (now, before) => {
     const recent = app.jobs.filter(j => j.bookId === id && j.finishedAt && Date.now() - j.finishedAt < 5 * 60000)
     const failed = recent.filter(j => j.status === 'failed').length, cancelled = recent.filter(j => j.status === 'cancelled').length
     if (recent.length && recent.every(j => j.status === 'cancelled')) continue
-    const msg = `${b.title}: run finished · ${recent.length - failed - cancelled} done${failed ? ` · ${failed} failed` : ''}`
-    app.toast(msg, { kind: failed ? 'warn' : 'info', action: { label: 'Queue', run: () => router.push('/queue') } })
-    if (app.notify && 'Notification' in window && Notification.permission === 'granted' && document.hidden) new Notification('Audiobook Studio', { body: msg })
+    const desc = `${recent.length - failed - cancelled} done${failed ? ` · ${failed} failed` : ''}`
+    app.toast(`${b.title}: run finished`, { kind: failed ? 'warn' : 'success', description: desc, action: { label: failed ? 'See what failed' : 'Open queue', run: () => router.push('/queue') } })
+    if (app.notify && 'Notification' in window && Notification.permission === 'granted' && document.hidden) new Notification('Audiobook Studio', { body: `${b.title}: run finished · ${desc}` })
   }
 })
 import { useRouter } from 'vue-router'

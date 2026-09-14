@@ -35,7 +35,7 @@ const finishAt = computed(() => eta.value ? new Date(eta.value.at).toLocaleTimeS
 const canNotify = 'Notification' in window
 async function toggleNotify() {
   if (app.notify) { app.notify = false; return }
-  if (canNotify && Notification.permission !== 'granted') { const r = await Notification.requestPermission(); if (r !== 'granted') { app.toast('Browser notifications are blocked — you will still get in-app toasts', { kind: 'warn' }); } }
+  if (canNotify && Notification.permission !== 'granted') { const r = await Notification.requestPermission(); if (r !== 'granted') { app.toast('Browser notifications are blocked', { kind: 'warn', description: 'You will still get in-app toasts when a book finishes.' }); } }
   app.notify = true
 }
 </script>

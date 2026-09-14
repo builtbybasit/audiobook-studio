@@ -29,8 +29,11 @@ const PATTERNS = [{ value: '{n}. {title}', label: '1. The Silent Peak' }, { valu
 const marker = (c, i) => meta.markerPattern.replace('{n}', i + 1).replace('{title}', (multi.value && meta.volPrefix && !meta.splitPerVolume ? shortVol(volName(c)) + ' · ' : '') + c.title)
 function pickCover(e) { const f = e.target.files?.[0]; if (!f) return; const r = new FileReader(); r.onload = () => meta.cover = r.result; r.readAsDataURL(f); e.target.value = '' }
 const pathOf = (e) => `~/Audiobooks/${(e.series || e.title).replace(/[\/:]/g, '-')}/${e.filename}`
-function copyPath(e) { navigator.clipboard?.writeText(pathOf(e)); app.toast('Path copied', { timeout: 2000 }) }
-function download(e) { app.toast(`Downloading ${e.filename} (${e.size} MB) — prototype: the real app streams the file from the backend`, { timeout: 4000 }) }
+function copyPath(e) { navigator.clipboard?.writeText(pathOf(e)); app.toast('Path copied', { kind: 'success', timeout: 2500 }) }
+function download(e) {
+  const work = new Promise(res => setTimeout(res, 1800))
+  app.toastLoading(work, { loading: `Preparing ${e.filename} (${e.size} MB)…`, success: `${e.filename} is ready`, error: 'Download failed' })
+}
 const tab = ref('metadata')
 
 const selChapters = computed(() => app.chaptersOf(bookId).filter(c => selected.value.includes(c.id)))

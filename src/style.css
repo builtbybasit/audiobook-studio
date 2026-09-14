@@ -62,7 +62,6 @@
   --input: theme(colors.zinc.300);
   --ring: theme(colors.violet.500);
 
-
   /* Chart series colours, in the order a stacked series is drawn. Kept as variables so the
      Unovis SVG and the HTML legend beside it are painted from one source. */
   --chart-1: theme(colors.violet.500);

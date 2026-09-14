@@ -12,6 +12,15 @@
 //  · buttons are real buttons with focus rings; Escape inside a toast dismisses it
 import { computed } from "vue";
 import { ToastContainer } from "vue-toastflow";
+import type { Component } from "vue";
+import {
+  Check as CheckIcon,
+  Info as InfoIcon,
+  Dot as DotIcon,
+  TriangleAlert as WarnIcon,
+  X as CloseIcon,
+  Undo2 as UndoIcon,
+} from "@lucide/vue";
 import { useApp } from "@/stores/app";
 const app = useApp();
 const isMac = /Mac|iPhone/.test(navigator.platform);
@@ -35,7 +44,14 @@ const BAR = {
   loading: "bg-violet-400",
   custom: "bg-zinc-400",
 };
-const ICON = { success: "✓", info: "ⓘ", default: "•", warning: "⚠", error: "✕", custom: "•" };
+const ICON: Record<string, Component> = {
+  success: CheckIcon,
+  info: InfoIcon,
+  default: DotIcon,
+  warning: WarnIcon,
+  error: CloseIcon,
+  custom: DotIcon,
+};
 const ICON_CLS = {
   success: "text-emerald-500",
   info: "text-violet-500",
@@ -93,8 +109,11 @@ const btnCls = (b: { id?: string }) =>
                 stroke-linecap="round"
               />
             </svg>
-            <template v-else-if="isUndo(toast)">↻</template>
-            <template v-else>{{ ICON[toast.type] ?? "•" }}</template>
+            <component
+              v-else
+              :is="isUndo(toast) ? UndoIcon : (ICON[toast.type] ?? DotIcon)"
+              class="icon"
+            />
           </span>
           <!-- text -->
           <div class="min-w-0 flex-1">
@@ -149,16 +168,7 @@ const btnCls = (b: { id?: string }) =>
             })
           "
         >
-          <svg
-            class="h-3.5 w-3.5"
-            viewBox="0 0 20 20"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-          >
-            <path d="M5 5l10 10M15 5L5 15" />
-          </svg>
+          <CloseIcon class="icon" />
         </button>
         <!-- time left -->
         <div v-if="ui.progress.show" v-bind="ui.progress.getWrapperProps()" aria-hidden="true">

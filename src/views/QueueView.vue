@@ -5,6 +5,14 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useApp } from "@/stores/app";
 import StatusDot from "@/components/StatusDot.vue";
 import type { Job, JobKind } from "@/types";
+import type { Component } from "vue";
+import {
+  AudioLines as NarrationIcon,
+  Download as ExportIcon,
+  PencilLine as ScriptingIcon,
+  RotateCcw as RetryIcon,
+  X as CloseIcon,
+} from "@lucide/vue";
 
 const app = useApp();
 const now = ref(Date.now());
@@ -14,7 +22,11 @@ onMounted(() => {
 });
 onUnmounted(() => clearInterval(t));
 
-const icon: Record<JobKind, string> = { scripting: "✎", narration: "♪", export: "⤓" };
+const icon: Record<JobKind, Component> = {
+  scripting: ScriptingIcon,
+  narration: NarrationIcon,
+  export: ExportIcon,
+};
 const running = computed(() => app.jobs.filter((j) => j.status === "running"));
 const queued = computed(() => app.jobs.filter((j) => j.status === "queued"));
 const history = computed(() =>
@@ -161,8 +173,8 @@ async function toggleNotify() {
             <div class="flex items-center gap-3">
               <span
                 class="grid h-8 w-8 place-items-center rounded-lg bg-violet-500/15 text-violet-500"
-                >{{ icon[j.kind] }}</span
-              >
+                ><component :is="icon[j.kind]" class="icon"
+              /></span>
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 text-sm">
                   <b class="capitalize">{{ j.kind }}</b
@@ -226,7 +238,7 @@ async function toggleNotify() {
             class="flex items-center gap-3 border-b border-zinc-100 px-4 py-2 text-sm last:border-0 dark:border-zinc-800/70"
           >
             <span class="w-5 font-mono text-xs text-zinc-400">{{ i + 1 }}</span>
-            <span class="w-4 text-center text-zinc-400">{{ icon[j.kind] }}</span>
+            <component :is="icon[j.kind]" class="icon-sm text-zinc-400" />
             <span class="min-w-0 flex-1 truncate"
               >{{ j.label }} <span class="text-zinc-500">· {{ book(j)?.title }}</span></span
             >
@@ -238,7 +250,7 @@ async function toggleNotify() {
               title="Cancel and remove"
               @click="app.removeJob(j.id)"
             >
-              ✕
+              <CloseIcon class="icon-sm" />
             </button>
           </div>
         </section>
@@ -270,7 +282,7 @@ async function toggleNotify() {
                 class="text-violet-500 hover:underline"
                 @click="app.retryAllFailed()"
               >
-                ↻ retry failed ({{ retryable }})
+                <RetryIcon class="icon-sm" /> retry failed ({{ retryable }})
               </button>
               <button
                 v-if="history.length"
@@ -294,7 +306,9 @@ async function toggleNotify() {
                 <td class="w-8 py-2 pl-4">
                   <StatusDot :status="j.status === 'cancelled' ? 'none' : j.status" />
                 </td>
-                <td class="w-6 text-zinc-400">{{ icon[j.kind] }}</td>
+                <td class="w-6 text-zinc-400">
+                  <component :is="icon[j.kind]" class="icon-sm" />
+                </td>
                 <td class="py-2">
                   <div>{{ j.label }}</div>
                   <div class="text-xs text-zinc-500">{{ book(j)?.title }}</div>
@@ -319,14 +333,14 @@ async function toggleNotify() {
                     class="btn-ghost btn-xs"
                     @click="app.retryJob(j.id)"
                   >
-                    ↻ Retry
+                    <RetryIcon class="icon-sm" /> Retry
                   </button>
                   <button
                     class="ml-1 rounded px-1.5 py-0.5 text-xs text-zinc-400 hover:bg-zinc-100 hover:text-red-500 dark:hover:bg-zinc-800"
                     title="Remove from history"
                     @click="app.removeJob(j.id)"
                   >
-                    ✕
+                    <CloseIcon class="icon-sm" />
                   </button>
                 </td>
               </tr>

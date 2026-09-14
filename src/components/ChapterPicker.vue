@@ -8,6 +8,11 @@ import { useApp, isNarrated } from "@/stores/app";
 import StatusDot from "@/components/StatusDot.vue";
 import { UiCheckbox, UiSelect } from "@/ui";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
+import {
+  ChevronDown as ChevronDownIcon,
+  ChevronRight as ChevronRightIcon,
+  Eye as PeekIcon,
+} from "@lucide/vue";
 import type { Chapter, Volume } from "@/types";
 
 const props = withDefaults(
@@ -17,6 +22,7 @@ const props = withDefaults(
     modelValue?: number[];
     openedId?: number | null;
     runLabel?: string;
+    runDisabled?: boolean;
     /** which chapters this stage may act on */
     selectable?: (c: Chapter) => boolean;
   }>(),
@@ -245,8 +251,10 @@ const peek = (c: Chapter) => {
             class="min-w-0 flex-1 truncate text-left font-semibold"
             @click="toggleCollapse(v.id)"
           >
-            <span class="mr-1 text-zinc-400">{{ collapsed.has(v.id) ? "▸" : "▾" }}</span
-            >{{ v.name }}
+            <component
+              :is="collapsed.has(v.id) ? ChevronRightIcon : ChevronDownIcon"
+              class="mr-1 icon-sm text-zinc-400"
+            />{{ v.name }}
           </button>
           <span class="shrink-0 font-mono text-[10px] text-zinc-400" :title="v.file"
             >{{ volState(v).done }}/{{ v.chapters.length }}</span
@@ -293,8 +301,8 @@ const peek = (c: Chapter) => {
                 class="rounded px-1 text-[11px] text-zinc-400 opacity-0 hover:text-violet-500 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                 title="peek at the chapter text"
                 tabindex="-1"
-                >⌕</PopoverTrigger
-              >
+                ><PeekIcon class="icon-sm"
+              /></PopoverTrigger>
               <PopoverPortal>
                 <PopoverContent
                   side="right"
@@ -370,11 +378,11 @@ const peek = (c: Chapter) => {
 
     <div class="border-t border-zinc-200 p-2 dark:border-zinc-800">
       <div class="mb-1 text-center text-[10px] text-zinc-400">
-        shift-click selects a range · ⌕ peeks at the text
+        shift-click selects a range · <PeekIcon class="icon-sm" /> peeks at the text
       </div>
       <button
         class="btn-primary w-full justify-center"
-        :disabled="!modelValue.length"
+        :disabled="runDisabled || !modelValue.length"
         @click="emit('run', modelValue)"
       >
         {{ runLabel }} <span class="opacity-70">({{ modelValue.length }})</span>

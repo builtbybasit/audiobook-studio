@@ -7,7 +7,14 @@ import { useApp, isNarrated } from "@/stores/app";
 import { useBookId } from "@/router";
 import { usePlayer } from "@/composables/usePlayer";
 import EmptyState from "@/components/EmptyState.vue";
-import { UiSelect, UiSwitch } from "@/ui";
+import { Download as ExportIcon } from "@lucide/vue";
+import {
+  Pause as PauseIcon,
+  Play as PlayIcon,
+  TriangleAlert as WarnIcon,
+  X as CloseIcon,
+} from "@lucide/vue";
+import { UiNumber, UiSelect, UiSwitch } from "@/ui";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import ChapterPicker from "@/components/ChapterPicker.vue";
 import type { Chapter, ExportItem } from "@/types";
@@ -167,7 +174,7 @@ function rebuild(e: ExportItem) {
 
     <EmptyState
       v-if="!anyNarrated"
-      icon="⤓"
+      :icon="ExportIcon"
       title="Nothing narrated yet"
       body="An audiobook is built from narrated chapters. Narrate at least one chapter, then come back to build an M4B."
       :steps="[
@@ -206,7 +213,12 @@ function rebuild(e: ExportItem) {
                 >Narrator credit<input v-model="meta.narrator" class="input mt-1 w-full"
               /></label>
               <label
-                >Year<input v-model.number="meta.year" type="number" class="input mt-1 w-full"
+                >Year<UiNumber
+                  v-model="meta.year"
+                  class="mt-1 w-full"
+                  align="left"
+                  :min="0"
+                  label="Year"
               /></label>
               <label
                 >Filename
@@ -368,18 +380,22 @@ function rebuild(e: ExportItem) {
             /></label>
             <div></div>
             <label
-              >Gap between segments (s)<input
-                v-model.number="meta.gapSeg"
-                type="number"
-                step="0.05"
-                class="input mt-1 w-full"
+              >Gap between segments<UiNumber
+                v-model="meta.gapSeg"
+                class="mt-1 w-full"
+                :min="0"
+                :step="0.05"
+                unit="s"
+                label="Gap between segments"
             /></label>
             <label
-              >Gap between chapters (s)<input
-                v-model.number="meta.gapCh"
-                type="number"
-                step="0.5"
-                class="input mt-1 w-full"
+              >Gap between chapters<UiNumber
+                v-model="meta.gapCh"
+                class="mt-1 w-full"
+                :min="0"
+                :step="0.5"
+                unit="s"
+                label="Gap between chapters"
             /></label>
           </TabsContent>
         </div>
@@ -393,15 +409,17 @@ function rebuild(e: ExportItem) {
             v-if="staleSelected"
             class="mb-2 rounded-md bg-amber-400/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300"
           >
-            ⚠ {{ staleSelected }} selected chapter{{ staleSelected > 1 ? "s have" : " has" }} stale
-            audio (edited after narration).
+            <WarnIcon class="icon-sm" /> {{ staleSelected }} selected chapter{{
+              staleSelected > 1 ? "s have" : " has"
+            }}
+            stale audio (edited after narration).
             <RouterLink :to="`/book/${bookId}/narration`" class="underline"
               >Re-narrate first</RouterLink
             >
             or the old audio is used.
           </div>
           <div v-for="p in plan" :key="p.filename" class="flex items-center gap-2 py-1 text-sm">
-            <span class="text-zinc-400">⤓</span>
+            <ExportIcon class="icon text-zinc-400" />
             <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ p.filename }}</span>
             <span
               v-if="p.volume"
@@ -502,9 +520,14 @@ function rebuild(e: ExportItem) {
                   title="listen (prototype player)"
                   @click="play('exp' + e.id, e.duration)"
                 >
-                  {{ player.id === "exp" + e.id && player.playing ? "❚❚" : "▶" }}
+                  <component
+                    :is="player.id === 'exp' + e.id && player.playing ? PauseIcon : PlayIcon"
+                    class="icon-sm icon-fill"
+                  />
                 </button>
-                <button class="btn-ghost btn-xs" title="download" @click="download(e)">⤓</button>
+                <button class="btn-ghost btn-xs" title="download" @click="download(e)">
+                  <ExportIcon class="icon-sm" />
+                </button>
                 <button
                   v-if="olderOf(e).length"
                   class="btn-ghost btn-xs"
@@ -519,7 +542,7 @@ function rebuild(e: ExportItem) {
                   {{ olderOf(e).length }} older
                 </button>
                 <button class="btn-ghost btn-xs text-red-500" @click="app.deleteExport(e.id)">
-                  ✕
+                  <CloseIcon class="icon-sm" />
                 </button>
               </span>
             </div>

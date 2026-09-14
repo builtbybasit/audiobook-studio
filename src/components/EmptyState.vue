@@ -1,6 +1,8 @@
 <script setup lang="ts">
-withDefaults(defineProps<{ icon?: string; title?: string; body?: string; steps?: string[] }>(), {
-  icon: "·",
+import type { Component } from "vue";
+import { Circle as DefaultIcon } from "@lucide/vue";
+withDefaults(defineProps<{ icon?: Component; title?: string; body?: string; steps?: string[] }>(), {
+  icon: () => DefaultIcon,
   title: undefined,
   body: undefined,
   steps: () => [],
@@ -10,9 +12,9 @@ withDefaults(defineProps<{ icon?: string; title?: string; body?: string; steps?:
   <div class="card grid h-full place-items-center p-8 text-center">
     <div class="max-w-md">
       <div
-        class="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-xl bg-zinc-100 text-2xl text-zinc-400 dark:bg-zinc-800"
+        class="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-xl bg-zinc-100 text-zinc-400 dark:bg-zinc-800"
       >
-        {{ icon }}
+        <component :is="icon" class="h-6 w-6" />
       </div>
       <div class="text-lg font-medium">{{ title }}</div>
       <p class="mt-1 text-sm text-zinc-500">{{ body }}</p>

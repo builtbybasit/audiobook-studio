@@ -5,6 +5,15 @@
 import { computed, ref, watch } from "vue";
 import { useApp } from "@/stores/app";
 import { speak } from "@/composables/usePlayer";
+import type { Component } from "vue";
+import {
+  Check as CheckIcon,
+  ChevronDown as ChevronDownIcon,
+  Dot as NeutralIcon,
+  Mars as MaleIcon,
+  Play as PlayIcon,
+  Venus as FemaleIcon,
+} from "@lucide/vue";
 import {
   ListboxContent,
   ListboxFilter,
@@ -67,7 +76,7 @@ const rows = computed(() =>
     }))
     .filter((g) => g.voices.length),
 );
-const G: Partial<Record<Gender, string>> = { m: "♂", f: "♀", n: "◦" };
+const G: Partial<Record<Gender, Component>> = { m: MaleIcon, f: FemaleIcon, n: NeutralIcon };
 function pick(v: unknown) {
   emit("update:modelValue", v === "__null__" ? null : String(v));
   open.value = false;
@@ -102,7 +111,7 @@ defineExpose({ open });
         >
         <template v-else>{{ nullLabel }}</template>
       </span>
-      <span class="ml-1 shrink-0 text-zinc-400" aria-hidden>▾</span>
+      <ChevronDownIcon class="ml-1 icon-sm text-zinc-400" aria-hidden />
     </PopoverTrigger>
     <PopoverPortal>
       <PopoverContent
@@ -125,17 +134,16 @@ defineExpose({ open });
               v-model="gender"
               :options="[
                 { value: 'all', label: 'all' },
-                { value: 'f', label: '♀' },
-                { value: 'm', label: '♂' },
-                { value: 'n', label: '◦' },
+                { value: 'f', label: '', icon: FemaleIcon },
+                { value: 'm', label: '', icon: MaleIcon },
+                { value: 'n', label: '', icon: NeutralIcon },
               ]"
             />
           </div>
           <ListboxContent class="max-h-[300px] overflow-auto p-1">
             <ListboxItem value="__null__" class="ui-item italic text-zinc-500"
-              >{{ nullLabel
-              }}<span v-if="!modelValue" class="ml-auto text-violet-500">✓</span></ListboxItem
-            >
+              >{{ nullLabel }}<CheckIcon v-if="!modelValue" class="ml-auto icon-sm text-violet-500"
+            /></ListboxItem>
             <ListboxGroup v-for="g in rows" :key="g.endpoint.id">
               <ListboxGroupLabel
                 class="flex items-center gap-1.5 px-2 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400"
@@ -156,7 +164,7 @@ defineExpose({ open });
                 :disabled="!g.endpoint.enabled"
                 class="ui-item"
               >
-                <span class="w-4 text-zinc-400">{{ G[v.gender] ?? "◦" }}</span>
+                <component :is="G[v.gender] ?? NeutralIcon" class="icon-sm text-zinc-400" />
                 <span class="min-w-0 truncate">{{ v.label }}</span
                 ><span v-if="v.label !== v.id" class="ml-1 font-mono text-[10px] text-zinc-400">{{
                   v.id
@@ -173,11 +181,12 @@ defineExpose({ open });
                     title="demo (browser voice — the real one needs the backend)"
                     @click.stop.prevent="speak(sample, v.id)"
                   >
-                    ▶
+                    <PlayIcon class="icon-sm icon-fill" />
                   </button>
-                  <span v-if="modelValue === `${g.endpoint.id}/${v.id}`" class="text-violet-500"
-                    >✓</span
-                  >
+                  <CheckIcon
+                    v-if="modelValue === `${g.endpoint.id}/${v.id}`"
+                    class="icon-sm text-violet-500"
+                  />
                 </span>
               </ListboxItem>
             </ListboxGroup>

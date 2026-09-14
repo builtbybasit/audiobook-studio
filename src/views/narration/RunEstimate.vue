@@ -4,6 +4,7 @@
 // long segments split against that endpoint's per-request limit.
 import { computed } from "vue";
 import { useApp, keyring } from "@/stores/app";
+import { TriangleAlert as WarnIcon } from "@lucide/vue";
 const props = defineProps<{ bookId: string; selected: number[] }>();
 const app = useApp();
 const est = computed(() => app.estimate(props.bookId, props.selected));
@@ -89,6 +90,8 @@ defineExpose({ blockers });
         {{ est.unrouted }} segments have no endpoint (voice missing).
       </div>
     </div>
-    <div v-for="b in blockers" :key="b" class="mt-2 text-amber-600">⚠ {{ b }}</div>
+    <div v-for="b in blockers" :key="b" class="mt-2 text-amber-600">
+      <WarnIcon class="icon-sm" /> {{ b }}
+    </div>
   </div>
 </template>

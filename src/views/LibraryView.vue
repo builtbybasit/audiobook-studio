@@ -5,6 +5,8 @@ import { useApp } from "@/stores/app";
 import type { Book, BookProgress } from "@/types";
 import MiniBar from "@/components/MiniBar.vue";
 import EmptyState from "@/components/EmptyState.vue";
+import { Library as LibraryIcon } from "@lucide/vue";
+import { Plus as AddIcon } from "@lucide/vue";
 import { UiSelect } from "@/ui";
 import {
   DialogContent,
@@ -73,7 +75,11 @@ function stageOf(p: BookProgress) {
         </p>
       </div>
       <label class="btn-primary cursor-pointer"
-        >＋ Add EPUB<input type="file" accept=".epub" class="hidden" @change="addFake($event)"
+        ><AddIcon class="icon" /> Add EPUB<input
+          type="file"
+          accept=".epub"
+          class="hidden"
+          @change="addFake($event)"
       /></label>
     </div>
 
@@ -96,7 +102,7 @@ function stageOf(p: BookProgress) {
 
     <EmptyState
       v-if="!app.books.length"
-      icon="▤"
+      :icon="LibraryIcon"
       title="No books yet"
       body="Add an EPUB to start. Each file becomes a novel, or a volume of one you already have."
     />
@@ -153,7 +159,7 @@ function stageOf(p: BookProgress) {
           <label
             class="mt-1 block cursor-pointer text-center text-[11px] text-zinc-400 hover:text-violet-500"
             @click.stop
-            >＋ add volume<input
+            ><AddIcon class="icon-sm" /> add volume<input
               type="file"
               accept=".epub"
               class="hidden"

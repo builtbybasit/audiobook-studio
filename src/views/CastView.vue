@@ -6,6 +6,7 @@ import { useApp } from "@/stores/app";
 import { useBookId } from "@/router";
 import { UiSelect, UiCombobox, UiCheckbox } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
+import { X as CloseIcon } from "@lucide/vue";
 import type { Character } from "@/types";
 const castOpts = computed(() =>
   cast.value.map((c) => ({
@@ -310,7 +311,7 @@ const genderLabel = { m: "male", f: "female", n: "neutral", "?": "unknown" };
                 @click="app.deleteCharacter(bookId, c.name)"
                 title="Merge into Narrator"
               >
-                ✕
+                <CloseIcon class="icon-sm" />
               </button>
             </td>
           </tr>

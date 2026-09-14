@@ -20,6 +20,7 @@ import {
   ListboxRoot,
   useFilter,
 } from "reka-ui";
+import { Search as SearchIcon } from "@lucide/vue";
 
 const app = useApp();
 const router = useRouter();
@@ -68,6 +69,14 @@ const commands = computed(() => {
     label: "Library",
     hint: "all novels",
     run: go("/library"),
+  });
+  out.push({
+    id: "nav-endpoints",
+    group: "Go to",
+    label: "Endpoints",
+    hint: "scripting + TTS, all books",
+    keywords: "endpoint provider api server health spend budget",
+    run: go("/endpoints"),
   });
   out.push({
     id: "nav-queue",
@@ -217,7 +226,17 @@ const commands = computed(() => {
     keywords: "server voice api",
     run: () => {
       app.addEndpoint();
-      if (b) router.push(`/book/${b}/narration`);
+      router.push("/endpoints");
+    },
+  });
+  out.push({
+    id: "act-script-endpoint",
+    group: "Actions",
+    label: "Add scripting endpoint",
+    keywords: "server llm model api openai compatible",
+    run: () => {
+      app.addScriptProfile();
+      router.push("/endpoints");
     },
   });
   out.push({
@@ -296,16 +315,27 @@ const commands = computed(() => {
         keywords: `speaker cast ${c.aliases.join(" ")}`,
         run: go(`/book/${b}/cast`),
       });
-  // endpoints
+  // endpoints — pause/resume either kind from anywhere
   for (const e of app.endpoints)
     out.push({
       id: "ep-" + e.id,
       group: "Endpoints",
       label: `${e.enabled ? "Pause" : "Resume"} ${e.name}`,
-      hint: `${e.voices.length} voices · ${e.enabled ? "on" : "paused"}`,
+      hint: `TTS · ${e.voices.length} voices · ${e.enabled ? "on" : "paused"}`,
       keywords: "endpoint tts server",
       run: () => {
         e.enabled = !e.enabled;
+      },
+    });
+  for (const p of app.profiles)
+    out.push({
+      id: "profile-" + p.id,
+      group: "Endpoints",
+      label: `${p.enabled ? "Pause" : "Resume"} ${p.name}`,
+      hint: `Scripting · ${p.model} · ${p.enabled ? "on" : "paused"}`,
+      keywords: "endpoint scripting llm model server",
+      run: () => {
+        p.enabled = !p.enabled;
       },
     });
   return out;
@@ -388,7 +418,7 @@ defineExpose({ open });
           @update:model-value="(v) => run(String(v))"
         >
           <div class="flex items-center gap-2 border-b border-zinc-200 px-3 dark:border-zinc-800">
-            <span class="text-zinc-400">⌕</span>
+            <SearchIcon class="icon text-zinc-400" />
             <ListboxFilter
               v-model="q"
               auto-focus

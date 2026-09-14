@@ -4,9 +4,21 @@
 // the "book finished" notifications and the document title (active job count).
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { useApp } from "@/stores/app";
+import { useApp, keyring } from "@/stores/app";
+import { endpointErrors, unifyEndpoint, unifyProfile } from "@/lib/endpoints";
 import JobIndicator from "@/components/JobIndicator.vue";
 import CommandPalette from "@/components/CommandPalette.vue";
+import {
+  X as CloseIcon,
+  Headphones as LogoIcon,
+  Menu as MenuIcon,
+  Moon as MoonIcon,
+  Pause as PauseIcon,
+  ListOrdered as QueueIcon,
+  Server as EndpointsIcon,
+  Search as SearchIcon,
+  Sun as SunIcon,
+} from "@lucide/vue";
 import Toasts from "@/components/Toasts.vue";
 import ShortcutsDialog from "@/components/ShortcutsDialog.vue";
 import { TooltipProvider } from "reka-ui";
@@ -102,16 +114,23 @@ onUnmounted(() => {
   window.removeEventListener("open-shortcuts", openShortcuts);
 });
 
-const stages: { key: string; label: string; icon: string; to: (b: string | null) => string }[] = [
-  { key: "library", label: "Library", icon: "▤", to: () => "/library" },
-  { key: "scripting", label: "Scripting", icon: "✎", to: (b) => `/book/${b}/scripting` },
-  { key: "narration", label: "Narration", icon: "♪", to: (b) => `/book/${b}/narration` },
-  { key: "export", label: "Export", icon: "⤓", to: (b) => `/book/${b}/export` },
+const stages: { key: string; label: string; to: (b: string | null) => string }[] = [
+  { key: "library", label: "Library", to: () => "/library" },
+  { key: "scripting", label: "Scripting", to: (b) => `/book/${b}/scripting` },
+  { key: "narration", label: "Narration", to: (b) => `/book/${b}/narration` },
+  { key: "export", label: "Export", to: (b) => `/book/${b}/export` },
 ];
 const activeKey = computed(() =>
   route.path.match(/^\/book\/[^/]+$/) ? "overview" : route.path.split("/").pop(),
 );
 const p = computed(() => (app.currentBookId ? app.progress(app.currentBookId) : null));
+/** enabled endpoints that can't currently run: no key, or settings that don't validate */
+const endpointsNeedingAttention = computed(
+  () =>
+    [...app.profiles.map(unifyProfile), ...app.endpoints.map(unifyEndpoint)].filter(
+      (u) => u.enabled && ((u.needsKey && !keyring.has(u.slot)) || endpointErrors(u).length > 0),
+    ).length,
+);
 const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
 const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
 </script>
@@ -130,12 +149,20 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
         :class="drawer ? 'translate-x-0' : '-translate-x-full'"
       >
         <div class="flex items-center gap-2 px-4 py-4">
-          <div class="grid h-8 w-8 place-items-center rounded-lg bg-violet-600 text-white">◍</div>
+          <div class="grid h-8 w-8 place-items-center rounded-lg bg-violet-600 text-white">
+            <LogoIcon class="icon-lg" />
+          </div>
           <div class="leading-tight">
             <div class="font-semibold">Audiobook Studio</div>
             <div class="text-[10px] uppercase tracking-wider text-amber-500">prototype</div>
           </div>
-          <button class="ml-auto text-zinc-400 lg:hidden" @click="drawer = false">✕</button>
+          <button
+            class="ml-auto text-zinc-400 lg:hidden"
+            aria-label="close menu"
+            @click="drawer = false"
+          >
+            <CloseIcon class="icon" />
+          </button>
         </div>
 
         <nav class="mt-2 flex flex-col gap-0.5 px-2">
@@ -189,8 +216,8 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
           >
             <span
               class="grid h-6 w-6 place-items-center rounded-md border border-zinc-300 text-xs dark:border-zinc-700"
-              >≡</span
-            >
+              ><QueueIcon class="icon"
+            /></span>
             <span class="flex-1">Queue</span>
             <span
               v-if="app.activeJobs.length"
@@ -200,6 +227,25 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
               }}<span v-if="app.eta" class="text-zinc-400">
                 · ~{{ Math.max(1, Math.round(app.eta.seconds / 60)) }}m</span
               ></span
+            >
+          </RouterLink>
+          <RouterLink
+            to="/endpoints"
+            class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            :class="
+              activeKey === 'endpoints' &&
+              'bg-violet-50 font-semibold text-violet-700 dark:bg-violet-500/10 dark:text-violet-300'
+            "
+          >
+            <span
+              class="grid h-6 w-6 place-items-center rounded-md border border-zinc-300 text-xs dark:border-zinc-700"
+              ><EndpointsIcon class="icon"
+            /></span>
+            <span class="flex-1">Endpoints</span>
+            <span
+              v-if="endpointsNeedingAttention"
+              class="text-[11px] text-amber-600 dark:text-amber-400"
+              >{{ endpointsNeedingAttention }} to fix</span
             >
           </RouterLink>
         </div>
@@ -220,7 +266,7 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
             v-if="app.book.budget?.paused"
             class="mt-1 rounded bg-amber-400/15 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-300"
           >
-            ❚❚ paused ·
+            <PauseIcon class="icon-sm icon-fill" /> paused ·
             <button class="underline" @click="app.resumeBook(app.book.id)">resume</button>
           </div>
           <div class="mt-2 flex flex-wrap gap-1.5">
@@ -243,14 +289,15 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
               :to="`/book/${app.book.id}/search`"
               class="rounded border border-zinc-200 px-2 py-0.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
               :class="activeKey === 'search' && 'border-violet-400'"
-              >⌕ Search</RouterLink
+              ><SearchIcon class="icon-sm" /> Search</RouterLink
             >
           </div>
         </div>
 
         <div class="mt-auto flex gap-2 p-3">
           <button class="btn-ghost flex-1 justify-center" @click="app.dark = !app.dark">
-            {{ app.dark ? "☀ Light" : "☾ Dark" }}
+            <component :is="app.dark ? SunIcon : MoonIcon" class="icon" />
+            {{ app.dark ? "Light" : "Dark" }}
           </button>
           <button class="btn-ghost" title="keyboard shortcuts (?)" @click="shortcuts = true">
             ?
@@ -265,9 +312,8 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
           <div class="flex min-w-0 items-center gap-2 text-sm text-zinc-500">
             <span class="lg:hidden"
               ><button class="btn-ghost btn-xs" aria-label="menu" @click="drawer = true">
-                ☰
-              </button></span
-            >
+                <MenuIcon class="icon" /></button
+            ></span>
             <span class="capitalize text-zinc-900 dark:text-zinc-100">{{ activeKey }}</span>
             <span v-if="app.book" class="hidden truncate sm:inline"> · {{ app.book.title }}</span>
           </div>
@@ -276,7 +322,7 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
               class="flex items-center gap-2 rounded-md border border-zinc-200 px-2.5 py-1 text-xs text-zinc-500 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
               @click="palette && (palette.open = true)"
             >
-              ⌕<span class="hidden sm:inline"> Jump or run…</span>
+              <SearchIcon class="icon" /><span class="hidden sm:inline">Jump or run…</span>
               <kbd
                 class="hidden rounded border border-zinc-200 px-1 font-mono text-[10px] sm:inline dark:border-zinc-700"
                 >{{ modKey }} K</kbd

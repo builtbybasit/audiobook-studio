@@ -6,7 +6,21 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useApp, keyring } from "@/stores/app";
 import { speak } from "@/composables/usePlayer";
-import { UiSlider, UiSelect, UiSwitch, UiTooltip } from "@/ui";
+import type { Component } from "vue";
+import {
+  ChevronRight as ChevronRightIcon,
+  Dot as NeutralIcon,
+  Download as ExportIcon,
+  Mars as MaleIcon,
+  Pause as PauseIcon,
+  Play as PlayIcon,
+  Plus as AddIcon,
+  Upload as ImportIcon,
+  Venus as FemaleIcon,
+  X as CloseIcon,
+  ArrowUpRight as ArrowIcon,
+} from "@lucide/vue";
+import { UiNumber, UiSlider, UiSelect, UiSwitch, UiTooltip } from "@/ui";
 import { SPLIT_MODES, splitText } from "@/lib/split";
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "reka-ui";
 import type { Endpoint, Gender, Segment, SplitMode, Voice } from "@/types";
@@ -75,7 +89,11 @@ const inUse = computed(() => {
     if (c.voice) m[c.voice.split("/")[0]] = (m[c.voice.split("/")[0]] ?? 0) + 1;
   return m;
 });
-const GENDER_CH: Partial<Record<Gender, string>> = { m: "♂", f: "♀", n: "◦" };
+const GENDER_CH: Partial<Record<Gender, Component>> = {
+  m: MaleIcon,
+  f: FemaleIcon,
+  n: NeutralIcon,
+};
 const splitOf = (e: Endpoint) => app.splitCount(props.bookId, e);
 const longest = (e: Endpoint): Segment | null => {
   let best: Segment | null = null;
@@ -195,20 +213,28 @@ function copyErr(e: Endpoint) {
   <div class="grid gap-3 p-3 lg:grid-cols-[260px_minmax(0,1fr)]">
     <!-- list -->
     <div class="flex flex-col gap-1">
-      <div class="mb-1 flex items-center gap-1 text-[11px]">
-        <span class="label">Endpoints</span>
-        <span class="ml-auto flex gap-2">
+      <div class="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+        <!-- the section heading is itself the way out to the full endpoint page: "all endpoints"
+             spelled out alongside export/import cost more width than this column has. -->
+        <RouterLink
+          to="/endpoints"
+          class="label inline-flex items-center gap-1 whitespace-nowrap hover:text-violet-500!"
+          title="health, spend and request history for every endpoint"
+          aria-label="All endpoints — health, spend and request history"
+          >Endpoints <ArrowIcon class="icon-sm"
+        /></RouterLink>
+        <span class="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
           <button
-            class="text-zinc-400 hover:text-violet-500"
+            class="inline-flex items-center gap-1 whitespace-nowrap text-zinc-400 hover:text-violet-500"
             title="download endpoints + profiles as JSON (no keys)"
             @click="exportSettings"
           >
-            ⤓ export
+            <ExportIcon class="icon-sm" /> export
           </button>
           <label
-            class="cursor-pointer text-zinc-400 hover:text-violet-500"
+            class="cursor-pointer inline-flex items-center gap-1 whitespace-nowrap text-zinc-400 hover:text-violet-500"
             title="import a settings JSON"
-            >⤒ import<input
+            ><ImportIcon class="icon-sm" /> import<input
               type="file"
               accept="application/json"
               class="hidden"
@@ -249,7 +275,7 @@ function copyErr(e: Endpoint) {
         class="rounded-lg border border-dashed border-zinc-300 py-2 text-xs text-zinc-500 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
         @click="selectedId = app.addEndpoint().id"
       >
-        ＋ Add endpoint
+        <AddIcon class="icon-sm" /> Add endpoint
       </button>
     </div>
 
@@ -272,7 +298,8 @@ function copyErr(e: Endpoint) {
           ></span
         >
         <button class="btn-ghost btn-xs" @click="e.enabled = !e.enabled">
-          {{ e.enabled ? "❚❚ Pause" : "▶ Resume" }}
+          <component :is="e.enabled ? PauseIcon : PlayIcon" class="icon-sm icon-fill" />
+          {{ e.enabled ? "Pause" : "Resume" }}
         </button>
         <button
           class="text-[11px] text-zinc-400 hover:text-red-500"
@@ -366,11 +393,14 @@ function copyErr(e: Endpoint) {
         ><input v-model="e.model" class="input py-0.5 font-mono" />
         <span class="text-zinc-500">Price</span>
         <div class="flex items-center gap-1">
-          <span>$</span
-          ><input v-model.number="e.price" type="number" class="input w-20 py-0.5" /><span
-            class="text-zinc-400"
-            >per 1M chars</span
-          >
+          <UiNumber
+            v-model="e.price"
+            class="w-24"
+            prefix="$"
+            :min="0"
+            :step="0.5"
+            label="Price per 1M characters"
+          /><span class="text-zinc-400">per 1M chars</span>
         </div>
         <span class="text-zinc-500">Concurrency</span>
         <div class="flex items-center gap-2">
@@ -381,13 +411,13 @@ function copyErr(e: Endpoint) {
         </div>
         <span class="self-center text-zinc-500">Max chars / request</span>
         <div class="flex flex-wrap items-center gap-2">
-          <input
-            v-model.number="e.maxChars"
-            type="number"
-            min="0"
-            step="50"
-            class="input w-20 py-0.5 font-mono"
+          <UiNumber
+            v-model="e.maxChars"
+            class="w-20"
+            :min="0"
+            :step="50"
             placeholder="0"
+            label="Maximum characters per request"
           />
           <UiSelect
             :model-value="LIMITS.some((l) => l.value === e.maxChars) ? e.maxChars : undefined"
@@ -428,8 +458,10 @@ function copyErr(e: Endpoint) {
       >
         <CollapsibleTrigger
           class="text-zinc-400 hover:text-violet-500 data-[state=open]:text-violet-500"
-          >▸ preview: longest routed segment ({{ cutPreview!.seg.text.length }} chars,
-          {{ cutPreview!.seg.speaker }}) →
+          ><ChevronRightIcon class="icon-sm" /> preview: longest routed segment ({{
+            cutPreview!.seg.text.length
+          }}
+          chars, {{ cutPreview!.seg.speaker }}) →
           {{ cutPreview!.parts.length }} requests</CollapsibleTrigger
         >
         <CollapsibleContent>
@@ -460,10 +492,12 @@ function copyErr(e: Endpoint) {
           <span v-if="inUse[e.id]" class="text-zinc-400">· {{ inUse[e.id] }} in use here</span>
           <span class="ml-auto flex gap-1">
             <button class="btn-ghost btn-xs" :disabled="e.fetching" @click="app.fetchVoices(e)">
-              {{ e.fetching ? "fetching…" : "⇣ Fetch from server" }}
+              <ImportIcon v-if="!e.fetching" class="icon-sm" />
+              {{ e.fetching ? "fetching…" : "Fetch from server" }}
             </button>
             <button class="btn-ghost btn-xs" @click="form(e).open = !form(e).open">
-              {{ form(e).open ? "close" : "＋ Add voice" }}
+              <AddIcon v-if="!form(e).open" class="icon-sm" />
+              {{ form(e).open ? "close" : "Add voice" }}
             </button>
           </span>
         </div>
@@ -484,7 +518,7 @@ function copyErr(e: Endpoint) {
             "
             :title="usedBy(e, v).length ? 'used by ' + usedBy(e, v).join(', ') : v.id"
           >
-            <span class="text-zinc-400">{{ GENDER_CH[v.gender] ?? "◦" }}</span>
+            <component :is="GENDER_CH[v.gender] ?? NeutralIcon" class="icon-sm text-zinc-400" />
             <span>{{ v.label }}</span
             ><span v-if="v.label !== v.id" class="font-mono text-[9px] text-zinc-400">{{
               v.id
@@ -501,7 +535,7 @@ function copyErr(e: Endpoint) {
                 speak('The mountain mist thinned as dawn crept over the outer sect grounds.', v.id)
               "
             >
-              ▶
+              <PlayIcon class="icon-sm icon-fill" />
             </button>
             <button
               class="rounded px-1 text-zinc-400 hover:bg-red-500/10 hover:text-red-500"
@@ -512,7 +546,7 @@ function copyErr(e: Endpoint) {
               "
               @click="app.removeVoice(e, v.id)"
             >
-              ✕
+              <CloseIcon class="icon-sm" />
             </button>
           </span>
         </div>

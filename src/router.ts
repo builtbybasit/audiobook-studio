@@ -14,6 +14,9 @@ export const router = createRouter({
     { path: "/", redirect: "/library" },
     { path: "/library", component: LibraryView },
     { path: "/queue", component: QueueView },
+    // Lazy: the charting library only this page uses is a third of the bundle, and most sessions
+    // never open it.
+    { path: "/endpoints", component: () => import("@/views/EndpointsView.vue") },
     { path: "/book/:bookId", component: BookView },
     { path: "/book/:bookId/cast", component: CastView },
     { path: "/book/:bookId/search", component: SearchView },

@@ -6,6 +6,13 @@ import { useApp } from "@/stores/app";
 import { speak } from "@/composables/usePlayer";
 import { UiSelect, UiCheckbox, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
+import {
+  ChevronDown as ChevronDownIcon,
+  ChevronRight as ChevronRightIcon,
+  Play as PlayIcon,
+  TriangleAlert as WarnIcon,
+  ArrowRight as NextIcon,
+} from "@lucide/vue";
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "reka-ui";
 import type { Character, Gender } from "@/types";
 
@@ -34,7 +41,6 @@ const minor = computed(() =>
     .sort((a, b) => (counts.value[b.name] ?? 0) - (counts.value[a.name] ?? 0))
     .filter(match),
 );
-const assigned = computed(() => all.value.filter((c) => c.voice).length);
 const narrator = computed(() => all.value.find((c) => c.name === "Narrator"));
 const genderLabel: Record<Gender, string> = {
   m: "male",
@@ -50,28 +56,19 @@ const sample = (c: Character) =>
 
 <template>
   <div class="p-3">
+    <!-- No summary line: the tab above reads "Voices 5/22", and a speaker with no voice of its own
+         shows "Narrator’s voice" right in its picker. Filters left, bulk actions right. -->
     <div class="mb-3 flex flex-wrap items-center gap-2">
-      <div class="text-sm">
-        <b>{{ assigned }}</b> of {{ all.length }} voices assigned
-        <span class="text-zinc-500"
-          >· the rest fall back to the Narrator’s voice ({{
-            narrator?.voice ? app.voiceLabel(narrator.voice) : "unset"
-          }}) · {{ voiceOpts.filter((o) => !o.disabled).length }} voices on
-          {{ app.enabledEndpoints.length }} endpoint{{
-            app.enabledEndpoints.length === 1 ? "" : "s"
-          }}</span
-        >
-      </div>
-      <div class="ml-auto flex items-center gap-2">
-        <input v-model="q" class="input w-44 py-1" placeholder="Find a speaker…" />
-        <label class="flex items-center gap-1.5 text-xs"
-          ><UiCheckbox v-model="unassignedOnly" /> Unassigned only</label
-        >
-        <button class="btn-ghost btn-xs" @click="app.autoAssignByGender(bookId)">
-          Auto-assign all by gender
-        </button>
-        <RouterLink :to="`/book/${bookId}/cast`" class="btn-ghost btn-xs">Full cast →</RouterLink>
-      </div>
+      <input v-model="q" class="input w-44 py-1" placeholder="Find a speaker…" />
+      <label class="flex items-center gap-1.5 text-xs"
+        ><UiCheckbox v-model="unassignedOnly" /> Unassigned only</label
+      >
+      <button class="btn-ghost btn-xs ml-auto" @click="app.autoAssignByGender(bookId)">
+        Auto-assign all by gender
+      </button>
+      <RouterLink :to="`/book/${bookId}/cast`" class="btn-ghost btn-xs"
+        >Full cast <NextIcon class="icon-sm"
+      /></RouterLink>
     </div>
 
     <div
@@ -135,12 +132,14 @@ const sample = (c: Character) =>
               :disabled="!app.effectiveVoice(bookId, c.name).voice"
               @click="speak(sample(c), app.effectiveVoice(bookId, c.name).voice ?? '')"
             >
-              ▶<span class="text-[9px] text-zinc-400">demo</span>
+              <PlayIcon class="icon-sm icon-fill" /><span class="text-[9px] text-zinc-400"
+                >demo</span
+              >
             </button></UiTooltip
           >
         </div>
         <div v-if="issueOf(c)" class="mt-1 text-[11px] text-amber-600">
-          ⚠ {{ issueOf(c)!.reason
+          <WarnIcon class="icon-sm" /> {{ issueOf(c)!.reason
           }}<template v-if="issueOf(c)!.kind === 'paused'">
             ·
             <button class="underline" @click="issueOf(c)!.endpoint!.enabled = true">
@@ -167,8 +166,11 @@ const sample = (c: Character) =>
       <CollapsibleTrigger
         class="flex w-full items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-left text-sm hover:bg-zinc-50 data-[state=open]:rounded-b-none dark:border-zinc-800 dark:hover:bg-zinc-800/60"
       >
-        <span class="text-zinc-400">{{ showMinor ? "▾" : "▸" }}</span
-        ><b>Minor cast ({{ minor.length }})</b>
+        <component
+          :is="showMinor ? ChevronDownIcon : ChevronRightIcon"
+          class="icon-sm text-zinc-400"
+        />
+        <b>Minor cast ({{ minor.length }})</b>
         <span class="text-xs text-zinc-500"
           >{{ minor.filter((c) => c.voice).length }} assigned · rest use the Narrator’s voice</span
         >

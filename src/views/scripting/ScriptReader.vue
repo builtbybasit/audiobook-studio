@@ -3,12 +3,30 @@
 // speaker pill and the voice direction. Right rail (toggleable) = the cast *in this chapter* with
 // aliases, spoiler-hidden descriptions and inline rename/merge; the rest of the cast is collapsed.
 // Any segment can be clicked to edit speaker / type / direction in place. Typography via the Aa menu.
+// The model's segment boundaries are not always right — two speakers in one segment, or a sentence cut
+// in half — so the editor can split a segment at any word gap (click the gap; sentence ends are marked)
+// and join it with its neighbour. Both invalidate the audio they touch and both are undoable.
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useScript, TYPES } from "@/views/scripting/shared";
 import { DIRECTIONS } from "@/mock/data";
 import { useReader } from "@/stores/reader";
 import ReaderSettings from "@/components/ReaderSettings.vue";
+import VoicePicker from "@/components/VoicePicker.vue";
+import SpokenText from "@/components/SpokenText.vue";
+import { PAUSE_STEPS, defaultPause, pauseAfter, secs } from "@/lib/speech";
+import {
+  AudioLines as NarrationIcon,
+  ChevronUp as ChevronUpIcon,
+  ChevronDown as ChevronDownIcon,
+  PanelRightClose as HideCastIcon,
+  Flag as FlagIcon,
+  Pause as PauseIcon,
+  RotateCcw as RetryIcon,
+  Scissors as SplitIcon,
+  TriangleAlert as WarnIcon,
+  Users as CastIcon,
+} from "@lucide/vue";
 import { UiSelect, UiCombobox, UiToggleGroup, UiTooltip, UiSwitch } from "@/ui";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import type { Character, Gender, Segment, SegmentType } from "@/types";
@@ -47,6 +65,7 @@ const volume = computed(() => app.volumeOf(props.bookId, props.chapterId));
 const multiVolume = computed(() => app.volumesOf(props.bookId).length > 1);
 
 const mode = ref("all"); // all | dialogue
+const warnOpen = ref(false); // the unverified-chunk banner reads as one line until asked
 const speaker = ref(""); // '' = everyone
 const open = ref<number | null>(null);
 const showRest = ref(false);
@@ -106,12 +125,72 @@ const dirOpts = computed(() => {
     })),
   ];
 });
+// ---- segment boundaries: split at a word gap, join with a neighbour
+const splitting = ref<number | null>(null);
+interface Tok {
+  text: string;
+  /** offset of the gap *before* this token */
+  at: number;
+  /** the previous token ended a sentence — the likely cut */
+  strong: boolean;
+}
+function tokensOf(text: string): Tok[] {
+  const out: Tok[] = [];
+  const re = /\S+\s*/g;
+  let m: RegExpExecArray | null;
+  let strong = false;
+  while ((m = re.exec(text))) {
+    out.push({ text: m[0], at: m.index, strong });
+    strong = /[.!?…][”’"')\]]?\s*$/.test(m[0]);
+  }
+  return out;
+}
+const at = (id: number) => segments.value.findIndex((x) => x.id === id);
+const nextOf = (s: Segment): Segment | undefined => segments.value[at(s.id) + 1];
+const prevOf = (s: Segment): Segment | undefined => segments.value[at(s.id) - 1];
+const preview = (t: string, n = 42) => (t.length > n ? t.slice(0, n) + "…" : t);
+function doSplit(s: Segment, offset: number) {
+  const id = app.splitSegment(props.bookId, props.chapterId, s.id, offset);
+  splitting.value = null;
+  if (id == null) return;
+  // the second half is the one that usually needs a different speaker — open it
+  open.value = id;
+  focus.value = id;
+  nextTick(() =>
+    document.getElementById("seg-" + id)?.scrollIntoView({ block: "center", behavior: "smooth" }),
+  );
+}
+function doJoin(s: Segment, dir: "next" | "prev") {
+  const first = dir === "next" ? s : prevOf(s);
+  if (!first || !nextOf(first)) return;
+  if (app.joinSegments(props.bookId, props.chapterId, first.id)) {
+    open.value = first.id;
+    focus.value = first.id;
+  }
+}
+
+// ---- pacing: how long the book holds after this line. Silence is stitched, not rendered, so a
+// pause changes the chapter's length without invalidating a single clip.
+const pacing = computed(() => app.pacingOf(props.bookId));
+const gapOf = (s: Segment) => pauseAfter(s, nextOf(s), pacing.value);
+const bookGap = (s: Segment) => defaultPause(s, nextOf(s), pacing.value);
+const setPause = (s: Segment, v: number | null) =>
+  app.setPause(props.bookId, props.chapterId, s.id, v);
+
 const GENDER_LABEL: Partial<Record<Gender, string>> = { m: "male", f: "female", n: "neutral" };
 const sameSpeakerCount = (s: Segment) =>
   segments.value.filter((x) => x.speaker === s.speaker && x.id !== s.id).length;
 
-// stale nudge: lines edited after narration, whose audio is now out of date
-const stale = computed(() => segments.value.filter((s) => s.audio.status === "stale").length);
+// stale nudge: lines whose audio is out of date — edited after narration, or a half of a split that
+// has never been rendered at all (only counts once the chapter has audio)
+const stale = computed(
+  () =>
+    segments.value.filter(
+      (s) =>
+        s.audio.status === "stale" ||
+        (chapter.value.narration !== "none" && s.audio.status === "none"),
+    ).length,
+);
 const edits = computed(() => segments.value.filter((s) => s.edited).length);
 
 // re-script: run the LLM again on this chapter, optionally re-applying manual edits; then show the diff
@@ -162,6 +241,19 @@ function onKey(e: KeyboardEvent) {
     open.value = open.value === focus.value ? null : focus.value;
   } else if (e.key === "Escape") {
     open.value = null;
+    splitting.value = null;
+  } else if (e.key === "s" && focus.value) {
+    splitting.value = splitting.value === focus.value ? null : focus.value;
+    open.value = null;
+  } else if (e.key === "m" && focus.value) {
+    const s = segments.value.find((x) => x.id === focus.value);
+    if (s) doJoin(s, "next");
+  } else if ((e.key === "[" || e.key === "]") && focus.value) {
+    const s = segments.value.find((x) => x.id === focus.value);
+    if (s && nextOf(s)) {
+      const v = Math.max(0, Math.round((gapOf(s) + (e.key === "]" ? 0.25 : -0.25)) * 100) / 100);
+      setPause(s, v === bookGap(s) ? null : v);
+    }
   } else if (e.key === "c") {
     reader.showCast = !reader.showCast;
   } else if (e.key === "/" && !e.shiftKey) {
@@ -219,11 +311,14 @@ watch(open, (v) => {
             class="btn-ghost btn-xs border-amber-400 text-amber-600"
             @click="nextNew"
           >
-            ⚠ {{ unresolved }} unreviewed speaker{{ unresolved > 1 ? "s" : "" }} → jump
+            <WarnIcon class="icon-sm" /> {{ unresolved }} unreviewed speaker{{
+              unresolved > 1 ? "s" : ""
+            }}
+            → jump
           </button>
           <PopoverRoot v-model:open="rescriptOpen">
             <PopoverTrigger class="btn-ghost btn-xs" title="run the LLM again on this chapter"
-              >↻ Re-script</PopoverTrigger
+              ><RetryIcon class="icon-sm" /> Re-script</PopoverTrigger
             >
             <PopoverPortal>
               <PopoverContent :side-offset="6" align="end" class="ui-popup w-80 p-3 text-xs">
@@ -238,16 +333,8 @@ watch(open, (v) => {
                     size="xs"
                     block
                   />
-                  <span class="text-zinc-500">Chunk</span>
-                  <div class="flex items-center gap-2">
-                    <input
-                      v-model.number="app.scriptSettings.chunkChars"
-                      type="number"
-                      step="500"
-                      min="2000"
-                      class="input w-24 py-0.5 font-mono"
-                    /><span class="text-zinc-400">chars</span>
-                  </div>
+                  <span class="text-zinc-500">Chunking</span>
+                  <span class="text-zinc-400">Uses this endpoint’s request settings.</span>
                 </div>
                 <div class="mt-2 rounded-md bg-zinc-50 p-2 dark:bg-zinc-800/60">
                   <template v-if="edits"
@@ -286,7 +373,8 @@ watch(open, (v) => {
             :class="reader.showCast && 'bg-zinc-200 dark:bg-zinc-800'"
             @click="reader.showCast = !reader.showCast"
           >
-            ☺ Cast <span class="text-zinc-400">{{ inChapter.length }}</span>
+            <CastIcon class="icon-sm" /> Cast
+            <span class="text-zinc-400">{{ inChapter.length }}</span>
           </button>
           <ReaderSettings />
         </div>
@@ -307,33 +395,54 @@ watch(open, (v) => {
 
       <div
         v-if="fallbacks.length"
-        class="flex items-center gap-3 border-b border-amber-300 bg-amber-400/10 px-6 py-2 text-xs text-amber-700 dark:border-amber-500/40 dark:text-amber-300"
+        class="border-b border-amber-300 bg-amber-400/10 text-xs text-amber-700 dark:border-amber-500/40 dark:text-amber-300"
       >
-        <span>⚠</span>
-        <span class="flex-1"
-          ><b>{{ fallbacks.length }} chunk{{ fallbacks.length > 1 ? "s" : "" }} didn’t verify</b> —
-          the model’s split couldn’t be matched back to the source text, so
+        <div class="flex items-center gap-3 px-6 py-1.5">
+          <button
+            class="flex min-w-0 flex-1 items-center gap-3 text-left"
+            :aria-expanded="warnOpen"
+            :title="warnOpen ? 'hide the detail' : 'what this means'"
+            @click="warnOpen = !warnOpen"
+          >
+            <WarnIcon class="icon shrink-0" />
+            <span class="min-w-0 flex-1 truncate"
+              ><b
+                >{{ fallbacks.length }} chunk{{ fallbacks.length > 1 ? "s" : "" }} didn’t verify</b
+              >
+              — kept whole, read by the Narrator</span
+            >
+            <component
+              :is="warnOpen ? ChevronUpIcon : ChevronDownIcon"
+              class="icon shrink-0 opacity-60"
+            />
+          </button>
+          <button
+            class="btn-ghost btn-xs shrink-0 border-amber-400"
+            @click="jumpTo(fallbacks[0].id)"
+          >
+            Show
+          </button>
+        </div>
+        <p v-if="warnOpen" class="px-6 pb-2 pl-[3.4rem] leading-relaxed">
+          The model’s split couldn’t be matched back to the source text, so
           {{ fallbacks.length > 1 ? "they were" : "it was" }} kept whole and will be read by the
           Narrator. Nothing is missing from the audio, but dialogue inside won’t get character
-          voices.</span
-        >
-        <button class="btn-ghost btn-xs border-amber-400" @click="jumpTo(fallbacks[0].id)">
-          Show
-        </button>
+          voices — re-split the chunk, or split it by hand.
+        </p>
       </div>
       <div
         v-if="stale"
         class="flex items-center gap-3 border-b border-amber-300 bg-amber-400/10 px-6 py-2 text-xs text-amber-700 dark:border-amber-500/40 dark:text-amber-300"
       >
-        <span>♪</span>
+        <NarrationIcon class="icon shrink-0" />
         <span class="flex-1"
           ><b>{{ stale }} line{{ stale > 1 ? "s" : "" }} changed since narration</b> — the audio
-          still reads the old script.</span
+          still reads the old script, and new lines have none of their own.</span
         >
         <RouterLink
           :to="{ path: `/book/${bookId}/narration`, query: { ch: chapterId } }"
           class="btn-primary btn-xs"
-          >↻ Re-narrate changed</RouterLink
+          ><RetryIcon class="icon-sm" /> Re-narrate changed</RouterLink
         >
       </div>
       <div
@@ -341,7 +450,7 @@ watch(open, (v) => {
         class="border-b border-violet-300 bg-violet-50 px-6 py-2 text-xs dark:border-violet-500/40 dark:bg-violet-500/10"
       >
         <div class="flex items-center gap-3">
-          <span class="text-violet-500">↻</span>
+          <RetryIcon class="icon-sm text-violet-500" />
           <span class="flex-1"
             ><b>Re-scripted.</b> {{ diff.prevCount }} → {{ diff.curCount }} segments ·
             <b>{{ diff.speaker.length }}</b> speaker change{{
@@ -398,6 +507,14 @@ watch(open, (v) => {
           :style="{ fontSize: reader.size + 'px', lineHeight: reader.lineHeight }"
         >
           <template v-for="s in rows" :key="s.id">
+            <div
+              v-if="splitting === s.id"
+              class="mb-1 flex flex-wrap items-center gap-2 rounded-md bg-violet-50 px-2 py-1 font-sans text-[11px] leading-normal text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
+            >
+              <b>Click the gap where this segment should be cut.</b>
+              <span class="text-violet-500/70">⁄ marks the end of a sentence.</span>
+              <button class="ml-auto underline" @click="splitting = null">Cancel</button>
+            </div>
             <!-- unverified chunk kept whole -->
             <div
               v-if="s.fallback"
@@ -412,15 +529,33 @@ watch(open, (v) => {
                 >
                 <span class="text-zinc-500">~{{ s.fallbackCount }} segments collapsed</span>
                 <span v-if="s.fallbackRetrying" class="ml-auto text-violet-500">re-splitting…</span>
-                <button
-                  v-else
-                  class="btn-ghost btn-xs ml-auto"
-                  @click="app.retryChunk(bookId, chapterId, s.id)"
-                >
-                  ↻ Re-split this chunk
-                </button>
+                <template v-else>
+                  <button
+                    class="btn-ghost btn-xs ml-auto"
+                    @click="app.retryChunk(bookId, chapterId, s.id)"
+                  >
+                    <RetryIcon class="icon-sm" /> Re-split this chunk
+                  </button>
+                  <button class="btn-ghost btn-xs" @click="splitting = s.id">
+                    <SplitIcon class="icon-sm" /> Split by hand
+                  </button>
+                </template>
               </div>
-              <p class="text-zinc-700 dark:text-zinc-300">{{ s.text }}</p>
+              <p class="text-zinc-700 dark:text-zinc-300">
+                <template v-if="splitting === s.id"
+                  ><span v-for="(t, i) in tokensOf(s.text)" :key="i"
+                    ><button
+                      v-if="i"
+                      class="split-gap"
+                      :class="t.strong && 'split-gap-strong'"
+                      :title="`cut here — the new segment starts “${preview(s.text.slice(t.at), 30)}”`"
+                      @click.stop="doSplit(s, t.at)"
+                    >
+                      ⁄</button
+                    >{{ t.text }}</span
+                  ></template
+                ><template v-else><SpokenText :book-id="bookId" :text="s.text" /></template>
+              </p>
               <details class="mt-2 font-sans text-[11px] leading-normal text-zinc-500">
                 <summary class="cursor-pointer">Why it failed</summary>
                 <div class="mt-1 rounded bg-white p-2 font-mono dark:bg-zinc-900">
@@ -444,8 +579,25 @@ watch(open, (v) => {
               "
               @click="open = open === s.id ? null : s.id"
             >
-              {{ s.text
-              }}<span
+              <template v-if="splitting === s.id"
+                ><span v-for="(t, i) in tokensOf(s.text)" :key="i"
+                  ><button
+                    v-if="i"
+                    class="split-gap"
+                    :class="t.strong && 'split-gap-strong'"
+                    :title="`cut here — the new segment starts “${preview(s.text.slice(t.at), 30)}”`"
+                    @click.stop="doSplit(s, t.at)"
+                  >
+                    ⁄</button
+                  >{{ t.text }}</span
+                ></template
+              ><template v-else><SpokenText :book-id="bookId" :text="s.text" /></template
+              ><span
+                v-if="s.flag"
+                class="ml-2 rounded bg-amber-400/20 px-1 font-sans text-[10px] font-semibold leading-none text-amber-700 dark:text-amber-300"
+                :title="s.flag.note"
+                ><FlagIcon class="icon-sm" /> {{ s.flag.kind }}</span
+              ><span
                 v-if="s.direction"
                 class="ml-2 font-sans text-[11px] leading-none text-violet-500/80"
                 >[{{ s.direction }}]</span
@@ -485,14 +637,33 @@ watch(open, (v) => {
                   title="Edited after narration — audio no longer matches"
                   >audio stale</span
                 >
+                <span
+                  v-if="s.flag"
+                  class="rounded bg-amber-400/20 px-1 text-[10px] font-semibold text-amber-600"
+                  :title="`Flagged in the ledger: ${s.flag.note || s.flag.kind}`"
+                  ><FlagIcon class="icon-sm" /> {{ s.flag.kind }}</span
+                >
                 <span v-if="s.direction" class="truncate italic text-zinc-500"
                   >— {{ s.direction }}</span
                 >
                 <span v-else class="italic text-zinc-300 dark:text-zinc-600">— no direction</span>
               </div>
               <p :class="s.type === 'thought' ? 'italic text-zinc-600 dark:text-zinc-300' : ''">
-                <template v-if="s.type === 'dialogue'">‘{{ s.text }}’</template
-                ><template v-else>{{ s.text }}</template>
+                <template v-if="splitting === s.id"
+                  ><span v-for="(t, i) in tokensOf(s.text)" :key="i"
+                    ><button
+                      v-if="i"
+                      class="split-gap"
+                      :class="t.strong && 'split-gap-strong'"
+                      :title="`cut here — the new segment starts “${preview(s.text.slice(t.at), 30)}”`"
+                      @click.stop="doSplit(s, t.at)"
+                    >
+                      ⁄</button
+                    >{{ t.text }}</span
+                  ></template
+                ><template v-else-if="s.type === 'dialogue'"
+                  >‘<SpokenText :book-id="bookId" :text="s.text" />’</template
+                ><template v-else><SpokenText :book-id="bookId" :text="s.text" /></template>
               </p>
             </div>
             <!-- inline editor -->
@@ -552,6 +723,76 @@ watch(open, (v) => {
                 <span v-if="s.edited" class="text-[10px] text-zinc-400">edited</span
                 ><button class="btn-ghost btn-xs" @click="open = null">Done</button>
               </div>
+              <!-- boundaries: the model grouped two speakers together, or cut a sentence in half -->
+              <div
+                class="col-span-2 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-2 2xl:col-span-4 dark:border-zinc-800"
+              >
+                <span class="text-zinc-400">Boundaries</span>
+                <UiTooltip
+                  text="Cut this segment in two — then give the second half its own speaker (s)"
+                  ><button class="btn-ghost btn-xs" @click="((open = null), (splitting = s.id))">
+                    <SplitIcon class="icon-sm" /> Split…
+                  </button></UiTooltip
+                >
+                <UiTooltip
+                  v-if="prevOf(s)"
+                  :text="`Join into #${prevOf(s)!.id} (${prevOf(s)!.speaker}): “…${preview(prevOf(s)!.text.slice(-40), 40)}”${prevOf(s)!.speaker === s.speaker ? '' : ' — both halves would be read by ' + prevOf(s)!.speaker}`"
+                  ><button class="btn-ghost btn-xs" @click="doJoin(s, 'prev')">
+                    <ChevronUpIcon class="icon-sm" /> Join up
+                  </button></UiTooltip
+                >
+                <UiTooltip
+                  v-if="nextOf(s)"
+                  :text="`Join #${nextOf(s)!.id} (${nextOf(s)!.speaker}) into this one: “${preview(nextOf(s)!.text)}”${nextOf(s)!.speaker === s.speaker ? '' : ' — both halves would be read by ' + s.speaker}`"
+                  ><button class="btn-ghost btn-xs" @click="doJoin(s, 'next')">
+                    <ChevronDownIcon class="icon-sm" /> Join next (m)
+                  </button></UiTooltip
+                >
+                <span
+                  v-if="nextOf(s) && nextOf(s)!.speaker !== s.speaker"
+                  class="text-[10px] text-zinc-400"
+                  >next line is {{ nextOf(s)!.speaker }}</span
+                >
+                <span v-if="s.audio.duration" class="ml-auto text-[10px] text-amber-600"
+                  >either one makes this line's audio stale</span
+                >
+              </div>
+              <!-- pacing: silence after this line. Stitched at build time, so no clip is invalidated. -->
+              <div
+                v-if="nextOf(s)"
+                class="col-span-2 flex flex-wrap items-center gap-1.5 border-t border-zinc-200 pt-2 2xl:col-span-4 dark:border-zinc-800"
+              >
+                <span class="text-zinc-400">Pause after</span>
+                <button
+                  v-for="v in PAUSE_STEPS"
+                  :key="String(v)"
+                  class="chip"
+                  :class="(s.pause ?? null) === v && 'chip-on'"
+                  @click="setPause(s, v)"
+                >
+                  {{ v === null ? `book · ${secs(bookGap(s))}` : v === 0 ? "run on" : secs(v) }}
+                </button>
+                <span class="ml-auto text-[10px] text-zinc-400"
+                  >silence is stitched, not rendered — nothing goes stale
+                  (<kbd>[</kbd>&nbsp;<kbd>]</kbd>)</span
+                >
+              </div>
+            </div>
+            <!-- a line that holds, or runs straight on, shown where the gap actually falls -->
+            <div
+              v-if="s.pause != null && nextOf(s)"
+              class="-mt-1 mb-3 flex items-center gap-2 font-sans text-[10px] leading-none text-zinc-400"
+            >
+              <span class="h-px flex-1 bg-zinc-200 dark:bg-zinc-800"></span>
+              <button
+                class="chip"
+                :title="`this line sets its own pause instead of the book's ${secs(bookGap(s))} — click to clear it`"
+                @click="setPause(s, null)"
+              >
+                <PauseIcon class="icon-sm icon-fill" />
+                {{ s.pause === 0 ? "runs straight on" : secs(s.pause) + " pause" }}
+              </button>
+              <span class="h-px flex-1 bg-zinc-200 dark:bg-zinc-800"></span>
             </div>
           </template>
           <div v-if="!rows.length" class="py-10 text-center text-sm text-zinc-500">
@@ -578,7 +819,14 @@ watch(open, (v) => {
             {{ c.name.split(" ")[0] }}</template
           >)</span
         >
-        · <kbd class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">c</kbd> cast
+        ·
+        <kbd class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">[</kbd>/<kbd
+          class="rounded bg-zinc-100 px-1 dark:bg-zinc-800"
+          >]</kbd
+        >
+        pause · <kbd class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">s</kbd> split ·
+        <kbd class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">m</kbd> join with next ·
+        <kbd class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">c</kbd> cast
       </div>
     </div>
 
@@ -587,7 +835,17 @@ watch(open, (v) => {
       v-if="reader.showCast"
       class="card max-h-[50vh] min-h-0 overflow-y-auto overflow-x-hidden p-3 lg:max-h-none"
     >
-      <div class="label mb-2">In this chapter · {{ inChapter.length }} speakers</div>
+      <div class="mb-2 flex items-center gap-2">
+        <span class="label">In this chapter · {{ inChapter.length }} speakers</span>
+        <button
+          class="icon-btn ml-auto"
+          title="hide the cast (c)"
+          aria-label="Hide the cast"
+          @click="reader.showCast = false"
+        >
+          <HideCastIcon class="icon-sm" />
+        </button>
+      </div>
       <div
         v-for="c in inChapter"
         :key="c.name"
@@ -631,8 +889,12 @@ watch(open, (v) => {
               >{{ a }}</span
             ></template
           >
-          <span v-if="c.isNew" class="rounded bg-amber-400/20 px-1 font-semibold text-amber-600"
-            >new · alias?</span
+          <RouterLink
+            v-if="c.isNew"
+            :to="`/book/${bookId}/cast`"
+            class="rounded bg-amber-400/20 px-1 font-semibold text-amber-600 hover:underline"
+            title="review this name on the Cast page — rename it, or merge it into the speaker it belongs to"
+            >new · alias?</RouterLink
           >
         </div>
         <div class="mt-2 pl-4 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
@@ -650,44 +912,21 @@ watch(open, (v) => {
             description hidden — spoilers · show
           </button>
         </div>
-        <div class="mt-2 flex flex-wrap items-center gap-1 pl-4 text-[11px]">
-          <span class="mr-auto min-w-0 truncate text-zinc-500"
-            >voice:
-            <b class="text-zinc-700 dark:text-zinc-300">{{
-              app.voiceLabel(app.effectiveVoice(bookId, c.name).ref) || "unset"
-            }}</b
-            ><span
-              v-if="
-                !app.effectiveVoice(bookId, c.name).own && app.effectiveVoice(bookId, c.name).ref
-              "
-            >
-              (Narrator’s)</span
-            ></span
-          >
+        <div class="mt-2 flex items-center gap-1 pl-4 text-[11px]">
+          <VoicePicker
+            v-model="c.voice"
+            :book-id="bookId"
+            :speaker="c.name"
+            size="xs"
+            class="min-w-0 flex-1"
+            block
+          />
           <button
-            class="rounded px-1.5 py-0.5 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            class="shrink-0 rounded px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
             @click="startRename(c)"
           >
             rename
           </button>
-          <UiCombobox
-            v-if="c.name !== 'Narrator'"
-            action
-            :options="
-              cast
-                .filter((x) => x.name !== c.name)
-                .map((o) => ({
-                  value: o.name,
-                  label: o.name,
-                  color: o.color,
-                  keywords: o.aliases.join(' '),
-                }))
-            "
-            placeholder="merge into…"
-            size="xs"
-            class="w-28"
-            @pick="(v) => app.mergeCharacter(bookId, c.name, String(v))"
-          />
         </div>
       </div>
 
@@ -709,8 +948,8 @@ watch(open, (v) => {
         </div>
       </div>
       <p class="mt-3 text-[11px] leading-relaxed text-zinc-400">
-        Click a name to filter the reader to their lines. Double-click to rename. Characters without
-        a voice of their own are read in the Narrator’s voice.
+        Click a name to filter the reader to their lines, double-click to rename, and set the voice
+        it is read in right here. A speaker with no voice of their own borrows the Narrator’s.
       </p>
     </div>
   </div>

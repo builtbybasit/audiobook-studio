@@ -1,6 +1,6 @@
 <script setup>
 // Narration stage: voices + endpoints on top, chapter picker + run estimate + job ledger below.
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useApp, isScripted, isNarrated } from '../stores/app'
 import EmptyState from '../components/EmptyState.vue'
@@ -11,11 +11,13 @@ import RunEstimate from './narration/RunEstimate.vue'
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from 'reka-ui'
 import JobLedger from './narration/JobLedger.vue'
 const app = useApp()
-const bookId = useRoute().params.bookId
+const route = useRoute()
+const bookId = route.params.bookId
 const tab = ref('voices')
 const collapsed = ref(false)
 const selected = ref([])
-const opened = ref(app.chaptersOf(bookId).find(c => c.narration === 'stale')?.id ?? app.chaptersOf(bookId).find(c => c.narration === 'failed')?.id ?? app.chaptersOf(bookId).find(isNarrated)?.id ?? 1)
+const opened = ref(Number(route.query.ch) || (app.chaptersOf(bookId).find(c => c.narration === 'stale')?.id ?? app.chaptersOf(bookId).find(c => c.narration === 'failed')?.id ?? app.chaptersOf(bookId).find(isNarrated)?.id ?? 1))
+watch(() => route.query.ch, (ch) => { if (ch) opened.value = Number(ch) })   // ?ch= from the command palette
 const anyScripted = computed(() => app.chaptersOf(bookId).some(isScripted))
 const chapter = computed(() => app.chapter(bookId, opened.value))
 const ready = computed(() => chapter.value && isScripted(chapter.value) && chapter.value.narration !== 'none')

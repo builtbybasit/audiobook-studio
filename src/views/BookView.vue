@@ -16,6 +16,8 @@ const unvoiced = computed(() => cast.value.filter(c => !c.voice && c.major).leng
 const suggestions = computed(() => app.mergeSuggestions(bookId).length)
 const exportsHere = computed(() => app.exports.filter(e => e.bookId === bookId && e.status === 'done'))
 const editing = ref(null), draft = ref(''), removing = ref(null)
+const dragging = ref(null), dragOver = ref(null)
+function drop(toIndex) { if (dragging.value != null) app.moveVolume(bookId, dragging.value, toIndex); dragging.value = null; dragOver.value = null }
 function saveName(v) { app.renameVolume(bookId, v.id, draft.value); editing.value = null }
 function remove(v) { const r = app.removeVolume(bookId, v.id); removing.value = null; if (r === 'book') router.push('/library') }
 const volStats = (v) => { const chs = chapters.value.filter(c => c.volumeId === v.id); return { n: chs.length, scripted: chs.filter(isScripted).length, narrated: chs.filter(isNarrated).length } }
@@ -77,9 +79,15 @@ const next = computed(() => {
 
     <div class="grid grid-cols-[1fr_340px] gap-4">
       <div class="card">
-        <div class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"><span class="label">Volumes</span><label class="ml-auto cursor-pointer text-xs text-zinc-400 hover:text-violet-500">＋ add volume<input type="file" accept=".epub" class="hidden" @change="e => app.addVolume(bookId, e.target.files?.[0]?.name ?? 'volume.epub')" /></label></div>
-        <div v-for="(v, vi) in book.volumes" :key="v.id" class="border-b border-zinc-100 px-4 py-3 last:border-0 dark:border-zinc-800/70">
-          <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"><span class="label">Volumes</span><span class="text-[11px] text-zinc-400">drag or ▲▼ to reorder · chapters renumber to match</span><label class="ml-auto cursor-pointer text-xs text-zinc-400 hover:text-violet-500">＋ add volume<input type="file" accept=".epub" class="hidden" @change="e => app.addVolume(bookId, e.target.files?.[0]?.name ?? 'volume.epub')" /></label></div>
+        <div v-for="(v, vi) in book.volumes" :key="v.id" class="border-b border-zinc-100 px-4 py-3 last:border-0 dark:border-zinc-800/70" :class="[dragOver === v.id && dragging !== v.id && 'bg-violet-50 dark:bg-violet-500/10', dragging === v.id && 'opacity-40']"
+          draggable="true" @dragstart="dragging = v.id" @dragend="dragging = null; dragOver = null" @dragover.prevent="dragOver = v.id" @dragleave="dragOver === v.id && (dragOver = null)" @drop.prevent="drop(vi)">
+          <div class="flex items-center gap-3">
+          <span class="flex flex-col items-center text-zinc-300 dark:text-zinc-600">
+            <button class="text-[10px] leading-none hover:text-violet-500 disabled:invisible" :disabled="vi === 0" title="move up" @click="app.moveVolume(bookId, v.id, vi - 1)">▲</button>
+            <span class="cursor-grab select-none text-sm leading-none" title="drag to reorder">⋮⋮</span>
+            <button class="text-[10px] leading-none hover:text-violet-500 disabled:invisible" :disabled="vi === book.volumes.length - 1" title="move down" @click="app.moveVolume(bookId, v.id, vi + 1)">▼</button>
+          </span>
           <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-zinc-100 font-mono text-sm dark:bg-zinc-800">{{ vi + 1 }}</span>
           <div class="group min-w-0 flex-1">
             <form v-if="editing === v.id" class="flex items-center gap-1" @submit.prevent="saveName(v)">

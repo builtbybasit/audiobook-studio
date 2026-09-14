@@ -1,6 +1,6 @@
 <script setup>
 // Scripting stage: chapter picker + run settings on the left, script reader on the right.
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useApp, isScripted } from '../stores/app'
 import ChapterPicker from '../components/ChapterPicker.vue'
@@ -9,9 +9,11 @@ import ScriptReader from './scripting/ScriptReader.vue'
 import ScriptSettings from './scripting/ScriptSettings.vue'
 
 const app = useApp()
-const bookId = useRoute().params.bookId
+const route = useRoute()
+const bookId = route.params.bookId
 const selected = ref([])
-const opened = ref(app.chaptersOf(bookId).find(c => c.scripting === 'fallback')?.id ?? app.chaptersOf(bookId).find(isScripted)?.id ?? 1)
+const opened = ref(Number(route.query.ch) || (app.chaptersOf(bookId).find(c => c.scripting === 'fallback')?.id ?? app.chaptersOf(bookId).find(isScripted)?.id ?? 1))
+watch(() => route.query.ch, (ch) => { if (ch) opened.value = Number(ch) })   // ?ch= from the command palette
 const chapter = computed(() => app.chapter(bookId, opened.value))
 const hasScript = computed(() => chapter.value && isScripted(chapter.value))
 const anyScripted = computed(() => app.chaptersOf(bookId).some(isScripted))

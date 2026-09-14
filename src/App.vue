@@ -1,8 +1,9 @@
 <script setup>
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useApp } from './stores/app'
 import JobIndicator from './components/JobIndicator.vue'
+import CommandPalette from './components/CommandPalette.vue'
 import { TooltipProvider } from 'reka-ui'
 
 const app = useApp()
@@ -19,6 +20,8 @@ const stages = [
 ]
 const activeKey = computed(() => route.path.match(/^\/book\/[^/]+$/) ? 'overview' : route.path.split('/').pop())
 const p = computed(() => app.currentBookId ? app.progress(app.currentBookId) : null)
+const palette = ref(null)
+const modKey = /Mac|iPhone/.test(navigator.platform) ? '⌘' : 'Ctrl'
 </script>
 
 <template>
@@ -83,8 +86,12 @@ const p = computed(() => app.currentBookId ? app.progress(app.currentBookId) : n
           <span class="capitalize text-zinc-900 dark:text-zinc-100">{{ activeKey }}</span>
           <span v-if="app.book"> · {{ app.book.title }}</span>
         </div>
-        <JobIndicator />
+        <div class="flex items-center gap-2">
+          <button class="flex items-center gap-2 rounded-md border border-zinc-200 px-2.5 py-1 text-xs text-zinc-500 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700" @click="palette.open = true">⌕ Jump or run… <kbd class="rounded border border-zinc-200 px-1 font-mono text-[10px] dark:border-zinc-700">{{ modKey }} K</kbd></button>
+          <JobIndicator />
+        </div>
       </header>
+      <CommandPalette ref="palette" />
       <main class="min-h-0 flex-1 overflow-auto">
         <RouterView />
       </main>

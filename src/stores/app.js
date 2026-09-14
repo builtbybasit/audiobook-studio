@@ -251,22 +251,37 @@ export const useApp = defineStore('app', {
       const gone = new Set(this.chapters[bookId].filter(c => c.volumeId === volId).map(c => c.id))
       for (const j of this.jobs) if (j.bookId === bookId && gone.has(j.chapterId) && (j.status === 'running' || j.status === 'queued')) this.cancelJob(j.id)
       this.jobs = this.jobs.filter(j => !(j.bookId === bookId && gone.has(j.chapterId)))
-      const keep = this.chapters[bookId].filter(c => !gone.has(c.id))
-      const map = {}; keep.forEach((c, i) => { map[c.id] = i + 1 })
+      book.volumes = book.volumes.filter(v => v.id !== volId)
+      this._renumber(bookId, this.chapters[bookId].filter(c => !gone.has(c.id)))
+      return 'volume'
+    },
+    // Volumes are sortable: chapters follow the volume order and are renumbered continuously.
+    moveVolume(bookId, volId, toIndex) {
+      const book = this.bookById(bookId); if (!book) return
+      const from = book.volumes.findIndex(v => v.id === volId); if (from < 0) return
+      toIndex = Math.max(0, Math.min(book.volumes.length - 1, toIndex)); if (from === toIndex) return
+      const vols = [...book.volumes]; const [v] = vols.splice(from, 1); vols.splice(toIndex, 0, v)
+      book.volumes = vols
+      const chs = this.chapters[bookId]
+      this._renumber(bookId, vols.flatMap(v => chs.filter(c => c.volumeId === v.id).sort((a, b) => a.volumeIndex - b.volumeIndex)))
+    },
+    // give `ordered` chapters ids 1..n in that order; re-key segments, remap jobs/exports, fix volume ranges
+    _renumber(bookId, ordered) {
+      const book = this.bookById(bookId)
+      const map = {}; ordered.forEach((c, i) => { map[c.id] = i + 1 })
       const segs = {}
       for (const [k, v] of Object.entries(this.segments)) {
         if (!k.startsWith(bookId + ':')) { segs[k] = v; continue }
         const old = Number(k.split(':')[1]); if (map[old]) segs[key(bookId, map[old])] = v
       }
       this.segments = segs
-      keep.forEach(c => { c.id = map[c.id]; c.index = c.id })
-      this.chapters[bookId] = keep
-      book.volumes = book.volumes.filter(v => v.id !== volId)
+      ordered.forEach(c => { c.id = map[c.id]; c.index = c.id })
+      this.chapters[bookId] = ordered
       let from = 1
-      for (const v of book.volumes) { const n = keep.filter(c => c.volumeId === v.id).length; v.from = from; v.to = from + n - 1; from += n; keep.filter(c => c.volumeId === v.id).forEach((c, i) => c.volumeIndex = i + 1) }
-      this.exports = this.exports.map(e => e.bookId !== bookId ? e : { ...e, chapterIds: e.chapterIds.filter(id => !gone.has(id)).map(id => map[id]) }).filter(e => e.bookId !== bookId || e.chapterIds.length)
+      for (const v of book.volumes) { const mine = ordered.filter(c => c.volumeId === v.id); v.from = from; v.to = from + mine.length - 1; from += mine.length; mine.forEach((c, i) => c.volumeIndex = i + 1) }
+      for (const j of this.jobs) if (j.bookId === bookId && j.chapterId != null && map[j.chapterId]) j.chapterId = map[j.chapterId]
+      this.exports = this.exports.map(e => e.bookId !== bookId ? e : { ...e, chapterIds: e.chapterIds.filter(id => map[id]).map(id => map[id]) }).filter(e => e.bookId !== bookId || e.chapterIds.length)
       for (const e of this.exports) if (e.bookId === bookId) e.chapters = e.chapterIds.length
-      return 'volume'
     },
     removeBook(bookId) {
       for (const j of this.jobs) if (j.bookId === bookId && (j.status === 'running' || j.status === 'queued')) this.cancelJob(j.id)

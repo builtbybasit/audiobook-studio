@@ -17,6 +17,7 @@ import {
   ComboboxTrigger,
   ComboboxViewport,
 } from "reka-ui";
+import { Check as CheckIcon, ChevronDown as ChevronDownIcon } from "@lucide/vue";
 import type { UiOption } from "@/ui/types";
 
 const props = withDefaults(
@@ -141,7 +142,9 @@ const groups = computed(() => {
         @keydown="onKey"
         @blur="onBlur"
       />
-      <ComboboxTrigger class="ml-1 shrink-0 text-zinc-400">▾</ComboboxTrigger>
+      <ComboboxTrigger class="ml-1 shrink-0 text-zinc-400"
+        ><ChevronDownIcon class="icon-sm"
+      /></ComboboxTrigger>
     </ComboboxAnchor>
     <ComboboxPortal>
       <ComboboxContent
@@ -176,8 +179,8 @@ const groups = computed(() => {
                 <span class="truncate">{{ o.label }}</span>
                 <span v-if="o.hint" class="ml-2 text-[10px] text-zinc-400">{{ o.hint }}</span>
                 <ComboboxItemIndicator v-if="!action" class="ml-auto pl-2 text-violet-500"
-                  >✓</ComboboxItemIndicator
-                >
+                  ><CheckIcon class="icon-sm"
+                /></ComboboxItemIndicator>
               </ComboboxItem>
             </ComboboxGroup>
           </template>

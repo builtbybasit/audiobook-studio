@@ -1,8 +1,116 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* shadcn-vue's semantic tokens, pointed at this app's own palette rather than shadcn's neutral
+   theme: anything added with `npx shadcn-vue add` comes out in zinc + violet and sits next to the
+   hand-written components without a reskin. Retheme here, not in the copied component files. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
 
 :root {
   color-scheme: light dark;
+
+  /* shadcn tokens -> this app's palette: body bg/text, .card, .ui-popup, .btn-primary,
+     .btn-ghost hover, .input and the violet focus ring all keep the values they already had. */
+  --radius: 0.5rem;
+  --background: theme(colors.zinc.100);
+  --foreground: theme(colors.zinc.900);
+  --card: theme(colors.white);
+  --card-foreground: theme(colors.zinc.900);
+  --popover: theme(colors.white);
+  --popover-foreground: theme(colors.zinc.900);
+  --primary: theme(colors.violet.600);
+  --primary-foreground: theme(colors.white);
+  --secondary: theme(colors.zinc.200);
+  --secondary-foreground: theme(colors.zinc.900);
+  --muted: theme(colors.zinc.200);
+  --muted-foreground: theme(colors.zinc.500);
+  --accent: theme(colors.violet.50);
+  --accent-foreground: theme(colors.violet.700);
+  --destructive: theme(colors.red.600);
+  --destructive-foreground: theme(colors.white);
+  --border: theme(colors.zinc.200);
+  --input: theme(colors.zinc.300);
+  --ring: theme(colors.violet.500);
+
+
+  /* Chart series colours, in the order a stacked series is drawn. Kept as variables so the
+     Unovis SVG and the HTML legend beside it are painted from one source. */
+  --chart-1: theme(colors.violet.500);
+  --chart-2: theme(colors.sky.400);
+  --chart-3: theme(colors.emerald.500);
+  --chart-4: theme(colors.red.500);
+  --chart-5: theme(colors.amber.500);
+  --chart-6: theme(colors.zinc.400);
+  --chart-grid: theme(colors.zinc.200);
+  --chart-tick: theme(colors.zinc.400);
+}
+.dark {
+  --background: theme(colors.zinc.950);
+  --foreground: theme(colors.zinc.100);
+  --card: theme(colors.zinc.900);
+  --card-foreground: theme(colors.zinc.100);
+  --popover: theme(colors.zinc.900);
+  --popover-foreground: theme(colors.zinc.100);
+  --primary: theme(colors.violet.600);
+  --primary-foreground: theme(colors.white);
+  --secondary: theme(colors.zinc.800);
+  --secondary-foreground: theme(colors.zinc.100);
+  --muted: theme(colors.zinc.800);
+  --muted-foreground: theme(colors.zinc.400);
+  --accent: color-mix(in oklab, theme(colors.violet.500) 15%, transparent);
+  --accent-foreground: theme(colors.violet.200);
+  --destructive: theme(colors.red.500);
+  --destructive-foreground: theme(colors.white);
+  --border: theme(colors.zinc.800);
+  --input: theme(colors.zinc.700);
+  --ring: theme(colors.violet.500);
+
+  --chart-2: theme(colors.sky.500);
+  --chart-6: theme(colors.zinc.500);
+  --chart-grid: theme(colors.zinc.800);
+  --chart-tick: theme(colors.zinc.500);
+}
+
+/* Unovis draws its own SVG; these line it up with the rest of the app's type and hairlines. */
+.vis-xy-container {
+  --vis-axis-grid-color: var(--chart-grid);
+  --vis-axis-tick-color: var(--chart-grid);
+  --vis-axis-tick-label-color: var(--chart-tick);
+  --vis-axis-tick-label-font-size: 10px;
+  --vis-axis-font-family: inherit;
+  --vis-dark-axis-grid-color: var(--chart-grid);
+  --vis-dark-axis-tick-color: var(--chart-grid);
+  --vis-dark-axis-tick-label-color: var(--chart-tick);
 }
 body {
   @apply bg-zinc-100 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
@@ -29,6 +137,74 @@ body {
 }
 .label {
   @apply text-[11px] font-semibold uppercase tracking-wider text-zinc-500;
+}
+
+/* ledger rows: one icon size for every row action, secondary ones only on hover / keyboard focus
+   (a touch device has no hover, so there they stay visible) */
+@layer components {
+  /* Lucide icons: one of three sizes, aligned with the text they sit in */
+  .icon {
+    @apply inline-block h-3.5 w-3.5 shrink-0 align-[-0.2em];
+  }
+  .icon-sm {
+    @apply inline-block h-3 w-3 shrink-0 align-[-0.15em];
+  }
+  .icon-lg {
+    @apply inline-block h-4 w-4 shrink-0 align-[-0.22em];
+  }
+  /* transport triangles/bars read better solid at this size */
+  .icon-fill {
+    fill: currentColor;
+  }
+  .icon-btn {
+    @apply grid h-5 w-5 shrink-0 place-items-center rounded border border-zinc-300 text-[10px] leading-none text-zinc-500 transition-colors hover:border-violet-400 hover:text-violet-600 dark:border-zinc-700 dark:text-zinc-400 dark:hover:border-violet-500 dark:hover:text-violet-400;
+  }
+  .icon-btn-on {
+    @apply border-violet-400 text-violet-600 dark:border-violet-500 dark:text-violet-400;
+  }
+  .icon-btn-flag {
+    @apply border-amber-400 bg-amber-400/15 text-amber-600 hover:border-amber-500 hover:text-amber-700 dark:text-amber-400;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-zinc-300 px-2 py-0.5 text-[11px] leading-normal text-zinc-600 transition-colors hover:border-violet-400 hover:text-violet-600 dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-violet-500 dark:hover:text-violet-400;
+  }
+  .chip-on {
+    @apply border-violet-400 bg-violet-500/10 text-violet-700 dark:border-violet-500 dark:text-violet-300;
+  }
+  .chip-off {
+    @apply border-dashed text-zinc-400 dark:text-zinc-500;
+  }
+  .icon-btn-play {
+    @apply border-violet-600 bg-violet-600 text-white hover:border-violet-500 hover:bg-violet-500 hover:text-white;
+  }
+}
+
+@media (hover: hover) {
+  .row-tool {
+    visibility: hidden;
+  }
+  tr[data-row]:hover .row-tool,
+  tr[data-row]:focus .row-tool,
+  tr[data-row]:focus-within .row-tool {
+    visibility: visible;
+  }
+}
+
+/* a word the pronunciation dictionary rewrites: the prose stays as written, the hint is underneath */
+.lex {
+  @apply cursor-help underline decoration-violet-400 decoration-dotted underline-offset-[3px];
+}
+
+/* split mode in the script reader: a click target in every word gap, loud at sentence ends */
+.split-gap {
+  @apply mx-[1px] rounded px-[3px] align-baseline font-sans text-[10px] leading-none text-violet-500 opacity-0 transition-opacity;
+}
+.split-gap-strong {
+  @apply opacity-50;
+}
+.split-gap:hover,
+.split-gap:focus-visible {
+  @apply bg-violet-600 text-white opacity-100 outline-none;
 }
 
 /* reka-ui wrappers */

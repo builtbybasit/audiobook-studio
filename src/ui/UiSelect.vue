@@ -15,6 +15,7 @@ import {
   SelectValue,
   SelectViewport,
 } from "reka-ui";
+import { Check as CheckIcon, ChevronDown as ChevronDownIcon } from "@lucide/vue";
 import type { UiOption } from "@/ui/types";
 
 const props = withDefaults(
@@ -84,7 +85,7 @@ const currentLabel = computed(() =>
       <SelectValue :placeholder="placeholder" class="min-w-0 flex-1 truncate text-left">
         <slot name="value" :label="currentLabel">{{ currentLabel || placeholder }}</slot>
       </SelectValue>
-      <span class="ml-1 shrink-0 text-zinc-400" aria-hidden>▾</span>
+      <ChevronDownIcon class="ml-1 icon-sm text-zinc-400" aria-hidden />
     </SelectTrigger>
     <SelectPortal>
       <SelectContent
@@ -103,9 +104,8 @@ const currentLabel = computed(() =>
             class="ui-item italic text-zinc-500"
             ><SelectItemText>{{ nullValue }}</SelectItemText
             ><SelectItemIndicator class="ml-auto text-violet-500"
-              >✓</SelectItemIndicator
-            ></SelectItem
-          >
+              ><CheckIcon class="icon-sm" /></SelectItemIndicator
+          ></SelectItem>
           <template v-for="[g, opts] in groups" :key="g">
             <SelectGroup>
               <SelectLabel
@@ -127,7 +127,9 @@ const currentLabel = computed(() =>
                 ></span>
                 <SelectItemText>{{ o.label }}</SelectItemText>
                 <span v-if="o.hint" class="ml-2 text-[10px] text-zinc-400">{{ o.hint }}</span>
-                <SelectItemIndicator class="ml-auto pl-2 text-violet-500">✓</SelectItemIndicator>
+                <SelectItemIndicator class="ml-auto pl-2 text-violet-500"
+                  ><CheckIcon class="icon-sm"
+                /></SelectItemIndicator>
               </SelectItem>
             </SelectGroup>
           </template>

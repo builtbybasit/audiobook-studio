@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // modelValue: true | false | 'indeterminate'
 import { CheckboxIndicator, CheckboxRoot } from "reka-ui";
+import { Check as CheckIcon, Minus as MinusIcon } from "@lucide/vue";
 withDefaults(
   defineProps<{
     modelValue?: boolean | "indeterminate";
@@ -27,7 +28,7 @@ const emit = defineEmits<{
       class="text-white leading-none"
       :class="size === 'xs' ? 'text-[9px]' : 'text-[11px]'"
     >
-      <template v-if="modelValue === 'indeterminate'">−</template><template v-else>✓</template>
+      <component :is="modelValue === 'indeterminate' ? MinusIcon : CheckIcon" class="icon-sm" />
     </CheckboxIndicator>
   </CheckboxRoot>
 </template>

@@ -1,3 +1,5 @@
+import type { Component } from "vue";
+
 /** One row in the UiSelect / UiCombobox / UiToggleGroup pickers. */
 export interface UiOption {
   value: string | number | null;
@@ -13,4 +15,6 @@ export interface UiOption {
   disabled?: boolean;
   /** extra classes, used by UiToggleGroup */
   class?: string;
+  /** leading icon, used by UiToggleGroup */
+  icon?: Component;
 }

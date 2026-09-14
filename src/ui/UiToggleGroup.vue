@@ -32,7 +32,7 @@ const emit = defineEmits<{ "update:modelValue": [string | number | null] }>();
       :value="o.value"
       class="capitalize transition-colors hover:bg-zinc-100 data-[state=on]:bg-violet-600 data-[state=on]:text-white dark:hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-400"
       :class="[size === 'xs' ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-sm', o.class]"
-      >{{ o.label }}</ToggleGroupItem
+      ><component v-if="o.icon" :is="o.icon" class="icon-sm" />{{ o.label }}</ToggleGroupItem
     >
   </ToggleGroupRoot>
 </template>

@@ -1,12 +1,15 @@
 <script setup lang="ts">
 // Narration stage: voices + endpoints on top, chapter picker + run estimate + job ledger below.
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useApp, isScripted, isNarrated } from "@/stores/app";
 import EmptyState from "@/components/EmptyState.vue";
+import { AudioLines as NarrationIcon } from "@lucide/vue";
+import { ChevronDown as ChevronDownIcon, ChevronUp as ChevronUpIcon } from "@lucide/vue";
 import ChapterPicker from "@/components/ChapterPicker.vue";
 import VoiceTable from "@/views/narration/VoiceTable.vue";
 import EndpointPanel from "@/views/narration/EndpointPanel.vue";
+import LexiconPanel from "@/views/narration/LexiconPanel.vue";
 import RunEstimate from "@/views/narration/RunEstimate.vue";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import JobLedger from "@/views/narration/JobLedger.vue";
@@ -15,6 +18,14 @@ const app = useApp();
 const route = useRoute();
 const bookId = useBookId();
 const tab = ref("voices");
+const lexicon = ref<InstanceType<typeof LexiconPanel> | null>(null);
+/** the ledger's pronunciation flag hands a word straight to the dictionary */
+async function toDictionary(word: string) {
+  tab.value = "pronunciation";
+  collapsed.value = false;
+  await nextTick();
+  lexicon.value?.prefill(word);
+}
 const collapsed = ref(false);
 const selected = ref([]);
 const opened = ref(
@@ -31,6 +42,11 @@ watch(
   },
 ); // ?ch= from the command palette
 const anyScripted = computed(() => app.chaptersOf(bookId).some(isScripted));
+/** The tab carries the cast's progress, so the Voices panel needs no summary line of its own. */
+const voices = computed(() => {
+  const cast = app.charactersOf(bookId);
+  return { assigned: cast.filter((c) => c.voice).length, total: cast.length };
+});
 const chapter = computed(() => app.chapter(bookId, opened.value));
 const ready = computed(
   () => chapter.value && isScripted(chapter.value) && chapter.value.narration !== "none",
@@ -45,7 +61,7 @@ const ready = computed(
           value="voices"
           class="border-b-2 border-transparent px-3 py-2 text-sm text-zinc-500 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:data-[state=active]:text-zinc-100"
           >Voices
-          <span class="text-zinc-400">{{ app.charactersOf(bookId).length }}</span></TabsTrigger
+          <span class="text-zinc-400">{{ voices.assigned }}/{{ voices.total }}</span></TabsTrigger
         >
         <TabsTrigger
           value="endpoints"
@@ -55,13 +71,23 @@ const ready = computed(
             >{{ app.enabledEndpoints.length }}/{{ app.endpoints.length }} on</span
           ></TabsTrigger
         >
+        <TabsTrigger
+          value="pronunciation"
+          class="border-b-2 border-transparent px-3 py-2 text-sm text-zinc-500 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:data-[state=active]:text-zinc-100"
+          >Pronunciation
+          <span class="text-zinc-400">{{ app.lexiconOf(bookId).length }}</span></TabsTrigger
+        >
         <button class="ml-auto px-3 py-2 text-xs text-zinc-500" @click="collapsed = !collapsed">
-          {{ collapsed ? "▾ expand" : "▴ collapse" }}
+          <component :is="collapsed ? ChevronDownIcon : ChevronUpIcon" class="icon-sm" />
+          {{ collapsed ? "expand" : "collapse" }}
         </button>
       </TabsList>
       <div v-show="!collapsed" class="max-h-[420px] overflow-auto">
         <TabsContent value="voices"><VoiceTable :book-id="bookId" /></TabsContent>
         <TabsContent value="endpoints"><EndpointPanel :book-id="bookId" /></TabsContent>
+        <TabsContent value="pronunciation"
+          ><LexiconPanel ref="lexicon" :book-id="bookId"
+        /></TabsContent>
       </div>
     </TabsRoot>
 
@@ -82,10 +108,16 @@ const ready = computed(
         <div class="card shrink-0 p-3"><RunEstimate :book-id="bookId" :selected="selected" /></div>
       </div>
       <div class="min-h-0 min-w-0 max-lg:h-[70vh]">
-        <JobLedger v-if="ready" :book-id="bookId" :chapter-id="opened" :key="opened" />
+        <JobLedger
+          v-if="ready"
+          :key="opened"
+          :book-id="bookId"
+          :chapter-id="opened"
+          @pronounce="toDictionary"
+        />
         <EmptyState
           v-else-if="!anyScripted"
-          icon="♪"
+          :icon="NarrationIcon"
           title="Nothing to narrate yet"
           body="Narration needs a script. Script at least one chapter first, then assign voices here."
           :steps="[
@@ -100,7 +132,7 @@ const ready = computed(
         </EmptyState>
         <EmptyState
           v-else-if="chapter && !isScripted(chapter)"
-          icon="♪"
+          :icon="NarrationIcon"
           :title="chapter.title"
           body="This chapter has no script yet. Script it first, then narrate."
         >
@@ -110,7 +142,7 @@ const ready = computed(
         </EmptyState>
         <EmptyState
           v-else
-          icon="♪"
+          :icon="NarrationIcon"
           :title="chapter?.title"
           :body="`${app.segmentsOf(bookId, opened).length} segments ready. Each goes to the endpoint that owns its speaker’s voice; ${
             app

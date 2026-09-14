@@ -5,6 +5,7 @@ import { splitText, partsFor } from "@/lib/split";
 import { speak, silenceOf, pacingOrDefault, hitsIn } from "@/lib/speech";
 import { newProfile, profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
 import { keyring } from "@/lib/keyring";
+import { presetById } from "@/lib/endpoints";
 import { logJob, jobWaiting, startJob } from "@/lib/jobActivity";
 import { toast as tf } from "vue-toastflow";
 import type { ToastButton } from "vue-toastflow";
@@ -1975,8 +1976,10 @@ export const useApp = defineStore("app", {
     },
 
     // ---------- endpoints & their voices ----------
-    addEndpoint(): Endpoint {
-      this.endpoints.push({
+    /** `presetId` fills in what a provider pins down (base URL, model, billing, limits); every
+     *  field stays editable afterwards. Without one this is the blank OpenAI-shaped endpoint. */
+    addEndpoint(presetId?: string): Endpoint {
+      const base: Endpoint = {
         id: "ep" + Date.now(),
         name: "New endpoint",
         baseUrl: "https://",
@@ -1995,7 +1998,8 @@ export const useApp = defineStore("app", {
         rateLimits: 0,
         backoffUntil: 0,
         fetching: false,
-      });
+      };
+      this.endpoints.push(Object.assign(base, presetId ? presetById(presetId)?.apply : undefined));
       return this.endpoints[this.endpoints.length - 1];
     },
     removeEndpoint(id: string): void {

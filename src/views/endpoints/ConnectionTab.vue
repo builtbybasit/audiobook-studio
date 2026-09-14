@@ -20,10 +20,13 @@ import {
 import {
   KIND_LABEL,
   KIND_PATH,
+  TTS_PRESETS,
   endpointErrors,
   maybeMoney,
   opsOf,
+  presetById,
   relative,
+  ttsRequestPath,
 } from "@/lib/endpoints";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import {
@@ -119,6 +122,40 @@ function discard() {
   discardDraft(props.u);
   confirming.value = false;
 }
+// ---------- presets ----------
+// A preset fills in what the provider pins down. The connection half (base URL, model, whether a
+// key is needed) goes into the draft so it is saved like any other provider change; the rest —
+// billing, limits, concurrency — is written straight onto the endpoint, the way the Pricing tab
+// writes it, because nothing stages those.
+const PRESET_OPTIONS = [
+  { value: "", label: "Start from a preset…", hint: "leaves every field as it is" },
+  ...TTS_PRESETS.map((p) => ({ value: p.id, label: p.label, hint: p.hint })),
+];
+const presetId = ref("");
+/** Where a request actually goes. Fish Audio serves /tts, not the OpenAI-style /audio/speech, so
+ *  this follows the draft and updates the moment a preset or a hand-typed base URL changes it. */
+const path = computed(() =>
+  props.u.kind === "tts" ? ttsRequestPath(draft.value) : KIND_PATH[props.u.kind],
+);
+const presetNote = computed(() => (presetId.value ? presetById(presetId.value)?.note : undefined));
+
+function usePreset(id: string | number | null) {
+  const preset = presetById(String(id ?? ""));
+  presetId.value = preset?.id ?? "";
+  if (!preset) return;
+  const { name, model, baseUrl, needsKey, ...rest } = preset.apply;
+  if (name !== undefined) draft.value.name = name;
+  if (model !== undefined) draft.value.model = model;
+  if (baseUrl !== undefined) draft.value.baseUrl = baseUrl;
+  if (needsKey !== undefined) draft.value.needsKey = needsKey;
+  const endpoint = app.endpoints.find((e) => e.id === props.u.id);
+  if (endpoint) Object.assign(endpoint, rest);
+  app.toast(`${preset.label} defaults filled in`, {
+    kind: "success",
+    description: "Review the connection below, then Save. Nothing is dispatched until you do.",
+  });
+}
+
 function newCredential() {
   const id = addCredential(draft.value.name || "New credential");
   draft.value.credentialId = id;
@@ -156,6 +193,25 @@ function newCredential() {
         recorded is re-priced.
       </p>
     </div>
+
+    <section v-if="u.kind === 'tts'" class="card p-3">
+      <h3 class="label mb-2">Provider</h3>
+      <div class="flex flex-wrap items-center gap-2">
+        <UiSelect
+          :model-value="presetId"
+          :options="PRESET_OPTIONS"
+          class="w-72"
+          aria-label="Start from a provider preset"
+          @update:model-value="usePreset"
+        />
+        <span class="text-[11px] text-zinc-500">
+          Fills in the base URL, model and billing. Every field stays editable.
+        </span>
+      </div>
+      <p v-if="presetNote" class="mt-2 text-[11px] leading-relaxed text-zinc-500">
+        {{ presetNote }}
+      </p>
+    </section>
 
     <div class="grid gap-3 lg:grid-cols-2">
       <!-- the saved configuration -->
@@ -211,7 +267,7 @@ function newCredential() {
             />
             <span class="block text-[11px] font-normal text-zinc-500"
               >Any OpenAI-compatible server. Requests append
-              <code class="font-mono">{{ KIND_PATH[u.kind] }}</code
+              <code class="font-mono">{{ path }}</code
               >; include <code class="font-mono">/v1</code> only if your provider needs it.</span
             ></label
           >
@@ -317,9 +373,7 @@ function newCredential() {
           <h3 class="label mb-1">Connection test</h3>
           <p class="break-words text-[11px] leading-relaxed text-zinc-500">
             Sends <b>one</b> request to
-            <code class="font-mono"
-              >{{ (u.baseUrl || "…").replace(/\/$/, "") }}{{ KIND_PATH[u.kind] }}</code
-            >
+            <code class="font-mono">{{ (u.baseUrl || "…").replace(/\/$/, "") }}{{ path }}</code>
             using
             <b>{{ usingCredential ? usingCredential.label : "this endpoint’s own key" }}</b
             >. It touches no book, queues no job, and writes nothing to any chapter.

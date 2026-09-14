@@ -125,6 +125,117 @@ export const KIND_PATH: Record<EndpointKind, string> = {
   tts: "/audio/speech",
 };
 
+// ---------- presets ----------
+
+/** What a provider's "add this endpoint" form should be filled in with. Everything here is a
+ *  starting point the user can still edit; only fields a provider genuinely pins down are set.
+ *  The app never calls a provider, so these are documentation as much as defaults. */
+export interface TtsPreset {
+  id: string;
+  label: string;
+  hint: string;
+  /** shown under the picker once chosen — the caveat that belongs with this choice */
+  note?: string;
+  apply: Partial<Endpoint>;
+}
+
+export const TTS_PRESETS: TtsPreset[] = [
+  {
+    id: "fish-free",
+    label: "Fish Audio · S2.1 Pro Free",
+    hint: "free tier, no hard character cap",
+    note:
+      "Free through 30 November 2026 under Fish Audio's fair-use policy, with no SLA and " +
+      "best-effort latency. Requests may be used to improve their model, and products over " +
+      "$1M ARR are asked to contact them first. A voice is a reference_id from your Fish Audio " +
+      "library, not a named voice.",
+    apply: {
+      name: "Fish Audio (free)",
+      baseUrl: "https://api.fish.audio/v1",
+      model: "s2.1-pro-free",
+      needsKey: true,
+      price: 0,
+      billing: { unit: "chars", rate: 0 },
+      // no documented per-request cap; their own chunking tops out at 300 characters a chunk
+      maxChars: 0,
+      splitAt: "sentence",
+      concurrency: 4,
+      latency: 1200,
+      failRate: 0.02,
+    },
+  },
+  {
+    id: "fish-pro",
+    label: "Fish Audio · S2.1 Pro",
+    hint: "paid tier, same API",
+    note:
+      "Same endpoint and request shape as the free tier with a different `model` header. Set the " +
+      "rate from your Fish Audio plan — it is left unknown rather than guessed, so the estimate " +
+      "says so instead of showing $0.",
+    apply: {
+      name: "Fish Audio",
+      baseUrl: "https://api.fish.audio/v1",
+      model: "s2.1-pro",
+      needsKey: true,
+      price: 0,
+      billing: { unit: "chars", rate: null },
+      maxChars: 0,
+      splitAt: "sentence",
+      concurrency: 4,
+      latency: 1100,
+      failRate: 0.02,
+    },
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    hint: "gpt-4o-mini-tts",
+    apply: {
+      name: "OpenAI",
+      baseUrl: "https://api.openai.com/v1",
+      model: "gpt-4o-mini-tts",
+      needsKey: true,
+      price: 12,
+      billing: { unit: "chars", rate: 12 },
+      maxChars: 4096,
+      splitAt: "sentence",
+      concurrency: 3,
+      latency: 1400,
+      failRate: 0.01,
+    },
+  },
+  {
+    id: "compatible",
+    label: "OpenAI-compatible server",
+    hint: "Kokoro-FastAPI, Orpheus, a Piper bridge",
+    apply: {
+      name: "Local server",
+      baseUrl: "http://127.0.0.1:8880/v1",
+      model: "kokoro",
+      needsKey: false,
+      price: 0,
+      billing: { unit: "chars", rate: 0 },
+      maxChars: 500,
+      splitAt: "sentence",
+      concurrency: 2,
+      latency: 2600,
+      failRate: 0.025,
+    },
+  },
+];
+
+export const presetById = (id: string): TtsPreset | undefined =>
+  TTS_PRESETS.find((p) => p.id === id);
+
+/** Fish Audio takes the model in a header and the voice as `reference_id`, so the path everything
+ *  else uses does not apply. Kept here so the Connection tab can show the right request line. */
+export const isFishAudio = (e: Pick<Endpoint, "baseUrl">): boolean =>
+  /(^|\/\/)([a-z0-9-]+\.)*fish\.audio(\/|$)/i.test(e.baseUrl);
+
+export function ttsRequestPath(e: Pick<Endpoint, "baseUrl">): string {
+  return isFishAudio(e) ? "/tts" : KIND_PATH.tts;
+}
+
 // ---------- billing ----------
 
 export const BILLING_UNITS: { value: TtsBillingUnit; label: string; hint: string }[] = [

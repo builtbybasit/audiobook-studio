@@ -2,55 +2,194 @@
    layout, motion and progress timing below are ours. The card itself is Tailwind in Toasts.vue. */
 
 /* ---- stack layout (class names come from ToastContainer; inline styles carry offset/width) ---- */
-.tf-toast-root { position: fixed; inset: 0; pointer-events: none; z-index: 70; }
-.tf-toast-stack { position: absolute; display: flex; align-items: flex-start; }
-.tf-toast-stack--bottom { align-items: flex-end; }
-.tf-toast-stack--left { justify-content: flex-start; }
-.tf-toast-stack--center { justify-content: center; }
-.tf-toast-stack--right { justify-content: flex-end; }
-.tf-toast-stack-inner { position: relative; display: flex; flex-direction: column; width: 100%; box-sizing: border-box; }
-.tf-toast-stack-inner--bottom { min-height: 100%; justify-content: flex-end; }
-.tf-toast-item { position: relative; width: 100%; pointer-events: auto; z-index: 1; }
-.tf-toast-motion { width: 100%; transform-origin: center; backface-visibility: hidden; }
-.tf-toast-move-noop { transition: none !important; }   /* keeps Vue's FLIP off; the container animates moves itself */
-.Toastflow__animation-move { transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1); will-change: transform; }
+.tf-toast-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 70;
+}
+.tf-toast-stack {
+  position: absolute;
+  display: flex;
+  align-items: flex-start;
+}
+.tf-toast-stack--bottom {
+  align-items: flex-end;
+}
+.tf-toast-stack--left {
+  justify-content: flex-start;
+}
+.tf-toast-stack--center {
+  justify-content: center;
+}
+.tf-toast-stack--right {
+  justify-content: flex-end;
+}
+.tf-toast-stack-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  box-sizing: border-box;
+}
+.tf-toast-stack-inner--bottom {
+  min-height: 100%;
+  justify-content: flex-end;
+}
+.tf-toast-item {
+  position: relative;
+  width: 100%;
+  pointer-events: auto;
+  z-index: 1;
+}
+.tf-toast-motion {
+  width: 100%;
+  transform-origin: center;
+  backface-visibility: hidden;
+}
+.tf-toast-move-noop {
+  transition: none !important;
+} /* keeps Vue's FLIP off; the container animates moves itself */
+.Toastflow__animation-move {
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
 
 /* ---- enter / leave: slide up from the edge, settle with a soft overshoot; leave slides away sideways ---- */
-.tf-toast-item[data-position^="bottom-"] { --toast-from-y: 14px; }
-.tf-toast-item[data-position^="top-"]    { --toast-from-y: -14px; }
+.tf-toast-item[data-position^="bottom-"] {
+  --toast-from-y: 14px;
+}
+.tf-toast-item[data-position^="top-"] {
+  --toast-from-y: -14px;
+}
 .Toastflow__animation-enter-from > .tf-toast-motion,
-.Toastflow__animation-appear-from > .tf-toast-motion { opacity: 0; transform: translate3d(0, var(--toast-from-y), 0) scale(0.97); }
+.Toastflow__animation-appear-from > .tf-toast-motion {
+  opacity: 0;
+  transform: translate3d(0, var(--toast-from-y), 0) scale(0.97);
+}
 .Toastflow__animation-enter-active > .tf-toast-motion,
-.Toastflow__animation-appear-active > .tf-toast-motion { transition: opacity 220ms ease-out, transform 320ms cubic-bezier(0.34, 1.3, 0.64, 1); }
+.Toastflow__animation-appear-active > .tf-toast-motion {
+  transition:
+    opacity 220ms ease-out,
+    transform 320ms cubic-bezier(0.34, 1.3, 0.64, 1);
+}
 .Toastflow__animation-enter-to > .tf-toast-motion,
-.Toastflow__animation-appear-to > .tf-toast-motion { opacity: 1; transform: none; }
-.Toastflow__animation-leave-from > .tf-toast-motion { opacity: 1; transform: none; }
-.Toastflow__animation-leave-active > .tf-toast-motion { transition: opacity 180ms ease-in, transform 200ms ease-in; }
-.Toastflow__animation-leave-to > .tf-toast-motion { opacity: 0; transform: translate3d(24px, 0, 0) scale(0.98); }
-.Toastflow__animation-clearAll .tf-toast-motion { animation: toast-clear 220ms ease-in both; }
-@keyframes toast-clear { to { opacity: 0; transform: translate3d(24px, 0, 0); } }
+.Toastflow__animation-appear-to > .tf-toast-motion {
+  opacity: 1;
+  transform: none;
+}
+.Toastflow__animation-leave-from > .tf-toast-motion {
+  opacity: 1;
+  transform: none;
+}
+.Toastflow__animation-leave-active > .tf-toast-motion {
+  transition:
+    opacity 180ms ease-in,
+    transform 200ms ease-in;
+}
+.Toastflow__animation-leave-to > .tf-toast-motion {
+  opacity: 0;
+  transform: translate3d(24px, 0, 0) scale(0.98);
+}
+.Toastflow__animation-clearAll .tf-toast-motion {
+  animation: toast-clear 220ms ease-in both;
+}
+@keyframes toast-clear {
+  to {
+    opacity: 0;
+    transform: translate3d(24px, 0, 0);
+  }
+}
 /* a duplicate or an update nudges the card so the eye lands on it */
-.Toastflow__animation-bump, .Toastflow__animation-update { animation: toast-bump 360ms cubic-bezier(0.34, 1.56, 0.64, 1); }
-@keyframes toast-bump { 0% { transform: scale(1); } 35% { transform: scale(1.025); } 100% { transform: scale(1); } }
+.Toastflow__animation-bump,
+.Toastflow__animation-update {
+  animation: toast-bump 360ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes toast-bump {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.025);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
 
 /* ---- swipe to dismiss (pointer handlers come from getRootProps) ---- */
-.tf-toast--swipe-enabled { touch-action: pan-y; -webkit-user-select: none; user-select: none; }
+.tf-toast--swipe-enabled {
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+}
 
 /* ---- progress = time left; the library sets --tf-toast-progress-duration and pauses via .tf-toast--paused ---- */
-.tf-toast-progress-wrapper { position: absolute; left: 0; right: 0; bottom: 0; }
-.tf-toast-progress { height: 2px; width: 100%; overflow: hidden; }
-.tf-toast-progress-bar { height: 100%; width: 100%; transform-origin: left; animation: toast-progress-rtl var(--tf-toast-progress-duration, 6000ms) linear forwards; will-change: transform; }
-.tf-toast-progress[data-align="left-to-right"] .tf-toast-progress-bar { transform-origin: right; animation-name: toast-progress-ltr; }
-.tf-toast--paused .tf-toast-progress-bar { animation-play-state: paused; }
-@keyframes toast-progress-rtl { from { transform: scaleX(1); } to { transform: scaleX(0); } }
-@keyframes toast-progress-ltr { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.tf-toast-progress-wrapper {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+.tf-toast-progress {
+  height: 2px;
+  width: 100%;
+  overflow: hidden;
+}
+.tf-toast-progress-bar {
+  height: 100%;
+  width: 100%;
+  transform-origin: left;
+  animation: toast-progress-rtl var(--tf-toast-progress-duration, 6000ms) linear forwards;
+  will-change: transform;
+}
+.tf-toast-progress[data-align="left-to-right"] .tf-toast-progress-bar {
+  transform-origin: right;
+  animation-name: toast-progress-ltr;
+}
+.tf-toast--paused .tf-toast-progress-bar {
+  animation-play-state: paused;
+}
+@keyframes toast-progress-rtl {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+@keyframes toast-progress-ltr {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
 
 /* ---- loading spinner ---- */
-.toast-spin { animation: toast-spin 0.9s linear infinite; }
-@keyframes toast-spin { to { transform: rotate(360deg); } }
+.toast-spin {
+  animation: toast-spin 0.9s linear infinite;
+}
+@keyframes toast-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .Toastflow__animation-move, .Toastflow__animation-enter-active > .tf-toast-motion, .Toastflow__animation-leave-active > .tf-toast-motion { transition: none; }
-  .Toastflow__animation-clearAll .tf-toast-motion, .Toastflow__animation-bump, .Toastflow__animation-update { animation: none; }
-  .Toastflow__animation-enter-from > .tf-toast-motion, .Toastflow__animation-leave-to > .tf-toast-motion { transform: none; }
+  .Toastflow__animation-move,
+  .Toastflow__animation-enter-active > .tf-toast-motion,
+  .Toastflow__animation-leave-active > .tf-toast-motion {
+    transition: none;
+  }
+  .Toastflow__animation-clearAll .tf-toast-motion,
+  .Toastflow__animation-bump,
+  .Toastflow__animation-update {
+    animation: none;
+  }
+  .Toastflow__animation-enter-from > .tf-toast-motion,
+  .Toastflow__animation-leave-to > .tf-toast-motion {
+    transform: none;
+  }
 }

@@ -23,10 +23,10 @@ A novel may span several EPUB files: each file is a **volume**, chapters number 
 
 Six structural variants were prototyped (three per screen) and compared via a `?variant=` switcher. The winners are folded in here; the full set lives on the `prototype/all-variants` branch.
 
-| Screen | Winner | Why |
-|---|---|---|
+| Screen           | Winner                                                                                     | Why                                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | Scripting review | **Reader** — prose + dialogue cards, toggleable in-chapter cast rail, `Aa` typography menu | reads like the book; the grid and cast-first layouts were better for bulk fixes but worse for judging the script |
-| Narration job | **Ledger** — filterable per-segment log with sticky player | failures and playback are the everyday task; the timeline and per-endpoint lanes were prettier but less useful |
+| Narration job    | **Ledger** — filterable per-segment log with sticky player                                 | failures and playback are the everyday task; the timeline and per-endpoint lanes were prettier but less useful   |
 
 Ideas borrowed from the older narrata web UI: major/minor cast split with Narrator-voice fallback, auto-assign by gender, spoiler-hidden descriptions, a "This run" cost estimate with blockers, endpoint price / no-key badges, per-chapter segment counts, reader filters.
 
@@ -68,6 +68,6 @@ Form controls are built on [reka-ui](https://reka-ui.com) (headless, accessible)
 
 ## Things to try
 
-- Scripting: *The Cliché Cultivation World* has three volumes — collapse them in the chapter list. Tick unscripted chapters on *Letters from the Drowned City* and run; new chapters sometimes surface an alias (dashed "new") to merge. Hide the cast with the Cast button, change type with `Aa`.
-- Narration: *Cliché* ch 4 is partly failed — retry from the ledger. The Narrator sits on the free local Kokoro (limit 500 chars) and dialogue on OpenAI; narrate ch 7 and watch rows split into parts. On *Drowned City*, Old Tobiah's voice lives on the paused Azure proxy — resume it or repick. In Endpoints, add an endpoint and “Fetch from server” to pull its voice list.
-- Export: *Ashes of the Starforge* is fully narrated — build an M4B.
+- Scripting: _The Cliché Cultivation World_ has three volumes — collapse them in the chapter list. Tick unscripted chapters on _Letters from the Drowned City_ and run; new chapters sometimes surface an alias (dashed "new") to merge. Hide the cast with the Cast button, change type with `Aa`.
+- Narration: _Cliché_ ch 4 is partly failed — retry from the ledger. The Narrator sits on the free local Kokoro (limit 500 chars) and dialogue on OpenAI; narrate ch 7 and watch rows split into parts. On _Drowned City_, Old Tobiah's voice lives on the paused Azure proxy — resume it or repick. In Endpoints, add an endpoint and “Fetch from server” to pull its voice list.
+- Export: _Ashes of the Starforge_ is fully narrated — build an M4B.

@@ -1,11 +1,15 @@
 {
   "name": "audiobook-ui",
-  "private": true,
   "version": "0.0.0",
+  "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "prototype": "vite --open",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -19,6 +23,8 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
     "@vitejs/plugin-vue": "^5.2.1",
+    "oxfmt": "^0.67.0",
+    "oxlint": "^1.82.0",
     "tailwindcss": "^4.0.0",
     "vite": "^6.0.5"
   }

@@ -1,78 +1,151 @@
 <script setup lang="ts">
-// Run settings + estimate for scripting: LLM profile, chunk size, watermark stripping, cost/time.
 import { computed } from "vue";
 import { useApp } from "@/stores/app";
-import { UiSelect, UiSlider, UiSwitch } from "@/ui";
-import { keyring } from "@/lib/keyring";
+import { UiNumber, UiSelect, UiSwitch, UiTooltip } from "@/ui";
+import {
+  ArrowRight as NextIcon,
+  CircleHelp as HintIcon,
+  ExternalLink as ExternalIcon,
+} from "@lucide/vue";
 const props = defineProps<{ bookId: string; selected: number[] }>();
+defineEmits<{ configure: [] }>();
 const app = useApp();
 const est = computed(() => app.scriptEstimate(props.bookId, props.selected));
-const fmt = (s: number) =>
-  s >= 3600
-    ? `~${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`
-    : s >= 60
-      ? `~${Math.round(s / 60)} min`
-      : `~${Math.round(s)}s`;
+const book = computed(() => app.bookById(props.bookId)!);
+const spent = computed(() => app.scriptSpent(props.bookId));
+const reserved = computed(() => app.scriptReserved(props.bookId));
+const remaining = computed(() =>
+  book.value.scriptBudget == null
+    ? null
+    : Math.max(0, book.value.scriptBudget - spent.value - reserved.value),
+);
+const runs = computed(() =>
+  app.jobs.filter((j) => j.bookId === props.bookId && !j.finishedAt && j.scriptRun),
+);
+const money = (n: number) =>
+  "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
 </script>
 <template>
-  <div class="text-xs">
-    <div class="label mb-1.5">Run settings</div>
-    <div class="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1.5">
-      <span class="text-zinc-500">Profile</span>
-      <UiSelect
-        v-model="app.scriptSettings.profile"
-        :options="app.profiles.map((p) => ({ value: p.id, label: p.name, hint: p.model }))"
-        size="xs"
-        block
-      />
-      <span class="text-zinc-500">Chunk</span>
-      <div class="flex items-center gap-2">
-        <UiSlider
-          v-model="app.scriptSettings.chunkChars"
-          :min="2000"
-          :max="12000"
-          :step="500"
-          label="Chunk size"
-        /><span class="w-12 font-mono"
-          >{{ (app.scriptSettings.chunkChars / 1000).toFixed(1) }}k</span
-        >
-      </div>
-      <span class="text-zinc-500">Watermarks</span>
-      <UiSwitch v-model="app.scriptSettings.stripWatermarks" label="strip site boilerplate" />
-    </div>
-    <div v-if="est.profile?.needsKey" class="mt-1.5 flex items-center gap-2">
-      <span class="text-zinc-500">Key</span
-      ><input
-        :value="keyring.get('profile:' + est.profile.id)"
-        type="password"
-        class="input min-w-0 flex-1 py-0.5 font-mono"
-        :placeholder="
-          keyring.has('profile:' + est.profile.id) ? '' : 'paste API key (kept in memory only)'
-        "
-        @input="
-          keyring.set('profile:' + est.profile!.id, ($event.target as HTMLInputElement).value)
-        "
-      /><span v-if="!keyring.has('profile:' + est.profile.id)" class="text-amber-600"
-        >⚠ no key</span
+  <div class="space-y-3 text-xs">
+    <div class="flex items-center justify-between">
+      <span class="label">This run</span
+      ><button
+        class="text-violet-600 hover:underline dark:text-violet-400"
+        @click="$emit('configure')"
       >
+        Manage endpoints <ExternalIcon class="icon-sm" />
+      </button>
     </div>
-    <div class="label mb-1 mt-3">This run</div>
-    <div class="grid grid-cols-2 gap-x-4 gap-y-0.5">
-      <span class="text-zinc-500">Chapters</span
-      ><span class="text-right font-mono">{{ est.chapters }}</span>
-      <span class="text-zinc-500">Chunks</span
-      ><span class="text-right font-mono">{{ est.chunks }}</span>
-      <span class="text-zinc-500">Text</span
-      ><span class="text-right font-mono">{{ (est.chars / 1000).toFixed(0) }}k chars</span>
-      <span class="text-zinc-500">Time</span
-      ><span class="text-right font-mono">{{ est.chapters ? fmt(est.seconds) : "—" }}</span>
-      <span class="text-zinc-500">Est. cost</span
-      ><span class="text-right font-mono font-semibold text-amber-600">{{
-        est.cost ? "$" + est.cost.toFixed(2) : "free"
-      }}</span>
+    <UiSelect
+      v-model="app.scriptSettings.profile"
+      :options="
+        app.profiles.map((p) => ({
+          value: p.id,
+          label: p.name,
+          hint: p.enabled ? p.model : 'Paused',
+        }))
+      "
+      size="xs"
+      block
+      aria-label="Scripting endpoint"
+    />
+    <p v-if="est.profile" class="text-[11px] text-zinc-500">
+      {{
+        est.profile.maxChars
+          ? est.profile.maxChars.toLocaleString() + " chars / chunk"
+          : "Whole chapters"
+      }}
+      · {{ est.profile.concurrency.toLocaleString() }} concurrent
+    </p>
+    <UiSwitch v-model="app.scriptSettings.stripWatermarks" label="Strip site boilerplate" />
+    <dl class="grid grid-cols-2 gap-y-1.5">
+      <dt class="text-zinc-500">Chapters / requests</dt>
+      <dd class="text-right font-mono">{{ est.chapters }} / {{ est.chunks }}</dd>
+      <dt class="text-zinc-500">Input · ~{{ est.inputTokens.toLocaleString() }} tokens</dt>
+      <dd class="text-right font-mono">{{ money(est.inputCost) }}</dd>
+      <dt class="text-zinc-500">Output · ~{{ est.outputTokens.toLocaleString() }} tokens</dt>
+      <dd class="text-right font-mono">{{ money(est.outputCost) }}</dd>
+      <dt class="font-medium">Estimated total</dt>
+      <dd class="text-right font-mono font-semibold">{{ money(est.cost) }}</dd>
+      <dt class="text-zinc-500">Estimated time</dt>
+      <dd class="text-right font-mono">
+        {{
+          est.chapters
+            ? est.seconds < 60
+              ? "~" + Math.ceil(est.seconds) + "s"
+              : "~" + Math.ceil(est.seconds / 60) + " min"
+            : "—"
+        }}
+      </dd>
+    </dl>
+    <div class="border-t border-zinc-200 pt-3 dark:border-zinc-800">
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0">
+          <span class="flex items-center gap-1 font-medium"
+            >Book scripting budget<UiTooltip
+              text="Covers every scripting run for this book. Blank = no cap; 0 = stop paid requests. Output limits reserve budget before dispatch."
+              ><button
+                type="button"
+                class="text-zinc-400 hover:text-violet-500"
+                aria-label="What this budget covers"
+              >
+                <HintIcon class="icon" /></button></UiTooltip
+          ></span>
+          <p class="text-[11px] leading-snug text-zinc-500">
+            {{ money(spent) }} spent<span v-if="reserved"> · {{ money(reserved) }} reserved</span
+            ><span v-if="remaining !== null"> · {{ money(remaining) }} available</span>
+          </p>
+        </div>
+        <UiNumber
+          class="w-28 shrink-0"
+          prefix="$"
+          :model-value="book.scriptBudget ?? null"
+          :min="0"
+          :step="1"
+          :empty="null"
+          placeholder="No cap"
+          label="Book scripting budget"
+          @update:model-value="(v: number | null) => (book!.scriptBudget = v)"
+        />
+      </div>
     </div>
-    <div class="mt-1 text-[10px] text-zinc-400">
-      Sequential per book: chapters wait on each other so roster and recap carry forward.
+    <div
+      v-if="est.blockers.length"
+      class="space-y-1 rounded-lg bg-amber-50 p-2.5 text-[11px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
+      role="status"
+    >
+      <p v-for="reason in est.blockers" :key="reason">{{ reason }}</p>
     </div>
+    <div
+      v-for="job in runs.slice(0, 3)"
+      :key="job.id"
+      class="rounded-lg bg-violet-50 p-2.5 dark:bg-violet-500/10"
+    >
+      <div class="flex justify-between gap-2">
+        <span class="truncate font-medium"
+          >{{ job.scriptRun!.profile.name }} · ch {{ job.chapterId }}</span
+        ><button class="text-zinc-500 hover:underline" @click="app.cancelJob(job.id)">
+          Cancel
+        </button>
+      </div>
+      <p class="mt-1 text-[11px] text-zinc-500">
+        {{ job.scriptRun!.completed }}/{{ job.scriptRun!.requests }} requests ·
+        {{ job.scriptRun!.active }} active · {{ money(job.scriptRun!.cost)
+        }}<span
+          v-if="
+            !job.scriptRun!.active &&
+            !app.profiles.find((p) => p.id === job.scriptRun!.profile.id)?.enabled
+          "
+        >
+          · Endpoint paused</span
+        >
+      </p>
+    </div>
+    <RouterLink
+      v-if="runs.length > 3"
+      to="/queue"
+      class="block text-xs text-violet-600 dark:text-violet-400"
+      >{{ runs.length - 3 }} more queued chapters · Open queue <NextIcon class="icon-sm"
+    /></RouterLink>
   </div>
 </template>

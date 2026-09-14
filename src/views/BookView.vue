@@ -3,6 +3,16 @@
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useApp, isScripted, isNarrated } from "@/stores/app";
+import {
+  ChevronUp as MoveUpIcon,
+  ChevronDown as MoveDownIcon,
+  GripVertical as GripIcon,
+  Pause as PauseIcon,
+  Play as PlayIcon,
+  Plus as AddIcon,
+  ArrowRight as NextIcon,
+} from "@lucide/vue";
+import { UiNumber } from "@/ui";
 import type { Volume } from "@/types";
 import { useBookId } from "@/router";
 
@@ -41,10 +51,10 @@ function remove(v: Volume) {
 }
 const budget = computed(() => book.value.budget ?? { cap: null, paused: false });
 const spent = computed(() => app.spent(bookId));
-const capInput = ref<number | string>(book.value.budget?.cap ?? "");
-function setCap() {
-  app.setBudgetCap(bookId, Number(capInput.value) || null);
-}
+const capInput = computed({
+  get: () => book.value.budget?.cap ?? null,
+  set: (v) => app.setBudgetCap(bookId, v || null),
+});
 const volStats = (v: Volume) => {
   const chs = chapters.value.filter((c) => c.volumeId === v.id);
   return {
@@ -148,7 +158,7 @@ const next = computed(() => {
         <div
           class="mt-4 flex items-center gap-3 rounded-lg border border-violet-300 bg-violet-50 px-4 py-3 dark:border-violet-500/40 dark:bg-violet-500/10"
         >
-          <span class="text-lg">→</span>
+          <NextIcon class="icon-lg shrink-0 text-violet-500" />
           <span class="flex-1 text-sm">{{ next.text }}</span>
           <RouterLink :to="`/book/${bookId}/${next.to}`" class="btn-primary whitespace-nowrap">{{
             next.label
@@ -228,9 +238,10 @@ const next = computed(() => {
         >
           <span class="label">Volumes</span
           ><span class="hidden text-[11px] text-zinc-400 sm:inline"
-            >drag or ▲▼ to reorder · chapters renumber to match</span
+            >drag or <MoveUpIcon class="icon-sm" /><MoveDownIcon class="icon-sm" /> to reorder ·
+            chapters renumber to match</span
           ><label class="ml-auto cursor-pointer text-xs text-zinc-400 hover:text-violet-500"
-            >＋ add volume<input
+            ><AddIcon class="icon-sm" /> add volume<input
               type="file"
               accept=".epub"
               class="hidden"
@@ -269,18 +280,18 @@ const next = computed(() => {
                 title="move up"
                 @click="app.moveVolume(bookId, v.id, vi - 1)"
               >
-                ▲
+                <MoveUpIcon class="icon-sm" />
               </button>
-              <span class="cursor-grab select-none text-sm leading-none" title="drag to reorder"
-                >⋮⋮</span
-              >
+              <span class="cursor-grab select-none leading-none" title="drag to reorder"
+                ><GripIcon class="icon"
+              /></span>
               <button
                 class="text-[10px] leading-none hover:text-violet-500 disabled:invisible"
                 :disabled="vi === book.volumes.length - 1"
                 title="move down"
                 @click="app.moveVolume(bookId, v.id, vi + 1)"
               >
-                ▼
+                <MoveDownIcon class="icon-sm" />
               </button>
             </span>
             <span
@@ -381,7 +392,8 @@ const next = computed(() => {
       <div class="space-y-4">
         <RouterLink :to="`/book/${bookId}/cast`" class="card block p-4 hover:border-violet-400">
           <div class="flex items-baseline justify-between">
-            <span class="label">Cast</span><span class="text-xs text-zinc-500">open →</span>
+            <span class="label">Cast</span
+            ><span class="text-xs text-zinc-500">open <NextIcon class="icon-sm" /></span>
           </div>
           <div class="mt-2 flex flex-wrap gap-1">
             <span
@@ -408,7 +420,7 @@ const next = computed(() => {
           <div class="flex items-center justify-between">
             <span class="label">Budget</span
             ><span class="text-xs" :class="budget.paused ? 'text-amber-600' : 'text-zinc-500'">{{
-              budget.paused ? "❚❚ paused" : "running normally"
+              budget.paused ? "paused" : "running normally"
             }}</span>
           </div>
           <div class="mt-2 flex items-baseline gap-2 text-sm">
@@ -430,14 +442,14 @@ const next = computed(() => {
           </div>
           <div class="mt-2 flex items-center gap-2 text-xs">
             <span class="text-zinc-500">Cap $</span
-            ><input
+            ><UiNumber
               v-model="capInput"
-              type="number"
-              min="0"
-              step="1"
-              class="input w-20 py-0.5"
+              class="w-24"
+              :min="0"
+              :step="1"
+              :empty="null"
               placeholder="none"
-              @change="setCap"
+              label="Spend cap for this book"
             /><span class="text-zinc-400">per book, narration only</span>
           </div>
           <button
@@ -449,7 +461,8 @@ const next = computed(() => {
             "
             @click="budget.paused ? app.resumeBook(bookId) : app.pauseBook(bookId)"
           >
-            {{ budget.paused ? "▶ Resume this book" : "❚❚ Pause everything on this book" }}
+            <component :is="budget.paused ? PlayIcon : PauseIcon" class="icon-sm icon-fill" />
+            {{ budget.paused ? "Resume this book" : "Pause everything on this book" }}
           </button>
         </div>
         <div class="card p-4 text-xs text-zinc-500">
@@ -461,7 +474,12 @@ const next = computed(() => {
             }}</span>
           </div>
           <div class="mt-1">
-            {{ app.scriptSettings.chunkChars.toLocaleString() }} chars/chunk · watermarks
+            {{
+              (
+                app.profiles.find((x) => x.id === app.scriptSettings.profile)?.maxChars ?? 0
+              ).toLocaleString()
+            }}
+            chars/chunk · watermarks
             {{ app.scriptSettings.stripWatermarks ? "stripped" : "kept" }}
           </div>
         </div>

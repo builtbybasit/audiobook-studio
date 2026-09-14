@@ -118,7 +118,17 @@ export function applyDraft(u: UnifiedEndpoint): void {
   target.credentialId = d.credentialId;
   target.quotaGroup = d.quotaGroup.trim() || null;
   bindCredential(u.slot, d.credentialId);
-  delete ui.drafts[u.key];
+  // Re-seed the draft from what was just written instead of deleting it. `draftFor` would rebuild
+  // it from the `u` snapshot this render still holds — the pre-save values — so the form would show
+  // the old text back and claim unsaved changes that had in fact just been saved.
+  ui.drafts[u.key] = {
+    name: d.name.trim(),
+    model: d.model.trim(),
+    baseUrl: d.baseUrl.trim(),
+    needsKey: d.needsKey,
+    credentialId: d.credentialId,
+    quotaGroup: d.quotaGroup.trim(),
+  };
 }
 
 export function discardDraft(u: UnifiedEndpoint): void {

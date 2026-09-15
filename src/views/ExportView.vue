@@ -51,7 +51,17 @@ const meta = reactive({
   markers: true,
   markerPattern: "{n}. {title}",
 });
-const { p: player, play } = usePlayer();
+const { p: player, playQueue } = usePlayer();
+/** A finished file is a one-clip queue, but a named one: the app-wide player says what it is playing. */
+function listen(e: ExportItem) {
+  playQueue({
+    id: "exp" + e.id,
+    title: e.filename,
+    subtitle: `${e.chapters} chapters · ${e.bitrate} kbps`,
+    href: `/book/${bookId}/export`,
+    clips: [{ id: "exp" + e.id, duration: e.duration, label: e.title }],
+  });
+}
 const PATTERNS = [
   { value: "{n}. {title}", label: "1. The Silent Peak" },
   { value: "Chapter {n} — {title}", label: "Chapter 1 — The Silent Peak" },
@@ -518,7 +528,7 @@ function rebuild(e: ExportItem) {
                 <button
                   class="btn-ghost btn-xs"
                   title="listen (prototype player)"
-                  @click="play('exp' + e.id, e.duration)"
+                  @click="listen(e)"
                 >
                   <component
                     :is="player.id === 'exp' + e.id && player.playing ? PauseIcon : PlayIcon"

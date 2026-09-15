@@ -10,12 +10,13 @@ import { opsOf } from "@/lib/endpoints";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import type { ConnectionTest, EndpointKind, RangeKey, RequestStatus } from "@/types";
 
-export type TabId = "overview" | "connection" | "requests" | "pricing" | "activity";
+export type TabId = "overview" | "connection" | "requests" | "pricing" | "activity" | "expressions";
 
 export const TABS: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "connection", label: "Connection" },
   { id: "requests", label: "Requests" },
+  { id: "expressions", label: "Expressions" },
   { id: "pricing", label: "Pricing & budgets" },
   { id: "activity", label: "Activity" },
 ];

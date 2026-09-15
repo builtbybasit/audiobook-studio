@@ -48,10 +48,13 @@ export function splitText(
   maxChars: number,
   mode: SplitMode = "sentence",
   preserveWhitespace = false,
+  protectedRanges: { from: number; to: number }[] = [],
 ): SplitPart[] {
   if (!maxChars || text.length <= maxChars)
     return [{ text, from: 0, to: text.length, at: null, fallback: false }];
   const parts: SplitPart[] = [];
+  if (protectedRanges.some((r) => r.to - r.from > maxChars))
+    throw new Error("A protected expression exceeds the character limit");
   let pos = 0;
   const start = Math.max(0, CHAIN.indexOf(mode));
   while (text.length - pos > maxChars) {
@@ -64,6 +67,11 @@ export function splitText(
         used = CHAIN[i];
         break;
       }
+    }
+    const inside = protectedRanges.find((r) => r.from < pos + cut && r.to > pos + cut);
+    if (inside) {
+      cut = inside.from > pos ? inside.from - pos : inside.to - pos;
+      used = "char";
     }
     const piece = rest.slice(0, cut);
     parts.push({

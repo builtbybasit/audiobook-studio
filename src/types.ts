@@ -66,6 +66,31 @@ export interface Endpoint {
   spendLimit?: number | null;
   credentialId?: string | null;
   quotaGroup?: string | null;
+  expressions?: ExpressionConfig;
+}
+
+export interface ExpressionTag {
+  /** Shared name used to match the same expression across manually configured models. */
+  id: string;
+  label: string;
+  token: string;
+  kind: "sound" | "delivery";
+}
+
+export interface ExpressionConfig {
+  status: "unknown" | "unsupported" | "supported";
+  /** Capabilities belong to this exact model and base URL, not every model at this endpoint. */
+  model: string;
+  baseUrl: string;
+  tags: ExpressionTag[];
+}
+
+export interface ExpressionAnnotation extends ExpressionTag {
+  annotationId: number;
+  /** UTF-16 insertion position in the unchanged source text. */
+  at: number;
+  omitted?: boolean;
+  needsReview?: boolean;
 }
 
 export type SegmentType = "dialogue" | "narration" | "thought";
@@ -111,8 +136,13 @@ export interface Take {
   text?: string;
   /** what was sent after the dictionary, when it differed */
   said?: string;
+  pronounced?: string;
+  expressionSignature?: string;
+  expressions?: string[];
   /** the user listened to it and chose the other take */
   rejected?: boolean;
+  /** where the rendered audio can be fetched; absent in the prototype, which has no files */
+  url?: string;
 }
 
 export interface SegmentAudio {
@@ -120,6 +150,9 @@ export interface SegmentAudio {
   endpoint: string | null;
   ms: number;
   duration: number;
+  /** where the rendered audio can be fetched. The prototype renders no files, so this is absent and
+   *  the player times the clip in silence instead — see `usePlayer`. */
+  url?: string;
 
   // split, when the segment exceeded the endpoint's maxChars
   parts?: number;
@@ -144,6 +177,9 @@ export interface SegmentAudio {
   said?: string;
   /** how many dictionary substitutions this clip carried */
   lex?: number;
+  pronounced?: string;
+  expressionSignature?: string;
+  expressions?: string[];
 
   // retakes
   /** take number of this clip; absent until the segment has been retaken at least once */
@@ -179,6 +215,7 @@ export interface Segment {
   /** the exact whitespace that followed this segment in the source, when it isn't a single space —
    *  a hand split records it so the join that undoes it restores the paragraph break */
   sep?: string;
+  expressions?: ExpressionAnnotation[];
 }
 
 /** One entry of a book's pronunciation dictionary. The book text is never rewritten: the term is

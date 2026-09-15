@@ -8,12 +8,21 @@ import {
   FISH_MODELS,
   voiceRef,
 } from "@/mock/data";
-import { splitText, partsFor } from "@/lib/split";
+import { partsFor } from "@/lib/split";
 import { speak, silenceOf, pacingOrDefault, hitsIn } from "@/lib/speech";
 import { newProfile, profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
 import { keyring } from "@/lib/keyring";
 import { fishModelsUrl, isFishAudio, presetById, voicesFromFishModels } from "@/lib/endpoints";
 import { logJob, jobWaiting, startJob } from "@/lib/jobActivity";
+import {
+  annotationFrom,
+  expressionId,
+  configErrors,
+  expressionPlan,
+  expressionParts,
+  expressionSupport,
+  remapExpressions,
+} from "@/lib/expressions";
 import { toast as tf } from "vue-toastflow";
 import type { ToastButton } from "vue-toastflow";
 import type {
@@ -24,6 +33,9 @@ import type {
   Character,
   EffectiveVoice,
   Endpoint,
+  ExpressionAnnotation,
+  ExpressionConfig,
+  ExpressionTag,
   EndpointEstimate,
   EndpointLoad,
   Eta,
@@ -116,6 +128,9 @@ const snapshotTake = (a: SegmentAudio): Take => ({
   type: a.type,
   text: a.text,
   said: a.said,
+  pronounced: a.pronounced,
+  expressionSignature: a.expressionSignature,
+  expressions: a.expressions,
 });
 export const FLAG_LABEL: Record<FlagKind, string> = {
   pronunciation: "wrong pronunciation",
@@ -229,10 +244,16 @@ interface AppState extends World {
   _kicked: boolean;
   dark: boolean;
   currentBookId: string | null;
+  expressionReview: {
+    bookId: string;
+    targets: { chId: number; segId: number }[];
+    resume: () => void;
+  } | null;
 }
 
 export const useApp = defineStore("app", {
   state: (): AppState => ({
+    expressionReview: null,
     ...makeWorld(),
     profiles: [
       newProfile({
@@ -320,6 +341,27 @@ export const useApp = defineStore("app", {
         pacingOrDefault(s.books.find((b) => b.id === bookId)?.pacing),
     /** One line as the endpoint will receive it: the book's dictionary applied, the book untouched. */
     spoken: (s) => (bookId: string, text: string) => speak(text, s.lexicon[bookId] ?? []),
+    expressionRender() {
+      return (bookId: string, segment: Segment) =>
+        expressionPlan(
+          segment,
+          this.effectiveVoice(bookId, segment.speaker).endpoint,
+          this.lexiconOf(bookId),
+        );
+    },
+    expressionIssues() {
+      return (bookId: string, ids: number[]) =>
+        ids.flatMap((chId) =>
+          this.segmentsOf(bookId, chId).flatMap((s) =>
+            this.expressionRender(bookId, s).issues.map((issue) => ({
+              ...issue,
+              chId,
+              segId: s.id,
+              speaker: s.speaker,
+            })),
+          ),
+        );
+    },
     /** How many times each dictionary entry actually occurs in the book's scripted text. */
     lexUses: (s) => (bookId: string) => {
       const list = s.lexicon[bookId] ?? [];
@@ -436,10 +478,12 @@ export const useApp = defineStore("app", {
               ? "text: edited"
               : `text: ${a.text.length} → ${s.text.length} chars`,
           );
-        const sent = a.said ?? a.text;
+        const sent = a.pronounced ?? a.said ?? a.text;
         // the words themselves are unchanged but the dictionary now sends different ones
         if (a.text === s.text && sent != null && this.spoken(bookId, s.text).text !== sent)
           out.push("pronunciation: the dictionary changed after this clip");
+        if ((a.expressionSignature ?? "") !== this.expressionRender(bookId, s).signature)
+          out.push("expressions: tags, position, or model support changed after this clip");
         if ((a.direction || "") !== (s.direction || ""))
           out.push(`direction: “${a.direction || "—"}” → “${s.direction || "—"}”`);
         if (a.type && a.type !== s.type) out.push(`type: ${a.type} → ${s.type}`);
@@ -718,8 +762,11 @@ export const useApp = defineStore("app", {
               requests: 0,
               split: 0,
             });
-            const parts = partsFor(seg.text, ep);
-            e.chars += seg.text.length;
+            const render = this.expressionRender(bookId, seg);
+            const parts = render.issues.length
+              ? partsFor(render.text, ep)
+              : expressionParts(render, ep).length;
+            e.chars += render.text.length;
             e.segments++;
             e.requests += parts;
             if (parts > 1) e.split++;
@@ -744,6 +791,135 @@ export const useApp = defineStore("app", {
   },
 
   actions: {
+    // ---------- model-specific narration expressions ----------
+    refreshExpressionAudio(): void {
+      for (const [k, segs] of Object.entries(this.segments)) {
+        const [bookId, ch] = k.split(":");
+        for (const s of segs)
+          if (s.expressions?.length && this.clipDrift(bookId, s).length)
+            this._markStale(bookId, Number(ch), s);
+      }
+    },
+    saveExpressionConfig(id: string, config: ExpressionConfig): boolean {
+      const ep = this.endpoints.find((e) => e.id === id);
+      if (!ep || configErrors(config).length) return false;
+      const previous = ep.expressions ? clone(ep.expressions) : undefined;
+      ep.expressions = clone({
+        ...config,
+        model: ep.model,
+        baseUrl: ep.baseUrl,
+        tags: config.tags.map((t) => ({
+          ...t,
+          id: expressionId(t.label),
+          label: t.label.trim(),
+          token: t.token.trim(),
+        })),
+      });
+      const restale = () => this.refreshExpressionAudio();
+      restale();
+      this.toast("Expression support saved", {
+        description: `Applies to ${ep.model}. Annotated lines are checked again before rendering.`,
+        undo: () => {
+          ep.expressions = previous;
+          restale();
+        },
+      });
+      return true;
+    },
+    addExpression(
+      bookId: string,
+      chId: number,
+      segId: number,
+      tag: ExpressionTag,
+      at: number,
+    ): void {
+      const s = this.segmentsOf(bookId, chId).find((s) => s.id === segId);
+      if (!s) return;
+      const ep = this.effectiveVoice(bookId, s.speaker).endpoint;
+      const definition = ep?.expressions?.tags.find((t) => t.id === tag.id);
+      if (
+        expressionSupport(ep) !== "supported" ||
+        !definition ||
+        !Number.isInteger(at) ||
+        at < 0 ||
+        at > s.text.length
+      )
+        return;
+      const undo = this._segSnapshot(bookId, chId);
+      (s.expressions ??= []).push(
+        annotationFrom(
+          definition,
+          at,
+          Math.max(0, ...s.expressions!.map((a) => a.annotationId)) + 1,
+        ),
+      );
+      s.edited = true;
+      this._markStale(bookId, chId, s);
+      this.toast(`${definition.label} added`, {
+        description: "The source text is unchanged. Re-render this line to hear the expression.",
+        undo,
+      });
+    },
+    updateExpression(
+      bookId: string,
+      chId: number,
+      segId: number,
+      annotationId: number,
+      patch: Partial<ExpressionAnnotation> | null,
+    ): void {
+      const s = this.segmentsOf(bookId, chId).find((s) => s.id === segId);
+      const a = s?.expressions?.find((a) => a.annotationId === annotationId);
+      if (!s || !a) return;
+      const undo = this._segSnapshot(bookId, chId);
+      if (patch) Object.assign(a, patch, { annotationId });
+      else s.expressions = s.expressions!.filter((a) => a.annotationId !== annotationId);
+      s.edited = true;
+      this._markStale(bookId, chId, s);
+      this.toast(patch ? "Expression updated" : "Expression removed", { undo });
+    },
+    _expressionGuard(
+      bookId: string,
+      targets: { chId: number; segId: number }[],
+      resume: () => void,
+    ): boolean {
+      const blocked = targets.some((t) => {
+        const s = this.segmentsOf(bookId, t.chId).find((s) => s.id === t.segId);
+        return s && this.expressionRender(bookId, s).issues.length;
+      });
+      if (blocked) this.expressionReview = { bookId, targets, resume };
+      return blocked;
+    },
+    continueExpressionReview(): void {
+      const pending = this.expressionReview;
+      if (!pending) return;
+      this.expressionReview = null;
+      pending.resume(); // rechecks current annotations, routing and launch prerequisites
+    },
+    omitReviewExpressions(): void {
+      const pending = this.expressionReview;
+      if (!pending) return;
+      const undos = [...new Set(pending.targets.map((t) => t.chId))].map((chId) =>
+        this._segSnapshot(pending.bookId, chId),
+      );
+      let count = 0;
+      for (const t of pending.targets) {
+        const s = this.segmentsOf(pending.bookId, t.chId).find((s) => s.id === t.segId);
+        if (!s) continue;
+        const issues = this.expressionRender(pending.bookId, s).issues;
+        for (const issue of issues) {
+          s.expressions!.find((a) => a.annotationId === issue.annotationId)!.omitted = true;
+          count++;
+        }
+        if (issues.length) {
+          s.edited = true;
+          this._markStale(pending.bookId, t.chId, s);
+        }
+      }
+      this.toast(`${count} expressions omitted from narration`, {
+        description: "Annotations stay in the script until you enable them again.",
+        undo: () => undos.forEach((undo) => undo()),
+      });
+    },
     // ---------- toasts & undo ----------
     // Thin wrapper over Toastflow so the rest of the app never imports it. `undo` makes the toast
     // undoable (↻, Undo button, 10 s, ⌘Z); `action` adds a second button; `timeout: 0` sticks.
@@ -962,6 +1138,9 @@ export const useApp = defineStore("app", {
     },
     importSettings(obj: Partial<SettingsFile> | null | undefined): void {
       if (!obj || !Array.isArray(obj.endpoints)) throw new Error("not a settings file");
+      for (const ep of obj.endpoints)
+        if (ep.expressions && configErrors(ep.expressions).length)
+          throw new Error(`Invalid expression support for ${ep.name}`);
       if (obj.profiles != null && !Array.isArray(obj.profiles))
         throw new Error("Invalid scripting endpoints");
       const profiles = (obj.profiles ?? []).map((imported) => {
@@ -1606,6 +1785,7 @@ export const useApp = defineStore("app", {
                         t.speaker = p.speaker;
                         t.direction = p.direction;
                         t.type = p.type;
+                        if (p.expressions) t.expressions = clone(p.expressions);
                         t.edited = true;
                       }
                     }
@@ -1657,6 +1837,8 @@ export const useApp = defineStore("app", {
       const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
       if (!s) return;
       const changed = (Object.keys(patch) as (keyof Segment)[]).some((k) => s[k] !== patch[k]);
+      if (patch.text != null && s.expressions && patch.expressions === undefined)
+        s.expressions = remapExpressions(s.expressions, s.text, patch.text);
       Object.assign(s, patch);
       if (changed) {
         s.edited = true;
@@ -1710,6 +1892,13 @@ export const useApp = defineStore("app", {
         audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
       };
       delete second.candidate;
+      const tailStart = s.text.length - tail.length;
+      second.expressions = (s.expressions ?? [])
+        .filter((a) => a.at >= at)
+        .map((a) => ({ ...a, at: Math.max(0, a.at - tailStart) }));
+      s.expressions = (s.expressions ?? [])
+        .filter((a) => a.at < at)
+        .map((a) => ({ ...a, at: Math.min(a.at, head.length) }));
       // a hand-split chunk is no longer the model's unverified guess, and the halves start unflagged
       delete second.fallback;
       delete second.fallbackCount;
@@ -1746,7 +1935,17 @@ export const useApp = defineStore("app", {
       const b = segs[i + 1];
       const revert = this._segSnapshot(bookId, chId);
       // put back whatever stood between them — a single space unless a split recorded otherwise
-      a.text = `${a.text.trimEnd()}${a.sep ?? " "}${b.text.trimStart()}`;
+      const head = a.text.trimEnd();
+      const tail = b.text.trimStart();
+      const offset = head.length + (a.sep ?? " ").length;
+      a.expressions = [
+        ...(a.expressions ?? []).map((x) => ({ ...x, at: Math.min(x.at, head.length) })),
+        ...(b.expressions ?? []).map((x) => ({
+          ...x,
+          at: offset + Math.max(0, x.at - (b.text.length - tail.length)),
+        })),
+      ].map((x, i) => ({ ...x, annotationId: i + 1 }));
+      a.text = `${head}${a.sep ?? " "}${tail}`;
       a.edited = true;
       a.flag ??= b.flag;
       delete a.candidate; // neither half's retake is a take of the joined line
@@ -1787,6 +1986,16 @@ export const useApp = defineStore("app", {
     // never rendered at all — in a chapter that has audio, neither belongs in the finished book.
     renarrateStale(bookId: string, chId: number): void {
       const started = this.chapter(bookId, chId)?.narration !== "none";
+      if (
+        this._expressionGuard(
+          bookId,
+          this.segmentsOf(bookId, chId)
+            .filter((s) => s.audio.status === "stale" || (started && s.audio.status === "none"))
+            .map((s) => ({ chId, segId: s.id })),
+          () => this.renarrateStale(bookId, chId),
+        )
+      )
+        return;
       for (const s of this.segmentsOf(bookId, chId))
         if (s.audio.status === "stale" || (started && s.audio.status === "none"))
           s.audio = requeue(s.audio);
@@ -1824,7 +2033,7 @@ export const useApp = defineStore("app", {
       for (const k of Object.keys(this.segments)) {
         if (!k.startsWith(prefix)) continue;
         for (const s of this.segments[k]) {
-          const sent = s.audio.said ?? s.audio.text;
+          const sent = s.audio.pronounced ?? s.audio.said ?? s.audio.text;
           if (s.audio.status !== "done" || sent == null) continue;
           if (this.spoken(bookId, s.text).text === sent) continue;
           s.audio.status = "stale";
@@ -2113,6 +2322,16 @@ export const useApp = defineStore("app", {
           isScripted(c) &&
           !["running", "queued"].includes(c.narration),
       );
+      if (
+        this._expressionGuard(
+          bookId,
+          chs.flatMap((c) =>
+            this.segmentsOf(bookId, c.id).map((s) => ({ chId: c.id, segId: s.id })),
+          ),
+          () => this.runNarration(bookId, ids),
+        )
+      )
+        return;
       const jobs = chs.map((c) => {
         c.narration = "queued";
         c.narrationProgress = 0;
@@ -2130,11 +2349,27 @@ export const useApp = defineStore("app", {
       });
     },
     retrySegment(bookId: string, chId: number, segId: number): void {
+      if (
+        this._expressionGuard(bookId, [{ chId, segId }], () =>
+          this.retrySegment(bookId, chId, segId),
+        )
+      )
+        return;
       const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
       if (s) s.audio = requeue(s.audio);
       this._resume(bookId, chId);
     },
     retryFailed(bookId: string, chId: number): void {
+      if (
+        this._expressionGuard(
+          bookId,
+          this.segmentsOf(bookId, chId)
+            .filter((s) => s.audio.status === "failed")
+            .map((s) => ({ chId, segId: s.id })),
+          () => this.retryFailed(bookId, chId),
+        )
+      )
+        return;
       for (const s of this.segmentsOf(bookId, chId))
         if (s.audio.status === "failed") s.audio = requeue(s.audio);
       this._resume(bookId, chId);
@@ -2162,12 +2397,28 @@ export const useApp = defineStore("app", {
     },
     /** Queue another render of one segment, keeping the current clip to compare against. */
     retakeSegment(bookId: string, chId: number, segId: number): void {
+      if (
+        this._expressionGuard(bookId, [{ chId, segId }], () =>
+          this.retakeSegment(bookId, chId, segId),
+        )
+      )
+        return;
       const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
       if (!s || !this._queueRetake(s)) return;
       this._resume(bookId, chId, "Retake");
     },
     /** Every flagged segment in the chapter gets another take in one run. */
     retakeFlagged(bookId: string, chId: number): number {
+      if (
+        this._expressionGuard(
+          bookId,
+          this.segmentsOf(bookId, chId)
+            .filter((s) => s.flag)
+            .map((s) => ({ chId, segId: s.id })),
+          () => this.retakeFlagged(bookId, chId),
+        )
+      )
+        return 0;
       let n = 0;
       for (const s of this.segmentsOf(bookId, chId)) if (s.flag && this._queueRetake(s)) n++;
       if (n) this._resume(bookId, chId, "Retake");
@@ -2333,9 +2584,18 @@ export const useApp = defineStore("app", {
             continue;
           }
           // the dictionary is applied here, on the way out: the script itself keeps the author's spelling
-          const said = this.spoken(bookId, next.text);
+          const said = this.expressionRender(bookId, next);
+          if (said.issues.length) {
+            const message = `Expression needs attention: ${said.issues[0].reason}`;
+            next[slot] = { ...queued, status: "failed", error: { code: 0, message, body: "" } };
+            logJob(job, `Segment ${next.id} blocked before dispatch`, "error", {
+              segment: next.id,
+              error: message,
+            });
+            continue;
+          }
           const sent = said.text;
-          const cuts = splitText(sent, ep.maxChars, ep.splitAt);
+          const cuts = expressionParts(said, ep);
           const parts = cuts.length;
           const attemptKey = `${next.id}:${slot}`;
           const attempt = (attempts.get(attemptKey) ?? 0) + 1;
@@ -2348,6 +2608,15 @@ export const useApp = defineStore("app", {
             model: ep.model,
             parts,
             characters: sent.length,
+            ...(said.tags.length ? { expressions: said.tags.join(" ") } : {}),
+            ...(next.expressions?.some((a) => a.omitted)
+              ? {
+                  omittedExpressions: next.expressions
+                    .filter((a) => a.omitted)
+                    .map((a) => a.label)
+                    .join(", "),
+                }
+              : {}),
           };
           logJob(
             job,
@@ -2379,7 +2648,10 @@ export const useApp = defineStore("app", {
             style: who?.style ?? "",
             type: next.type,
             text: next.text,
-            ...(said.hits.length ? { said: sent, lex: said.hits.length } : {}),
+            pronounced: said.pronounced,
+            expressionSignature: said.signature,
+            expressions: said.tags,
+            ...(sent !== next.text ? { said: sent, lex: said.hits.length } : {}),
             at: Date.now(),
             cost: (sent.length / 1e6) * ep.price,
           };
@@ -2416,7 +2688,7 @@ export const useApp = defineStore("app", {
             }
             const fail = Math.random() < ep.failRate;
             clip.ms = Math.round(dur);
-            clip.duration = fail ? 0 : sent.split(" ").length / 2.6;
+            clip.duration = fail ? 0 : said.pronounced.split(" ").length / 2.6;
             // the script can move while a request is in flight — a clip that no longer matches what
             // the line says now arrives stale, not done
             clip.status = fail

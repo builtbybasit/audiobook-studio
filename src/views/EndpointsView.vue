@@ -28,6 +28,7 @@ import EndpointCard from "@/views/endpoints/EndpointCard.vue";
 import OverviewTab from "@/views/endpoints/OverviewTab.vue";
 import ConnectionTab from "@/views/endpoints/ConnectionTab.vue";
 import RequestsTab from "@/views/endpoints/RequestsTab.vue";
+import ExpressionsTab from "@/views/endpoints/ExpressionsTab.vue";
 import PricingTab from "@/views/endpoints/PricingTab.vue";
 import ActivityTab from "@/views/endpoints/ActivityTab.vue";
 import { endpointService, seriesFrom, RANGES } from "@/services/endpoints";
@@ -576,7 +577,7 @@ function pickBucket(b: MetricBucket | null) {
             aria-label="Endpoint detail"
           >
             <TabsTrigger
-              v-for="t in TABS"
+              v-for="t in TABS.filter((t) => t.id !== 'expressions' || selected?.kind === 'tts')"
               :key="t.id"
               :value="t.id"
               class="whitespace-nowrap border-b-2 px-2 pb-2 text-xs sm:px-3 sm:text-sm"
@@ -636,6 +637,12 @@ function pickBucket(b: MetricBucket | null) {
               :today="spendTodayFor(selected)"
             />
           </TabsContent>
+          <TabsContent value="expressions"
+            ><ExpressionsTab
+              v-if="selected.endpoint"
+              :key="selected.key"
+              :endpoint="selected.endpoint"
+          /></TabsContent>
           <TabsContent value="activity">
             <ActivityTab
               :u="selected"

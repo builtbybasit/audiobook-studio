@@ -12,6 +12,7 @@ const cast = computed(() => app.charactersOf(props.bookId));
 const voiced = computed(() => cast.value.filter((c) => c.voice).length);
 const narratorOk = computed(() => !!cast.value.find((c) => c.name === "Narrator")?.voice);
 const issues = computed(() => app.routingIssues(props.bookId));
+const expressions = computed(() => app.expressionIssues(props.bookId, props.selected));
 const blockers = computed(() => {
   const b = [];
   if (!narratorOk.value) b.push("Assign the Narrator’s voice to start.");
@@ -92,6 +93,13 @@ defineExpose({ blockers });
     </div>
     <div v-for="b in blockers" :key="b" class="mt-2 text-amber-600">
       <WarnIcon class="icon-sm" /> {{ b }}
+    </div>
+    <div
+      v-if="expressions.length"
+      class="mt-2 rounded bg-amber-50 p-2 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"
+    >
+      <WarnIcon class="icon-sm" /> {{ expressions.length }} expressions need review. Press Narrate
+      to resolve them before any work is queued.
     </div>
   </div>
 </template>

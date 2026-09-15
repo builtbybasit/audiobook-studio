@@ -13,7 +13,8 @@ import { DIRECTIONS } from "@/mock/data";
 import { useReader } from "@/stores/reader";
 import ReaderSettings from "@/components/ReaderSettings.vue";
 import VoicePicker from "@/components/VoicePicker.vue";
-import SpokenText from "@/components/SpokenText.vue";
+import ExpressionText from "@/components/ExpressionText.vue";
+import ExpressionEditor from "@/components/ExpressionEditor.vue";
 import { PAUSE_STEPS, defaultPause, pauseAfter, secs } from "@/lib/speech";
 import {
   AudioLines as NarrationIcon,
@@ -222,6 +223,7 @@ function moveFocus(d: number) {
 }
 function onKey(e: KeyboardEvent) {
   const t = e.target as HTMLElement;
+  if (t.closest('[data-expression-editor], [role="dialog"]')) return;
   // inside a field: let the widget (combobox/select) handle Escape itself; a second Escape closes the editor
   if (
     ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) ||
@@ -345,7 +347,7 @@ watch(open, (v) => {
                     <div class="mt-1 text-[11px] text-zinc-500">
                       {{
                         keepEdits
-                          ? "Speaker / type / direction you changed are re-applied where the text still matches."
+                          ? "Speaker, type, direction and expression annotations are re-applied where the text still matches."
                           : "Your edits are discarded — the new run wins."
                       }}
                     </div></template
@@ -554,7 +556,7 @@ watch(open, (v) => {
                       ⁄</button
                     >{{ t.text }}</span
                   ></template
-                ><template v-else><SpokenText :book-id="bookId" :text="s.text" /></template>
+                ><template v-else><ExpressionText :book-id="bookId" :segment="s" /></template>
               </p>
               <details class="mt-2 font-sans text-[11px] leading-normal text-zinc-500">
                 <summary class="cursor-pointer">Why it failed</summary>
@@ -591,7 +593,7 @@ watch(open, (v) => {
                     ⁄</button
                   >{{ t.text }}</span
                 ></template
-              ><template v-else><SpokenText :book-id="bookId" :text="s.text" /></template
+              ><template v-else><ExpressionText :book-id="bookId" :segment="s" /></template
               ><span
                 v-if="s.flag"
                 class="ml-2 rounded bg-amber-400/20 px-1 font-sans text-[10px] font-semibold leading-none text-amber-700 dark:text-amber-300"
@@ -662,8 +664,8 @@ watch(open, (v) => {
                     >{{ t.text }}</span
                   ></template
                 ><template v-else-if="s.type === 'dialogue'"
-                  >‘<SpokenText :book-id="bookId" :text="s.text" />’</template
-                ><template v-else><SpokenText :book-id="bookId" :text="s.text" /></template>
+                  >‘<ExpressionText :book-id="bookId" :segment="s" />’</template
+                ><template v-else><ExpressionText :book-id="bookId" :segment="s" /></template>
               </p>
             </div>
             <!-- inline editor -->
@@ -723,6 +725,12 @@ watch(open, (v) => {
                 <span v-if="s.edited" class="text-[10px] text-zinc-400">edited</span
                 ><button class="btn-ghost btn-xs" @click="open = null">Done</button>
               </div>
+              <ExpressionEditor
+                :book-id="bookId"
+                :chapter-id="chapterId"
+                :segment="s"
+                class="col-span-2 border-t border-zinc-200 pt-2 2xl:col-span-4 dark:border-zinc-800"
+              />
               <!-- boundaries: the model grouped two speakers together, or cut a sentence in half -->
               <div
                 class="col-span-2 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-2 2xl:col-span-4 dark:border-zinc-800"

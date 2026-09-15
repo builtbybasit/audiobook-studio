@@ -138,6 +138,56 @@ gap rules, and the store: the endpoint gets the respelling while the script does
 stales only the clips that used it and undo puts them back, and a pause re-times a chapter without
 touching a single clip.
 
+## Round six: one player, app-wide (2026-09-15)
+
+The player was a per-view timer: `usePlayer()` returned fresh state to every component that called
+it, so leaving the narration page stopped the audio, and a chapter was one undifferentiated block of
+`total` seconds. Reviewing a book is the opposite of that — you listen _while_ fixing the script, the
+cast or the dictionary, and you listen for hours.
+
+`src/composables/usePlayer.ts` is now a **singleton sequencer**. Its unit is not a file but a
+**queue**: clips with the stitched silence between them (`pauseAfter`), the same timeline the ledger
+already drew. It owns the layout, the gaps and the playhead; an `<audio>` element is only the sound
+source, and the reactive media state around it (`currentTime`, `rate`, `waiting`, `ended`) comes from
+VueUse's `useMediaControls`, which was already a dependency. No player library models a timeline of
+many short clips with computed silence, so none was added.
+
+- **It survives navigation.** The state is module-scope, and `components/MiniPlayer.vue` follows you
+  off the page that started it — transport, speed, elapsed, and a link back to where it came from. It
+  hides on that page, which has the better player of its own.
+- **Listening controls.** Playback speed to 2×, ±10 s, previous / next _line_ (prev restarts the line
+  unless you only just started it, as every media player does), `space` to play or pause anywhere
+  except while a button or link has focus, and OS media keys / lock-screen metadata through the
+  MediaSession API.
+- **A chapter boundary is not a stop.** A queue carries a `next()`; the ledger's continues into the
+  following narrated chapter and moves `?ch=` with it, so the ledger follows the player.
+- **Clips carry a `url`.** `SegmentAudio.url` and `Take.url` are the seam: with a file the element
+  plays it, without one the clip is _timed_ rather than heard — same timeline, same scrubber, same
+  gaps, silent. The prototype renders no files, so the bar says "timed, not heard" rather than
+  pretending. Give the clips urls and the same code path plays them.
+
+**Waveforms in the retake compare panel** (`components/Waveform.vue`, [wavesurfer.js](https://wavesurfer.xyz)
+v7). Judging two takes of a line is partly a thing you see: dead air, a clipped ending, a flatter
+read. wavesurfer is used **directly**, not through a community Vue wrapper, for the reason Unovis is
+on the endpoints page — and here a wrapper would be in the way, because this component *draws* and
+does not *play*. The app has one playback engine, so the element stays out of wavesurfer's hands:
+`interact` reports clicks as seek requests and the playhead is pushed in from outside with
+`setTime`, which works with no media attached because `getDuration()` falls back to the decoded
+peaks. `usePlayer().clipProgress(id)` answers "how far through this clip is the playhead", so a view
+can ask about any clip it drew without knowing where in the queue it sits.
+
+With a `url` wavesurfer decodes the real file. Without one there is nothing to decode, so
+`lib/peaks.ts` invents a speech envelope — syllables about four a second, a breath or two, seeded by
+the clip's identity so a take's shape is stable across redraws and two takes look related but not
+identical — and the panel says **waveform illustrative** next to what differs. Invented, and marked
+as invented, like every row `FixtureEndpointService` produces. The library is a lazy chunk
+(12 kB gzip) fetched the first time a compare panel opens, not part of the entry bundle.
+
+`tests/player.test.ts` fakes the clock and `setInterval` and covers the sequencer: the gap is part of
+the queue but is no clip, the playhead runs through it into the next line, speed scales the timed
+clock, a queue that runs out continues into the next one (and stops when there isn't one), and
+scrubbing a chapter that isn't loaded parks the playhead without starting it.
+
 ## Toasts (Toastflow, 2026-09-14)
 
 Toasts run on [vue-toastflow](https://www.toastflow.top) for the runtime only — queue, timers, pause on hover, swipe to dismiss, Escape, focus handling, live regions, the promise `loading` helper. The plugin is created with `{ css: false }`, so none of its stylesheet loads: stack layout, motion and the time-left bar are in `src/toasts.css`, and the card is our own Tailwind markup in `components/Toasts.vue` through the headless slot (`ui.getRootProps / getCloseProps / getButtonProps / progress.*` keep the a11y and behaviour wiring). The app only ever calls `app.toast(msg, { kind, description, undo, action, timeout })` and `app.toastLoading(promise, { loading, success, error })`.
@@ -277,3 +327,22 @@ of that file.
 The route is lazy (`() => import("@/views/EndpointsView.vue")`): the charting library is only used
 here, and keeping it out of the entry chunk leaves the main bundle smaller than it was before this
 page existed.
+
+## Model-specific expressions
+
+TTS endpoints have an **Expressions** tab for explicitly configuring supported names, exact bracket
+syntax, and whether each tag is a vocal sound or delivery instruction. Support starts unknown and is
+bound to the configured model and base URL; changing either requires confirming support again.
+No provider capabilities are assumed from its name.
+
+Expanded script and narration lines offer a searchable expression picker, placement controls,
+inline annotations, and an exact outgoing-text preview after pronunciation replacements. Annotations
+are separate from prose: existing bracketed text is never automatically interpreted as a control.
+Splitting, joining, and editing preserve annotation positions where possible and request review
+when an edit affects an anchor. Request splitting keeps each expression token intact.
+
+Narration and retakes check compatibility before queuing and again before dispatch. A review dialog
+lets the user resolve unsupported annotations or explicitly omit them; omission is saved and
+reversible, never silently applied. Changes invalidate affected audio, and take snapshots and job
+events retain the expressions actually rendered. These workflows use the existing simulator; no
+real speech or provider capability verification is performed. Book annotations remain in memory.

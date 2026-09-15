@@ -13,11 +13,15 @@
 // pronunciation / bad delivery / awkward pause) and retaken: the old clip is kept, the new one is
 // rendered beside it, and nothing is decided until the listener plays both and keeps one.
 // Keyboard: j/k move, ↵/p play, r retry, t retake, a keep new, x keep previous, i details.
-import { computed, ref, watch } from "vue";
+import { computed, defineAsyncComponent, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useJob, STATUS_BG, fmt } from "@/views/narration/shared";
 import { FLAG_LABEL } from "@/stores/app";
 import { pauseAfter, secs } from "@/lib/speech";
-import { usePlayer } from "@/composables/usePlayer";
+import { usePlayer, type Queue } from "@/composables/usePlayer";
+import { speechPeaks } from "@/lib/peaks";
+import ExpressionEditor from "@/components/ExpressionEditor.vue";
+import ExpressionText from "@/components/ExpressionText.vue";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { UiToggleGroup } from "@/ui";
 import {
@@ -26,6 +30,10 @@ import {
   Pause as PauseIcon,
   Play as PlayIcon,
   SkipForward as PlayFromIcon,
+  ChevronFirst as PrevIcon,
+  ChevronLast as NextIcon,
+  Rewind as BackIcon,
+  FastForward as FwdIcon,
   RotateCcw as RetryIcon,
   Scissors as CutIcon,
   TriangleAlert as WarnIcon,
@@ -36,8 +44,12 @@ const props = defineProps<{ bookId: string; chapterId: number }>();
 /** a word the listener wants respelled, handed up to the pronunciation dictionary */
 const emit = defineEmits<{ pronounce: [word: string] }>();
 const { app, segments, colorOf, voiceOf, epName, stats } = useJob(props);
+const route = useRoute();
+const router = useRouter();
 const chapter = computed(() => app.chapter(props.bookId, props.chapterId)!);
-const { p, play, pause, seek } = usePlayer();
+const { p, play, playQueue, cue, seekTo, skip, next, prev, cycleRate, clipProgress } = usePlayer();
+// wavesurfer is only ever needed once a compare panel is open, so it stays out of the entry chunk
+const Waveform = defineAsyncComponent(() => import("@/components/Waveform.vue"));
 const filter = ref("all");
 const expanded = ref(new Set<number>());
 const toggleDetails = (id: number) => {
@@ -89,30 +101,67 @@ const bookGap = (s: Segment) =>
   pacing.value[
     segments.value[segments.value.indexOf(s) + 1]?.speaker === s.speaker ? "line" : "turn"
   ];
-const currentId = computed(() =>
-  p.id === "chapter"
-    ? (timeline.value.find((x) => p.pos >= x.start && p.pos < x.end)?.s.id ?? null)
-    : p.id?.startsWith("seg")
-      ? Number(p.id.slice(3))
-      : null,
-);
+// The player is app-wide, so a queue has to name this exact chapter: pressing play on ch 7 while
+// ch 6 is still going must load ch 7, not toggle the bar.
+const queueId = (chId: number) => `chapter:${props.bookId}:${chId}`;
+const isChapter = computed(() => p.id === queueId(props.chapterId));
+/** the clip under the playhead is this one — true whether it is playing alone or inside the chapter */
+const onClip = (id: string) => p.clipId === id && p.playing;
+
+/** The chapter as the player wants it: the clips and the silence between them, in order. */
+function buildQueue(chId: number): Queue | null {
+  const segs = app.segmentsOf(props.bookId, chId);
+  const heard = segs.filter((s) => s.audio.duration > 0);
+  if (!heard.length) return null;
+  const pace = app.pacingOf(props.bookId);
+  return {
+    id: queueId(chId),
+    title: app.chapter(props.bookId, chId)?.title ?? "",
+    subtitle: app.bookById(props.bookId)?.title ?? "",
+    href: `/book/${props.bookId}/narration?ch=${chId}`,
+    clips: heard.map((s, i) => ({
+      id: "seg" + s.id,
+      duration: s.audio.duration,
+      gap: pauseAfter(s, heard[i + 1], pace),
+      url: s.audio.url,
+      label: s.text,
+      speaker: s.speaker,
+    })),
+    next: () => nextNarrated(chId),
+  };
+}
+/** Listening through a book shouldn't stop at a chapter boundary. */
+function nextNarrated(after: number): Queue | null {
+  const chs = app.chaptersOf(props.bookId);
+  for (const c of chs.slice(chs.findIndex((x) => x.id === after) + 1)) {
+    const q = buildQueue(c.id);
+    if (!q) continue;
+    // the ledger follows the player: ?ch= is what NarrationView already watches, and going through
+    // the router means this survives the remount that switching chapters causes
+    void router.replace({ query: { ...route.query, ch: String(c.id) } });
+    return q;
+  }
+  return null;
+}
+function playChapter(at?: number) {
+  const q = buildQueue(props.chapterId);
+  if (q) playQueue(q, at);
+}
+
+const currentId = computed(() => (p.clipId?.startsWith("seg") ? Number(p.clipId.slice(3)) : null));
 watch(currentId, (id) => {
   if (id && p.playing)
     document.getElementById("row-" + id)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 });
 function playFrom(s: Segment) {
   const x = timeline.value.find((x) => x.s.id === s.id);
-  if (!x) return;
-  play("chapter", total.value);
-  p.pos = x.start;
+  if (x) playChapter(x.start);
 }
 function scrub(e: MouseEvent) {
-  const frac = e.offsetX / (e.currentTarget as HTMLElement).clientWidth;
-  if (p.id !== "chapter") {
-    play("chapter", total.value);
-    pause();
-  }
-  seek(frac);
+  const at = (e.offsetX / (e.currentTarget as HTMLElement).clientWidth) * total.value;
+  if (isChapter.value) return seekTo(at);
+  const q = buildQueue(props.chapterId);
+  if (q) cue(q, at); // park the playhead without starting — scrubbing is not pressing play
 }
 
 // what differs between the clip and the script now (the reason a row is stale, made explicit)
@@ -239,7 +288,7 @@ const takeTitle = (t: Take) =>
 const takeId = (s: Segment, n: number) => `take${s.id}-${n}`;
 /** the clip the retake is judged against: whatever is in the book right now */
 const candId = (s: Segment) => `cand${s.id}`;
-const candPlaying = (s: Segment) => p.id === candId(s) && p.playing;
+const candPlaying = (s: Segment) => onClip(candId(s));
 /** What differs between the clip in the book and the retake waiting beside it. */
 function takeDiff(s: Segment): string[] {
   const a = s.audio;
@@ -258,11 +307,24 @@ function takeDiff(s: Segment): string[] {
   if (!out.length) out.push("same voice, same direction — the same request, rendered again");
   return out;
 }
-function playTake(s: Segment, t: Take | undefined) {
-  if (t) play(takeId(s, t.n), t.duration);
+// A clip with no file has no shape to decode, so one is invented from its identity and the panel
+// says so. Two takes of the same line seed differently, which is the point of putting them together.
+const peaksOf = (seed: string, duration: number) => speechPeaks(seed, duration);
+/** zinc wave / violet played for the clip in the book, sky for the one waiting to be judged */
+const waveColors = (candidate: boolean) =>
+  candidate
+    ? { wave: app.dark ? "#075985" : "#bae6fd", played: app.dark ? "#38bdf8" : "#0284c7" }
+    : { wave: app.dark ? "#3f3f46" : "#d4d4d8", played: app.dark ? "#a78bfa" : "#7c3aed" };
+/** clicking a waveform plays that take from where you clicked */
+function seekTake(id: string, duration: number, url: string | undefined, frac: number) {
+  if (p.clipId !== id) play(id, duration, url);
+  seekTo(frac * duration);
 }
-const takePlaying = (s: Segment, t: Take | undefined) =>
-  !!t && p.id === takeId(s, t.n) && p.playing;
+
+function playTake(s: Segment, t: Take | undefined) {
+  if (t) play(takeId(s, t.n), t.duration, t.url);
+}
+const takePlaying = (s: Segment, t: Take | undefined) => !!t && onClip(takeId(s, t.n));
 function onRowKey(e: KeyboardEvent, s: Segment) {
   const row = e.currentTarget as HTMLElement;
   const list = [...(row.parentElement?.querySelectorAll<HTMLElement>("tr[data-row]") ?? [])];
@@ -275,7 +337,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
     list[i - 1]?.focus();
   } else if ((e.key === "Enter" || e.key === "p") && s.audio.duration) {
     e.preventDefault();
-    play("seg" + s.id, s.audio.duration);
+    play("seg" + s.id, s.audio.duration, s.audio.url);
   } else if (e.key === "r" && s.audio.status === "failed")
     app.retrySegment(props.bookId, props.chapterId, s.id);
   else if (e.key === "t" && s.audio.duration)
@@ -423,7 +485,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                 class="truncate py-1 pr-3 leading-tight text-zinc-600 dark:text-zinc-300"
                 :class="s.type === 'thought' && 'italic'"
               >
-                <div class="line-clamp-1">{{ s.text }}</div>
+                <div class="line-clamp-1"><ExpressionText :book-id="bookId" :segment="s" /></div>
                 <div class="flex items-center gap-1.5 truncate text-[10px]">
                   <span v-if="s.direction" class="text-violet-500">[{{ s.direction }}]</span
                   ><span v-if="s.audio.status === 'stale'" class="text-amber-600">{{
@@ -480,10 +542,10 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                       v-if="s.audio.duration"
                       class="icon-btn icon-btn-play"
                       title="play this segment (↵)"
-                      @click="play('seg' + s.id, s.audio.duration)"
+                      @click="play('seg' + s.id, s.audio.duration, s.audio.url)"
                     >
                       <component
-                        :is="p.id === 'seg' + s.id && p.playing ? PauseIcon : PlayIcon"
+                        :is="onClip('seg' + s.id) ? PauseIcon : PlayIcon"
                         class="icon-sm icon-fill"
                       />
                     </button>
@@ -640,10 +702,10 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                       <button
                         class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-zinc-200 text-[10px] disabled:opacity-40 dark:bg-zinc-700"
                         :disabled="!s.audio.duration"
-                        @click="play('seg' + s.id, s.audio.duration)"
+                        @click="play('seg' + s.id, s.audio.duration, s.audio.url)"
                       >
                         <component
-                          :is="p.id === 'seg' + s.id && p.playing ? PauseIcon : PlayIcon"
+                          :is="onClip('seg' + s.id) ? PauseIcon : PlayIcon"
                           class="icon-sm icon-fill"
                         />
                       </button>
@@ -653,6 +715,16 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                         >{{ s.audio.duration.toFixed(1) }}s</span
                       >
                     </div>
+                    <Waveform
+                      v-if="s.audio.duration"
+                      class="mt-1.5"
+                      :url="s.audio.url"
+                      :peaks="peaksOf('seg' + s.id + '#' + (s.audio.n ?? 1), s.audio.duration)"
+                      :duration="s.audio.duration"
+                      :progress="clipProgress('seg' + s.id) ?? 0"
+                      v-bind="waveColors(false)"
+                      @seek="(f) => seekTake('seg' + s.id, s.audio.duration, s.audio.url, f)"
+                    />
                     <div class="mt-1 pl-8 text-[11px] text-zinc-500">
                       {{ app.voiceLabel(s.audio.voiceRef) || s.audio.voice || "—" }} ·
                       {{ s.audio.direction || "no direction"
@@ -671,7 +743,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                       <button
                         class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-sky-500 text-[10px] text-white disabled:opacity-40"
                         :disabled="!s.candidate!.duration"
-                        @click="play(candId(s), s.candidate!.duration)"
+                        @click="play(candId(s), s.candidate!.duration, s.candidate!.url)"
                       >
                         <component
                           :is="candPlaying(s) ? PauseIcon : PlayIcon"
@@ -684,6 +756,16 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                         s.candidate!.duration ? s.candidate!.duration.toFixed(1) + "s" : "…"
                       }}</span>
                     </div>
+                    <Waveform
+                      v-if="s.candidate!.duration"
+                      class="mt-1.5"
+                      :url="s.candidate!.url"
+                      :peaks="peaksOf(candId(s) + '#' + s.candidate!.n, s.candidate!.duration)"
+                      :duration="s.candidate!.duration"
+                      :progress="clipProgress(candId(s)) ?? 0"
+                      v-bind="waveColors(true)"
+                      @seek="(f) => seekTake(candId(s), s.candidate!.duration, s.candidate!.url, f)"
+                    />
                     <div class="mt-1 pl-8 text-[11px]">
                       <span v-if="s.candidate!.error" class="text-red-500"
                         >{{
@@ -700,7 +782,15 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                   </div>
                 </div>
                 <div class="mt-2 flex flex-wrap items-center gap-2">
-                  <span class="min-w-0 flex-1 text-zinc-500">{{ takeDiff(s).join(" · ") }}</span>
+                  <span class="min-w-0 flex-1 text-zinc-500"
+                    >{{ takeDiff(s).join(" · ")
+                    }}<span
+                      v-if="!s.audio.url && !s.candidate!.url"
+                      class="ml-1 text-[10px] text-amber-600"
+                      title="the prototype renders no audio, so there is no file to decode — the shape is invented from the clip's identity, not measured"
+                      >· waveform illustrative</span
+                    ></span
+                  >
                   <template v-if="!['queued', 'generating'].includes(s.candidate!.status)">
                     <button
                       class="btn-ghost btn-xs"
@@ -729,6 +819,12 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
               <td></td>
               <td colspan="5" class="py-2 pr-4">
                 <div class="border-l-2 border-violet-400 pl-3 text-xs dark:border-violet-500">
+                  <ExpressionEditor
+                    :book-id="bookId"
+                    :chapter-id="chapterId"
+                    :segment="s"
+                    class="mb-3 border-b border-zinc-200 pb-3 dark:border-zinc-700"
+                  />
                   <!-- what this clip was rendered with -->
                   <div v-if="facts(s).length" class="flex items-start gap-3">
                     <div class="flex min-w-0 flex-1 flex-wrap gap-x-5 gap-y-1.5">
@@ -824,12 +920,14 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                       :class="[t.current && 'chip-on', t.rejected && 'chip-off']"
                       :title="takeTitle(t)"
                       @click.stop="
-                        t.current ? play('seg' + s.id, s.audio.duration) : playTake(s, t)
+                        t.current
+                          ? play('seg' + s.id, s.audio.duration, s.audio.url)
+                          : playTake(s, t)
                       "
                     >
                       <component
                         :is="
-                          (t.current ? p.id === 'seg' + s.id && p.playing : takePlaying(s, t))
+                          (t.current ? onClip('seg' + s.id) : takePlaying(s, t))
                             ? PauseIcon
                             : PlayIcon
                         "
@@ -883,29 +981,66 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
       class="border-t border-zinc-200 bg-zinc-50 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/60"
     >
       <div class="flex items-center gap-3">
-        <button
-          class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-violet-600 text-white disabled:opacity-40"
-          :disabled="!total"
-          @click="play('chapter', total)"
-        >
-          <component
-            :is="p.id === 'chapter' && p.playing ? PauseIcon : PlayIcon"
-            class="icon-lg icon-fill"
-          />
-        </button>
+        <div class="flex shrink-0 items-center gap-0.5">
+          <button class="icon-btn" :disabled="!isChapter" title="previous line" @click="prev()">
+            <PrevIcon class="icon-sm" />
+          </button>
+          <button
+            class="icon-btn"
+            :disabled="!isChapter"
+            title="back 10 seconds"
+            @click="skip(-10)"
+          >
+            <BackIcon class="icon-sm" />
+          </button>
+          <button
+            class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-violet-600 text-white disabled:opacity-40"
+            :disabled="!total"
+            title="play the stitched chapter (space)"
+            @click="playChapter()"
+          >
+            <component
+              :is="isChapter && p.playing ? PauseIcon : PlayIcon"
+              class="icon-lg icon-fill"
+            />
+          </button>
+          <button
+            class="icon-btn"
+            :disabled="!isChapter"
+            title="forward 10 seconds"
+            @click="skip(10)"
+          >
+            <FwdIcon class="icon-sm" />
+          </button>
+          <button class="icon-btn" :disabled="!isChapter" title="next line" @click="next()">
+            <NextIcon class="icon-sm" />
+          </button>
+        </div>
         <div class="min-w-0 flex-1">
           <div class="mb-1 flex items-center justify-between text-xs">
             <span class="truncate"
               ><b v-if="currentId"
                 >#{{ currentId }} {{ segments.find((s) => s.id === currentId)?.speaker }}</b
+              ><span v-else-if="isChapter && p.playing" class="text-zinc-500">silence</span
               ><span v-else class="text-zinc-500">{{
                 total ? "Stitched chapter · click the bar to scrub" : "No audio yet"
-              }}</span></span
+              }}</span>
+              <span v-if="total && !p.live" class="ml-1 text-[10px] text-amber-600"
+                >timed, not heard — no rendered files in the prototype</span
+              ></span
             >
-            <span class="font-mono text-zinc-500"
-              >{{ fmt(p.id === "chapter" ? p.pos : p.id ? p.pos : 0) }} /
-              {{ fmt(p.id === "chapter" || !p.id ? total : p.len) }}</span
-            >
+            <span class="flex items-center gap-2">
+              <button
+                class="rounded border border-zinc-200 px-1 font-mono text-[10px] text-zinc-500 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
+                title="playback speed"
+                @click="cycleRate()"
+              >
+                {{ p.rate }}×
+              </button>
+              <span class="font-mono text-zinc-500"
+                >{{ fmt(isChapter ? p.pos : 0) }} / {{ fmt(total) }}</span
+              >
+            </span>
           </div>
           <div class="relative h-5 cursor-pointer overflow-hidden rounded" @click="scrub">
             <div class="absolute inset-0 flex gap-px">
@@ -929,12 +1064,12 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
               <div v-if="!timeline.length" class="h-full w-full bg-zinc-200 dark:bg-zinc-800"></div>
             </div>
             <div
-              v-if="p.id === 'chapter'"
+              v-if="isChapter"
               class="absolute inset-y-0 left-0 bg-black/25 dark:bg-white/25"
               :style="{ width: (total ? (p.pos / total) * 100 : 0) + '%' }"
             ></div>
             <div
-              v-if="p.id === 'chapter'"
+              v-if="isChapter"
               class="absolute inset-y-0 w-0.5 bg-black dark:bg-white"
               :style="{ left: (total ? (p.pos / total) * 100 : 0) + '%' }"
             ></div>

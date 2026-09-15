@@ -21,6 +21,16 @@ const groups = [
     ],
   },
   {
+    title: "Player",
+    keys: [
+      ["space", "play / pause (not while a button has focus)"],
+      ["click the bar", "scrub the stitched chapter"],
+      ["⏴⏵", "back / forward 10 seconds"],
+      ["⏮ ⏭", "previous / next line"],
+      ["1×", "playback speed, up to 2×"],
+    ],
+  },
+  {
     title: "Script reader",
     keys: [
       ["j / k · ↑ ↓", "move between lines"],

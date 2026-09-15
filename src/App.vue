@@ -5,6 +5,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useApp, keyring } from "@/stores/app";
+import { usePlayer } from "@/composables/usePlayer";
 import { endpointErrors, unifyEndpoint, unifyProfile } from "@/lib/endpoints";
 import JobIndicator from "@/components/JobIndicator.vue";
 import CommandPalette from "@/components/CommandPalette.vue";
@@ -20,13 +21,20 @@ import {
   Sun as SunIcon,
 } from "@lucide/vue";
 import Toasts from "@/components/Toasts.vue";
+import MiniPlayer from "@/components/MiniPlayer.vue";
 import ShortcutsDialog from "@/components/ShortcutsDialog.vue";
+import ExpressionReview from "@/components/ExpressionReview.vue";
 import { TooltipProvider } from "reka-ui";
 
 const app = useApp();
+const player = usePlayer();
 const route = useRoute();
 const drawer = ref(false);
 const shortcuts = ref(false);
+watch(
+  () => app.endpoints.map((e) => JSON.stringify([e.id, e.model, e.baseUrl, e.expressions])),
+  () => app.refreshExpressionAudio(),
+);
 
 watch(
   () => route.params.bookId,
@@ -95,6 +103,11 @@ const router = useRouter();
 function onKey(e: KeyboardEvent) {
   const t = e.target as HTMLElement;
   if (["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) || t.isContentEditable) return;
+  if (e.key === " " && !["BUTTON", "A", "SUMMARY"].includes(t.tagName) && player.p.id) {
+    e.preventDefault(); // the page would scroll otherwise
+    player.toggle();
+    return;
+  }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
     if (app.undoLast()) e.preventDefault();
   } else if (e.key === "?" || (e.shiftKey && e.key === "/")) {
@@ -333,10 +346,12 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
         </header>
         <CommandPalette ref="palette" />
         <ShortcutsDialog v-model:open="shortcuts" />
+        <ExpressionReview />
         <main class="min-h-0 flex-1 overflow-auto">
           <RouterView />
         </main>
       </div>
+      <MiniPlayer />
       <Toasts />
     </div>
   </TooltipProvider>

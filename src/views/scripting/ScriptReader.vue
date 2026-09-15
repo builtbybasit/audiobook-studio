@@ -9,7 +9,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useScript, TYPES } from "@/views/scripting/shared";
-import { DIRECTIONS } from "@/mock/data";
+import { directionOptions } from "@/lib/bulk";
 import { useReader } from "@/stores/reader";
 import ReaderSettings from "@/components/ReaderSettings.vue";
 import VoicePicker from "@/components/VoicePicker.vue";
@@ -108,24 +108,7 @@ const fallbacks = computed(() => segments.value.filter((s) => s.fallback));
 const route = useRoute();
 
 // directions: presets + everything already used in this book, free text allowed
-const dirOpts = computed(() => {
-  const used = new Map<string, number>();
-  for (const k of Object.keys(app.segments))
-    if (k.startsWith(props.bookId + ":"))
-      for (const x of app.segments[k])
-        if (x.direction) used.set(x.direction, (used.get(x.direction) ?? 0) + 1);
-  const fromBook = [...used.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([d, n]) => ({ value: d, label: d, group: "Used in this book", hint: n + "×" }));
-  return [
-    ...fromBook,
-    ...DIRECTIONS.filter((d) => !used.has(d)).map((d) => ({
-      value: d,
-      label: d,
-      group: "Presets",
-    })),
-  ];
-});
+const dirOpts = computed(() => directionOptions(app.segments, props.bookId));
 // ---- segment boundaries: split at a word gap, join with a neighbour
 const splitting = ref<number | null>(null);
 interface Tok {

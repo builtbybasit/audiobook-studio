@@ -50,7 +50,7 @@ Ideas borrowed from the older narrata web UI: major/minor cast split with Narrat
 - **Re-script** from the reader header: profile + chunk size, "keep my N manual edits" (re-applied where the text still matches), then a "what changed" panel (speaker / direction changes, new / gone segments, click to jump). Edited segments carry `edited: true`.
 - **Undo** — merge, rename, delete speaker, remove volume / novel / endpoint / voice, delete export all toast with Undo; `⌘Z`/`Ctrl+Z` outside a field undoes the latest. Snapshots in `_castSnapshot` / `_bookSnapshot`.
 - **Export**: custom cover, chapter markers with a title pattern and preview, listen / download / on-disk path per finished file.
-- **Script search** (`/book/:id/search`, or type ≥2 chars in the palette): text, speaker, direction across every scripted chapter; results deep-link to the segment (`?ch=&seg=`).
+- **Script search** (`/book/:id/search`, or type ≥2 chars in the palette): text, speaker, direction across every scripted chapter; results deep-link to the segment (`?ch=&seg=`), and can be selected for a bulk correction (see round seven).
 - **Audit trail**: each rendered clip records voice, model, direction, style, type, time, cost. Clicking a ledger row (or `i`) shows it and spells out what differs from the script now (why a row is stale). Failures carry HTTP status + body and a "copy request".
 - **Voice picker** popover (search, gender filter, grouped by endpoint, "N using", inline demo) replaces the flat select on Voices and Cast.
 - **Direction** is a combobox: presets + directions already used in the book, free text allowed, and "→ all <speaker>" applies it to every line of that speaker in the chapter.
@@ -169,8 +169,8 @@ many short clips with computed silence, so none was added.
 **Waveforms in the retake compare panel** (`components/Waveform.vue`, [wavesurfer.js](https://wavesurfer.xyz)
 v7). Judging two takes of a line is partly a thing you see: dead air, a clipped ending, a flatter
 read. wavesurfer is used **directly**, not through a community Vue wrapper, for the reason Unovis is
-on the endpoints page — and here a wrapper would be in the way, because this component *draws* and
-does not *play*. The app has one playback engine, so the element stays out of wavesurfer's hands:
+on the endpoints page — and here a wrapper would be in the way, because this component _draws_ and
+does not _play_. The app has one playback engine, so the element stays out of wavesurfer's hands:
 `interact` reports clicks as seek requests and the playhead is pushed in from outside with
 `setTime`, which works with no media attached because `getDuration()` falls back to the decoded
 peaks. `usePlayer().clipProgress(id)` answers "how far through this clip is the playhead", so a view
@@ -187,6 +187,52 @@ as invented, like every row `FixtureEndpointService` produces. The library is a 
 the queue but is no clip, the playhead runs through it into the next line, speed scales the timed
 clock, a queue that runs out continues into the next one (and stops when there isn't one), and
 scrubbing a chapter that isn't loaded parks the playhead without starting it.
+
+## Round seven: bulk corrections in Search (2026-09-15)
+
+Search could find the forty lines the model mis-attributed and could open each one in the reader. Fixing
+them was forty round trips. The page now carries the whole correction: **find → select → choose →
+preview → apply → undo**, without leaving Search.
+
+- **Selection is a set of segments, not a slice of the page.** Results are shown 40 lines at a time;
+  the counts and every "select all" speak for the whole match set (`12 selected · 46 matching lines in
+8 chapters`), and **Select all matching results** takes the matches below the fold with it — the
+  footer says how many those are. Per-line, per-chapter (tri-state) and everything.
+- **Selecting is not opening.** The checkbox and the row's link are separate targets; ticking never
+  navigates. Changing the query or a filter **drops the selection** and says so, in a toast and in an
+  `aria-live` line — a hidden selection is a correction waiting to go wrong.
+- **One panel, opened inside the bar** — not a modal, and not a chain of confirmations. Pressing an
+  action expands the bar downward, above the lines it is about, so the results stay on screen and the
+  player stays clear; pressing it again closes it, and closing returns the focus to the button. It reads
+  like the ledger's row detail rather than a paragraph: a violet rail, a strip of tiny labelled facts
+  (_selected · will change · unchanged · clips going stale_), and tinted callouts for the things that
+  cost something. `bulkPreview` (store getter, pure) supplies those counts plus before/after rows with
+  chapter and speaker context, and **Inspect all N** expands to every affected line with a reason beside
+  each skipped one. The final button names the work — **Change 39 lines** — and is dead when there is
+  none. Opening, configuring and closing mutate nothing; if a selected line is edited elsewhere while the
+  panel is open, the numbers are marked out of date and apply waits for a refreshed preview. A clip
+  finishing in the background is not such an edit (`scriptFingerprint` vs `segmentFingerprint` in
+  `src/lib/bulk.ts`). A tall panel scrolls inside the bar instead of eating the viewport.
+- **Change speaker** picks from the book's cast only — no character is created, merged, or given a
+  fallback voice behind your back. It names the voice that will read the lines, and when the character
+  has none it says so and links to Cast: the script correction is fine, the narration needs an assignment.
+- **Direction** is an explicit _set_ or _clear_. An empty field clears nothing, and setting one says how
+  many lines already carry a direction that would be replaced. Directions are not expression tags: the
+  prose and its annotations are never touched.
+- **Flag for review** reuses the ledger's own categories and notes, keeps existing flags by default, and
+  makes replacing them a switch you have to find. Flagging stales no audio, and says so.
+- **Apply and undo.** Every line goes through `setSpeaker` / `updateSegment` / `flagSegment` — the same
+  actions a single edit uses — so `edited`, clip staleness and annotations end up exactly where they
+  would by hand. Audio is never regenerated automatically; the old clips stay for comparison. One undo
+  covers the batch, shared by the toast, `⌘Z` and the result strip in Search, so it can only be taken
+  once — and a line someone edited after the batch is left alone rather than silently overwritten.
+- **Add pronunciation…** sits beside the search term, not in the bulk bar: a dictionary entry is not a
+  mass replacement of the selected text. It previews across the whole book, says so, detects an existing
+  entry and edits that one instead of adding a second, and refuses to turn a search _phrase_ into a term.
+- **Seeded scenarios** (the **Demo** chip, prototype only): matches in every chapter with more than a
+  page of them, mixed speakers and directions, clips rendered / stale / not yet rendered, already-flagged
+  lines, a character with no voice, a search with no results, and one where every selected line already
+  has the requested value. Reset restores the book from an in-memory snapshot; nothing persists.
 
 ## Toasts (Toastflow, 2026-09-14)
 
@@ -225,6 +271,7 @@ inside the box (`$ 12`, `0.35 s`), and `empty` lets a blank field mean something
 - Pacing: _Starforge_ ch 1 holds 1.5s after the Captain's threat and runs straight on into the reply — the ledger's scrubber draws both gaps. Set your own in the reader under **Pause after**, or `[`/`]`.
 - Endpoints: open **Endpoints** in the sidebar. _Antigravity (local)_ has never been used — it reads **Not tested**, not healthy. _Azure proxy_ is billed per audio minute at a rate nobody wrote down: its spend shows **unknown**, and the totals say how many rows they are missing. On the Overview tab switch to **Latency** and see queue wait stacked under provider response, then click a bar to filter the Activity list to those requests. Type `2500` into Concurrency on the Requests tab — the slider range follows. Start a narration run, then **Pause** _Local Kokoro_: the queue holds, the run doesn't fail, and **Resume** picks it up. **Cancel** says what it will do first.
 - Boundaries: in the reader, open a line and press `s` — click a gap to cut it, then give the second half its own speaker. `m` joins a line with the next. Try it on the unverified chunk in _Cliché_ ch 7.
+- Bulk corrections: on _Cliché_ open **Search**, hit the **Demo** chip and pick _Mis-attributed “Ning”_. Tick a chapter, or **Select all matching results** (it takes the matches the page is not showing), then **Change speaker…** → _Ji Ning_: 46 will change, 21 already use it, 12 clips go stale. Apply, read the strip, **Undo this batch**. Pick _Ning_ instead to see the no-voice warning, try **Direction…** with an empty field, and _Lines already read by Ji Ning_ for a batch with nothing to do. **Add pronunciation…** with `Ji Ning` in the box finds the entry that already exists.
 
 ## Queue job activity (2026-09-14)
 

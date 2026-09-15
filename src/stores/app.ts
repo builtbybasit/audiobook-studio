@@ -14,6 +14,7 @@ import { newProfile, profileErrors, scriptParts, tokenEstimate } from "@/lib/scr
 import { keyring } from "@/lib/keyring";
 import { fishModelsUrl, isFishAudio, presetById, voicesFromFishModels } from "@/lib/endpoints";
 import { logJob, jobWaiting, startJob } from "@/lib/jobActivity";
+import { bulkInvalidates, bulkOutcome, scriptFingerprint, segmentFingerprint } from "@/lib/bulk";
 import {
   annotationFrom,
   expressionId,
@@ -28,6 +29,12 @@ import type { ToastButton } from "vue-toastflow";
 import type {
   AudioStatus,
   Book,
+  BulkAction,
+  BulkPreview,
+  BulkResult,
+  BulkRow,
+  BulkSkip,
+  BulkTarget,
   CastStat,
   Chapter,
   Character,
@@ -48,6 +55,7 @@ import type {
   LexEntry,
   JobStatus,
   MergeSuggestion,
+  NarrationStatus,
   NarrationEstimate,
   Pacing,
   Profile,
@@ -57,6 +65,7 @@ import type {
   ScriptDiff,
   ScriptEstimate,
   ScriptSettings,
+  SearchScenario,
   ScriptEndpointTelemetry,
   Segment,
   SegmentAudio,
@@ -137,6 +146,46 @@ export const FLAG_LABEL: Record<FlagKind, string> = {
   delivery: "bad delivery",
   pause: "awkward pause",
   other: "something else",
+};
+/** One flag as a sentence: "bad delivery — flat, the line should land as a threat". */
+const flagText = (f: SegmentFlag): string =>
+  FLAG_LABEL[f.kind] + (f.note ? ` \u2014 ${f.note}` : "");
+/** The batch's one-line title, e.g. "Change speaker to Ji Ning". */
+export function bulkLabel(a: BulkAction): string {
+  if (a.kind === "speaker") return `Change speaker to ${a.speaker}`;
+  if (a.kind === "direction")
+    return a.mode === "clear"
+      ? "Clear directions"
+      : `Set direction \u201c${a.direction.trim()}\u201d`;
+  return `Flag as ${FLAG_LABEL[a.flag]}${a.replace ? " (replacing existing flags)" : ""}`;
+}
+/** What the preview's before/after columns read for one line. */
+function beforeOf(s: Segment, a: BulkAction): string {
+  if (a.kind === "speaker") return s.speaker;
+  if (a.kind === "direction") return s.direction || "no direction";
+  return s.flag ? flagText(s.flag) : "not flagged";
+}
+function afterOf(s: Segment, a: BulkAction): string {
+  if (!bulkOutcome(s, a).changes) return beforeOf(s, a); // a skipped line is left exactly as it is
+  if (a.kind === "speaker") return a.speaker;
+  if (a.kind === "direction") return a.mode === "clear" ? "no direction" : a.direction.trim();
+  return flagText({ kind: a.flag, note: a.note.trim(), at: 0 });
+}
+/** Why one row is skipped, and what the skipped rows have in common. */
+const SKIP_TEXT: Record<BulkSkip, (s: Segment, a: BulkAction) => string> = {
+  "same-speaker": (s) => `already ${s.speaker}`,
+  "same-direction": (s) => `already \u201c${s.direction}\u201d`,
+  "no-direction": () => "no direction to clear",
+  "already-flagged": (s) => `keeping ${s.flag ? FLAG_LABEL[s.flag.kind] : "the existing flag"}`,
+  "same-flag": () => "already flagged this way",
+};
+const SKIP_SUMMARY: Record<BulkSkip, (a: BulkAction) => string> = {
+  "same-speaker": (a) => `already use ${a.kind === "speaker" ? a.speaker : "this speaker"}`,
+  "same-direction": (a) =>
+    `already read \u201c${a.kind === "direction" ? a.direction.trim() : ""}\u201d`,
+  "no-direction": () => "have no direction to clear",
+  "already-flagged": () => "are already flagged \u2014 their flags are kept",
+  "same-flag": () => "already carry this flag",
 };
 const ago = (min: number): number => Date.now() - min * 60000;
 function collapseChunk(segs: Segment[]): Segment[] {
@@ -249,6 +298,8 @@ interface AppState extends World {
     targets: { chId: number; segId: number }[];
     resume: () => void;
   } | null;
+  /** the Search page's demo scenario is seeded, and how to put the book back */
+  _searchDemo: { bookId: string; restore: () => void } | null;
 }
 
 export const useApp = defineStore("app", {
@@ -295,6 +346,7 @@ export const useApp = defineStore("app", {
     _previous: {}, // `${bookId}:${chId}` → segments before the last re-script (for the diff panel)
     notify: false, // browser notifications when a book's run finishes
     _kicked: false,
+    _searchDemo: null,
     dark: window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true,
     currentBookId: null,
   }),
@@ -786,6 +838,129 @@ export const useApp = defineStore("app", {
           endpoints: this.endpoints.filter((e) => e.enabled).length,
           per: rows,
         };
+      };
+    },
+
+    // ---------- bulk script corrections (Search) ----------
+    /** What a bulk correction would do, computed without touching anything. The dialog shows this;
+     *  `applyBulk` then changes exactly the rows it counted. */
+    bulkPreview(): (bookId: string, targets: BulkTarget[], action: BulkAction) => BulkPreview {
+      return (bookId, targets, action) => {
+        const cast = this.charactersOf(bookId);
+        const ordered = [...targets].sort((a, b) => a.chId - b.chId || a.segId - b.segId);
+        const rows: BulkRow[] = [];
+        const chapters = new Set<number>();
+        const skips = new Set<BulkSkip>();
+        let missing = 0;
+        let changing = 0;
+        let stale = 0;
+        const parts: string[] = [];
+        for (const t of ordered) {
+          const s = this.segmentsOf(bookId, t.chId).find((x) => x.id === t.segId);
+          parts.push(`${t.chId}:${t.segId}:${scriptFingerprint(s)}`);
+          if (!s) {
+            missing++;
+            continue;
+          }
+          chapters.add(t.chId);
+          const { changes, skip } = bulkOutcome(s, action);
+          if (skip) skips.add(skip);
+          const willStale = changes && bulkInvalidates(action) && s.audio.status === "done";
+          if (changes) changing++;
+          if (willStale) stale++;
+          rows.push({
+            chId: t.chId,
+            segId: t.segId,
+            chapter: this.chapter(bookId, t.chId)?.title ?? `Chapter ${t.chId}`,
+            speaker: s.speaker,
+            color: cast.find((c) => c.name === s.speaker)?.color ?? "#71717a",
+            text: s.text,
+            before: beforeOf(s, action),
+            after: afterOf(s, action),
+            changes,
+            skip: skip ? SKIP_TEXT[skip](s, action) : "",
+            stale: willStale,
+          });
+        }
+        const n = changing;
+        const one = n === 1;
+        const confirm =
+          action.kind === "speaker"
+            ? `Change ${n} line${one ? "" : "s"}`
+            : action.kind === "flag"
+              ? `Flag ${n} line${one ? "" : "s"}`
+              : action.mode === "clear"
+                ? `Clear ${n} direction${one ? "" : "s"}`
+                : `Set ${n} direction${one ? "" : "s"}`;
+        const skipList = [...skips] as BulkSkip[];
+        return {
+          label: bulkLabel(action),
+          confirm,
+          selected: targets.length,
+          chapters: chapters.size,
+          changing,
+          skipped: rows.length - changing,
+          skipReason:
+            skipList.length === 1
+              ? SKIP_SUMMARY[skipList[0]](action)
+              : "already match this correction",
+          stale,
+          missing,
+          rows,
+          signature: parts.join("|"),
+        };
+      };
+    },
+    /** Is this batch's undo still on the stack? The Search result strip hides its Undo once the
+     *  toast, \u2318Z or the strip itself has taken it, so a batch can only be undone once. */
+    undoPending:
+      (s) =>
+      (entry: UndoEntry | null): boolean =>
+        !!entry && s._undo.includes(entry),
+
+    // ---------- search demo ----------
+    /** The character the demo scatters an alias of, or null when the book has nothing scripted. */
+    searchDemo(): (bookId: string) => { main: string; alias: string } | null {
+      return (bookId) => {
+        if (!this.chaptersOf(bookId).some(isScripted)) return null;
+        const cast = this.charactersOf(bookId);
+        const main =
+          cast.find((c) => c.major && c.name !== "Narrator" && c.aliases.length) ??
+          cast.find((c) => c.major && c.name !== "Narrator");
+        if (!main) return null;
+        return { main: main.name, alias: main.aliases[0] ?? main.name.split(" ").at(-1)! };
+      };
+    },
+    searchScenarios(): (bookId: string) => SearchScenario[] {
+      return (bookId) => {
+        const d = this.searchDemo(bookId);
+        if (!d) return [];
+        return [
+          {
+            id: "alias",
+            label: `Mis-attributed \u201c${d.alias}\u201d`,
+            hint: "Matches in every chapter \u2014 more than one page of them \u2014 mixed speakers and directions, clips rendered, stale and not yet rendered, and a few already flagged.",
+            query: d.alias,
+            speaker: "",
+            type: "all",
+          },
+          {
+            id: "settled",
+            label: `Lines already read by ${d.main}`,
+            hint: `Filtered to ${d.main}, so \u201cChange speaker to ${d.main}\u201d has nothing left to change.`,
+            query: d.alias,
+            speaker: d.main,
+            type: "all",
+          },
+          {
+            id: "empty",
+            label: "No results",
+            hint: "A term this book never uses.",
+            query: "orbital docking clamp",
+            speaker: "",
+            type: "all",
+          },
+        ];
       };
     },
   },
@@ -1461,6 +1636,96 @@ export const useApp = defineStore("app", {
     },
 
     // ---------- demo ----------
+    // A seeded situation for the Search page's bulk corrections: one character's alias scattered
+    // through the book as if the model had mis-attributed it, a few flagged lines, and clips in all
+    // three states. Nothing persists \u2014 `resetSearchDemo` puts the book back exactly as it was.
+    seedSearchDemo(bookId: string): void {
+      if (this._searchDemo) return;
+      const info = this.searchDemo(bookId);
+      if (!info) {
+        this.toast("This book has no scripted chapters to seed", { kind: "warn" });
+        return;
+      }
+      const restore = this._bookSnapshot(bookId);
+      const { main, alias } = info;
+      const scripted = this.chaptersOf(bookId).filter(isScripted);
+      const cast = this.characters[bookId];
+      // the alias is a speaker of its own, with no voice \u2014 exactly what a re-script leaves behind
+      if (!cast.some((c) => c.name === alias))
+        cast.push({
+          name: alias,
+          aliases: [],
+          gender: "?",
+          description: "",
+          voice: null,
+          style: "",
+          color: PALETTE[cast.length % PALETTE.length],
+          major: false,
+          isNew: true,
+        });
+      let moved = 0;
+      let flagged = 0;
+      let staled = 0;
+      let cleared = 0;
+      for (const [i, c] of scripted.entries()) {
+        const segs = this.segmentsOf(bookId, c.id);
+        // every other chapter contributes mis-attributed lines, so matches span the whole book
+        if (i % 2 === 1) {
+          const his = segs.filter((x) => x.speaker === main);
+          for (const [j, s] of his.entries())
+            if (moved < 16 && j % 2 === 0) {
+              s.speaker = alias;
+              moved++;
+            }
+        }
+        for (const s of segs) {
+          const hit = s.speaker.includes(alias) || s.text.includes(alias);
+          if (!hit) continue;
+          // already-flagged lines to explain "existing flags are kept"
+          if (s.audio.status === "done" && flagged < 3 && !s.flag) {
+            s.flag = {
+              kind: flagged === 0 ? "delivery" : "pronunciation",
+              note:
+                flagged === 0
+                  ? "flat \u2014 the line should land"
+                  : `\u201c${alias}\u201d is read as two words`,
+              at: Date.now() - (40 + flagged * 7) * 60000,
+            };
+            flagged++;
+            continue;
+          }
+          // and clips in every state: rendered, already stale, never rendered
+          if (s.audio.status === "done" && staled < 4 && s.id % 5 === 2) {
+            s.audio.status = "stale";
+            if (c.narration === "done") c.narration = "stale";
+            staled++;
+            continue;
+          }
+          if (s.direction && cleared < 6 && s.id % 4 === 1) {
+            s.direction = "";
+            cleared++;
+          }
+        }
+      }
+      this._searchDemo = { bookId, restore };
+      this.toast("Search demo seeded", {
+        kind: "info",
+        description: `${moved} lines re-attributed to \u201c${alias}\u201d, ${flagged} flagged, ${staled} clips made stale. Reset puts \u201c${this.bookById(bookId)?.title}\u201d back.`,
+        timeout: 7000,
+      });
+    },
+    /** Put the book back the way it was before the demo. In-memory only, like everything else. */
+    resetSearchDemo(): void {
+      const demo = this._searchDemo;
+      if (!demo) return;
+      demo.restore();
+      this._searchDemo = null;
+      this.toast("Search demo reset", {
+        kind: "info",
+        description: "The book is back to its seeded state.",
+        timeout: 4000,
+      });
+    },
     demoKick(): void {
       if (this._kicked) return;
       this._kicked = true;
@@ -1845,6 +2110,133 @@ export const useApp = defineStore("app", {
         this._markStale(bookId, chId, s);
       }
     },
+
+    // ---------- bulk script corrections (Search) ----------
+    // One correction, many lines, one undo. Everything goes through the per-segment actions above,
+    // so a line corrected in a batch ends up in exactly the state it would reach by hand: edited,
+    // its clip stale, its annotations and its prose untouched.
+    /** Apply `action` to the lines the preview counted. Lines that already have the requested value
+     *  are left alone. Returns the batch's single undo, or null when nothing changed. */
+    applyBulk(bookId: string, targets: BulkTarget[], action: BulkAction): BulkResult {
+      const preview = this.bulkPreview(bookId, targets, action);
+      const empty: BulkResult = {
+        changed: 0,
+        chapters: 0,
+        skipped: preview.skipped,
+        stale: 0,
+        label: preview.label,
+        entry: null,
+      };
+      if (!preview.changing) return empty;
+      // Flagging never touches a clip, so an undo of a flag batch ignores what the audio did since;
+      // a speaker or direction batch marked clips stale, so its undo has to see them unchanged.
+      const touchesAudio = bulkInvalidates(action);
+      const fingerprint = touchesAudio ? segmentFingerprint : scriptFingerprint;
+      // what each line read before, plus what it reads straight after — undo refuses to overwrite a
+      // line that someone edited in between
+      const before: {
+        chId: number;
+        segId: number;
+        speaker: string;
+        direction: string;
+        flag?: SegmentFlag;
+        edited?: boolean;
+        status: AudioStatus;
+        after: string;
+      }[] = [];
+      const chapters = new Set<number>();
+      const narration = new Map<number, NarrationStatus>();
+      for (const row of preview.rows) {
+        if (!row.changes) continue;
+        const at = () => this.segmentsOf(bookId, row.chId).find((x) => x.id === row.segId);
+        const s = at();
+        if (!s) continue;
+        if (!narration.has(row.chId))
+          narration.set(row.chId, this.chapter(bookId, row.chId)?.narration ?? "none");
+        const was = {
+          chId: row.chId,
+          segId: row.segId,
+          speaker: s.speaker,
+          direction: s.direction,
+          flag: s.flag ? clone(s.flag) : undefined,
+          edited: s.edited,
+          status: s.audio.status,
+          after: "",
+        };
+        if (action.kind === "speaker") this.setSpeaker(bookId, row.chId, row.segId, action.speaker);
+        else if (action.kind === "direction")
+          this.updateSegment(bookId, row.chId, row.segId, {
+            direction: action.mode === "clear" ? "" : action.direction.trim(),
+          });
+        else this.flagSegment(bookId, row.chId, row.segId, action.flag, action.note);
+        was.after = fingerprint(at());
+        before.push(was);
+        chapters.add(row.chId);
+      }
+      if (!before.length) return empty;
+      const revert = () => {
+        const clean = new Set(chapters);
+        let conflicts = 0;
+        for (const w of before) {
+          const s = this.segmentsOf(bookId, w.chId).find((x) => x.id === w.segId);
+          if (!s || fingerprint(s) !== w.after) {
+            conflicts++;
+            clean.delete(w.chId); // something else in this chapter moved on; leave its status alone
+            continue;
+          }
+          s.speaker = w.speaker;
+          s.direction = w.direction;
+          if (w.flag) s.flag = w.flag;
+          else delete s.flag;
+          if (w.edited) s.edited = true;
+          else delete s.edited;
+          if (touchesAudio) s.audio.status = w.status;
+        }
+        if (touchesAudio)
+          for (const chId of clean) {
+            const c = this.chapter(bookId, chId);
+            const was = narration.get(chId);
+            if (c && was) c.narration = was;
+          }
+        if (conflicts)
+          this.toast(
+            `${conflicts} line${conflicts === 1 ? " was" : "s were"} edited after this batch`,
+            {
+              kind: "warn",
+              description:
+                "They were left as they are — undo only restored the lines it still recognised.",
+              timeout: 7000,
+            },
+          );
+      };
+      // flagging says something about a clip; it does not change what would be sent to the endpoint
+      const stale = bulkInvalidates(action) ? before.filter((w) => w.status === "done").length : 0;
+      const changed = before.length;
+      this.toast(preview.label, {
+        kind: "success",
+        description:
+          `${changed} line${changed === 1 ? "" : "s"} in ${chapters.size} chapter${chapters.size === 1 ? "" : "s"}` +
+          (preview.skipped ? ` \u00b7 ${preview.skipped} unchanged` : "") +
+          (stale
+            ? ` \u00b7 ${stale} rendered clip${stale === 1 ? "" : "s"} now need re-narration`
+            : ""),
+        undo: revert,
+        timeout: 12000,
+      });
+      return {
+        changed,
+        chapters: chapters.size,
+        skipped: preview.skipped,
+        stale,
+        label: preview.label,
+        entry: this._undo.at(-1) ?? null,
+      };
+    },
+    /** Take one specific undo — the batch's own — rather than whatever is latest. */
+    revertEntry(entry: UndoEntry): void {
+      this._revert(entry);
+    },
+
     // ---------- segment boundaries ----------
     // The LLM sometimes groups two speakers into one segment, or cuts a sentence in half. These two
     // actions fix the split by hand; both are undoable and both invalidate the audio they touch.

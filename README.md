@@ -1,7 +1,7 @@
 # audiobook-ui — PROTOTYPE
 
 Throwaway Vue 3 prototype answering **"what should the audiobook pipeline UI look like?"**
-Front-end only. All data is mocked in `src/mock/data.ts`; jobs are simulated with timers in `src/stores/app.ts`. Nothing persists except reader typography preferences (localStorage).
+Front-end only. Everything mocked lives under `src/mock/`: hand-authored fixtures in `fixtures/`, the world they are expanded into in `world/`, the seeded demo situations in `scenarios/`, and the timer-driven fakes that stand in for the endpoints in `simulators/`. `src/stores/` contains focused Pinia stores for library, scripts, cast, endpoints, jobs, scripting, narration, exports and UI state; `demo.ts` coordinates the seeded scenarios. See [store ownership](src/stores/README.md) before adding state or cross-feature actions. The domain types are split by feature under `src/types/` and imported through `@/types`. Nothing persists except reader typography preferences (localStorage).
 
 ```bash
 pnpm install
@@ -37,6 +37,7 @@ Ideas borrowed from the older narrata web UI: major/minor cast split with Narrat
 - Narration: `done`, `stale` (script edited after narration → "Re-narrate changed" renders only those segments, including halves of a hand-split line that were never rendered), `failed` (per-segment retry).
 - A segment can hold several **takes**. `segment.audio` is always the clip in the book; a retake renders into `segment.candidate` and replaces nothing — not the player, not the chapter length, not the export — until it is accepted. Rejected takes stay in the row's details.
 - Narration is also `stale` when the **pronunciation dictionary** changes under a clip that used the old spelling. A **pause** never makes anything stale: it is stitched, not rendered.
+- Export: an **export** is one deliverable in one or more files, versioned by name + format + layout. It stores a fingerprint of every chapter it was built from, so "needs an update" is a comparison against the book rather than a date; a failed or cancelled build never replaces the version already on disk.
 - Endpoints back off for a few seconds on a simulated rate limit; health strip shows latency sparkline, ok rate, failures, 429s.
 - **Voices belong to endpoints.** Each endpoint card lists its voices (fetch from the server, add by id, remove); character pickers are grouped by endpoint, and a paused endpoint's voices are listed but disabled. A character's voice is a ref `endpointId/voiceId`, so every segment is rendered by the endpoint that owns its speaker's voice (unvoiced speakers borrow the Narrator's). Removing a voice or pausing its endpoint shows up as a blocker on the voice card and in "This run"; segments that can't be routed fail with a reason instead of hanging.
 - **Per-request character limit** per endpoint (`maxChars`, 0 = whole segments). Longer segments are sent as several requests and joined; the endpoint card says how many segments of the open book would split, the run estimate counts requests and splits, and the ledger marks rows "N parts · M ch" (click to see the exact cuts). **Cut at** chooses the boundary: sentence end, clause (`, ; : —`), word, or hard cut; when the preferred boundary doesn't occur inside the window it falls back to the next finer one and the part is flagged. The endpoint card previews how the longest routed segment of the open book would be cut (`src/lib/split.js`).
@@ -49,7 +50,7 @@ Ideas borrowed from the older narrata web UI: major/minor cast split with Narrat
 - **Chapter peek & skip** — every picker row has a ⌕ popover with the raw text and word count and a "Skip this chapter" toggle; skipped chapters leave every stage, the run totals and the audiobook.
 - **Re-script** from the reader header: profile + chunk size, "keep my N manual edits" (re-applied where the text still matches), then a "what changed" panel (speaker / direction changes, new / gone segments, click to jump). Edited segments carry `edited: true`.
 - **Undo** — merge, rename, delete speaker, remove volume / novel / endpoint / voice, delete export all toast with Undo; `⌘Z`/`Ctrl+Z` outside a field undoes the latest. Snapshots in `_castSnapshot` / `_bookSnapshot`.
-- **Export**: custom cover, chapter markers with a title pattern and preview, listen / download / on-disk path per finished file.
+- **Export**: custom cover, chapter markers with a title pattern and preview, listen / download / on-disk path per finished file. (Rebuilt in round eight — see below.)
 - **Script search** (`/book/:id/search`, or type ≥2 chars in the palette): text, speaker, direction across every scripted chapter; results deep-link to the segment (`?ch=&seg=`), and can be selected for a bulk correction (see round seven).
 - **Audit trail**: each rendered clip records voice, model, direction, style, type, time, cost. Clicking a ledger row (or `i`) shows it and spells out what differs from the script now (why a row is stale). Failures carry HTTP status + body and a "copy request".
 - **Voice picker** popover (search, gender filter, grouped by endpoint, "N using", inline demo) replaces the flat select on Voices and Cast.
@@ -234,6 +235,94 @@ preview → apply → undo**, without leaving Search.
   lines, a character with no voice, a search with no results, and one where every selected line already
   has the requested value. Reset restores the book from an in-memory snapshot; nothing persists.
 
+## Round eight: Export, at the size of a real book (2026-09-15)
+
+Export was built for the small case — one M4B, a chapter list in a 300px rail, a gap control that
+quietly disagreed with the book's own pacing, and "rebuild" as the only word for keeping a finished
+audiobook current. A 200-chapter serial breaks all four. The page is now two jobs on two tabs:
+**Build** (what goes in, what comes out) and **Audiobooks** (what you have made, and whether it still
+matches the book).
+
+**One plan, one truth.** `src/lib/exports.ts` is pure: given the selected chapters, the volumes and
+the settings, `planOf` returns every output file with its chapters, running time, size and marker
+count. The file count, the example names, the chapter order, the duration and the size are all read
+off that one structure, so they cannot drift apart from each other or from the selection. The store
+builds exactly the plan the page drew.
+
+**An export is the deliverable, not a file.** Format (M4B / MP3) and layout (one file · one per
+volume · one per chapter) are independent: layout decides how many files, nothing else changes. So
+one export entry holds `files[]` — "one audiobook in 6 files" rather than six entries to keep in
+sync. A set of files is named by its folder; a single file is named by itself. MP3 says plainly that
+it has no chapter marks every player reads, and offers the two ways out (one file per chapter, or
+M4B) instead of a disabled checkbox.
+
+**Selection is the contract.** `ExportChapterList` lets you tick _any_ chapter, including ones that
+cannot be exported, because a chapter silently left out is the failure mode this page exists to
+avoid. Each row says what is wrong with it — `no audio`, `failed`, `partial`, `stale`, `running` —
+and the plan panel turns the totals into things to do: **Narrate them**, **Leave them out**, **Use
+the audio as it is**. "Leave them out" unticks them, so the list and the build stay the same set, and
+`buildExport` refuses anything unusable rather than trimming it. At 214 chapters the list carries
+search, per-volume select and collapse, a jump box, shift-range selection, `↑↓`/`space`/`/`, and a
+**Needs attention** filter that doubles as navigation — with a warning in the footer when the current
+filter is hiding ticked chapters.
+
+**Using stale audio is a decision.** `useStale` starts false, so a build that contains clips the
+script has moved under is always something someone chose: the blocker offers re-narrating, leaving
+them out, or using them, and once accepted the plan says so in amber with a one-click undo of the
+choice.
+
+**Pacing had two owners; now it has one.** Export used to carry its own "gap between segments"
+beside the book's `line` / `turn` pacing, so the same silence was configured twice and the export's
+duration estimate counted neither. Gaps _inside_ a chapter now belong entirely to the book's pacing
+and its per-line overrides — the numbers the reader, the ledger, `chapter.duration` and the player
+already share — and are edited from Export through the same `setPacing` action, not copied. Export
+owns exactly one gap, **between two chapters**, because that join does not exist until they are
+stitched. `durationOf` is the only place chapter time is added up, so the plan, the size estimate and
+the preview agree; the chapter fingerprint covers the stitched silence, so changing a pause marks a
+finished export out of date even though it re-renders nothing.
+
+**Loudness.** A book read by several voices from several providers arrives at several different
+levels, and a listener reaches for the volume knob long before they notice the bitrate. The Loudness
+section lists every voice in the selection with its integrated loudness, the spread between the
+quietest and the loudest, and the gain matching would apply. All of it is **invented from each
+voice's identity, not measured** — `measuredLoudness` is a hash, this prototype renders no audio and
+applies no gain — and the panel says so in those words. The control is on by default at −18 LUFS,
+with −23 (EBU R128) and −16 (podcast-loud) offered.
+
+**Preview uses the app's own player.** The Preview button and each file's ▶ build a queue of the real
+clips with the real silence between them — the book's pacing inside a chapter, the export's gap
+between two. There is no rendered audio in the prototype, so the run is _timed rather than heard_ and
+the player bar says exactly that, rather than pretending. Download says the same: nothing was
+encoded, so there is nothing to download.
+
+**Builds are jobs.** One build is one job, whatever it produces, so a 200-track export does not put
+200 rows in the Queue. The job carries an `exportRun` — settings, chapters, which file is being
+written, how many chapters were encoded and how many carried over — which the Queue's running row,
+the job's Run details and Retry all read. Cancel removes the in-progress version and leaves the one
+on disk alone; a failed build does the same and says so (`v3 is untouched and still the audiobook on
+disk`), with Retry from Export, from the toast, or from the Queue.
+
+**Updating instead of rebuilding.** Every export stores a fingerprint per chapter
+(`chapterSignature`: the clips, the stitched silence, and the chapter's narration state). "Needs an
+update" is then a real comparison against the book as it stands, not a timestamp: _9 chapters
+narrated since · 4 changed · 1 no longer has audio · 191 of its 196 chapters are unchanged and would
+be carried over rather than encoded again._ An update encodes only what moved and copies the rest —
+the simulated encoder weights the two differently, and the job log says which is which — and the
+version already on disk stays current until the new one lands. Changing an output setting (bitrate,
+layout, loudness target…) is a different file, so nothing is carried over, and the page says that
+too.
+
+Seeded scenarios live behind the **Demo** chip, as on Search: a book ready to export, ready/missing/
+stale together, the 214-chapter serial, an export that needs updating, and running/failed/finished
+builds — plus a one-shot **make the next build fail** switch for the failure path. Reset restores the
+book from an in-memory snapshot.
+
+`tests/exports.test.ts` covers the plan (grouping, names, track widths, MP3's missing marks, and that
+the file totals equal the plan totals), the blockers (nothing dropped, stale accepted on purpose,
+partial ≠ failed), loudness (deterministic, gain closes to target), and the store: a build refuses
+what it cannot use, replaces the version it supersedes, keeps the finished version when the next one
+fails or is cancelled, and reuses exactly the chapters whose fingerprints have not moved.
+
 ## Toasts (Toastflow, 2026-09-14)
 
 Toasts run on [vue-toastflow](https://www.toastflow.top) for the runtime only — queue, timers, pause on hover, swipe to dismiss, Escape, focus handling, live regions, the promise `loading` helper. The plugin is created with `{ css: false }`, so none of its stylesheet loads: stack layout, motion and the time-left bar are in `src/toasts.css`, and the card is our own Tailwind markup in `components/Toasts.vue` through the headless slot (`ui.getRootProps / getCloseProps / getButtonProps / progress.*` keep the a11y and behaviour wiring). The app only ever calls `app.toast(msg, { kind, description, undo, action, timeout })` and `app.toastLoading(promise, { loading, success, error })`.
@@ -265,7 +354,7 @@ inside the box (`$ 12`, `0.35 s`), and `empty` lets a blank field mean something
 
 - Scripting: _The Cliché Cultivation World_ has three volumes — collapse them in the chapter list. Tick unscripted chapters on _Letters from the Drowned City_ and run; new chapters sometimes surface an alias (dashed "new") — the chip opens the Cast page, where merging lives. The cast rail sets each speaker's voice where you are reading them; hide it with its own button, the Cast button or `c`, and change type with `Aa`.
 - Narration: _Cliché_ ch 4 is partly failed — retry from the ledger. The Narrator sits on the free local Kokoro (limit 500 chars) and dialogue on OpenAI; narrate ch 7 and watch rows split into parts. On _Drowned City_, Old Tobiah's voice lives on the paused Azure proxy — resume it or repick. In Endpoints, add an endpoint and “Fetch from server” to pull its voice list.
-- Export: _Ashes of the Starforge_ is fully narrated — build an M4B.
+- Export: hit the **Demo** chip and pick a scenario. _A long book_ opens **Thousand Gates of the Ninth Heaven** — 214 chapters over 6 volumes: filter to **Needs attention**, switch **Files** between one file / per volume / per chapter and watch the names and the count follow, then **See the chapter order**. _An export that needs updating_ shows v2 nine chapters behind with 191 carried over — press **Update to v3** and watch the Queue say `Encoding 50 of 204 · file 2 of 6`. On _Ashes of the Starforge_ chapter 1 is stale, so the build waits for you to choose. Open **Loudness** to see five voices 4.3 LU apart and what matching would do; open **Pauses** and nudge "after a line" — the running time, the size and the preview all move, and the finished export says it is behind the book. Turn on **make the next build fail** in the Demo chip and build: the previous version is untouched and Retry starts over.
 - Review: _Starforge_ ch 1 has three flagged clips and one retake already waiting — play both takes and keep one. Flag another line yourself (⚑), then `↻ Retake flagged`.
 - Pronunciation: Narration → **Pronunciation** on _Cliché_ — `Ji Ning → Jee Ning` and `Lan’er → Lahn-urr` are already in; click the count for a before/after on a real line, change one and watch the clips that used it go stale. In the reader those words are underlined; hover for the respelling.
 - Pacing: _Starforge_ ch 1 holds 1.5s after the Captain's threat and runs straight on into the reply — the ledger's scrubber draws both gaps. Set your own in the reader under **Pause after**, or `[`/`]`.

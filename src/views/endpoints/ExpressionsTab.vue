@@ -1,13 +1,19 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useScriptsStore } from "@/stores/scripts";
+
 import { computed, ref } from "vue";
 import { Plus as AddIcon, Trash2 as RemoveIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
 import { UiSelect } from "@/ui";
-import { useApp } from "@/stores/app";
+
 import { configErrors, expressionId, validToken } from "@/lib/expressions";
 import { expressionDraft, resetExpressionDraft } from "./expressionState";
 import type { Endpoint, ExpressionTag } from "@/types";
 const props = defineProps<{ endpoint: Endpoint }>();
-const app = useApp();
+const castStore = useCastStore();
+const endpointsStore = useEndpointsStore();
+const scriptsStore = useScriptsStore();
 const draft = computed(() => expressionDraft(props.endpoint));
 const label = ref("");
 const token = ref("");
@@ -24,13 +30,13 @@ const modelChanged = computed(
     draft.value.model !== props.endpoint.model || draft.value.baseUrl !== props.endpoint.baseUrl,
 );
 const affected = computed(() =>
-  Object.entries(app.segments).reduce(
+  Object.entries(scriptsStore.segments).reduce(
     (n, [key, segs]) =>
       n +
       segs.filter(
         (s) =>
           s.expressions?.some((a) => !a.omitted) &&
-          app.effectiveVoice(key.split(":")[0], s.speaker).endpoint?.id === props.endpoint.id,
+          castStore.effectiveVoice(key.split(":")[0], s.speaker).endpoint?.id === props.endpoint.id,
       ).length,
     0,
   ),
@@ -62,7 +68,7 @@ function add() {
 function save() {
   attempted.value = true;
   if (errors.value.length) return;
-  if (app.saveExpressionConfig(props.endpoint.id, draft.value)) {
+  if (endpointsStore.saveExpressionConfig(props.endpoint.id, draft.value)) {
     resetExpressionDraft(props.endpoint);
     attempted.value = false;
   }

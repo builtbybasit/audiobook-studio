@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+
 // Money, and the three different things people mean by "cost":
 //
 //   estimated — what a run would cost, worked out from these rates before anything is sent
@@ -9,7 +12,7 @@
 // And the fourth case that matters most: when the rate isn't known, the answer is "unknown", never
 // a confident $0.
 import { computed } from "vue";
-import { useApp } from "@/stores/app";
+
 import { UiNumber, UiSelect, UiTooltip } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
 import {
@@ -32,7 +35,8 @@ const props = defineProps<{
   today: { cost: number; unknown: number };
 }>();
 
-const app = useApp();
+const jobsStore = useJobsStore();
+const libraryStore = useLibraryStore();
 const ep = computed(() => (props.u.profile ?? props.u.endpoint)!);
 const ops = computed(() => opsOf(props.u));
 const billing = computed(() => (props.u.endpoint ? billingOf(props.u.endpoint) : null));
@@ -57,14 +61,14 @@ const noRates = computed(
 );
 
 const books = computed(() =>
-  app.books
+  libraryStore.books
     .map((b) => ({
       book: b,
       cap: b.budget?.cap ?? null,
       scriptCap: b.scriptBudget ?? null,
-      spent: app.spent(b.id),
-      scriptSpent: app.scriptSpent(b.id),
-      reserved: app.scriptReserved(b.id),
+      spent: jobsStore.spent(b.id),
+      scriptSpent: jobsStore.scriptSpent(b.id),
+      reserved: jobsStore.scriptReserved(b.id),
       paused: !!b.budget?.paused,
     }))
     .filter((r) => r.cap != null || r.scriptCap != null || r.reserved > 0),
@@ -197,7 +201,7 @@ const limitUsed = computed(() =>
           <dd class="mt-1 font-mono text-sm">
             {{
               u.kind === "scripting"
-                ? money(app.books.reduce((n, b) => n + app.scriptReserved(b.id), 0))
+                ? money(libraryStore.books.reduce((n, b) => n + jobsStore.scriptReserved(b.id), 0))
                 : "—"
             }}
           </dd>

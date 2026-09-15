@@ -1,6 +1,8 @@
+import { useCastStore } from "@/stores/cast";
+import { useScriptsStore } from "@/stores/scripts";
 import { computed } from "vue";
 import type { ComputedRef } from "vue";
-import { useApp } from "@/stores/app";
+
 import type { Character, SegmentType } from "@/types";
 
 export interface ChapterProps {
@@ -9,16 +11,17 @@ export interface ChapterProps {
 }
 
 export function useScript(props: ChapterProps) {
-  const app = useApp();
-  const segments = computed(() => app.segmentsOf(props.bookId, props.chapterId));
-  const cast = computed(() => app.charactersOf(props.bookId));
-  const counts = computed(() => app.lineCounts(props.bookId, props.chapterId));
+  const castStore = useCastStore();
+  const scriptsStore = useScriptsStore();
+  const segments = computed(() => scriptsStore.segmentsOf(props.bookId, props.chapterId));
+  const cast = computed(() => castStore.charactersOf(props.bookId));
+  const counts = computed(() => scriptsStore.lineCounts(props.bookId, props.chapterId));
   const inChapter: ComputedRef<Character[]> = computed(() =>
     cast.value.filter((c) => counts.value[c.name]),
   );
   const colorOf = (name: string): string =>
     cast.value.find((c) => c.name === name)?.color ?? "#71717a";
-  return { app, segments, cast, counts, inChapter, colorOf };
+  return { segments, cast, counts, inChapter, colorOf };
 }
 export const TYPES: SegmentType[] = ["dialogue", "narration", "thought"];
 export const TYPE_GLYPH: Record<SegmentType, string> = {

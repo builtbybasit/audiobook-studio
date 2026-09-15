@@ -1,8 +1,12 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useScriptsStore } from "@/stores/scripts";
+
 // Cast → voice assignment. Main cast as cards; minor cast collapsed and falling back to the
 // Narrator's voice unless given one. Search, "unassigned only", auto-assign by gender.
 import { computed, ref } from "vue";
-import { useApp } from "@/stores/app";
+
 import { speak } from "@/composables/usePlayer";
 import { UiSelect, UiCheckbox, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
@@ -17,18 +21,21 @@ import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "reka-ui
 import type { Character, Gender } from "@/types";
 
 const props = defineProps<{ bookId: string }>();
-const app = useApp();
+const castStore = useCastStore();
+const endpointsStore = useEndpointsStore();
+const scriptsStore = useScriptsStore();
 // voices come from the endpoints (Endpoints tab); grouped per endpoint, paused endpoints listed but disabled
-const voiceOpts = computed(() => app.voiceOptions);
-const missing = (c: Character) => c.voice && !app.resolveVoice(c.voice);
-const issueOf = (c: Character) => app.routingIssues(props.bookId).find((i) => i.name === c.name);
+const voiceOpts = computed(() => endpointsStore.voiceOptions);
+const missing = (c: Character) => c.voice && !endpointsStore.resolveVoice(c.voice);
+const issueOf = (c: Character) =>
+  castStore.routingIssues(props.bookId).find((i) => i.name === c.name);
 const q = ref("");
 const unassignedOnly = ref(false);
 const showMinor = ref(false);
 const revealed = ref(new Set<string>());
 
-const all = computed(() => app.charactersOf(props.bookId));
-const counts = computed(() => app.lineCounts(props.bookId));
+const all = computed(() => castStore.charactersOf(props.bookId));
+const counts = computed(() => scriptsStore.lineCounts(props.bookId));
 const match = (c: Character) =>
   (!q.value ||
     c.name.toLowerCase().includes(q.value.toLowerCase()) ||
@@ -63,7 +70,7 @@ const sample = (c: Character) =>
       <label class="flex items-center gap-1.5 text-xs"
         ><UiCheckbox v-model="unassignedOnly" /> Unassigned only</label
       >
-      <button class="btn-ghost btn-xs ml-auto" @click="app.autoAssignByGender(bookId)">
+      <button class="btn-ghost btn-xs ml-auto" @click="castStore.autoAssignByGender(bookId)">
         Auto-assign all by gender
       </button>
       <RouterLink :to="`/book/${bookId}/cast`" class="btn-ghost btn-xs"
@@ -129,8 +136,8 @@ const sample = (c: Character) =>
           <UiTooltip text="Prototype: plays a browser voice, not the real TTS voice"
             ><button
               class="btn-ghost btn-xs"
-              :disabled="!app.effectiveVoice(bookId, c.name).voice"
-              @click="speak(sample(c), app.effectiveVoice(bookId, c.name).voice ?? '')"
+              :disabled="!castStore.effectiveVoice(bookId, c.name).voice"
+              @click="speak(sample(c), castStore.effectiveVoice(bookId, c.name).voice ?? '')"
             >
               <PlayIcon class="icon-sm icon-fill" /><span class="text-[9px] text-zinc-400"
                 >demo</span
@@ -149,9 +156,10 @@ const sample = (c: Character) =>
           ><template v-else-if="issueOf(c)!.kind === 'missing'"> · pick another voice</template>
         </div>
         <div v-else-if="c.voice" class="mt-1 truncate text-[11px] text-zinc-400">
-          on {{ app.resolveVoice(c.voice)!.endpoint.name
-          }}<template v-if="app.resolveVoice(c.voice)!.endpoint.maxChars">
-            · splits over {{ app.resolveVoice(c.voice)!.endpoint.maxChars }} chars</template
+          on {{ endpointsStore.resolveVoice(c.voice)!.endpoint.name
+          }}<template v-if="endpointsStore.resolveVoice(c.voice)!.endpoint.maxChars">
+            · splits over
+            {{ endpointsStore.resolveVoice(c.voice)!.endpoint.maxChars }} chars</template
           >
         </div>
         <input

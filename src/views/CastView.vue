@@ -1,8 +1,12 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useLibraryStore } from "@/stores/library";
+
 // Book-wide cast: every speaker across all chapters with line counts, first appearance, chapter spread,
 // aliases and voice. Merge suggestions for near-duplicate names; bulk merge; rename inline.
 import { computed, ref } from "vue";
-import { useApp } from "@/stores/app";
+
 import { useBookId } from "@/router";
 import { UiSelect, UiCombobox, UiCheckbox } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
@@ -17,19 +21,21 @@ const castOpts = computed(() =>
   })),
 );
 
-const app = useApp();
-const voiceOpts = computed(() => app.voiceOptions);
+const castStore = useCastStore();
+const endpointsStore = useEndpointsStore();
+const libraryStore = useLibraryStore();
+const voiceOpts = computed(() => endpointsStore.voiceOptions);
 const bookId = useBookId();
-const cast = computed(() => app.charactersOf(bookId));
-const stats = computed(() => app.castStats(bookId));
-const suggestions = computed(() => app.mergeSuggestions(bookId));
+const cast = computed(() => castStore.charactersOf(bookId));
+const stats = computed(() => castStore.castStats(bookId));
+const suggestions = computed(() => castStore.mergeSuggestions(bookId));
 const q = ref("");
 const sort = ref("lines");
 const onlyNew = ref(false);
 const sel = ref(new Set<string>());
 const editing = ref<string | null>(null);
 const draft = ref("");
-const total = computed(() => app.chaptersOf(bookId).length);
+const total = computed(() => libraryStore.chaptersOf(bookId).length);
 
 const rows = computed(() =>
   cast.value
@@ -60,7 +66,7 @@ function toggle(name: string) {
   sel.value = s;
 }
 function mergeSelectedInto(into: string | number | null) {
-  app.mergeMany(bookId, [...sel.value], String(into));
+  castStore.mergeMany(bookId, [...sel.value], String(into));
   sel.value = new Set();
 }
 const pickers = ref<Record<string, { open: boolean } | null>>({});
@@ -95,13 +101,13 @@ function startRename(c: Character) {
 }
 /** Dismiss a merge suggestion: the name stays as its own character. */
 function keepSuggestion(name: string) {
-  const c = app.characters[bookId]?.find((x) => x.name === name);
+  const c = castStore.characters[bookId]?.find((x) => x.name === name);
   if (!c) return;
   c.isNew = false;
   c.keep = true;
 }
 function commit() {
-  if (editing.value) app.renameCharacter(bookId, editing.value, draft.value);
+  if (editing.value) castStore.renameCharacter(bookId, editing.value, draft.value);
   editing.value = null;
 }
 const genderLabel = { m: "male", f: "female", n: "neutral", "?": "unknown" };
@@ -159,7 +165,7 @@ const genderLabel = { m: "male", f: "female", n: "neutral", "?": "unknown" };
         ><span class="text-xs text-zinc-400">{{ suggestions.length }}</span>
         <button
           class="ml-auto text-xs text-violet-500 hover:underline"
-          @click="suggestions.forEach((s) => app.mergeCharacter(bookId, s.from, s.into))"
+          @click="suggestions.forEach((s) => castStore.mergeCharacter(bookId, s.from, s.into))"
         >
           accept all
         </button>
@@ -183,7 +189,10 @@ const genderLabel = { m: "male", f: "female", n: "neutral", "?": "unknown" };
         <span class="min-w-0 flex-1 truncate text-xs text-zinc-500"
           >{{ s.reason }} · {{ stats[s.from]?.lines ?? 0 }} lines would move</span
         >
-        <button class="btn-primary btn-xs" @click="app.mergeCharacter(bookId, s.from, s.into)">
+        <button
+          class="btn-primary btn-xs"
+          @click="castStore.mergeCharacter(bookId, s.from, s.into)"
+        >
           Merge
         </button>
         <button class="btn-ghost btn-xs" @click="keepSuggestion(s.from)">Keep separate</button>
@@ -308,7 +317,7 @@ const genderLabel = { m: "male", f: "female", n: "neutral", "?": "unknown" };
               <button
                 v-if="c.name !== 'Narrator'"
                 class="ml-2 text-xs text-zinc-400 hover:text-red-500"
-                @click="app.deleteCharacter(bookId, c.name)"
+                @click="castStore.deleteCharacter(bookId, c.name)"
                 title="Merge into Narrator"
               >
                 <CloseIcon class="icon-sm" />

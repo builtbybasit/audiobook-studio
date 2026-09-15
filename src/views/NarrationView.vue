@@ -1,8 +1,15 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptsStore } from "@/stores/scripts";
+
 // Narration stage: voices + endpoints on top, chapter picker + run estimate + job ledger below.
 import { computed, nextTick, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { useApp, isScripted, isNarrated } from "@/stores/app";
+import { isScripted } from "@/lib/scriptReview";
+import { isNarrated } from "@/lib/scriptReview";
 import EmptyState from "@/components/EmptyState.vue";
 import { AudioLines as NarrationIcon } from "@lucide/vue";
 import { ChevronDown as ChevronDownIcon, ChevronUp as ChevronUpIcon } from "@lucide/vue";
@@ -14,7 +21,11 @@ import RunEstimate from "@/views/narration/RunEstimate.vue";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import JobLedger from "@/views/narration/JobLedger.vue";
 import { useBookId } from "@/router";
-const app = useApp();
+const castStore = useCastStore();
+const endpointsStore = useEndpointsStore();
+const libraryStore = useLibraryStore();
+const narrationStore = useNarrationStore();
+const scriptsStore = useScriptsStore();
 const route = useRoute();
 const bookId = useBookId();
 const tab = ref("voices");
@@ -30,9 +41,9 @@ const collapsed = ref(false);
 const selected = ref([]);
 const opened = ref(
   Number(route.query.ch) ||
-    (app.chaptersOf(bookId).find((c) => c.narration === "stale")?.id ??
-      app.chaptersOf(bookId).find((c) => c.narration === "failed")?.id ??
-      app.chaptersOf(bookId).find(isNarrated)?.id ??
+    (libraryStore.chaptersOf(bookId).find((c) => c.narration === "stale")?.id ??
+      libraryStore.chaptersOf(bookId).find((c) => c.narration === "failed")?.id ??
+      libraryStore.chaptersOf(bookId).find(isNarrated)?.id ??
       1),
 );
 watch(
@@ -41,13 +52,13 @@ watch(
     if (ch) opened.value = Number(ch);
   },
 ); // ?ch= from the command palette
-const anyScripted = computed(() => app.chaptersOf(bookId).some(isScripted));
+const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));
 /** The tab carries the cast's progress, so the Voices panel needs no summary line of its own. */
 const voices = computed(() => {
-  const cast = app.charactersOf(bookId);
+  const cast = castStore.charactersOf(bookId);
   return { assigned: cast.filter((c) => c.voice).length, total: cast.length };
 });
-const chapter = computed(() => app.chapter(bookId, opened.value));
+const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
 const ready = computed(
   () => chapter.value && isScripted(chapter.value) && chapter.value.narration !== "none",
 );
@@ -68,14 +79,17 @@ const ready = computed(
           class="border-b-2 border-transparent px-3 py-2 text-sm text-zinc-500 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:data-[state=active]:text-zinc-100"
           >Endpoints
           <span class="text-zinc-400"
-            >{{ app.enabledEndpoints.length }}/{{ app.endpoints.length }} on</span
+            >{{ endpointsStore.enabledEndpoints.length }}/{{
+              endpointsStore.endpoints.length
+            }}
+            on</span
           ></TabsTrigger
         >
         <TabsTrigger
           value="pronunciation"
           class="border-b-2 border-transparent px-3 py-2 text-sm text-zinc-500 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:data-[state=active]:text-zinc-100"
           >Pronunciation
-          <span class="text-zinc-400">{{ app.lexiconOf(bookId).length }}</span></TabsTrigger
+          <span class="text-zinc-400">{{ castStore.lexiconOf(bookId).length }}</span></TabsTrigger
         >
         <button class="ml-auto px-3 py-2 text-xs text-zinc-500" @click="collapsed = !collapsed">
           <component :is="collapsed ? ChevronDownIcon : ChevronUpIcon" class="icon-sm" />
@@ -102,7 +116,7 @@ const ready = computed(
             run-label="Narrate"
             :selectable="(c) => isScripted(c)"
             @open="(id) => (opened = id)"
-            @run="(ids) => app.runNarration(bookId, ids)"
+            @run="(ids) => narrationStore.runNarration(bookId, ids)"
           />
         </div>
         <div class="card shrink-0 p-3"><RunEstimate :book-id="bookId" :selected="selected" /></div>
@@ -144,8 +158,8 @@ const ready = computed(
           v-else
           :icon="NarrationIcon"
           :title="chapter?.title"
-          :body="`${app.segmentsOf(bookId, opened).length} segments ready. Each goes to the endpoint that owns its speaker’s voice; ${
-            app
+          :body="`${scriptsStore.segmentsOf(bookId, opened).length} segments ready. Each goes to the endpoint that owns its speaker’s voice; ${
+            narrationStore
               .estimate(bookId, [opened])
               .per.map(
                 (e) => `${e.endpoint.name}: ${e.requests} request${e.requests === 1 ? '' : 's'}`,
@@ -153,7 +167,7 @@ const ready = computed(
               .join(', ') || 'no voices routed yet'
           }.`"
         >
-          <button class="btn-primary" @click="app.runNarration(bookId, [opened])">
+          <button class="btn-primary" @click="narrationStore.runNarration(bookId, [opened])">
             Narrate this chapter
           </button>
         </EmptyState>

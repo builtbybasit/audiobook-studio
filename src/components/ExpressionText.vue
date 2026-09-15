@@ -1,11 +1,13 @@
 <script setup lang="ts">
+import { useNarrationStore } from "@/stores/narration";
+
 import { computed } from "vue";
-import { useApp } from "@/stores/app";
+
 import SpokenText from "@/components/SpokenText.vue";
 import type { Segment, ExpressionAnnotation } from "@/types";
 const props = defineProps<{ bookId: string; segment: Segment }>();
-const app = useApp();
-const plan = computed(() => app.expressionRender(props.bookId, props.segment));
+const narrationStore = useNarrationStore();
+const plan = computed(() => narrationStore.expressionRender(props.bookId, props.segment));
 const pieces = computed(() => {
   const out: { text?: string; annotation?: ExpressionAnnotation }[] = [];
   let at = 0;

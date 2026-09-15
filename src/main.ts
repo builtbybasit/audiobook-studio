@@ -3,7 +3,7 @@ import { createPinia } from "pinia";
 import App from "@/App.vue";
 import { router } from "@/router";
 import { useReader, saveReader } from "@/stores/reader";
-import { useApp } from "@/stores/app";
+import { useDemoStore } from "@/stores/demo";
 import { keyring } from "@/lib/keyring";
 import "@/style.css";
 import "@/toasts.css";
@@ -36,4 +36,4 @@ useReader(pinia).$subscribe((_, state) => saveReader(state));
 keyring.set("openai", "sk-prototype-demo-key-4f2a");
 keyring.set("profile:openai", "sk-prototype-demo-key-4f2a");
 keyring.set("profile:deepseek", "ds-prototype-91cd"); // PROTOTYPE: seeded key lives in the keyring, never in the store
-useApp(pinia).demoKick(); // PROTOTYPE: start a few simulated jobs so the queue is alive on load
+useDemoStore(pinia).demoKick(); // PROTOTYPE: start a few simulated jobs so the queue is alive on load

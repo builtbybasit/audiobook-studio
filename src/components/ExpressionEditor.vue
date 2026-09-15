@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useNarrationStore } from "@/stores/narration";
+
 import { computed, nextTick, ref } from "vue";
 import {
   DialogRoot,
@@ -17,7 +20,7 @@ import {
   ChevronDown as ExpandIcon,
 } from "@lucide/vue";
 import { UiSelect, UiCombobox, UiSwitch } from "@/ui";
-import { useApp } from "@/stores/app";
+
 import { expressionPositions, expressionSupport } from "@/lib/expressions";
 import ExpressionsTab from "@/views/endpoints/ExpressionsTab.vue";
 import ExpressionText from "@/components/ExpressionText.vue";
@@ -28,13 +31,14 @@ const props = defineProps<{
   segment: Segment;
   startOpen?: boolean;
 }>();
-const app = useApp();
+const castStore = useCastStore();
+const narrationStore = useNarrationStore();
 const root = ref<HTMLElement | null>(null);
 const expanded = ref(!!props.startOpen);
 const settings = ref(false);
 const selected = ref("");
 const at = ref("0");
-const route = computed(() => app.effectiveVoice(props.bookId, props.segment.speaker));
+const route = computed(() => castStore.effectiveVoice(props.bookId, props.segment.speaker));
 const endpoint = computed(() => route.value.endpoint);
 const support = computed(() => expressionSupport(endpoint.value));
 const tags = computed(() =>
@@ -49,14 +53,20 @@ const options = computed(() =>
   })),
 );
 const positions = computed(() => expressionPositions(props.segment.text));
-const plan = computed(() => app.expressionRender(props.bookId, props.segment));
+const plan = computed(() => narrationStore.expressionRender(props.bookId, props.segment));
 const issue = (id: number) => plan.value.issues.find((i) => i.annotationId === id);
 const change = (id: number, patch: Partial<ExpressionAnnotation> | null) =>
-  app.updateExpression(props.bookId, props.chapterId, props.segment.id, id, patch);
+  narrationStore.updateExpression(props.bookId, props.chapterId, props.segment.id, id, patch);
 async function insert() {
   const tag = tags.value.find((t) => t.id === selected.value);
   if (!tag) return;
-  app.addExpression(props.bookId, props.chapterId, props.segment.id, tag, Number(at.value));
+  narrationStore.addExpression(
+    props.bookId,
+    props.chapterId,
+    props.segment.id,
+    tag,
+    Number(at.value),
+  );
   selected.value = "";
   await nextTick();
   root.value?.querySelector<HTMLInputElement>('input[role="combobox"]')?.focus();

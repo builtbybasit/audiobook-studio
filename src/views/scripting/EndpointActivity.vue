@@ -1,17 +1,21 @@
 <script setup lang="ts">
+import { useJobsStore } from "@/stores/jobs";
+import { useUiStore } from "@/stores/ui";
+
 import { computed } from "vue";
-import { useApp } from "@/stores/app";
+
 import type { Profile } from "@/types";
 const props = defineProps<{ profile: Profile; now: number }>();
-const app = useApp();
-const stats = computed(() => app.scriptTelemetry[props.profile.id]);
+const jobsStore = useJobsStore();
+const uiStore = useUiStore();
+const stats = computed(() => jobsStore.scriptTelemetry[props.profile.id]);
 const error = computed(() => stats.value?.lastError);
 const recovered = computed(() => !!error.value && (stats.value?.lastSuccess ?? 0) > error.value.at);
 const cooldown = computed(() =>
   Math.max(0, Math.ceil(((stats.value?.backoffUntil ?? 0) - props.now) / 1000)),
 );
 const requests = computed(() =>
-  app.jobs.filter((j) => j.scriptRun?.profile.id === props.profile.id && !j.finishedAt),
+  jobsStore.jobs.filter((j) => j.scriptRun?.profile.id === props.profile.id && !j.finishedAt),
 );
 const active = computed(() => requests.value.reduce((n, j) => n + j.scriptRun!.active, 0));
 const queued = computed(() =>
@@ -21,7 +25,7 @@ const queued = computed(() =>
   ),
 );
 const usage = computed(() =>
-  app.scriptUsage
+  jobsStore.scriptUsage
     .filter((x) => x.profileId === props.profile.id)
     .reduce(
       (n, x) => ({
@@ -76,9 +80,9 @@ async function copyError() {
         2,
       ),
     );
-    app.toast("Error details copied", { kind: "success" });
+    uiStore.toast("Error details copied", { kind: "success" });
   } catch {
-    app.toast("Could not copy error details", { kind: "error" });
+    uiStore.toast("Could not copy error details", { kind: "error" });
   }
 }
 </script>

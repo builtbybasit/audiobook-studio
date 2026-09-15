@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+
 import { computed, ref, watch } from "vue";
 import {
   DialogRoot,
@@ -14,14 +17,15 @@ import {
   TabsContent,
 } from "reka-ui";
 import { X as CloseIcon, Copy as CopyIcon, ArrowUpRight as OpenIcon } from "@lucide/vue";
-import { useApp } from "@/stores/app";
+
 import { duration } from "@/lib/endpoints";
 import { jobDiagnostics } from "@/lib/jobActivity";
 import type { Job } from "@/types";
 
 const props = defineProps<{ job: Job | null; now: number }>();
 const emit = defineEmits<{ close: [] }>();
-const app = useApp();
+const jobsStore = useJobsStore();
+const libraryStore = useLibraryStore();
 const tab = ref("activity");
 const search = ref("");
 const issuesOnly = ref(false);
@@ -102,7 +106,7 @@ async function copy() {
             </div>
             <DialogTitle class="break-words text-lg font-semibold">{{ job.label }}</DialogTitle>
             <DialogDescription class="mt-1 text-sm text-zinc-500"
-              >{{ app.bookById(job.bookId)?.title ?? job.bookId
+              >{{ libraryStore.bookById(job.bookId)?.title ?? job.bookId
               }}<span v-if="job.chapterId !== null">
                 · Chapter {{ job.chapterId }}</span
               ></DialogDescription
@@ -259,6 +263,37 @@ async function copy() {
                 <dd>{{ stamp(job.startedAt) }}</dd>
                 <dt class="text-zinc-500">Finished</dt>
                 <dd>{{ stamp(job.finishedAt) }}</dd>
+                <template v-if="job.exportRun"
+                  ><dt class="text-zinc-500">Output</dt>
+                  <dd class="break-words">
+                    {{ job.exportRun.settings.format.toUpperCase() }} ·
+                    {{ job.exportRun.files }} file{{ job.exportRun.files === 1 ? "" : "s" }} ·
+                    {{ job.exportRun.settings.bitrate }} kbps
+                  </dd>
+                  <dt class="text-zinc-500">Writing</dt>
+                  <dd class="break-all font-mono text-xs">{{ job.exportRun.fileName }}</dd>
+                  <dt class="text-zinc-500">Chapters</dt>
+                  <dd>
+                    {{ job.exportRun.done }}/{{ job.exportRun.chapterIds.length }} ·
+                    {{ job.exportRun.encode }} encoded, {{ job.exportRun.reuse }} carried over
+                  </dd>
+                  <dt class="text-zinc-500">Loudness</dt>
+                  <dd>
+                    {{
+                      job.exportRun.settings.normalize
+                        ? `matched to ${job.exportRun.settings.loudness} LUFS (simulated)`
+                        : "left as rendered"
+                    }}
+                  </dd>
+                  <dt class="text-zinc-500">Updates</dt>
+                  <dd>
+                    {{
+                      job.exportRun.updates === null
+                        ? "a new audiobook"
+                        : "an existing audiobook — the version on disk is kept until this one lands"
+                    }}
+                  </dd></template
+                >
                 <template v-if="job.scriptRun"
                   ><dt class="text-zinc-500">Endpoint</dt>
                   <dd class="break-words">{{ job.scriptRun.profile.name }}</dd>
@@ -297,7 +332,7 @@ async function copy() {
                 v-if="!job.finishedAt"
                 class="btn-ghost btn-xs ml-auto text-red-500"
                 :disabled="job.cancelled"
-                @click="app.cancelJob(job.id)"
+                @click="jobsStore.cancelJob(job.id)"
               >
                 {{ job.cancelled ? "Cancelling…" : "Cancel job" }}
               </button>

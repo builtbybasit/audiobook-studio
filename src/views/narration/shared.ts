@@ -1,5 +1,9 @@
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
 import { computed } from "vue";
-import { useApp } from "@/stores/app";
+
 import type { AudioStatus } from "@/types";
 
 export const STATUS_BG: Record<AudioStatus, string> = {
@@ -24,17 +28,21 @@ export interface JobStats extends Record<AudioStatus, number> {
 }
 
 export function useJob(props: ChapterProps) {
-  const app = useApp();
-  const chapter = computed(() => app.chapter(props.bookId, props.chapterId));
-  const segments = computed(() => app.segmentsOf(props.bookId, props.chapterId));
-  const cast = computed(() => app.charactersOf(props.bookId));
+  const castStore = useCastStore();
+  const endpointsStore = useEndpointsStore();
+  const libraryStore = useLibraryStore();
+  const scriptsStore = useScriptsStore();
+  const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterId));
+  const segments = computed(() => scriptsStore.segmentsOf(props.bookId, props.chapterId));
+  const cast = computed(() => castStore.charactersOf(props.bookId));
   const colorOf = (name: string): string =>
     cast.value.find((c) => c.name === name)?.color ?? "#71717a";
   const voiceOf = (name: string): string => {
-    const v = app.effectiveVoice(props.bookId, name);
+    const v = castStore.effectiveVoice(props.bookId, name);
     return v.label ? (v.own ? v.label : `${v.label} (Narrator’s)`) : "?";
   };
-  const epName = (id: string | null): string => app.endpoints.find((e) => e.id === id)?.name ?? "—";
+  const epName = (id: string | null): string =>
+    endpointsStore.endpoints.find((e) => e.id === id)?.name ?? "—";
   const stats = computed<JobStats>(() => {
     const s: JobStats = {
       none: 0,
@@ -52,5 +60,5 @@ export function useJob(props: ChapterProps) {
     }
     return s;
   });
-  return { app, chapter, segments, cast, colorOf, voiceOf, epName, stats };
+  return { chapter, segments, cast, colorOf, voiceOf, epName, stats };
 }

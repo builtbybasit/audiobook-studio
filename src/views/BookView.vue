@@ -1,8 +1,16 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useExportsStore } from "@/stores/exports";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptingStore } from "@/stores/scripting";
+
 // Book overview: volumes, pipeline progress per stage, cast summary, latest exports, and what to do next.
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
-import { useApp, isScripted, isNarrated } from "@/stores/app";
+import { isScripted } from "@/lib/scriptReview";
+import { isNarrated } from "@/lib/scriptReview";
 import {
   ChevronUp as MoveUpIcon,
   ChevronDown as MoveDownIcon,
@@ -16,19 +24,28 @@ import { UiNumber } from "@/ui";
 import type { Volume } from "@/types";
 import { useBookId } from "@/router";
 
-const app = useApp();
+const castStore = useCastStore();
+const endpointsStore = useEndpointsStore();
+const exportsStore = useExportsStore();
+const jobsStore = useJobsStore();
+const libraryStore = useLibraryStore();
+const scriptingStore = useScriptingStore();
 const bookId = useBookId();
 const router = useRouter();
 // the router only reaches this view with a real book id
-const book = computed(() => app.bookById(bookId)!);
-const chapters = computed(() => app.chaptersOf(bookId));
-const p = computed(() => app.progress(bookId));
-const cast = computed(() => app.charactersOf(bookId));
+const book = computed(() => libraryStore.bookById(bookId)!);
+const chapters = computed(() => libraryStore.chaptersOf(bookId));
+const p = computed(() => libraryStore.progress(bookId));
+const cast = computed(() => castStore.charactersOf(bookId));
 const unreviewed = computed(() => cast.value.filter((c) => c.isNew).length);
 const unvoiced = computed(() => cast.value.filter((c) => !c.voice && c.major).length);
-const suggestions = computed(() => app.mergeSuggestions(bookId).length);
+const suggestions = computed(() => castStore.mergeSuggestions(bookId).length);
 const exportsHere = computed(() =>
-  app.exports.filter((e) => e.bookId === bookId && e.status === "done"),
+  exportsStore.exports.filter((e) => e.bookId === bookId && e.status === "done"),
+);
+/** A finished audiobook that no longer matches the book — new chapters, or chapters re-rendered. */
+const behind = computed(() =>
+  exportsHere.value.some((e) => exportsStore.exportUpdateFor(e).needed),
 );
 const editing = ref<number | null>(null);
 const draft = ref("");
@@ -36,24 +53,24 @@ const removing = ref<number | null>(null);
 const dragging = ref<number | null>(null);
 const dragOver = ref<number | null>(null);
 function drop(toIndex: number) {
-  if (dragging.value != null) app.moveVolume(bookId, dragging.value, toIndex);
+  if (dragging.value != null) libraryStore.moveVolume(bookId, dragging.value, toIndex);
   dragging.value = null;
   dragOver.value = null;
 }
 function saveName(v: Volume) {
-  app.renameVolume(bookId, v.id, draft.value);
+  libraryStore.renameVolume(bookId, v.id, draft.value);
   editing.value = null;
 }
 function remove(v: Volume) {
-  const r = app.removeVolume(bookId, v.id);
+  const r = libraryStore.removeVolume(bookId, v.id);
   removing.value = null;
   if (r === "book") router.push("/library");
 }
 const budget = computed(() => book.value.budget ?? { cap: null, paused: false });
-const spent = computed(() => app.spent(bookId));
+const spent = computed(() => jobsStore.spent(bookId));
 const capInput = computed({
   get: () => book.value.budget?.cap ?? null,
-  set: (v) => app.setBudgetCap(bookId, v || null),
+  set: (v) => libraryStore.setBudgetCap(bookId, v || null),
 });
 const volStats = (v: Volume) => {
   const chs = chapters.value.filter((c) => c.volumeId === v.id);
@@ -127,7 +144,7 @@ const next = computed(() => {
       to: "scripting",
       label: "Continue scripting",
     };
-  const fresh = exportsHere.value.some((e) => app.newSince(e).length);
+  const fresh = behind.value;
   if (!exportsHere.value.length || fresh)
     return {
       text: fresh
@@ -206,26 +223,22 @@ const next = computed(() => {
         <div class="flex items-baseline justify-between">
           <span class="label">3 · Export</span
           ><span class="font-mono text-xs text-zinc-500"
-            >{{ exportsHere.length }} file{{ exportsHere.length === 1 ? "" : "s" }}</span
+            >{{ exportsHere.length }} audiobook{{ exportsHere.length === 1 ? "" : "s" }}</span
           >
         </div>
         <div v-if="exportsHere.length" class="mt-2 truncate font-mono text-xs">
           {{ exportsHere[0].filename }}
-          <span class="text-zinc-400">v{{ exportsHere[0].version }}</span>
+          <span class="text-zinc-400"
+            >v{{ exportsHere[0].version
+            }}<template v-if="exportsHere[0].files.length > 1">
+              · {{ exportsHere[0].files.length }} files</template
+            ></span
+          >
         </div>
         <div v-else class="mt-2 text-xs text-zinc-500">No audiobook built yet.</div>
-        <div
-          class="mt-2 text-xs"
-          :class="
-            exportsHere.some((e) => app.newSince(e).length) ? 'text-violet-500' : 'text-zinc-500'
-          "
-        >
+        <div class="mt-2 text-xs" :class="behind ? 'text-violet-500' : 'text-zinc-500'">
           {{
-            exportsHere.some((e) => app.newSince(e).length)
-              ? "new chapters since last build"
-              : exportsHere.length
-                ? "up to date"
-                : ""
+            behind ? "behind the book — needs an update" : exportsHere.length ? "up to date" : ""
           }}
         </div>
       </RouterLink>
@@ -247,7 +260,7 @@ const next = computed(() => {
               class="hidden"
               @change="
                 (e: Event) =>
-                  app.addVolume(
+                  libraryStore.addVolume(
                     bookId,
                     (e.target as HTMLInputElement).files?.[0]?.name ?? 'volume.epub',
                   )
@@ -278,7 +291,7 @@ const next = computed(() => {
                 class="text-[10px] leading-none hover:text-violet-500 disabled:invisible"
                 :disabled="vi === 0"
                 title="move up"
-                @click="app.moveVolume(bookId, v.id, vi - 1)"
+                @click="libraryStore.moveVolume(bookId, v.id, vi - 1)"
               >
                 <MoveUpIcon class="icon-sm" />
               </button>
@@ -289,7 +302,7 @@ const next = computed(() => {
                 class="text-[10px] leading-none hover:text-violet-500 disabled:invisible"
                 :disabled="vi === book.volumes.length - 1"
                 title="move down"
-                @click="app.moveVolume(bookId, v.id, vi + 1)"
+                @click="libraryStore.moveVolume(bookId, v.id, vi + 1)"
               >
                 <MoveDownIcon class="icon-sm" />
               </button>
@@ -459,7 +472,9 @@ const next = computed(() => {
                 ? 'border-emerald-400 text-emerald-600'
                 : 'border-amber-400 text-amber-600'
             "
-            @click="budget.paused ? app.resumeBook(bookId) : app.pauseBook(bookId)"
+            @click="
+              budget.paused ? libraryStore.resumeBook(bookId) : libraryStore.pauseBook(bookId)
+            "
           >
             <component :is="budget.paused ? PlayIcon : PauseIcon" class="icon-sm icon-fill" />
             {{ budget.paused ? "Resume this book" : "Pause everything on this book" }}
@@ -468,19 +483,25 @@ const next = computed(() => {
         <div class="card p-4 text-xs text-zinc-500">
           <div class="label mb-1">Scripting profile</div>
           <div class="text-sm text-zinc-900 dark:text-zinc-100">
-            {{ app.profiles.find((x) => x.id === app.scriptSettings.profile)?.name }} ·
+            {{
+              endpointsStore.profiles.find((x) => x.id === scriptingStore.scriptSettings.profile)
+                ?.name
+            }}
+            ·
             <span class="font-mono">{{
-              app.profiles.find((x) => x.id === app.scriptSettings.profile)?.model
+              endpointsStore.profiles.find((x) => x.id === scriptingStore.scriptSettings.profile)
+                ?.model
             }}</span>
           </div>
           <div class="mt-1">
             {{
               (
-                app.profiles.find((x) => x.id === app.scriptSettings.profile)?.maxChars ?? 0
+                endpointsStore.profiles.find((x) => x.id === scriptingStore.scriptSettings.profile)
+                  ?.maxChars ?? 0
               ).toLocaleString()
             }}
             chars/chunk · watermarks
-            {{ app.scriptSettings.stripWatermarks ? "stripped" : "kept" }}
+            {{ scriptingStore.scriptSettings.stripWatermarks ? "stripped" : "kept" }}
           </div>
         </div>
       </div>

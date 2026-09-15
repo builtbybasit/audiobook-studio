@@ -1,13 +1,27 @@
+import { useEndpointsStore } from "../src/stores/endpoints";
+import { useExportsStore } from "../src/stores/exports";
+import { useJobsStore } from "../src/stores/jobs";
+import { useLibraryStore } from "../src/stores/library";
+import { useScriptingStore } from "../src/stores/scripting";
+import { useScriptsStore } from "../src/stores/scripts";
+import { useUiStore } from "../src/stores/ui";
 import { test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 import { newProfile, profileErrors, scriptParts, tokenEstimate } from "../src/lib/scripting";
-import { useApp } from "../src/stores/app";
+
 import { jobDiagnostics, logJob, MAX_JOB_EVENTS } from "../src/lib/jobActivity";
+import { DEFAULT_EXPORT_SETTINGS } from "../src/lib/exports";
 
 let callbacks = new Map<number, () => void>();
 let clock = 1000;
 let restore: (() => void)[] = [];
-let app: ReturnType<typeof useApp>;
+let endpointsStore: ReturnType<typeof useEndpointsStore>;
+let exportsStore: ReturnType<typeof useExportsStore>;
+let jobsStore: ReturnType<typeof useJobsStore>;
+let libraryStore: ReturnType<typeof useLibraryStore>;
+let scriptingStore: ReturnType<typeof useScriptingStore>;
+let scriptsStore: ReturnType<typeof useScriptsStore>;
+let uiStore: ReturnType<typeof useUiStore>;
 function tick(ms = 220) {
   clock += ms;
   const pending = [...callbacks]; // New intervals start on the next tick.
@@ -20,9 +34,15 @@ function finish() {
 beforeEach(() => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   setActivePinia(createPinia());
-  app = useApp();
-  app.jobs = [];
-  app.toast = () => "test";
+  endpointsStore = useEndpointsStore();
+  exportsStore = useExportsStore();
+  jobsStore = useJobsStore();
+  libraryStore = useLibraryStore();
+  scriptingStore = useScriptingStore();
+  scriptsStore = useScriptsStore();
+  uiStore = useUiStore();
+  jobsStore.jobs = [];
+  uiStore.toast = () => "test";
   const p = newProfile({
     id: "test",
     model: "test-model",
@@ -33,8 +53,8 @@ beforeEach(() => {
     outPrice: 2,
     maxOutputTokens: 200,
   });
-  app.profiles = [p];
-  app.scriptSettings.profile = p.id;
+  endpointsStore.profiles = [p];
+  scriptingStore.scriptSettings.profile = p.id;
   callbacks = new Map();
   clock = 1000;
   let seq = 0;
@@ -71,7 +91,7 @@ test("accepts 2,500 concurrency and rejects invalid endpoints and limits", () =>
   ).toContain("Use the base URL without /chat/completions.");
 });
 test("calculates input/output separately and includes per-request prompt overhead", () => {
-  const p = app.profiles[0];
+  const p = endpointsStore.profiles[0];
   const text = "a".repeat(400);
   const t = tokenEstimate(text, p);
   expect(t.inputTokens).toBe(660);
@@ -80,121 +100,127 @@ test("calculates input/output separately and includes per-request prompt overhea
   expect(tokenEstimate(text.slice(0, 200), p).inputTokens * 2).toBeGreaterThan(t.inputTokens);
 });
 test("estimate skips excluded and active chapters and uses endpoint-specific chunking", () => {
-  app.chapter("cliche", 2)!.excluded = true;
-  app.chapter("cliche", 3)!.scripting = "running";
-  const estimate = app.scriptEstimate("cliche", [1, 2, 3]);
+  libraryStore.chapter("cliche", 2)!.excluded = true;
+  libraryStore.chapter("cliche", 3)!.scripting = "running";
+  const estimate = scriptingStore.scriptEstimate("cliche", [1, 2, 3]);
   expect(estimate.chapters).toBe(1);
-  expect(estimate.chunks).toBe(scriptParts(app.rawText("cliche", 1), app.profiles[0]).length);
+  expect(estimate.chunks).toBe(
+    scriptParts(scriptsStore.rawText("cliche", 1), endpointsStore.profiles[0]).length,
+  );
 });
 test("shares endpoint concurrency across books, orders chapters, and snapshots rates", () => {
-  const estimate = app.scriptEstimate("cliche", [1]);
-  app.runScripting("cliche", [1, 2]);
-  app.runScripting("drowned", [1]);
+  const estimate = scriptingStore.scriptEstimate("cliche", [1]);
+  scriptingStore.runScripting("cliche", [1, 2]);
+  scriptingStore.runScripting("drowned", [1]);
   tick();
-  expect(app.jobs.reduce((n, j) => n + (j.scriptRun?.active ?? 0), 0)).toBe(2);
-  expect(app.jobs.find((j) => j.bookId === "cliche" && j.chapterId === 2)!.status).toBe("queued");
-  app.profiles[0].inPrice = 999;
-  app.profiles[0].model = "changed-model";
+  expect(jobsStore.jobs.reduce((n, j) => n + (j.scriptRun?.active ?? 0), 0)).toBe(2);
+  expect(jobsStore.jobs.find((j) => j.bookId === "cliche" && j.chapterId === 2)!.status).toBe(
+    "queued",
+  );
+  endpointsStore.profiles[0].inPrice = 999;
+  endpointsStore.profiles[0].model = "changed-model";
   finish();
-  const job = app.jobs.find((j) => j.bookId === "cliche" && j.chapterId === 1)!;
+  const job = jobsStore.jobs.find((j) => j.bookId === "cliche" && j.chapterId === 1)!;
   expect(job.scriptRun!.cost).toBeCloseTo(estimate.cost, 10);
   expect(job.scriptRun!.profile.model).toBe("test-model");
-  expect(app.jobs.every((j) => j.status === "done")).toBe(true);
+  expect(jobsStore.jobs.every((j) => j.status === "done")).toBe(true);
 });
 test("budget reservations throttle requests and spend survives cleared jobs", () => {
-  const e = app.scriptEstimate("cliche", [1]);
-  app.bookById("cliche")!.scriptBudget = e.cost + 0.0005;
-  app.runScripting("cliche", [1]);
+  const e = scriptingStore.scriptEstimate("cliche", [1]);
+  libraryStore.bookById("cliche")!.scriptBudget = e.cost + 0.0005;
+  scriptingStore.runScripting("cliche", [1]);
   while (callbacks.size) {
     tick(3000);
-    expect(app.scriptSpent("cliche") + app.scriptReserved("cliche")).toBeLessThanOrEqual(
-      app.bookById("cliche")!.scriptBudget! + 1e-9,
-    );
+    expect(
+      jobsStore.scriptSpent("cliche") + jobsStore.scriptReserved("cliche"),
+    ).toBeLessThanOrEqual(libraryStore.bookById("cliche")!.scriptBudget! + 1e-9);
   }
-  expect(app.scriptSpent("cliche")).toBeCloseTo(e.cost, 10);
-  app.clearFinished();
-  expect(app.scriptSpent("cliche")).toBeCloseTo(e.cost, 10);
+  expect(jobsStore.scriptSpent("cliche")).toBeCloseTo(e.cost, 10);
+  jobsStore.clearFinished();
+  expect(jobsStore.scriptSpent("cliche")).toBeCloseTo(e.cost, 10);
 });
 test("zero budget blocks paid work; paused endpoints block launch", () => {
-  app.bookById("cliche")!.scriptBudget = 0;
-  app.runScripting("cliche", [1]);
-  expect(app.jobs).toHaveLength(0);
-  app.bookById("cliche")!.scriptBudget = null;
-  app.profiles[0].enabled = false;
-  app.runScripting("cliche", [1]);
-  expect(app.jobs).toHaveLength(0);
+  libraryStore.bookById("cliche")!.scriptBudget = 0;
+  scriptingStore.runScripting("cliche", [1]);
+  expect(jobsStore.jobs).toHaveLength(0);
+  libraryStore.bookById("cliche")!.scriptBudget = null;
+  endpointsStore.profiles[0].enabled = false;
+  scriptingStore.runScripting("cliche", [1]);
+  expect(jobsStore.jobs).toHaveLength(0);
 });
 test("live pause drains current requests, resumes, and cancellation releases reservations", () => {
-  app.runScripting("cliche", [1]);
+  scriptingStore.runScripting("cliche", [1]);
   tick();
-  app.profiles[0].enabled = false;
+  endpointsStore.profiles[0].enabled = false;
   tick(3000);
-  expect(app.jobs[0].scriptRun!.active).toBe(0);
-  const completed = app.jobs[0].scriptRun!.completed;
+  expect(jobsStore.jobs[0].scriptRun!.active).toBe(0);
+  const completed = jobsStore.jobs[0].scriptRun!.completed;
   tick(3000);
-  expect(app.jobs[0].scriptRun!.completed).toBe(completed);
-  app.profiles[0].enabled = true;
+  expect(jobsStore.jobs[0].scriptRun!.completed).toBe(completed);
+  endpointsStore.profiles[0].enabled = true;
   tick();
-  expect(app.jobs[0].scriptRun!.active).toBe(2);
-  app.cancelJob(app.jobs[0].id);
+  expect(jobsStore.jobs[0].scriptRun!.active).toBe(2);
+  jobsStore.cancelJob(jobsStore.jobs[0].id);
   tick();
-  expect(app.scriptReserved("cliche")).toBe(0);
+  expect(jobsStore.scriptReserved("cliche")).toBe(0);
   expect(callbacks.size).toBe(0);
 });
 test("partial fallback retry retains other segments and honors the same scheduler", () => {
-  const segments = app.segmentsOf("cliche", 7);
+  const segments = scriptsStore.segmentsOf("cliche", 7);
   const fallback = segments.find((s) => s.fallback)!;
   const before = segments.filter((s) => s !== fallback).map((s) => s.text);
-  app.retryChunk("cliche", 7, fallback.id);
+  scriptingStore.retryChunk("cliche", 7, fallback.id);
   tick();
-  expect(app.jobs[0].scriptRun!.active).toBeLessThanOrEqual(2);
+  expect(jobsStore.jobs[0].scriptRun!.active).toBeLessThanOrEqual(2);
   finish();
-  const after = app.segmentsOf("cliche", 7);
+  const after = scriptsStore.segmentsOf("cliche", 7);
   expect(before.every((text) => after.some((s) => s.text === text))).toBe(true);
   expect(after.some((s) => s.fallback)).toBe(false);
 });
 
 test("output limits block oversized chunks; free endpoints work with a zero budget", () => {
-  app.profiles[0].maxOutputTokens = 1;
+  endpointsStore.profiles[0].maxOutputTokens = 1;
   expect(
-    app.scriptEstimate("cliche", [1]).blockers.some((x) => x.includes("output token limit")),
+    scriptingStore
+      .scriptEstimate("cliche", [1])
+      .blockers.some((x) => x.includes("output token limit")),
   ).toBe(true);
-  app.profiles[0].maxOutputTokens = 200;
-  app.profiles[0].inPrice = 0;
-  app.profiles[0].outPrice = 0;
-  app.bookById("cliche")!.scriptBudget = 0;
-  app.runScripting("cliche", [1]);
+  endpointsStore.profiles[0].maxOutputTokens = 200;
+  endpointsStore.profiles[0].inPrice = 0;
+  endpointsStore.profiles[0].outPrice = 0;
+  libraryStore.bookById("cliche")!.scriptBudget = 0;
+  scriptingStore.runScripting("cliche", [1]);
   finish();
-  expect(app.jobs[0].status).toBe("done");
-  expect(app.scriptSpent("cliche")).toBe(0);
+  expect(jobsStore.jobs[0].status).toBe("done");
+  expect(jobsStore.scriptSpent("cliche")).toBe(0);
 });
 
 test("settings round-trip retains endpoint limits and excludes unrecognized credential fields", () => {
-  const saved = app.exportSettings();
+  const saved = endpointsStore.exportSettings();
   saved.profiles[0].concurrency = 2500;
   Object.assign(saved.profiles[0], { apiKey: "test-secret" });
-  app.importSettings(saved);
-  expect(app.profiles[0].concurrency).toBe(2500);
-  expect(JSON.stringify(app.exportSettings())).not.toContain("test-secret");
-  const invalid = app.exportSettings();
+  endpointsStore.importSettings(saved);
+  expect(endpointsStore.profiles[0].concurrency).toBe(2500);
+  expect(JSON.stringify(endpointsStore.exportSettings())).not.toContain("test-secret");
+  const invalid = endpointsStore.exportSettings();
   invalid.profiles[0].concurrency = -1;
-  expect(() => app.importSettings(invalid)).toThrow("Invalid scripting endpoint");
-  expect(app.profiles[0].concurrency).toBe(2500);
+  expect(() => endpointsStore.importSettings(invalid)).toThrow("Invalid scripting endpoint");
+  expect(endpointsStore.profiles[0].concurrency).toBe(2500);
 });
 
 test("a second run for the same book waits for the first batch", () => {
-  app.runScripting("cliche", [1, 2]);
-  app.runScripting("cliche", [3]);
+  scriptingStore.runScripting("cliche", [1, 2]);
+  scriptingStore.runScripting("cliche", [3]);
   tick();
-  expect(app.jobs[2].status).toBe("queued");
-  expect(app.jobs[2].scriptRun!.active).toBe(0);
+  expect(jobsStore.jobs[2].status).toBe("queued");
+  expect(jobsStore.jobs[2].scriptRun!.active).toBe(0);
   finish();
-  expect(app.jobs[2].startedAt!).toBeGreaterThanOrEqual(app.jobs[1].finishedAt!);
+  expect(jobsStore.jobs[2].startedAt!).toBeGreaterThanOrEqual(jobsStore.jobs[1].finishedAt!);
 });
 
 test("job activity records request attempts, usage and completion across a cooldown", () => {
-  app.runScripting("cliche", [1]);
-  const job = app.jobs[0];
+  scriptingStore.runScripting("cliche", [1]);
+  const job = jobsStore.jobs[0];
   spyOn(Math, "random").mockReturnValueOnce(0).mockReturnValue(0.5);
   tick();
   expect(job.activity!.some((e) => e.detail?.code === 429)).toBe(true);
@@ -211,24 +237,24 @@ test("job activity records request attempts, usage and completion across a coold
 });
 
 test("paused activity does not flood the log, and cancellation is recorded once", () => {
-  app.runScripting("cliche", [1]);
+  scriptingStore.runScripting("cliche", [1]);
   tick();
-  app.profiles[0].enabled = false;
+  endpointsStore.profiles[0].enabled = false;
   tick(3000);
-  const job = app.jobs[0];
+  const job = jobsStore.jobs[0];
   const count = job.activity!.length;
   for (let i = 0; i < 30; i++) tick();
   expect(job.activity).toHaveLength(count);
   expect(job.waitingReason).toBe("Endpoint is paused");
-  app.cancelJob(job.id);
-  app.cancelJob(job.id);
+  jobsStore.cancelJob(job.id);
+  jobsStore.cancelJob(job.id);
   tick();
   expect(job.activity!.filter((e) => e.message === "Cancellation requested")).toHaveLength(1);
   expect(job.activity!.at(-1)!.message).toBe("Job cancelled");
 });
 
 test("retained diagnostics stay bounded and omit connection snapshots and credentials", () => {
-  const job = app.addJob("scripting", "cliche", "Test");
+  const job = jobsStore.addJob("scripting", "cliche", "Test");
   for (let i = 0; i < MAX_JOB_EVENTS + 2; i++) logJob(job, `Event ${i}`);
   logJob(job, "Authorization: Bearer sk-examplecredential", "error", {
     apiKey: "private",
@@ -245,17 +271,19 @@ test("retained diagnostics stay bounded and omit connection snapshots and creden
 });
 
 test("export jobs record milestones and the completed artifact", () => {
-  app.buildExport("starforge", [1], {
+  exportsStore.buildExport("starforge", [2, 3, 4, 5, 6], {
+    ...DEFAULT_EXPORT_SETTINGS,
     title: "Test book",
     filename: "test-log",
     bitrate: 64,
-  } as Parameters<typeof app.buildExport>[2]);
+  });
   finish();
-  const job = app.jobs[0];
+  const job = jobsStore.jobs[0];
   expect(job.status).toBe("done");
-  expect(job.activity!.some((e) => e.message === "Export 25% complete")).toBe(true);
-  expect(job.activity!.find((e) => e.message === "Export ready")!.detail?.filename).toBe(
-    "test-log.m4b",
-  );
+  expect(job.kind).toBe("export");
+  expect(job.activity!.some((e) => e.message.startsWith("25%"))).toBe(true);
+  expect(job.activity!.find((e) => e.message === "Export ready")!.detail?.files).toBe(1);
+  expect(exportsStore.exports[0].filename).toBe("test-log.m4b");
+  expect(exportsStore.exports[0].status).toBe("done");
   expect(job.activity!.at(-1)!.message).toBe("Job done");
 });

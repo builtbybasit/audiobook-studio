@@ -1,10 +1,15 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptsStore } from "@/stores/scripts";
+
 // How this book is *said*: the pronunciation dictionary on the left, the pacing defaults on the right.
 // Neither one edits the book — a term is swapped on its way to the endpoint and silence is stitched
 // between clips — but they differ in cost: a respelling needs the line rendered again, a pause does not.
 // Click a term for its preview against a real line, plus match-case and a note.
 import { computed, nextTick, ref } from "vue";
-import { useApp } from "@/stores/app";
+
 import { UiNumber, UiSwitch } from "@/ui";
 import { hitsIn, marks, speak, DEFAULT_PACING, secs } from "@/lib/speech";
 import {
@@ -15,11 +20,14 @@ import {
 } from "@lucide/vue";
 import type { LexEntry } from "@/types";
 const props = defineProps<{ bookId: string }>();
-const app = useApp();
-const list = computed(() => app.lexiconOf(props.bookId));
-const uses = computed(() => app.lexUses(props.bookId));
-const pacing = computed(() => app.pacingOf(props.bookId));
-const book = computed(() => app.bookById(props.bookId));
+const castStore = useCastStore();
+const libraryStore = useLibraryStore();
+const narrationStore = useNarrationStore();
+const scriptsStore = useScriptsStore();
+const list = computed(() => castStore.lexiconOf(props.bookId));
+const uses = computed(() => castStore.lexUses(props.bookId));
+const pacing = computed(() => castStore.pacingOf(props.bookId));
+const book = computed(() => libraryStore.bookById(props.bookId));
 const open = ref<number | null>(null);
 const term = ref("");
 const say = ref("");
@@ -32,7 +40,7 @@ const unused = computed(() => list.value.filter((e) => !uses.value[e.id]).length
 
 function add() {
   if (!term.value.trim() || !say.value.trim()) return;
-  open.value = app.addTerm(props.bookId, term.value, say.value);
+  open.value = castStore.addTerm(props.bookId, term.value, say.value);
   term.value = "";
   say.value = "";
   nextTick(() => {
@@ -49,7 +57,7 @@ defineExpose({ prefill });
 
 /** a window of a real line around the first hit — narration paragraphs run long */
 function sample(e: LexEntry): string {
-  const text = app.lexSample(props.bookId, e);
+  const text = castStore.lexSample(props.bookId, e);
   const hit = hitsIn(text, [{ ...e, enabled: true }])[0];
   if (!hit) return "";
   let from = Math.max(0, hit.from - 60);
@@ -62,19 +70,20 @@ const preview = (e: LexEntry) => marks(sample(e), [{ ...e, enabled: true }]);
 const said = (e: LexEntry) => speak(sample(e), [{ ...e, enabled: true }]).text;
 // clips rendered before a term changed still carry the old spelling
 const staleChapters = computed(() =>
-  app.chaptersOf(props.bookId).filter((c) => c.narration === "stale"),
+  libraryStore.chaptersOf(props.bookId).filter((c) => c.narration === "stale"),
 );
 const staleLines = computed(() =>
   staleChapters.value.reduce(
     (a, c) =>
-      a + app.segmentsOf(props.bookId, c.id).filter((s) => s.audio.status === "stale").length,
+      a +
+      scriptsStore.segmentsOf(props.bookId, c.id).filter((s) => s.audio.status === "stale").length,
     0,
   ),
 );
 function renarrate() {
-  for (const c of staleChapters.value) app.renarrateStale(props.bookId, c.id);
+  for (const c of staleChapters.value) narrationStore.renarrateStale(props.bookId, c.id);
 }
-const overrides = computed(() => app.pauseOverrides(props.bookId));
+const overrides = computed(() => castStore.pauseOverrides(props.bookId));
 const PRESETS = [0.2, 0.35, 0.6, 1];
 </script>
 
@@ -129,7 +138,9 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
               :class="!e.enabled && 'text-zinc-400 line-through'"
               aria-label="Term"
               @change="
-                app.updateTerm(bookId, e.id, { term: ($event.target as HTMLInputElement).value })
+                castStore.updateTerm(bookId, e.id, {
+                  term: ($event.target as HTMLInputElement).value,
+                })
               "
             />
             <span class="text-center text-zinc-400">→</span>
@@ -139,7 +150,9 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
               :class="!e.enabled && 'text-zinc-400'"
               aria-label="Said as"
               @change="
-                app.updateTerm(bookId, e.id, { say: ($event.target as HTMLInputElement).value })
+                castStore.updateTerm(bookId, e.id, {
+                  say: ($event.target as HTMLInputElement).value,
+                })
               "
             />
             <button
@@ -160,13 +173,15 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
             </button>
             <UiSwitch
               :model-value="e.enabled"
-              @update:model-value="(v: boolean) => app.updateTerm(bookId, e.id, { enabled: v })"
+              @update:model-value="
+                (v: boolean) => castStore.updateTerm(bookId, e.id, { enabled: v })
+              "
               ><span class="sr-only">Apply {{ e.term }}</span></UiSwitch
             >
             <button
               class="icon-btn shrink-0 hover:!border-red-400 hover:!text-red-500"
               title="remove this term"
-              @click="app.removeTerm(bookId, e.id)"
+              @click="castStore.removeTerm(bookId, e.id)"
             >
               <RemoveIcon class="icon-sm" />
             </button>
@@ -195,7 +210,7 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
                   type="checkbox"
                   :checked="!!e.matchCase"
                   @change="
-                    app.updateTerm(bookId, e.id, {
+                    castStore.updateTerm(bookId, e.id, {
                       matchCase: ($event.target as HTMLInputElement).checked,
                     })
                   "
@@ -207,7 +222,9 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
                 placeholder="note to yourself — why this entry exists"
                 aria-label="Note"
                 @change="
-                  app.updateTerm(bookId, e.id, { note: ($event.target as HTMLInputElement).value })
+                  castStore.updateTerm(bookId, e.id, {
+                    note: ($event.target as HTMLInputElement).value,
+                  })
                 "
               />
             </div>
@@ -257,7 +274,9 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
               :step="0.05"
               unit="s"
               :label="k === 'line' ? 'Gap after a line' : 'Gap when the speaker changes'"
-              @update:model-value="(v: number | null) => app.setPacing(bookId, { [k]: v ?? 0 })"
+              @update:model-value="
+                (v: number | null) => castStore.setPacing(bookId, { [k]: v ?? 0 })
+              "
             />
           </div>
           <div class="mt-1 flex flex-wrap gap-1">
@@ -266,7 +285,7 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
               :key="v"
               class="chip"
               :class="pacing[k] === v && 'chip-on'"
-              @click="app.setPacing(bookId, { [k]: v })"
+              @click="castStore.setPacing(bookId, { [k]: v })"
             >
               {{ secs(v) }}
             </button>
@@ -277,7 +296,7 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
         v-if="book?.pacing"
         class="btn-ghost btn-xs mt-3"
         :title="`back to ${secs(DEFAULT_PACING.line)} / ${secs(DEFAULT_PACING.turn)}`"
-        @click="app.resetPacing(bookId)"
+        @click="castStore.resetPacing(bookId)"
       >
         Reset to default
       </button>

@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
+
 // Shared chapter selector: checkboxes + per-stage status. Chapters are grouped by volume when a
 // novel spans several EPUBs; each volume header can collapse and select/deselect its chapters.
 // Each row has a peek (raw text preview) and can be skipped (excluded from every stage).
 // Keyboard: ↑↓ move, space ticks, ↵ opens, / focuses search.
 import { computed, ref } from "vue";
-import { useApp, isNarrated } from "@/stores/app";
+import { isNarrated } from "@/lib/scriptReview";
 import StatusDot from "@/components/StatusDot.vue";
 import { UiCheckbox, UiSelect } from "@/ui";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
@@ -38,9 +41,10 @@ const emit = defineEmits<{
   open: [number];
   run: [number[]];
 }>();
-const app = useApp();
-const chapters = computed(() => app.chaptersOf(props.bookId));
-const volumes = computed(() => app.volumesOf(props.bookId));
+const libraryStore = useLibraryStore();
+const scriptsStore = useScriptsStore();
+const chapters = computed(() => libraryStore.chaptersOf(props.bookId));
+const volumes = computed(() => libraryStore.volumesOf(props.bookId));
 const grouped = computed(() =>
   volumes.value.map((v) => ({ ...v, chapters: chapters.value.filter((c) => c.volumeId === v.id) })),
 );
@@ -176,7 +180,7 @@ function onListKey(e: KeyboardEvent) {
   }
 }
 function skip(c: Chapter, v: boolean) {
-  app.setExcluded(props.bookId, c.id, v);
+  libraryStore.setExcluded(props.bookId, c.id, v);
   if (v && props.modelValue.includes(c.id))
     emit(
       "update:modelValue",
@@ -184,7 +188,7 @@ function skip(c: Chapter, v: boolean) {
     );
 }
 const peek = (c: Chapter) => {
-  const t = app.rawText(props.bookId, c.id);
+  const t = scriptsStore.rawText(props.bookId, c.id);
   return t.length > 700 ? t.slice(0, 700) + "…" : t;
 };
 </script>
@@ -362,7 +366,7 @@ const peek = (c: Chapter) => {
               v-else-if="stage === 'scripting' && c.scripting === 'done'"
               class="font-mono text-[11px] text-zinc-400"
               title="segments"
-              >{{ app.segmentsOf(bookId, c.id).length }}</span
+              >{{ scriptsStore.segmentsOf(bookId, c.id).length }}</span
             >
             <span
               v-else-if="stage !== 'scripting' && c.duration"

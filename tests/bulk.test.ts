@@ -18,16 +18,32 @@ mock.module("vue-toastflow", () => ({
     loading: (f: () => Promise<unknown>) => f(),
   },
 }));
-const { useApp } = await import("../src/stores/app");
 
-let app: ReturnType<typeof useApp>;
+const { useDemoStore } = await import("../src/stores/demo");
+const { useJobsStore } = await import("../src/stores/jobs");
+const { useLibraryStore } = await import("../src/stores/library");
+const { useNarrationStore } = await import("../src/stores/narration");
+const { useScriptsStore } = await import("../src/stores/scripts");
+const { useUiStore } = await import("../src/stores/ui");
+
+let demoStore: ReturnType<typeof useDemoStore>;
+let jobsStore: ReturnType<typeof useJobsStore>;
+let libraryStore: ReturnType<typeof useLibraryStore>;
+let narrationStore: ReturnType<typeof useNarrationStore>;
+let scriptsStore: ReturnType<typeof useScriptsStore>;
+let uiStore: ReturnType<typeof useUiStore>;
 let restore: (() => void)[] = [];
 
 beforeEach(() => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   setActivePinia(createPinia());
-  app = useApp();
-  app.jobs = [];
+  demoStore = useDemoStore();
+  jobsStore = useJobsStore();
+  libraryStore = useLibraryStore();
+  narrationStore = useNarrationStore();
+  scriptsStore = useScriptsStore();
+  uiStore = useUiStore();
+  jobsStore.jobs = [];
   toasts.length = 0;
   restore = [spyOn(Math, "random").mockReturnValue(0.5)].map((s) => () => s.mockRestore());
 });
@@ -35,11 +51,11 @@ afterEach(() => restore.forEach((fn) => fn()));
 
 /** Every line of a chapter, as selection targets. */
 const all = (chId: number): BulkTarget[] =>
-  app.segmentsOf("cliche", chId).map((s) => ({ chId, segId: s.id }));
+  scriptsStore.segmentsOf("cliche", chId).map((s) => ({ chId, segId: s.id }));
 const seg = (chId: number, segId: number): Segment =>
-  app.segmentsOf("cliche", chId).find((s) => s.id === segId)!;
+  scriptsStore.segmentsOf("cliche", chId).find((s) => s.id === segId)!;
 const snapshot = (chId: number): string =>
-  app
+  scriptsStore
     .segmentsOf("cliche", chId)
     .map((s) => segmentFingerprint(s))
     .join("|");
@@ -49,8 +65,8 @@ test("the preview counts what will change and what already matches, and mutates 
   const speaker = seg(1, targets[0].segId).speaker;
   const before = snapshot(1);
 
-  const p = app.bulkPreview("cliche", targets, { kind: "speaker", speaker });
-  const already = app.segmentsOf("cliche", 1).filter((s) => s.speaker === speaker).length;
+  const p = scriptsStore.bulkPreview("cliche", targets, { kind: "speaker", speaker });
+  const already = scriptsStore.segmentsOf("cliche", 1).filter((s) => s.speaker === speaker).length;
 
   expect(p.selected).toBe(targets.length);
   expect(p.chapters).toBe(1);
@@ -64,19 +80,19 @@ test("the preview counts what will change and what already matches, and mutates 
 
 test("a batch where every selected line already has the value offers nothing to apply", () => {
   const speaker = "Ji Ning";
-  const targets = app
+  const targets = scriptsStore
     .segmentsOf("cliche", 1)
     .filter((s) => s.speaker === speaker)
     .map((s) => ({ chId: 1, segId: s.id }));
   expect(targets.length).toBeGreaterThan(0);
 
-  const p = app.bulkPreview("cliche", targets, { kind: "speaker", speaker });
+  const p = scriptsStore.bulkPreview("cliche", targets, { kind: "speaker", speaker });
   expect(p.changing).toBe(0);
   expect(p.skipped).toBe(targets.length);
   expect(p.confirm).toBe("Change 0 lines");
 
   const before = snapshot(1);
-  const res = app.applyBulk("cliche", targets, { kind: "speaker", speaker });
+  const res = scriptsStore.applyBulk("cliche", targets, { kind: "speaker", speaker });
   expect(res.changed).toBe(0);
   expect(res.entry).toBeNull();
   expect(snapshot(1)).toBe(before);
@@ -84,48 +100,48 @@ test("a batch where every selected line already has the value offers nothing to 
 
 test("changing the speaker in bulk edits only the counted lines and stales their rendered clips", () => {
   const targets = all(1); // chapter 1 of Cliché is narrated, so every clip is done
-  const p = app.bulkPreview("cliche", targets, { kind: "speaker", speaker: "Elder Mo" });
-  const untouched = app.segmentsOf("cliche", 2).map((s) => s.audio.status);
+  const p = scriptsStore.bulkPreview("cliche", targets, { kind: "speaker", speaker: "Elder Mo" });
+  const untouched = scriptsStore.segmentsOf("cliche", 2).map((s) => s.audio.status);
 
-  const res = app.applyBulk("cliche", targets, { kind: "speaker", speaker: "Elder Mo" });
+  const res = scriptsStore.applyBulk("cliche", targets, { kind: "speaker", speaker: "Elder Mo" });
 
   expect(res.changed).toBe(p.changing);
   expect(res.stale).toBe(p.stale);
   expect(p.stale).toBeGreaterThan(0);
-  const changed = app.segmentsOf("cliche", 1).filter((s) => s.speaker === "Elder Mo");
-  expect(changed).toHaveLength(app.segmentsOf("cliche", 1).length);
+  const changed = scriptsStore.segmentsOf("cliche", 1).filter((s) => s.speaker === "Elder Mo");
+  expect(changed).toHaveLength(scriptsStore.segmentsOf("cliche", 1).length);
   expect(changed.every((s) => s.edited)).toBe(true);
-  expect(app.chapter("cliche", 1)!.narration).toBe("stale");
+  expect(libraryStore.chapter("cliche", 1)!.narration).toBe("stale");
   // a chapter nobody selected is left alone
-  expect(app.segmentsOf("cliche", 2).map((s) => s.audio.status)).toEqual(untouched);
+  expect(scriptsStore.segmentsOf("cliche", 2).map((s) => s.audio.status)).toEqual(untouched);
 });
 
 test("undo restores speakers, edited marks, clip status and the chapter's narration state", () => {
   const targets = all(1);
-  const speakers = app.segmentsOf("cliche", 1).map((s) => s.speaker);
-  const statuses = app.segmentsOf("cliche", 1).map((s) => s.audio.status);
-  const edits = app.segmentsOf("cliche", 1).map((s) => s.edited);
-  const narration = app.chapter("cliche", 1)!.narration;
+  const speakers = scriptsStore.segmentsOf("cliche", 1).map((s) => s.speaker);
+  const statuses = scriptsStore.segmentsOf("cliche", 1).map((s) => s.audio.status);
+  const edits = scriptsStore.segmentsOf("cliche", 1).map((s) => s.edited);
+  const narration = libraryStore.chapter("cliche", 1)!.narration;
 
-  const res = app.applyBulk("cliche", targets, { kind: "speaker", speaker: "Elder Mo" });
-  expect(app.undoPending(res.entry)).toBe(true);
-  app.revertEntry(res.entry as UndoEntry);
+  const res = scriptsStore.applyBulk("cliche", targets, { kind: "speaker", speaker: "Elder Mo" });
+  expect(uiStore.undoPending(res.entry)).toBe(true);
+  uiStore.revertEntry(res.entry as UndoEntry);
 
-  expect(app.segmentsOf("cliche", 1).map((s) => s.speaker)).toEqual(speakers);
-  expect(app.segmentsOf("cliche", 1).map((s) => s.audio.status)).toEqual(statuses);
-  expect(app.segmentsOf("cliche", 1).map((s) => s.edited)).toEqual(edits);
-  expect(app.chapter("cliche", 1)!.narration).toBe(narration);
-  expect(app.undoPending(res.entry)).toBe(false); // the batch's undo is taken once
+  expect(scriptsStore.segmentsOf("cliche", 1).map((s) => s.speaker)).toEqual(speakers);
+  expect(scriptsStore.segmentsOf("cliche", 1).map((s) => s.audio.status)).toEqual(statuses);
+  expect(scriptsStore.segmentsOf("cliche", 1).map((s) => s.edited)).toEqual(edits);
+  expect(libraryStore.chapter("cliche", 1)!.narration).toBe(narration);
+  expect(uiStore.undoPending(res.entry)).toBe(false); // the batch's undo is taken once
 });
 
 test("undo leaves alone a line that was edited after the batch", () => {
   const targets = all(1);
   const victim = targets[0];
-  const res = app.applyBulk("cliche", targets, { kind: "speaker", speaker: "Elder Mo" });
+  const res = scriptsStore.applyBulk("cliche", targets, { kind: "speaker", speaker: "Elder Mo" });
 
   // someone corrects one of the batch's lines by hand afterwards
-  app.setSpeaker("cliche", victim.chId, victim.segId, "Xiao Lan");
-  app.revertEntry(res.entry as UndoEntry);
+  scriptsStore.setSpeaker("cliche", victim.chId, victim.segId, "Xiao Lan");
+  uiStore.revertEntry(res.entry as UndoEntry);
 
   expect(seg(victim.chId, victim.segId).speaker).toBe("Xiao Lan");
   expect(seg(1, targets[1].segId).speaker).not.toBe("Elder Mo");
@@ -133,22 +149,28 @@ test("undo leaves alone a line that was edited after the batch", () => {
 
 test("setting a direction replaces existing ones; clearing is its own action", () => {
   const targets = all(5);
-  const had = app.segmentsOf("cliche", 5).filter((s) => s.direction).length;
+  const had = scriptsStore.segmentsOf("cliche", 5).filter((s) => s.direction).length;
   expect(had).toBeGreaterThan(0);
 
-  app.applyBulk("cliche", targets, { kind: "direction", mode: "set", direction: "weary, slow" });
-  expect(app.segmentsOf("cliche", 5).every((s) => s.direction === "weary, slow")).toBe(true);
+  scriptsStore.applyBulk("cliche", targets, {
+    kind: "direction",
+    mode: "set",
+    direction: "weary, slow",
+  });
+  expect(scriptsStore.segmentsOf("cliche", 5).every((s) => s.direction === "weary, slow")).toBe(
+    true,
+  );
 
-  const cleared = app.applyBulk("cliche", targets, {
+  const cleared = scriptsStore.applyBulk("cliche", targets, {
     kind: "direction",
     mode: "clear",
     direction: "",
   });
   expect(cleared.changed).toBe(targets.length);
-  expect(app.segmentsOf("cliche", 5).every((s) => s.direction === "")).toBe(true);
+  expect(scriptsStore.segmentsOf("cliche", 5).every((s) => s.direction === "")).toBe(true);
 
   // clearing again has nothing to do, and says so
-  const again = app.bulkPreview("cliche", targets, {
+  const again = scriptsStore.bulkPreview("cliche", targets, {
     kind: "direction",
     mode: "clear",
     direction: "",
@@ -159,23 +181,29 @@ test("setting a direction replaces existing ones; clearing is its own action", (
 
 test("a bulk correction leaves the prose and its expression annotations untouched", () => {
   const targets = all(1);
-  const text = app.segmentsOf("cliche", 1).map((s) => s.text);
-  const marks = app.segmentsOf("cliche", 1).map((s) => JSON.stringify(s.expressions ?? null));
+  const text = scriptsStore.segmentsOf("cliche", 1).map((s) => s.text);
+  const marks = scriptsStore
+    .segmentsOf("cliche", 1)
+    .map((s) => JSON.stringify(s.expressions ?? null));
 
-  app.applyBulk("cliche", targets, { kind: "direction", mode: "set", direction: "trembling" });
+  scriptsStore.applyBulk("cliche", targets, {
+    kind: "direction",
+    mode: "set",
+    direction: "trembling",
+  });
 
-  expect(app.segmentsOf("cliche", 1).map((s) => s.text)).toEqual(text);
-  expect(app.segmentsOf("cliche", 1).map((s) => JSON.stringify(s.expressions ?? null))).toEqual(
-    marks,
-  );
+  expect(scriptsStore.segmentsOf("cliche", 1).map((s) => s.text)).toEqual(text);
+  expect(
+    scriptsStore.segmentsOf("cliche", 1).map((s) => JSON.stringify(s.expressions ?? null)),
+  ).toEqual(marks);
 });
 
 test("flagging keeps existing flags unless replacement is chosen, and stales nothing", () => {
   const targets = all(1);
-  app.flagSegment("cliche", 1, targets[0].segId, "pause", "keep me");
-  const statuses = app.segmentsOf("cliche", 1).map((s) => s.audio.status);
+  narrationStore.flagSegment("cliche", 1, targets[0].segId, "pause", "keep me");
+  const statuses = scriptsStore.segmentsOf("cliche", 1).map((s) => s.audio.status);
 
-  const keep = app.bulkPreview("cliche", targets, {
+  const keep = scriptsStore.bulkPreview("cliche", targets, {
     kind: "flag",
     flag: "delivery",
     note: "whole scene",
@@ -185,7 +213,7 @@ test("flagging keeps existing flags unless replacement is chosen, and stales not
   expect(keep.skipReason).toBe("are already flagged — their flags are kept");
   expect(keep.stale).toBe(0);
 
-  const res = app.applyBulk("cliche", targets, {
+  const res = scriptsStore.applyBulk("cliche", targets, {
     kind: "flag",
     flag: "delivery",
     note: "whole scene",
@@ -193,9 +221,9 @@ test("flagging keeps existing flags unless replacement is chosen, and stales not
   });
   expect(res.stale).toBe(0);
   expect(seg(1, targets[0].segId).flag).toMatchObject({ kind: "pause", note: "keep me" });
-  expect(app.segmentsOf("cliche", 1).map((s) => s.audio.status)).toEqual(statuses);
+  expect(scriptsStore.segmentsOf("cliche", 1).map((s) => s.audio.status)).toEqual(statuses);
 
-  const replaced = app.bulkPreview("cliche", targets, {
+  const replaced = scriptsStore.bulkPreview("cliche", targets, {
     kind: "flag",
     flag: "delivery",
     note: "whole scene",
@@ -207,16 +235,16 @@ test("flagging keeps existing flags unless replacement is chosen, and stales not
 test("the preview signature moves when a selected line changes underneath it", () => {
   const targets = all(1);
   const action = { kind: "direction", mode: "set", direction: "commanding" } as const;
-  const first = app.bulkPreview("cliche", targets, action).signature;
+  const first = scriptsStore.bulkPreview("cliche", targets, action).signature;
 
-  app.setSpeaker("cliche", 1, targets[2].segId, "Bai Feng");
+  scriptsStore.setSpeaker("cliche", 1, targets[2].segId, "Bai Feng");
 
-  expect(app.bulkPreview("cliche", targets, action).signature).not.toBe(first);
+  expect(scriptsStore.bulkPreview("cliche", targets, action).signature).not.toBe(first);
 });
 
 test("selected lines that no longer exist are reported, not applied", () => {
   const targets = [...all(1), { chId: 1, segId: 9999 }];
-  const p = app.bulkPreview("cliche", targets, { kind: "speaker", speaker: "Elder Mo" });
+  const p = scriptsStore.bulkPreview("cliche", targets, { kind: "speaker", speaker: "Elder Mo" });
   expect(p.missing).toBe(1);
   expect(p.selected).toBe(targets.length);
   expect(p.rows).toHaveLength(targets.length - 1);
@@ -234,35 +262,35 @@ test("bulkOutcome names why a line is skipped", () => {
 });
 
 test("direction options list the book's own directions first, once each", () => {
-  const opts = directionOptions(app.segments, "cliche");
+  const opts = directionOptions(scriptsStore.segments, "cliche");
   expect(opts[0].group).toBe("Used in this book");
   expect(opts[0].hint).toMatch(/\d+/);
   expect(new Set(opts.map((o) => o.value)).size).toBe(opts.length);
   // a book that has never been scripted offers the presets alone
-  const fresh = directionOptions(app.segments, "nothing-here");
+  const fresh = directionOptions(scriptsStore.segments, "nothing-here");
   expect(fresh.every((o) => o.group === "Presets")).toBe(true);
   expect(fresh.length).toBeGreaterThan(0);
 });
 
 test("the search demo seeds a book and resets it exactly", () => {
-  const before = app
+  const before = libraryStore
     .chaptersOf("cliche")
     .map((c) => snapshot(c.id))
     .join("#");
-  const info = app.searchDemo("cliche")!;
+  const info = demoStore.searchDemo("cliche")!;
   expect(info.alias).toBe("Ning");
 
-  app.seedSearchDemo("cliche");
-  const after = app
+  demoStore.seedSearchDemo("cliche");
+  const after = libraryStore
     .chaptersOf("cliche")
     .map((c) => snapshot(c.id))
     .join("#");
   expect(after).not.toBe(before);
-  expect(app.searchScenarios("cliche")).toHaveLength(3);
+  expect(demoStore.searchScenarios("cliche")).toHaveLength(3);
 
-  app.resetSearchDemo();
+  demoStore.resetSearchDemo();
   expect(
-    app
+    libraryStore
       .chaptersOf("cliche")
       .map((c) => snapshot(c.id))
       .join("#"),
@@ -272,20 +300,20 @@ test("the search demo seeds a book and resets it exactly", () => {
 test("a clip finishing in the background does not invalidate an open preview, but an edit does", () => {
   const targets = all(1);
   const action = { kind: "speaker", speaker: "Elder Mo" } as const;
-  const first = app.bulkPreview("cliche", targets, action).signature;
+  const first = scriptsStore.bulkPreview("cliche", targets, action).signature;
 
   // audio moving on its own is not a reason to re-read the numbers
   seg(1, targets[0].segId).audio.status = "failed";
-  expect(app.bulkPreview("cliche", targets, action).signature).toBe(first);
+  expect(scriptsStore.bulkPreview("cliche", targets, action).signature).toBe(first);
 
   // someone editing one of the selected lines is
-  app.updateSegment("cliche", 1, targets[0].segId, { direction: "cold and clipped" });
-  expect(app.bulkPreview("cliche", targets, action).signature).not.toBe(first);
+  scriptsStore.updateSegment("cliche", 1, targets[0].segId, { direction: "cold and clipped" });
+  expect(scriptsStore.bulkPreview("cliche", targets, action).signature).not.toBe(first);
 });
 
 test("undoing a flag batch survives a clip that rendered in the meantime", () => {
   const targets = all(5); // chapter 5 is scripted but not narrated
-  const res = app.applyBulk("cliche", targets, {
+  const res = scriptsStore.applyBulk("cliche", targets, {
     kind: "flag",
     flag: "pause",
     note: "check the beat",
@@ -295,8 +323,8 @@ test("undoing a flag batch survives a clip that rendered in the meantime", () =>
 
   // narration finishes under the batch — nothing to do with the flags
   seg(5, targets[0].segId).audio.status = "done";
-  app.revertEntry(res.entry as UndoEntry);
+  uiStore.revertEntry(res.entry as UndoEntry);
 
-  expect(app.segmentsOf("cliche", 5).every((s) => !s.flag)).toBe(true);
+  expect(scriptsStore.segmentsOf("cliche", 5).every((s) => !s.flag)).toBe(true);
   expect(seg(5, targets[0].segId).audio.status).toBe("done"); // and the clip is left alone
 });

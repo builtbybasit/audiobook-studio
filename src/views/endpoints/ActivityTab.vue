@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useLibraryStore } from "@/stores/library";
+import { useUiStore } from "@/stores/ui";
+
 // Every request this endpoint has handled or is about to, in one filterable list.
 //
 // Two columns that usually get merged are kept apart: `queue` is how long we made the request wait
@@ -8,7 +11,7 @@
 //
 // Error bodies are redacted before they are shown or copied.
 import { computed, ref } from "vue";
-import { useApp } from "@/stores/app";
+
 import { UiSelect, UiToggleGroup } from "@/ui";
 import StatusDot from "@/components/StatusDot.vue";
 import { ChevronRight as ExpandIcon, Copy as CopyIcon, X as ClearIcon } from "@lucide/vue";
@@ -33,7 +36,8 @@ const props = defineProps<{
   rangeLabel: string;
 }>();
 
-const app = useApp();
+const libraryStore = useLibraryStore();
+const uiStore = useUiStore();
 const expanded = ref(new Set<string>());
 const limit = ref(50);
 
@@ -46,7 +50,7 @@ const STATUS_OPTS = [
 ];
 const bookOpts = computed(() => [
   { value: "__all__", label: "Every book" },
-  ...app.books.map((b) => ({ value: b.id, label: b.title })),
+  ...libraryStore.books.map((b) => ({ value: b.id, label: b.title })),
 ]);
 
 const shown = computed(() => {
@@ -81,7 +85,7 @@ function toggle(id: string) {
   else next.add(id);
   expanded.value = next;
 }
-const bookTitle = (id: string | null) => (id ? (app.bookById(id)?.title ?? id) : "—");
+const bookTitle = (id: string | null) => (id ? (libraryStore.bookById(id)?.title ?? id) : "—");
 const usageOf = (r: RequestRecord): string => {
   const u = r.usage;
   if (r.kind === "scripting")
@@ -120,13 +124,13 @@ async function copyDiagnostics(r: RequestRecord) {
   };
   try {
     await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
-    app.toast("Diagnostics copied", {
+    uiStore.toast("Diagnostics copied", {
       kind: "success",
       description: "Redacted — no API key is included.",
       timeout: 2500,
     });
   } catch {
-    app.toast("Could not copy diagnostics", { kind: "error" });
+    uiStore.toast("Could not copy diagnostics", { kind: "error" });
   }
 }
 

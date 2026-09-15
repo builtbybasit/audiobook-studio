@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useScriptsStore } from "@/stores/scripts";
+
 // "Add pronunciation…" — the search term, taken to the book's dictionary rather than replaced in the
 // prose. The dictionary rewrites a term on its way to the endpoint and never touches the book text,
 // so its scope is the whole book, not the selected results. An existing entry is detected and edited
@@ -14,13 +17,14 @@ import {
   DialogTitle,
 } from "reka-ui";
 import { X as CloseIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
-import { useApp } from "@/stores/app";
+
 import { hitsIn, marks, speak } from "@/lib/speech";
 import type { LexEntry } from "@/types";
 
 const props = defineProps<{ bookId: string; open: boolean; term: string }>();
 const emit = defineEmits<{ close: [] }>();
-const app = useApp();
+const castStore = useCastStore();
+const scriptsStore = useScriptsStore();
 
 /** A whole search phrase is not a dictionary entry: prefill only something word-sized. */
 const prefillable = (t: string) => {
@@ -37,7 +41,7 @@ watch(
     if (!props.open) return;
     phrase.value = !!props.term.trim() && !prefillable(props.term);
     word.value = prefillable(props.term) ? props.term.trim() : "";
-    const found = app.lexiconOf(props.bookId).find((e) => same(e.term, word.value));
+    const found = castStore.lexiconOf(props.bookId).find((e) => same(e.term, word.value));
     say.value = found?.say ?? "";
   },
   { immediate: true },
@@ -45,7 +49,9 @@ watch(
 
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 const existing = computed<LexEntry | undefined>(() =>
-  word.value.trim() ? app.lexiconOf(props.bookId).find((e) => same(e.term, word.value)) : undefined,
+  word.value.trim()
+    ? castStore.lexiconOf(props.bookId).find((e) => same(e.term, word.value))
+    : undefined,
 );
 // re-read an existing entry's respelling when the user types their way onto one
 watch(existing, (e) => {
@@ -72,9 +78,9 @@ const scope = computed(() => {
   let lines = 0;
   const chapters = new Set<string>();
   let sample = "";
-  for (const k of Object.keys(app.segments)) {
+  for (const k of Object.keys(scriptsStore.segments)) {
     if (!k.startsWith(prefix)) continue;
-    for (const s of app.segments[k])
+    for (const s of scriptsStore.segments[k])
       if (hitsIn(s.text, [probe.value]).length) {
         lines++;
         chapters.add(k);
@@ -92,12 +98,12 @@ const staleClips = computed(() => {
   if (!draft.value.term || !draft.value.say) return 0;
   const prefix = props.bookId + ":";
   let n = 0;
-  for (const k of Object.keys(app.segments)) {
+  for (const k of Object.keys(scriptsStore.segments)) {
     if (!k.startsWith(prefix)) continue;
-    for (const s of app.segments[k]) {
+    for (const s of scriptsStore.segments[k]) {
       const sent = s.audio.pronounced ?? s.audio.said ?? s.audio.text;
       if (s.audio.status !== "done" || sent == null) continue;
-      if (speak(s.text, [...app.lexiconOf(props.bookId), draft.value]).text !== sent) n++;
+      if (speak(s.text, [...castStore.lexiconOf(props.bookId), draft.value]).text !== sent) n++;
     }
   }
   return n;
@@ -110,8 +116,8 @@ const valid = computed(() => !!draft.value.term && !!draft.value.say && changed.
 function save() {
   if (!valid.value) return;
   if (existing.value)
-    app.updateTerm(props.bookId, existing.value.id, { say: draft.value.say, enabled: true });
-  else app.addTerm(props.bookId, draft.value.term, draft.value.say);
+    castStore.updateTerm(props.bookId, existing.value.id, { say: draft.value.say, enabled: true });
+  else castStore.addTerm(props.bookId, draft.value.term, draft.value.say);
   emit("close");
 }
 </script>

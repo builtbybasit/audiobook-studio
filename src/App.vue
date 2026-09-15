@@ -1,10 +1,17 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useUiStore } from "@/stores/ui";
+
 // App shell. Desktop: fixed sidebar. Narrow (< lg): top bar with a menu button that opens the same
 // sidebar as a drawer. Also hosts the palette, toasts, the shortcuts dialog, global ⌘Z / ? keys,
 // the "book finished" notifications and the document title (active job count).
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { useApp, keyring } from "@/stores/app";
+import { keyring } from "@/lib/keyring";
 import { usePlayer } from "@/composables/usePlayer";
 import { endpointErrors, unifyEndpoint, unifyProfile } from "@/lib/endpoints";
 import JobIndicator from "@/components/JobIndicator.vue";
@@ -26,20 +33,26 @@ import ShortcutsDialog from "@/components/ShortcutsDialog.vue";
 import ExpressionReview from "@/components/ExpressionReview.vue";
 import { TooltipProvider } from "reka-ui";
 
-const app = useApp();
+const castStore = useCastStore();
+const endpointsStore = useEndpointsStore();
+const jobsStore = useJobsStore();
+const libraryStore = useLibraryStore();
+const narrationStore = useNarrationStore();
+const uiStore = useUiStore();
 const player = usePlayer();
 const route = useRoute();
 const drawer = ref(false);
 const shortcuts = ref(false);
 watch(
-  () => app.endpoints.map((e) => JSON.stringify([e.id, e.model, e.baseUrl, e.expressions])),
-  () => app.refreshExpressionAudio(),
+  () =>
+    endpointsStore.endpoints.map((e) => JSON.stringify([e.id, e.model, e.baseUrl, e.expressions])),
+  () => narrationStore.refreshExpressionAudio(),
 );
 
 watch(
   () => route.params.bookId,
   (id) => {
-    if (id) app.currentBookId = String(id);
+    if (id) uiStore.currentBookId = String(id);
   },
   { immediate: true },
 );
@@ -50,12 +63,12 @@ watch(
   },
 );
 watch(
-  () => app.dark,
+  () => uiStore.dark,
   (d) => document.documentElement.classList.toggle("dark", d),
   { immediate: true },
 );
 watch(
-  () => app.activeJobs.length,
+  () => jobsStore.activeJobs.length,
   (n) => {
     document.title = (n ? `(${n}) ` : "") + "Audiobook Studio · prototype";
   },
@@ -65,22 +78,22 @@ watch(
 // a book's run finished (it had active jobs, now none) → toast, and a browser notification if enabled
 const activeByBook = computed(() => {
   const m: Record<string, number> = {};
-  for (const j of app.activeJobs) m[j.bookId] = (m[j.bookId] ?? 0) + 1;
+  for (const j of jobsStore.activeJobs) m[j.bookId] = (m[j.bookId] ?? 0) + 1;
   return m;
 });
 watch(activeByBook, (now, before) => {
   for (const id of Object.keys(before ?? {})) {
     if (now[id]) continue;
-    const b = app.bookById(id);
+    const b = libraryStore.bookById(id);
     if (!b) continue;
-    const recent = app.jobs.filter(
+    const recent = jobsStore.jobs.filter(
       (j) => j.bookId === id && j.finishedAt && Date.now() - j.finishedAt < 5 * 60000,
     );
     const failed = recent.filter((j) => j.status === "failed").length;
     const cancelled = recent.filter((j) => j.status === "cancelled").length;
     if (recent.length && recent.every((j) => j.status === "cancelled")) continue;
     const desc = `${recent.length - failed - cancelled} done${failed ? ` · ${failed} failed` : ""}`;
-    app.toast(`${b.title}: run finished`, {
+    uiStore.toast(`${b.title}: run finished`, {
       kind: failed ? "warn" : "success",
       description: desc,
       action: {
@@ -89,7 +102,7 @@ watch(activeByBook, (now, before) => {
       },
     });
     if (
-      app.notify &&
+      uiStore.notify &&
       "Notification" in window &&
       Notification.permission === "granted" &&
       document.hidden
@@ -109,7 +122,7 @@ function onKey(e: KeyboardEvent) {
     return;
   }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
-    if (app.undoLast()) e.preventDefault();
+    if (uiStore.undoLast()) e.preventDefault();
   } else if (e.key === "?" || (e.shiftKey && e.key === "/")) {
     e.preventDefault();
     shortcuts.value = true;
@@ -136,11 +149,16 @@ const stages: { key: string; label: string; to: (b: string | null) => string }[]
 const activeKey = computed(() =>
   route.path.match(/^\/book\/[^/]+$/) ? "overview" : route.path.split("/").pop(),
 );
-const p = computed(() => (app.currentBookId ? app.progress(app.currentBookId) : null));
+const p = computed(() =>
+  uiStore.currentBookId ? libraryStore.progress(uiStore.currentBookId) : null,
+);
 /** enabled endpoints that can't currently run: no key, or settings that don't validate */
 const endpointsNeedingAttention = computed(
   () =>
-    [...app.profiles.map(unifyProfile), ...app.endpoints.map(unifyEndpoint)].filter(
+    [
+      ...endpointsStore.profiles.map(unifyProfile),
+      ...endpointsStore.endpoints.map(unifyEndpoint),
+    ].filter(
       (u) => u.enabled && ((u.needsKey && !keyring.has(u.slot)) || endpointErrors(u).length > 0),
     ).length,
 );
@@ -181,8 +199,8 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
         <nav class="mt-2 flex flex-col gap-0.5 px-2">
           <template v-for="(s, i) in stages" :key="s.key">
             <RouterLink
-              v-if="s.key === 'library' || app.currentBookId"
-              :to="s.to(app.currentBookId)"
+              v-if="s.key === 'library' || uiStore.currentBookId"
+              :to="s.to(uiStore.currentBookId)"
               class="flex items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
               :class="
                 activeKey === s.key &&
@@ -233,12 +251,12 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
             /></span>
             <span class="flex-1">Queue</span>
             <span
-              v-if="app.activeJobs.length"
+              v-if="jobsStore.activeJobs.length"
               class="flex items-center gap-1 text-[11px] text-emerald-500"
               ><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500"></span
-              >{{ app.activeJobs.length
-              }}<span v-if="app.eta" class="text-zinc-400">
-                · ~{{ Math.max(1, Math.round(app.eta.seconds / 60)) }}m</span
+              >{{ jobsStore.activeJobs.length
+              }}<span v-if="jobsStore.eta" class="text-zinc-400">
+                · ~{{ Math.max(1, Math.round(jobsStore.eta.seconds / 60)) }}m</span
               ></span
             >
           </RouterLink>
@@ -264,42 +282,44 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
         </div>
 
         <div
-          v-if="app.book"
+          v-if="libraryStore.book"
           class="mx-3 mt-5 rounded-lg border border-zinc-200 p-3 text-xs dark:border-zinc-800"
         >
           <div class="label mb-1">Open book</div>
           <RouterLink
-            :to="`/book/${app.book.id}`"
+            :to="`/book/${libraryStore.book.id}`"
             class="block font-medium leading-snug hover:text-violet-500"
             :class="activeKey === 'overview' && 'text-violet-600 dark:text-violet-300'"
-            >{{ app.book.title }}</RouterLink
+            >{{ libraryStore.book.title }}</RouterLink
           >
-          <div class="text-zinc-500">{{ app.book.author }}</div>
+          <div class="text-zinc-500">{{ libraryStore.book.author }}</div>
           <div
-            v-if="app.book.budget?.paused"
+            v-if="libraryStore.book.budget?.paused"
             class="mt-1 rounded bg-amber-400/15 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-300"
           >
             <PauseIcon class="icon-sm icon-fill" /> paused ·
-            <button class="underline" @click="app.resumeBook(app.book.id)">resume</button>
+            <button class="underline" @click="libraryStore.resumeBook(libraryStore.book.id)">
+              resume
+            </button>
           </div>
           <div class="mt-2 flex flex-wrap gap-1.5">
             <RouterLink
-              :to="`/book/${app.book.id}`"
+              :to="`/book/${libraryStore.book.id}`"
               class="rounded border border-zinc-200 px-2 py-0.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
               :class="activeKey === 'overview' && 'border-violet-400'"
               >Overview</RouterLink
             >
             <RouterLink
-              :to="`/book/${app.book.id}/cast`"
+              :to="`/book/${libraryStore.book.id}/cast`"
               class="rounded border border-zinc-200 px-2 py-0.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
               :class="activeKey === 'cast' && 'border-violet-400'"
               >Cast
               <span class="text-zinc-400">{{
-                app.charactersOf(app.book.id).length
+                castStore.charactersOf(libraryStore.book.id).length
               }}</span></RouterLink
             >
             <RouterLink
-              :to="`/book/${app.book.id}/search`"
+              :to="`/book/${libraryStore.book.id}/search`"
               class="rounded border border-zinc-200 px-2 py-0.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
               :class="activeKey === 'search' && 'border-violet-400'"
               ><SearchIcon class="icon-sm" /> Search</RouterLink
@@ -308,9 +328,9 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
         </div>
 
         <div class="mt-auto flex gap-2 p-3">
-          <button class="btn-ghost flex-1 justify-center" @click="app.dark = !app.dark">
-            <component :is="app.dark ? SunIcon : MoonIcon" class="icon" />
-            {{ app.dark ? "Light" : "Dark" }}
+          <button class="btn-ghost flex-1 justify-center" @click="uiStore.dark = !uiStore.dark">
+            <component :is="uiStore.dark ? SunIcon : MoonIcon" class="icon" />
+            {{ uiStore.dark ? "Light" : "Dark" }}
           </button>
           <button class="btn-ghost" title="keyboard shortcuts (?)" @click="shortcuts = true">
             ?
@@ -328,7 +348,9 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
                 <MenuIcon class="icon" /></button
             ></span>
             <span class="capitalize text-zinc-900 dark:text-zinc-100">{{ activeKey }}</span>
-            <span v-if="app.book" class="hidden truncate sm:inline"> · {{ app.book.title }}</span>
+            <span v-if="libraryStore.book" class="hidden truncate sm:inline">
+              · {{ libraryStore.book.title }}</span
+            >
           </div>
           <div class="flex items-center gap-2">
             <button
@@ -348,7 +370,10 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
         <ShortcutsDialog v-model:open="shortcuts" />
         <ExpressionReview />
         <main class="min-h-0 flex-1 overflow-auto">
-          <RouterView />
+          <!-- Stage views read `:bookId` once, at setup. Going from one book's stage straight to the
+               same stage of another (the command palette, the Export demo) reuses the instance and
+               would leave them pointed at the book you left, so the book id is the view's identity. -->
+          <RouterView :key="String(route.params.bookId ?? '')" />
         </main>
       </div>
       <MiniPlayer />

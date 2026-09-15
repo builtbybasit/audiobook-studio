@@ -1,4 +1,11 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
+
 // Job ledger: one compact row per segment, filterable. The row carries the line itself; speaker, voice
 // and endpoint share one column, and render latency lives in the details panel — click a row (or press
 // `i`) for its audit trail. The row actions are one icon size in fixed slots: play stays visible, the
@@ -16,7 +23,7 @@
 import { computed, defineAsyncComponent, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useJob, STATUS_BG, fmt } from "@/views/narration/shared";
-import { FLAG_LABEL } from "@/stores/app";
+import { FLAG_LABEL } from "@/lib/scriptReview";
 import { pauseAfter, secs } from "@/lib/speech";
 import { usePlayer, type Queue } from "@/composables/usePlayer";
 import { speechPeaks } from "@/lib/peaks";
@@ -43,10 +50,16 @@ import type { FlagKind, Segment, SegmentAudio, Take } from "@/types";
 const props = defineProps<{ bookId: string; chapterId: number }>();
 /** a word the listener wants respelled, handed up to the pronunciation dictionary */
 const emit = defineEmits<{ pronounce: [word: string] }>();
-const { app, segments, colorOf, voiceOf, epName, stats } = useJob(props);
+const { segments, colorOf, voiceOf, epName, stats } = useJob(props);
+const castStore = useCastStore();
+const endpointsStore = useEndpointsStore();
+const libraryStore = useLibraryStore();
+const narrationStore = useNarrationStore();
+const scriptsStore = useScriptsStore();
+const uiStore = useUiStore();
 const route = useRoute();
 const router = useRouter();
-const chapter = computed(() => app.chapter(props.bookId, props.chapterId)!);
+const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterId)!);
 const { p, play, playQueue, cue, seekTo, skip, next, prev, cycleRate, clipProgress } = usePlayer();
 // wavesurfer is only ever needed once a compare panel is open, so it stays out of the entry chunk
 const Waveform = defineAsyncComponent(() => import("@/components/Waveform.vue"));
@@ -76,7 +89,7 @@ const count = (f: string) =>
 const unrendered = computed(() => segments.value.filter((s) => s.audio.status === "none").length);
 const changed = computed(() => count("stale") + unrendered.value);
 
-const pacing = computed(() => app.pacingOf(props.bookId));
+const pacing = computed(() => castStore.pacingOf(props.bookId));
 // the stitched chapter is the clips *and* the silence between them, so the scrubber shows both
 const timeline = computed(() => {
   const heard = segments.value.filter((s) => s.audio.duration > 0);
@@ -110,14 +123,14 @@ const onClip = (id: string) => p.clipId === id && p.playing;
 
 /** The chapter as the player wants it: the clips and the silence between them, in order. */
 function buildQueue(chId: number): Queue | null {
-  const segs = app.segmentsOf(props.bookId, chId);
+  const segs = scriptsStore.segmentsOf(props.bookId, chId);
   const heard = segs.filter((s) => s.audio.duration > 0);
   if (!heard.length) return null;
-  const pace = app.pacingOf(props.bookId);
+  const pace = castStore.pacingOf(props.bookId);
   return {
     id: queueId(chId),
-    title: app.chapter(props.bookId, chId)?.title ?? "",
-    subtitle: app.bookById(props.bookId)?.title ?? "",
+    title: libraryStore.chapter(props.bookId, chId)?.title ?? "",
+    subtitle: libraryStore.bookById(props.bookId)?.title ?? "",
     href: `/book/${props.bookId}/narration?ch=${chId}`,
     clips: heard.map((s, i) => ({
       id: "seg" + s.id,
@@ -132,7 +145,7 @@ function buildQueue(chId: number): Queue | null {
 }
 /** Listening through a book shouldn't stop at a chapter boundary. */
 function nextNarrated(after: number): Queue | null {
-  const chs = app.chaptersOf(props.bookId);
+  const chs = libraryStore.chaptersOf(props.bookId);
   for (const c of chs.slice(chs.findIndex((x) => x.id === after) + 1)) {
     const q = buildQueue(c.id);
     if (!q) continue;
@@ -165,11 +178,11 @@ function scrub(e: MouseEvent) {
 }
 
 // what differs between the clip and the script now (the reason a row is stale, made explicit)
-const drift = (s: Segment, a?: SegmentAudio) => app.clipDrift(props.bookId, s, a);
+const drift = (s: Segment, a?: SegmentAudio) => narrationStore.clipDrift(props.bookId, s, a);
 const clock = (ts: number) =>
   new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 function requestOf(s: Segment) {
-  const ep = app.endpoints.find((e) => e.id === s.audio.endpoint);
+  const ep = endpointsStore.endpoints.find((e) => e.id === s.audio.endpoint);
   return JSON.stringify(
     {
       POST: (ep?.baseUrl ?? "") + "/audio/speech",
@@ -189,7 +202,7 @@ function requestOf(s: Segment) {
 }
 function copyReq(s: Segment) {
   navigator.clipboard?.writeText(requestOf(s));
-  app.toast("Request copied as JSON", { kind: "success", timeout: 2500 });
+  uiStore.toast("Request copied as JSON", { kind: "success", timeout: 2500 });
 }
 // ---- flags and retakes
 const KINDS: FlagKind[] = ["pronunciation", "delivery", "pause", "other"];
@@ -227,14 +240,14 @@ function toDictionary(s: Segment) {
   if (word.value.trim()) emit("pronounce", word.value.trim());
 }
 function saveFlag(s: Segment, alsoRetake: boolean) {
-  app.flagSegment(props.bookId, props.chapterId, s.id, kind.value, note.value);
+  narrationStore.flagSegment(props.bookId, props.chapterId, s.id, kind.value, note.value);
   flagOpen.value = null;
-  if (alsoRetake) app.retakeSegment(props.bookId, props.chapterId, s.id);
+  if (alsoRetake) narrationStore.retakeSegment(props.bookId, props.chapterId, s.id);
 }
 function retakeAll() {
-  const n = app.retakeFlagged(props.bookId, props.chapterId);
+  const n = narrationStore.retakeFlagged(props.bookId, props.chapterId);
   if (n)
-    app.toast(`Retaking ${n} flagged segment${n === 1 ? "" : "s"}`, {
+    uiStore.toast(`Retaking ${n} flagged segment${n === 1 ? "" : "s"}`, {
       description: "The current clips are kept — you compare and keep one per segment.",
     });
 }
@@ -251,7 +264,7 @@ function facts(s: Segment): Fact[] {
   const a = s.audio;
   if (!a.at) return [];
   return [
-    { label: "voice", value: app.voiceLabel(a.voiceRef) || a.voice || "—" },
+    { label: "voice", value: endpointsStore.voiceLabel(a.voiceRef) || a.voice || "—" },
     { label: "endpoint", value: epName(a.endpoint) },
     { label: "model", value: a.model ?? "—", mono: true },
     { label: "read as", value: a.type ?? s.type },
@@ -284,7 +297,7 @@ function allTakes(s: Segment): (Take & { current?: boolean })[] {
   return list.sort((a, b) => a.n - b.n);
 }
 const takeTitle = (t: Take) =>
-  `${app.voiceLabel(t.voiceRef) || t.voice || "—"} · ${t.direction || "no direction"} · ${t.at ? clock(t.at) : ""}`;
+  `${endpointsStore.voiceLabel(t.voiceRef) || t.voice || "—"} · ${t.direction || "no direction"} · ${t.at ? clock(t.at) : ""}`;
 const takeId = (s: Segment, n: number) => `take${s.id}-${n}`;
 /** the clip the retake is judged against: whatever is in the book right now */
 const candId = (s: Segment) => `cand${s.id}`;
@@ -298,7 +311,9 @@ function takeDiff(s: Segment): string[] {
   if ((a.direction || "") !== (b.direction || ""))
     out.push(`direction “${a.direction || "—"}” → “${b.direction || "—"}”`);
   if ((a.voiceRef || "") !== (b.voiceRef || ""))
-    out.push(`voice ${app.voiceLabel(a.voiceRef) || "—"} → ${app.voiceLabel(b.voiceRef) || "—"}`);
+    out.push(
+      `voice ${endpointsStore.voiceLabel(a.voiceRef) || "—"} → ${endpointsStore.voiceLabel(b.voiceRef) || "—"}`,
+    );
   if ((a.style || "") !== (b.style || ""))
     out.push(`style “${a.style || "—"}” → “${b.style || "—"}”`);
   if ((a.text || "") !== (b.text || "")) out.push("the line itself was edited");
@@ -313,8 +328,8 @@ const peaksOf = (seed: string, duration: number) => speechPeaks(seed, duration);
 /** zinc wave / violet played for the clip in the book, sky for the one waiting to be judged */
 const waveColors = (candidate: boolean) =>
   candidate
-    ? { wave: app.dark ? "#075985" : "#bae6fd", played: app.dark ? "#38bdf8" : "#0284c7" }
-    : { wave: app.dark ? "#3f3f46" : "#d4d4d8", played: app.dark ? "#a78bfa" : "#7c3aed" };
+    ? { wave: uiStore.dark ? "#075985" : "#bae6fd", played: uiStore.dark ? "#38bdf8" : "#0284c7" }
+    : { wave: uiStore.dark ? "#3f3f46" : "#d4d4d8", played: uiStore.dark ? "#a78bfa" : "#7c3aed" };
 /** clicking a waveform plays that take from where you clicked */
 function seekTake(id: string, duration: number, url: string | undefined, frac: number) {
   if (p.clipId !== id) play(id, duration, url);
@@ -339,11 +354,13 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
     e.preventDefault();
     play("seg" + s.id, s.audio.duration, s.audio.url);
   } else if (e.key === "r" && s.audio.status === "failed")
-    app.retrySegment(props.bookId, props.chapterId, s.id);
+    narrationStore.retrySegment(props.bookId, props.chapterId, s.id);
   else if (e.key === "t" && s.audio.duration)
-    app.retakeSegment(props.bookId, props.chapterId, s.id);
-  else if (e.key === "a" && s.candidate) app.acceptTake(props.bookId, props.chapterId, s.id);
-  else if (e.key === "x" && s.candidate) app.rejectTake(props.bookId, props.chapterId, s.id);
+    narrationStore.retakeSegment(props.bookId, props.chapterId, s.id);
+  else if (e.key === "a" && s.candidate)
+    narrationStore.acceptTake(props.bookId, props.chapterId, s.id);
+  else if (e.key === "x" && s.candidate)
+    narrationStore.rejectTake(props.bookId, props.chapterId, s.id);
   else if (e.key === "f" && s.audio.duration) openFlag(s);
   else if (e.key === "i" && hasDetails(s)) toggleDetails(s.id);
 }
@@ -397,7 +414,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
               ? `${count('stale')} edited after narration, ${unrendered} never rendered (new halves of a split)`
               : 'lines edited after narration'
           "
-          @click="app.renarrateStale(bookId, chapterId)"
+          @click="narrationStore.renarrateStale(bookId, chapterId)"
         >
           <RetryIcon class="icon-sm" /> Re-narrate changed ({{ changed }})
         </button>
@@ -411,14 +428,14 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
         <button
           v-if="stats.failed && chapter.narration !== 'running'"
           class="btn-ghost btn-xs"
-          @click="app.retryFailed(bookId, chapterId)"
+          @click="narrationStore.retryFailed(bookId, chapterId)"
         >
           Retry failed ({{ stats.failed }})
         </button>
         <button
           v-if="chapter.narration !== 'running'"
           class="btn-ghost btn-xs"
-          @click="app.runNarration(bookId, [chapterId])"
+          @click="narrationStore.runNarration(bookId, [chapterId])"
         >
           Re-narrate all
         </button>
@@ -553,7 +570,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                       v-else-if="s.audio.status === 'failed'"
                       class="icon-btn border-red-400 text-red-500 hover:border-red-500 hover:text-red-600"
                       title="retry this segment (r)"
-                      @click="app.retrySegment(bookId, chapterId, s.id)"
+                      @click="narrationStore.retrySegment(bookId, chapterId, s.id)"
                     >
                       <RetryIcon class="icon-sm" />
                     </button>
@@ -578,7 +595,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                       v-if="s.audio.duration && chapter.narration !== 'running'"
                       class="icon-btn row-tool"
                       title="retake — render it again and compare (t)"
-                      @click="app.retakeSegment(bookId, chapterId, s.id)"
+                      @click="narrationStore.retakeSegment(bookId, chapterId, s.id)"
                     >
                       <RetryIcon class="icon-sm" />
                     </button>
@@ -658,7 +675,10 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                             <button
                               v-if="s.flag"
                               class="btn-ghost btn-xs mr-auto"
-                              @click="((flagOpen = null), app.clearFlag(bookId, chapterId, s.id))"
+                              @click="
+                                ((flagOpen = null),
+                                narrationStore.clearFlag(bookId, chapterId, s.id))
+                              "
                             >
                               Clear flag
                             </button>
@@ -726,7 +746,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                       @seek="(f) => seekTake('seg' + s.id, s.audio.duration, s.audio.url, f)"
                     />
                     <div class="mt-1 pl-8 text-[11px] text-zinc-500">
-                      {{ app.voiceLabel(s.audio.voiceRef) || s.audio.voice || "—" }} ·
+                      {{ endpointsStore.voiceLabel(s.audio.voiceRef) || s.audio.voice || "—" }} ·
                       {{ s.audio.direction || "no direction"
                       }}<span v-if="s.audio.at"> · {{ clock(s.audio.at) }}</span>
                     </div>
@@ -774,8 +794,12 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                             : ""
                         }}{{ s.candidate!.error!.message }}</span
                       ><span v-else class="text-zinc-500"
-                        >{{ app.voiceLabel(s.candidate!.voiceRef) || s.candidate!.voice || "—" }} ·
-                        {{ s.candidate!.direction || "no direction"
+                        >{{
+                          endpointsStore.voiceLabel(s.candidate!.voiceRef) ||
+                          s.candidate!.voice ||
+                          "—"
+                        }}
+                        · {{ s.candidate!.direction || "no direction"
                         }}<span v-if="s.candidate!.at"> · {{ clock(s.candidate!.at) }}</span></span
                       >
                     </div>
@@ -799,7 +823,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                           ? 'keep the clip the book already uses (x)'
                           : 'drop this retake (x)'
                       "
-                      @click="app.rejectTake(bookId, chapterId, s.id)"
+                      @click="narrationStore.rejectTake(bookId, chapterId, s.id)"
                     >
                       {{ s.candidate!.duration ? `Keep take ${s.audio.n ?? 1}` : "Discard retake" }}
                     </button>
@@ -807,7 +831,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                       v-if="s.candidate!.duration"
                       class="btn-primary btn-xs"
                       title="put the new clip in the book and clear the flag (a)"
-                      @click="app.acceptTake(bookId, chapterId, s.id)"
+                      @click="narrationStore.acceptTake(bookId, chapterId, s.id)"
                     >
                       Keep take {{ s.candidate!.n }}
                     </button>
@@ -881,7 +905,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                     <button
                       v-if="chapter.narration !== 'running'"
                       class="btn-ghost btn-xs shrink-0 border-amber-400"
-                      @click.stop="app.retrySegment(bookId, chapterId, s.id)"
+                      @click.stop="narrationStore.retrySegment(bookId, chapterId, s.id)"
                     >
                       Render it again
                     </button>

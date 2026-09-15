@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptsStore } from "@/stores/scripts";
+
 import { computed } from "vue";
 import {
   DialogRoot,
@@ -10,16 +13,19 @@ import {
   DialogClose,
 } from "reka-ui";
 import { X as CloseIcon } from "@lucide/vue";
-import { useApp } from "@/stores/app";
+
 import ExpressionEditor from "@/components/ExpressionEditor.vue";
-const app = useApp();
-const pending = computed(() => app.expressionReview);
+const narrationStore = useNarrationStore();
+const scriptsStore = useScriptsStore();
+const pending = computed(() => narrationStore.expressionReview);
 const rows = computed(
   () =>
     pending.value?.targets.flatMap((t) => {
-      const s = app.segmentsOf(pending.value!.bookId, t.chId).find((s) => s.id === t.segId);
+      const s = scriptsStore
+        .segmentsOf(pending.value!.bookId, t.chId)
+        .find((s) => s.id === t.segId);
       if (!s) return [];
-      const issues = app.expressionRender(pending.value!.bookId, s).issues;
+      const issues = narrationStore.expressionRender(pending.value!.bookId, s).issues;
       return issues.length ? [{ ...t, s, issues }] : [];
     }) ?? [],
 );
@@ -30,7 +36,7 @@ const count = computed(() => rows.value.reduce((n, r) => n + r.issues.length, 0)
     :open="!!pending"
     @update:open="
       (v) => {
-        if (!v) app.expressionReview = null;
+        if (!v) narrationStore.expressionReview = null;
       }
     "
     ><DialogPortal
@@ -78,12 +84,16 @@ const count = computed(() => rows.value.reduce((n, r) => n + r.issues.length, 0)
         </div>
         <footer class="border-t border-zinc-200 p-4 dark:border-zinc-800">
           <div class="flex flex-wrap gap-2">
-            <button v-if="count" class="btn-ghost btn-xs" @click="app.omitReviewExpressions()">
+            <button
+              v-if="count"
+              class="btn-ghost btn-xs"
+              @click="narrationStore.omitReviewExpressions()"
+            >
               Omit {{ count }} expression{{ count === 1 ? "" : "s" }} needing review</button
             ><button
               class="btn-primary btn-xs ml-auto"
               :disabled="!!count"
-              @click="app.continueExpressionReview()"
+              @click="narrationStore.continueExpressionReview()"
             >
               Continue narration
             </button>

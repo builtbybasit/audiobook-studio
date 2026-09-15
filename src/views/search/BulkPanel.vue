@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useScriptsStore } from "@/stores/scripts";
+
 // The bulk action bar's own panel: it opens in place, under the buttons, rather than over the results
 // it is about. Same idea as the ledger's row detail — a violet rail, a strip of labelled facts, and
 // tinted callouts for the things that cost something — so the numbers can be read at a glance instead
@@ -13,7 +17,7 @@ import {
   ChevronRight as ClosedIcon,
   ArrowRight as ToIcon,
 } from "@lucide/vue";
-import { useApp, FLAG_LABEL } from "@/stores/app";
+import { FLAG_LABEL } from "@/lib/scriptReview";
 import { directionOptions } from "@/lib/bulk";
 import { UiCombobox, UiToggleGroup, UiSwitch } from "@/ui";
 import type { BulkAction, BulkResult, BulkTarget, FlagKind } from "@/types";
@@ -25,7 +29,9 @@ const props = defineProps<{
   targets: BulkTarget[];
 }>();
 const emit = defineEmits<{ close: []; applied: [BulkResult] }>();
-const app = useApp();
+const castStore = useCastStore();
+const endpointsStore = useEndpointsStore();
+const scriptsStore = useScriptsStore();
 
 const root = ref<HTMLElement | null>(null);
 const speaker = ref("");
@@ -38,8 +44,8 @@ const expanded = ref(false);
 /** the state of the selected lines when this preview was taken; a drift means it is out of date */
 const base = ref("");
 
-const cast = computed(() => app.charactersOf(props.bookId));
-const counts = computed(() => app.lineCounts(props.bookId));
+const cast = computed(() => castStore.charactersOf(props.bookId));
+const counts = computed(() => scriptsStore.lineCounts(props.bookId));
 const castOpts = computed(() =>
   [...cast.value]
     .sort((a, b) => Number(b.major) - Number(a.major) || a.name.localeCompare(b.name))
@@ -48,11 +54,11 @@ const castOpts = computed(() =>
       label: c.name,
       color: c.color,
       group: c.major ? "Main cast" : "Also in the script",
-      hint: c.voice ? app.voiceLabel(c.voice) : "no voice yet",
+      hint: c.voice ? endpointsStore.voiceLabel(c.voice) : "no voice yet",
       keywords: [c.aliases.join(" "), `${counts.value[c.name] ?? 0} lines`].join(" "),
     })),
 );
-const dirOpts = computed(() => directionOptions(app.segments, props.bookId));
+const dirOpts = computed(() => directionOptions(scriptsStore.segments, props.bookId));
 const KINDS: FlagKind[] = ["pronunciation", "delivery", "pause", "other"];
 
 // a fresh form each time the bar opens a panel, and the focus lands in it
@@ -89,7 +95,7 @@ const action = computed<BulkAction | null>(() => {
   return null;
 });
 const preview = computed(() =>
-  action.value ? app.bulkPreview(props.bookId, props.targets, action.value) : null,
+  action.value ? scriptsStore.bulkPreview(props.bookId, props.targets, action.value) : null,
 );
 // the first preview of this selection is the one the numbers are promised against
 watch(preview, (p) => {
@@ -102,12 +108,13 @@ const examples = computed(() => preview.value?.rows.filter((r) => r.changes).sli
 
 // --- what the change means for narration
 const voice = computed(() =>
-  speaker.value ? app.effectiveVoice(props.bookId, speaker.value) : null,
+  speaker.value ? castStore.effectiveVoice(props.bookId, speaker.value) : null,
 );
 const narratorVoice = computed(() =>
-  app.voiceLabel(app.effectiveVoice(props.bookId, "Narrator").ref),
+  endpointsStore.voiceLabel(castStore.effectiveVoice(props.bookId, "Narrator").ref),
 );
-const segOf = (t: BulkTarget) => app.segmentsOf(props.bookId, t.chId).find((s) => s.id === t.segId);
+const segOf = (t: BulkTarget) =>
+  scriptsStore.segmentsOf(props.bookId, t.chId).find((s) => s.id === t.segId);
 const withDirection = computed(() => props.targets.filter((t) => segOf(t)?.direction).length);
 const alreadyFlagged = computed(() => props.targets.filter((t) => segOf(t)?.flag).length);
 const chapters = computed(() => new Set(props.targets.map((t) => t.chId)).size);
@@ -162,7 +169,7 @@ const TITLE = {
 
 function apply() {
   if (!action.value || !preview.value?.changing || drifted.value) return;
-  emit("applied", app.applyBulk(props.bookId, props.targets, action.value));
+  emit("applied", scriptsStore.applyBulk(props.bookId, props.targets, action.value));
   emit("close");
 }
 </script>
@@ -195,7 +202,7 @@ function apply() {
           <span v-if="voice?.own" class="text-zinc-500"
             >read by
             <b class="font-medium text-zinc-700 dark:text-zinc-300">{{
-              app.voiceLabel(voice.ref)
+              endpointsStore.voiceLabel(voice.ref)
             }}</b></span
           >
         </template>

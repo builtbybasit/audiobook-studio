@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
+
 // Script search across every scripted chapter of the book: text, speaker, direction. Results open the
 // reader at that exact segment — and can be ticked instead, for a correction applied to many lines at
 // once: change speaker, set or clear direction, flag for review. Selecting is not opening: the
@@ -10,7 +15,7 @@
 import { computed, nextTick, ref, watch } from "vue";
 import type { Component } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { useApp, isScripted } from "@/stores/app";
+import { isScripted } from "@/lib/scriptReview";
 import { UiCheckbox, UiSelect, UiToggleGroup } from "@/ui";
 import { useFilter } from "reka-ui";
 import { useBookId } from "@/router";
@@ -28,7 +33,10 @@ import PronunciationDialog from "@/views/search/PronunciationDialog.vue";
 import DemoScenarios from "@/views/search/DemoScenarios.vue";
 import type { BulkResult, BulkTarget, SearchScenario, Segment, UndoEntry } from "@/types";
 
-const app = useApp();
+const castStore = useCastStore();
+const libraryStore = useLibraryStore();
+const scriptsStore = useScriptsStore();
+const uiStore = useUiStore();
 const route = useRoute();
 const router = useRouter();
 const bookId = useBookId();
@@ -43,7 +51,7 @@ watch(
 );
 watch(q, (v) => router.replace({ query: { ...route.query, q: v || undefined } }));
 const { contains } = useFilter({ sensitivity: "base" });
-const cast = computed(() => app.charactersOf(bookId));
+const cast = computed(() => castStore.charactersOf(bookId));
 const speakerOpts = computed(() => [
   { value: "", label: "Any speaker" },
   ...cast.value.map((c) => ({ value: c.name, label: c.name, color: c.color })),
@@ -51,8 +59,8 @@ const speakerOpts = computed(() => [
 const results = computed(() => {
   const s = q.value.trim();
   const out = [];
-  for (const c of app.chaptersOf(bookId).filter(isScripted)) {
-    const hits = app
+  for (const c of libraryStore.chaptersOf(bookId).filter(isScripted)) {
+    const hits = scriptsStore
       .segmentsOf(bookId, c.id)
       .filter(
         (x) =>
@@ -153,7 +161,7 @@ watch(criteria, () => {
   const n = selected.value.size;
   selected.value = new Set();
   announcement.value = `Selection cleared: the search changed, so the ${n} selected line${n === 1 ? "" : "s"} no longer apply.`;
-  app.toast(`Selection cleared — ${n} line${n === 1 ? "" : "s"}`, {
+  uiStore.toast(`Selection cleared — ${n} line${n === 1 ? "" : "s"}`, {
     kind: "info",
     description: "The search changed, so nothing stays selected out of sight.",
     timeout: 4000,
@@ -182,7 +190,7 @@ function closePanel() {
 }
 const pronounce = ref(false);
 const last = ref<{ result: BulkResult; entry: UndoEntry | null } | null>(null);
-const undoable = computed(() => app.undoPending(last.value?.entry ?? null));
+const undoable = computed(() => uiStore.undoPending(last.value?.entry ?? null));
 
 function applied(result: BulkResult) {
   last.value = { result, entry: result.entry };
@@ -192,7 +200,7 @@ function applied(result: BulkResult) {
 }
 function undo() {
   if (!last.value?.entry) return;
-  app.revertEntry(last.value.entry);
+  uiStore.revertEntry(last.value.entry);
   announcement.value = `Undone: ${last.value.result.label}.`;
 }
 
@@ -238,8 +246,8 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
       <div class="min-w-0 flex-1">
         <h1 class="text-2xl font-semibold">Search the script</h1>
         <p class="text-sm text-zinc-500">
-          Every line of {{ app.bookById(bookId)?.title }} that has been scripted — text, speaker or
-          direction. Tick lines to correct them together.
+          Every line of {{ libraryStore.bookById(bookId)?.title }} that has been scripted — text,
+          speaker or direction. Tick lines to correct them together.
         </p>
       </div>
       <DemoScenarios :book-id="bookId" @pick="runScenario" @reset="resetScenario" />

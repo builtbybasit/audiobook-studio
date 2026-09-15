@@ -1,591 +1,254 @@
 <script setup lang="ts">
-// Export: assemble narrated chapters into M4B files. Repeatable — as volumes arrive, rebuild with the
-// same filename to replace the previous audiobook (versioned), or split one file per volume with
-// volume metadata (series / volume N of M).
-import { computed, reactive, ref, watch } from "vue";
-import { useApp, isNarrated } from "@/stores/app";
-import { useBookId } from "@/router";
-import { usePlayer } from "@/composables/usePlayer";
-import EmptyState from "@/components/EmptyState.vue";
-import { Download as ExportIcon } from "@lucide/vue";
-import {
-  Pause as PauseIcon,
-  Play as PlayIcon,
-  TriangleAlert as WarnIcon,
-  X as CloseIcon,
-} from "@lucide/vue";
-import { UiNumber, UiSelect, UiSwitch } from "@/ui";
-import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
-import ChapterPicker from "@/components/ChapterPicker.vue";
-import type { Chapter, ExportItem } from "@/types";
+import { useDemoStore } from "@/stores/demo";
+import { useExportsStore } from "@/stores/exports";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useUiStore } from "@/stores/ui";
 
-const app = useApp();
+// Export: turn narrated chapters into an audiobook, and keep it up to date afterwards.
+//
+// Two tabs, because they are two jobs. **Build** is the selection on the left and everything the
+// build will be on the right; **Audiobooks** is what this book has already produced, what is in each
+// one, and whether it still matches the book. The tab label carries the count and a dot when
+// something needs an update, so the second job never has to be remembered.
+//
+// The selection is the contract: whatever is ticked on the left is exactly what goes in the files.
+// Chapters that cannot be exported can still be ticked — they are shown as problems with something
+// to do about them, and "leave them out" untick them, so nothing is ever dropped behind your back.
+//
+// That contract is why Update and Retry can land here too. When one of them would have had to trim
+// the selection or accept stale clips on your behalf, it stages the build instead: the form and the
+// ticks arrive filled in, and the same review asks the same questions before anything is built.
+import { computed, reactive, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { isNarrated } from "@/lib/scriptReview";
+import { useBookId } from "@/router";
+import { DEFAULT_EXPORT_SETTINGS, readinessOf } from "@/lib/exports";
+import { plural } from "@/views/export/shared";
+import EmptyState from "@/components/EmptyState.vue";
+import ExportChapterList from "@/views/export/ExportChapterList.vue";
+import ExportOutput from "@/views/export/ExportOutput.vue";
+import ExportPlan from "@/views/export/ExportPlan.vue";
+import ExportLibrary from "@/views/export/ExportLibrary.vue";
+import ExportDemo from "@/views/export/ExportDemo.vue";
+import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
+import { Download as ExportIcon } from "@lucide/vue";
+import type { ExportSettings } from "@/types";
+
+const demoStore = useDemoStore();
+const exportsStore = useExportsStore();
+const libraryStore = useLibraryStore();
+const narrationStore = useNarrationStore();
+const uiStore = useUiStore();
+const route = useRoute();
+const router = useRouter();
 const bookId = useBookId();
 // the router only reaches this view with a real book id
-const book = computed(() => app.bookById(bookId)!);
-const multi = computed(() => book.value.volumes.length > 1);
-const selected = ref(
-  app
+const book = computed(() => libraryStore.bookById(bookId)!);
+const tab = ref(route.query.tab === "library" ? "library" : "build");
+
+const anyNarrated = computed(() => libraryStore.chaptersOf(bookId).some(isNarrated));
+const selected = ref<number[]>([]);
+const settings = reactive<ExportSettings>({ ...DEFAULT_EXPORT_SETTINGS });
+/** The finished export a staged build would become the next version of. */
+const updates = ref<number | null>(null);
+
+/** Opening a book fills the form from it and ticks everything that is ready to go. */
+function reset() {
+  const b = book.value;
+  Object.assign(settings, DEFAULT_EXPORT_SETTINGS, {
+    title: b.title,
+    series: b.title,
+    author: b.author,
+    narrator: "Multi-voice · Audiobook Studio",
+    filename: b.title,
+    grouping: b.volumes.length > 1 ? "volume" : "single",
+  });
+  // everything that has audio, stale included: a stale chapter left out on your behalf is exactly
+  // the omission this page is meant not to make. It opens as a decision, not as a silent gap.
+  selected.value = libraryStore
     .chaptersOf(bookId)
-    .filter(isNarrated)
-    .map((c) => c.id),
+    .filter((c) => ["ready", "stale"].includes(readinessOf(c)))
+    .map((c) => c.id);
+  updates.value = null;
+}
+watch(() => bookId, reset, { immediate: true });
+// Update and Retry hand a build back here rather than answering for you. Take it whole — the ticks,
+// the settings it was built with, and which audiobook it is the next version of.
+watch(
+  () => exportsStore._exportDraft,
+  (d) => {
+    if (!d || d.bookId !== bookId) return;
+    Object.assign(settings, d.settings);
+    selected.value = [...d.ids];
+    updates.value = d.updates;
+    tab.value = "build";
+    exportsStore._exportDraft = null;
+  },
+  { immediate: true },
 );
-const anyNarrated = computed(() => app.chaptersOf(bookId).some(isNarrated));
-const staleSelected = computed(
-  () => selChapters.value.filter((c) => c.narration === "stale").length,
+// a demo scenario rewrites the book under the page; the form and the selection follow it
+watch(
+  () => demoStore._exportDemo?.bookId,
+  () => reset(),
 );
-const meta = reactive({
-  title: book.value.title,
-  series: book.value.title,
-  author: book.value.author,
-  narrator: "OpenAI TTS · multi-voice",
-  year: new Date().getFullYear(),
-  description: "",
-  filename: book.value.title,
-  bitrate: 96,
-  gapSeg: 0.35,
-  gapCh: 2.0,
-  volPrefix: true,
-  splitPerVolume: false,
-  cover: null as string | null,
-  markers: true,
-  markerPattern: "{n}. {title}",
-});
-const { p: player, playQueue } = usePlayer();
-/** A finished file is a one-clip queue, but a named one: the app-wide player says what it is playing. */
-function listen(e: ExportItem) {
-  playQueue({
-    id: "exp" + e.id,
-    title: e.filename,
-    subtitle: `${e.chapters} chapters · ${e.bitrate} kbps`,
-    href: `/book/${bookId}/export`,
-    clips: [{ id: "exp" + e.id, duration: e.duration, label: e.title }],
+
+const exportsHere = computed(() => exportsStore.exportsOf(bookId));
+const needUpdate = computed(
+  () =>
+    exportsHere.value.filter((e) => e.status === "done" && exportsStore.exportUpdateFor(e).needed)
+      .length,
+);
+const building = computed(() => exportsHere.value.some((e) => e.status === "building"));
+const failedBuilds = computed(() => exportsHere.value.filter((e) => e.status === "failed").length);
+
+// ---- resolving problems. Each of these changes the selection or the settings and nothing else, so
+// what the chapter list shows stays exactly what will be built.
+function drop(ids: number[]) {
+  const gone = new Set(ids);
+  selected.value = selected.value.filter((id) => !gone.has(id));
+  uiStore.toast(`${plural(ids.length, "chapter")} left out of this build`, {
+    kind: "info",
+    description: "They are unticked in the list — nothing was deleted, and nothing was narrated.",
+    timeout: 5000,
   });
 }
-const PATTERNS = [
-  { value: "{n}. {title}", label: "1. The Silent Peak" },
-  { value: "Chapter {n} — {title}", label: "Chapter 1 — The Silent Peak" },
-  { value: "{title}", label: "The Silent Peak" },
-  { value: "Chapter {n}", label: "Chapter 1" },
-];
-const marker = (c: Chapter, i: number) =>
-  meta.markerPattern
-    .replace("{n}", String(i + 1))
-    .replace(
-      "{title}",
-      (multi.value && meta.volPrefix && !meta.splitPerVolume ? shortVol(volName(c)) + " · " : "") +
-        c.title,
-    );
-function pickCover(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const f = input.files?.[0];
-  if (!f) return;
-  const r = new FileReader();
-  r.onload = () => (meta.cover = String(r.result));
-  r.readAsDataURL(f);
-  input.value = "";
-}
-const pathOf = (e: ExportItem) =>
-  `~/Audiobooks/${(e.series || e.title).replace(/[/:]/g, "-")}/${e.filename}`;
-function copyPath(e: ExportItem) {
-  navigator.clipboard?.writeText(pathOf(e));
-  app.toast("Path copied", { kind: "success", timeout: 2500 });
-}
-function download(e: ExportItem) {
-  const work = new Promise<void>((res) => setTimeout(res, 1800));
-  app.toastLoading(work, {
-    loading: `Preparing ${e.filename} (${e.size} MB)…`,
-    success: `${e.filename} is ready`,
-    error: "Download failed",
-  });
-}
-const tab = ref("metadata");
-
-const selChapters = computed(() =>
-  app.chaptersOf(bookId).filter((c) => selected.value.includes(c.id)),
-);
-const totalDur = computed(() => selChapters.value.reduce((a, c) => a + c.duration, 0));
-const fmt = (s: number) =>
-  s >= 3600
-    ? `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, "0")}m`
-    : `${Math.floor(s / 60)}m ${String(Math.round(s % 60)).padStart(2, "0")}s`;
-const estSize = (dur: number) => Math.round(((dur * meta.bitrate) / 8 / 1024) * 1.04);
-const volName = (c: Chapter) => book.value.volumes.find((v) => v.id === c.volumeId)?.name ?? "";
-const shortVol = (name: string) => name.split("·")[0].trim();
-
-// what will be built: one plan entry per output file
-const plan = computed(() => {
-  if (!meta.splitPerVolume)
-    return [
+function narrate(ids: number[]) {
+  const chapters = libraryStore.chaptersOf(bookId).filter((c) => ids.includes(c.id));
+  const scripted = chapters.filter((c) => c.scripting === "done" || c.scripting === "fallback");
+  const unscripted = chapters.filter((c) => !scripted.includes(c));
+  if (!scripted.length) {
+    uiStore.toast(
+      `${plural(unscripted.length, "chapter")} ${unscripted.length === 1 ? "has" : "have"} no script yet`,
       {
-        filename: app.exportFilename(meta, null),
-        title: meta.title,
-        volume: null,
-        chapters: selChapters.value,
+        kind: "warn",
+        description: "Narration reads a script, so these have to be scripted first.",
+        action: { label: "Go to Scripting", run: () => router.push(`/book/${bookId}/scripting`) },
       },
-    ];
-  return book.value.volumes
-    .map((v, i) => ({
-      filename: app.exportFilename(meta, v),
-      title: `${meta.title} · ${shortVol(v.name)}`,
-      volume: { number: i + 1, of: book.value.volumes.length, name: v.name },
-      chapters: selChapters.value.filter((c) => c.volumeId === v.id),
-    }))
-    .filter((p) => p.chapters.length);
-});
-const existing = (filename: string) =>
-  app.exports.find((e) => e.bookId === bookId && e.filename === filename && e.status === "done");
-
-const exportsHere = computed(() =>
-  app.exports.filter((e) => e.bookId === bookId && e.status !== "replaced"),
-);
-const olderOf = (e: ExportItem) =>
-  app.exports.filter(
-    (x) => x.bookId === bookId && x.filename === e.filename && x.status === "replaced",
-  );
-const showOld = ref(new Set<number>());
-function rebuild(e: ExportItem) {
-  // same filename, previous chapters + everything narrated since
-  const ids = [...new Set([...e.chapterIds, ...app.newSince(e)])];
-  const m = {
-    ...meta,
-    title: e.series ?? meta.title,
-    series: e.series,
-    filename: e.filename.replace(/ - .*\.m4b$/, "").replace(/\.m4b$/, ""),
-    splitPerVolume: false,
-  };
-  if (e.volume) {
-    const v = book.value.volumes[e.volume.number - 1]!;
-    app._buildOne(
+    );
+    return;
+  }
+  // a chapter that failed part-way only needs the lines that failed; the rest is already rendered
+  const partial = scripted.filter((c) => c.narration === "failed" && c.duration > 0);
+  for (const c of partial) narrationStore.retryFailed(bookId, c.id);
+  const whole = scripted.filter((c) => !partial.includes(c));
+  if (whole.length)
+    narrationStore.runNarration(
       bookId,
-      {
-        vol: v,
-        index: e.volume.number,
-        chapters: app.chaptersOf(bookId).filter((c) => ids.includes(c.id)),
-      },
-      m,
+      whole.map((c) => c.id),
     );
-  } else app.buildExport(bookId, ids, m);
+  // say what was queued *and* what was not: a chapter left behind here is one the build still wants
+  uiStore.toast(`Narrating ${plural(scripted.length, "chapter")}`, {
+    kind: "info",
+    description: unscripted.length
+      ? `${plural(unscripted.length, "chapter")} in the selection ${unscripted.length === 1 ? "has" : "have"} no script yet and could not be queued.`
+      : "They stay selected, so the build picks them up when the run finishes.",
+    timeout: 6000,
+    ...(unscripted.length
+      ? {
+          action: {
+            label: "Script them",
+            run: () => router.push(`/book/${bookId}/scripting`),
+          },
+        }
+      : {}),
+  });
+}
+function useStale() {
+  settings.useStale = !settings.useStale;
+}
+function build() {
+  const item = exportsStore.buildExport(bookId, selected.value, settings, {
+    updates: updates.value ?? undefined,
+  });
+  if (item) {
+    updates.value = null;
+    tab.value = "library";
+  }
 }
 </script>
 
 <template>
-  <div class="grid gap-4 p-4 lg:h-full lg:grid-cols-[300px_1fr] lg:grid-rows-[minmax(0,1fr)]">
-    <div class="h-[50vh] min-h-0 lg:h-auto">
-      <ChapterPicker
-        :book-id="bookId"
-        stage="export"
-        v-model="selected"
-        run-label="Build audiobook"
-        :selectable="(c) => isNarrated(c) && !c.excluded"
-        @run="(ids) => app.buildExport(bookId, ids, meta)"
-      />
-    </div>
-
-    <EmptyState
-      v-if="!anyNarrated"
-      :icon="ExportIcon"
-      title="Nothing narrated yet"
-      body="An audiobook is built from narrated chapters. Narrate at least one chapter, then come back to build an M4B."
-      :steps="[
-        'Script chapters',
-        'Assign voices and narrate',
-        'Build — rebuild later as more chapters finish',
-      ]"
-    >
-      <RouterLink :to="`/book/${bookId}/narration`" class="btn-primary">Go to Narration</RouterLink>
-    </EmptyState>
-    <div v-else class="grid min-h-0 gap-4 lg:grid-cols-[1fr_340px] lg:grid-rows-[minmax(0,1fr)]">
-      <!-- left: settings -->
-      <TabsRoot v-model="tab" class="card flex min-h-0 flex-col">
-        <TabsList
-          class="flex items-center gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800"
-        >
+  <div class="flex h-full min-h-0 flex-col">
+    <TabsRoot v-model="tab" class="flex min-h-0 flex-1 flex-col">
+      <div
+        class="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 sm:px-4 dark:border-zinc-800 dark:bg-zinc-900"
+      >
+        <TabsList class="flex items-center gap-1" aria-label="Export views">
           <TabsTrigger
-            v-for="t in ['metadata', 'chapters', 'options']"
-            :key="t"
-            :value="t"
-            class="border-b-2 border-transparent px-3 py-2 text-sm capitalize text-zinc-500 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:data-[state=active]:text-zinc-100"
-            >{{ t }}</TabsTrigger
+            value="build"
+            class="border-b-2 border-transparent px-3 py-2.5 text-sm text-zinc-500 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:data-[state=active]:text-zinc-100"
+            >Build</TabsTrigger
           >
+          <TabsTrigger
+            value="library"
+            class="flex items-center gap-1.5 border-b-2 border-transparent px-3 py-2.5 text-sm text-zinc-500 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:data-[state=active]:text-zinc-100"
+            >Audiobooks
+            <span class="text-zinc-400">{{ exportsHere.length }}</span>
+            <span
+              v-if="building"
+              class="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-500"
+              title="a build is running"
+            ></span>
+            <span
+              v-else-if="failedBuilds"
+              class="h-1.5 w-1.5 rounded-full bg-red-500"
+              :title="`${failedBuilds} failed`"
+            ></span>
+            <span
+              v-else-if="needUpdate"
+              class="h-1.5 w-1.5 rounded-full bg-violet-500"
+              :title="`${needUpdate} need updating`"
+            ></span
+          ></TabsTrigger>
         </TabsList>
-        <div class="min-h-0 flex-1 overflow-auto p-5">
-          <!-- metadata -->
-          <TabsContent value="metadata" class="space-y-4">
-            <div class="grid gap-3 text-sm sm:grid-cols-2">
-              <label>Title<input v-model="meta.title" class="input mt-1 w-full" /></label>
-              <label
-                >Series <span class="text-zinc-400">(novel)</span
-                ><input v-model="meta.series" class="input mt-1 w-full"
-              /></label>
-              <label>Author<input v-model="meta.author" class="input mt-1 w-full" /></label>
-              <label
-                >Narrator credit<input v-model="meta.narrator" class="input mt-1 w-full"
-              /></label>
-              <label
-                >Year<UiNumber
-                  v-model="meta.year"
-                  class="mt-1 w-full"
-                  align="left"
-                  :min="0"
-                  label="Year"
-              /></label>
-              <label
-                >Filename
-                <div class="input mt-1 flex w-full items-center gap-1 py-0">
-                  <input
-                    v-model="meta.filename"
-                    class="min-w-0 flex-1 bg-transparent py-1 focus:outline-none"
-                  /><span class="text-zinc-400">{{
-                    meta.splitPerVolume ? " - Vol. N.m4b" : ".m4b"
-                  }}</span>
-                </div></label
-              >
-              <label class="sm:col-span-2"
-                >Description<textarea
-                  v-model="meta.description"
-                  rows="2"
-                  class="input mt-1 w-full"
-                  placeholder="Shown in audiobook players. Leave blank to use the EPUB blurb."
-                ></textarea>
-              </label>
-            </div>
-
-            <div
-              v-if="multi"
-              class="rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800"
-            >
-              <UiSwitch v-model="meta.splitPerVolume" class="items-start"
-                ><span class="text-sm"
-                  ><b>One file per volume</b><br /><span class="text-xs text-zinc-500"
-                    >Each M4B gets series = “{{ meta.series }}”, volume N of
-                    {{ book.volumes.length }}, and the volume name as subtitle. Players group them
-                    as a series.</span
-                  ></span
-                ></UiSwitch
-              >
-            </div>
-
-            <div class="flex items-center gap-4">
-              <img
-                v-if="meta.cover"
-                :src="meta.cover"
-                class="h-24 w-16 shrink-0 rounded-md object-cover"
-                alt="cover"
-              />
-              <div
-                v-else
-                class="h-24 w-16 shrink-0 rounded-md"
-                :style="{
-                  background: `linear-gradient(160deg, ${book.cover[0]}, ${book.cover[1]})`,
-                }"
-              ></div>
-              <div class="text-sm">
-                <div class="font-medium">Cover</div>
-                <div class="text-xs text-zinc-500">
-                  {{
-                    meta.cover
-                      ? "Your image, embedded in every file."
-                      : "From the EPUB, embedded in every file."
-                  }}
-                </div>
-                <div class="mt-2 flex gap-1">
-                  <label class="btn-ghost btn-xs cursor-pointer"
-                    >{{ meta.cover ? "Replace…" : "Use my own…"
-                    }}<input
-                      type="file"
-                      accept="image/*"
-                      class="hidden"
-                      @change="pickCover" /></label
-                  ><button v-if="meta.cover" class="btn-ghost btn-xs" @click="meta.cover = null">
-                    Back to EPUB cover
-                  </button>
-                </div>
-              </div>
-            </div>
-          </TabsContent>
-
-          <!-- chapters -->
-          <TabsContent value="chapters">
-            <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <div class="label">Chapter markers in the file</div>
-              <div class="flex flex-wrap items-center gap-3 text-xs">
-                <UiSwitch v-model="meta.markers" label="write markers" class="text-zinc-500" />
-                <UiSelect
-                  v-model="meta.markerPattern"
-                  :options="PATTERNS"
-                  size="xs"
-                  class="w-52"
-                  :disabled="!meta.markers"
-                />
-                <UiSwitch
-                  v-if="multi && !meta.splitPerVolume"
-                  v-model="meta.volPrefix"
-                  label="prefix with volume"
-                  class="text-zinc-500"
-                />
-              </div>
-            </div>
-            <div
-              v-if="!meta.markers"
-              class="mb-2 rounded-md bg-amber-400/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300"
-            >
-              Without markers the player shows one long track — listeners can’t skip by chapter.
-            </div>
-            <div
-              v-else
-              class="mb-2 rounded-md bg-zinc-50 px-2 py-1.5 font-mono text-[11px] text-zinc-500 dark:bg-zinc-800/60"
-            >
-              as the player will list them:
-              <span
-                v-for="(c, i) in selChapters.slice(0, 3)"
-                :key="c.id"
-                class="mr-3 text-zinc-800 dark:text-zinc-200"
-                >{{ marker(c, i) }}</span
-              ><span v-if="selChapters.length > 3">…</span>
-            </div>
-            <div class="rounded-md border border-zinc-200 text-sm dark:border-zinc-800">
-              <div
-                v-for="c in selChapters"
-                :key="c.id"
-                class="flex items-center gap-2 border-b border-zinc-100 px-2 py-1 last:border-0 dark:border-zinc-800"
-              >
-                <span class="font-mono text-[11px] text-zinc-400">{{
-                  String(c.id).padStart(2, "0")
-                }}</span>
-                <span
-                  v-if="multi && meta.volPrefix && !meta.splitPerVolume"
-                  class="shrink-0 text-xs text-zinc-400"
-                  >{{ shortVol(volName(c)) }} ·</span
-                >
-                <input v-model="c.title" class="flex-1 bg-transparent focus:outline-none" />
-                <span class="font-mono text-[11px] text-zinc-400">{{ fmt(c.duration) }}</span>
-              </div>
-              <div v-if="!selChapters.length" class="p-3 text-zinc-500">No chapters selected.</div>
-            </div>
-          </TabsContent>
-
-          <!-- options -->
-          <TabsContent value="options" class="grid gap-3 text-sm sm:grid-cols-3">
-            <label
-              >Format<UiSelect
-                model-value="m4b"
-                :options="[
-                  { value: 'm4b', label: 'M4B (AAC)' },
-                  { value: 'mp3', label: 'MP3 (soon)', disabled: true },
-                ]"
-                class="mt-1"
-                block
-            /></label>
-            <label
-              >Bitrate<UiSelect
-                v-model="meta.bitrate"
-                :options="[
-                  { value: 64, label: '64 kbps' },
-                  { value: 96, label: '96 kbps' },
-                  { value: 128, label: '128 kbps' },
-                ]"
-                class="mt-1"
-                block
-            /></label>
-            <div></div>
-            <label
-              >Gap between segments<UiNumber
-                v-model="meta.gapSeg"
-                class="mt-1 w-full"
-                :min="0"
-                :step="0.05"
-                unit="s"
-                label="Gap between segments"
-            /></label>
-            <label
-              >Gap between chapters<UiNumber
-                v-model="meta.gapCh"
-                class="mt-1 w-full"
-                :min="0"
-                :step="0.5"
-                unit="s"
-                label="Gap between chapters"
-            /></label>
-          </TabsContent>
-        </div>
-
-        <!-- build plan -->
-        <div class="border-t border-zinc-200 px-5 py-3 dark:border-zinc-800">
-          <div class="label mb-1.5">
-            Will build {{ plan.length }} file{{ plan.length === 1 ? "" : "s" }}
-          </div>
-          <div
-            v-if="staleSelected"
-            class="mb-2 rounded-md bg-amber-400/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300"
-          >
-            <WarnIcon class="icon-sm" /> {{ staleSelected }} selected chapter{{
-              staleSelected > 1 ? "s have" : " has"
-            }}
-            stale audio (edited after narration).
-            <RouterLink :to="`/book/${bookId}/narration`" class="underline"
-              >Re-narrate first</RouterLink
-            >
-            or the old audio is used.
-          </div>
-          <div v-for="p in plan" :key="p.filename" class="flex items-center gap-2 py-1 text-sm">
-            <ExportIcon class="icon text-zinc-400" />
-            <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ p.filename }}</span>
-            <span
-              v-if="p.volume"
-              class="rounded bg-zinc-100 px-1.5 text-[10px] text-zinc-500 dark:bg-zinc-800"
-              >vol {{ p.volume.number }}/{{ p.volume.of }}</span
-            >
-            <span class="font-mono text-[11px] text-zinc-500"
-              >{{ p.chapters.length }} ch ·
-              {{ fmt(p.chapters.reduce((a, c) => a + c.duration, 0)) }} · ~{{
-                estSize(p.chapters.reduce((a, c) => a + c.duration, 0))
-              }}
-              MB</span
-            >
-            <span
-              v-if="existing(p.filename)"
-              class="rounded bg-amber-400/20 px-1.5 text-[10px] font-semibold text-amber-600"
-              :title="`Replaces v${existing(p.filename)!.version} from ${existing(p.filename)!.createdAt}`"
-              >replaces v{{ existing(p.filename)!.version }}</span
-            >
-            <span
-              v-else
-              class="rounded bg-emerald-500/15 px-1.5 text-[10px] font-semibold text-emerald-600"
-              >new</span
-            >
-          </div>
-          <div v-if="!plan.length" class="text-sm text-zinc-500">
-            Select narrated chapters on the left.
-          </div>
-          <div v-else class="mt-1 text-[11px] text-zinc-400">
-            {{ meta.markers ? `${selChapters.length} chapter markers` : "no chapter markers" }} ·
-            {{ meta.cover ? "custom cover" : "EPUB cover" }} · {{ meta.bitrate }} kbps AAC
-          </div>
-        </div>
-      </TabsRoot>
-
-      <!-- right: exports -->
-      <div class="card min-h-0 overflow-auto p-4">
-        <div class="label mb-2">Audiobooks</div>
-        <div v-if="!exportsHere.length" class="text-sm text-zinc-500">None yet.</div>
-        <div
-          v-for="e in exportsHere"
-          :key="e.id"
-          class="mb-3 rounded-lg border border-zinc-200 p-3 text-sm dark:border-zinc-800"
-        >
-          <div class="flex items-start gap-2">
-            <div class="min-w-0 flex-1">
-              <div class="truncate font-mono text-xs">{{ e.filename }}</div>
-              <div class="mt-0.5 text-xs text-zinc-500">
-                <span v-if="e.volume"
-                  >{{ e.series }} · vol {{ e.volume.number }}/{{ e.volume.of }} · </span
-                >{{ e.chapters }} ch · {{ fmt(e.duration) }} · {{ e.bitrate }} kbps
-              </div>
-            </div>
-            <span
-              class="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500 dark:bg-zinc-800"
-              >v{{ e.version }}</span
-            >
-          </div>
-          <div
-            v-if="e.status === 'building'"
-            class="mt-2 h-1.5 rounded bg-zinc-200 dark:bg-zinc-800"
-          >
-            <div
-              class="h-1.5 rounded bg-violet-500 transition-all"
-              :style="{ width: e.progress + '%' }"
-            ></div>
-          </div>
-          <template v-else>
-            <div
-              v-if="app.newSince(e).length"
-              class="mt-2 flex items-center gap-2 rounded-md bg-violet-50 px-2 py-1.5 text-xs dark:bg-violet-500/10"
-            >
-              <span class="min-w-0 flex-1 text-violet-700 dark:text-violet-300"
-                ><b
-                  >{{ app.newSince(e).length }} new chapter{{
-                    app.newSince(e).length > 1 ? "s" : ""
-                  }}</b
-                >
-                narrated since this build</span
-              >
-              <button class="btn-primary btn-xs whitespace-nowrap" @click="rebuild(e)">
-                Rebuild → v{{ e.version + 1 }}
-              </button>
-            </div>
-            <div
-              class="mt-2 flex items-center gap-1 rounded bg-zinc-50 px-2 py-1 font-mono text-[10px] text-zinc-500 dark:bg-zinc-800/60"
-            >
-              <span class="min-w-0 flex-1 truncate" :title="pathOf(e)">{{ pathOf(e) }}</span
-              ><button class="shrink-0 text-violet-500 hover:underline" @click="copyPath(e)">
-                copy
-              </button>
-            </div>
-            <div class="mt-2 flex items-center gap-2 text-xs text-zinc-500">
-              <span>{{ e.size }} MB · {{ e.createdAt }}</span>
-              <span class="ml-auto flex gap-1">
-                <button
-                  class="btn-ghost btn-xs"
-                  title="listen (prototype player)"
-                  @click="listen(e)"
-                >
-                  <component
-                    :is="player.id === 'exp' + e.id && player.playing ? PauseIcon : PlayIcon"
-                    class="icon-sm icon-fill"
-                  />
-                </button>
-                <button class="btn-ghost btn-xs" title="download" @click="download(e)">
-                  <ExportIcon class="icon-sm" />
-                </button>
-                <button
-                  v-if="olderOf(e).length"
-                  class="btn-ghost btn-xs"
-                  @click="
-                    showOld = new Set(
-                      showOld.has(e.id)
-                        ? [...showOld].filter((x) => x !== e.id)
-                        : [...showOld, e.id],
-                    )
-                  "
-                >
-                  {{ olderOf(e).length }} older
-                </button>
-                <button class="btn-ghost btn-xs text-red-500" @click="app.deleteExport(e.id)">
-                  <CloseIcon class="icon-sm" />
-                </button>
-              </span>
-            </div>
-            <div
-              v-if="player.id === 'exp' + e.id"
-              class="mt-2 h-1 rounded bg-zinc-200 dark:bg-zinc-800"
-            >
-              <div
-                class="h-1 rounded bg-violet-500"
-                :style="{ width: (player.len ? (player.pos / player.len) * 100 : 0) + '%' }"
-              ></div>
-            </div>
-            <div
-              v-if="showOld.has(e.id)"
-              class="mt-2 space-y-1 border-t border-dashed border-zinc-200 pt-2 dark:border-zinc-800"
-            >
-              <div
-                v-for="o in olderOf(e)"
-                :key="o.id"
-                class="flex items-center gap-2 text-[11px] text-zinc-400"
-              >
-                <span class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">v{{ o.version }}</span
-                ><span>{{ o.chapters }} ch · {{ o.size }} MB · {{ o.createdAt }}</span
-                ><span class="ml-auto">replaced</span>
-              </div>
-            </div>
-          </template>
-        </div>
-        <p class="mt-2 text-[11px] leading-relaxed text-zinc-400">
-          Building with a filename that already exists replaces that audiobook and bumps its
-          version. Older versions stay listed until deleted.
-        </p>
+        <div class="ml-auto py-1.5"><ExportDemo /></div>
       </div>
-    </div>
+
+      <TabsContent value="build" class="min-h-0 flex-1 overflow-auto p-3 focus:outline-none sm:p-4">
+        <EmptyState
+          v-if="!anyNarrated"
+          :icon="ExportIcon"
+          title="Nothing narrated yet"
+          body="An audiobook is built from narrated chapters. Narrate at least one, then come back and choose what goes in."
+          :steps="[
+            'Script chapters',
+            'Assign voices and narrate',
+            'Build — and update it later as more chapters finish',
+          ]"
+        >
+          <RouterLink :to="`/book/${bookId}/narration`" class="btn-primary"
+            >Go to Narration</RouterLink
+          >
+        </EmptyState>
+        <div
+          v-else
+          class="grid min-h-0 gap-4 lg:h-full lg:grid-cols-[minmax(280px,340px)_minmax(0,1fr)]"
+        >
+          <div class="h-[55vh] min-h-0 lg:h-auto">
+            <ExportChapterList :book-id="bookId" v-model="selected" />
+          </div>
+          <div class="min-w-0 space-y-4 lg:min-h-0 lg:overflow-auto lg:pr-1">
+            <ExportPlan
+              :book-id="bookId"
+              :settings="settings"
+              :selected="selected"
+              @build="build"
+              @drop="drop"
+              @narrate="narrate"
+              @use-stale="useStale"
+            />
+            <ExportOutput :book-id="bookId" :settings="settings" :selected="selected" />
+          </div>
+        </div>
+      </TabsContent>
+
+      <TabsContent
+        value="library"
+        class="min-h-0 flex-1 overflow-auto p-3 focus:outline-none sm:p-4"
+      >
+        <div class="mx-auto max-w-4xl"><ExportLibrary :book-id="bookId" /></div>
+      </TabsContent>
+    </TabsRoot>
   </div>
 </template>

@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptingStore } from "@/stores/scripting";
+import { useScriptsStore } from "@/stores/scripts";
+
 // Script reader: narration flows as prose; dialogue and thought are lifted into cards with a
 // speaker pill and the voice direction. Right rail (toggleable) = the cast *in this chapter* with
 // aliases, spoiler-hidden descriptions and inline rename/merge; the rest of the cast is collapsed.
@@ -60,10 +66,15 @@ const filterOpts = computed(() => [
 ]);
 
 const props = defineProps<{ bookId: string; chapterId: number }>();
-const { app, segments, cast, counts, inChapter, colorOf } = useScript(props);
+const { segments, cast, counts, inChapter, colorOf } = useScript(props);
+const castStore = useCastStore();
+const endpointsStore = useEndpointsStore();
+const libraryStore = useLibraryStore();
+const scriptingStore = useScriptingStore();
+const scriptsStore = useScriptsStore();
 const reader = useReader();
-const volume = computed(() => app.volumeOf(props.bookId, props.chapterId));
-const multiVolume = computed(() => app.volumesOf(props.bookId).length > 1);
+const volume = computed(() => libraryStore.volumeOf(props.bookId, props.chapterId));
+const multiVolume = computed(() => libraryStore.volumesOf(props.bookId).length > 1);
 
 const mode = ref("all"); // all | dialogue
 const warnOpen = ref(false); // the unverified-chunk banner reads as one line until asked
@@ -82,7 +93,7 @@ const rows = computed(() =>
   ),
 );
 const rest = computed(() => cast.value.filter((c) => !counts.value[c.name]));
-const chapter = computed(() => app.chapter(props.bookId, props.chapterId)!);
+const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterId)!);
 const chars = computed(() => segments.value.reduce((a, s) => a + s.text.length, 0));
 
 function jumpToSpeaker(name: string) {
@@ -93,7 +104,7 @@ function startRename(c: Character) {
   draft.value = c.name;
 }
 function commitRename() {
-  if (editingName.value) app.renameCharacter(props.bookId, editingName.value, draft.value);
+  if (editingName.value) castStore.renameCharacter(props.bookId, editingName.value, draft.value);
   editingName.value = null;
 }
 function nextNew() {
@@ -108,7 +119,7 @@ const fallbacks = computed(() => segments.value.filter((s) => s.fallback));
 const route = useRoute();
 
 // directions: presets + everything already used in this book, free text allowed
-const dirOpts = computed(() => directionOptions(app.segments, props.bookId));
+const dirOpts = computed(() => directionOptions(scriptsStore.segments, props.bookId));
 // ---- segment boundaries: split at a word gap, join with a neighbour
 const splitting = ref<number | null>(null);
 interface Tok {
@@ -134,7 +145,7 @@ const nextOf = (s: Segment): Segment | undefined => segments.value[at(s.id) + 1]
 const prevOf = (s: Segment): Segment | undefined => segments.value[at(s.id) - 1];
 const preview = (t: string, n = 42) => (t.length > n ? t.slice(0, n) + "…" : t);
 function doSplit(s: Segment, offset: number) {
-  const id = app.splitSegment(props.bookId, props.chapterId, s.id, offset);
+  const id = scriptsStore.splitSegment(props.bookId, props.chapterId, s.id, offset);
   splitting.value = null;
   if (id == null) return;
   // the second half is the one that usually needs a different speaker — open it
@@ -147,7 +158,7 @@ function doSplit(s: Segment, offset: number) {
 function doJoin(s: Segment, dir: "next" | "prev") {
   const first = dir === "next" ? s : prevOf(s);
   if (!first || !nextOf(first)) return;
-  if (app.joinSegments(props.bookId, props.chapterId, first.id)) {
+  if (scriptsStore.joinSegments(props.bookId, props.chapterId, first.id)) {
     open.value = first.id;
     focus.value = first.id;
   }
@@ -155,11 +166,11 @@ function doJoin(s: Segment, dir: "next" | "prev") {
 
 // ---- pacing: how long the book holds after this line. Silence is stitched, not rendered, so a
 // pause changes the chapter's length without invalidating a single clip.
-const pacing = computed(() => app.pacingOf(props.bookId));
+const pacing = computed(() => castStore.pacingOf(props.bookId));
 const gapOf = (s: Segment) => pauseAfter(s, nextOf(s), pacing.value);
 const bookGap = (s: Segment) => defaultPause(s, nextOf(s), pacing.value);
 const setPause = (s: Segment, v: number | null) =>
-  app.setPause(props.bookId, props.chapterId, s.id, v);
+  castStore.setPause(props.bookId, props.chapterId, s.id, v);
 
 const GENDER_LABEL: Partial<Record<Gender, string>> = { m: "male", f: "female", n: "neutral" };
 const sameSpeakerCount = (s: Segment) =>
@@ -180,11 +191,11 @@ const edits = computed(() => segments.value.filter((s) => s.edited).length);
 // re-script: run the LLM again on this chapter, optionally re-applying manual edits; then show the diff
 const rescriptOpen = ref(false);
 const keepEdits = ref(true);
-const diff = computed(() => app.scriptDiff(props.bookId, props.chapterId));
+const diff = computed(() => scriptsStore.scriptDiff(props.bookId, props.chapterId));
 const showDiff = ref(true);
 function rescript() {
   rescriptOpen.value = false;
-  app.runScripting(props.bookId, [props.chapterId], { keepEdits: keepEdits.value });
+  scriptingStore.runScripting(props.bookId, [props.chapterId], { keepEdits: keepEdits.value });
 }
 function jumpTo(id: number) {
   focus.value = id;
@@ -246,7 +257,7 @@ function onKey(e: KeyboardEvent) {
     document.querySelector<HTMLInputElement>('input[placeholder^="Find chapter"]')?.focus();
   } else if (/^[1-9]$/.test(e.key) && focus.value) {
     const c = inChapter.value[Number(e.key) - 1];
-    if (c) app.setSpeaker(props.bookId, props.chapterId, focus.value, c.name);
+    if (c) scriptsStore.setSpeaker(props.bookId, props.chapterId, focus.value, c.name);
   }
 }
 onMounted(() => {
@@ -311,9 +322,13 @@ watch(open, (v) => {
                 <div class="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1.5">
                   <span class="text-zinc-500">Profile</span
                   ><UiSelect
-                    v-model="app.scriptSettings.profile"
+                    v-model="scriptingStore.scriptSettings.profile"
                     :options="
-                      app.profiles.map((p) => ({ value: p.id, label: p.name, hint: p.model }))
+                      endpointsStore.profiles.map((p) => ({
+                        value: p.id,
+                        label: p.name,
+                        hint: p.model,
+                      }))
                     "
                     size="xs"
                     block
@@ -452,7 +467,7 @@ watch(open, (v) => {
           >
           <button
             class="text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-            @click="app.dismissDiff(bookId, chapterId)"
+            @click="scriptsStore.dismissDiff(bookId, chapterId)"
           >
             dismiss
           </button>
@@ -517,7 +532,7 @@ watch(open, (v) => {
                 <template v-else>
                   <button
                     class="btn-ghost btn-xs ml-auto"
-                    @click="app.retryChunk(bookId, chapterId, s.id)"
+                    @click="scriptingStore.retryChunk(bookId, chapterId, s.id)"
                   >
                     <RetryIcon class="icon-sm" /> Re-split this chunk
                   </button>
@@ -664,7 +679,9 @@ watch(open, (v) => {
                   size="xs"
                   class="mt-1"
                   block
-                  @update:model-value="(v) => app.setSpeaker(bookId, chapterId, s.id, String(v))"
+                  @update:model-value="
+                    (v) => scriptsStore.setSpeaker(bookId, chapterId, s.id, String(v))
+                  "
               /></label>
               <label
                 >Type<UiSelect
@@ -674,7 +691,10 @@ watch(open, (v) => {
                   class="mt-1"
                   block
                   @update:model-value="
-                    (v) => app.updateSegment(bookId, chapterId, s.id, { type: v as SegmentType })
+                    (v) =>
+                      scriptsStore.updateSegment(bookId, chapterId, s.id, {
+                        type: v as SegmentType,
+                      })
                   "
               /></label>
               <label class="col-span-2 2xl:col-span-1"
@@ -689,7 +709,10 @@ watch(open, (v) => {
                     class="min-w-0 flex-1"
                     block
                     @update:model-value="
-                      (v) => app.updateSegment(bookId, chapterId, s.id, { direction: String(v) })
+                      (v) =>
+                        scriptsStore.updateSegment(bookId, chapterId, s.id, {
+                          direction: String(v),
+                        })
                     "
                   />
                   <UiTooltip
@@ -697,7 +720,9 @@ watch(open, (v) => {
                     ><button
                       class="btn-ghost btn-xs whitespace-nowrap"
                       :disabled="!s.direction || !sameSpeakerCount(s)"
-                      @click="app.applyDirection(bookId, chapterId, s.speaker, s.direction)"
+                      @click="
+                        scriptsStore.applyDirection(bookId, chapterId, s.speaker, s.direction)
+                      "
                     >
                       → all {{ s.speaker.split(" ")[0] }}
                     </button></UiTooltip
@@ -935,7 +960,9 @@ watch(open, (v) => {
         >
           <span class="h-2 w-2 rounded-full" :style="{ background: c.color }"></span>
           <span class="min-w-0 flex-1 truncate">{{ c.name }}</span>
-          <span class="font-mono text-zinc-400">{{ app.lineCounts(bookId)[c.name] ?? 0 }}</span>
+          <span class="font-mono text-zinc-400">{{
+            scriptsStore.lineCounts(bookId)[c.name] ?? 0
+          }}</span>
         </div>
       </div>
       <p class="mt-3 text-[11px] leading-relaxed text-zinc-400">

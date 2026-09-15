@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { useLibraryStore } from "@/stores/library";
+import { useUiStore } from "@/stores/ui";
+
 import { ref } from "vue";
 import { useRouter } from "vue-router";
-import { useApp } from "@/stores/app";
+
 import type { Book, BookProgress } from "@/types";
 import MiniBar from "@/components/MiniBar.vue";
 import EmptyState from "@/components/EmptyState.vue";
@@ -16,7 +19,8 @@ import {
   DialogRoot,
   DialogTitle,
 } from "reka-ui";
-const app = useApp();
+const libraryStore = useLibraryStore();
+const uiStore = useUiStore();
 const router = useRouter();
 const dragging = ref(false);
 /** The add-a-file dialog: what was dropped, and whether it becomes a new novel or a new volume. */
@@ -30,7 +34,7 @@ interface PendingAdd {
 const pending = ref<PendingAdd | null>(null);
 
 function open(b: Book) {
-  app.currentBookId = b.id;
+  uiStore.currentBookId = b.id;
   router.push(`/book/${b.id}`);
 }
 function addFake(e: Event | DragEvent | null, bookId: string | null = null) {
@@ -42,7 +46,7 @@ function addFake(e: Event | DragEvent | null, bookId: string | null = null) {
   pending.value = {
     file,
     mode: bookId ? "volume" : "new",
-    bookId: bookId ?? app.books[0]?.id ?? "",
+    bookId: bookId ?? libraryStore.books[0]?.id ?? "",
     title: guess,
     volName: guess,
   };
@@ -50,8 +54,8 @@ function addFake(e: Event | DragEvent | null, bookId: string | null = null) {
 function confirmAdd() {
   const p = pending.value;
   if (!p) return;
-  if (p.mode === "new") app.addNovel(p.file, p.title);
-  else app.addVolume(p.bookId, p.file, p.volName);
+  if (p.mode === "new") libraryStore.addNovel(p.file, p.title);
+  else libraryStore.addVolume(p.bookId, p.file, p.volName);
   pending.value = null;
 }
 function stageOf(p: BookProgress) {
@@ -71,7 +75,7 @@ function stageOf(p: BookProgress) {
       <div>
         <h1 class="text-2xl font-semibold">Library</h1>
         <p class="text-sm text-zinc-500">
-          {{ app.books.length }} books · pick one to start scripting
+          {{ libraryStore.books.length }} books · pick one to start scripting
         </p>
       </div>
       <label class="btn-primary cursor-pointer"
@@ -101,14 +105,14 @@ function stageOf(p: BookProgress) {
     </div>
 
     <EmptyState
-      v-if="!app.books.length"
+      v-if="!libraryStore.books.length"
       :icon="LibraryIcon"
       title="No books yet"
       body="Add an EPUB to start. Each file becomes a novel, or a volume of one you already have."
     />
     <div class="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-4">
       <button
-        v-for="b in app.books"
+        v-for="b in libraryStore.books"
         :key="b.id"
         class="card group overflow-hidden text-left transition-shadow hover:shadow-lg hover:shadow-violet-500/10"
         @click="open(b)"
@@ -123,11 +127,11 @@ function stageOf(p: BookProgress) {
           <div class="mt-1 text-xs text-white/80">{{ b.author }}</div>
           <span
             class="absolute bottom-3 left-3 rounded-full px-2 py-0.5 text-[11px] font-semibold backdrop-blur"
-            :class="stageOf(app.progress(b.id)).cls"
-            >{{ stageOf(app.progress(b.id)).label }}</span
+            :class="stageOf(libraryStore.progress(b.id)).cls"
+            >{{ stageOf(libraryStore.progress(b.id)).label }}</span
           >
           <span
-            v-if="app.progress(b.id).running"
+            v-if="libraryStore.progress(b.id).running"
             class="absolute bottom-3 right-3 h-2 w-2 animate-pulse rounded-full bg-emerald-400"
           ></span>
         </div>
@@ -135,7 +139,7 @@ function stageOf(p: BookProgress) {
           <div class="flex justify-between">
             <span class="text-zinc-500">Chapters</span
             ><span
-              >{{ app.progress(b.id).total
+              >{{ libraryStore.progress(b.id).total
               }}<span v-if="b.volumes.length > 1" class="text-zinc-400">
                 · {{ b.volumes.length }} vols</span
               ></span
@@ -143,18 +147,19 @@ function stageOf(p: BookProgress) {
           </div>
           <MiniBar
             label="Scripted"
-            :n="app.progress(b.id).scripted"
-            :of="app.progress(b.id).total"
+            :n="libraryStore.progress(b.id).scripted"
+            :of="libraryStore.progress(b.id).total"
             color="bg-amber-500"
           />
           <MiniBar
             label="Narrated"
-            :n="app.progress(b.id).narrated"
-            :of="app.progress(b.id).total"
+            :n="libraryStore.progress(b.id).narrated"
+            :of="libraryStore.progress(b.id).total"
             color="bg-sky-500"
           />
           <div class="flex justify-between">
-            <span class="text-zinc-500">Exports</span><span>{{ app.progress(b.id).exported }}</span>
+            <span class="text-zinc-500">Exports</span
+            ><span>{{ libraryStore.progress(b.id).exported }}</span>
           </div>
           <label
             class="mt-1 block cursor-pointer text-center text-[11px] text-zinc-400 hover:text-violet-500"
@@ -226,7 +231,7 @@ function stageOf(p: BookProgress) {
                 >Novel<UiSelect
                   v-model="pending.bookId"
                   :options="
-                    app.books.map((b) => ({
+                    libraryStore.books.map((b) => ({
                       value: b.id,
                       label: b.title,
                       hint: b.volumes.length + ' vol.',

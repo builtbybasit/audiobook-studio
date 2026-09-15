@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+
 // Voice picker for a character: a popover with search, gender filter, voices grouped by endpoint
 // (paused ones listed but disabled), "used by N" and an inline demo button. Built on reka Popover +
 // Listbox so arrows/Enter work. v-model is the voice ref (`endpointId/voiceId`) or null.
 import { computed, ref, watch } from "vue";
-import { useApp } from "@/stores/app";
+
 import { speak } from "@/composables/usePlayer";
 import type { Component } from "vue";
 import {
@@ -42,7 +45,8 @@ const props = withDefaults(
   { modelValue: null, nullLabel: "Narrator’s voice", size: "sm", speaker: undefined },
 );
 const emit = defineEmits<{ "update:modelValue": [VoiceRef | null] }>();
-const app = useApp();
+const castStore = useCastStore();
+const endpointsStore = useEndpointsStore();
 const open = ref(false);
 const q = ref("");
 const gender = ref("all");
@@ -54,15 +58,16 @@ watch(open, (o) => {
   }
 });
 
-const current = computed(() => app.resolveVoice(props.modelValue));
+const current = computed(() => endpointsStore.resolveVoice(props.modelValue));
 const missing = computed(() => props.modelValue && !current.value);
 const usedBy = computed(() => {
   const m: Record<VoiceRef, string[]> = {};
-  for (const c of app.charactersOf(props.bookId)) if (c.voice) (m[c.voice] ??= []).push(c.name);
+  for (const c of castStore.charactersOf(props.bookId))
+    if (c.voice) (m[c.voice] ??= []).push(c.name);
   return m;
 });
 const rows = computed(() =>
-  app.endpoints
+  endpointsStore.endpoints
     .map((e) => ({
       endpoint: e,
       voices: e.voices.filter(

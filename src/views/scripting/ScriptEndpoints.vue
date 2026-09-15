@@ -1,6 +1,13 @@
 <script setup lang="ts">
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptingStore } from "@/stores/scripting";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
+
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { useApp, keyring } from "@/stores/app";
+import { keyring } from "@/lib/keyring";
 import { UiNumber, UiSelect, UiSwitch } from "@/ui";
 import NumberSlider from "@/components/NumberSlider.vue";
 import {
@@ -20,8 +27,13 @@ import EndpointActivity from "@/views/scripting/EndpointActivity.vue";
 import type { Profile, SettingsFile } from "@/types";
 import { SPLIT_MODES } from "@/lib/split";
 const props = defineProps<{ bookId: string; selected: number[] }>();
-const app = useApp();
-const selectedId = ref(app.scriptSettings.profile);
+const endpointsStore = useEndpointsStore();
+const jobsStore = useJobsStore();
+const libraryStore = useLibraryStore();
+const scriptingStore = useScriptingStore();
+const scriptsStore = useScriptsStore();
+const uiStore = useUiStore();
+const selectedId = ref(scriptingStore.scriptSettings.profile);
 const now = ref(Date.now());
 let clock: ReturnType<typeof setInterval>;
 onMounted(() => {
@@ -30,7 +42,7 @@ onMounted(() => {
 onUnmounted(() => clearInterval(clock));
 const endpointList = ref<HTMLElement | null>(null);
 const health = (ep: Profile) =>
-  scriptingHealth(ep, app.scriptTelemetry[ep.id], keyring.has("profile:" + ep.id), now.value);
+  scriptingHealth(ep, jobsStore.scriptTelemetry[ep.id], keyring.has("profile:" + ep.id), now.value);
 const tone = (ep: Profile) =>
   ({ good: "bg-emerald-500", warn: "bg-amber-500", muted: "bg-zinc-400" })[health(ep).tone];
 watch(selectedId, async () => {
@@ -43,17 +55,19 @@ watch(selectedId, async () => {
     list.scrollLeft = selected.offsetLeft - list.offsetLeft;
   }
 });
-const p = computed(() => app.profiles.find((p) => p.id === selectedId.value));
+const p = computed(() => endpointsStore.profiles.find((p) => p.id === selectedId.value));
 const section = ref("connection");
 const errors = computed(() => (p.value ? profileErrors(p.value) : []));
 const sampleChapter = computed(
   () =>
-    app.chaptersOf(props.bookId).find((c) => props.selected.includes(c.id) && !c.excluded) ??
-    app.chaptersOf(props.bookId).find((c) => !c.excluded),
+    libraryStore
+      .chaptersOf(props.bookId)
+      .find((c) => props.selected.includes(c.id) && !c.excluded) ??
+    libraryStore.chaptersOf(props.bookId).find((c) => !c.excluded),
 );
 const parts = computed(() =>
   p.value && sampleChapter.value
-    ? scriptParts(app.rawText(props.bookId, sampleChapter.value.id), p.value)
+    ? scriptParts(scriptsStore.rawText(props.bookId, sampleChapter.value.id), p.value)
     : [],
 );
 const previewPart = ref(0);
@@ -66,7 +80,9 @@ const tokens = computed(() =>
 const money = (n: number) => "$" + n.toLocaleString("en-US", { maximumFractionDigits: 6 });
 function exportSettings() {
   const url = URL.createObjectURL(
-    new Blob([JSON.stringify(app.exportSettings(), null, 2)], { type: "application/json" }),
+    new Blob([JSON.stringify(endpointsStore.exportSettings(), null, 2)], {
+      type: "application/json",
+    }),
   );
   const link = document.createElement("a");
   link.href = url;
@@ -79,9 +95,9 @@ async function importSettings(event: Event) {
   const file = input.files?.[0];
   if (!file) return;
   try {
-    app.importSettings(JSON.parse(await file.text()) as SettingsFile);
+    endpointsStore.importSettings(JSON.parse(await file.text()) as SettingsFile);
   } catch (error) {
-    app.toast("Could not import settings", {
+    uiStore.toast("Could not import settings", {
       kind: "error",
       description: error instanceof Error ? error.message : "Invalid settings file",
     });
@@ -89,12 +105,12 @@ async function importSettings(event: Event) {
   input.value = "";
 }
 function add() {
-  selectedId.value = app.addScriptProfile();
+  selectedId.value = endpointsStore.addScriptProfile();
   section.value = "connection";
 }
 function remove() {
-  if (p.value) app.removeScriptProfile(p.value.id);
-  if (!p.value) selectedId.value = app.profiles[0]?.id ?? "";
+  if (p.value) endpointsStore.removeScriptProfile(p.value.id);
+  if (!p.value) selectedId.value = endpointsStore.profiles[0]?.id ?? "";
 }
 </script>
 <template>
@@ -137,7 +153,7 @@ function remove() {
         class="relative flex gap-1 overflow-x-auto md:max-h-[320px] md:flex-col md:overflow-y-auto"
       >
         <div
-          v-for="ep in app.profiles"
+          v-for="ep in endpointsStore.profiles"
           :key="ep.id"
           :data-selected="selectedId === ep.id"
           class="relative min-w-56 shrink-0 rounded-lg border transition-colors md:min-w-0"
@@ -162,7 +178,7 @@ function remove() {
                 ep.name || "Untitled endpoint"
               }}</span
               ><span
-                v-if="app.scriptSettings.profile === ep.id"
+                v-if="scriptingStore.scriptSettings.profile === ep.id"
                 class="shrink-0 text-[10px] font-medium text-violet-600 dark:text-violet-400"
                 title="runs use this endpoint"
                 ><CheckIcon class="icon-sm" /> runs</span
@@ -215,10 +231,10 @@ function remove() {
             <component :is="p.enabled ? PauseIcon : PlayIcon" class="icon-sm icon-fill" />
             {{ p.enabled ? "Pause" : "Enable" }}</button
           ><button
-            v-if="app.scriptSettings.profile !== p.id"
+            v-if="scriptingStore.scriptSettings.profile !== p.id"
             class="btn-primary btn-xs"
             :disabled="!!errors.length || !p.enabled"
-            @click="app.scriptSettings.profile = p.id"
+            @click="scriptingStore.scriptSettings.profile = p.id"
           >
             Use for runs</button
           ><span v-else class="text-xs font-medium text-violet-600 dark:text-violet-400"

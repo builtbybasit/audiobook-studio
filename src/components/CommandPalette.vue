@@ -1,10 +1,19 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptingStore } from "@/stores/scripting";
+import { useUiStore } from "@/stores/ui";
+
 // ⌘K / Ctrl+K command palette: reka Dialog + Listbox with a filter. Jump to any page, book, chapter,
 // speaker or endpoint, or run the common actions (script pending, narrate, retry failed, toggle theme…).
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { RouteLocationRaw } from "vue-router";
-import { useApp, isScripted, isNarrated } from "@/stores/app";
+import { isScripted } from "@/lib/scriptReview";
+import { isNarrated } from "@/lib/scriptReview";
 import {
   DialogContent,
   DialogDescription,
@@ -22,7 +31,13 @@ import {
 } from "reka-ui";
 import { Search as SearchIcon } from "@lucide/vue";
 
-const app = useApp();
+const castStore = useCastStore();
+const endpointsStore = useEndpointsStore();
+const jobsStore = useJobsStore();
+const libraryStore = useLibraryStore();
+const narrationStore = useNarrationStore();
+const scriptingStore = useScriptingStore();
+const uiStore = useUiStore();
 const router = useRouter();
 const route = useRoute();
 const open = ref(false);
@@ -44,9 +59,9 @@ watch(open, (o) => {
   if (o) q.value = "";
 });
 
-const bookId = computed(() => app.currentBookId);
-const book = computed(() => app.book);
-const chs = computed(() => (bookId.value ? app.chaptersOf(bookId.value) : []));
+const bookId = computed(() => uiStore.currentBookId);
+const book = computed(() => libraryStore.book);
+const chs = computed(() => (bookId.value ? libraryStore.chaptersOf(bookId.value) : []));
 const go = (to: RouteLocationRaw) => () => router.push(to);
 
 /** One row of the palette; the default order is the order they are pushed. */
@@ -82,7 +97,7 @@ const commands = computed(() => {
     id: "nav-queue",
     group: "Go to",
     label: "Queue",
-    hint: `${app.activeJobs.length} active`,
+    hint: `${jobsStore.activeJobs.length} active`,
     run: go("/queue"),
   });
   if (b) {
@@ -96,7 +111,7 @@ const commands = computed(() => {
       id: "nav-cast",
       group: "Go to",
       label: "Cast",
-      hint: `${app.charactersOf(b).length} speakers`,
+      hint: `${castStore.charactersOf(b).length} speakers`,
       run: go(`/book/${b}/cast`),
     });
     out.push({
@@ -141,7 +156,7 @@ const commands = computed(() => {
         hint: `${pending.length} ch`,
         keywords: "extract run",
         run: () => {
-          app.runScripting(b, pending);
+          scriptingStore.runScripting(b, pending);
           router.push(`/book/${b}/scripting`);
         },
       });
@@ -153,7 +168,7 @@ const commands = computed(() => {
         hint: `${scripted.length} ch`,
         keywords: "tts render run",
         run: () => {
-          app.runNarration(b, scripted);
+          narrationStore.runNarration(b, scripted);
           router.push(`/book/${b}/narration`);
         },
       });
@@ -165,7 +180,7 @@ const commands = computed(() => {
         hint: `${stale.length} ch stale`,
         keywords: "edited",
         run: () => {
-          stale.forEach((c) => app.renarrateStale(b, c.id));
+          stale.forEach((c) => narrationStore.renarrateStale(b, c.id));
           router.push(`/book/${b}/narration`);
         },
       });
@@ -176,48 +191,48 @@ const commands = computed(() => {
         label: `Retry failed narration`,
         hint: `${failedN.length} ch`,
         run: () => {
-          failedN.forEach((c) => app.retryFailed(b, c.id));
+          failedN.forEach((c) => narrationStore.retryFailed(b, c.id));
           router.push(`/book/${b}/narration`);
         },
       });
-    if (app.charactersOf(b).some((c) => !c.voice && c.name !== "Narrator"))
+    if (castStore.charactersOf(b).some((c) => !c.voice && c.name !== "Narrator"))
       out.push({
         id: "act-auto",
         group: "Actions",
         label: "Auto-assign voices by gender",
         hint: "unvoiced cast",
         run: () => {
-          app.autoAssignByGender(b);
+          castStore.autoAssignByGender(b);
           router.push(`/book/${b}/narration`);
         },
       });
-    if (app.mergeSuggestions(b).length)
+    if (castStore.mergeSuggestions(b).length)
       out.push({
         id: "act-merge",
         group: "Actions",
         label: "Review merge suggestions",
-        hint: `${app.mergeSuggestions(b).length}`,
+        hint: `${castStore.mergeSuggestions(b).length}`,
         keywords: "alias duplicate cast",
         run: go(`/book/${b}/cast`),
       });
   }
-  if (app.jobs.some((j) => j.status === "failed"))
+  if (jobsStore.jobs.some((j) => j.status === "failed"))
     out.push({
       id: "act-retry-all",
       group: "Actions",
       label: "Retry all failed jobs",
-      hint: `${app.jobs.filter((j) => j.status === "failed").length}`,
+      hint: `${jobsStore.jobs.filter((j) => j.status === "failed").length}`,
       keywords: "queue",
-      run: () => app.retryAllFailed(),
+      run: () => jobsStore.retryAllFailed(),
     });
-  if (app.activeJobs.length)
+  if (jobsStore.activeJobs.length)
     out.push({
       id: "act-cancel-all",
       group: "Actions",
       label: "Cancel all running and queued jobs",
-      hint: `${app.activeJobs.length}`,
+      hint: `${jobsStore.activeJobs.length}`,
       keywords: "stop queue",
-      run: () => app.cancelAll(),
+      run: () => jobsStore.cancelAll(),
     });
   out.push({
     id: "act-endpoint",
@@ -225,7 +240,7 @@ const commands = computed(() => {
     label: "Add TTS endpoint",
     keywords: "server voice api",
     run: () => {
-      app.addEndpoint();
+      endpointsStore.addEndpoint();
       router.push("/endpoints");
     },
   });
@@ -235,17 +250,17 @@ const commands = computed(() => {
     label: "Add scripting endpoint",
     keywords: "server llm model api openai compatible",
     run: () => {
-      app.addScriptProfile();
+      endpointsStore.addScriptProfile();
       router.push("/endpoints");
     },
   });
   out.push({
     id: "act-dark",
     group: "Actions",
-    label: app.dark ? "Switch to light theme" : "Switch to dark theme",
+    label: uiStore.dark ? "Switch to light theme" : "Switch to dark theme",
     keywords: "dark light mode theme",
     run: () => {
-      app.dark = !app.dark;
+      uiStore.dark = !uiStore.dark;
     },
   });
   out.push({
@@ -256,13 +271,13 @@ const commands = computed(() => {
     keywords: "help keys hotkeys",
     run: () => window.dispatchEvent(new CustomEvent("open-shortcuts")),
   });
-  if (b && app._undo.length)
+  if (b && uiStore._undo.length)
     out.push({
       id: "act-undo",
       group: "Actions",
-      label: `Undo: ${app._undo.at(-1)!.label}`,
+      label: `Undo: ${uiStore._undo.at(-1)!.label}`,
       hint: `${mod} Z`,
-      run: () => app.undoLast(),
+      run: () => uiStore.undoLast(),
     });
   if (b)
     out.push({
@@ -272,16 +287,17 @@ const commands = computed(() => {
         ? `Resume ${book.value!.title}`
         : `Pause everything on ${book.value!.title}`,
       keywords: "budget stop",
-      run: () => (book.value!.budget?.paused ? app.resumeBook(b) : app.pauseBook(b)),
+      run: () =>
+        book.value!.budget?.paused ? libraryStore.resumeBook(b) : libraryStore.pauseBook(b),
     });
   // books
-  for (const bk of app.books)
+  for (const bk of libraryStore.books)
     if (bk.id !== b)
       out.push({
         id: "book-" + bk.id,
         group: "Novels",
         label: bk.title,
-        hint: `${bk.author} · ${app.chaptersOf(bk.id).length} ch`,
+        hint: `${bk.author} · ${libraryStore.chaptersOf(bk.id).length} ch`,
         keywords: bk.author,
         run: go(`/book/${bk.id}`),
       });
@@ -299,24 +315,24 @@ const commands = computed(() => {
       group: "Chapters",
       label: `${String(c.id).padStart(2, "0")} · ${c.title}`,
       hint: state,
-      keywords: `chapter ${c.id} ${app.volumeOf(b!, c.id)?.name ?? ""}`,
+      keywords: `chapter ${c.id} ${libraryStore.volumeOf(b!, c.id)?.name ?? ""}`,
       run: go({ path: `/book/${b}/${stage}`, query: { ch: c.id } }),
     });
   }
   // speakers of the open book
   if (b)
-    for (const c of app.charactersOf(b))
+    for (const c of castStore.charactersOf(b))
       out.push({
         id: "sp-" + c.name,
         group: "Speakers",
         label: c.name,
-        hint: c.voice ? app.voiceLabel(c.voice) : "Narrator’s voice",
+        hint: c.voice ? endpointsStore.voiceLabel(c.voice) : "Narrator’s voice",
         color: c.color,
         keywords: `speaker cast ${c.aliases.join(" ")}`,
         run: go(`/book/${b}/cast`),
       });
   // endpoints — pause/resume either kind from anywhere
-  for (const e of app.endpoints)
+  for (const e of endpointsStore.endpoints)
     out.push({
       id: "ep-" + e.id,
       group: "Endpoints",
@@ -327,7 +343,7 @@ const commands = computed(() => {
         e.enabled = !e.enabled;
       },
     });
-  for (const p of app.profiles)
+  for (const p of endpointsStore.profiles)
     out.push({
       id: "profile-" + p.id,
       group: "Endpoints",

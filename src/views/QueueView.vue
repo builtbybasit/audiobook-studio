@@ -1,8 +1,14 @@
 <script setup lang="ts">
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
+
 // Queue: every job across every book. Running now (with live detail), the pending queue (cancellable),
 // endpoint utilisation, and history with retry. A clock tick keeps elapsed times moving.
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { useApp } from "@/stores/app";
+
 import StatusDot from "@/components/StatusDot.vue";
 import JobDetails from "@/views/queue/JobDetails.vue";
 import type { Job, JobKind } from "@/types";
@@ -15,9 +21,13 @@ import {
   X as CloseIcon,
 } from "@lucide/vue";
 
-const app = useApp();
+const endpointsStore = useEndpointsStore();
+const jobsStore = useJobsStore();
+const libraryStore = useLibraryStore();
+const scriptsStore = useScriptsStore();
+const uiStore = useUiStore();
 const selectedId = ref<number | null>(null);
-const selectedJob = computed(() => app.jobs.find((j) => j.id === selectedId.value) ?? null);
+const selectedJob = computed(() => jobsStore.jobs.find((j) => j.id === selectedId.value) ?? null);
 function openRow(event: MouseEvent, job: Job) {
   if ((event.target as HTMLElement).closest("button, a, input")) return;
   selectedId.value = job.id;
@@ -34,16 +44,18 @@ const icon: Record<JobKind, Component> = {
   narration: NarrationIcon,
   export: ExportIcon,
 };
-const running = computed(() => app.jobs.filter((j) => j.status === "running"));
-const queued = computed(() => app.jobs.filter((j) => j.status === "queued"));
+const running = computed(() => jobsStore.jobs.filter((j) => j.status === "running"));
+const queued = computed(() => jobsStore.jobs.filter((j) => j.status === "queued"));
 const history = computed(() =>
-  app.jobs.filter((j) => j.finishedAt).sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0)),
+  jobsStore.jobs
+    .filter((j) => j.finishedAt)
+    .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0)),
 );
 const counts = computed(() => ({
   running: running.value.length,
   queued: queued.value.length,
-  done: app.jobs.filter((j) => j.status === "done").length,
-  failed: app.jobs.filter((j) => j.status === "failed").length,
+  done: jobsStore.jobs.filter((j) => j.status === "done").length,
+  failed: jobsStore.jobs.filter((j) => j.status === "failed").length,
 }));
 const filter = ref("all");
 const retryable = computed(
@@ -56,8 +68,8 @@ const shown = computed(() =>
   filter.value === "all" ? history.value : history.value.filter((j) => j.status === filter.value),
 );
 
-const book = (j: Job) => app.bookById(j.bookId);
-const chapter = (j: Job) => (j.chapterId ? app.chapter(j.bookId, j.chapterId) : null);
+const book = (j: Job) => libraryStore.bookById(j.bookId);
+const chapter = (j: Job) => (j.chapterId ? libraryStore.chapter(j.bookId, j.chapterId) : null);
 const elapsed = (j: Job) =>
   fmtDur(((j.finishedAt ?? now.value) - (j.startedAt ?? now.value)) / 1000);
 const fmtDur = (s: number) =>
@@ -65,7 +77,7 @@ const fmtDur = (s: number) =>
 const clock = (ts: number) =>
   new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 function segStats(j: Job) {
-  const segs = j.chapterId == null ? [] : app.segmentsOf(j.bookId, j.chapterId);
+  const segs = j.chapterId == null ? [] : scriptsStore.segmentsOf(j.bookId, j.chapterId);
   return {
     total: segs.length,
     done: segs.filter((s) => s.audio.status === "done").length,
@@ -76,7 +88,7 @@ function segStats(j: Job) {
 const stageLink = (j: Job) => `/book/${j.bookId}/${j.kind === "export" ? "export" : j.kind}`;
 const eta = computed(() => {
   const _tick = now.value; // re-read the estimate as the clock advances
-  return app.eta;
+  return jobsStore.eta;
 });
 const finishAt = computed(() =>
   eta.value
@@ -85,20 +97,20 @@ const finishAt = computed(() =>
 );
 const canNotify = "Notification" in window;
 async function toggleNotify() {
-  if (app.notify) {
-    app.notify = false;
+  if (uiStore.notify) {
+    uiStore.notify = false;
     return;
   }
   if (canNotify && Notification.permission !== "granted") {
     const r = await Notification.requestPermission();
     if (r !== "granted") {
-      app.toast("Browser notifications are blocked", {
+      uiStore.toast("Browser notifications are blocked", {
         kind: "warn",
         description: "You will still get in-app toasts when a book finishes.",
       });
     }
   }
-  app.notify = true;
+  uiStore.notify = true;
 }
 </script>
 
@@ -120,11 +132,13 @@ async function toggleNotify() {
         >
         <button
           class="btn-ghost btn-xs"
-          :class="app.notify && 'border-violet-400 text-violet-600'"
+          :class="uiStore.notify && 'border-violet-400 text-violet-600'"
           @click="toggleNotify"
         >
           {{
-            app.notify ? "🔔 notifying when a book finishes" : "🔕 notify me when a book finishes"
+            uiStore.notify
+              ? "🔔 notifying when a book finishes"
+              : "🔕 notify me when a book finishes"
           }}
         </button>
       </div>
@@ -161,11 +175,11 @@ async function toggleNotify() {
             <span class="label">Running now</span
             ><span class="text-xs text-zinc-400">{{ running.length }}</span>
             <button
-              v-if="app.activeJobs.length"
+              v-if="jobsStore.activeJobs.length"
               class="ml-auto whitespace-nowrap text-xs text-zinc-400 hover:text-red-500"
-              @click="app.cancelAll()"
+              @click="jobsStore.cancelAll()"
             >
-              cancel all ({{ app.activeJobs.length }})
+              cancel all ({{ jobsStore.activeJobs.length }})
             </button>
           </div>
           <div v-if="!running.length" class="px-4 py-6 text-sm text-zinc-500">
@@ -210,12 +224,25 @@ async function toggleNotify() {
                 </div>
                 <RouterLink :to="stageLink(j)" class="btn-ghost btn-xs">Open</RouterLink>
                 <button class="btn-ghost btn-xs" @click="selectedId = j.id">Activity</button>
-                <button class="btn-ghost btn-xs text-red-500" @click="app.cancelJob(j.id)">
+                <button class="btn-ghost btn-xs text-red-500" @click="jobsStore.cancelJob(j.id)">
                   Cancel
                 </button>
               </div>
+              <div v-if="j.exportRun" class="mt-2 flex flex-wrap gap-3 pl-11 text-xs text-zinc-500">
+                <span
+                  >{{ j.exportRun.stage }} <b>{{ j.exportRun.done }}</b> of
+                  {{ j.exportRun.chapterIds.length }} chapters</span
+                >
+                <span
+                  >file <b>{{ j.exportRun.file }}</b> of {{ j.exportRun.files }}</span
+                >
+                <span v-if="j.exportRun.reuse"
+                  ><b class="text-emerald-500">{{ j.exportRun.reuse }}</b> carried over</span
+                >
+                <span class="min-w-0 truncate font-mono">{{ j.exportRun.fileName }}</span>
+              </div>
               <div
-                v-if="j.kind === 'narration'"
+                v-else-if="j.kind === 'narration'"
                 class="mt-2 flex gap-3 pl-11 text-xs text-zinc-500"
               >
                 <span
@@ -244,7 +271,7 @@ async function toggleNotify() {
             <button
               v-if="queued.length"
               class="ml-auto whitespace-nowrap text-xs text-zinc-400 hover:text-red-500"
-              @click="queued.forEach((j) => app.cancelJob(j.id))"
+              @click="queued.forEach((j) => jobsStore.cancelJob(j.id))"
             >
               cancel queued
             </button>
@@ -266,13 +293,16 @@ async function toggleNotify() {
               >
                 {{ j.label }} <span class="text-zinc-500">· {{ book(j)?.title }}</span>
               </button>
-              <button class="text-xs text-zinc-400 hover:text-red-500" @click="app.cancelJob(j.id)">
+              <button
+                class="text-xs text-zinc-400 hover:text-red-500"
+                @click="jobsStore.cancelJob(j.id)"
+              >
                 cancel
               </button>
               <button
                 class="text-xs text-zinc-400 hover:text-red-500"
                 title="Cancel and remove"
-                @click="app.removeJob(j.id)"
+                @click="jobsStore.removeJob(j.id)"
               >
                 <CloseIcon class="icon-sm" />
               </button>
@@ -305,14 +335,14 @@ async function toggleNotify() {
               <button
                 v-if="retryable"
                 class="text-violet-500 hover:underline"
-                @click="app.retryAllFailed()"
+                @click="jobsStore.retryAllFailed()"
               >
                 <RetryIcon class="icon-sm" /> retry failed ({{ retryable }})
               </button>
               <button
                 v-if="history.length"
                 class="text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
-                @click="app.clearFinished()"
+                @click="jobsStore.clearFinished()"
               >
                 clear
               </button>
@@ -362,16 +392,16 @@ async function toggleNotify() {
                   </td>
                   <td class="w-28 pr-4 text-right">
                     <button
-                      v-if="j.status !== 'done' && j.kind !== 'export'"
+                      v-if="j.status !== 'done' && (j.kind !== 'export' || j.exportRun)"
                       class="btn-ghost btn-xs"
-                      @click="app.retryJob(j.id)"
+                      @click="jobsStore.retryJob(j.id)"
                     >
                       <RetryIcon class="icon-sm" /> Retry
                     </button>
                     <button
                       class="ml-1 rounded px-1.5 py-0.5 text-xs text-zinc-400 hover:bg-zinc-100 hover:text-red-500 dark:hover:bg-zinc-800"
                       title="Remove from history"
-                      @click="app.removeJob(j.id)"
+                      @click="jobsStore.removeJob(j.id)"
                     >
                       <CloseIcon class="icon-sm" />
                     </button>
@@ -387,7 +417,7 @@ async function toggleNotify() {
       <aside class="space-y-3">
         <div class="card p-4">
           <div class="label mb-3">Endpoint pool</div>
-          <div v-for="e in app.endpoints" :key="e.id" class="mb-3 last:mb-0">
+          <div v-for="e in endpointsStore.endpoints" :key="e.id" class="mb-3 last:mb-0">
             <div class="flex items-center gap-2 text-sm">
               <span
                 class="h-2 w-2 rounded-full"
@@ -400,7 +430,7 @@ async function toggleNotify() {
                 >backing off</span
               >
               <span class="font-mono text-xs text-zinc-500"
-                >{{ app.endpointLoad[e.id].active }}/{{ e.concurrency }}</span
+                >{{ jobsStore.endpointLoad[e.id].active }}/{{ e.concurrency }}</span
               >
             </div>
             <div class="mt-1 flex gap-0.5">
@@ -409,21 +439,21 @@ async function toggleNotify() {
                 :key="i"
                 class="h-1.5 flex-1 rounded-sm"
                 :class="
-                  i <= app.endpointLoad[e.id].active
+                  i <= jobsStore.endpointLoad[e.id].active
                     ? 'bg-violet-500 animate-pulse'
                     : 'bg-zinc-200 dark:bg-zinc-800'
                 "
               ></div>
             </div>
             <div class="mt-1 text-[11px] text-zinc-500">
-              {{ app.endpointLoad[e.id].done }} segments done ·
-              {{ app.endpointLoad[e.id].failed }} failed ·
+              {{ jobsStore.endpointLoad[e.id].done }} segments done ·
+              {{ jobsStore.endpointLoad[e.id].failed }} failed ·
               {{ e.price ? "$" + e.price + "/1M" : "free" }}
             </div>
           </div>
           <RouterLink
-            v-if="app.currentBookId"
-            :to="`/book/${app.currentBookId}/narration`"
+            v-if="uiStore.currentBookId"
+            :to="`/book/${uiStore.currentBookId}/narration`"
             class="btn-ghost btn-xs mt-2 w-full justify-center"
             >Manage endpoints</RouterLink
           >

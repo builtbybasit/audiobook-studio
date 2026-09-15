@@ -49,6 +49,7 @@ const groups = [
       ["space", "tick / untick"],
       ["↵", "open the chapter"],
       ["shift-click", "select a range"],
+      ["/", "search the chapter list"],
     ],
   },
   {

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useUiStore } from "@/stores/ui";
+
 // Three things get confused with each other and are kept apart here:
 //
 //   the saved model configuration — this row, its name, its model id, its limits and prices
@@ -9,7 +12,7 @@
 // different provider, so edits are staged and applied deliberately, and when work is in flight the
 // Save button says what will and won't move.
 import { computed, ref } from "vue";
-import { useApp, keyring } from "@/stores/app";
+import { keyring } from "@/lib/keyring";
 import { UiSelect, UiSwitch, UiTooltip } from "@/ui";
 import {
   Check as OkIcon,
@@ -59,7 +62,8 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ test: []; remove: [] }>();
 
-const app = useApp();
+const endpointsStore = useEndpointsStore();
+const uiStore = useUiStore();
 const draft = computed(() => draftFor(props.u));
 const changes = computed(() => draftChanges(props.u));
 const providerChanged = computed(() => changes.value.some((c) => PROVIDER_FIELDS.includes(c)));
@@ -111,7 +115,7 @@ function save() {
   const name = draft.value.name.trim() || props.u.name;
   applyDraft(props.u);
   confirming.value = false;
-  app.toast(`${name} connection saved`, {
+  uiStore.toast(`${name} connection saved`, {
     kind: "success",
     description: providerChanged.value
       ? "New jobs use it from now on. Jobs already queued keep the connection they were created with."
@@ -148,9 +152,9 @@ function usePreset(id: string | number | null) {
   if (model !== undefined) draft.value.model = model;
   if (baseUrl !== undefined) draft.value.baseUrl = baseUrl;
   if (needsKey !== undefined) draft.value.needsKey = needsKey;
-  const endpoint = app.endpoints.find((e) => e.id === props.u.id);
+  const endpoint = endpointsStore.endpoints.find((e) => e.id === props.u.id);
   if (endpoint) Object.assign(endpoint, rest);
-  app.toast(`${preset.label} defaults filled in`, {
+  uiStore.toast(`${preset.label} defaults filled in`, {
     kind: "success",
     description: "Review the connection below, then Save. Nothing is dispatched until you do.",
   });

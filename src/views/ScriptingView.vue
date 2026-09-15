@@ -1,8 +1,12 @@
 <script setup lang="ts">
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptingStore } from "@/stores/scripting";
+
 // Scripting stage: chapter picker + run settings on the left, script reader on the right.
 import { computed, nextTick, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { useApp, isScripted } from "@/stores/app";
+import { isScripted } from "@/lib/scriptReview";
 import ChapterPicker from "@/components/ChapterPicker.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import { PencilLine as ScriptingIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
@@ -11,14 +15,16 @@ import ScriptSettings from "@/views/scripting/ScriptSettings.vue";
 import ScriptEndpoints from "@/views/scripting/ScriptEndpoints.vue";
 import { useBookId } from "@/router";
 
-const app = useApp();
+const endpointsStore = useEndpointsStore();
+const libraryStore = useLibraryStore();
+const scriptingStore = useScriptingStore();
 const route = useRoute();
 const bookId = useBookId();
 const selected = ref<number[]>([]);
 const showEndpoints = ref(false);
 const endpointPanel = ref<HTMLElement | null>(null);
 const currentEndpoint = computed(() =>
-  app.profiles.find((p) => p.id === app.scriptSettings.profile),
+  endpointsStore.profiles.find((p) => p.id === scriptingStore.scriptSettings.profile),
 );
 async function configure() {
   showEndpoints.value = true;
@@ -28,12 +34,12 @@ async function configure() {
 function smallerChunks() {
   if (currentEndpoint.value)
     currentEndpoint.value.maxChars = Math.max(100, (currentEndpoint.value.maxChars || 6000) - 2000);
-  app.runScripting(bookId, [opened.value]);
+  scriptingStore.runScripting(bookId, [opened.value]);
 }
 const opened = ref(
   Number(route.query.ch) ||
-    (app.chaptersOf(bookId).find((c) => c.scripting === "fallback")?.id ??
-      app.chaptersOf(bookId).find(isScripted)?.id ??
+    (libraryStore.chaptersOf(bookId).find((c) => c.scripting === "fallback")?.id ??
+      libraryStore.chaptersOf(bookId).find(isScripted)?.id ??
       1),
 );
 watch(
@@ -42,17 +48,17 @@ watch(
     if (ch) opened.value = Number(ch);
   },
 ); // ?ch= from the command palette
-const chapter = computed(() => app.chapter(bookId, opened.value));
+const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
 const hasScript = computed(() => chapter.value && isScripted(chapter.value));
-const anyScripted = computed(() => app.chaptersOf(bookId).some(isScripted));
+const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));
 function scriptFirst() {
-  const ids = app
+  const ids = libraryStore
     .chaptersOf(bookId)
     .filter((c) => !c.excluded)
     .slice(0, 3)
     .map((c) => c.id);
   selected.value = ids;
-  app.runScripting(bookId, ids);
+  scriptingStore.runScripting(bookId, ids);
 }
 </script>
 
@@ -68,7 +74,7 @@ function scriptFirst() {
         <span
           ><span class="text-sm font-semibold">Scripting endpoints</span
           ><span class="ml-3 text-xs text-zinc-500"
-            >{{ app.profiles.length }} saved ·
+            >{{ endpointsStore.profiles.length }} saved ·
             {{ currentEndpoint?.name ?? "Choose an endpoint" }}</span
           ></span
         >
@@ -93,10 +99,10 @@ function scriptFirst() {
             v-model="selected"
             :opened-id="opened"
             run-label="Run scripting"
-            :run-disabled="!!app.scriptEstimate(bookId, selected).blockers.length"
+            :run-disabled="!!scriptingStore.scriptEstimate(bookId, selected).blockers.length"
             :selectable="(c) => !['running', 'queued'].includes(c.scripting)"
             @open="(id) => (opened = id)"
-            @run="(ids) => app.runScripting(bookId, ids)"
+            @run="(ids) => scriptingStore.runScripting(bookId, ids)"
           />
         </div>
         <div class="card shrink-0 p-3">
@@ -135,7 +141,7 @@ function scriptFirst() {
           :title="chapter.title"
           body="Scripting failed: after retries the model's output still didn't reconstruct the chapter text, so nothing was kept. This usually means a chunk boundary split a quote or the chapter has unusual formatting. Try a smaller chunk size, then re-run."
         >
-          <button class="btn-primary" @click="app.runScripting(bookId, [opened])">
+          <button class="btn-primary" @click="scriptingStore.runScripting(bookId, [opened])">
             Re-run this chapter
           </button>
           <button class="btn-ghost" @click="smallerChunks">Smaller chunks + re-run</button>
@@ -146,7 +152,7 @@ function scriptFirst() {
           :title="chapter?.title"
           body="Not scripted yet. Tick it on the left and run scripting, or script just this one."
         >
-          <button class="btn-primary" @click="app.runScripting(bookId, [opened])">
+          <button class="btn-primary" @click="scriptingStore.runScripting(bookId, [opened])">
             Script this chapter
           </button>
         </EmptyState>

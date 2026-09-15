@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useUiStore } from "@/stores/ui";
+
 // Toast stack on Toastflow's runtime (queue, timers, pause on hover, swipe, Escape, focus handling,
 // live regions) with our own card through the headless slot. Nothing from the library's CSS is
 // loaded; layout and motion live in src/toasts.css.
@@ -21,10 +23,10 @@ import {
   X as CloseIcon,
   Undo2 as UndoIcon,
 } from "@lucide/vue";
-import { useApp } from "@/stores/app";
-const app = useApp();
+
+const uiStore = useUiStore();
 const isMac = /Mac|iPhone/.test(navigator.platform);
-const newestUndoId = computed(() => app._undo.at(-1)?.toastId);
+const newestUndoId = computed(() => uiStore._undo.at(-1)?.toastId);
 
 const ACCENT = {
   success: "border-l-emerald-500",

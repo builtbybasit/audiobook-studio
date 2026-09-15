@@ -1,0 +1,452 @@
+import type { Spoken } from "@/lib/speech";
+// Book cast, pronunciation and pacing. Speech text stays separate from source prose.
+import { keyring } from "@/lib/keyring";
+import { norm } from "@/lib/scriptReview";
+import { hitsIn, pacingOrDefault, silenceOf, speak } from "@/lib/speech";
+import { clone } from "@/lib/utils";
+import { newSpeaker, voiceRef } from "@/mock";
+import type {
+  CastStat,
+  Character,
+  EffectiveVoice,
+  Gender,
+  LexEntry,
+  MergeSuggestion,
+  Pacing,
+  RoutingIssue,
+  Segment,
+  SegmentMap,
+} from "@/types";
+import { defineStore } from "pinia";
+import { useEndpointsStore } from "./endpoints";
+import { useLibraryStore } from "./library";
+import { useScriptsStore } from "./scripts";
+import { seedState } from "./seed";
+import { useUiStore } from "./ui";
+interface CastState {
+  characters: Record<string, Character[]>;
+  lexicon: Record<string, LexEntry[]>;
+}
+export const useCastStore = defineStore("cast", {
+  state: (): CastState => ({ ...seedState("characters", "lexicon") }),
+  getters: {
+    charactersOf(s): (id: string) => Character[] {
+      return (id: string): Character[] => s.characters[id] ?? [];
+    },
+    lexiconOf(s): (bookId: string) => LexEntry[] {
+      return (bookId: string): LexEntry[] => s.lexicon[bookId] ?? [];
+    },
+    pacingOf(): (bookId: string) => Pacing {
+      const libraryStore = useLibraryStore();
+      return (bookId: string): Pacing =>
+        pacingOrDefault(libraryStore.books.find((b) => b.id === bookId)?.pacing);
+    },
+    spoken(s): (bookId: string, text: string) => Spoken {
+      return (bookId: string, text: string) => speak(text, s.lexicon[bookId] ?? []);
+    },
+    lexUses(s): (bookId: string) => Record<number, number> {
+      const scriptsStore = useScriptsStore();
+      return (bookId: string) => {
+        const list = s.lexicon[bookId] ?? [];
+        const uses: Record<number, number> = Object.fromEntries(list.map((e) => [e.id, 0]));
+        const prefix = bookId + ":";
+        for (const k of Object.keys(scriptsStore.segments)) {
+          if (!k.startsWith(prefix)) continue;
+          for (const seg of scriptsStore.segments[k])
+            // one entry at a time, so an entry that is currently shadowed by a longer one reads 0
+            for (const e of list) uses[e.id] += hitsIn(seg.text, [e]).length;
+        }
+        return uses;
+      };
+    },
+    lexSample(): (bookId: string, entry: LexEntry) => string {
+      const scriptsStore = useScriptsStore();
+      return (bookId: string, entry: LexEntry) => {
+        const prefix = bookId + ":";
+        for (const k of Object.keys(scriptsStore.segments)) {
+          if (!k.startsWith(prefix)) continue;
+          for (const seg of scriptsStore.segments[k])
+            if (hitsIn(seg.text, [entry]).length) return seg.text;
+        }
+        return "";
+      };
+    },
+    // a character with no voice of their own is read in the Narrator's voice
+    effectiveVoice(): (bookId: string, name: string) => EffectiveVoice {
+      const endpointsStore = useEndpointsStore();
+
+      return (bookId, name) => {
+        const cast = this.characters[bookId] ?? [];
+        const c = cast.find((x) => x.name === name);
+        const ref = c?.voice || cast.find((x) => x.name === "Narrator")?.voice || null;
+        const r = endpointsStore.resolveVoice(ref);
+        return {
+          ref,
+          own: !!c?.voice,
+          voice: r?.voice.id ?? null,
+          label: r ? r.voice.label : ref ? "missing" : null,
+          endpoint: r?.endpoint ?? null,
+        };
+      };
+    },
+    routingIssues(): (bookId: string) => RoutingIssue[] {
+      const endpointsStore = useEndpointsStore();
+
+      return (bookId) => {
+        const out: RoutingIssue[] = [];
+        for (const c of this.characters[bookId] ?? []) {
+          if (!c.voice) continue;
+          const r = endpointsStore.resolveVoice(c.voice);
+          if (!r)
+            out.push({
+              name: c.name,
+              ref: c.voice,
+              reason: "voice no longer exists",
+              kind: "missing" as const,
+            });
+          else if (!r.endpoint.enabled)
+            out.push({
+              name: c.name,
+              ref: c.voice,
+              reason: `${r.endpoint.name} is paused`,
+              kind: "paused" as const,
+              endpoint: r.endpoint,
+            });
+          else if (r.endpoint.needsKey && !keyring.has(r.endpoint.id))
+            out.push({
+              name: c.name,
+              ref: c.voice,
+              reason: `${r.endpoint.name} has no API key`,
+              kind: "nokey" as const,
+              endpoint: r.endpoint,
+            });
+        }
+        return out;
+      };
+    },
+    castStats(): (bookId: string) => Record<string, CastStat> {
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+      return (bookId: string): Record<string, CastStat> => {
+        const stats: Record<string, CastStat> = {};
+        for (const c of libraryStore.chapters[bookId] ?? [])
+          for (const seg of scriptsStore.segments[`${bookId}:${c.id}`] ?? []) {
+            const st = (stats[seg.speaker] ??= { lines: 0, chapters: new Set(), first: c.id });
+            st.lines++;
+            st.chapters.add(c.id);
+            if (c.id < st.first) st.first = c.id;
+          }
+        return stats;
+      };
+    },
+    mergeSuggestions(s): (bookId: string) => MergeSuggestion[] {
+      return (bookId: string): MergeSuggestion[] => {
+        const cast = s.characters[bookId] ?? [];
+        const out: MergeSuggestion[] = [];
+        for (const a of cast)
+          for (const b of cast) {
+            if (a === b || a.name === "Narrator" || b.name === "Narrator") continue;
+            const na = norm(a.name);
+            const nb = norm(b.name);
+            if (
+              a.major &&
+              !b.major &&
+              b.aliases.length === 0 &&
+              a.aliases.some((x) => norm(x) === nb)
+            )
+              out.push({
+                from: b.name,
+                into: a.name,
+                reason: `“${b.name}” is a known alias of ${a.name}`,
+              });
+            else if (!b.major && na !== nb && na.split(" ").includes(nb) && nb.length > 2)
+              out.push({
+                from: b.name,
+                into: a.name,
+                reason: `“${b.name}” looks like a short form of ${a.name}`,
+              });
+            else if (!b.major && b.isNew && na !== nb && na.includes(nb) && nb.length > 3)
+              out.push({
+                from: b.name,
+                into: a.name,
+                reason: `“${b.name}” is contained in ${a.name}`,
+              });
+          }
+        const seen = new Set<string>();
+        return out.filter((x) => {
+          const k = x.from;
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      };
+    },
+  },
+  actions: {
+    // snapshots used by undo: the cast + every segment of a book (speakers live in both)
+    _castSnapshot(bookId: string): () => void {
+      const scriptsStore = useScriptsStore();
+
+      const chars = clone(this.characters[bookId]);
+      const segs: SegmentMap = {};
+      for (const [k, v] of Object.entries(scriptsStore.segments))
+        if (k.startsWith(bookId + ":")) segs[k] = clone(v);
+      return () => {
+        this.characters[bookId] = chars;
+        for (const [k, v] of Object.entries(segs)) scriptsStore.segments[k] = v;
+      };
+    },
+    _absorbCast(bookId: string, chId: number): void {
+      const scriptsStore = useScriptsStore();
+
+      const cast = this.characters[bookId];
+      for (const s of scriptsStore.segmentsOf(bookId, chId))
+        if (!cast.some((c) => c.name === s.speaker)) cast.push(newSpeaker(s.speaker, cast.length));
+    },
+    /** Chapter length is the sum of what is actually rendered, plus the silence stitched between. */
+    _retime(bookId: string, chId: number): void {
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+
+      const c = libraryStore.chapter(bookId, chId);
+      if (!c) return;
+      const segs = scriptsStore.segmentsOf(bookId, chId);
+      c.duration =
+        segs.reduce((a, s) => a + s.audio.duration, 0) + silenceOf(segs, this.pacingOf(bookId));
+    },
+    // ---------- pronunciation & pacing ----------
+    // Two ways to change how a book sounds without editing a word of it. The dictionary rewrites a
+    // term on its way to the endpoint, so the clips that were rendered with the old spelling no
+    // longer match and are marked stale. A pause is stitched between clips instead of rendered, so
+    // changing one re-times the chapter and invalidates nothing.
+    _lexSnapshot(bookId: string): () => void {
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+
+      const before = clone(this.lexicon[bookId] ?? []);
+      const prefix = bookId + ":";
+      const keys = Object.keys(scriptsStore.segments).filter((k) => k.startsWith(prefix));
+      const audio = keys.flatMap((k) =>
+        scriptsStore.segments[k].map((s) => [k, s.id, s.audio.status] as const),
+      );
+      const narration = libraryStore.chaptersOf(bookId).map((c) => [c.id, c.narration] as const);
+      return () => {
+        this.lexicon[bookId] = before;
+        for (const [k, id, status] of audio) {
+          const s = scriptsStore.segments[k]?.find((x) => x.id === id);
+          if (s) s.audio.status = status;
+        }
+        for (const [id, was] of narration) {
+          const c = libraryStore.chapter(bookId, id);
+          if (c) c.narration = was;
+        }
+      };
+    },
+    /** Clips that would now be sent different words read the old pronunciation — mark them stale. */
+    _lexRestale(bookId: string): number {
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+
+      let n = 0;
+      const prefix = bookId + ":";
+      for (const k of Object.keys(scriptsStore.segments)) {
+        if (!k.startsWith(prefix)) continue;
+        for (const s of scriptsStore.segments[k]) {
+          const sent = s.audio.pronounced ?? s.audio.said ?? s.audio.text;
+          if (s.audio.status !== "done" || sent == null) continue;
+          if (this.spoken(bookId, s.text).text === sent) continue;
+          s.audio.status = "stale";
+          n++;
+          const c = libraryStore.chapter(bookId, Number(k.slice(prefix.length)));
+          if (c?.narration === "done") c.narration = "stale";
+        }
+      }
+      return n;
+    },
+    _lexChanged(bookId: string, revert: () => void, label: string): void {
+      const uiStore = useUiStore();
+
+      const n = this._lexRestale(bookId);
+      uiStore.toast(label, {
+        kind: n ? "warn" : "info",
+        description: n
+          ? `${n} rendered line${n === 1 ? "" : "s"} still read the old pronunciation — re-narrate to apply.`
+          : "The book text is unchanged; the endpoint is sent the respelling.",
+        undo: revert,
+      });
+    },
+    addTerm(bookId: string, term = "", say = ""): number {
+      const revert = this._lexSnapshot(bookId);
+      const list = (this.lexicon[bookId] ??= []);
+      const id = Math.max(0, ...list.map((e) => e.id)) + 1;
+      list.push({ id, term: term.trim(), say: say.trim(), enabled: true });
+      if (term.trim() && say.trim())
+        this._lexChanged(bookId, revert, `“${term.trim()}” is said “${say.trim()}”`);
+      return id;
+    },
+    updateTerm(bookId: string, id: number, patch: Partial<LexEntry>): void {
+      const e = this.lexiconOf(bookId).find((x) => x.id === id);
+      if (!e) return;
+      if (!(Object.keys(patch) as (keyof LexEntry)[]).some((k) => e[k] !== patch[k])) return;
+      const revert = this._lexSnapshot(bookId);
+      const was = { ...e };
+      Object.assign(e, patch);
+      const renamed = e.term !== was.term || e.say !== was.say;
+      this._lexChanged(
+        bookId,
+        revert,
+        patch.enabled != null && !renamed
+          ? `“${e.term}” ${e.enabled ? "is applied again" : "is no longer applied"}`
+          : `“${e.term}” is said “${e.say}”`,
+      );
+    },
+    removeTerm(bookId: string, id: number): void {
+      const list = this.lexiconOf(bookId);
+      const e = list.find((x) => x.id === id);
+      if (!e) return;
+      const revert = this._lexSnapshot(bookId);
+      list.splice(list.indexOf(e), 1);
+      if (e.term && e.say)
+        this._lexChanged(bookId, revert, `“${e.term}” removed from the dictionary`);
+    },
+    /** Silence after one line, in seconds; null goes back to the book's pacing. */
+    setPause(bookId: string, chId: number, segId: number, pause: number | null): void {
+      const scriptsStore = useScriptsStore();
+
+      const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
+      if (!s) return;
+      if (pause == null) delete s.pause;
+      else s.pause = pause;
+      this._retime(bookId, chId);
+    },
+    setPacing(bookId: string, patch: Partial<Pacing>): void {
+      const libraryStore = useLibraryStore();
+
+      const b = libraryStore.bookById(bookId);
+      if (!b) return;
+      b.pacing = { ...this.pacingOf(bookId), ...patch };
+      for (const c of libraryStore.chaptersOf(bookId)) this._retime(bookId, c.id);
+    },
+    resetPacing(bookId: string): void {
+      const libraryStore = useLibraryStore();
+
+      const b = libraryStore.bookById(bookId);
+      if (!b?.pacing) return;
+      delete b.pacing;
+      for (const c of libraryStore.chaptersOf(bookId)) this._retime(bookId, c.id);
+    },
+    /** Lines in this book that carry a pause of their own. */
+    pauseOverrides(bookId: string): {
+      chId: number;
+      seg: Segment;
+    }[] {
+      const scriptsStore = useScriptsStore();
+
+      const prefix = bookId + ":";
+      return Object.keys(scriptsStore.segments)
+        .filter((k) => k.startsWith(prefix))
+        .flatMap((k) =>
+          scriptsStore.segments[k]
+            .filter((s) => s.pause != null)
+            .map((seg) => ({ chId: Number(k.slice(prefix.length)), seg })),
+        )
+        .sort((a, b) => a.chId - b.chId || a.seg.id - b.seg.id);
+    },
+    renameCharacter(bookId: string, from: string, to: string): void {
+      const uiStore = useUiStore();
+
+      to = (to ?? "").trim();
+      if (!to || from === to) return;
+      const cast = this.characters[bookId];
+      if (cast.some((c) => c.name === to)) {
+        this.mergeCharacter(bookId, from, to);
+        return;
+      }
+      const revert = this._castSnapshot(bookId);
+      const c = cast.find((x) => x.name === from);
+      if (!c) return;
+      c.name = to;
+      c.isNew = false;
+      this._replaceSpeaker(bookId, from, to);
+      uiStore.toast(`Renamed “${from}” to “${to}”`, { undo: revert });
+    },
+    mergeCharacter(bookId: string, from: string, into: string, { silent = false } = {}): void {
+      const scriptsStore = useScriptsStore();
+      const uiStore = useUiStore();
+
+      if (from === into) return;
+      const cast = this.characters[bookId];
+      const src = cast.find((c) => c.name === from);
+      const dst = cast.find((c) => c.name === into);
+      if (!src || !dst) return;
+      const revert = this._castSnapshot(bookId);
+      const n = scriptsStore.lineCounts(bookId)[from] ?? 0;
+      dst.aliases = [...new Set([...dst.aliases, from, ...src.aliases])];
+      this.characters[bookId] = cast.filter((c) => c !== src);
+      this._replaceSpeaker(bookId, from, into);
+      if (!silent)
+        uiStore.toast(`Merged “${from}” into ${into} · ${n} line${n === 1 ? "" : "s"} moved`, {
+          undo: revert,
+        });
+    },
+    mergeMany(bookId: string, names: string[], into: string): void {
+      const uiStore = useUiStore();
+
+      const revert = this._castSnapshot(bookId);
+      let n = 0;
+      for (const name of names)
+        if (name !== into) {
+          this.mergeCharacter(bookId, name, into, { silent: true });
+          n++;
+        }
+      if (n)
+        uiStore.toast(`Merged ${n} speaker${n === 1 ? "" : "s"} into ${into}`, { undo: revert });
+    },
+    deleteCharacter(bookId: string, name: string): void {
+      const scriptsStore = useScriptsStore();
+      const uiStore = useUiStore();
+
+      const revert = this._castSnapshot(bookId);
+      const n = scriptsStore.lineCounts(bookId)[name] ?? 0;
+      this.mergeCharacter(bookId, name, "Narrator", { silent: true });
+      uiStore.toast(`Removed “${name}” · ${n} line${n === 1 ? "" : "s"} now read by the Narrator`, {
+        undo: revert,
+      });
+    },
+    autoAssignByGender(bookId: string): void {
+      const endpointsStore = useEndpointsStore();
+
+      // pool = voices on enabled endpoints, grouped by the gender tag the endpoint's voice list carries
+      const all = endpointsStore.enabledEndpoints.flatMap((e) =>
+        e.voices.map((v) => ({ ref: voiceRef(e.id, v.id), gender: v.gender })),
+      );
+      if (!all.length) return;
+      const byGender: Partial<Record<Gender, typeof all>> = {
+        m: all.filter((v) => v.gender === "m"),
+        f: all.filter((v) => v.gender === "f"),
+        n: all.filter((v) => v.gender === "n"),
+      };
+      const used: Partial<Record<Gender, number>> = {};
+      for (const c of this.characters[bookId]) {
+        if (c.voice || c.name === "Narrator") continue;
+        const byG = byGender[c.gender];
+        const pool = byG?.length ? byG : all;
+        const i = (used[c.gender] = (used[c.gender] ?? 0) + 1);
+        c.voice = pool[i % pool.length].ref;
+      }
+    },
+    _replaceSpeaker(bookId: string, from: string, to: string): void {
+      const scriptsStore = useScriptsStore();
+
+      for (const k of Object.keys(scriptsStore.segments)) {
+        if (!k.startsWith(bookId + ":")) continue;
+        const chId = Number(k.split(":")[1]);
+        for (const s of scriptsStore.segments[k])
+          if (s.speaker === from) {
+            s.speaker = to;
+            scriptsStore._markStale(bookId, chId, s);
+          }
+      }
+    },
+  },
+});

@@ -1,8 +1,15 @@
+import { useCastStore } from "../src/stores/cast";
+import { useEndpointsStore } from "../src/stores/endpoints";
+import { useJobsStore } from "../src/stores/jobs";
+import { useLibraryStore } from "../src/stores/library";
+import { useNarrationStore } from "../src/stores/narration";
+import { useScriptsStore } from "../src/stores/scripts";
+import { useUiStore } from "../src/stores/ui";
 // Pronunciation dictionary and pacing: both change how a book sounds without changing a word of it.
 // The store's narration simulation runs on setTimeout, so the clock and both timer APIs are faked.
 import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
-import { useApp } from "../src/stores/app";
+
 import { speak, marks, silenceOf, DEFAULT_PACING, pauseAfter } from "../src/lib/speech";
 import type { LexEntry, Segment, ToastOptions } from "../src/types";
 
@@ -82,7 +89,13 @@ describe("in the store", () => {
   let clock = 1000;
   let restore: (() => void)[] = [];
   let undos: (() => void)[] = [];
-  let app: ReturnType<typeof useApp>;
+  let castStore: ReturnType<typeof useCastStore>;
+  let endpointsStore: ReturnType<typeof useEndpointsStore>;
+  let jobsStore: ReturnType<typeof useJobsStore>;
+  let libraryStore: ReturnType<typeof useLibraryStore>;
+  let narrationStore: ReturnType<typeof useNarrationStore>;
+  let scriptsStore: ReturnType<typeof useScriptsStore>;
+  let uiStore: ReturnType<typeof useUiStore>;
 
   function run(rounds = 400): void {
     for (let i = 0; i < rounds && timers.size; i++) {
@@ -100,14 +113,20 @@ describe("in the store", () => {
   beforeEach(() => {
     Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
     setActivePinia(createPinia());
-    app = useApp();
-    app.jobs = [];
+    castStore = useCastStore();
+    endpointsStore = useEndpointsStore();
+    jobsStore = useJobsStore();
+    libraryStore = useLibraryStore();
+    narrationStore = useNarrationStore();
+    scriptsStore = useScriptsStore();
+    uiStore = useUiStore();
+    jobsStore.jobs = [];
     undos = [];
-    app.toast = ((_msg: string, opts?: ToastOptions) => {
+    uiStore.toast = ((_msg: string, opts?: ToastOptions) => {
       if (opts?.undo) undos.push(opts.undo);
       return "test";
-    }) as typeof app.toast;
-    for (const e of app.endpoints) {
+    }) as typeof uiStore.toast;
+    for (const e of endpointsStore.endpoints) {
       e.enabled = true;
       e.needsKey = false;
       e.failRate = 0;
@@ -133,16 +152,16 @@ describe("in the store", () => {
 
   /** the seeded “Ji Ning” entry and a rendered line that uses it */
   const withTerm = (bookId: string, chId: number) => {
-    const s = app
+    const s = scriptsStore
       .segmentsOf(bookId, chId)
       .find((x) => x.text.includes("Ji Ning") && x.audio.status === "done")!;
     expect(s).toBeDefined();
-    return { s, id: app.lexiconOf(bookId).find((e) => e.term === "Ji Ning")!.id };
+    return { s, id: castStore.lexiconOf(bookId).find((e) => e.term === "Ji Ning")!.id };
   };
 
   test("the endpoint is sent the respelling; the book keeps its own spelling", () => {
     const { s } = withTerm("cliche", 1);
-    app.retrySegment("cliche", 1, s.id);
+    narrationStore.retrySegment("cliche", 1, s.id);
     run();
     expect(s.text).toContain("Ji Ning"); // the script is never rewritten
     expect(s.audio.said).toContain("Jee Ning");
@@ -155,37 +174,37 @@ describe("in the store", () => {
     const { s, id } = withTerm("cliche", 1);
     expect(s.audio.status).toBe("done");
 
-    app.updateTerm("cliche", id, { say: "Gee Ning" });
+    castStore.updateTerm("cliche", id, { say: "Gee Ning" });
     expect(s.audio.status).toBe("stale");
-    expect(app.chapter("cliche", 1)!.narration).toBe("stale");
+    expect(libraryStore.chapter("cliche", 1)!.narration).toBe("stale");
 
     undos.pop()!();
     expect(s.audio.status).toBe("done");
-    expect(app.chapter("cliche", 1)!.narration).toBe("done");
-    expect(app.lexiconOf("cliche").find((e) => e.id === id)!.say).toBe("Jee Ning");
+    expect(libraryStore.chapter("cliche", 1)!.narration).toBe("done");
+    expect(castStore.lexiconOf("cliche").find((e) => e.id === id)!.say).toBe("Jee Ning");
   });
 
   test("a term nothing was rendered with leaves every clip alone", () => {
-    const before = app.segmentsOf("cliche", 1).map((s) => s.audio.status);
-    app.addTerm("cliche", "zzyzx", "zizzix");
-    expect(app.segmentsOf("cliche", 1).map((s) => s.audio.status)).toEqual(before);
-    expect(app.chapter("cliche", 1)!.narration).toBe("done");
+    const before = scriptsStore.segmentsOf("cliche", 1).map((s) => s.audio.status);
+    castStore.addTerm("cliche", "zzyzx", "zizzix");
+    expect(scriptsStore.segmentsOf("cliche", 1).map((s) => s.audio.status)).toEqual(before);
+    expect(libraryStore.chapter("cliche", 1)!.narration).toBe("done");
   });
 
   test("re-narrating after a dictionary change sends the new spelling", () => {
     const { s, id } = withTerm("cliche", 1);
-    app.updateTerm("cliche", id, { say: "Gee Ning" });
-    app.renarrateStale("cliche", 1);
+    castStore.updateTerm("cliche", id, { say: "Gee Ning" });
+    narrationStore.renarrateStale("cliche", 1);
     run();
     expect(s.audio.status).toBe("done");
     expect(s.audio.said).toContain("Gee Ning");
-    expect(app.chapter("cliche", 1)!.narration).toBe("done");
+    expect(libraryStore.chapter("cliche", 1)!.narration).toBe("done");
   });
 
   test("switching a term off restores the plain spelling on the next render", () => {
     const { s, id } = withTerm("cliche", 1);
-    app.updateTerm("cliche", id, { enabled: false });
-    app.retrySegment("cliche", 1, s.id);
+    castStore.updateTerm("cliche", id, { enabled: false });
+    narrationStore.retrySegment("cliche", 1, s.id);
     run();
     // other entries may still apply to this line; this one no longer does
     expect(s.audio.said ?? s.audio.text).toContain("Ji Ning");
@@ -195,23 +214,23 @@ describe("in the store", () => {
 
   test("a term edited mid-render lands the finished clip stale, not done", () => {
     const { s, id } = withTerm("cliche", 1);
-    app.retrySegment("cliche", 1, s.id);
+    narrationStore.retrySegment("cliche", 1, s.id);
     // the request is in flight; the dictionary moves under it before the clip comes back
     expect(s.audio.status).toBe("generating");
-    app.updateTerm("cliche", id, { say: "Gee Ning" });
+    castStore.updateTerm("cliche", id, { say: "Gee Ning" });
     run();
 
     expect(s.audio.said).toContain("Jee Ning"); // what was actually sent
     expect(s.audio.status).toBe("stale"); // …and it is no longer what the dictionary says
-    expect(app.chapter("cliche", 1)!.narration).toBe("stale");
-    expect(app.clipDrift("cliche", s)).toContain(
+    expect(libraryStore.chapter("cliche", 1)!.narration).toBe("stale");
+    expect(narrationStore.clipDrift("cliche", s)).toContain(
       "pronunciation: the dictionary changed after this clip",
     );
   });
 
   test("an edit mid-render is caught the same way", () => {
-    const s = app.segmentsOf("cliche", 1).find((x) => x.audio.status === "done")!;
-    app.retrySegment("cliche", 1, s.id);
+    const s = scriptsStore.segmentsOf("cliche", 1).find((x) => x.audio.status === "done")!;
+    narrationStore.retrySegment("cliche", 1, s.id);
     expect(s.audio.status).toBe("generating");
     s.text = s.text + " And then silence.";
     run();
@@ -219,33 +238,33 @@ describe("in the store", () => {
   });
 
   test("a pause re-times the chapter without invalidating any audio", () => {
-    const segs = app.segmentsOf("cliche", 1);
-    const before = app.chapter("cliche", 1)!.duration;
+    const segs = scriptsStore.segmentsOf("cliche", 1);
+    const before = libraryStore.chapter("cliche", 1)!.duration;
     const statuses = segs.map((s) => s.audio.status);
 
-    app.setPause("cliche", 1, segs[0].id, 2.5);
+    castStore.setPause("cliche", 1, segs[0].id, 2.5);
     const added = 2.5 - pauseAfter({ ...segs[0], pause: undefined }, segs[1], DEFAULT_PACING);
-    expect(app.chapter("cliche", 1)!.duration).toBeCloseTo(before + added, 10);
+    expect(libraryStore.chapter("cliche", 1)!.duration).toBeCloseTo(before + added, 10);
     expect(segs.map((s) => s.audio.status)).toEqual(statuses);
-    expect(app.chapter("cliche", 1)!.narration).toBe("done");
+    expect(libraryStore.chapter("cliche", 1)!.narration).toBe("done");
 
-    app.setPause("cliche", 1, segs[0].id, null);
-    expect(app.chapter("cliche", 1)!.duration).toBeCloseTo(before, 10);
+    castStore.setPause("cliche", 1, segs[0].id, null);
+    expect(libraryStore.chapter("cliche", 1)!.duration).toBeCloseTo(before, 10);
   });
 
   test("the book's pacing re-times every chapter it has audio for", () => {
-    const narrated = app.chaptersOf("cliche").filter((c) => c.duration > 0);
+    const narrated = libraryStore.chaptersOf("cliche").filter((c) => c.duration > 0);
     const before = narrated.map((c) => c.duration);
-    app.setPacing("cliche", { line: 0, turn: 0 });
+    castStore.setPacing("cliche", { line: 0, turn: 0 });
     // with no gaps at all a chapter is exactly the sum of its clips
     narrated.forEach((c, i) => {
       expect(c.duration).toBeCloseTo(
-        app.segmentsOf("cliche", c.id).reduce((a, s) => a + s.audio.duration, 0),
+        scriptsStore.segmentsOf("cliche", c.id).reduce((a, s) => a + s.audio.duration, 0),
         10,
       );
       expect(c.duration).toBeLessThan(before[i]);
     });
-    app.resetPacing("cliche");
+    castStore.resetPacing("cliche");
     narrated.forEach((c, i) => expect(c.duration).toBeCloseTo(before[i], 10));
   });
 });

@@ -1,26 +1,28 @@
 <script setup lang="ts">
+import { useDemoStore } from "@/stores/demo";
+
 // Prototype-only: drop the Search page into a seeded situation worth trying the bulk flow on.
 // Seeding mutates the open book in memory and keeps the snapshot that puts it back — Reset restores
 // it exactly, and nothing is written anywhere.
 import { computed } from "vue";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { FlaskConical as DemoIcon, RotateCcw as ResetIcon } from "@lucide/vue";
-import { useApp } from "@/stores/app";
+
 import type { SearchScenario } from "@/types";
 
 const props = defineProps<{ bookId: string }>();
 const emit = defineEmits<{ pick: [SearchScenario]; reset: [] }>();
-const app = useApp();
-const scenarios = computed(() => app.searchScenarios(props.bookId));
-const seeded = computed(() => app._searchDemo?.bookId === props.bookId);
+const demoStore = useDemoStore();
+const scenarios = computed(() => demoStore.searchScenarios(props.bookId));
+const seeded = computed(() => demoStore._searchDemo?.bookId === props.bookId);
 
 function pick(s: SearchScenario) {
-  app.seedSearchDemo(props.bookId);
+  demoStore.seedSearchDemo(props.bookId);
   emit("pick", s);
 }
 /** Restoring the book can move the lines out from under a selection, so drop it. */
 function reset() {
-  app.resetSearchDemo();
+  demoStore.resetSearchDemo();
   emit("reset");
 }
 </script>

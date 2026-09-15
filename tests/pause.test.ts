@@ -1,14 +1,26 @@
+import { useCastStore } from "../src/stores/cast";
+import { useEndpointsStore } from "../src/stores/endpoints";
+import { useJobsStore } from "../src/stores/jobs";
+import { useLibraryStore } from "../src/stores/library";
+import { useNarrationStore } from "../src/stores/narration";
+import { useScriptsStore } from "../src/stores/scripts";
+import { useUiStore } from "../src/stores/ui";
 // Pause and Cancel are different things, and the dispatcher has to agree with the words the
 // Endpoints page puts on the buttons: pausing holds the queue, cancelling empties it.
 import { test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
-import { useApp } from "../src/stores/app";
 
 let now = 1000;
 let timers = new Map<number, { at: number; fn: () => void }>();
 let seq = 0;
 let restore: (() => void)[] = [];
-let app: ReturnType<typeof useApp>;
+let castStore: ReturnType<typeof useCastStore>;
+let endpointsStore: ReturnType<typeof useEndpointsStore>;
+let jobsStore: ReturnType<typeof useJobsStore>;
+let libraryStore: ReturnType<typeof useLibraryStore>;
+let narrationStore: ReturnType<typeof useNarrationStore>;
+let scriptsStore: ReturnType<typeof useScriptsStore>;
+let uiStore: ReturnType<typeof useUiStore>;
 
 /** Run every timer due inside the next `ms`, in time order. */
 function advance(ms: number) {
@@ -36,9 +48,15 @@ const bookId = "cliche";
 beforeEach(() => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   setActivePinia(createPinia());
-  app = useApp();
-  app.jobs = [];
-  app.toast = () => "test";
+  castStore = useCastStore();
+  endpointsStore = useEndpointsStore();
+  jobsStore = useJobsStore();
+  libraryStore = useLibraryStore();
+  narrationStore = useNarrationStore();
+  scriptsStore = useScriptsStore();
+  uiStore = useUiStore();
+  jobsStore.jobs = [];
+  uiStore.toast = () => "test";
   now = 1000;
   seq = 0;
   timers = new Map();
@@ -57,19 +75,19 @@ beforeEach(() => {
   ].map((s) => () => s.mockRestore());
 
   // route every speaker at the one local endpoint so the test is about that endpoint alone
-  const local = app.endpoints.find((e) => e.id === "local")!;
+  const local = endpointsStore.endpoints.find((e) => e.id === "local")!;
   local.enabled = true;
   local.backoffUntil = 0;
-  for (const c of app.characters[bookId]) c.voice = `local/${local.voices[0].id}`;
+  for (const c of castStore.characters[bookId]) c.voice = `local/${local.voices[0].id}`;
 });
 afterEach(() => restore.forEach((fn) => fn()));
 
-const statuses = () => app.segmentsOf(bookId, chapterId).map((s) => s.audio.status);
-const job = () => app.jobs.find((j) => j.kind === "narration" && j.chapterId === chapterId);
+const statuses = () => scriptsStore.segmentsOf(bookId, chapterId).map((s) => s.audio.status);
+const job = () => jobsStore.jobs.find((j) => j.kind === "narration" && j.chapterId === chapterId);
 
 test("pausing an endpoint holds its queue; the run finishes when it is resumed", () => {
-  const local = app.endpoints.find((e) => e.id === "local")!;
-  app.runNarration(bookId, [chapterId]);
+  const local = endpointsStore.endpoints.find((e) => e.id === "local")!;
+  narrationStore.runNarration(bookId, [chapterId]);
   advance(3000);
   expect(job()).toBeDefined();
   expect(statuses().some((s) => s === "done" || s === "generating")).toBe(true);
@@ -80,7 +98,7 @@ test("pausing an endpoint holds its queue; the run finishes when it is resumed",
   local.enabled = false;
   advance(60_000);
   expect(job()!.finishedAt).toBeNull();
-  expect(app.chapter(bookId, chapterId)!.narration).toBe("running");
+  expect(libraryStore.chapter(bookId, chapterId)!.narration).toBe("running");
   expect(statuses().some((s) => s === "queued")).toBe(true);
   expect(statuses().some((s) => s === "generating")).toBe(false);
   // work that was already in flight when we paused was allowed to finish
@@ -95,10 +113,10 @@ test("pausing an endpoint holds its queue; the run finishes when it is resumed",
 });
 
 test("cancelling empties the queue instead of holding it", () => {
-  app.runNarration(bookId, [chapterId]);
+  narrationStore.runNarration(bookId, [chapterId]);
   advance(3000);
   const id = job()!.id;
-  app.cancelJob(id);
+  jobsStore.cancelJob(id);
   advance(60_000);
   expect(job()!.finishedAt).not.toBeNull();
   expect(job()!.status).toBe("cancelled");
@@ -108,18 +126,18 @@ test("cancelling empties the queue instead of holding it", () => {
 test("a voice whose endpoint is gone still fails rather than waiting forever", () => {
   // removing the endpoint leaves the speakers pointing at nothing — unlike a pause, that can
   // never resolve on its own, so the run has to end
-  app.runNarration(bookId, [chapterId]);
+  narrationStore.runNarration(bookId, [chapterId]);
   advance(1000);
-  app.endpoints.splice(0, app.endpoints.length);
+  endpointsStore.endpoints.splice(0, endpointsStore.endpoints.length);
   advance(120_000);
   expect(job()!.finishedAt).not.toBeNull();
-  expect(app.chapter(bookId, chapterId)!.narration).toBe("failed");
+  expect(libraryStore.chapter(bookId, chapterId)!.narration).toBe("failed");
   expect(job()!.activity!.some((e) => e.level === "error" && e.detail?.segment)).toBe(true);
   expect(job()!.activity!.at(-1)!.message).toBe("Job failed");
 });
 
 test("narration activity keeps the segment identity and attempt across a rate-limit retry", () => {
-  app.runNarration(bookId, [chapterId]);
+  narrationStore.runNarration(bookId, [chapterId]);
   spyOn(Math, "random").mockReturnValueOnce(0).mockReturnValue(0.5);
   advance(600_000);
   const events = job()!.activity!;

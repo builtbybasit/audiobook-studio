@@ -1,6 +1,11 @@
 <script setup lang="ts">
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptingStore } from "@/stores/scripting";
+
 import { computed } from "vue";
-import { useApp } from "@/stores/app";
+
 import { UiNumber, UiSelect, UiSwitch, UiTooltip } from "@/ui";
 import {
   ArrowRight as NextIcon,
@@ -9,18 +14,21 @@ import {
 } from "@lucide/vue";
 const props = defineProps<{ bookId: string; selected: number[] }>();
 defineEmits<{ configure: [] }>();
-const app = useApp();
-const est = computed(() => app.scriptEstimate(props.bookId, props.selected));
-const book = computed(() => app.bookById(props.bookId)!);
-const spent = computed(() => app.scriptSpent(props.bookId));
-const reserved = computed(() => app.scriptReserved(props.bookId));
+const endpointsStore = useEndpointsStore();
+const jobsStore = useJobsStore();
+const libraryStore = useLibraryStore();
+const scriptingStore = useScriptingStore();
+const est = computed(() => scriptingStore.scriptEstimate(props.bookId, props.selected));
+const book = computed(() => libraryStore.bookById(props.bookId)!);
+const spent = computed(() => jobsStore.scriptSpent(props.bookId));
+const reserved = computed(() => jobsStore.scriptReserved(props.bookId));
 const remaining = computed(() =>
   book.value.scriptBudget == null
     ? null
     : Math.max(0, book.value.scriptBudget - spent.value - reserved.value),
 );
 const runs = computed(() =>
-  app.jobs.filter((j) => j.bookId === props.bookId && !j.finishedAt && j.scriptRun),
+  jobsStore.jobs.filter((j) => j.bookId === props.bookId && !j.finishedAt && j.scriptRun),
 );
 const money = (n: number) =>
   "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
@@ -37,9 +45,9 @@ const money = (n: number) =>
       </button>
     </div>
     <UiSelect
-      v-model="app.scriptSettings.profile"
+      v-model="scriptingStore.scriptSettings.profile"
       :options="
-        app.profiles.map((p) => ({
+        endpointsStore.profiles.map((p) => ({
           value: p.id,
           label: p.name,
           hint: p.enabled ? p.model : 'Paused',
@@ -57,7 +65,10 @@ const money = (n: number) =>
       }}
       · {{ est.profile.concurrency.toLocaleString() }} concurrent
     </p>
-    <UiSwitch v-model="app.scriptSettings.stripWatermarks" label="Strip site boilerplate" />
+    <UiSwitch
+      v-model="scriptingStore.scriptSettings.stripWatermarks"
+      label="Strip site boilerplate"
+    />
     <dl class="grid grid-cols-2 gap-y-1.5">
       <dt class="text-zinc-500">Chapters / requests</dt>
       <dd class="text-right font-mono">{{ est.chapters }} / {{ est.chunks }}</dd>
@@ -124,7 +135,7 @@ const money = (n: number) =>
       <div class="flex justify-between gap-2">
         <span class="truncate font-medium"
           >{{ job.scriptRun!.profile.name }} · ch {{ job.chapterId }}</span
-        ><button class="text-zinc-500 hover:underline" @click="app.cancelJob(job.id)">
+        ><button class="text-zinc-500 hover:underline" @click="jobsStore.cancelJob(job.id)">
           Cancel
         </button>
       </div>
@@ -134,7 +145,7 @@ const money = (n: number) =>
         }}<span
           v-if="
             !job.scriptRun!.active &&
-            !app.profiles.find((p) => p.id === job.scriptRun!.profile.id)?.enabled
+            !endpointsStore.profiles.find((p) => p.id === job.scriptRun!.profile.id)?.enabled
           "
         >
           · Endpoint paused</span

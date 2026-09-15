@@ -1,10 +1,15 @@
 <script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
+
 // Endpoint pool as master/detail: a compact list on the left (health, voices, on/off), the selected
 // endpoint's full settings on the right — connection, key (kept in the keyring, not the store),
 // price, concurrency, per-request limit + cut strategy with a preview, the voice list, last error.
 // Settings export/import writes a JSON without keys.
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
-import { useApp, keyring } from "@/stores/app";
+import { keyring } from "@/lib/keyring";
 import { speak } from "@/composables/usePlayer";
 import type { Component } from "vue";
 import {
@@ -25,20 +30,26 @@ import { SPLIT_MODES, splitText } from "@/lib/split";
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "reka-ui";
 import type { Endpoint, Gender, Segment, SplitMode, Voice } from "@/types";
 const props = defineProps<{ bookId: string }>();
-const app = useApp();
+const castStore = useCastStore();
+const endpointsStore = useEndpointsStore();
+const scriptsStore = useScriptsStore();
+const uiStore = useUiStore();
 const now = ref(Date.now());
 let t: ReturnType<typeof setInterval>;
 onMounted(() => {
   t = setInterval(() => (now.value = Date.now()), 500);
 });
 onUnmounted(() => clearInterval(t));
-const selectedId = ref<string | null>(app.endpoints[0]?.id ?? null);
-const e = computed(() => app.endpoints.find((x) => x.id === selectedId.value) ?? app.endpoints[0]);
+const selectedId = ref<string | null>(endpointsStore.endpoints[0]?.id ?? null);
+const e = computed(
+  () =>
+    endpointsStore.endpoints.find((x) => x.id === selectedId.value) ?? endpointsStore.endpoints[0],
+);
 watch(
-  () => app.endpoints.length,
+  () => endpointsStore.endpoints.length,
   () => {
-    if (!app.endpoints.some((x) => x.id === selectedId.value))
-      selectedId.value = app.endpoints.at(-1)?.id ?? null;
+    if (!endpointsStore.endpoints.some((x) => x.id === selectedId.value))
+      selectedId.value = endpointsStore.endpoints.at(-1)?.id ?? null;
   },
 );
 
@@ -74,18 +85,18 @@ const AT: Record<SplitMode, string> = {
 };
 function submit(e: Endpoint) {
   const f = form(e);
-  if (app.addVoice(e, f)) {
+  if (endpointsStore.addVoice(e, f)) {
     f.id = "";
     f.label = "";
   }
 }
 const usedBy = (e: Endpoint, v: Voice) =>
-  (app.characters[props.bookId] ?? [])
+  (castStore.characters[props.bookId] ?? [])
     .filter((c) => c.voice === `${e.id}/${v.id}`)
     .map((c) => c.name);
 const inUse = computed(() => {
   const m: Record<string, number> = {};
-  for (const c of app.characters[props.bookId] ?? [])
+  for (const c of castStore.characters[props.bookId] ?? [])
     if (c.voice) m[c.voice.split("/")[0]] = (m[c.voice.split("/")[0]] ?? 0) + 1;
   return m;
 });
@@ -94,14 +105,14 @@ const GENDER_CH: Partial<Record<Gender, Component>> = {
   f: FemaleIcon,
   n: NeutralIcon,
 };
-const splitOf = (e: Endpoint) => app.splitCount(props.bookId, e);
+const splitOf = (e: Endpoint) => endpointsStore.splitCount(props.bookId, e);
 const longest = (e: Endpoint): Segment | null => {
   let best: Segment | null = null;
-  for (const k of Object.keys(app.segments))
+  for (const k of Object.keys(scriptsStore.segments))
     if (k.startsWith(props.bookId + ":"))
-      for (const s of app.segments[k])
+      for (const s of scriptsStore.segments[k])
         if (
-          app.effectiveVoice(props.bookId, s.speaker).endpoint?.id === e.id &&
+          castStore.effectiveVoice(props.bookId, s.speaker).endpoint?.id === e.id &&
           (!best || s.text.length > best.text.length)
         )
           best = s;
@@ -164,7 +175,7 @@ const ago = (ts: number) => {
 
 // settings file: endpoints + profiles + script settings, never keys
 function exportSettings() {
-  const blob = new Blob([JSON.stringify(app.exportSettings(), null, 2)], {
+  const blob = new Blob([JSON.stringify(endpointsStore.exportSettings(), null, 2)], {
     type: "application/json",
   });
   const a = document.createElement("a");
@@ -172,7 +183,7 @@ function exportSettings() {
   a.download = "audiobook-studio-settings.json";
   a.click();
   URL.revokeObjectURL(a.href);
-  app.toast("Settings exported", {
+  uiStore.toast("Settings exported", {
     kind: "success",
     description: "audiobook-studio-settings.json — API keys are never included.",
     timeout: 4000,
@@ -184,9 +195,9 @@ function importSettings(ev: Event) {
   if (!f) return;
   f.text().then((txt: string) => {
     try {
-      app.importSettings(JSON.parse(txt));
+      endpointsStore.importSettings(JSON.parse(txt));
     } catch (err) {
-      app.toast("Could not import settings", {
+      uiStore.toast("Could not import settings", {
         kind: "error",
         description: err instanceof Error ? err.message : String(err),
       });
@@ -202,7 +213,7 @@ function copyErr(e: Endpoint) {
       2,
     ),
   );
-  app.toast("Copied", {
+  uiStore.toast("Copied", {
     kind: "success",
     description: "Last error and request details are on the clipboard.",
     timeout: 2500,
@@ -243,7 +254,7 @@ function copyErr(e: Endpoint) {
         </span>
       </div>
       <button
-        v-for="x in app.endpoints"
+        v-for="x in endpointsStore.endpoints"
         :key="x.id"
         class="flex items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-sm"
         :class="
@@ -273,7 +284,7 @@ function copyErr(e: Endpoint) {
       </button>
       <button
         class="rounded-lg border border-dashed border-zinc-300 py-2 text-xs text-zinc-500 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
-        @click="selectedId = app.addEndpoint().id"
+        @click="selectedId = endpointsStore.addEndpoint().id"
       >
         <AddIcon class="icon-sm" /> Add endpoint
       </button>
@@ -303,7 +314,7 @@ function copyErr(e: Endpoint) {
         </button>
         <button
           class="text-[11px] text-zinc-400 hover:text-red-500"
-          @click="app.removeEndpoint(e.id)"
+          @click="endpointsStore.removeEndpoint(e.id)"
         >
           remove
         </button>
@@ -491,7 +502,11 @@ function copyErr(e: Endpoint) {
           <b>Voices</b><span class="text-zinc-400">{{ e.voices.length }}</span>
           <span v-if="inUse[e.id]" class="text-zinc-400">· {{ inUse[e.id] }} in use here</span>
           <span class="ml-auto flex gap-1">
-            <button class="btn-ghost btn-xs" :disabled="e.fetching" @click="app.fetchVoices(e)">
+            <button
+              class="btn-ghost btn-xs"
+              :disabled="e.fetching"
+              @click="endpointsStore.fetchVoices(e)"
+            >
               <ImportIcon v-if="!e.fetching" class="icon-sm" />
               {{ e.fetching ? "fetching…" : "Fetch from server" }}
             </button>
@@ -544,7 +559,7 @@ function copyErr(e: Endpoint) {
                   ? 'remove — ' + usedBy(e, v).length + ' speaker(s) will show a missing voice'
                   : 'remove'
               "
-              @click="app.removeVoice(e, v.id)"
+              @click="endpointsStore.removeVoice(e, v.id)"
             >
               <CloseIcon class="icon-sm" />
             </button>

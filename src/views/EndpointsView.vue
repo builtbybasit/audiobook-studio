@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
+
 // Endpoints — app-wide, both kinds, one page.
 //
 // The app talks to two sorts of OpenAI-compatible server: chat models that turn prose into a
@@ -12,7 +18,7 @@
 //   · everything historical — `endpointService`, which in this build is a fixture generator
 // Both are simulated. No provider is called, nothing is billed, and nothing persists.
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { useApp, keyring } from "@/stores/app";
+import { keyring } from "@/lib/keyring";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import { UiToggleGroup, UiTooltip } from "@/ui";
 import {
@@ -48,12 +54,17 @@ import {
 } from "@/lib/endpoints";
 import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
 import { bindCredential } from "@/lib/credentials";
-import { jobsUsing, liveActivity, liveRequests } from "@/views/endpoints/live";
+import { useEndpointActivity } from "@/views/endpoints/live";
+const { jobsUsing, liveActivity, liveRequests } = useEndpointActivity();
 import { TABS, draftDirty, filterOf, ui } from "@/views/endpoints/state";
 import type { TabId } from "@/views/endpoints/state";
 import type { MetricBucket, RequestRecord } from "@/types";
 
-const app = useApp();
+const endpointsStore = useEndpointsStore();
+const jobsStore = useJobsStore();
+const libraryStore = useLibraryStore();
+const scriptsStore = useScriptsStore();
+const uiStore = useUiStore();
 const now = ref(Date.now());
 let clock: ReturnType<typeof setInterval>;
 onMounted(() => {
@@ -63,15 +74,15 @@ onUnmounted(() => clearInterval(clock));
 
 // ---------- the unified list ----------
 const all = computed<UnifiedEndpoint[]>(() => [
-  ...app.profiles.map(unifyProfile),
-  ...app.endpoints.map(unifyEndpoint),
+  ...endpointsStore.profiles.map(unifyProfile),
+  ...endpointsStore.endpoints.map(unifyEndpoint),
 ]);
 // fill operational defaults in, and restore any credential bindings, whenever the lists change
 watch(
-  () => [app.profiles.length, app.endpoints.length] as const,
+  () => [endpointsStore.profiles.length, endpointsStore.endpoints.length] as const,
   () => {
-    for (const p of app.profiles) ensureOps(p, "scripting");
-    for (const e of app.endpoints) ensureOps(e, "tts");
+    for (const p of endpointsStore.profiles) ensureOps(p, "scripting");
+    for (const e of endpointsStore.endpoints) ensureOps(e, "tts");
     for (const u of all.value) {
       const cred = opsOf(u).credentialId;
       if (cred) bindCredential(u.slot, cred);
@@ -135,7 +146,7 @@ const rangeLabel = computed(() => RANGES.find((r) => r.value === ui.range)!.labe
 const seriesFor = (u: UnifiedEndpoint, range = ui.range) =>
   seriesFrom(histories.value[u.key] ?? [], u.kind, range, now.value);
 
-const liveFor = (u: UnifiedEndpoint) => liveActivity(app, u);
+const liveFor = (u: UnifiedEndpoint) => liveActivity(u);
 
 function healthFor(u: UnifiedEndpoint): Health {
   const rows = histories.value[u.key] ?? [];
@@ -187,7 +198,7 @@ const health = computed(() =>
     ? healthFor(selected.value)
     : ({ state: "idle", label: "", tone: "muted", detail: "" } as Health),
 );
-const busyJobs = computed(() => (selected.value ? jobsUsing(app, selected.value) : []));
+const busyJobs = computed(() => (selected.value ? jobsUsing(selected.value) : []));
 
 /** Sample history plus whatever this session has in flight, newest first. */
 const activityRows = computed(() => {
@@ -197,7 +208,7 @@ const activityRows = computed(() => {
   const historical = (histories.value[u.key] ?? []).filter(
     (r) => (r.finishedAt ?? r.queuedAt) >= from,
   );
-  return [...liveRequests(app, u, now.value), ...historical];
+  return [...liveRequests(u, now.value), ...historical];
 });
 
 // ---------- the strip ----------
@@ -247,7 +258,7 @@ const attention = computed(() =>
 function toggleEnabled(u: UnifiedEndpoint, value: boolean) {
   const target = (u.profile ?? u.endpoint)!;
   target.enabled = value;
-  app.toast(`${u.name} ${value ? "resumed" : "paused"}`, {
+  uiStore.toast(`${u.name} ${value ? "resumed" : "paused"}`, {
     kind: value ? "success" : "info",
     description: value
       ? "Requests that were waiting start going out again."
@@ -260,11 +271,11 @@ function toggleEnabled(u: UnifiedEndpoint, value: boolean) {
 
 const confirmCancel = ref(false);
 function cancelWork(u: UnifiedEndpoint) {
-  const jobs = jobsUsing(app, u);
+  const jobs = jobsUsing(u);
   if (!jobs.length) return;
-  for (const j of jobs) app.cancelJob(j.id);
+  for (const j of jobs) jobsStore.cancelJob(j.id);
   confirmCancel.value = false;
-  app.toast(`Cancelled ${jobs.length} job${jobs.length === 1 ? "" : "s"} on ${u.name}`, {
+  uiStore.toast(`Cancelled ${jobs.length} job${jobs.length === 1 ? "" : "s"} on ${u.name}`, {
     kind: "warn",
     description:
       "Requests already in flight finish and stay recorded. Nothing rendered was deleted.",
@@ -277,7 +288,7 @@ async function runTest(u: UnifiedEndpoint) {
   try {
     const result = await endpointService.testConnection(describe(u));
     ui.tests[u.key] = result;
-    app.toast(result.ok ? `${u.name} answered` : `${u.name} did not answer`, {
+    uiStore.toast(result.ok ? `${u.name} answered` : `${u.name} did not answer`, {
       kind: result.ok ? "success" : "error",
       description: result.detail,
     });
@@ -296,15 +307,17 @@ function probeCost(u: UnifiedEndpoint): number | null {
 }
 
 function remove(u: UnifiedEndpoint) {
-  if (u.profile) app.removeScriptProfile(u.id);
-  else app.removeEndpoint(u.id);
+  if (u.profile) endpointsStore.removeScriptProfile(u.id);
+  else endpointsStore.removeEndpoint(u.id);
   delete histories.value[u.key];
   ui.selected = null;
 }
 
 function add(kind: "scripting" | "tts") {
   const key =
-    kind === "scripting" ? "scripting:" + app.addScriptProfile() : "tts:" + app.addEndpoint().id;
+    kind === "scripting"
+      ? "scripting:" + endpointsStore.addScriptProfile()
+      : "tts:" + endpointsStore.addEndpoint().id;
   ui.selected = key;
   ui.tab[key] = "connection";
   ui.kind = "all";
@@ -315,10 +328,10 @@ function add(kind: "scripting" | "tts") {
 const SAMPLE =
   "The mountain mist thinned as dawn crept over the outer sect grounds. “You are late,” said the steward, without looking up from his ledger. Ji Ning bowed, and said nothing; there was nothing to say that would not cost him another month of hauling water. The steward wrote a line, blotted it, and finally raised his eyes. “Twice this week. The elders notice such things — and so, unfortunately, do I.”";
 const sample = computed(() => {
-  const b = app.currentBookId;
-  const ch = b ? app.chaptersOf(b).find((c) => !c.excluded) : null;
+  const b = uiStore.currentBookId;
+  const ch = b ? libraryStore.chaptersOf(b).find((c) => !c.excluded) : null;
   return b && ch
-    ? { text: app.rawText(b, ch.id), label: `ch ${ch.id} · ${ch.title}` }
+    ? { text: scriptsStore.rawText(b, ch.id), label: `ch ${ch.id} · ${ch.title}` }
     : { text: SAMPLE, label: "sample text" };
 });
 

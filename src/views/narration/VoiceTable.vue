@@ -18,6 +18,14 @@ import {
   ArrowRight as NextIcon,
 } from "@lucide/vue";
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "reka-ui";
+import {
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogRoot,
+  DialogTitle,
+} from "reka-ui";
 import type { Character, Gender } from "@/types";
 
 const props = defineProps<{ bookId: string }>();
@@ -33,6 +41,7 @@ const q = ref("");
 const unassignedOnly = ref(false);
 const showMinor = ref(false);
 const revealed = ref(new Set<string>());
+const assignOpen = ref(false);
 
 const all = computed(() => castStore.charactersOf(props.bookId));
 const counts = computed(() => scriptsStore.lineCounts(props.bookId));
@@ -49,6 +58,7 @@ const minor = computed(() =>
     .filter(match),
 );
 const narrator = computed(() => all.value.find((c) => c.name === "Narrator"));
+const assignmentPlan = computed(() => castStore.autoAssignPlan(props.bookId));
 const genderLabel: Record<Gender, string> = {
   m: "male",
   f: "female",
@@ -59,6 +69,10 @@ const sample = (c: Character) =>
   c.name === "Narrator"
     ? "The mountain mist thinned as dawn crept over the outer sect grounds."
     : "I have not come to fight. Give me three days, that is all I ask.";
+function applyAssignments() {
+  castStore.autoAssignByGender(props.bookId);
+  assignOpen.value = false;
+}
 </script>
 
 <template>
@@ -70,8 +84,16 @@ const sample = (c: Character) =>
       <label class="flex items-center gap-1.5 text-xs"
         ><UiCheckbox v-model="unassignedOnly" /> Unassigned only</label
       >
-      <button class="btn-ghost btn-xs ml-auto" @click="castStore.autoAssignByGender(bookId)">
-        Auto-assign all by gender
+      <button
+        class="btn-ghost btn-xs ml-auto"
+        :disabled="!assignmentPlan.length"
+        @click="assignOpen = true"
+      >
+        {{
+          assignmentPlan.length
+            ? `Assign ${assignmentPlan.length} unvoiced…`
+            : "All speakers assigned"
+        }}
       </button>
       <RouterLink :to="`/book/${bookId}/cast`" class="btn-ghost btn-xs"
         >Full cast <NextIcon class="icon-sm"
@@ -208,5 +230,58 @@ const sample = (c: Character) =>
         </table>
       </CollapsibleContent>
     </CollapsibleRoot>
+
+    <DialogRoot v-model:open="assignOpen">
+      <DialogPortal>
+        <DialogOverlay class="fixed inset-0 z-40 bg-black/40" />
+        <DialogContent
+          class="card fixed left-1/2 top-1/2 z-50 flex max-h-[min(36rem,90vh)] w-[min(34rem,92vw)] -translate-x-1/2 -translate-y-1/2 flex-col p-5 text-sm shadow-2xl focus:outline-none"
+        >
+          <DialogTitle class="text-base font-semibold">
+            Assign {{ assignmentPlan.length }} unvoiced speaker{{
+              assignmentPlan.length === 1 ? "" : "s"
+            }}?
+          </DialogTitle>
+          <DialogDescription class="mt-1 text-xs leading-relaxed text-zinc-500">
+            Enabled endpoints supply the voices. Gender-matched voices are rotated across the cast;
+            unknown or unmatched speakers use the available pool. Existing assignments and the
+            Narrator stay unchanged.
+          </DialogDescription>
+          <div class="mt-3 min-h-0 flex-1 overflow-auto rounded-md border dark:border-zinc-800">
+            <div
+              v-for="row in assignmentPlan"
+              :key="row.name"
+              class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b px-3 py-2 last:border-0 dark:border-zinc-800"
+            >
+              <div class="min-w-0">
+                <div class="truncate font-medium">{{ row.name }}</div>
+                <div class="text-[10px] text-zinc-400">
+                  {{ genderLabel[row.gender]
+                  }}{{ row.matchedGender ? " match" : " · fallback pool" }}
+                </div>
+              </div>
+              <NextIcon class="icon-sm text-zinc-400" />
+              <div class="min-w-0 text-right">
+                <div class="truncate">{{ row.voiceLabel }}</div>
+                <div class="truncate text-[10px] text-zinc-400">{{ row.endpoint }}</div>
+              </div>
+            </div>
+          </div>
+          <div class="mt-4 flex justify-end gap-2">
+            <button class="btn-ghost" @click="assignOpen = false">Cancel</button>
+            <button
+              class="btn-primary"
+              :disabled="!assignmentPlan.length"
+              @click="applyAssignments"
+            >
+              Assign {{ assignmentPlan.length }} speaker{{ assignmentPlan.length === 1 ? "" : "s" }}
+            </button>
+          </div>
+          <p class="mt-2 text-right text-[11px] text-zinc-400">
+            You can undo the whole assignment from the toast or with ⌘Z.
+          </p>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
   </div>
 </template>

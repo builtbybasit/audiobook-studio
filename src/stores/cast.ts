@@ -16,6 +16,7 @@ import type {
   RoutingIssue,
   Segment,
   SegmentMap,
+  VoiceRef,
 } from "@/types";
 import { defineStore } from "pinia";
 import { useEndpointsStore } from "./endpoints";
@@ -26,6 +27,14 @@ import { useUiStore } from "./ui";
 interface CastState {
   characters: Record<string, Character[]>;
   lexicon: Record<string, LexEntry[]>;
+}
+export interface AutoVoiceAssignment {
+  name: string;
+  gender: Gender;
+  voice: VoiceRef;
+  voiceLabel: string;
+  endpoint: string;
+  matchedGender: boolean;
 }
 export const useCastStore = defineStore("cast", {
   state: (): CastState => ({ ...seedState("characters", "lexicon") }),
@@ -413,27 +422,56 @@ export const useCastStore = defineStore("cast", {
         undo: revert,
       });
     },
-    autoAssignByGender(bookId: string): void {
+    autoAssignPlan(bookId: string): AutoVoiceAssignment[] {
       const endpointsStore = useEndpointsStore();
 
       // pool = voices on enabled endpoints, grouped by the gender tag the endpoint's voice list carries
       const all = endpointsStore.enabledEndpoints.flatMap((e) =>
         e.voices.map((v) => ({ ref: voiceRef(e.id, v.id), gender: v.gender })),
       );
-      if (!all.length) return;
+      if (!all.length) return [];
       const byGender: Partial<Record<Gender, typeof all>> = {
         m: all.filter((v) => v.gender === "m"),
         f: all.filter((v) => v.gender === "f"),
         n: all.filter((v) => v.gender === "n"),
       };
       const used: Partial<Record<Gender, number>> = {};
+      const plan: AutoVoiceAssignment[] = [];
       for (const c of this.characters[bookId]) {
         if (c.voice || c.name === "Narrator") continue;
         const byG = byGender[c.gender];
         const pool = byG?.length ? byG : all;
-        const i = (used[c.gender] = (used[c.gender] ?? 0) + 1);
-        c.voice = pool[i % pool.length].ref;
+        const i = used[c.gender] ?? 0;
+        used[c.gender] = i + 1;
+        const voice = pool[i % pool.length].ref;
+        const resolved = endpointsStore.resolveVoice(voice)!;
+        plan.push({
+          name: c.name,
+          gender: c.gender,
+          voice,
+          voiceLabel: resolved.voice.label,
+          endpoint: resolved.endpoint.name,
+          matchedGender: !!byG?.length,
+        });
       }
+      return plan;
+    },
+    autoAssignByGender(bookId: string): number {
+      const uiStore = useUiStore();
+      const plan = this.autoAssignPlan(bookId);
+      if (!plan.length) return 0;
+      const revert = this._castSnapshot(bookId);
+      const cast = this.characters[bookId];
+      for (const assignment of plan) {
+        const character = cast.find((c) => c.name === assignment.name);
+        if (character && !character.voice) character.voice = assignment.voice;
+      }
+      uiStore.toast(`${plan.length} unvoiced speaker${plan.length === 1 ? "" : "s"} assigned`, {
+        kind: "success",
+        description: "Existing voice assignments were left alone.",
+        undo: revert,
+      });
+      return plan.length;
     },
     _replaceSpeaker(bookId: string, from: string, to: string): void {
       const scriptsStore = useScriptsStore();

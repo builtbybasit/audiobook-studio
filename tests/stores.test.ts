@@ -144,3 +144,28 @@ test("book removal and its undo cover dictionary and saved script revisions as w
   expect(cast.lexiconOf("cliche")).toEqual(before.dictionary);
   expect(scripts._previous["cliche:1"]).toEqual(before.previous);
 });
+
+test("automatic voice assignment previews the exact change and undoes it as one action", () => {
+  const cast = useCastStore();
+  const ui = useUiStore();
+  const before = cast.charactersOf("starforge").map((c) => ({ name: c.name, voice: c.voice }));
+  const plan = cast.autoAssignPlan("starforge");
+  expect(plan.length).toBeGreaterThan(0);
+  expect(plan.every((row) => row.name !== "Narrator" && row.voice.includes("/"))).toBe(true);
+
+  let undo: (() => void) | undefined;
+  ui.toast = (_message, options = {}) => {
+    undo = options.undo ?? undefined;
+    return "test";
+  };
+  expect(cast.autoAssignByGender("starforge")).toBe(plan.length);
+  for (const row of plan)
+    expect(cast.charactersOf("starforge").find((c) => c.name === row.name)?.voice).toBe(row.voice);
+  for (const row of before.filter((c) => c.voice))
+    expect(cast.charactersOf("starforge").find((c) => c.name === row.name)?.voice).toBe(row.voice);
+
+  undo!();
+  expect(cast.charactersOf("starforge").map((c) => ({ name: c.name, voice: c.voice }))).toEqual(
+    before,
+  );
+});

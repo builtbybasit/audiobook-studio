@@ -34,6 +34,7 @@ import {
   componentToString,
 } from "@/components/ui/chart";
 import { metricValue, money, throughputUnit } from "@/lib/endpoints";
+import { UiToggleGroup } from "@/ui";
 
 const props = defineProps<{
   series: MetricSeries;
@@ -61,11 +62,33 @@ const PARTS: Record<string, Part[]> = {
     { key: "retries", label: "retried", color: "var(--chart-6)" },
   ],
 };
-const parts = computed(() => PARTS[props.metric]);
-/** The legend and the tooltip both render from this, so neither repeats what PARTS already says. */
-const chartConfig = computed<ChartConfig>(() =>
-  Object.fromEntries(parts.value.map((p) => [p.key, { label: p.label, color: p.color }])),
+const LATENCY_BREAKDOWN: Part[] = [
+  { key: "responseMs", label: "provider response", color: "var(--chart-2)" },
+  { key: "queueMs", label: "queue wait", color: "var(--chart-3)" },
+];
+const LATENCY_VIEW_OPTIONS = [
+  { value: "total", label: "Total" },
+  { value: "breakdown", label: "Breakdown" },
+];
+const latencyView = ref<"total" | "breakdown">("total");
+const setLatencyView = (value: string | number | null) => {
+  if (value === "total" || value === "breakdown") latencyView.value = value;
+};
+const parts = computed(() =>
+  props.metric === "latency" && latencyView.value === "breakdown"
+    ? LATENCY_BREAKDOWN
+    : PARTS[props.metric],
 );
+/** Latency plots one total line, but its tooltip also names the two values that make up that total. */
+const chartConfig = computed<ChartConfig>(() => {
+  if (props.metric === "latency")
+    return {
+      latencyMs: { label: "total latency", color: "var(--chart-1)" },
+      responseMs: { label: "provider response", color: "var(--chart-2)" },
+      queueMs: { label: "queue wait", color: "var(--chart-3)" },
+    };
+  return Object.fromEntries(parts.value.map((p) => [p.key, { label: p.label, color: p.color }]));
+});
 const empty = computed(() => props.series.totals.requests === 0);
 const buckets = computed<ChartBucket[]>(() =>
   props.series.buckets.map((bucket) => ({
@@ -191,12 +214,32 @@ const tooltip = computed(() =>
     :cursor="metric === 'latency'"
     class="aspect-auto h-auto w-full justify-start"
   >
-    <div class="flex flex-wrap items-end justify-between gap-x-4 gap-y-1 text-[11px]">
+    <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px]">
+      <span v-if="metric === 'latency'" class="flex flex-wrap items-center gap-3 text-zinc-500">
+        <span v-for="part in parts" :key="String(part.key)" class="flex items-center gap-1.5">
+          <span
+            class="size-2 rounded-[2px]"
+            :style="{ backgroundColor: part.color }"
+            aria-hidden="true"
+          />
+          {{ part.label }}
+        </span>
+      </span>
       <ChartLegendContent
+        v-else
         vertical-align="top"
         class="flex-wrap justify-start gap-x-3 gap-y-1 pb-0 text-zinc-500"
       />
-      <span class="text-zinc-400">← → walks the buckets, Enter filters</span>
+      <span class="flex flex-wrap items-center justify-end gap-3">
+        <span v-if="metric === 'latency'" aria-label="Latency chart view">
+          <UiToggleGroup
+            :model-value="latencyView"
+            :options="LATENCY_VIEW_OPTIONS"
+            @update:model-value="setLatencyView"
+          />
+        </span>
+        <span class="text-zinc-400">← → walks the buckets, Enter filters</span>
+      </span>
     </div>
 
     <div

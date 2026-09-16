@@ -80,7 +80,7 @@ const rangeLabel = computed(() => RANGES.find((r) => r.value === props.range)!.l
           metric === "throughput"
             ? throughputLabel(u.kind)
             : metric === "latency"
-              ? "Average total latency · queue and provider details on hover"
+              ? "Average latency · switch between total and component lines"
               : metric === "spend"
                 ? "Recorded cost per bucket"
                 : "Failures, rate limits and retried requests"

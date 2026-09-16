@@ -9,6 +9,8 @@ import { useScriptsStore } from "@/stores/scripts";
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isNarrated } from "@/lib/scriptReview";
+import { queryIdSet, queryText } from "@/lib/query";
+import { clockDuration } from "@/lib/time";
 import StatusDot from "@/components/StatusDot.vue";
 import { UiCheckbox, UiSelect } from "@/ui";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
@@ -54,11 +56,7 @@ const grouped = computed(() =>
 /** A volume plus the chapters that belong to it, as rendered by the list. */
 type VolumeRow = Volume & { chapters: Chapter[] };
 const multi = computed(() => volumes.value.length > 1);
-const queryText = (value: unknown) =>
-  Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
-const queryIds = (value: unknown) =>
-  new Set(queryText(value).split(",").map(Number).filter(Number.isFinite));
-const collapsed = ref(queryIds(route.query.closed));
+const collapsed = ref(queryIdSet(route.query.closed));
 const q = ref(queryText(route.query.find));
 const search = ref<HTMLInputElement | null>(null);
 const lastClicked = ref<number | null>(null);
@@ -91,8 +89,9 @@ watch(
 watch(
   () => route.query.closed,
   (value) => {
-    const next = queryIds(value);
-    if ([...next].join(",") !== [...collapsed.value].join(",")) collapsed.value = next;
+    const next = queryIdSet(value);
+    const ordered = (ids: Set<number>) => [...ids].sort((a, b) => a - b).join(",");
+    if (ordered(next) !== ordered(collapsed.value)) collapsed.value = next;
   },
 );
 function jump(id: string | number | null) {
@@ -429,9 +428,7 @@ const peek = (c: Chapter) => {
             <span
               v-else-if="stage !== 'scripting' && c.duration"
               class="font-mono text-[11px] text-zinc-400"
-              >{{ Math.floor(c.duration / 60) }}:{{
-                String(Math.round(c.duration % 60)).padStart(2, "0")
-              }}</span
+              >{{ clockDuration(c.duration) }}</span
             >
           </div>
         </template>

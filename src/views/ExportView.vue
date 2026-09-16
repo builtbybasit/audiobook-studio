@@ -24,6 +24,7 @@ import { useRoute, useRouter } from "vue-router";
 import { isNarrated } from "@/lib/scriptReview";
 import { useBookId } from "@/router";
 import { DEFAULT_EXPORT_SETTINGS, readinessOf } from "@/lib/exports";
+import { queryIds } from "@/lib/query";
 import { plural } from "@/views/export/shared";
 import EmptyState from "@/components/EmptyState.vue";
 import ExportChapterList from "@/views/export/ExportChapterList.vue";
@@ -45,12 +46,6 @@ const bookId = useBookId();
 // the router only reaches this view with a real book id
 const book = computed(() => libraryStore.bookById(bookId)!);
 const tab = ref(route.query.tab === "library" ? "library" : "build");
-
-const queryIds = (value: unknown) =>
-  String(Array.isArray(value) ? (value[0] ?? "") : (value ?? ""))
-    .split(",")
-    .map(Number)
-    .filter(Number.isFinite);
 
 const anyNarrated = computed(() => libraryStore.chaptersOf(bookId).some(isNarrated));
 const selected = ref<number[]>([]);

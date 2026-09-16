@@ -72,6 +72,7 @@ const groups = [
       ["r", "retry a failed segment"],
       ["f", "flag the clip (pronunciation / delivery / pause)"],
       ["t", "retake — render it again and compare"],
+      ["1 / 2", "play the current take / retake"],
       ["a / x", "keep the new take / keep the previous one"],
       ["click · i", "show render details"],
     ],

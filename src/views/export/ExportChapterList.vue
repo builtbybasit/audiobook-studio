@@ -13,6 +13,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { readinessOf, READINESS } from "@/lib/exports";
+import { queryIdSet, queryText } from "@/lib/query";
 import { clock } from "@/views/export/shared";
 import StatusDot from "@/components/StatusDot.vue";
 import { UiCheckbox, UiSelect } from "@/ui";
@@ -32,11 +33,6 @@ const libraryStore = useLibraryStore();
 const route = useRoute();
 const router = useRouter();
 
-const queryText = (value: unknown) =>
-  Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
-const queryIds = (value: unknown) =>
-  new Set(queryText(value).split(",").map(Number).filter(Number.isFinite));
-
 const chapters = computed(() => libraryStore.chaptersOf(props.bookId));
 const volumes = computed(() => libraryStore.volumesOf(props.bookId));
 const multi = computed(() => volumes.value.length > 1);
@@ -51,7 +47,7 @@ const canPick = (c: Chapter) => !c.excluded;
 
 const q = ref(queryText(route.query.find));
 const search = ref<HTMLInputElement | null>(null);
-const collapsed = ref(queryIds(route.query.closed));
+const collapsed = ref(queryIdSet(route.query.closed));
 const lastClicked = ref<number | null>(null);
 
 type FilterKey = "all" | "selected" | "ready" | "attention" | "other";
@@ -204,7 +200,7 @@ watch(
     q.value = queryText(route.query.find);
     const nextFilter = queryText(route.query.filter) as FilterKey;
     filter.value = filterKeys.includes(nextFilter) ? nextFilter : "all";
-    collapsed.value = queryIds(route.query.closed);
+    collapsed.value = queryIdSet(route.query.closed);
   },
 );
 

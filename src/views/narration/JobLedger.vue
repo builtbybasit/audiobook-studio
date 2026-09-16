@@ -24,6 +24,7 @@ import { computed, defineAsyncComponent, nextTick, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useJob, STATUS_BG, fmt } from "@/views/narration/shared";
 import { FLAG_LABEL } from "@/lib/scriptReview";
+import { queryIdSet } from "@/lib/query";
 import { pauseAfter, secs } from "@/lib/speech";
 import { usePlayer, type Queue } from "@/composables/usePlayer";
 import { speechPeaks } from "@/lib/peaks";
@@ -74,14 +75,7 @@ watch(
     filter.value = FILTERS.includes(next) ? next : "all";
   },
 );
-const segmentIds = (value: unknown) =>
-  new Set(
-    String(Array.isArray(value) ? (value[0] ?? "") : (value ?? ""))
-      .split(",")
-      .map(Number)
-      .filter(Number.isFinite),
-  );
-const expanded = ref(segmentIds(route.query.seg));
+const expanded = ref(queryIdSet(route.query.seg));
 function rememberExpanded() {
   const seg = [...expanded.value].sort((a, b) => a - b).join(",");
   void router.replace({ query: { ...route.query, seg: seg || undefined } });
@@ -96,7 +90,7 @@ const toggleDetails = (id: number) => {
 watch(
   () => route.query.seg,
   async (value) => {
-    const next = segmentIds(value);
+    const next = queryIdSet(value);
     expanded.value = next;
     const id = [...next][0];
     if (id) {
@@ -374,6 +368,58 @@ function playTake(s: Segment, t: Take | undefined) {
   if (t) play(takeId(s, t.n), t.duration, t.url);
 }
 const takePlaying = (s: Segment, t: Take | undefined) => !!t && onClip(takeId(s, t.n));
+const reviewable = computed(() =>
+  segments.value.filter(
+    (s) => s.candidate?.duration && !["queued", "generating"].includes(s.candidate.status),
+  ),
+);
+const bookReviewable = computed(() =>
+  libraryStore.chaptersOf(props.bookId).flatMap((chapter) =>
+    scriptsStore
+      .segmentsOf(props.bookId, chapter.id)
+      .filter(
+        (s) => s.candidate?.duration && !["queued", "generating"].includes(s.candidate.status),
+      )
+      .map((segment) => ({ chId: chapter.id, segment })),
+  ),
+);
+const reviewPosition = (s: Segment) =>
+  bookReviewable.value.findIndex((row) => row.chId === props.chapterId && row.segment.id === s.id) +
+  1;
+function focusReview(id: number | undefined) {
+  if (!id) return;
+  nextTick(() => {
+    const row = document.getElementById(`row-${id}`);
+    row?.focus();
+    row?.scrollIntoView({ block: "center", behavior: "smooth" });
+  });
+}
+/** A verdict removes this comparison, so remember its neighbour before changing the store. */
+async function decideTake(s: Segment, keep: "current" | "new") {
+  const reviews = bookReviewable.value;
+  const at = reviews.findIndex((row) => row.chId === props.chapterId && row.segment.id === s.id);
+  const nextReview = reviews[at + 1] ?? reviews[at - 1];
+  if (keep === "new") narrationStore.acceptTake(props.bookId, props.chapterId, s.id);
+  else narrationStore.rejectTake(props.bookId, props.chapterId, s.id);
+  if (!nextReview) {
+    await router.replace({ query: { ...route.query, seg: undefined } });
+    return;
+  }
+  await router.replace({
+    query: {
+      ...route.query,
+      ch: String(nextReview.chId),
+      filter: "review",
+      seg: String(nextReview.segment.id),
+    },
+  });
+  if (nextReview.chId === props.chapterId) focusReview(nextReview.segment.id);
+}
+function chooseFilter(next: string) {
+  filter.value = next;
+  void router.replace({ query: { ...route.query, filter: next === "all" ? undefined : next } });
+  if (next === "review") focusReview(reviewable.value[0]?.id);
+}
 function onRowKey(e: KeyboardEvent, s: Segment) {
   const row = e.currentTarget as HTMLElement;
   const list = [...(row.parentElement?.querySelectorAll<HTMLElement>("tr[data-row]") ?? [])];
@@ -391,10 +437,14 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
     narrationStore.retrySegment(props.bookId, props.chapterId, s.id);
   else if (e.key === "t" && s.audio.duration)
     narrationStore.retakeSegment(props.bookId, props.chapterId, s.id);
-  else if (e.key === "a" && s.candidate)
-    narrationStore.acceptTake(props.bookId, props.chapterId, s.id);
-  else if (e.key === "x" && s.candidate)
-    narrationStore.rejectTake(props.bookId, props.chapterId, s.id);
+  else if (e.key === "1" && s.candidate && s.audio.duration) {
+    e.preventDefault();
+    play("seg" + s.id, s.audio.duration, s.audio.url);
+  } else if (e.key === "2" && s.candidate?.duration) {
+    e.preventDefault();
+    play(candId(s), s.candidate.duration, s.candidate.url);
+  } else if (e.key === "a" && s.candidate?.duration) decideTake(s, "new");
+  else if (e.key === "x" && s.candidate) decideTake(s, "current");
   else if (e.key === "f" && s.audio.duration) openFlag(s);
   else if (e.key === "i" && hasDetails(s)) toggleDetails(s.id);
 }
@@ -410,10 +460,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
         :key="f"
         class="px-2 py-2 text-left sm:px-3"
         :class="filter === f ? 'bg-zinc-50 dark:bg-zinc-800/60' : ''"
-        @click="
-          filter = f;
-          router.replace({ query: { ...route.query, filter: f === 'all' ? undefined : f } });
-        "
+        @click="chooseFilter(f)"
       >
         <div class="truncate text-[11px] uppercase tracking-wider text-zinc-500">
           {{ FILTER_LABEL[f] ?? f }}
@@ -431,6 +478,17 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
           {{ count(f) }}
         </div>
       </button>
+    </div>
+    <div
+      v-if="filter === 'review' && count('review')"
+      class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200"
+    >
+      <b>{{ bookReviewable.length }} ready in this book</b>
+      <span><kbd class="rounded border px-1">1</kbd> play A</span>
+      <span><kbd class="rounded border px-1">2</kbd> play B</span>
+      <span><kbd class="rounded border px-1">X</kbd> keep A</span>
+      <span><kbd class="rounded border px-1">A</kbd> keep B</span>
+      <span class="text-sky-700/70 dark:text-sky-300/70">A verdict moves to the next retake.</span>
     </div>
     <div
       class="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-4 py-2 text-xs dark:border-zinc-800"
@@ -749,6 +807,9 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
               <td colspan="5" class="px-2 py-2 pr-4 text-xs">
                 <div class="flex flex-wrap items-center gap-2">
                   <b class="text-sky-700 dark:text-sky-300">Two takes of #{{ s.id }}</b>
+                  <span v-if="reviewPosition(s)" class="text-zinc-400">
+                    retake {{ reviewPosition(s) }} of {{ bookReviewable.length }}
+                  </span>
                   <span v-if="s.flag" class="text-amber-600"
                     ><FlagIcon class="icon-sm" /> {{ FLAG_LABEL[s.flag.kind]
                     }}<span v-if="s.flag.note"> — {{ s.flag.note }}</span></span
@@ -767,7 +828,8 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                     <div class="flex items-center gap-2">
                       <button
                         class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-zinc-200 text-[10px] disabled:opacity-40 dark:bg-zinc-700"
-                        :aria-label="`${onClip('seg' + s.id) ? 'Pause' : 'Play'} take ${s.audio.n ?? 1}`"
+                        :aria-label="`${onClip('seg' + s.id) ? 'Pause' : 'Play'} A, take ${s.audio.n ?? 1}`"
+                        aria-keyshortcuts="1"
                         :disabled="!s.audio.duration"
                         @click="play('seg' + s.id, s.audio.duration, s.audio.url)"
                       >
@@ -776,9 +838,10 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                           class="icon-sm icon-fill"
                         />
                       </button>
-                      <b>Take {{ s.audio.n ?? 1 }}</b>
-                      <span class="text-zinc-400">in the book</span>
-                      <span class="ml-auto font-mono text-zinc-500"
+                      <b>A · Take {{ s.audio.n ?? 1 }}</b>
+                      <span class="text-zinc-400">current book</span>
+                      <kbd class="ml-auto rounded border px-1 text-[10px] text-zinc-400">1</kbd>
+                      <span class="font-mono text-zinc-500"
                         >{{ s.audio.duration.toFixed(1) }}s</span
                       >
                     </div>
@@ -809,7 +872,8 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                     <div class="flex items-center gap-2">
                       <button
                         class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-sky-500 text-[10px] text-white disabled:opacity-40"
-                        :aria-label="`${candPlaying(s) ? 'Pause' : 'Play'} take ${s.candidate!.n}`"
+                        :aria-label="`${candPlaying(s) ? 'Pause' : 'Play'} B, take ${s.candidate!.n}`"
+                        aria-keyshortcuts="2"
                         :disabled="!s.candidate!.duration"
                         @click="play(candId(s), s.candidate!.duration, s.candidate!.url)"
                       >
@@ -818,9 +882,10 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                           class="icon-sm icon-fill"
                         />
                       </button>
-                      <b>Take {{ s.candidate!.n }}</b>
-                      <span class="text-zinc-400">new</span>
-                      <span class="ml-auto font-mono text-zinc-500">{{
+                      <b>B · Take {{ s.candidate!.n }}</b>
+                      <span class="text-zinc-400">retake</span>
+                      <kbd class="ml-auto rounded border px-1 text-[10px] text-sky-500">2</kbd>
+                      <span class="font-mono text-zinc-500">{{
                         s.candidate!.duration ? s.candidate!.duration.toFixed(1) + "s" : "…"
                       }}</span>
                     </div>
@@ -871,17 +936,23 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                           ? 'keep the clip the book already uses (x)'
                           : 'drop this retake (x)'
                       "
-                      @click="narrationStore.rejectTake(bookId, chapterId, s.id)"
+                      aria-keyshortcuts="x"
+                      @click="decideTake(s, 'current')"
                     >
-                      {{ s.candidate!.duration ? `Keep take ${s.audio.n ?? 1}` : "Discard retake" }}
+                      {{
+                        s.candidate!.duration ? `Keep A · take ${s.audio.n ?? 1}` : "Discard retake"
+                      }}
+                      <kbd class="ml-1 rounded border px-1 text-[9px]">X</kbd>
                     </button>
                     <button
                       v-if="s.candidate!.duration"
                       class="btn-primary btn-xs"
                       title="put the new clip in the book and clear the flag (a)"
-                      @click="narrationStore.acceptTake(bookId, chapterId, s.id)"
+                      aria-keyshortcuts="a"
+                      @click="decideTake(s, 'new')"
                     >
-                      Keep take {{ s.candidate!.n }}
+                      Keep B · take {{ s.candidate!.n }}
+                      <kbd class="ml-1 rounded border border-white/40 px-1 text-[9px]">A</kbd>
                     </button>
                   </template>
                 </div>

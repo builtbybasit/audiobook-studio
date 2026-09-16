@@ -19,7 +19,7 @@ import { useUiStore } from "@/stores/ui";
 // A clip can come back fine and still sound wrong, so any rendered row can be flagged (wrong
 // pronunciation / bad delivery / awkward pause) and retaken: the old clip is kept, the new one is
 // rendered beside it, and nothing is decided until the listener plays both and keeps one.
-// Keyboard: j/k move, ↵/p play, r retry, t retake, a keep new, x keep previous, i details.
+// Keyboard: j/k move, ↵/p play, r retry, t retake, a keep new, x keep previous, i details, e edit the line.
 import { computed, defineAsyncComponent, nextTick, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useJob, STATUS_BG, fmt } from "@/views/narration/shared";
@@ -27,6 +27,7 @@ import { FLAG_LABEL } from "@/lib/scriptReview";
 import { queryIdSet } from "@/lib/query";
 import { pauseAfter, secs } from "@/lib/speech";
 import { usePlayer, type Queue } from "@/composables/usePlayer";
+import { chapterQueue, chapterQueueId } from "@/composables/useChapterQueue";
 import { speechPeaks } from "@/lib/peaks";
 import ExpressionEditor from "@/components/ExpressionEditor.vue";
 import ExpressionText from "@/components/ExpressionText.vue";
@@ -36,6 +37,7 @@ import {
   BookA as DictionaryIcon,
   Flag as FlagIcon,
   Pause as PauseIcon,
+  PencilLine as EditIcon,
   Play as PlayIcon,
   SkipForward as PlayFromIcon,
   ChevronFirst as PrevIcon,
@@ -142,48 +144,19 @@ const bookGap = (s: Segment) =>
   pacing.value[
     segments.value[segments.value.indexOf(s) + 1]?.speaker === s.speaker ? "line" : "turn"
   ];
-// The player is app-wide, so a queue has to name this exact chapter: pressing play on ch 7 while
-// ch 6 is still going must load ch 7, not toggle the bar.
-const queueId = (chId: number) => `chapter:${props.bookId}:${chId}`;
+const queueId = (chId: number) => chapterQueueId(props.bookId, chId);
 const isChapter = computed(() => p.id === queueId(props.chapterId));
 /** the clip under the playhead is this one — true whether it is playing alone or inside the chapter */
 const onClip = (id: string) => p.clipId === id && p.playing;
 
-/** The chapter as the player wants it: the clips and the silence between them, in order. */
-function buildQueue(chId: number): Queue | null {
-  const segs = scriptsStore.segmentsOf(props.bookId, chId);
-  const heard = segs.filter((s) => s.audio.duration > 0);
-  if (!heard.length) return null;
-  const pace = castStore.pacingOf(props.bookId);
-  return {
-    id: queueId(chId),
-    title: libraryStore.chapter(props.bookId, chId)?.title ?? "",
-    subtitle: libraryStore.bookById(props.bookId)?.title ?? "",
-    href: `/book/${props.bookId}/narration?ch=${chId}`,
-    clips: heard.map((s, i) => ({
-      id: "seg" + s.id,
-      duration: s.audio.duration,
-      gap: pauseAfter(s, heard[i + 1], pace),
-      url: s.audio.url,
-      label: s.text,
-      speaker: s.speaker,
-    })),
-    next: () => nextNarrated(chId),
-  };
-}
-/** Listening through a book shouldn't stop at a chapter boundary. */
-function nextNarrated(after: number): Queue | null {
-  const chs = libraryStore.chaptersOf(props.bookId);
-  for (const c of chs.slice(chs.findIndex((x) => x.id === after) + 1)) {
-    const q = buildQueue(c.id);
-    if (!q) continue;
+/** This chapter's timeline, built the same way the reader builds it. */
+const buildQueue = (chId: number): Queue | null =>
+  chapterQueue(props.bookId, chId, {
+    href: (id) => `/book/${props.bookId}/narration?ch=${id}`,
     // the ledger follows the player: ?ch= is what NarrationView already watches, and going through
     // the router means this survives the remount that switching chapters causes
-    void router.replace({ query: { ...route.query, ch: String(c.id) } });
-    return q;
-  }
-  return null;
-}
+    onChapter: (id) => void router.replace({ query: { ...route.query, ch: String(id) } }),
+  });
 function playChapter(at?: number) {
   const q = buildQueue(props.chapterId);
   if (q) playQueue(q, at);
@@ -280,6 +253,12 @@ function retakeAll() {
     });
 }
 const hasDetails = (s: Segment) => !!(s.audio.at || s.audio.error || s.audio.cuts);
+/** The line itself, in the reader — where a wrong speaker, direction or word is fixed before a
+ *  retake would read the same request again. The same deep link Search uses. */
+const lineLink = (s: Segment) => ({
+  path: `/book/${props.bookId}/scripting`,
+  query: { ch: String(props.chapterId), seg: String(s.id) },
+});
 /** The audit trail as a strip of labelled facts — what this clip was actually rendered with. The
  *  free-text ones (style, direction) go last and take the rest of the line: they are whole phrases. */
 interface Fact {
@@ -447,6 +426,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
   else if (e.key === "x" && s.candidate) decideTake(s, "current");
   else if (e.key === "f" && s.audio.duration) openFlag(s);
   else if (e.key === "i" && hasDetails(s)) toggleDetails(s.id);
+  else if (e.key === "e") void router.push(lineLink(s));
 }
 </script>
 
@@ -548,7 +528,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
             <th class="hidden w-36 sm:table-cell">Speaker</th>
             <th>Text</th>
             <th class="hidden w-12 text-right sm:table-cell">Audio</th>
-            <th class="w-24 sm:w-28"></th>
+            <th class="w-28 sm:w-32"></th>
           </tr>
         </thead>
         <tbody>
@@ -771,9 +751,14 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                             </div>
                           </div>
                           <p v-else class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-                            A retake keeps this clip: you play both and decide. Change the voice,
-                            direction or the line itself first if the request was wrong, not the
-                            render.
+                            A retake keeps this clip: you play both and decide. If the request was
+                            wrong rather than the render, change the voice, direction or the line
+                            itself first —
+                            <RouterLink
+                              :to="lineLink(s)"
+                              class="text-violet-600 underline hover:text-violet-500 dark:text-violet-400"
+                              >edit the line in the reader</RouterLink
+                            >.
                           </p>
                           <div class="mt-3 flex items-center gap-2">
                             <button
@@ -796,6 +781,16 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                         </PopoverContent>
                       </PopoverPortal>
                     </PopoverRoot>
+                  </span>
+                  <span class="grid w-5 place-items-center">
+                    <RouterLink
+                      :to="lineLink(s)"
+                      class="icon-btn row-tool"
+                      title="edit this line in the reader — speaker, direction, boundaries, the words"
+                      :aria-label="`Edit line ${s.id} in the reader`"
+                    >
+                      <EditIcon class="icon-sm" />
+                    </RouterLink>
                   </span>
                 </div>
               </td>
@@ -990,13 +985,23 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                         </div>
                       </div>
                     </div>
-                    <button
-                      class="shrink-0 text-[11px] text-violet-500 hover:underline"
-                      title="the exact request body, as JSON"
-                      @click.stop="copyReq(s)"
-                    >
-                      copy request
-                    </button>
+                    <span class="flex shrink-0 items-center gap-3 text-[11px]">
+                      <RouterLink
+                        :to="lineLink(s)"
+                        class="text-violet-500 hover:underline"
+                        title="open this line in the reader"
+                        @click.stop
+                      >
+                        <EditIcon class="icon-sm" /> edit line
+                      </RouterLink>
+                      <button
+                        class="text-violet-500 hover:underline"
+                        title="the exact request body, as JSON"
+                        @click.stop="copyReq(s)"
+                      >
+                        copy request
+                      </button>
+                    </span>
                   </div>
 
                   <!-- the dictionary rewrote something on the way out -->

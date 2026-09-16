@@ -24,6 +24,8 @@ import ExpressionText from "@/components/ExpressionText.vue";
 import ExpressionEditor from "@/components/ExpressionEditor.vue";
 import WordStrip from "@/components/WordStrip.vue";
 import { PAUSE_STEPS, defaultPause, pauseAfter, secs } from "@/lib/speech";
+import { usePlayer } from "@/composables/usePlayer";
+import { chapterQueue, chapterQueueId, clipOf, segmentStart } from "@/composables/useChapterQueue";
 import {
   AudioLines as NarrationIcon,
   ChevronUp as ChevronUpIcon,
@@ -33,6 +35,7 @@ import {
   Minimize2 as ExitFocusIcon,
   Flag as FlagIcon,
   Pause as PauseIcon,
+  Play as PlayIcon,
   RotateCcw as RetryIcon,
   Scissors as SplitIcon,
   Trash2 as TrashIcon,
@@ -262,6 +265,35 @@ function nudgePause(s: Segment, step: number) {
   );
 }
 
+// ---- hearing the line you are editing ----
+// The player is app-wide and the chapter's timeline is built in one place, so the reader plays the
+// same queue the ledger does: pressing play on a line starts the chapter from that line and keeps
+// going, and whichever page you leave it on, the mini player carries it.
+const { p, playQueue, toggle } = usePlayer();
+const queueId = computed(() => chapterQueueId(props.bookId, props.chapterId));
+/** the clip under the playhead is this line, and it is actually running */
+const onClip = (s: Segment) => p.clipId === clipOf(s.id) && p.playing;
+function playLine(s: Segment) {
+  if (!s.audio.duration) return;
+  // pressing it again on the line under the playhead stops it rather than starting it over
+  if (p.id === queueId.value && p.clipId === clipOf(s.id)) return toggle();
+  const q = chapterQueue(props.bookId, props.chapterId, {
+    href: (id) => `/book/${props.bookId}/scripting?ch=${id}`,
+    onChapter: (id) => void router.replace({ query: { ...route.query, ch: String(id) } }),
+  });
+  const at = segmentStart(props.bookId, props.chapterId, s.id);
+  if (q && at != null) playQueue(q, at);
+}
+// Reading along: the page follows the playhead, but only while it is playing and only within this
+// chapter, so scrolling back to re-read something is never fought over.
+watch(
+  () => p.clipId,
+  (id) => {
+    if (!id || !p.playing || p.id !== queueId.value) return;
+    document.getElementById(`seg-${id.slice(3)}`)?.scrollIntoView({ block: "nearest" });
+  },
+);
+
 const GENDER_LABEL: Partial<Record<Gender, string>> = { m: "male", f: "female", n: "neutral" };
 const sameSpeakerCount = (s: Segment) =>
   segments.value.filter((x) => x.speaker === s.speaker && x.id !== s.id).length;
@@ -374,6 +406,9 @@ function onKey(e: KeyboardEvent) {
     e.preventDefault(); // the field opens focused, and would otherwise be handed this very "e"
     const s = segments.value.find((x) => x.id === focus.value);
     if (s) startTextEdit(s);
+  } else if (e.key === "p" && focus.value) {
+    const s = segments.value.find((x) => x.id === focus.value);
+    if (s) playLine(s);
   } else if (e.key === "c") {
     reader.showCast = !reader.showCast;
   } else if (e.key === "f") {
@@ -718,7 +753,8 @@ watch(open, (v) => {
             <p
               v-else-if="s.type === 'narration'"
               :id="'seg-' + s.id"
-              class="-mx-2 mb-3 cursor-text rounded px-2 py-0.5 transition-colors"
+              data-line
+              class="-mx-2 mb-3 flex cursor-text items-start gap-2 rounded px-2 py-0.5 transition-colors"
               :class="
                 open === s.id
                   ? 'bg-violet-50 ring-1 ring-violet-300 dark:bg-violet-500/10 dark:ring-violet-500/40'
@@ -728,21 +764,36 @@ watch(open, (v) => {
               "
               @click="open = open === s.id ? null : s.id"
             >
-              <ExpressionText :book-id="bookId" :segment="s" /><span
-                v-if="s.flag"
-                class="ml-2 rounded bg-amber-400/20 px-1 font-sans text-[10px] font-semibold leading-none text-amber-700 dark:text-amber-300"
-                :title="s.flag.note"
-                ><FlagIcon class="icon-sm" /> {{ s.flag.kind }}</span
-              ><span
-                v-if="s.direction"
-                class="ml-2 font-sans text-[11px] leading-none text-violet-500/80"
-                >[{{ s.direction }}]</span
+              <span class="min-w-0 flex-1"
+                ><ExpressionText :book-id="bookId" :segment="s" /><span
+                  v-if="s.flag"
+                  class="ml-2 rounded bg-amber-400/20 px-1 font-sans text-[10px] font-semibold leading-none text-amber-700 dark:text-amber-300"
+                  :title="s.flag.note"
+                  ><FlagIcon class="icon-sm" /> {{ s.flag.kind }}</span
+                ><span
+                  v-if="s.direction"
+                  class="ml-2 font-sans text-[11px] leading-none text-violet-500/80"
+                  >[{{ s.direction }}]</span
+                ></span
               >
+              <!-- in the same column as the cards' own, so the controls line up down the chapter;
+                   hidden until the line is hovered or read, so the page stays prose -->
+              <button
+                v-if="s.audio.duration"
+                class="icon-btn line-tool mt-0.5 shrink-0"
+                :class="onClip(s) ? 'icon-btn-play is-on' : focus === s.id && 'is-on'"
+                :aria-label="`${onClip(s) ? 'Pause' : 'Play'} line ${s.id}`"
+                :title="`Play the chapter from this line (p) · ${secs(s.audio.duration)}`"
+                @click.stop="playLine(s)"
+              >
+                <component :is="onClip(s) ? PauseIcon : PlayIcon" class="icon-sm icon-fill" />
+              </button>
             </p>
             <!-- dialogue / thought: card -->
             <div
               v-else
               :id="'seg-' + s.id"
+              data-line
               class="mb-3 cursor-pointer rounded-lg border-l-[3px] bg-zinc-50 px-4 py-2.5 transition-colors dark:bg-zinc-800/50"
               :style="{ borderLeftColor: colorOf(s.speaker) }"
               :class="
@@ -783,6 +834,16 @@ watch(open, (v) => {
                   >— {{ s.direction }}</span
                 >
                 <span v-else class="italic text-zinc-300 dark:text-zinc-600">— no direction</span>
+                <button
+                  v-if="s.audio.duration"
+                  class="icon-btn line-tool ml-auto shrink-0"
+                  :class="onClip(s) ? 'icon-btn-play is-on' : focus === s.id && 'is-on'"
+                  :aria-label="`${onClip(s) ? 'Pause' : 'Play'} ${s.speaker}’s line ${s.id}`"
+                  :title="`Play the chapter from this line (p) · ${secs(s.audio.duration)}`"
+                  @click.stop="playLine(s)"
+                >
+                  <component :is="onClip(s) ? PauseIcon : PlayIcon" class="icon-sm icon-fill" />
+                </button>
               </div>
               <p :class="s.type === 'thought' ? 'italic text-zinc-600 dark:text-zinc-300' : ''">
                 <template v-if="s.type === 'dialogue'"

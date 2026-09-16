@@ -37,6 +37,7 @@ const groups = [
       ["↵", "edit the focused line"],
       ["1 – 9", "assign speaker (chapter order)"],
       ["e", "correct the words of the focused line"],
+      ["p", "play the chapter from the focused line"],
       ["s", "split the focused line at a word gap"],
       ["m", "join the focused line with the next one"],
       ["c", "toggle the cast rail"],
@@ -76,6 +77,7 @@ const groups = [
       ["1 / 2", "play the current take / retake"],
       ["a / x", "keep the new take / keep the previous one"],
       ["click · i", "show render details"],
+      ["e", "edit the line in the reader"],
     ],
   },
   {

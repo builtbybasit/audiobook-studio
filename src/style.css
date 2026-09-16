@@ -189,6 +189,20 @@ body {
   }
 }
 
+/* the same idea in the script reader, where the rows are prose: the line's own controls keep their
+   place in the column so nothing reflows, but a page you are reading rather than working shows
+   none of them. `is-on` is the exception — the line under the playhead keeps its button. */
+@media (hover: hover) {
+  .line-tool {
+    visibility: hidden;
+  }
+  [data-line]:hover .line-tool,
+  [data-line]:focus-within .line-tool,
+  .line-tool.is-on {
+    visibility: visible;
+  }
+}
+
 /* a word the pronunciation dictionary rewrites: the prose stays as written, the hint is underneath */
 .lex {
   @apply cursor-help underline decoration-violet-400 decoration-dotted underline-offset-[3px];

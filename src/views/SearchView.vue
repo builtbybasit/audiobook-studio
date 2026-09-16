@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
+import { useDemoStore } from "@/stores/demo";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
@@ -30,10 +31,10 @@ import {
 import StatusDot from "@/components/StatusDot.vue";
 import BulkPanel from "@/views/search/BulkPanel.vue";
 import PronunciationDialog from "@/views/search/PronunciationDialog.vue";
-import DemoScenarios from "@/views/search/DemoScenarios.vue";
-import type { BulkResult, BulkTarget, SearchScenario, Segment, UndoEntry } from "@/types";
+import type { BulkResult, BulkTarget, Segment, UndoEntry } from "@/types";
 
 const castStore = useCastStore();
+const demoStore = useDemoStore();
 const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
@@ -222,18 +223,14 @@ function undo() {
   announcement.value = `Undone: ${last.value.result.label}.`;
 }
 
-function resetScenario() {
-  clearSelection();
-  last.value = null;
-}
-function runScenario(s: SearchScenario) {
-  clearSelection();
-  last.value = null;
-  q.value = s.query;
-  speaker.value = s.speaker;
-  type.value = s.type;
-  nextTick(() => (shown.value = PAGE));
-}
+// the Demo drawer seeds this book and puts it back; either way the last batch is history
+watch(
+  () => demoStore._searchDemo?.bookId,
+  () => {
+    clearSelection();
+    last.value = null;
+  },
+);
 
 // ---------- display helpers ----------
 function mark(text: string): { t: string; hit?: boolean }[] {
@@ -260,15 +257,12 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
 
 <template>
   <div class="mx-auto max-w-4xl space-y-4 p-4 sm:p-6">
-    <div class="flex flex-wrap items-start gap-2">
-      <div class="min-w-0 flex-1">
-        <h1 class="text-2xl font-semibold">Search the script</h1>
-        <p class="text-sm text-zinc-500">
-          Every line of {{ libraryStore.bookById(bookId)?.title }} that has been scripted — text,
-          speaker or direction. Tick lines to correct them together.
-        </p>
-      </div>
-      <DemoScenarios :book-id="bookId" @pick="runScenario" @reset="resetScenario" />
+    <div>
+      <h1 class="text-2xl font-semibold">Search the script</h1>
+      <p class="text-sm text-zinc-500">
+        Every line of {{ libraryStore.bookById(bookId)?.title }} that has been scripted — text,
+        speaker or direction. Tick lines to correct them together.
+      </p>
     </div>
 
     <div class="flex flex-wrap items-center gap-2">

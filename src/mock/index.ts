@@ -83,3 +83,4 @@ export {
   type ScriptSimContext,
 } from "@/mock/simulators/scripting";
 export type { SimulatorContext } from "@/mock/simulators/context";
+export { SPEEDS, clock, simMs } from "@/mock/simulators/clock";

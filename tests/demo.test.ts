@@ -1,13 +1,13 @@
-import { useCastStore } from "../src/stores/cast";
-import { useDemoStore } from "../src/stores/demo";
-import { useEndpointsStore } from "../src/stores/endpoints";
-import { useExportsStore } from "../src/stores/exports";
-import { useJobsStore } from "../src/stores/jobs";
-import { useLibraryStore } from "../src/stores/library";
-import { useNarrationStore } from "../src/stores/narration";
-import { useScriptingStore } from "../src/stores/scripting";
-import { useScriptsStore } from "../src/stores/scripts";
-import { useUiStore } from "../src/stores/ui";
+import { useCastStore } from "@/stores/cast";
+import { useDemoStore } from "@/stores/demo";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useExportsStore } from "@/stores/exports";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptingStore } from "@/stores/scripting";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 // The Demo tools: the scenarios behind the panel, and the two properties that make them worth
 // having.
 //
@@ -21,8 +21,8 @@ import { useUiStore } from "../src/stores/ui";
 import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 
-import { demoScenarios, DEMO_GROUPS } from "../src/mock";
-import { isScripted } from "../src/lib/scriptReview";
+import { clock as simClock, demoScenarios, DEMO_GROUPS, simMs } from "@/mock";
+import { isScripted } from "@/lib/scriptReview";
 
 let timers = new Map<number, { fn: () => void; repeat: boolean }>();
 let clock = 1_000_000;
@@ -142,6 +142,12 @@ describe("the scenario catalogue", () => {
     expect(demoScenarios()).not.toBe(demoScenarios());
     expect(demoScenarios()[0]).toEqual(demoScenarios()[0]);
   });
+  test("every row says what to try once it is applied", () => {
+    for (const s of demoScenarios()) {
+      expect(s.steps?.length ?? 0).toBeGreaterThan(0);
+      for (const step of s.steps ?? []) expect(step.trim().length).toBeGreaterThan(10);
+    }
+  });
 });
 
 describe("applying a scenario", () => {
@@ -184,7 +190,7 @@ describe("applying a scenario", () => {
   });
 
   test("reset puts back the demo credentials a scenario took away", async () => {
-    const { keyring } = await import("../src/lib/keyring");
+    const { keyring } = await import("@/lib/keyring");
     keyring.set("profile:openai", "");
     expect(keyring.has("profile:openai")).toBe(false);
     demoStore.resetDemo();
@@ -242,6 +248,29 @@ describe("switching scenarios while work is running", () => {
   });
 });
 
+describe("the speed of simulated work", () => {
+  test("shortens the waits, survives a reset, and leaves the recorded latency alone", () => {
+    try {
+      demoStore.setSpeed(4);
+      expect(simClock.speed).toBe(4);
+      expect(simMs(400)).toBe(100);
+      demoStore.resetDemo();
+      expect(demoStore._speed).toBe(4);
+      // a narration run at 4×: the clip still records the provider's latency, not the shortened wait
+      demoStore.applyScenario("fresh-book");
+      scriptingStore.runScripting("drowned", [1]);
+      drain();
+      narrationStore.runNarration("drowned", [1]);
+      drain();
+      const rendered = scriptsStore.segmentsOf("drowned", 1).filter((s) => s.audio.duration > 0);
+      expect(rendered.length).toBeGreaterThan(0);
+      for (const s of rendered) expect(s.audio.ms).toBeGreaterThan(100);
+    } finally {
+      demoStore.setSpeed(1);
+    }
+  });
+});
+
 describe("what a reset has to reach", () => {
   test("it leaves no simulated timer behind", () => {
     demoStore.applyScenario("builds");
@@ -267,8 +296,8 @@ describe("what a reset has to reach", () => {
   });
 
   test("it clears page state that lives outside the store", async () => {
-    const { ui, draftFor, draftDirty } = await import("../src/views/endpoints/state");
-    const { unifyEndpoint } = await import("../src/lib/endpoints");
+    const { ui, draftFor, draftDirty } = await import("@/views/endpoints/state");
+    const { unifyEndpoint } = await import("@/lib/endpoints");
     const endpoint = unifyEndpoint(endpointsStore.endpoints[0]);
     const draft = draftFor(endpoint);
     draft.model = "half-typed-model";

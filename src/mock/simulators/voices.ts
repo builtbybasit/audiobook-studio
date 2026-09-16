@@ -6,7 +6,8 @@
 // Only the transport is here. The toast that reports it belongs to the store.
 import { keyring } from "@/lib/keyring";
 import { fishModelsUrl, isFishAudio, voicesFromFishModels } from "@/lib/endpoints";
-import { DISCOVERABLE_VOICES, FISH_MODELS } from "../fixtures/voices";
+import { DISCOVERABLE_VOICES, FISH_MODELS } from "@/mock/fixtures/voices";
+import { simMs } from "@/mock/simulators/clock";
 import type { Endpoint } from "@/types";
 
 /** Where the request would go — the same URL the failure messages quote back. */
@@ -31,6 +32,6 @@ export function discoverVoices(ep: Endpoint): Promise<number> {
         .map((v) => ({ ...v }));
       ep.voices.push(...added);
       res(added.length);
-    }, 1200),
+    }, simMs(1200)),
   );
 }

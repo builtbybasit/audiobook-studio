@@ -8,9 +8,10 @@ import { keyring } from "@/lib/keyring";
 import { logJob, jobWaiting, startJob } from "@/lib/jobActivity";
 import { expressionParts } from "@/lib/expressions";
 import { requeue } from "@/lib/takes";
-import { rnd } from "../random";
-import { REQUEST_ERRORS } from "../fixtures/errors";
-import type { SimulatorContext } from "./context";
+import { rnd } from "@/mock/random";
+import { REQUEST_ERRORS } from "@/mock/fixtures/errors";
+import { simMs } from "@/mock/simulators/clock";
+import type { SimulatorContext } from "@/mock/simulators/context";
 import type { ExpressionPlan } from "@/lib/expressions";
 import type {
   AudioStatus,
@@ -76,7 +77,7 @@ export function dispatchNarration(
         ctx.finishJob(job, "cancelled");
         return done();
       }
-      return setTimeout(tick, 200);
+      return setTimeout(tick, simMs(200));
     }
     // A segment is rendered by the endpoint that owns its speaker's voice (falling back to the
     // Narrator's). Long text is split into `parts` requests against that endpoint's limit.
@@ -202,6 +203,7 @@ export function dispatchNarration(
         cost: (sent.length / 1e6) * ep.price,
       };
       const dur = ep.latency * rnd(0.5, 1.1) * parts + sent.length * 6;
+      // the wait is shortened by the demo speed; `dur` is what the clip records as its latency
       setTimeout(() => {
         // a request still in flight when the world was replaced: its result belongs to nothing
         if (ctx.stale()) return;
@@ -266,7 +268,7 @@ export function dispatchNarration(
             ...(clip.error ? { code: clip.error.code, error: clip.error.message } : {}),
           },
         );
-      }, dur);
+      }, simMs(dur));
     }
     jobWaiting(job, [...waiting].sort().join("; "));
     const pending = targets("queued", "generating");
@@ -311,7 +313,7 @@ export function dispatchNarration(
       done();
       return;
     }
-    setTimeout(tick, 200);
+    setTimeout(tick, simMs(200));
   };
   tick();
 }

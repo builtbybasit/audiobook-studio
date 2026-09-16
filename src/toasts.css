@@ -25,6 +25,12 @@
 .tf-toast-stack--right {
   justify-content: flex-end;
 }
+/* the Demo drawer takes the right edge on wide screens; toasts step aside rather than cover it */
+@media (min-width: 640px) {
+  .demo-drawer-open .tf-toast-stack--right {
+    transform: translateX(-400px);
+  }
+}
 .tf-toast-stack-inner {
   position: relative;
   display: flex;

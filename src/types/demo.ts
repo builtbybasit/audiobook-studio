@@ -20,6 +20,8 @@ export interface DemoScenario {
   path: string;
   /** simulated runs to start once it is seeded, so there is work in flight to watch */
   runs?: { kind: "scripting" | "narration"; chapterIds: number[] }[];
+  /** what to try once it is applied, in order — the drawer keeps these beside the page */
+  steps?: string[];
 }
 
 /** What a scenario did, for the toast that reports it and where it wants to open. */

@@ -17,6 +17,7 @@ import {
   applySearchDemo,
   applySituation,
   BOOK_SEEDS,
+  clock,
   demoScenario,
   demoScenarios,
   exportScenarios,
@@ -30,33 +31,39 @@ import {
 } from "@/mock";
 import type { DemoScenario, ExportScenario, ExportSettings, SearchScenario } from "@/types";
 import { defineStore } from "pinia";
-import { useCastStore } from "./cast";
-import { useEndpointsStore } from "./endpoints";
-import { useExportsStore } from "./exports";
-import { useJobsStore } from "./jobs";
-import { useLibraryStore } from "./library";
-import { useNarrationStore } from "./narration";
-import { useScriptingStore } from "./scripting";
-import { useScriptsStore } from "./scripts";
-import { useUiStore } from "./ui";
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useExportsStore } from "@/stores/exports";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptingStore } from "@/stores/scripting";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 interface DemoState {
   _kicked: boolean;
   /** the scenario the world currently holds, or null for the world as it is seeded */
   _scenario: string | null;
+  /** what applying it did, in counts — kept on screen in the drawer rather than only toasted */
+  _note: string;
   /** bumped every time the world is replaced; simulated runs from an older one stop */
   _epoch: number;
   _searchDemo: { bookId: string; restore: () => void } | null;
   _exportDemo: { bookId: string } | null;
   _exportFails: boolean;
+  /** how fast simulated work runs; mirrors `clock.speed`, which the simulators read */
+  _speed: number;
 }
 export const useDemoStore = defineStore("demo", {
   state: (): DemoState => ({
     _kicked: false,
     _scenario: null,
+    _note: "",
     _epoch: 0,
     _searchDemo: null,
     _exportDemo: null,
     _exportFails: false,
+    _speed: clock.speed,
   }),
   getters: {
     /** Every scenario the Demo tools offer, newly built each time they are rendered. */
@@ -136,6 +143,7 @@ export const useDemoStore = defineStore("demo", {
       // a scenario is free to take a demo credential away; the world it belongs to puts it back
       for (const [id, value] of SEEDED_KEYS) keyring.set(id, value);
       this._scenario = null;
+      this._note = "";
       this._searchDemo = null;
       this._exportDemo = null;
       this._exportFails = false;
@@ -155,6 +163,14 @@ export const useDemoStore = defineStore("demo", {
           j.cancelled = true;
           jobsStore._finish(j, "cancelled");
         }
+    },
+    /**
+     * Speed up every simulated wait. A run already going picks it up at its next request; what a
+     * request records — latency, cost — stays nominal. A tester's setting, so a reset leaves it.
+     */
+    setSpeed(speed: number): void {
+      clock.speed = Math.max(0.1, speed);
+      this._speed = clock.speed;
     },
     /** True for a run started against a world that has since been replaced. */
     isStale(epoch: number): boolean {
@@ -176,6 +192,7 @@ export const useDemoStore = defineStore("demo", {
       this._restoreWorld();
       const result = applySituation(this._scenarioContext(), id, scenario.bookId);
       this._scenario = id;
+      this._note = result.note;
       if (scenario.group === "export") this._exportDemo = { bookId: scenario.bookId };
       uiStore.toast(`Demo scenario: ${scenario.name}`, {
         kind: "info",

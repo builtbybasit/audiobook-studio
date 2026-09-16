@@ -2,7 +2,8 @@
 // produced in the same shape the narration and scripting runs already use, so the Queue treats a
 // build like any other job.
 import { jobWaiting, logJob } from "@/lib/jobActivity";
-import type { SimulatorContext } from "./context";
+import { clock } from "@/mock/simulators/clock";
+import type { SimulatorContext } from "@/mock/simulators/context";
 import type { ExportItem, Job } from "@/types";
 
 export interface BuildSimContext extends SimulatorContext {
@@ -135,7 +136,7 @@ export function runBuild(
       clearInterval(t);
       return;
     }
-    for (let n = 0; n < perTick && !job.finishedAt; n++) step();
+    for (let n = 0; n < perTick * clock.speed && !job.finishedAt; n++) step();
   }, 140);
 }
 

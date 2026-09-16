@@ -8,8 +8,9 @@
 import { logJob, jobWaiting, startJob } from "@/lib/jobActivity";
 import { scriptParts, tokenEstimate } from "@/lib/scripting";
 import { clone } from "@/lib/utils";
-import { generateSegments } from "../world/script";
-import type { SimulatorContext } from "./context";
+import { generateSegments } from "@/mock/world/script";
+import { clock, simMs } from "@/mock/simulators/clock";
+import type { SimulatorContext } from "@/mock/simulators/context";
 import type { Book, Chapter, Job, Profile, ScriptEndpointTelemetry, Segment } from "@/types";
 
 export interface ScriptSimContext extends SimulatorContext {
@@ -99,7 +100,7 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
       const { usage, started, request } = active.splice(i, 1)[0];
       logJob(job, `Request ${request} completed`, "info", {
         request,
-        responseMs: Date.now() - started,
+        responseMs: Math.round((Date.now() - started) * clock.speed),
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
         costUSD: usage.cost,
@@ -108,7 +109,7 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
       telemetry.lastSuccess = Date.now();
       telemetry.history = [
         ...telemetry.history.slice(-29),
-        { at: Date.now(), ms: Date.now() - started, ok: true },
+        { at: Date.now(), ms: Math.round((Date.now() - started) * clock.speed), ok: true },
       ];
       run.active--;
       run.completed++;
@@ -229,7 +230,7 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
       active.push({
         request: cursor,
         started: Date.now(),
-        finish: Date.now() + profile.secPerChunk * 100,
+        finish: Date.now() + simMs(profile.secPerChunk * 100),
         usage,
       });
       c.scripting = "running";

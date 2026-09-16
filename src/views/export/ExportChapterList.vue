@@ -22,8 +22,11 @@ import {
 } from "@lucide/vue";
 import type { Chapter, ChapterReadiness, Volume } from "@/types";
 
-const props = defineProps<{ bookId: string; modelValue: number[] }>();
-const emit = defineEmits<{ "update:modelValue": [number[]] }>();
+const props = withDefaults(
+  defineProps<{ bookId: string; modelValue: number[]; focusIds?: number[] }>(),
+  { focusIds: () => [] },
+);
+const emit = defineEmits<{ "update:modelValue": [number[]]; "clear-focus": [] }>();
 const libraryStore = useLibraryStore();
 
 const chapters = computed(() => libraryStore.chaptersOf(props.bookId));
@@ -43,7 +46,7 @@ const search = ref<HTMLInputElement | null>(null);
 const collapsed = ref(new Set<number>());
 const lastClicked = ref<number | null>(null);
 
-type FilterKey = "all" | "selected" | "ready" | "attention";
+type FilterKey = "all" | "selected" | "ready" | "attention" | "other";
 const filter = ref<FilterKey>("all");
 const counts = computed(() => {
   const out = { total: 0, ready: 0, stale: 0, missing: 0, failed: 0, running: 0, skipped: 0 };
@@ -62,19 +65,25 @@ const counts = computed(() => {
 const attention = computed(() => counts.value.stale + counts.value.missing + counts.value.failed);
 const needsAttention = (c: Chapter) =>
   selected.value.has(c.id) && !["ready", "skipped"].includes(readiness.value.get(c.id)!);
+const selectedAttention = computed(() => chapters.value.filter((c) => needsAttention(c)).length);
+const otherAttention = computed(() => Math.max(0, attention.value - selectedAttention.value));
 
 const FILTERS = computed(() => [
   { key: "all" as const, label: "All", n: counts.value.total },
   { key: "selected" as const, label: "Selected", n: props.modelValue.length },
   { key: "ready" as const, label: "Ready", n: counts.value.ready },
-  { key: "attention" as const, label: "Needs attention", n: attention.value },
+  { key: "attention" as const, label: "Selected issues", n: selectedAttention.value },
+  { key: "other" as const, label: "Other issues", n: otherAttention.value },
 ]);
 
 function passes(c: Chapter) {
   const r = readiness.value.get(c.id)!;
+  if (props.focusIds.length && !props.focusIds.includes(c.id)) return false;
   if (filter.value === "selected" && !selected.value.has(c.id)) return false;
   if (filter.value === "ready" && r !== "ready") return false;
-  if (filter.value === "attention" && ["ready", "skipped"].includes(r)) return false;
+  if (filter.value === "attention" && !needsAttention(c)) return false;
+  if (filter.value === "other" && (selected.value.has(c.id) || ["ready", "skipped"].includes(r)))
+    return false;
   if (!q.value) return true;
   const needle = q.value.trim().toLowerCase();
   return c.title.toLowerCase().includes(needle) || String(c.id) === needle;
@@ -121,13 +130,22 @@ function toggle(id: number, e?: MouseEvent | KeyboardEvent) {
 }
 /** Both things hide a ticked chapter, so both have to go — the promise is "show everything". */
 function showEverything() {
+  emit("clear-focus");
   filter.value = "all";
   q.value = "";
 }
-const wholeBook = () => set(pickable(chapters.value));
-const allReady = () =>
+const wholeBook = () => {
+  emit("clear-focus");
+  set(pickable(chapters.value));
+};
+const allReady = () => {
+  emit("clear-focus");
   set(chapters.value.filter((c) => readiness.value.get(c.id) === "ready").map((c) => c.id));
-const none = () => set([]);
+};
+const none = () => {
+  emit("clear-focus");
+  set([]);
+};
 
 function volState(v: VolumeRow) {
   const ids = pickable(chapters.value.filter((c) => c.volumeId === v.id));
@@ -229,6 +247,7 @@ const tone: Record<string, string> = {
           class="min-w-0 flex-1 bg-transparent py-0.5 text-xs focus:outline-none"
           placeholder="Find a chapter… (title or number)"
           aria-label="Find a chapter"
+          @input="emit('clear-focus')"
         />
       </div>
       <UiSelect
@@ -249,13 +268,28 @@ const tone: Record<string, string> = {
         class="chip"
         :class="[
           filter === f.key && 'chip-on',
-          f.key === 'attention' && f.n && filter !== f.key && 'border-amber-400 text-amber-600',
+          (f.key === 'attention' || f.key === 'other') &&
+            f.n &&
+            filter !== f.key &&
+            'border-amber-400 text-amber-600',
         ]"
         :aria-pressed="filter === f.key"
-        @click="filter = f.key"
+        @click="
+          emit('clear-focus');
+          filter = f.key;
+        "
       >
         {{ f.label }} <span class="font-mono opacity-60">{{ f.n }}</span>
       </button>
+    </div>
+
+    <div
+      v-if="focusIds.length"
+      class="flex items-center gap-2 border-b border-sky-200 bg-sky-500/10 px-3 py-2 text-xs text-sky-700 dark:border-sky-900 dark:text-sky-300"
+    >
+      Showing {{ focusIds.length }} {{ focusIds.length === 1 ? "chapter" : "chapters" }} from this
+      export issue
+      <button class="btn-ghost btn-xs ml-auto" @click="showEverything">Show everything</button>
     </div>
 
     <div class="min-h-0 flex-1 overflow-auto py-1" data-list>

@@ -208,6 +208,7 @@ export const useScriptingStore = defineStore("scripting", {
       const epoch = demoStore._epoch;
       return {
         stale: () => demoStore.isStale(epoch),
+        paused: (id) => !!libraryStore.bookById(id)?.budget?.paused,
         // read through a call, not captured: concurrency is shared across books and both lists are
         // replaced wholesale elsewhere in the store
         jobs: () => jobsStore.jobs,

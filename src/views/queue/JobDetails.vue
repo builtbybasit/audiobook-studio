@@ -54,9 +54,21 @@ const filtered = computed(() => {
     .reverse();
 });
 const issues = computed(() => events.value.filter((e) => e.level !== "info").length);
-const stage = computed(() =>
-  props.job ? `/book/${props.job.bookId}/${props.job.kind}` : "/queue",
-);
+const stage = computed(() => {
+  if (!props.job) return "/queue";
+  return {
+    path: `/book/${props.job.bookId}/${props.job.kind}`,
+    query:
+      props.job.chapterId == null
+        ? undefined
+        : {
+            ch: String(props.job.chapterId),
+            ...(props.job.kind === "narration" && props.job.status === "failed"
+              ? { filter: "failed" }
+              : {}),
+          },
+  };
+});
 const clock = (at: number) =>
   new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const stamp = (at: number | null) => (at === null ? "—" : new Date(at).toLocaleString());
@@ -327,7 +339,9 @@ async function copy() {
               <button class="btn-ghost btn-xs" @click="copy">
                 <CopyIcon class="icon-sm" /> Copy diagnostics</button
               ><RouterLink :to="stage" class="btn-ghost btn-xs" @click="emit('close')"
-                >Open {{ job.kind }}<OpenIcon class="icon-sm" /></RouterLink
+                >Open {{ job.kind
+                }}<template v-if="job.chapterId !== null"> · chapter {{ job.chapterId }}</template
+                ><OpenIcon class="icon-sm" /></RouterLink
               ><button
                 v-if="!job.finishedAt"
                 class="btn-ghost btn-xs ml-auto text-red-500"

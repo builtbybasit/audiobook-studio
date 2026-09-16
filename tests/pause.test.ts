@@ -112,6 +112,25 @@ test("pausing an endpoint holds its queue; the run finishes when it is resumed",
   expect(statuses().every((s) => s === "done")).toBe(true);
 });
 
+test("pausing a book holds its jobs without turning them into cancelled history", () => {
+  narrationStore.runNarration(bookId, [chapterId]);
+  advance(3000);
+  const active = job()!;
+
+  libraryStore.pauseBook(bookId);
+  advance(60_000);
+  expect(active.cancelled).toBe(false);
+  expect(active.finishedAt).toBeNull();
+  expect(active.waitingReason).toBe("Book is paused");
+  expect(statuses().some((s) => s === "queued")).toBe(true);
+  expect(statuses().some((s) => s === "failed")).toBe(false);
+
+  libraryStore.resumeBook(bookId);
+  advance(600_000);
+  expect(active.finishedAt).not.toBeNull();
+  expect(active.status).toBe("done");
+});
+
 test("cancelling empties the queue instead of holding it", () => {
   narrationStore.runNarration(bookId, [chapterId]);
   advance(3000);

@@ -145,20 +145,24 @@ export const useLibraryStore = defineStore("library", {
       const jobsStore = useJobsStore();
       const uiStore = useUiStore();
 
-      for (const j of jobsStore.jobs)
-        if (j.bookId === bookId && (j.status === "running" || j.status === "queued"))
-          jobsStore.cancelJob(j.id);
       const b = this.bookById(bookId);
       if (b) (b.budget ??= { cap: null, paused: false }).paused = true;
-      uiStore.toast(`${b?.title}: everything paused`, {
+      const held = jobsStore.jobs.filter(
+        (j) => j.bookId === bookId && (j.status === "running" || j.status === "queued"),
+      ).length;
+      uiStore.toast(`${b?.title}: new work paused`, {
         kind: "warn",
-        description: "Running and queued jobs were cancelled. Resume from the overview.",
+        description: held
+          ? `${held} ${held === 1 ? "job is" : "jobs are"} held. In-flight steps can finish; queued work resumes from here.`
+          : "New scripting, narration and builds are held until you resume this book.",
         timeout: 5000,
       });
     },
     resumeBook(bookId: string): void {
+      const uiStore = useUiStore();
       const b = this.bookById(bookId);
       if (b?.budget) b.budget.paused = false;
+      if (b) uiStore.toast(`${b.title}: work resumed`, { kind: "success" });
     },
     setBudgetCap(bookId: string, cap: number | null): void {
       const b = this.bookById(bookId);

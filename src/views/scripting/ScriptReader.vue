@@ -27,6 +27,8 @@ import {
   ChevronUp as ChevronUpIcon,
   ChevronDown as ChevronDownIcon,
   PanelRightClose as HideCastIcon,
+  Maximize2 as FocusIcon,
+  Minimize2 as ExitFocusIcon,
   Flag as FlagIcon,
   Pause as PauseIcon,
   RotateCcw as RetryIcon,
@@ -65,7 +67,11 @@ const filterOpts = computed(() => [
   })),
 ]);
 
-const props = defineProps<{ bookId: string; chapterId: number }>();
+const props = withDefaults(
+  defineProps<{ bookId: string; chapterId: number; focusMode?: boolean }>(),
+  { focusMode: false },
+);
+const emit = defineEmits<{ "toggle-focus": [] }>();
 const { segments, cast, counts, inChapter, colorOf } = useScript(props);
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
@@ -236,8 +242,10 @@ function onKey(e: KeyboardEvent) {
   } else if (e.key === "Enter" && focus.value) {
     open.value = open.value === focus.value ? null : focus.value;
   } else if (e.key === "Escape") {
-    open.value = null;
-    splitting.value = null;
+    if (open.value || splitting.value) {
+      open.value = null;
+      splitting.value = null;
+    } else if (props.focusMode) emit("toggle-focus");
   } else if (e.key === "s" && focus.value) {
     splitting.value = splitting.value === focus.value ? null : focus.value;
     open.value = null;
@@ -252,6 +260,8 @@ function onKey(e: KeyboardEvent) {
     }
   } else if (e.key === "c") {
     reader.showCast = !reader.showCast;
+  } else if (e.key === "f") {
+    emit("toggle-focus");
   } else if (e.key === "/" && !e.shiftKey) {
     e.preventDefault();
     document.querySelector<HTMLInputElement>('input[placeholder^="Find chapter"]')?.focus();
@@ -375,6 +385,15 @@ watch(open, (v) => {
           >
             <CastIcon class="icon-sm" /> Cast
             <span class="text-zinc-400">{{ inChapter.length }}</span>
+          </button>
+          <button
+            class="btn-ghost btn-xs"
+            :class="focusMode && 'bg-zinc-200 dark:bg-zinc-800'"
+            :title="focusMode ? 'Exit reader focus mode (Esc or F)' : 'Focus the reader (F)'"
+            @click="emit('toggle-focus')"
+          >
+            <component :is="focusMode ? ExitFocusIcon : FocusIcon" class="icon-sm" />
+            {{ focusMode ? "Exit focus" : "Focus reader" }}
           </button>
           <ReaderSettings />
         </div>

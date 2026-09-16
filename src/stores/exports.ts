@@ -59,6 +59,7 @@ export const useExportsStore = defineStore("exports", {
       const epoch = demoStore._epoch;
       return {
         stale: () => demoStore.isStale(epoch),
+        paused: (id) => !!libraryStore.bookById(id)?.budget?.paused,
         chapterTitle: (bookId, chId) => libraryStore.chapter(bookId, chId)?.title ?? "",
         exportById: (id) => this.exports.find((e) => e.id === id),
         dropExport: (id) => {

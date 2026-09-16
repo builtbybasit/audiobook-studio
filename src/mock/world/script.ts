@@ -2,7 +2,7 @@
 // on the pair, so the same chapter always produces the same lines — and a re-script that is meant to
 // differ says so through `opts` rather than by drawing different randomness.
 import { pick, rng } from "../random";
-import { bookSeed, MINOR_LINES } from "../fixtures/books";
+import { BOOK_SEEDS, MINOR_LINES } from "../fixtures/books";
 import { DIRECTIONS } from "../fixtures/style";
 import type { Segment, SegmentType } from "@/types";
 
@@ -11,7 +11,9 @@ export function generateSegments(
   chapterId: number,
   opts: { aliasNoise?: boolean } = {},
 ): Segment[] {
-  const book = bookSeed(bookId);
+  // A freshly imported demo book has a runtime id rather than a hand-authored fixture id. It still
+  // needs deterministic prose so the complete seeded workflow can be exercised after import.
+  const book = BOOK_SEEDS.find((b) => b.id === bookId) ?? BOOK_SEEDS[0];
   const r = rng(bookId.length * 977 + chapterId * 131);
   const speakers = Object.keys(book.dialogue);
   const n = 24 + Math.floor(r() * 14);

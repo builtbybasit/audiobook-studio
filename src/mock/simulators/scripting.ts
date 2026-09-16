@@ -124,6 +124,10 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
         outputTokens: usage.outputTokens,
       });
     }
+    if (ctx.paused(bookId)) {
+      jobWaiting(job, "Book is paused");
+      return;
+    }
     const live = ctx.profiles().find((p) => p.id === profile.id);
     let slots =
       (live?.concurrency ?? 0) -

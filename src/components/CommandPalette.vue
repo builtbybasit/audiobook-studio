@@ -285,7 +285,7 @@ const commands = computed(() => {
       group: "Actions",
       label: book.value!.budget?.paused
         ? `Resume ${book.value!.title}`
-        : `Pause everything on ${book.value!.title}`,
+        : `Pause new work on ${book.value!.title}`,
       keywords: "budget stop",
       run: () =>
         book.value!.budget?.paused ? libraryStore.resumeBook(b) : libraryStore.pauseBook(b),

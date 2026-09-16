@@ -48,6 +48,7 @@ const tab = ref(route.query.tab === "library" ? "library" : "build");
 
 const anyNarrated = computed(() => libraryStore.chaptersOf(bookId).some(isNarrated));
 const selected = ref<number[]>([]);
+const issueIds = ref<number[]>([]);
 const settings = reactive<ExportSettings>({ ...DEFAULT_EXPORT_SETTINGS });
 /** The finished export a staged build would become the next version of. */
 const updates = ref<number | null>(null);
@@ -70,6 +71,7 @@ function reset() {
     .filter((c) => ["ready", "stale"].includes(readinessOf(c)))
     .map((c) => c.id);
   updates.value = null;
+  issueIds.value = [];
 }
 watch(() => bookId, reset, { immediate: true });
 // Update and Retry hand a build back here rather than answering for you. Take it whole — the ticks,
@@ -106,6 +108,7 @@ const failedBuilds = computed(() => exportsHere.value.filter((e) => e.status ===
 function drop(ids: number[]) {
   const gone = new Set(ids);
   selected.value = selected.value.filter((id) => !gone.has(id));
+  issueIds.value = [];
   uiStore.toast(`${plural(ids.length, "chapter")} left out of this build`, {
     kind: "info",
     description: "They are unticked in the list — nothing was deleted, and nothing was narrated.",
@@ -224,7 +227,12 @@ function build() {
           class="grid min-h-0 gap-4 lg:h-full lg:grid-cols-[minmax(280px,340px)_minmax(0,1fr)]"
         >
           <div class="h-[55vh] min-h-0 lg:h-auto">
-            <ExportChapterList :book-id="bookId" v-model="selected" />
+            <ExportChapterList
+              :book-id="bookId"
+              v-model="selected"
+              :focus-ids="issueIds"
+              @clear-focus="issueIds = []"
+            />
           </div>
           <div class="min-w-0 space-y-4 lg:min-h-0 lg:overflow-auto lg:pr-1">
             <ExportPlan
@@ -235,6 +243,7 @@ function build() {
               @drop="drop"
               @narrate="narrate"
               @use-stale="useStale"
+              @show="(ids) => (issueIds = ids)"
             />
             <ExportOutput :book-id="bookId" :settings="settings" :selected="selected" />
           </div>

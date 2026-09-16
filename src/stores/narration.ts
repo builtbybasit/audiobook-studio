@@ -539,6 +539,7 @@ export const useNarrationStore = defineStore("narration", {
       const castStore = useCastStore();
       const demoStore = useDemoStore();
       const jobsStore = useJobsStore();
+      const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
@@ -546,6 +547,7 @@ export const useNarrationStore = defineStore("narration", {
       const epoch = demoStore._epoch;
       return {
         stale: () => demoStore.isStale(epoch),
+        paused: (id) => !!libraryStore.bookById(id)?.budget?.paused,
         segmentsOf: (bookId, chId) => scriptsStore.segmentsOf(bookId, chId),
         charactersOf: (bookId) => castStore.charactersOf(bookId),
         effectiveVoice: (bookId, speaker) => castStore.effectiveVoice(bookId, speaker),

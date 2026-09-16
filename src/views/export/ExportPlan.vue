@@ -35,6 +35,7 @@ const emit = defineEmits<{
   narrate: [number[]];
   drop: [number[]];
   "use-stale": [];
+  show: [number[]];
 }>();
 const castStore = useCastStore();
 const exportsStore = useExportsStore();
@@ -53,6 +54,11 @@ const blocked = computed(() => review.value.blockers.length > 0);
 const chapters = computed(() =>
   libraryStore.chaptersOf(props.bookId).filter((c) => props.selected.includes(c.id)),
 );
+const chapterNames = (ids: number[]) =>
+  ids
+    .map((id) => libraryStore.chapter(props.bookId, id))
+    .filter(Boolean)
+    .map((c) => `Ch ${c!.id} · ${c!.title}`);
 /** A finished export this build would become the next version of. */
 const replaces = computed(() =>
   exportsStore
@@ -282,7 +288,17 @@ const ACTION_LABEL: Record<string, string> = {
             <p class="mt-0.5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-300">
               {{ b.detail }}
             </p>
+            <p
+              class="mt-1 line-clamp-2 text-[11px] text-zinc-500"
+              :title="chapterNames(b.ids).join('\n')"
+            >
+              {{ chapterNames(b.ids).slice(0, 3).join(" · ")
+              }}<template v-if="b.ids.length > 3"> · +{{ b.ids.length - 3 }} more</template>
+            </p>
             <div v-if="b.actions.length" class="mt-2 flex flex-wrap gap-1.5">
+              <button class="btn-ghost btn-xs" @click="emit('show', b.ids)">
+                Show {{ b.ids.length === 1 ? "chapter" : `these ${b.ids.length} chapters` }}
+              </button>
               <button
                 v-for="a in b.actions"
                 :key="a"

@@ -81,7 +81,9 @@ export function dispatchNarration(
     // A segment is rendered by the endpoint that owns its speaker's voice (falling back to the
     // Narrator's). Long text is split into `parts` requests against that endpoint's limit.
     const waiting = new Set<string>();
-    for (const target of targets("queued")) {
+    const bookPaused = ctx.paused(bookId);
+    if (bookPaused) waiting.add("Book is paused");
+    for (const target of bookPaused ? [] : targets("queued")) {
       const next = target.s;
       const slot = target.slot;
       const queued = clipOf(target);
@@ -274,10 +276,12 @@ export function dispatchNarration(
     // Pausing an endpoint holds its queued clips rather than failing them: that is the whole
     // difference between Pause and Cancel. The run stays open, waiting, until the endpoint is
     // resumed or the job is cancelled.
-    const held = targets("queued").some((t) => {
-      const ep = ctx.effectiveVoice(bookId, t.s.speaker).endpoint;
-      return !!ep && !ep.enabled;
-    });
+    const held =
+      bookPaused ||
+      targets("queued").some((t) => {
+        const ep = ctx.effectiveVoice(bookId, t.s.speaker).endpoint;
+        return !!ep && !ep.enabled;
+      });
     // stalled: nothing in flight and no queued clip can ever be placed — the voice or its
     // endpoint is gone, not merely paused
     const stalled =

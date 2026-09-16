@@ -63,7 +63,17 @@ const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterI
 const { p, play, playQueue, cue, seekTo, skip, next, prev, cycleRate, clipProgress } = usePlayer();
 // wavesurfer is only ever needed once a compare panel is open, so it stays out of the entry chunk
 const Waveform = defineAsyncComponent(() => import("@/components/Waveform.vue"));
-const filter = ref("all");
+const FILTERS = ["all", "done", "generating", "queued", "failed", "stale", "flagged", "review"];
+const filter = ref(
+  FILTERS.includes(String(route.query.filter)) ? String(route.query.filter) : "all",
+);
+watch(
+  () => route.query.filter,
+  (value) => {
+    const next = String(value ?? "all");
+    filter.value = FILTERS.includes(next) ? next : "all";
+  },
+);
 const expanded = ref(new Set<number>());
 const toggleDetails = (id: number) => {
   const n = new Set(expanded.value);
@@ -72,8 +82,7 @@ const toggleDetails = (id: number) => {
   expanded.value = n;
 };
 const AT = { sentence: "sentence", clause: "clause", word: "word", char: "hard cut" };
-const FILTERS = ["all", "done", "generating", "queued", "failed", "stale", "flagged", "review"];
-const FILTER_LABEL: Record<string, string> = { generating: "running" };
+const FILTER_LABEL: Record<string, string> = { done: "current audio", generating: "running" };
 const matches = (s: Segment, f: string) =>
   f === "all"
     ? true
@@ -376,7 +385,10 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
         :key="f"
         class="px-2 py-2 text-left sm:px-3"
         :class="filter === f ? 'bg-zinc-50 dark:bg-zinc-800/60' : ''"
-        @click="filter = f"
+        @click="
+          filter = f;
+          router.replace({ query: { ...route.query, filter: f === 'all' ? undefined : f } });
+        "
       >
         <div class="truncate text-[11px] uppercase tracking-wider text-zinc-500">
           {{ FILTER_LABEL[f] ?? f }}
@@ -443,17 +455,17 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
     </div>
 
     <div class="min-h-0 flex-1 overflow-auto">
-      <table class="w-full min-w-[640px] table-fixed text-sm">
+      <table class="w-full table-fixed text-sm sm:min-w-[640px]">
         <thead
           class="sticky top-0 bg-zinc-50 text-left text-[11px] uppercase tracking-wider text-zinc-500 dark:bg-zinc-900"
         >
           <tr>
             <th class="w-9 px-2 py-1.5">#</th>
             <th class="w-5"></th>
-            <th class="w-36">Speaker</th>
+            <th class="hidden w-36 sm:table-cell">Speaker</th>
             <th>Text</th>
-            <th class="w-12 text-right">Audio</th>
-            <th class="w-28"></th>
+            <th class="hidden w-12 text-right sm:table-cell">Audio</th>
+            <th class="w-24 sm:w-28"></th>
           </tr>
         </thead>
         <tbody>
@@ -480,7 +492,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                   :title="s.audio.status"
                 ></span>
               </td>
-              <td class="py-1 pr-2 leading-tight">
+              <td class="hidden py-1 pr-2 leading-tight sm:table-cell">
                 <div class="flex items-center gap-1.5">
                   <span
                     class="h-2 w-2 shrink-0 rounded-full"
@@ -502,6 +514,15 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                 class="truncate py-1 pr-3 leading-tight text-zinc-600 dark:text-zinc-300"
                 :class="s.type === 'thought' && 'italic'"
               >
+                <div
+                  class="mb-0.5 flex items-center gap-1 truncate text-[10px] not-italic sm:hidden"
+                >
+                  <span
+                    class="h-2 w-2 shrink-0 rounded-full"
+                    :style="{ background: colorOf(s.speaker) }"
+                  ></span>
+                  <span class="truncate font-medium text-zinc-500">{{ s.speaker }}</span>
+                </div>
                 <div class="line-clamp-1"><ExpressionText :book-id="bookId" :segment="s" /></div>
                 <div class="flex items-center gap-1.5 truncate text-[10px]">
                   <span v-if="s.direction" class="text-violet-500">[{{ s.direction }}]</span
@@ -546,12 +567,12 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                 </div>
               </td>
               <td
-                class="text-right font-mono text-xs text-zinc-500"
+                class="hidden text-right font-mono text-xs text-zinc-500 sm:table-cell"
                 :title="s.audio.ms ? `rendered in ${(s.audio.ms / 1000).toFixed(1)}s` : ''"
               >
                 {{ s.audio.duration ? s.audio.duration.toFixed(1) + "s" : "" }}
               </td>
-              <td class="pr-2">
+              <td class="pr-1 sm:pr-2">
                 <!-- fixed slots, so the primary action never moves between rows -->
                 <div class="flex items-center justify-end gap-0.5" @click.stop>
                   <span class="grid w-5 place-items-center">
@@ -721,6 +742,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                     <div class="flex items-center gap-2">
                       <button
                         class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-zinc-200 text-[10px] disabled:opacity-40 dark:bg-zinc-700"
+                        :aria-label="`${onClip('seg' + s.id) ? 'Pause' : 'Play'} take ${s.audio.n ?? 1}`"
                         :disabled="!s.audio.duration"
                         @click="play('seg' + s.id, s.audio.duration, s.audio.url)"
                       >
@@ -762,6 +784,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                     <div class="flex items-center gap-2">
                       <button
                         class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-sky-500 text-[10px] text-white disabled:opacity-40"
+                        :aria-label="`${candPlaying(s) ? 'Pause' : 'Play'} take ${s.candidate!.n}`"
                         :disabled="!s.candidate!.duration"
                         @click="play(candId(s), s.candidate!.duration, s.candidate!.url)"
                       >

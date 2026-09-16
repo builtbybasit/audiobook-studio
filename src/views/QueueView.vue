@@ -85,7 +85,16 @@ function segStats(j: Job) {
     failed: segs.filter((s) => s.audio.status === "failed").length,
   };
 }
-const stageLink = (j: Job) => `/book/${j.bookId}/${j.kind === "export" ? "export" : j.kind}`;
+const stageLink = (j: Job) => ({
+  path: `/book/${j.bookId}/${j.kind === "export" ? "export" : j.kind}`,
+  query:
+    j.chapterId == null
+      ? undefined
+      : {
+          ch: String(j.chapterId),
+          ...(j.kind === "narration" && j.status === "failed" ? { filter: "failed" } : {}),
+        },
+});
 const eta = computed(() => {
   const _tick = now.value; // re-read the estimate as the clock advances
   return jobsStore.eta;

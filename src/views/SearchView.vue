@@ -41,7 +41,7 @@ const route = useRoute();
 const router = useRouter();
 const bookId = useBookId();
 const q = ref(String(route.query.q ?? ""));
-const speaker = ref("");
+const speaker = ref(String(route.query.speaker ?? ""));
 const type = ref("all");
 watch(
   () => route.query.q,
@@ -50,6 +50,13 @@ watch(
   },
 );
 watch(q, (v) => router.replace({ query: { ...route.query, q: v || undefined } }));
+watch(
+  () => route.query.speaker,
+  (v) => {
+    speaker.value = String(v ?? "");
+  },
+);
+watch(speaker, (v) => router.replace({ query: { ...route.query, speaker: v || undefined } }));
 const { contains } = useFilter({ sensitivity: "base" });
 const cast = computed(() => castStore.charactersOf(bookId));
 const speakerOpts = computed(() => [

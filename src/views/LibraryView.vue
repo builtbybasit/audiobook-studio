@@ -59,12 +59,31 @@ function confirmAdd() {
   pending.value = null;
 }
 function stageOf(p: BookProgress) {
+  if (p.scripted < p.total)
+    return {
+      label: `${p.total - p.scripted} to script`,
+      cls: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+    };
+  if (p.narrated < p.total)
+    return {
+      label: `${p.total - p.narrated} to narrate`,
+      cls: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+    };
+  if (p.stale)
+    return {
+      label: `${p.stale} stale`,
+      cls: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+    };
   if (p.exported)
-    return { label: "Exported", cls: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" };
+    return {
+      label: `Complete · export v${p.exported}`,
+      cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+    };
   if (p.narrated)
-    return { label: "Narrating", cls: "bg-sky-500/15 text-sky-600 dark:text-sky-400" };
-  if (p.scripted)
-    return { label: "Scripting", cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400" };
+    return {
+      label: "Ready to export",
+      cls: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
+    };
   return { label: "New", cls: "bg-zinc-500/15 text-zinc-500" };
 }
 </script>

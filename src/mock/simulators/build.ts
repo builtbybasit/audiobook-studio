@@ -1,7 +1,7 @@
 // The simulated encoder. Nothing here writes a file: progress, timings, reuse and failure are
 // produced in the same shape the narration and scripting runs already use, so the Queue treats a
 // build like any other job.
-import { logJob } from "@/lib/jobActivity";
+import { jobWaiting, logJob } from "@/lib/jobActivity";
 import type { SimulatorContext } from "./context";
 import type { ExportItem, Job } from "@/types";
 
@@ -66,6 +66,11 @@ export function runBuild(
       });
       return;
     }
+    if (ctx.paused(bookId)) {
+      jobWaiting(job, "Book is paused");
+      return;
+    }
+    jobWaiting(job, "");
     const at = queue[i];
     if (!at) return;
     if (at.fileIndex !== lastFile) {

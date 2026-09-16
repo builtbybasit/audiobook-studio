@@ -110,8 +110,7 @@ test("an asynchronous export settles only the stores that started it", () => {
   const otherJobs = useJobsStore(second);
   const before = clone(otherExports.exports);
   setActivePinia(second);
-  for (let tick = 0; tick < 20 && callbacks.size; tick++)
-    for (const fn of callbacks.values()) fn();
+  for (let tick = 0; tick < 20 && callbacks.size; tick++) for (const fn of callbacks.values()) fn();
   expect(item.status).toBe("done");
   expect(useJobsStore(first).jobs.find((j) => j.id === item.jobId)?.status).toBe("done");
   expect(otherExports.exports).toEqual(before);

@@ -20,4 +20,6 @@ export interface SimulatorContext {
    * while work is in flight.
    */
   stale(): boolean;
+  /** A book-level hold stops new simulated requests while preserving the job and its queue. */
+  paused(bookId: string): boolean;
 }

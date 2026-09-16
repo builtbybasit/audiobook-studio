@@ -22,6 +22,7 @@ const route = useRoute();
 const bookId = useBookId();
 const selected = ref<number[]>([]);
 const showEndpoints = ref(false);
+const focusReader = ref(false);
 const endpointPanel = ref<HTMLElement | null>(null);
 const currentEndpoint = computed(() =>
   endpointsStore.profiles.find((p) => p.id === scriptingStore.scriptSettings.profile),
@@ -64,7 +65,7 @@ function scriptFirst() {
 
 <template>
   <div class="space-y-4 p-4">
-    <section ref="endpointPanel" class="card overflow-hidden">
+    <section v-if="!focusReader" ref="endpointPanel" class="card overflow-hidden">
       <button
         class="flex w-full flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-left"
         :aria-expanded="showEndpoints"
@@ -90,8 +91,11 @@ function scriptFirst() {
         <ScriptEndpoints :book-id="bookId" :selected="selected" />
       </div>
     </section>
-    <div class="grid grid-cols-1 gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
-      <div class="flex min-h-0 flex-col gap-3">
+    <div
+      class="grid grid-cols-1 gap-4"
+      :class="!focusReader && 'lg:grid-cols-[320px_minmax(0,1fr)]'"
+    >
+      <div v-if="!focusReader" class="flex min-h-0 flex-col gap-3">
         <div class="h-[420px] min-h-0">
           <ChapterPicker
             :book-id="bookId"
@@ -110,8 +114,18 @@ function scriptFirst() {
         </div>
       </div>
 
-      <div class="min-h-0 min-w-0 lg:sticky lg:top-4 lg:h-[calc(100vh-140px)]">
-        <ScriptReader v-if="hasScript" :book-id="bookId" :chapter-id="opened" :key="opened" />
+      <div
+        class="min-h-0 min-w-0 lg:sticky lg:top-4"
+        :class="focusReader ? 'h-[calc(100dvh-88px)]' : 'lg:h-[calc(100vh-140px)]'"
+      >
+        <ScriptReader
+          v-if="hasScript"
+          :book-id="bookId"
+          :chapter-id="opened"
+          :focus-mode="focusReader"
+          :key="opened"
+          @toggle-focus="focusReader = !focusReader"
+        />
         <EmptyState
           v-else-if="!anyScripted && chapter?.scripting === 'none'"
           :icon="ScriptingIcon"

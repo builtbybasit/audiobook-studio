@@ -68,6 +68,8 @@ function remove(v: Volume) {
 }
 const budget = computed(() => book.value.budget ?? { cap: null, paused: false });
 const spent = computed(() => jobsStore.spent(bookId));
+const scriptSpent = computed(() => jobsStore.scriptSpent(bookId));
+const narrationSpent = computed(() => Math.max(0, spent.value - scriptSpent.value));
 const capInput = computed({
   get: () => book.value.budget?.cap ?? null,
   set: (v) => libraryStore.setBudgetCap(bookId, v || null),
@@ -438,7 +440,10 @@ const next = computed(() => {
           </div>
           <div class="mt-2 flex items-baseline gap-2 text-sm">
             <b class="text-lg">${{ spent.toFixed(2) }}</b
-            ><span class="text-zinc-500">spent on narration so far</span>
+            ><span class="text-zinc-500">spent on this book</span>
+          </div>
+          <div class="mt-0.5 text-[11px] text-zinc-500">
+            Scripting ${{ scriptSpent.toFixed(2) }} · Narration ${{ narrationSpent.toFixed(2) }}
           </div>
           <div v-if="budget.cap" class="mt-1">
             <div class="h-1.5 rounded bg-zinc-200 dark:bg-zinc-800">
@@ -463,7 +468,7 @@ const next = computed(() => {
               :empty="null"
               placeholder="none"
               label="Spend cap for this book"
-            /><span class="text-zinc-400">per book, narration only</span>
+            /><span class="text-zinc-400">scripting + narration</span>
           </div>
           <button
             class="btn-ghost btn-xs mt-3 w-full justify-center"
@@ -477,7 +482,7 @@ const next = computed(() => {
             "
           >
             <component :is="budget.paused ? PlayIcon : PauseIcon" class="icon-sm icon-fill" />
-            {{ budget.paused ? "Resume this book" : "Pause everything on this book" }}
+            {{ budget.paused ? "Resume this book" : "Pause new work on this book" }}
           </button>
         </div>
         <div class="card p-4 text-xs text-zinc-500">

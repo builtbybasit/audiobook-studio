@@ -264,6 +264,13 @@ describe("demo scenarios", () => {
     expect(demoStore.searchScenarios(unscripted)).toEqual([]);
   });
 
+  test("a newly imported book has deterministic source text for the seeded workflow", () => {
+    const imported = libraryStore.addNovel("brand-new.epub", "Brand New");
+    const first = scriptsStore.rawText(imported, 1);
+    expect(first.length).toBeGreaterThan(100);
+    expect(scriptsStore.rawText(imported, 1)).toBe(first);
+  });
+
   test("the search scenario rows describe the character they were built from", () => {
     const target = searchDemoTarget(castStore.charactersOf("cliche"))!;
     const rows = searchScenarios(target);

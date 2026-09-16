@@ -63,6 +63,8 @@ const visible = computed(() =>
     .map((v) => ({ ...v, chapters: v.chapters.filter(matches) }))
     .filter((v) => v.chapters.length),
 );
+const visiblePickable = computed(() => visible.value.flatMap((v) => v.chapters.filter(canPick)));
+const eligible = computed(() => chapters.value.filter(canPick));
 function jump(id: string | number | null) {
   document
     .getElementById(`vol-${props.bookId}-${id}`)
@@ -84,7 +86,7 @@ function progressOf(c: Chapter) {
 function toggle(id: number, e?: MouseEvent | KeyboardEvent) {
   const set = new Set(props.modelValue);
   if (e?.shiftKey && lastClicked.value != null) {
-    const ids = chapters.value.filter(canPick).map((c) => c.id);
+    const ids = visiblePickable.value.map((c) => c.id);
     const a = ids.indexOf(lastClicked.value);
     const b = ids.indexOf(id);
     const on = !set.has(id);
@@ -100,7 +102,13 @@ function toggle(id: number, e?: MouseEvent | KeyboardEvent) {
 function all() {
   emit(
     "update:modelValue",
-    chapters.value.filter(canPick).map((c) => c.id),
+    visiblePickable.value.map((c) => c.id),
+  );
+}
+function allEligible() {
+  emit(
+    "update:modelValue",
+    eligible.value.map((c) => c.id),
   );
 }
 function none() {
@@ -212,7 +220,12 @@ const peek = (c: Chapter) => {
         </div>
       </div>
       <div class="flex gap-1">
-        <button class="btn-ghost btn-xs" @click="all">All</button>
+        <button class="btn-ghost btn-xs" @click="all">
+          {{ q ? `All results (${visiblePickable.length})` : "All" }}
+        </button>
+        <button v-if="q" class="btn-ghost btn-xs" @click="allEligible">
+          All eligible ({{ eligible.length }})
+        </button>
         <button class="btn-ghost btn-xs" @click="pending">Pending</button>
         <button class="btn-ghost btn-xs" @click="none">None</button>
       </div>
@@ -304,7 +317,7 @@ const peek = (c: Chapter) => {
               <PopoverTrigger
                 class="rounded px-1 text-[11px] text-zinc-400 opacity-0 hover:text-violet-500 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                 title="peek at the chapter text"
-                tabindex="-1"
+                :aria-label="`Preview and exclude chapter ${c.id}, ${c.title}`"
                 ><PeekIcon class="icon-sm"
               /></PopoverTrigger>
               <PopoverPortal>

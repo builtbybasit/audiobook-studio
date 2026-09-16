@@ -39,6 +39,7 @@ const groups = [
       ["s", "split the focused line at a word gap"],
       ["m", "join the focused line with the next one"],
       ["c", "toggle the cast rail"],
+      ["f", "toggle reader focus mode"],
       ["/", "focus the chapter search"],
     ],
   },

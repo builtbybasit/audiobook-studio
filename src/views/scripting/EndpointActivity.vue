@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useJobsStore } from "@/stores/jobs";
 import { useUiStore } from "@/stores/ui";
+import LatencySparkline from "@/components/LatencySparkline.vue";
 
 import { computed } from "vue";
 
@@ -46,17 +47,6 @@ const success = computed(() =>
       "%"
     : "—",
 );
-const points = computed(() => {
-  const rows = history.value.slice(-16);
-  const max = Math.max(1, ...rows.map((x) => x.ms));
-  const min = Math.min(...rows.map((x) => x.ms));
-  return rows
-    .map(
-      (x, i) =>
-        `${(i * 64) / Math.max(1, rows.length - 1)},${20 - ((x.ms - min) / Math.max(1, max - min)) * 16}`,
-    )
-    .join(" ");
-});
 const number = (n: number) => n.toLocaleString();
 const cost = computed(
   () =>
@@ -100,17 +90,8 @@ async function copyError() {
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Avg. latency</dt>
         <dd class="mt-0.5 flex items-center gap-1 font-mono">
-          {{ latency === null ? "—" : (latency / 1000).toFixed(1) + "s"
-          }}<svg
-            v-if="history.length > 1"
-            width="48"
-            height="20"
-            viewBox="0 0 64 24"
-            aria-hidden="true"
-            class="text-violet-500"
-          >
-            <polyline :points="points" fill="none" stroke="currentColor" stroke-width="1.5" />
-          </svg>
+          {{ latency === null ? "—" : (latency / 1000).toFixed(1) + "s" }}
+          <LatencySparkline :points="history" />
         </dd>
       </div>
       <div>

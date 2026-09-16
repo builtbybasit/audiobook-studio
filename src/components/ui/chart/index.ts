@@ -5,6 +5,7 @@ export { default as ChartContainer } from "./ChartContainer.vue";
 export { default as ChartLegendContent } from "./ChartLegendContent.vue";
 export { default as ChartTooltipContent } from "./ChartTooltipContent.vue";
 export { componentToString } from "./utils";
+export { VisCrosshair as ChartCrosshair, VisTooltip as ChartTooltip } from "@unovis/vue";
 
 // Format: { THEME_NAME: CSS_SELECTOR }
 export const THEMES = { light: "", dark: ".dark" } as const;
@@ -25,6 +26,3 @@ interface ChartContextProps {
 }
 
 export const [useChart, provideChartContext] = createContext<ChartContextProps>("Chart");
-
-// shadcn ships a re-export of VisCrosshair/VisTooltip here; dropped so chart call sites
-// import them straight from "@unovis/vue" the way the rest of the app does.

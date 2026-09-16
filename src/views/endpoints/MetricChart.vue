@@ -9,22 +9,27 @@
 // buckets, Enter picks one, Esc clears. The readout under the chart is the live region that
 // announces whichever bucket the pointer or the keyboard is on.
 //
-// Latency is drawn as two stacked segments, because the two halves have different fixes: time spent
-// waiting for one of our own slots, and time spent waiting for the provider.
+// Throughput and spend are interval totals, while errors are discrete event counts, so bars make
+// their magnitude and empty buckets easy to compare. Latency is a trend: two lines keep provider
+// response and queue wait distinct, and break where no settled request supplied a measurement.
 import { computed, ref } from "vue";
+import { CurveType } from "@unovis/ts";
 import {
   VisAxis,
-  VisCrosshair as ChartCrosshair,
+  VisLine,
+  VisScatter,
+  VisScatterSelectors,
   VisStackedBar,
   VisStackedBarSelectors,
-  VisTooltip as ChartTooltip,
   VisXYContainer,
 } from "@unovis/vue";
 import type { MetricBucket, MetricSeries } from "@/types";
 import type { ChartConfig } from "@/components/ui/chart";
 import {
   ChartContainer,
+  ChartCrosshair,
   ChartLegendContent,
+  ChartTooltip,
   ChartTooltipContent,
   componentToString,
 } from "@/components/ui/chart";
@@ -37,7 +42,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ pick: [MetricBucket | null] }>();
 
-/** Each metric is one or more stacked parts, drawn bottom-up. */
+/** Each metric is one or more series. Non-latency series are drawn as stacked bars. */
 interface Part {
   key: keyof MetricBucket;
   label: string;
@@ -72,8 +77,15 @@ const totalOf = (b: MetricBucket): number =>
   parts.value.reduce((n, p) => n + (b[p.key] as number), 0);
 
 const x = (b: MetricBucket) => b.from;
-const y = computed(() => parts.value.map((p) => (b: MetricBucket) => b[p.key] as number));
+const hasLatency = (b: MetricBucket): boolean => b.responseMs > 0 || b.queueMs > 0;
+const y = computed(() =>
+  parts.value.map(
+    (p) => (b: MetricBucket) =>
+      props.metric === "latency" && !hasLatency(b) ? undefined : (b[p.key] as number),
+  ),
+);
 const color = (_b: MetricBucket, i: number): string => parts.value[i]?.color ?? "var(--chart-1)";
+const colors = computed(() => parts.value.map((p) => p.color));
 
 const isSelected = (b: MetricBucket): boolean =>
   !!props.selected && props.selected.from === b.from && props.selected.to === b.to;
@@ -105,6 +117,13 @@ const cursor = ref<number | null>(null);
 const indexOf = (b: MetricBucket) => buckets.value.findIndex((x) => x.from === b.from);
 const events = {
   [VisStackedBarSelectors.bar]: {
+    mouseover: (b: MetricBucket) => (hovered.value = indexOf(b)),
+    mouseout: () => (hovered.value = null),
+    click: (b: MetricBucket) => pick(b),
+  },
+};
+const pointEvents = {
+  [VisScatterSelectors.point]: {
     mouseover: (b: MetricBucket) => (hovered.value = indexOf(b)),
     mouseout: () => (hovered.value = null),
     click: (b: MetricBucket) => pick(b),
@@ -191,7 +210,27 @@ const tooltip = computed(() =>
         :y-domain="[0, undefined]"
         :duration="200"
       >
+        <VisLine
+          v-if="metric === 'latency'"
+          :x="x"
+          :y="y"
+          :color="colors"
+          :curve-type="CurveType.MonotoneX"
+          :line-width="2"
+        />
+        <VisScatter
+          v-if="metric === 'latency'"
+          :x="x"
+          :y="y"
+          :color="colors"
+          :size="6"
+          stroke-color="var(--background)"
+          :stroke-width="1.5"
+          :events="pointEvents"
+          cursor="pointer"
+        />
         <VisStackedBar
+          v-else
           :x="x"
           :y="y"
           :color="color"
@@ -244,10 +283,10 @@ const tooltip = computed(() =>
           · pick it to see these requests</span
         >
       </template>
-      <template v-else
-        >Hover or arrow through a bar for its numbers; pick one to filter the Activity
-        tab.</template
-      >
+      <template v-else>
+        Hover or arrow through a {{ metric === "latency" ? "point" : "bar" }} for its numbers; pick
+        one to filter the Activity tab.
+      </template>
     </p>
   </ChartContainer>
 </template>

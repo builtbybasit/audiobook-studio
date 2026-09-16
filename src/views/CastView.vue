@@ -315,7 +315,10 @@ const duplicate = computed(
           >{{ s.into }}</span
         >
         <span class="min-w-0 flex-1 truncate text-xs text-zinc-500"
-          >{{ s.reason }} · {{ stats[s.from]?.lines ?? 0 }} lines would move</span
+          >{{ s.reason }} · {{ stats[s.from]?.lines ?? 0 }} line{{
+            (stats[s.from]?.lines ?? 0) === 1 ? "" : "s"
+          }}
+          would move</span
         >
         <button
           class="btn-primary btn-xs"

@@ -289,7 +289,7 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
       <label v-if="total" class="flex items-center gap-1.5">
         <UiCheckbox
           :model-value="allState"
-          :aria-label="`Select all ${total} matching lines`"
+          :aria-label="`Select all ${total} matching line${total === 1 ? '' : 's'}`"
           @update:model-value="() => (allState === true ? clearSelection() : selectAll())"
         />
         <span>Select all matching results</span>

@@ -7,7 +7,7 @@ import { useScriptsStore } from "@/stores/scripts";
 
 // Narration stage: voices + endpoints on top, chapter picker + run estimate + job ledger below.
 import { computed, nextTick, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
 import { isNarrated } from "@/lib/scriptReview";
 import EmptyState from "@/components/EmptyState.vue";
@@ -27,6 +27,7 @@ const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
 const scriptsStore = useScriptsStore();
 const route = useRoute();
+const router = useRouter();
 const bookId = useBookId();
 const tab = ref("voices");
 const lexicon = ref<InstanceType<typeof LexiconPanel> | null>(null);
@@ -37,7 +38,32 @@ async function toDictionary(word: string) {
   await nextTick();
   lexicon.value?.prefill(word);
 }
-const collapsed = ref(false);
+const setupKey = `audiobook-studio:narration-setup:${bookId}`;
+function savedCollapsed(): boolean | null {
+  try {
+    const value = localStorage.getItem(setupKey);
+    return value == null ? null : value === "closed";
+  } catch {
+    return null;
+  }
+}
+const collapsed = ref(
+  savedCollapsed() ??
+    (!!route.query.filter || libraryStore.chaptersOf(bookId).some((c) => c.narration !== "none")),
+);
+watch(collapsed, (value) => {
+  try {
+    localStorage.setItem(setupKey, value ? "closed" : "open");
+  } catch {
+    // A blocked storage API should not stop the workspace from opening.
+  }
+});
+watch(
+  () => route.query.filter,
+  (value) => {
+    if (value) collapsed.value = true;
+  },
+);
 const selected = ref([]);
 const opened = ref(
   Number(route.query.ch) ||
@@ -52,6 +78,10 @@ watch(
     if (ch) opened.value = Number(ch);
   },
 ); // ?ch= from the command palette
+function openChapter(id: number) {
+  opened.value = id;
+  void router.replace({ query: { ...route.query, ch: String(id), seg: undefined } });
+}
 const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));
 /** The tab carries the cast's progress, so the Voices panel needs no summary line of its own. */
 const voices = computed(() => {
@@ -115,7 +145,7 @@ const ready = computed(
             :opened-id="opened"
             run-label="Narrate"
             :selectable="(c) => isScripted(c)"
-            @open="(id) => (opened = id)"
+            @open="openChapter"
             @run="(ids) => narrationStore.runNarration(bookId, ids)"
           />
         </div>

@@ -6,7 +6,8 @@ import { useScriptsStore } from "@/stores/scripts";
 // novel spans several EPUBs; each volume header can collapse and select/deselect its chapters.
 // Each row has a peek (raw text preview) and can be skipped (excluded from every stage).
 // Keyboard: ↑↓ move, space ticks, ↵ opens, / focuses search.
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { isNarrated } from "@/lib/scriptReview";
 import StatusDot from "@/components/StatusDot.vue";
 import { UiCheckbox, UiSelect } from "@/ui";
@@ -43,6 +44,8 @@ const emit = defineEmits<{
 }>();
 const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
+const route = useRoute();
+const router = useRouter();
 const chapters = computed(() => libraryStore.chaptersOf(props.bookId));
 const volumes = computed(() => libraryStore.volumesOf(props.bookId));
 const grouped = computed(() =>
@@ -51,8 +54,12 @@ const grouped = computed(() =>
 /** A volume plus the chapters that belong to it, as rendered by the list. */
 type VolumeRow = Volume & { chapters: Chapter[] };
 const multi = computed(() => volumes.value.length > 1);
-const collapsed = ref(new Set<number>());
-const q = ref("");
+const queryText = (value: unknown) =>
+  Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
+const queryIds = (value: unknown) =>
+  new Set(queryText(value).split(",").map(Number).filter(Number.isFinite));
+const collapsed = ref(queryIds(route.query.closed));
+const q = ref(queryText(route.query.find));
 const search = ref<HTMLInputElement | null>(null);
 const lastClicked = ref<number | null>(null);
 const canPick = (c: Chapter) => props.selectable(c) && !c.excluded;
@@ -65,6 +72,29 @@ const visible = computed(() =>
 );
 const visiblePickable = computed(() => visible.value.flatMap((v) => v.chapters.filter(canPick)));
 const eligible = computed(() => chapters.value.filter(canPick));
+watch(q, (value) => {
+  if (queryText(route.query.find) === value) return;
+  void router.replace({ query: { ...route.query, find: value || undefined } });
+});
+watch(collapsed, (value) => {
+  const closed = [...value].sort((a, b) => a - b).join(",");
+  if (queryText(route.query.closed) === closed) return;
+  void router.replace({ query: { ...route.query, closed: closed || undefined } });
+});
+watch(
+  () => route.query.find,
+  (value) => {
+    const next = queryText(value);
+    if (q.value !== next) q.value = next;
+  },
+);
+watch(
+  () => route.query.closed,
+  (value) => {
+    const next = queryIds(value);
+    if ([...next].join(",") !== [...collapsed.value].join(",")) collapsed.value = next;
+  },
+);
 function jump(id: string | number | null) {
   document
     .getElementById(`vol-${props.bookId}-${id}`)

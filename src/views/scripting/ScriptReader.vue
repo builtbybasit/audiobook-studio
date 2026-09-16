@@ -13,7 +13,7 @@ import { useScriptsStore } from "@/stores/scripts";
 // in half — so the editor can split a segment at any word gap (click the gap; sentence ends are marked)
 // and join it with its neighbour. Both invalidate the audio they touch and both are undoable.
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useScript, TYPES } from "@/views/scripting/shared";
 import { directionOptions } from "@/lib/bulk";
 import { useReader } from "@/stores/reader";
@@ -79,6 +79,8 @@ const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 const scriptsStore = useScriptsStore();
 const reader = useReader();
+const route = useRoute();
+const router = useRouter();
 const volume = computed(() => libraryStore.volumeOf(props.bookId, props.chapterId));
 const multiVolume = computed(() => libraryStore.volumesOf(props.bookId).length > 1);
 
@@ -122,8 +124,6 @@ function nextNew() {
 }
 const unresolved = computed(() => inChapter.value.filter((c) => c.isNew).length);
 const fallbacks = computed(() => segments.value.filter((s) => s.fallback));
-const route = useRoute();
-
 // directions: presets + everything already used in this book, free text allowed
 const dirOpts = computed(() => directionOptions(scriptsStore.segments, props.bookId));
 // ---- segment boundaries: split at a word gap, join with a neighbour
@@ -213,6 +213,11 @@ function jumpTo(id: number) {
 
 // keyboard: j/k or ↑/↓ move, Enter edit, Esc close, 1–9 assign speaker (in-chapter order), c toggles cast
 const focus = ref<number | null>(null);
+watch(focus, (value) => {
+  const current = Number(route.query.seg) || null;
+  if (current === value) return;
+  void router.replace({ query: { ...route.query, seg: value ? String(value) : undefined } });
+});
 function moveFocus(d: number) {
   const ids = rows.value.map((r) => r.id);
   const i = focus.value == null ? -1 : ids.indexOf(focus.value);

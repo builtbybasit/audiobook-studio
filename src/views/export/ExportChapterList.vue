@@ -10,6 +10,7 @@ import { useLibraryStore } from "@/stores/library";
 // It also has to stay usable at 214 chapters: search, a status filter that doubles as navigation,
 // per-volume select and collapse, a jump box, and range selection with shift.
 import { computed, nextTick, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
 import { readinessOf, READINESS } from "@/lib/exports";
 import { clock } from "@/views/export/shared";
@@ -28,6 +29,13 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ "update:modelValue": [number[]]; "clear-focus": [] }>();
 const libraryStore = useLibraryStore();
+const route = useRoute();
+const router = useRouter();
+
+const queryText = (value: unknown) =>
+  Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
+const queryIds = (value: unknown) =>
+  new Set(queryText(value).split(",").map(Number).filter(Number.isFinite));
 
 const chapters = computed(() => libraryStore.chaptersOf(props.bookId));
 const volumes = computed(() => libraryStore.volumesOf(props.bookId));
@@ -41,13 +49,15 @@ const readiness = computed(() => {
 /** A chapter that is skipped is out of every stage; it cannot be put in a file either. */
 const canPick = (c: Chapter) => !c.excluded;
 
-const q = ref("");
+const q = ref(queryText(route.query.find));
 const search = ref<HTMLInputElement | null>(null);
-const collapsed = ref(new Set<number>());
+const collapsed = ref(queryIds(route.query.closed));
 const lastClicked = ref<number | null>(null);
 
 type FilterKey = "all" | "selected" | "ready" | "attention" | "other";
-const filter = ref<FilterKey>("all");
+const filterKeys: FilterKey[] = ["all", "selected", "ready", "attention", "other"];
+const routeFilter = queryText(route.query.filter) as FilterKey;
+const filter = ref<FilterKey>(filterKeys.includes(routeFilter) ? routeFilter : "all");
 const counts = computed(() => {
   const out = { total: 0, ready: 0, stale: 0, missing: 0, failed: 0, running: 0, skipped: 0 };
   for (const c of chapters.value) {
@@ -175,13 +185,26 @@ async function jump(id: string | number | null) {
     .getElementById(`xvol-${props.bookId}-${id}`)
     ?.scrollIntoView({ block: "start", behavior: "smooth" });
 }
-// changing book resets what is only meaningful for one book
+watch(q, (value) => {
+  if (queryText(route.query.find) === value) return;
+  void router.replace({ query: { ...route.query, find: value || undefined } });
+});
+watch(filter, (value) => {
+  if (queryText(route.query.filter) === (value === "all" ? "" : value)) return;
+  void router.replace({ query: { ...route.query, filter: value === "all" ? undefined : value } });
+});
+watch(collapsed, (value) => {
+  const closed = [...value].sort((a, b) => a - b).join(",");
+  if (queryText(route.query.closed) === closed) return;
+  void router.replace({ query: { ...route.query, closed: closed || undefined } });
+});
 watch(
-  () => props.bookId,
+  () => [route.query.find, route.query.filter, route.query.closed],
   () => {
-    q.value = "";
-    filter.value = "all";
-    collapsed.value = new Set();
+    q.value = queryText(route.query.find);
+    const nextFilter = queryText(route.query.filter) as FilterKey;
+    filter.value = filterKeys.includes(nextFilter) ? nextFilter : "all";
+    collapsed.value = queryIds(route.query.closed);
   },
 );
 

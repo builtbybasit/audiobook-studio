@@ -46,9 +46,15 @@ const bookId = useBookId();
 const book = computed(() => libraryStore.bookById(bookId)!);
 const tab = ref(route.query.tab === "library" ? "library" : "build");
 
+const queryIds = (value: unknown) =>
+  String(Array.isArray(value) ? (value[0] ?? "") : (value ?? ""))
+    .split(",")
+    .map(Number)
+    .filter(Number.isFinite);
+
 const anyNarrated = computed(() => libraryStore.chaptersOf(bookId).some(isNarrated));
 const selected = ref<number[]>([]);
-const issueIds = ref<number[]>([]);
+const issueIds = ref<number[]>(queryIds(route.query.issue));
 const settings = reactive<ExportSettings>({ ...DEFAULT_EXPORT_SETTINGS });
 /** The finished export a staged build would become the next version of. */
 const updates = ref<number | null>(null);
@@ -71,7 +77,6 @@ function reset() {
     .filter((c) => ["ready", "stale"].includes(readinessOf(c)))
     .map((c) => c.id);
   updates.value = null;
-  issueIds.value = [];
 }
 watch(() => bookId, reset, { immediate: true });
 // Update and Retry hand a build back here rather than answering for you. Take it whole — the ticks,
@@ -88,6 +93,34 @@ watch(
   },
   { immediate: true },
 );
+watch(tab, (value) => {
+  if (route.query.tab === (value === "library" ? "library" : undefined)) return;
+  void router.replace({
+    query: { ...route.query, tab: value === "library" ? "library" : undefined },
+  });
+});
+watch(
+  () => route.query.tab,
+  (value) => {
+    tab.value = value === "library" ? "library" : "build";
+  },
+);
+watch(
+  () => route.query.issue,
+  (value) => {
+    issueIds.value = queryIds(value);
+  },
+);
+
+function showIssues(ids: number[]) {
+  issueIds.value = [...new Set(ids)];
+  void router.replace({
+    query: { ...route.query, issue: issueIds.value.length ? issueIds.value.join(",") : undefined },
+  });
+}
+function clearIssues() {
+  showIssues([]);
+}
 // a demo scenario replaces the world under the page; the form and the selection follow it
 watch(
   () => demoStore._epoch,
@@ -231,7 +264,7 @@ function build() {
               :book-id="bookId"
               v-model="selected"
               :focus-ids="issueIds"
-              @clear-focus="issueIds = []"
+              @clear-focus="clearIssues"
             />
           </div>
           <div class="min-w-0 space-y-4 lg:min-h-0 lg:overflow-auto lg:pr-1">
@@ -243,7 +276,7 @@ function build() {
               @drop="drop"
               @narrate="narrate"
               @use-stale="useStale"
-              @show="(ids) => (issueIds = ids)"
+              @show="showIssues"
             />
             <ExportOutput :book-id="bookId" :settings="settings" :selected="selected" />
           </div>

@@ -20,7 +20,7 @@ import { useUiStore } from "@/stores/ui";
 // pronunciation / bad delivery / awkward pause) and retaken: the old clip is kept, the new one is
 // rendered beside it, and nothing is decided until the listener plays both and keeps one.
 // Keyboard: j/k move, ↵/p play, r retry, t retake, a keep new, x keep previous, i details.
-import { computed, defineAsyncComponent, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useJob, STATUS_BG, fmt } from "@/views/narration/shared";
 import { FLAG_LABEL } from "@/lib/scriptReview";
@@ -74,13 +74,38 @@ watch(
     filter.value = FILTERS.includes(next) ? next : "all";
   },
 );
-const expanded = ref(new Set<number>());
+const segmentIds = (value: unknown) =>
+  new Set(
+    String(Array.isArray(value) ? (value[0] ?? "") : (value ?? ""))
+      .split(",")
+      .map(Number)
+      .filter(Number.isFinite),
+  );
+const expanded = ref(segmentIds(route.query.seg));
+function rememberExpanded() {
+  const seg = [...expanded.value].sort((a, b) => a - b).join(",");
+  void router.replace({ query: { ...route.query, seg: seg || undefined } });
+}
 const toggleDetails = (id: number) => {
   const n = new Set(expanded.value);
   if (n.has(id)) n.delete(id);
   else n.add(id);
   expanded.value = n;
+  rememberExpanded();
 };
+watch(
+  () => route.query.seg,
+  async (value) => {
+    const next = segmentIds(value);
+    expanded.value = next;
+    const id = [...next][0];
+    if (id) {
+      await nextTick();
+      document.getElementById(`row-${id}`)?.scrollIntoView({ block: "center" });
+    }
+  },
+  { immediate: true },
+);
 const AT = { sentence: "sentence", clause: "clause", word: "word", char: "hard cut" };
 const FILTER_LABEL: Record<string, string> = { done: "current audio", generating: "running" };
 const matches = (s: Segment, f: string) =>

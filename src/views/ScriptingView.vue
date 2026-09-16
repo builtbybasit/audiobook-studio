@@ -5,7 +5,7 @@ import { useScriptingStore } from "@/stores/scripting";
 
 // Scripting stage: chapter picker + run settings on the left, script reader on the right.
 import { computed, nextTick, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
 import ChapterPicker from "@/components/ChapterPicker.vue";
 import EmptyState from "@/components/EmptyState.vue";
@@ -19,6 +19,7 @@ const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 const route = useRoute();
+const router = useRouter();
 const bookId = useBookId();
 const selected = ref<number[]>([]);
 const showEndpoints = ref(false);
@@ -49,6 +50,10 @@ watch(
     if (ch) opened.value = Number(ch);
   },
 ); // ?ch= from the command palette
+function openChapter(id: number) {
+  opened.value = id;
+  void router.replace({ query: { ...route.query, ch: String(id), seg: undefined } });
+}
 const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
 const hasScript = computed(() => chapter.value && isScripted(chapter.value));
 const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));
@@ -105,7 +110,7 @@ function scriptFirst() {
             run-label="Run scripting"
             :run-disabled="!!scriptingStore.scriptEstimate(bookId, selected).blockers.length"
             :selectable="(c) => !['running', 'queued'].includes(c.scripting)"
-            @open="(id) => (opened = id)"
+            @open="openChapter"
             @run="(ids) => scriptingStore.runScripting(bookId, ids)"
           />
         </div>

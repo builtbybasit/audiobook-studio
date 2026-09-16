@@ -10,8 +10,8 @@
 // announces whichever bucket the pointer or the keyboard is on.
 //
 // Throughput and spend are interval totals, while errors are discrete event counts, so bars make
-// their magnitude and empty buckets easy to compare. Latency is a trend: two lines keep provider
-// response and queue wait distinct, and break where no settled request supplied a measurement.
+// their magnitude and empty buckets easy to compare. Latency is a trend: one line shows the total
+// wait a user experienced, while the readout retains the queue/provider split needed to diagnose it.
 import { computed, ref } from "vue";
 import { CurveType } from "@unovis/ts";
 import {
@@ -43,17 +43,17 @@ const props = defineProps<{
 const emit = defineEmits<{ pick: [MetricBucket | null] }>();
 
 /** Each metric is one or more series. Non-latency series are drawn as stacked bars. */
+interface ChartBucket extends MetricBucket {
+  latencyMs: number;
+}
 interface Part {
-  key: keyof MetricBucket;
+  key: keyof ChartBucket;
   label: string;
   color: string;
 }
 const PARTS: Record<string, Part[]> = {
   throughput: [{ key: "throughput", label: "throughput", color: "var(--chart-1)" }],
-  latency: [
-    { key: "responseMs", label: "provider response", color: "var(--chart-1)" },
-    { key: "queueMs", label: "queue wait", color: "var(--chart-2)" },
-  ],
+  latency: [{ key: "latencyMs", label: "average total latency", color: "var(--chart-1)" }],
   spend: [{ key: "cost", label: "spend", color: "var(--chart-3)" }],
   errors: [
     { key: "failures", label: "failed", color: "var(--chart-4)" },
@@ -67,34 +67,42 @@ const chartConfig = computed<ChartConfig>(() =>
   Object.fromEntries(parts.value.map((p) => [p.key, { label: p.label, color: p.color }])),
 );
 const empty = computed(() => props.series.totals.requests === 0);
-const buckets = computed(() => props.series.buckets);
+const buckets = computed<ChartBucket[]>(() =>
+  props.series.buckets.map((bucket) => ({
+    ...bucket,
+    latencyMs: bucket.queueMs + bucket.responseMs,
+  })),
+);
 /** Bars are placed on a time axis, so Unovis needs the spacing to size them. */
 const step = computed(() => {
   const [a, b] = buckets.value;
   return b ? b.from - a.from : 60_000;
 });
-const totalOf = (b: MetricBucket): number =>
+const totalOf = (b: ChartBucket): number =>
   parts.value.reduce((n, p) => n + (b[p.key] as number), 0);
 
-const x = (b: MetricBucket) => b.from;
-const hasLatency = (b: MetricBucket): boolean => b.responseMs > 0 || b.queueMs > 0;
+const x = (b: ChartBucket) => b.from;
+const hasLatency = (b: ChartBucket): boolean => b.responseMs > 0 || b.queueMs > 0;
+const chartData = computed(() =>
+  props.metric === "latency" ? buckets.value.filter(hasLatency) : buckets.value,
+);
 const y = computed(() =>
   parts.value.map(
-    (p) => (b: MetricBucket) =>
+    (p) => (b: ChartBucket) =>
       props.metric === "latency" && !hasLatency(b) ? undefined : (b[p.key] as number),
   ),
 );
-const color = (_b: MetricBucket, i: number): string => parts.value[i]?.color ?? "var(--chart-1)";
+const color = (_b: ChartBucket, i: number): string => parts.value[i]?.color ?? "var(--chart-1)";
 const colors = computed(() => parts.value.map((p) => p.color));
 
-const isSelected = (b: MetricBucket): boolean =>
+const isSelected = (b: ChartBucket): boolean =>
   !!props.selected && props.selected.from === b.from && props.selected.to === b.to;
 /** Dim everything but the bucket in play — the one the keyboard cursor is on, or the one the
  *  Activity list is filtered to. A new function identity each time is what tells Unovis to redraw. */
 const barStyle = computed(() => {
   // an empty bucket has nothing to pick out, so landing on one dims nothing
   const focus = highlighted.value && totalOf(highlighted.value) > 0 ? highlighted.value : null;
-  return (b: MetricBucket) => (focus && focus.from !== b.from ? { opacity: 0.25 } : {});
+  return (b: ChartBucket) => (focus && focus.from !== b.from ? { opacity: 0.25 } : {});
 });
 
 function format(n: number): string {
@@ -114,22 +122,22 @@ const stamp = (from: number): string =>
 // ---------- pointer and keyboard ----------
 const hovered = ref<number | null>(null);
 const cursor = ref<number | null>(null);
-const indexOf = (b: MetricBucket) => buckets.value.findIndex((x) => x.from === b.from);
+const indexOf = (b: ChartBucket) => buckets.value.findIndex((x) => x.from === b.from);
 const events = {
   [VisStackedBarSelectors.bar]: {
-    mouseover: (b: MetricBucket) => (hovered.value = indexOf(b)),
+    mouseover: (b: ChartBucket) => (hovered.value = indexOf(b)),
     mouseout: () => (hovered.value = null),
-    click: (b: MetricBucket) => pick(b),
+    click: (b: ChartBucket) => pick(b),
   },
 };
 const pointEvents = {
   [VisScatterSelectors.point]: {
-    mouseover: (b: MetricBucket) => (hovered.value = indexOf(b)),
+    mouseover: (b: ChartBucket) => (hovered.value = indexOf(b)),
     mouseout: () => (hovered.value = null),
-    click: (b: MetricBucket) => pick(b),
+    click: (b: ChartBucket) => pick(b),
   },
 };
-function pick(b: MetricBucket) {
+function pick(b: ChartBucket) {
   emit("pick", isSelected(b) ? null : b);
 }
 function onKey(e: KeyboardEvent) {
@@ -178,7 +186,11 @@ const tooltip = computed(() =>
 </script>
 
 <template>
-  <ChartContainer :config="chartConfig" class="aspect-auto h-auto w-full justify-start">
+  <ChartContainer
+    :config="chartConfig"
+    :cursor="metric === 'latency'"
+    class="aspect-auto h-auto w-full justify-start"
+  >
     <div class="flex flex-wrap items-end justify-between gap-x-4 gap-y-1 text-[11px]">
       <ChartLegendContent
         vertical-align="top"
@@ -205,8 +217,9 @@ const tooltip = computed(() =>
       @mouseleave="hovered = null"
     >
       <VisXYContainer
-        :data="buckets"
+        :data="chartData"
         :margin="{ top: 6, right: 4, bottom: 2, left: 2 }"
+        :x-domain="[series.from, series.to]"
         :y-domain="[0, undefined]"
         :duration="200"
       >
@@ -216,16 +229,16 @@ const tooltip = computed(() =>
           :y="y"
           :color="colors"
           :curve-type="CurveType.MonotoneX"
-          :line-width="2"
+          :line-width="2.5"
         />
         <VisScatter
           v-if="metric === 'latency'"
           :x="x"
           :y="y"
-          :color="colors"
-          :size="6"
-          stroke-color="var(--background)"
-          :stroke-width="1.5"
+          color="transparent"
+          :size="14"
+          stroke-color="transparent"
+          :stroke-width="0"
           :events="pointEvents"
           cursor="pointer"
         />
@@ -260,7 +273,13 @@ const tooltip = computed(() =>
           :domain-line="false"
         />
         <ChartTooltip />
-        <ChartCrosshair :x="x" :y="y" :template="tooltip" color="transparent" />
+        <ChartCrosshair
+          :x="x"
+          :y="y"
+          :template="tooltip"
+          :color="metric === 'latency' ? colors : 'transparent'"
+          :circle-radius="4"
+        />
       </VisXYContainer>
     </div>
 
@@ -272,7 +291,11 @@ const tooltip = computed(() =>
       <template v-if="shown">
         <b class="text-zinc-700 dark:text-zinc-200">{{ stamp(shown.from) }}</b> ·
         {{ shown.requests }} request{{ shown.requests === 1 ? "" : "s" }}
-        <template v-for="p in parts" :key="String(p.key)">
+        <template v-if="metric === 'latency'">
+          · total {{ format(shown.latencyMs) }} · provider {{ format(shown.responseMs) }} · queue
+          {{ format(shown.queueMs) }}
+        </template>
+        <template v-for="p in metric === 'latency' ? [] : parts" :key="String(p.key)">
           · {{ p.label }} {{ format(shown[p.key] as number) }}{{ unit }}
         </template>
         <template v-if="shown.unknownCost"> · {{ shown.unknownCost }} not priced </template>

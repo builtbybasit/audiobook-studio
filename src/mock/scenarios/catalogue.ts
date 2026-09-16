@@ -83,6 +83,15 @@ export function demoScenarios(): DemoScenario[] {
       path: "/book/starforge/narration?ch=1",
     },
     {
+      id: "expressions",
+      group: "review",
+      name: "Expressions placed in a line",
+      blurb:
+        "Ashes of the Starforge, chapter 1: a sigh and a softer delivery placed on the Captain’s line, and a laugh on the next line whose position needs a look after an edit. The reader opens on the line.",
+      bookId: "starforge",
+      path: "/book/starforge/scripting?ch=1",
+    },
+    {
       id: "mis-attributed",
       group: "review",
       name: "One speaker mis-attributed all through",

@@ -5,7 +5,27 @@
 // A factory, not a constant: every call builds a fresh set, voice entries and billing included, so
 // a scenario that pauses an endpoint or adds a voice cannot leak into the next world.
 import { AZURE_VOICES, KOKORO_VOICES, OPENAI_VOICES } from "./voices";
-import type { Endpoint } from "@/types";
+import type { Endpoint, ExpressionTag } from "@/types";
+
+/**
+ * The expression tags the main OpenAI model is configured with, so a line read by it can carry
+ * a vocal sound or a delivery note out of the box. Tags are per model: the other endpoints start
+ * unconfigured, which is the state a new server is really in.
+ */
+export const EXPRESSION_TAGS: ExpressionTag[] = [
+  { id: "laughs", label: "Laughs", token: "[laughs]", kind: "sound" },
+  { id: "chuckles", label: "Chuckles", token: "[chuckles]", kind: "sound" },
+  { id: "sighs", label: "Sighs", token: "[sighs]", kind: "sound" },
+  { id: "gasps", label: "Gasps", token: "[gasps]", kind: "sound" },
+  { id: "clears throat", label: "Clears throat", token: "[clears throat]", kind: "sound" },
+  { id: "pause", label: "Pause", token: "[pause]", kind: "sound" },
+  { id: "whispering", label: "Whispering", token: "[whispers]", kind: "delivery" },
+  { id: "softly", label: "Softly", token: "[softly]", kind: "delivery" },
+  { id: "excited", label: "Excited", token: "[excited]", kind: "delivery" },
+  { id: "sad", label: "Sad", token: "[sadly]", kind: "delivery" },
+  { id: "angry", label: "Angry", token: "[angrily]", kind: "delivery" },
+  { id: "hesitant", label: "Hesitant", token: "[hesitantly]", kind: "delivery" },
+];
 
 export function makeEndpoints(): Endpoint[] {
   return [
@@ -26,6 +46,12 @@ export function makeEndpoints(): Endpoint[] {
       needsKey: true,
       maxChars: 4096,
       splitAt: "sentence",
+      expressions: {
+        status: "supported",
+        model: "gpt-4o-mini-tts",
+        baseUrl: "https://api.openai.com/v1",
+        tags: EXPRESSION_TAGS.map((t) => ({ ...t })),
+      },
       voices: OPENAI_VOICES.map((v) => ({ ...v })),
       history: Array.from({ length: 30 }, (_, i) => ({
         t: Date.now() - (30 - i) * 60000,

@@ -21,7 +21,7 @@ export {
   OPENAI_VOICES,
   voiceRef,
 } from "./fixtures/voices";
-export { makeEndpoints } from "./fixtures/endpoints";
+export { EXPRESSION_TAGS, makeEndpoints } from "./fixtures/endpoints";
 export { makeProfiles, makeScriptSettings } from "./fixtures/profiles";
 export { makeLexicon } from "./fixtures/lexicon";
 export { makeJobHistory } from "./fixtures/jobs";

@@ -195,15 +195,46 @@ body {
 }
 
 /* split mode in the script reader: a click target in every word gap, loud at sentence ends */
+/* the gaps between words on a line, where a segment is cut or an expression is placed. Shown from
+   the start as light ticks, darker at the end of a sentence; the one under the pointer or the
+   keyboard fills in. */
 .split-gap {
-  @apply mx-[1px] rounded px-[3px] align-baseline font-sans text-[10px] leading-none text-violet-500 opacity-0 transition-opacity;
+  @apply relative mx-[1px] inline-flex h-[1.1em] w-[9px] cursor-pointer items-center justify-center rounded align-text-bottom transition-colors;
 }
-.split-gap-strong {
-  @apply opacity-50;
+.split-gap-tick {
+  @apply block h-full w-px rounded bg-violet-400/50 dark:bg-violet-400/40;
+}
+.split-gap-strong .split-gap-tick {
+  @apply w-[2px] bg-violet-500/80 dark:bg-violet-400/80;
+}
+.split-gap-edge .split-gap-tick {
+  @apply bg-zinc-400/60;
 }
 .split-gap:hover,
-.split-gap:focus-visible {
-  @apply bg-violet-600 text-white opacity-100 outline-none;
+.split-gap:focus-visible,
+.split-gap-active {
+  @apply bg-violet-600 outline-none;
+}
+.split-gap:hover .split-gap-tick,
+.split-gap:focus-visible .split-gap-tick,
+.split-gap-active .split-gap-tick {
+  @apply bg-white;
+}
+.word-strip:focus {
+  @apply outline-none;
+}
+/* an expression placed on a line */
+.expression-chip {
+  @apply mx-1 inline-block rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 align-baseline font-sans text-[11px] not-italic leading-normal text-violet-700 transition-colors hover:border-violet-400 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300;
+}
+.expression-chip-issue {
+  @apply border-amber-300 bg-amber-50 text-amber-700 hover:border-amber-500 dark:bg-amber-500/10 dark:text-amber-300;
+}
+.expression-chip-omitted {
+  @apply border-zinc-200 bg-transparent text-zinc-400 line-through dark:border-zinc-700;
+}
+.expression-chip-moving {
+  @apply border-dashed opacity-50;
 }
 
 /* reka-ui wrappers */

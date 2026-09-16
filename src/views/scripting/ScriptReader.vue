@@ -21,6 +21,7 @@ import ReaderSettings from "@/components/ReaderSettings.vue";
 import VoicePicker from "@/components/VoicePicker.vue";
 import ExpressionText from "@/components/ExpressionText.vue";
 import ExpressionEditor from "@/components/ExpressionEditor.vue";
+import WordStrip from "@/components/WordStrip.vue";
 import { PAUSE_STEPS, defaultPause, pauseAfter, secs } from "@/lib/speech";
 import {
   AudioLines as NarrationIcon,
@@ -126,33 +127,32 @@ const unresolved = computed(() => inChapter.value.filter((c) => c.isNew).length)
 const fallbacks = computed(() => segments.value.filter((s) => s.fallback));
 // directions: presets + everything already used in this book, free text allowed
 const dirOpts = computed(() => directionOptions(scriptsStore.segments, props.bookId));
-// ---- segment boundaries: split at a word gap, join with a neighbour
+// ---- segment boundaries: split at a word gap, join with a neighbour. Both live in the editor
+// under the line: the split turns the line into a strip of words with its gaps showing (the same
+// strip expressions are placed on), and hovering a gap shows both halves as they would come out;
+// hovering a join shows the merged line and who would read it.
 const splitting = ref<number | null>(null);
-interface Tok {
-  text: string;
-  /** offset of the gap *before* this token */
-  at: number;
-  /** the previous token ended a sentence — the likely cut */
-  strong: boolean;
-}
-function tokensOf(text: string): Tok[] {
-  const out: Tok[] = [];
-  const re = /\S+\s*/g;
-  let m: RegExpExecArray | null;
-  let strong = false;
-  while ((m = re.exec(text))) {
-    out.push({ text: m[0], at: m.index, strong });
-    strong = /[.!?…][”’"')\]]?\s*$/.test(m[0]);
-  }
-  return out;
-}
+/** the gap under the pointer while splitting, for the two-halves preview */
+const cutAt = ref<number | null>(null);
+const joinPreview = ref<"prev" | "next" | null>(null);
 const at = (id: number) => segments.value.findIndex((x) => x.id === id);
 const nextOf = (s: Segment): Segment | undefined => segments.value[at(s.id) + 1];
 const prevOf = (s: Segment): Segment | undefined => segments.value[at(s.id) - 1];
 const preview = (t: string, n = 42) => (t.length > n ? t.slice(0, n) + "…" : t);
+/** The line a join would produce: the earlier segment's text, the separator a split kept, the later one's. */
+function mergedText(s: Segment, dir: "next" | "prev"): string {
+  const first = dir === "next" ? s : prevOf(s);
+  const second = first && nextOf(first);
+  if (!first || !second) return "";
+  const text = `${first.text.trimEnd()}${first.sep ?? " "}${second.text.trimStart()}`;
+  return text.length > 180
+    ? `${text.slice(0, 100).trimEnd()} … ${text.slice(-70).trimStart()}`
+    : text;
+}
 function doSplit(s: Segment, offset: number) {
   const id = scriptsStore.splitSegment(props.bookId, props.chapterId, s.id, offset);
   splitting.value = null;
+  cutAt.value = null;
   if (id == null) return;
   // the second half is the one that usually needs a different speaker — open it
   open.value = id;
@@ -250,10 +250,13 @@ function onKey(e: KeyboardEvent) {
     if (open.value || splitting.value) {
       open.value = null;
       splitting.value = null;
+      cutAt.value = null;
     } else if (props.focusMode) emit("toggle-focus");
   } else if (e.key === "s" && focus.value) {
+    // the split lives in the editor, so the editor opens with it
+    open.value = focus.value;
     splitting.value = splitting.value === focus.value ? null : focus.value;
-    open.value = null;
+    cutAt.value = null;
   } else if (e.key === "m" && focus.value) {
     const s = segments.value.find((x) => x.id === focus.value);
     if (s) doJoin(s, "next");
@@ -531,14 +534,6 @@ watch(open, (v) => {
           :style="{ fontSize: reader.size + 'px', lineHeight: reader.lineHeight }"
         >
           <template v-for="s in rows" :key="s.id">
-            <div
-              v-if="splitting === s.id"
-              class="mb-1 flex flex-wrap items-center gap-2 rounded-md bg-violet-50 px-2 py-1 font-sans text-[11px] leading-normal text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
-            >
-              <b>Click the gap where this segment should be cut.</b>
-              <span class="text-violet-500/70">⁄ marks the end of a sentence.</span>
-              <button class="ml-auto underline" @click="splitting = null">Cancel</button>
-            </div>
             <!-- unverified chunk kept whole -->
             <div
               v-if="s.fallback"
@@ -560,25 +555,13 @@ watch(open, (v) => {
                   >
                     <RetryIcon class="icon-sm" /> Re-split this chunk
                   </button>
-                  <button class="btn-ghost btn-xs" @click="splitting = s.id">
+                  <button class="btn-ghost btn-xs" @click="((open = s.id), (splitting = s.id))">
                     <SplitIcon class="icon-sm" /> Split by hand
                   </button>
                 </template>
               </div>
               <p class="text-zinc-700 dark:text-zinc-300">
-                <template v-if="splitting === s.id"
-                  ><span v-for="(t, i) in tokensOf(s.text)" :key="i"
-                    ><button
-                      v-if="i"
-                      class="split-gap"
-                      :class="t.strong && 'split-gap-strong'"
-                      :title="`cut here — the new segment starts “${preview(s.text.slice(t.at), 30)}”`"
-                      @click.stop="doSplit(s, t.at)"
-                    >
-                      ⁄</button
-                    >{{ t.text }}</span
-                  ></template
-                ><template v-else><ExpressionText :book-id="bookId" :segment="s" /></template>
+                <ExpressionText :book-id="bookId" :segment="s" />
               </p>
               <details class="mt-2 font-sans text-[11px] leading-normal text-zinc-500">
                 <summary class="cursor-pointer">Why it failed</summary>
@@ -603,20 +586,7 @@ watch(open, (v) => {
               "
               @click="open = open === s.id ? null : s.id"
             >
-              <template v-if="splitting === s.id"
-                ><span v-for="(t, i) in tokensOf(s.text)" :key="i"
-                  ><button
-                    v-if="i"
-                    class="split-gap"
-                    :class="t.strong && 'split-gap-strong'"
-                    :title="`cut here — the new segment starts “${preview(s.text.slice(t.at), 30)}”`"
-                    @click.stop="doSplit(s, t.at)"
-                  >
-                    ⁄</button
-                  >{{ t.text }}</span
-                ></template
-              ><template v-else><ExpressionText :book-id="bookId" :segment="s" /></template
-              ><span
+              <ExpressionText :book-id="bookId" :segment="s" /><span
                 v-if="s.flag"
                 class="ml-2 rounded bg-amber-400/20 px-1 font-sans text-[10px] font-semibold leading-none text-amber-700 dark:text-amber-300"
                 :title="s.flag.note"
@@ -673,19 +643,7 @@ watch(open, (v) => {
                 <span v-else class="italic text-zinc-300 dark:text-zinc-600">— no direction</span>
               </div>
               <p :class="s.type === 'thought' ? 'italic text-zinc-600 dark:text-zinc-300' : ''">
-                <template v-if="splitting === s.id"
-                  ><span v-for="(t, i) in tokensOf(s.text)" :key="i"
-                    ><button
-                      v-if="i"
-                      class="split-gap"
-                      :class="t.strong && 'split-gap-strong'"
-                      :title="`cut here — the new segment starts “${preview(s.text.slice(t.at), 30)}”`"
-                      @click.stop="doSplit(s, t.at)"
-                    >
-                      ⁄</button
-                    >{{ t.text }}</span
-                  ></template
-                ><template v-else-if="s.type === 'dialogue'"
+                <template v-if="s.type === 'dialogue'"
                   >‘<ExpressionText :book-id="bookId" :segment="s" />’</template
                 ><template v-else><ExpressionText :book-id="bookId" :segment="s" /></template>
               </p>
@@ -693,9 +651,31 @@ watch(open, (v) => {
             <!-- inline editor -->
             <div
               v-if="open === s.id"
-              class="-mt-1 mb-4 grid grid-cols-2 items-end gap-2 rounded-md border border-violet-300 bg-white p-2 font-sans text-xs leading-normal 2xl:grid-cols-[1fr_1fr_2fr_auto] dark:border-violet-500/40 dark:bg-zinc-900"
+              class="-mt-1 mb-4 grid grid-cols-2 items-end gap-2 rounded-md border border-violet-300 bg-white p-2 font-sans text-xs leading-normal 2xl:grid-cols-[1fr_1fr_2fr] dark:border-violet-500/40 dark:bg-zinc-900"
               @click.stop
             >
+              <!-- the editor's own header: which line this is, and the one way out -->
+              <div
+                class="col-span-2 -mt-0.5 flex items-center gap-2 border-b border-zinc-100 pb-1.5 2xl:col-span-3 dark:border-zinc-800"
+              >
+                <span class="font-mono text-[10px] text-zinc-400">#{{ s.id }}</span>
+                <span class="font-medium" :style="{ color: colorOf(s.speaker) }">{{
+                  s.speaker
+                }}</span>
+                <span class="text-zinc-400">· {{ s.type }}</span>
+                <span
+                  v-if="s.edited"
+                  class="rounded bg-zinc-100 px-1 text-[10px] text-zinc-500 dark:bg-zinc-800"
+                  >edited</span
+                >
+                <button
+                  class="btn-ghost btn-xs ml-auto"
+                  title="Close the editor (Esc)"
+                  @click="((open = null), (splitting = null))"
+                >
+                  Done <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">esc</kbd>
+                </button>
+              </div>
               <label
                 >Speaker<UiCombobox
                   :model-value="s.speaker"
@@ -753,54 +733,141 @@ watch(open, (v) => {
                   >
                 </div>
               </label>
-              <div class="flex items-center gap-2 justify-self-end">
-                <span v-if="s.edited" class="text-[10px] text-zinc-400">edited</span
-                ><button class="btn-ghost btn-xs" @click="open = null">Done</button>
-              </div>
               <ExpressionEditor
                 :book-id="bookId"
                 :chapter-id="chapterId"
                 :segment="s"
-                class="col-span-2 border-t border-zinc-200 pt-2 2xl:col-span-4 dark:border-zinc-800"
+                class="col-span-2 border-t border-zinc-200 pt-2 2xl:col-span-3 dark:border-zinc-800"
               />
               <!-- boundaries: the model grouped two speakers together, or cut a sentence in half -->
               <div
-                class="col-span-2 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-2 2xl:col-span-4 dark:border-zinc-800"
+                class="col-span-2 space-y-2 border-t border-zinc-200 pt-2 2xl:col-span-3 dark:border-zinc-800"
+                @mouseleave="joinPreview = null"
               >
-                <span class="text-zinc-400">Boundaries</span>
-                <UiTooltip
-                  text="Cut this segment in two — then give the second half its own speaker (s)"
-                  ><button class="btn-ghost btn-xs" @click="((open = null), (splitting = s.id))">
-                    <SplitIcon class="icon-sm" /> Split…
-                  </button></UiTooltip
-                >
-                <UiTooltip
-                  v-if="prevOf(s)"
-                  :text="`Join into #${prevOf(s)!.id} (${prevOf(s)!.speaker}): “…${preview(prevOf(s)!.text.slice(-40), 40)}”${prevOf(s)!.speaker === s.speaker ? '' : ' — both halves would be read by ' + prevOf(s)!.speaker}`"
-                  ><button class="btn-ghost btn-xs" @click="doJoin(s, 'prev')">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-zinc-400">Boundaries</span>
+                  <button
+                    class="btn-ghost btn-xs"
+                    :class="
+                      splitting === s.id && 'border-violet-400 text-violet-700 dark:text-violet-300'
+                    "
+                    :aria-pressed="splitting === s.id"
+                    @click="((splitting = splitting === s.id ? null : s.id), (cutAt = null))"
+                  >
+                    <SplitIcon class="icon-sm" />
+                    {{ splitting === s.id ? "Cancel split" : "Split…" }}
+                    <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">s</kbd>
+                  </button>
+                  <button
+                    v-if="prevOf(s)"
+                    class="btn-ghost btn-xs"
+                    @mouseenter="joinPreview = 'prev'"
+                    @focus="joinPreview = 'prev'"
+                    @blur="joinPreview = null"
+                    @click="doJoin(s, 'prev')"
+                  >
                     <ChevronUpIcon class="icon-sm" /> Join up
-                  </button></UiTooltip
+                  </button>
+                  <button
+                    v-if="nextOf(s)"
+                    class="btn-ghost btn-xs"
+                    @mouseenter="joinPreview = 'next'"
+                    @focus="joinPreview = 'next'"
+                    @blur="joinPreview = null"
+                    @click="doJoin(s, 'next')"
+                  >
+                    <ChevronDownIcon class="icon-sm" /> Join next
+                    <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">m</kbd>
+                  </button>
+                  <span v-if="s.audio.duration" class="ml-auto text-[10px] text-amber-600"
+                    >either one makes this line's audio stale</span
+                  >
+                </div>
+
+                <!-- split: the line as a strip of words, and both halves as they would come out -->
+                <template v-if="splitting === s.id">
+                  <div
+                    class="rounded-md bg-zinc-50 p-3 leading-loose ring-1 ring-violet-300 dark:bg-zinc-800/50 dark:ring-violet-500/40"
+                    :class="s.type === 'thought' && 'italic'"
+                  >
+                    <WordStrip
+                      :text="s.text"
+                      mode="split"
+                      :expressions="s.expressions"
+                      :quote="s.type === 'dialogue' ? 'dialogue' : ''"
+                      verb="cut"
+                      @pick="(at) => doSplit(s, at)"
+                      @hover="(at) => (cutAt = at)"
+                      @cancel="((splitting = null), (cutAt = null))"
+                    />
+                  </div>
+                  <div v-if="cutAt != null" class="grid gap-1 sm:grid-cols-2">
+                    <div
+                      class="min-w-0 rounded border border-zinc-200 px-2 py-1 dark:border-zinc-700"
+                    >
+                      <span class="font-mono text-[10px] text-zinc-400">#{{ s.id }}</span>
+                      <span class="font-medium" :style="{ color: colorOf(s.speaker) }">{{
+                        s.speaker
+                      }}</span>
+                      <div class="truncate">{{ s.text.slice(0, cutAt).trimEnd() }}</div>
+                    </div>
+                    <div
+                      class="min-w-0 rounded border border-dashed border-violet-300 px-2 py-1 dark:border-violet-500/40"
+                    >
+                      <span class="font-mono text-[10px] text-zinc-400">new</span>
+                      <span class="font-medium" :style="{ color: colorOf(s.speaker) }">{{
+                        s.speaker
+                      }}</span>
+                      <span class="text-[10px] text-zinc-400">· opens for a new speaker</span>
+                      <div class="truncate">{{ s.text.slice(cutAt).trimStart() }}</div>
+                    </div>
+                  </div>
+                  <p v-else class="text-violet-600 dark:text-violet-300">
+                    Click the gap where this line should be cut — the darker ticks end a sentence.
+                    <span class="text-violet-500/70"
+                      >← → walk the gaps, Enter cuts, Esc cancels.</span
+                    >
+                  </p>
+                </template>
+
+                <!-- join: the merged line, and who would read it -->
+                <div
+                  v-else-if="joinPreview && (joinPreview === 'prev' ? prevOf(s) : nextOf(s))"
+                  class="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-700"
                 >
-                <UiTooltip
-                  v-if="nextOf(s)"
-                  :text="`Join #${nextOf(s)!.id} (${nextOf(s)!.speaker}) into this one: “${preview(nextOf(s)!.text)}”${nextOf(s)!.speaker === s.speaker ? '' : ' — both halves would be read by ' + s.speaker}`"
-                  ><button class="btn-ghost btn-xs" @click="doJoin(s, 'next')">
-                    <ChevronDownIcon class="icon-sm" /> Join next (m)
-                  </button></UiTooltip
-                >
-                <span
-                  v-if="nextOf(s) && nextOf(s)!.speaker !== s.speaker"
-                  class="text-[10px] text-zinc-400"
-                  >next line is {{ nextOf(s)!.speaker }}</span
-                >
-                <span v-if="s.audio.duration" class="ml-auto text-[10px] text-amber-600"
-                  >either one makes this line's audio stale</span
-                >
+                  <span class="font-mono text-[10px] text-zinc-400"
+                    >#{{ (joinPreview === "prev" ? prevOf(s)! : s).id }}</span
+                  >
+                  <span
+                    class="font-medium"
+                    :style="{ color: colorOf((joinPreview === 'prev' ? prevOf(s)! : s).speaker) }"
+                    >{{ (joinPreview === "prev" ? prevOf(s)! : s).speaker }}</span
+                  >
+                  <span class="text-zinc-400">
+                    reads both ·
+                    {{
+                      joinPreview === "prev"
+                        ? `#${prevOf(s)!.id} + #${s.id}`
+                        : `#${s.id} + #${nextOf(s)!.id}`
+                    }}</span
+                  >
+                  <div class="line-clamp-2">{{ mergedText(s, joinPreview) }}</div>
+                  <div
+                    v-if="
+                      (joinPreview === 'prev' ? prevOf(s)!.speaker : nextOf(s)!.speaker) !==
+                      s.speaker
+                    "
+                    class="text-amber-600 dark:text-amber-400"
+                  >
+                    {{ joinPreview === "prev" ? s.speaker : nextOf(s)!.speaker }}’s words would be
+                    read by {{ (joinPreview === "prev" ? prevOf(s)! : s).speaker }}.
+                  </div>
+                </div>
               </div>
               <!-- pacing: silence after this line. Stitched at build time, so no clip is invalidated. -->
               <div
                 v-if="nextOf(s)"
-                class="col-span-2 flex flex-wrap items-center gap-1.5 border-t border-zinc-200 pt-2 2xl:col-span-4 dark:border-zinc-800"
+                class="col-span-2 flex flex-wrap items-center gap-1.5 border-t border-zinc-200 pt-2 2xl:col-span-3 dark:border-zinc-800"
               >
                 <span class="text-zinc-400">Pause after</span>
                 <button

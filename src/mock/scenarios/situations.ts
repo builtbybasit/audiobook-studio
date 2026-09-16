@@ -10,6 +10,8 @@
 // the split the simulators use.
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { snapshotTake } from "@/lib/takes";
+import { EXPRESSION_TAGS } from "../fixtures/endpoints";
+import { gapsOf } from "@/lib/gaps";
 import { voiceRef } from "../fixtures/voices";
 import { routeOf, seedClip, type ClipWorld } from "../world/audio";
 import { exportDemoPrep, freshenChapters } from "./export";
@@ -104,9 +106,49 @@ export function applySituation(ctx: ScenarioContext, id: string, bookId: string)
       return staleAndRetakes(ctx, bookId);
     case "mis-attributed":
       return misAttributed(ctx, bookId);
+    case "expressions":
+      return expressionsPlaced(ctx, bookId);
     default:
       return exportSituation(ctx, id, bookId);
   }
+}
+
+// ---------- expressions on a line ----------
+
+/**
+ * Two dialogue lines in the first scripted chapter: one with a sigh before it and a softer
+ * delivery placed mid-line, both fine; the next with a laugh whose anchor the text moved out from
+ * under, so it asks to be placed again. The reader opens on the first.
+ */
+function expressionsPlaced(ctx: ScenarioContext, bookId: string): DemoResult {
+  const chapter = ctx.chapters(bookId).find(isScripted);
+  if (!chapter)
+    return { note: "Nothing is scripted, so there is no line to place an expression on." };
+  const lines = ctx
+    .segmentsOf(bookId, chapter.id)
+    .filter((s) => s.type === "dialogue" && s.speaker !== "Narrator" && s.text.length > 24);
+  const [a, b] = lines;
+  const tag = (id: string) => EXPRESSION_TAGS.find((t) => t.id === id)!;
+  if (a) {
+    const gaps = gapsOf(a.text, "split");
+    const mid = gaps[Math.floor(gaps.length / 2)]?.at ?? 0;
+    a.expressions = [
+      { ...tag("sighs"), annotationId: 1, at: 0 },
+      { ...tag("softly"), annotationId: 2, at: mid },
+    ];
+    a.edited = true;
+    if (a.audio.status === "done") a.audio.status = "stale";
+  }
+  if (b) {
+    const first = gapsOf(b.text, "split")[0]?.at ?? 0;
+    b.expressions = [{ ...tag("laughs"), annotationId: 1, at: first, needsReview: true }];
+    b.edited = true;
+    if (b.audio.status === "done") b.audio.status = "stale";
+  }
+  return {
+    note: `Two expressions placed on line ${a?.id ?? "?"}, and one on line ${b?.id ?? "?"} that needs its position chosen again.`,
+    open: a ? `/book/${bookId}/scripting?ch=${chapter.id}&seg=${a.id}` : undefined,
+  };
 }
 
 // ---------- starting a book ----------

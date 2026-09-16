@@ -69,6 +69,11 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
   let retriedFirstRequest = false;
   const telemetry = ctx.telemetryFor(profile.id);
   const t = setInterval(() => {
+    // the world this run was planned against is gone: stop without writing to the new one
+    if (ctx.stale()) {
+      clearInterval(t);
+      return;
+    }
     if (job.cancelled) {
       clearInterval(t);
       run.active = 0;

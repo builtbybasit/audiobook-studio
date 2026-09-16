@@ -8,6 +8,44 @@ pnpm install
 pnpm prototype        # opens http://localhost:5173
 ```
 
+## Keep the seeded demo after backend integration
+
+The seeded demo is a permanent UI testing tool, even after the application gets a real backend. Preserve `src/mock/` fixtures, scenarios and simulators, along with the demo controls. The frontend currently runs entirely in this mode; backend mode is not implemented yet.
+
+When integrating the backend:
+
+- Keep an explicit **Demo** mode that runs the same screens with seeded books, scripts, cast, endpoints and simulated jobs. It must work without a backend, provider credentials or paid AI requests. Label costs as simulated and show a clear Demo indicator.
+- Select demo or backend services at application startup. Keep the choice at the service boundary so views do not grow their own mock-versus-real branches. Never silently fall back between modes.
+- Keep demo state separate from real library data and credentials. A demo reset restores fixtures and cancels its simulated work; it must never modify the real library.
+- Preserve repeatable scenarios for success, partial failure, rate limits, missing voices, budget limits, stale audio and export retries. These let us test difficult UX states without generating a book each time.
+- For backend integration tests, use a separate test library and fake AI providers. This exercises the real queue, storage and API while returning fixture scripts and reusable local audio instead of calling paid endpoints. Real provider checks remain an explicit, small test.
+
+These are integration requirements, not a second backend or new runtime mode added to the current prototype. Keep the existing demo working while implementing backend features incrementally.
+
+## Demo tools
+
+The app always runs in demo mode: seeded books, seeded cast and voices, and timer-driven fakes in place of the endpoints. Nothing is fetched, nothing is billed, and **every cost, duration and file size on screen is invented**. The sidebar says so under the app name, and the **Demo** chip in the header opens the panel.
+
+Each scenario puts the book, its script, its cast, the queue and its exports into one situation together and opens the page it is about. A scenario is always applied to the seeded world rather than on top of the last one, so picking the same row twice — or three others in between — gives the same situation. **Reset the demo data** puts everything back.
+
+| Scenario                                       | What you get                                                                                                                                                                         |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A new book, nothing scripted                   | _Letters from the Drowned City_ straight after import: chapters to pick over, no script, no jobs, and the Narrator alone in the cast. Opens Scripting.                               |
+| A book part-way through                        | _The Cliché Cultivation World_: 12 chapters scripted, 3 narrated, one stale, one failed, one unverified chunk — and three chapters scripting as you arrive. Opens the book overview. |
+| Scripting that failed and was rate-limited     | Two chapters that kept nothing, the scripting endpoint inside a 429 cooldown, and the rows to retry. Opens the Queue.                                                                |
+| Narration that failed and was rate-limited     | One chapter failed outright, one with failed clips among finished ones, and the speech endpoint backing off. Opens Narration.                                                        |
+| Speakers with no voice                         | The Narrator and a speaker unassigned, one pointing at a voice that no longer exists and one at the paused Azure proxy — lines that cannot be routed, and issues to fix. Opens Cast. |
+| The budget is spent                            | The book's cap and its scripting budget used up, so every estimate reports a blocker instead of starting. Opens Narration.                                                           |
+| Edited script, stale audio, retakes to compare | Lines edited after narration and the clips that no longer match them, flagged audio, a second take waiting beside the first and one already rejected. Opens the ledger.              |
+| One speaker mis-attributed all through         | An alias scattered through the book, with Search open on the matches — the bulk corrections flow.                                                                                    |
+| The five Export rows                           | A book ready to export, ready/missing/stale together, a 214-chapter serial, an export that needs updating, and running/failed/finished builds. Opens Export.                         |
+
+The **make the next build fail** switch is one-shot: the build stops part-way, the version already on disk is untouched, and the failure offers a retry.
+
+Reset also covers what lives outside the stores: half-typed endpoint forms and page filters, the demo's own credentials, and any page open on a book the seeded world does not have — an EPUB you added during the session is dropped, so that page is sent back to the Library first.
+
+Switching scenarios or resetting **abandons simulated work in flight**. Each run records which generation of the demo world it was started against, and every simulator checks that before it writes; a chapter, a clip or a build from the world you just left cannot land in the one you are looking at now. The Search page keeps a **Demo searches** chip of its own: those rows are queries against the seeded book — the mis-attributed alias, the same lines already settled, a term the book never uses — rather than situations, so they sit with the page that runs them.
+
 ## Pages
 
 - **Library** → **Book overview** (volumes, per-stage progress, cast summary, "what next") → stages **Scripting / Narration / Export**.
@@ -352,15 +390,16 @@ inside the box (`$ 12`, `0.35 s`), and `empty` lets a blank field mean something
 
 ## Things to try
 
+- Difficult states: open the header's **Demo** chip and pick a row — a new book with nothing scripted, a rate-limited scripting run, speakers with no voice, a spent budget, or a chapter edited after narration. Pick another straight after: whatever was running is abandoned, and the new one starts from the seeded data rather than on top of the last. **Reset the demo data** puts everything back.
 - Scripting: _The Cliché Cultivation World_ has three volumes — collapse them in the chapter list. Tick unscripted chapters on _Letters from the Drowned City_ and run; new chapters sometimes surface an alias (dashed "new") — the chip opens the Cast page, where merging lives. The cast rail sets each speaker's voice where you are reading them; hide it with its own button, the Cast button or `c`, and change type with `Aa`.
 - Narration: _Cliché_ ch 4 is partly failed — retry from the ledger. The Narrator sits on the free local Kokoro (limit 500 chars) and dialogue on OpenAI; narrate ch 7 and watch rows split into parts. On _Drowned City_, Old Tobiah's voice lives on the paused Azure proxy — resume it or repick. In Endpoints, add an endpoint and “Fetch from server” to pull its voice list.
-- Export: hit the **Demo** chip and pick a scenario. _A long book_ opens **Thousand Gates of the Ninth Heaven** — 214 chapters over 6 volumes: filter to **Needs attention**, switch **Files** between one file / per volume / per chapter and watch the names and the count follow, then **See the chapter order**. _An export that needs updating_ shows v2 nine chapters behind with 191 carried over — press **Update to v3** and watch the Queue say `Encoding 50 of 204 · file 2 of 6`. On _Ashes of the Starforge_ chapter 1 is stale, so the build waits for you to choose. Open **Loudness** to see five voices 4.3 LU apart and what matching would do; open **Pauses** and nudge "after a line" — the running time, the size and the preview all move, and the finished export says it is behind the book. Turn on **make the next build fail** in the Demo chip and build: the previous version is untouched and Retry starts over.
+- Export: open the header's **Demo** chip and pick an Export scenario. _A long book_ opens **Thousand Gates of the Ninth Heaven** — 214 chapters over 6 volumes: filter to **Needs attention**, switch **Files** between one file / per volume / per chapter and watch the names and the count follow, then **See the chapter order**. _An export that needs updating_ shows v2 nine chapters behind with 191 carried over — press **Update to v3** and watch the Queue say `Encoding 50 of 204 · file 2 of 6`. On _Ashes of the Starforge_ chapter 1 is stale, so the build waits for you to choose. Open **Loudness** to see five voices 4.3 LU apart and what matching would do; open **Pauses** and nudge "after a line" — the running time, the size and the preview all move, and the finished export says it is behind the book. Turn on **make the next build fail** in the Demo panel and build: the previous version is untouched and Retry starts over.
 - Review: _Starforge_ ch 1 has three flagged clips and one retake already waiting — play both takes and keep one. Flag another line yourself (⚑), then `↻ Retake flagged`.
 - Pronunciation: Narration → **Pronunciation** on _Cliché_ — `Ji Ning → Jee Ning` and `Lan’er → Lahn-urr` are already in; click the count for a before/after on a real line, change one and watch the clips that used it go stale. In the reader those words are underlined; hover for the respelling.
 - Pacing: _Starforge_ ch 1 holds 1.5s after the Captain's threat and runs straight on into the reply — the ledger's scrubber draws both gaps. Set your own in the reader under **Pause after**, or `[`/`]`.
 - Endpoints: open **Endpoints** in the sidebar. _Antigravity (local)_ has never been used — it reads **Not tested**, not healthy. _Azure proxy_ is billed per audio minute at a rate nobody wrote down: its spend shows **unknown**, and the totals say how many rows they are missing. On the Overview tab switch to **Latency** and see queue wait stacked under provider response, then click a bar to filter the Activity list to those requests. Type `2500` into Concurrency on the Requests tab — the slider range follows. Start a narration run, then **Pause** _Local Kokoro_: the queue holds, the run doesn't fail, and **Resume** picks it up. **Cancel** says what it will do first.
 - Boundaries: in the reader, open a line and press `s` — click a gap to cut it, then give the second half its own speaker. `m` joins a line with the next. Try it on the unverified chunk in _Cliché_ ch 7.
-- Bulk corrections: on _Cliché_ open **Search**, hit the **Demo** chip and pick _Mis-attributed “Ning”_. Tick a chapter, or **Select all matching results** (it takes the matches the page is not showing), then **Change speaker…** → _Ji Ning_: 46 will change, 21 already use it, 12 clips go stale. Apply, read the strip, **Undo this batch**. Pick _Ning_ instead to see the no-voice warning, try **Direction…** with an empty field, and _Lines already read by Ji Ning_ for a batch with nothing to do. **Add pronunciation…** with `Ji Ning` in the box finds the entry that already exists.
+- Bulk corrections: on _Cliché_ open **Search**, hit **Demo searches** and pick _Mis-attributed “Ning”_. Tick a chapter, or **Select all matching results** (it takes the matches the page is not showing), then **Change speaker…** → _Ji Ning_: 46 will change, 21 already use it, 12 clips go stale. Apply, read the strip, **Undo this batch**. Pick _Ning_ instead to see the no-voice warning, try **Direction…** with an empty field, and _Lines already read by Ji Ning_ for a batch with nothing to do. **Add pronunciation…** with `Ji Ning` in the box finds the entry that already exists.
 
 ## Queue job activity (2026-09-14)
 

@@ -5,6 +5,7 @@ import { router } from "@/router";
 import { useReader, saveReader } from "@/stores/reader";
 import { useDemoStore } from "@/stores/demo";
 import { keyring } from "@/lib/keyring";
+import { SEEDED_KEYS } from "@/mock";
 import "@/style.css";
 import "@/toasts.css";
 import { createToastflow } from "vue-toastflow";
@@ -33,7 +34,7 @@ const toastflow = createToastflow(
 );
 createApp(App).use(pinia).use(router).use(toastflow).mount("#app");
 useReader(pinia).$subscribe((_, state) => saveReader(state));
-keyring.set("openai", "sk-prototype-demo-key-4f2a");
-keyring.set("profile:openai", "sk-prototype-demo-key-4f2a");
-keyring.set("profile:deepseek", "ds-prototype-91cd"); // PROTOTYPE: seeded key lives in the keyring, never in the store
+// PROTOTYPE: the demo's own credentials live in the keyring, never in the store, and a demo reset
+// puts them back — nothing here is sent anywhere.
+for (const [id, value] of SEEDED_KEYS) keyring.set(id, value);
 useDemoStore(pinia).demoKick(); // PROTOTYPE: start a few simulated jobs so the queue is alive on load

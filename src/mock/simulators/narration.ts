@@ -65,6 +65,8 @@ export function dispatchNarration(
     segments: segs.length,
   });
   const tick = () => {
+    // the world this run was dispatched against is gone: stop without writing to the new one
+    if (ctx.stale()) return;
     if (job.cancelled) {
       for (const t of targets("queued"))
         if (t.slot === "candidate") delete t.s.candidate;
@@ -199,6 +201,8 @@ export function dispatchNarration(
       };
       const dur = ep.latency * rnd(0.5, 1.1) * parts + sent.length * 6;
       setTimeout(() => {
+        // a request still in flight when the world was replaced: its result belongs to nothing
+        if (ctx.stale()) return;
         const clip = next[slot];
         if (!clip) {
           logJob(

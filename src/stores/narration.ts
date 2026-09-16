@@ -27,6 +27,7 @@ import type {
 } from "@/types";
 import { defineStore } from "pinia";
 import { useCastStore } from "./cast";
+import { useDemoStore } from "./demo";
 import { useEndpointsStore } from "./endpoints";
 import { useJobsStore } from "./jobs";
 import { useLibraryStore } from "./library";
@@ -536,11 +537,15 @@ export const useNarrationStore = defineStore("narration", {
     // dependency on the rest of it — and the store stays the only place reactive state is defined.
     _narrationSim(): NarrationSimContext {
       const castStore = useCastStore();
+      const demoStore = useDemoStore();
       const jobsStore = useJobsStore();
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
+      // the generation of the demo world this run belongs to, taken as it is dispatched
+      const epoch = demoStore._epoch;
       return {
+        stale: () => demoStore.isStale(epoch),
         segmentsOf: (bookId, chId) => scriptsStore.segmentsOf(bookId, chId),
         charactersOf: (bookId) => castStore.charactersOf(bookId),
         effectiveVoice: (bookId, speaker) => castStore.effectiveVoice(bookId, speaker),

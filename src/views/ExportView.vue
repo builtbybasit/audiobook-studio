@@ -30,7 +30,6 @@ import ExportChapterList from "@/views/export/ExportChapterList.vue";
 import ExportOutput from "@/views/export/ExportOutput.vue";
 import ExportPlan from "@/views/export/ExportPlan.vue";
 import ExportLibrary from "@/views/export/ExportLibrary.vue";
-import ExportDemo from "@/views/export/ExportDemo.vue";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import { Download as ExportIcon } from "@lucide/vue";
 import type { ExportSettings } from "@/types";
@@ -87,9 +86,9 @@ watch(
   },
   { immediate: true },
 );
-// a demo scenario rewrites the book under the page; the form and the selection follow it
+// a demo scenario replaces the world under the page; the form and the selection follow it
 watch(
-  () => demoStore._exportDemo?.bookId,
+  () => demoStore._epoch,
   () => reset(),
 );
 
@@ -202,7 +201,6 @@ function build() {
             ></span
           ></TabsTrigger>
         </TabsList>
-        <div class="ml-auto py-1.5"><ExportDemo /></div>
       </div>
 
       <TabsContent value="build" class="min-h-0 flex-1 overflow-auto p-3 focus:outline-none sm:p-4">

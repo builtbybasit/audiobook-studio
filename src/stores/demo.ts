@@ -1,19 +1,37 @@
 // Seeded scenario coordination and restoration. Never owns a second copy of live book data.
+//
+// A scenario is applied to the pristine seeded world, never on top of whatever the last one left:
+// `applyScenario` restores every store from the same fixture world first, then seeds the situation
+// on top of it. That is what makes the rows repeatable — the same row gives the same situation
+// however many others ran before it — and what makes Reset a single, obvious thing.
+//
+// Simulated work in flight is abandoned rather than left to land: `_epoch` is the generation of the
+// world the running simulators were started against, and every simulator checks it before writing.
+// A run from the world you just left cannot finish a chapter, fail a build or spend a budget in the
+// one you are looking at now.
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
-import { isScripted } from "@/lib/scriptReview";
+import { keyring } from "@/lib/keyring";
+import { clearPageState } from "@/lib/pageState";
+import { isScripted, key } from "@/lib/scriptReview";
 import {
   applySearchDemo,
-  exportDemoPrep,
+  applySituation,
+  BOOK_SEEDS,
+  demoScenario,
+  demoScenarios,
   exportScenarios,
-  freshenChapters,
   searchDemoTarget,
   searchScenarios,
+  SEEDED_KEYS,
   STARTUP_DELAY_MS,
   startupRuns,
+  type HistoryRow,
+  type ScenarioContext,
 } from "@/mock";
-import type { ExportScenario, ExportSettings, SearchScenario } from "@/types";
+import type { DemoScenario, ExportScenario, ExportSettings, SearchScenario } from "@/types";
 import { defineStore } from "pinia";
 import { useCastStore } from "./cast";
+import { useEndpointsStore } from "./endpoints";
 import { useExportsStore } from "./exports";
 import { useJobsStore } from "./jobs";
 import { useLibraryStore } from "./library";
@@ -23,18 +41,39 @@ import { useScriptsStore } from "./scripts";
 import { useUiStore } from "./ui";
 interface DemoState {
   _kicked: boolean;
+  /** the scenario the world currently holds, or null for the world as it is seeded */
+  _scenario: string | null;
+  /** bumped every time the world is replaced; simulated runs from an older one stop */
+  _epoch: number;
   _searchDemo: { bookId: string; restore: () => void } | null;
-  _exportDemo: { bookId: string; restore: () => void } | null;
+  _exportDemo: { bookId: string } | null;
   _exportFails: boolean;
 }
 export const useDemoStore = defineStore("demo", {
   state: (): DemoState => ({
     _kicked: false,
+    _scenario: null,
+    _epoch: 0,
     _searchDemo: null,
     _exportDemo: null,
     _exportFails: false,
   }),
   getters: {
+    /** Every scenario the Demo tools offer, newly built each time they are rendered. */
+    scenarios(): DemoScenario[] {
+      return demoScenarios();
+    },
+    /** The row the world is currently in, for the panel's "you are here" line. */
+    activeScenario(s): DemoScenario | null {
+      return s._scenario ? (demoScenario(s._scenario) ?? null) : null;
+    },
+    /**
+     * True for a book a reset keeps. The seeded world is the only thing a reset restores, so a book
+     * imported during the session goes with it — and a page open on that book has to leave first.
+     */
+    survivesReset(): (bookId: string) => boolean {
+      return (bookId) => BOOK_SEEDS.some((b) => b.id === bookId);
+    },
     // ---------- search demo ----------
     /** The character the demo scatters an alias of, or null when the book has nothing scripted. */
     searchDemo(): (bookId: string) => {
@@ -57,17 +96,235 @@ export const useDemoStore = defineStore("demo", {
     },
   },
   actions: {
-    // ---------- demo ----------
-    // A seeded situation for the Search page's bulk corrections: one character's alias scattered
-    // through the book as if the model had mis-attributed it, a few flagged lines, and clips in all
-    // three states. Nothing persists \u2014 `resetSearchDemo` puts the book back exactly as it was.
+    // ---------- the world these scenarios are seeded on ----------
+    /**
+     * Put every store back to the one pristine fixture world and abandon whatever was running.
+     * `seedState` hands each store an independent copy of the same world, so resetting them all is
+     * a coherent library rather than eight stores agreeing by luck.
+     */
+    _restoreWorld(): void {
+      const castStore = useCastStore();
+      const endpointsStore = useEndpointsStore();
+      const exportsStore = useExportsStore();
+      const jobsStore = useJobsStore();
+      const libraryStore = useLibraryStore();
+      const narrationStore = useNarrationStore();
+      const scriptingStore = useScriptingStore();
+      const scriptsStore = useScriptsStore();
+      const uiStore = useUiStore();
+
+      this.abandonRuns();
+      for (const store of [
+        castStore,
+        endpointsStore,
+        exportsStore,
+        jobsStore,
+        libraryStore,
+        narrationStore,
+        scriptingStore,
+        scriptsStore,
+      ])
+        store.$reset();
+      // the undo stack points at objects from the world that has just been replaced
+      uiStore._undo = [];
+      // a book imported during the session is not in the seeded world, so nothing may still be
+      // pointed at it — the sidebar would offer stage links into a book that no longer exists
+      if (uiStore.currentBookId && !libraryStore.bookById(uiStore.currentBookId))
+        uiStore.currentBookId = null;
+      // page state that lives outside the store — half-typed endpoint forms, filters, open tabs
+      clearPageState();
+      // a scenario is free to take a demo credential away; the world it belongs to puts it back
+      for (const [id, value] of SEEDED_KEYS) keyring.set(id, value);
+      this._scenario = null;
+      this._searchDemo = null;
+      this._exportDemo = null;
+      this._exportFails = false;
+    },
+    /**
+     * Stop caring about every run in flight. The simulators notice on their next tick — and, for a
+     * request already dispatched, when its result comes back — and stop without writing anything.
+     * Queued and running rows are settled as cancelled so the queue never shows work that nothing
+     * is driving any more.
+     */
+    abandonRuns(): void {
+      const jobsStore = useJobsStore();
+
+      this._epoch++;
+      for (const j of jobsStore.jobs)
+        if (!j.finishedAt) {
+          j.cancelled = true;
+          jobsStore._finish(j, "cancelled");
+        }
+    },
+    /** True for a run started against a world that has since been replaced. */
+    isStale(epoch: number): boolean {
+      return this._epoch !== epoch;
+    },
+    // ---------- scenarios ----------
+    /**
+     * Seed one situation and say where it wants to be looked at. Always from the seeded world, so
+     * two runs of the same row give the same situation and nothing of the last one survives.
+     */
+    applyScenario(id: string): string | null {
+      const libraryStore = useLibraryStore();
+      const narrationStore = useNarrationStore();
+      const scriptingStore = useScriptingStore();
+      const uiStore = useUiStore();
+
+      const scenario = demoScenario(id);
+      if (!scenario) return null;
+      this._restoreWorld();
+      const result = applySituation(this._scenarioContext(), id, scenario.bookId);
+      this._scenario = id;
+      if (scenario.group === "export") this._exportDemo = { bookId: scenario.bookId };
+      uiStore.toast(`Demo scenario: ${scenario.name}`, {
+        kind: "info",
+        description: `${result.note} Reset returns the demo to its seeded state.`,
+        timeout: 8000,
+      });
+      // the runs the scenario wants in flight, started once the world is the way it describes
+      for (const run of scenario.runs ?? [])
+        if (run.kind === "scripting") scriptingStore.runScripting(scenario.bookId, run.chapterIds);
+        else narrationStore.runNarration(scenario.bookId, run.chapterIds);
+      return libraryStore.bookById(scenario.bookId) ? (result.open ?? scenario.path) : null;
+    },
+    /** Back to the seeded world, with nothing applied and nothing running. */
+    resetDemo(): void {
+      const uiStore = useUiStore();
+
+      this._restoreWorld();
+      uiStore.toast("Demo data reset", {
+        kind: "info",
+        description:
+          "Every book, script, voice, job and export is back to its seeded state, and simulated work that was running was abandoned.",
+        timeout: 5000,
+      });
+    },
+    /** What a situation is allowed to reach for. See `ScenarioContext` for why it is spelled out. */
+    _scenarioContext(): ScenarioContext {
+      const castStore = useCastStore();
+      const endpointsStore = useEndpointsStore();
+      const exportsStore = useExportsStore();
+      const jobsStore = useJobsStore();
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+
+      return {
+        now: () => Date.now(),
+        world: {
+          characters: castStore.characters,
+          lexicon: castStore.lexicon,
+          endpoints: endpointsStore.endpoints,
+        },
+        book: (bookId) => libraryStore.bookById(bookId),
+        chapters: (bookId) => libraryStore.chaptersOf(bookId),
+        cast: (bookId) => castStore.characters[bookId] ?? [],
+        segmentsOf: (bookId, chId) => scriptsStore.segmentsOf(bookId, chId),
+        clearScript: (bookId, chId) => {
+          delete scriptsStore.segments[key(bookId, chId)];
+          delete scriptsStore._previous[key(bookId, chId)];
+        },
+        profiles: () => endpointsStore.profiles,
+        telemetry: (profileId) => jobsStore.scriptingTelemetry(profileId),
+        addHistory: (row) => this._addHistory(row),
+        clearJobs: (bookId) => {
+          jobsStore.jobs = jobsStore.jobs.filter((j) => j.bookId !== bookId);
+        },
+        clearExports: (bookId) => {
+          exportsStore.exports = exportsStore.exports.filter((e) => e.bookId !== bookId);
+        },
+        seedBuilds: (bookId) =>
+          this._seedBuildHistory(
+            bookId,
+            libraryStore
+              .chaptersOf(bookId)
+              .filter((c) => c.narration === "done")
+              .map((c) => c.id),
+          ),
+        spent: (bookId) => jobsStore.spent(bookId),
+        addScriptUsage: (bookId, profileId, cost) => {
+          jobsStore.scriptUsage.push({ bookId, profileId, cost, inputTokens: 0, outputTokens: 0 });
+        },
+        retime: (bookId, chId) => castStore._retime(bookId, chId),
+      };
+    },
+    /**
+     * A finished row in the queue, as an earlier session would have left it — including the activity
+     * that explains it. A failed row whose log says only "Job queued" is not a failure anyone can
+     * diagnose, so the run's own account is seeded with it and dated between the row's start and its
+     * finish, in order.
+     */
+    _addHistory(row: HistoryRow): void {
+      const jobsStore = useJobsStore();
+
+      const job = jobsStore.addJob(row.kind, row.bookId, row.label, row.chapterId);
+      const started = Date.now() - row.minutesAgo * 60000;
+      const finished = started + row.seconds * 1000;
+      job.status = row.status;
+      job.progress = row.status === "done" || row.status === "failed" ? 100 : 40;
+      job.queuedAt = started - 1500;
+      job.startedAt = started;
+      job.finishedAt = finished;
+      job.cancelled = row.status === "cancelled";
+      job.waitingReason = "";
+      const middle = row.activity ?? [];
+      // the run's account, spread over the time it actually took
+      job.activity = [
+        { at: job.queuedAt, level: "info" as const, message: "Job queued" },
+        {
+          at: started,
+          level: "info" as const,
+          message: "Job started",
+          detail: { queueMs: 1500 },
+        },
+        ...middle.map((e, i) => ({
+          at: started + ((i + 1) * (finished - started)) / (middle.length + 1),
+          level: e.level ?? ("info" as const),
+          message: e.message,
+          ...(e.detail ? { detail: e.detail } : {}),
+        })),
+        {
+          at: finished,
+          level: row.status === "failed" ? ("error" as const) : ("info" as const),
+          message: `Job ${row.status}`,
+          detail: { elapsedMs: finished - started },
+        },
+      ].map((e, i) => ({ ...e, id: i + 1, at: Math.round(e.at) }));
+    },
+    /** Set the seeded runs going once, so the queue is not empty the first time you look at it. */
+    demoKick(): void {
+      const narrationStore = useNarrationStore();
+      const scriptingStore = useScriptingStore();
+
+      if (this._kicked) return;
+      this._kicked = true;
+      const epoch = this._epoch;
+      setTimeout(() => {
+        // a scenario applied in the first second owns the world now; the startup runs are not its
+        if (this.isStale(epoch)) return;
+        for (const run of startupRuns())
+          if (run.kind === "scripting") scriptingStore.runScripting(run.bookId, run.chapterIds);
+          else narrationStore.runNarration(run.bookId, run.chapterIds);
+      }, STARTUP_DELAY_MS);
+    },
+    // ---------- the page-level demos ----------
+    // The Search and Export pages have their own Demo chips, older than the panel and pointed at the
+    // page they sit on. They go through the same scenarios: seeding one is applying a row.
+    /** A seeded situation for the Search page's bulk corrections, on the book the page is open on. */
     seedSearchDemo(bookId: string): void {
       const castStore = useCastStore();
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
-      if (this._searchDemo) return;
+      const open = this._searchDemo;
+      if (open?.bookId === bookId) return;
+      // seeding a second book would otherwise drop the snapshot that puts the first one back, and
+      // one Reset cannot undo two books
+      if (open) {
+        open.restore();
+        this._searchDemo = null;
+      }
       const target = this.searchDemo(bookId);
       if (!target) {
         uiStore.toast("This book has no scripted chapters to seed", { kind: "warn" });
@@ -83,7 +340,7 @@ export const useDemoStore = defineStore("demo", {
       this._searchDemo = { bookId, restore };
       uiStore.toast("Search demo seeded", {
         kind: "info",
-        description: `${moved} lines re-attributed to \u201c${target.alias}\u201d, ${flagged} flagged, ${staled} clips made stale. Reset puts \u201c${libraryStore.bookById(bookId)?.title}\u201d back.`,
+        description: `${moved} lines re-attributed to “${target.alias}”, ${flagged} flagged, ${staled} clips made stale. Reset puts “${libraryStore.bookById(bookId)?.title}” back.`,
         timeout: 7000,
       });
     },
@@ -101,59 +358,19 @@ export const useDemoStore = defineStore("demo", {
         timeout: 4000,
       });
     },
-    /** Set the seeded runs going once, so the queue is not empty the first time you look at it. */
-    demoKick(): void {
-      const narrationStore = useNarrationStore();
-      const scriptingStore = useScriptingStore();
-
-      if (this._kicked) return;
-      this._kicked = true;
-      setTimeout(() => {
-        for (const run of startupRuns())
-          if (run.kind === "scripting") scriptingStore.runScripting(run.bookId, run.chapterIds);
-          else narrationStore.runNarration(run.bookId, run.chapterIds);
-      }, STARTUP_DELAY_MS);
-    },
-    // ---------- export demo ----------
-    // Seeded situations for trying a build. Like the Search demo, seeding mutates the open book in
-    // memory and keeps the snapshot that puts it back.
     exportScenarios(): ExportScenario[] {
       return exportScenarios();
     },
+    /** Apply one of the Export rows and say which book to open. */
     seedExportDemo(id: string): string | null {
-      const exportsStore = useExportsStore();
-      const libraryStore = useLibraryStore();
-      const scriptsStore = useScriptsStore();
-      const uiStore = useUiStore();
-
-      const scenario = this.exportScenarios().find((s) => s.id === id);
-      if (!scenario) return null;
-      const bookId = scenario.bookId;
-      this.resetExportDemo();
-      const restore = libraryStore._bookSnapshot(bookId);
-      const prep = exportDemoPrep(id);
-      if (prep.freshen)
-        freshenChapters(libraryStore.chaptersOf(bookId), (chId) =>
-          scriptsStore.segmentsOf(bookId, chId),
-        );
-      if (prep.clearExports)
-        exportsStore.exports = exportsStore.exports.filter((e) => e.bookId !== bookId);
-      if (prep.buildHistory)
-        this._seedBuildHistory(
-          bookId,
-          libraryStore
-            .chaptersOf(bookId)
-            .filter((c) => c.narration === "done")
-            .map((c) => c.id),
-        );
-      this._exportDemo = { bookId, restore };
-      uiStore.toast(`Seeded: ${scenario.label}`, {
-        kind: "info",
-        description: `${prep.note} Reset puts the book back.`,
-        timeout: 7000,
-      });
-      return bookId;
+      const scenario = demoScenario(id);
+      return scenario && this.applyScenario(id) ? scenario.bookId : null;
     },
+    resetExportDemo(): void {
+      if (!this._exportDemo) return;
+      this._restoreWorld();
+    },
+    /** One build running, one that failed and is waiting for a retry, and one that finished. */
     _seedBuildHistory(bookId: string, ids: number[]): void {
       const exportsStore = useExportsStore();
       const jobsStore = useJobsStore();
@@ -183,17 +400,6 @@ export const useDemoStore = defineStore("demo", {
         ...base,
         filename: base.filename + " - in progress",
       });
-    },
-    resetExportDemo(): void {
-      const jobsStore = useJobsStore();
-
-      const demo = this._exportDemo;
-      if (!demo) return;
-      for (const j of jobsStore.jobs)
-        if (j.bookId === demo.bookId && j.kind === "export" && !j.finishedAt)
-          jobsStore.cancelJob(j.id);
-      demo.restore();
-      this._exportDemo = null;
     },
   },
 });

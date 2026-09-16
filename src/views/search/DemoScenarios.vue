@@ -29,12 +29,18 @@ function reset() {
 
 <template>
   <PopoverRoot>
-    <PopoverTrigger class="chip" :class="seeded && 'chip-on'" title="seeded demo scenarios">
-      <DemoIcon class="icon-sm" /> Demo
+    <!-- These are searches, not world states: the header's Demo chip seeds the situation, this one
+         runs a query against it. Named apart so two chips never both read "Demo". -->
+    <PopoverTrigger
+      class="chip"
+      :class="seeded && 'chip-on'"
+      title="seeded searches to try the bulk corrections on"
+    >
+      <DemoIcon class="icon-sm" /> Demo searches
     </PopoverTrigger>
     <PopoverPortal>
       <PopoverContent align="end" :side-offset="6" class="ui-popup w-80 p-3 text-xs">
-        <div class="label mb-1">Seeded scenarios</div>
+        <div class="label mb-1">Seeded searches</div>
         <p class="mb-2 text-[11px] leading-relaxed text-zinc-500">
           Prototype only. Picking one seeds this book in memory and runs the search. Reset puts the
           book back.

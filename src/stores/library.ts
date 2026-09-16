@@ -88,6 +88,8 @@ export const useLibraryStore = defineStore("library", {
       for (const [k, v] of Object.entries(scriptsStore.segments))
         if (k.startsWith(bookId + ":")) segs[k] = clone(v);
       const exports = clone(exportsStore.exports.filter((e) => e.bookId === bookId));
+      // the list's order is part of what is being put back: the Audiobooks shelf is read in it
+      const order = exportsStore.exports.map((e) => e.id);
       const jobs = clone(
         jobsStore.jobs.filter(
           (j) => j.bookId === bookId && j.status !== "running" && j.status !== "queued",
@@ -117,9 +119,16 @@ export const useLibraryStore = defineStore("library", {
           ),
           ...segs,
         };
+        const mine = new Map(exports.map((e) => [e.id, e]));
+        const others = exportsStore.exports.filter((e) => e.bookId !== bookId);
+        const byId = new Map(others.map((e) => [e.id, e]));
         exportsStore.exports = [
-          ...exports,
-          ...exportsStore.exports.filter((e) => e.bookId !== bookId),
+          // anything built since the snapshot was taken keeps the front, where a new build lands
+          ...others.filter((e) => !order.includes(e.id)),
+          ...order.flatMap((id) => {
+            const e = mine.get(id) ?? byId.get(id);
+            return e ? [e] : [];
+          }),
         ];
         jobsStore.jobs = [...jobsStore.jobs.filter((j) => j.bookId !== bookId), ...jobs].sort(
           (a, b) => a.id - b.id,

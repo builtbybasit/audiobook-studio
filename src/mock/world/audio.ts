@@ -5,7 +5,12 @@ import { splitText } from "@/lib/split";
 import { speak, silenceOf, DEFAULT_PACING } from "@/lib/speech";
 import { generateSegments } from "./script";
 import type { WorldDraft } from "./draft";
-import type { Endpoint, Segment, VoiceRef } from "@/types";
+import type { Endpoint, Segment, SegmentAudio, VoiceRef } from "@/types";
+
+/** What seeding a clip has to agree with: who reads the line, how the book says it, and where it
+ *  is rendered. A world under construction satisfies this, and so does the live store — which is
+ *  how a demo scenario seeds clips the same way the world did. */
+export type ClipWorld = Pick<WorldDraft, "characters" | "lexicon" | "endpoints">;
 
 /** rendered length of a chapter: the clips plus the silence stitched between them */
 export const timeOf = (segs: Segment[]): number =>
@@ -22,7 +27,7 @@ const seedCuts = (text: string, ep: Endpoint) => {
     : {};
 };
 
-export const seedAudit = (w: WorldDraft, bookId: string, s: Segment, ep: Endpoint, i: number) => {
+export const seedAudit = (w: ClipWorld, bookId: string, s: Segment, ep: Endpoint, i: number) => {
   const cast = w.characters[bookId];
   const c = cast.find((x) => x.name === s.speaker);
   const ref = (c?.voice || cast.find((x) => x.name === "Narrator")!.voice)!;
@@ -41,15 +46,33 @@ export const seedAudit = (w: WorldDraft, bookId: string, s: Segment, ep: Endpoin
   };
 };
 
+/** One finished clip, exactly as the seeded world writes it — audit trail, cut preview and all.
+ *  A demo scenario that narrates a chapter after the fact goes through here, so a seeded clip and a
+ *  world-seeded one are the same thing. */
+export const seedClip = (
+  w: ClipWorld,
+  bookId: string,
+  s: Segment,
+  ep: Endpoint,
+  i: number,
+): SegmentAudio => ({
+  status: "done",
+  endpoint: ep.id,
+  ms: 900 + i * 37,
+  duration: s.text.split(" ").length / 2.6,
+  ...seedCuts(s.text, ep),
+  ...seedAudit(w, bookId, s, ep, i),
+});
+
 /** The voice a speaker is read in, falling back to the Narrator's. */
-export const refOf = (w: WorldDraft, bookId: string, speaker: string): VoiceRef => {
+export const refOf = (w: ClipWorld, bookId: string, speaker: string): VoiceRef => {
   const cast = w.characters[bookId];
   return (cast.find((c) => c.name === speaker)?.voice ||
     cast.find((c) => c.name === "Narrator")!.voice)!;
 };
 
 /** The endpoint that owns that voice — the one a clip for this speaker would be rendered by. */
-export const routeOf = (w: WorldDraft, bookId: string, speaker: string): Endpoint => {
+export const routeOf = (w: ClipWorld, bookId: string, speaker: string): Endpoint => {
   const ref = refOf(w, bookId, speaker);
   return w.endpoints.find((e) => e.id === ref.split("/")[0])!;
 };
@@ -82,21 +105,19 @@ export function seedPipeline(
       const segs = w.segments[`${bookId}:${c.id}`];
       segs.forEach((s, i) => {
         const ep = routeOf(w, bookId, s.speaker);
-        s.audio = {
-          status: "done",
-          endpoint: ep.id,
-          ms: 900 + i * 37,
-          duration: s.text.split(" ").length / 2.6,
-          ...(light
-            ? {
-                voiceRef: refOf(w, bookId, s.speaker),
-                model: ep.model,
-                type: s.type,
-                text: s.text,
-                at: Date.now() - (86400 + c.id * 61 + i * 7) * 1000,
-              }
-            : { ...seedCuts(s.text, ep), ...seedAudit(w, bookId, s, ep, i) }),
-        };
+        s.audio = light
+          ? {
+              status: "done",
+              endpoint: ep.id,
+              ms: 900 + i * 37,
+              duration: s.text.split(" ").length / 2.6,
+              voiceRef: refOf(w, bookId, s.speaker),
+              model: ep.model,
+              type: s.type,
+              text: s.text,
+              at: Date.now() - (86400 + c.id * 61 + i * 7) * 1000,
+            }
+          : seedClip(w, bookId, s, ep, i);
       });
       c.duration = timeOf(segs);
     }

@@ -9,6 +9,7 @@ import { makeScriptSettings, simulateScriptRun } from "@/mock";
 import type { ScriptEstimate, ScriptSettings } from "@/types";
 import { defineStore } from "pinia";
 import { useCastStore } from "./cast";
+import { useDemoStore } from "./demo";
 import { useEndpointsStore } from "./endpoints";
 import { useJobsStore } from "./jobs";
 import { useLibraryStore } from "./library";
@@ -196,13 +197,17 @@ export const useScriptingStore = defineStore("scripting", {
     },
     _scriptSim(): ScriptSimContext {
       const castStore = useCastStore();
+      const demoStore = useDemoStore();
       const endpointsStore = useEndpointsStore();
       const jobsStore = useJobsStore();
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
+      // the generation of the demo world this run belongs to, taken as it starts
+      const epoch = demoStore._epoch;
       return {
+        stale: () => demoStore.isStale(epoch),
         // read through a call, not captured: concurrency is shared across books and both lists are
         // replaced wholesale elsewhere in the store
         jobs: () => jobsStore.jobs,

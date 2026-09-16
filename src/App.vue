@@ -16,6 +16,7 @@ import { usePlayer } from "@/composables/usePlayer";
 import { endpointErrors, unifyEndpoint, unifyProfile } from "@/lib/endpoints";
 import JobIndicator from "@/components/JobIndicator.vue";
 import CommandPalette from "@/components/CommandPalette.vue";
+import DemoTools from "@/components/DemoTools.vue";
 import {
   X as CloseIcon,
   Headphones as LogoIcon,
@@ -185,7 +186,13 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
           </div>
           <div class="leading-tight">
             <div class="font-semibold">Audiobook Studio</div>
-            <div class="text-[10px] uppercase tracking-wider text-amber-500">prototype</div>
+            <!-- the app runs on seeded data and simulated jobs; say so where the name is -->
+            <div
+              class="text-[10px] uppercase tracking-wider text-amber-500"
+              title="Seeded books and simulated jobs. No provider is called and every cost shown is simulated."
+            >
+              demo mode · simulated costs
+            </div>
           </div>
           <button
             class="ml-auto text-zinc-400 lg:hidden"
@@ -363,6 +370,7 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
                 >{{ modKey }} K</kbd
               >
             </button>
+            <DemoTools />
             <JobIndicator />
           </div>
         </header>

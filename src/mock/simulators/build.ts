@@ -43,6 +43,11 @@ export function runBuild(
   let lastFile = -1;
   let milestone = 0;
   const step = () => {
+    // the world this build was planned against is gone: stop without writing to the new one
+    if (ctx.stale()) {
+      clearInterval(t);
+      return;
+    }
     if (job.cancelled) {
       clearInterval(t);
       ctx.dropExport(entry.id);
@@ -118,6 +123,13 @@ export function runBuild(
     }
   };
   const t = setInterval(() => {
+    // `step` clears this interval when the build lands, but a job settled from outside — a demo
+    // reset abandoning it, a cancellation elsewhere — never reaches `step` at all, so the timer is
+    // dropped here rather than left ticking against a build nothing is watching
+    if (ctx.stale() || job.finishedAt) {
+      clearInterval(t);
+      return;
+    }
     for (let n = 0; n < perTick && !job.finishedAt; n++) step();
   }, 140);
 }

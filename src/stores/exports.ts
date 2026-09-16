@@ -55,7 +55,10 @@ export const useExportsStore = defineStore("exports", {
       const libraryStore = useLibraryStore();
       const uiStore = useUiStore();
 
+      // the generation of the demo world this build belongs to, taken as it is queued
+      const epoch = demoStore._epoch;
       return {
+        stale: () => demoStore.isStale(epoch),
         chapterTitle: (bookId, chId) => libraryStore.chapter(bookId, chId)?.title ?? "",
         exportById: (id) => this.exports.find((e) => e.id === id),
         dropExport: (id) => {

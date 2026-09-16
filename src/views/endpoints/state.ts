@@ -6,6 +6,7 @@
 // keyed by `<kind>:<id>`.
 import { reactive } from "vue";
 import { bindCredential } from "@/lib/credentials";
+import { onDemoReset } from "@/lib/pageState";
 import { opsOf } from "@/lib/endpoints";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import type { ConnectionTest, EndpointKind, RangeKey, RequestStatus } from "@/types";
@@ -59,7 +60,7 @@ interface PageState {
   tests: Record<string, ConnectionTest>;
 }
 
-export const ui = reactive<PageState>({
+const blank = (): PageState => ({
   selected: null,
   kind: "all",
   search: "",
@@ -70,6 +71,12 @@ export const ui = reactive<PageState>({
   activity: {},
   tests: {},
 });
+
+export const ui = reactive<PageState>(blank());
+
+// A demo reset restores the endpoints themselves; a draft of an edit to one of them would otherwise
+// survive it, and the form would claim unsaved changes against a model that had just been put back.
+onDemoReset(() => Object.assign(ui, blank()));
 
 export const tabOf = (key: string): TabId => ui.tab[key] ?? "overview";
 export const filterOf = (key: string): ActivityFilter => (ui.activity[key] ??= newFilter());

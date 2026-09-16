@@ -32,7 +32,7 @@ export { makeWorld } from "./world";
 export { makeVolumes, makeChapters, volumesOfSeed, importedChapterCount } from "./world/chapters";
 export { generateSegments } from "./world/script";
 export { makeCharacters, newSpeaker } from "./world/cast";
-export { timeOf } from "./world/audio";
+export { routeOf, seedClip, timeOf, type ClipWorld } from "./world/audio";
 
 // helpers the simulators share
 export { rnd, rng, pick } from "./random";
@@ -46,13 +46,15 @@ export {
   type SearchDemoResult,
   type SearchDemoTarget,
 } from "./scenarios/search";
-export { STARTUP_DELAY_MS, startupRuns, type StartupRun } from "./scenarios/startup";
+export { SEEDED_KEYS, STARTUP_DELAY_MS, startupRuns, type StartupRun } from "./scenarios/startup";
 export {
   exportDemoPrep,
   exportScenarios,
   freshenChapters,
   type ExportDemoPrep,
 } from "./scenarios/export";
+export { DEMO_GROUPS, demoScenario, demoScenarios } from "./scenarios/catalogue";
+export { applySituation, type HistoryRow, type ScenarioContext } from "./scenarios/situations";
 
 // simulators — the timer-driven fakes that stand in for the endpoints
 export { discoverVoices, voicesUrl } from "./simulators/voices";

@@ -163,6 +163,50 @@ test("joining folds the next line into this one and the first speaker wins", () 
   expect(scriptsStore.segmentsOf("cliche", 1)[i].speaker).toBe(b.speaker);
 });
 
+test("deleting a line takes it out of the chapter, and the undo puts it back in place", () => {
+  const segs = scriptsStore.segmentsOf("cliche", 1);
+  const count = segs.length;
+  const before = segs.map((s) => s.text);
+  const gone = segs[2];
+
+  expect(scriptsStore.deleteSegment("cliche", 1, gone.id)).toBe(true);
+  const after = scriptsStore.segmentsOf("cliche", 1);
+  expect(after).toHaveLength(count - 1);
+  expect(after.some((s) => s.id === gone.id)).toBe(false);
+
+  undos.pop()!();
+  expect(scriptsStore.segmentsOf("cliche", 1).map((s) => s.text)).toEqual(before);
+});
+
+test("a chapter keeps its last line — there would be nothing left to narrate", () => {
+  const segs = scriptsStore.segmentsOf("cliche", 1);
+  for (const s of segs.slice(1)) expect(scriptsStore.deleteSegment("cliche", 1, s.id)).toBe(true);
+  const last = scriptsStore.segmentsOf("cliche", 1)[0];
+  expect(scriptsStore.deleteSegment("cliche", 1, last.id)).toBe(false);
+  expect(scriptsStore.segmentsOf("cliche", 1)).toHaveLength(1);
+});
+
+test("dropping a rendered line leaves the finished chapter stale and retimed", () => {
+  const gone = narrated("cliche", 1)[1];
+  expect(libraryStore.chapter("cliche", 1)!.narration).toBe("done");
+
+  scriptsStore.deleteSegment("cliche", 1, gone.id);
+  expect(libraryStore.chapter("cliche", 1)!.narration).toBe("stale");
+  expect(libraryStore.chapter("cliche", 1)!.duration).toBeCloseTo(stitched("cliche", 1), 10);
+});
+
+test("a rewritten line keeps its place and goes stale", () => {
+  const target = narrated("cliche", 1)[1];
+  const count = scriptsStore.segmentsOf("cliche", 1).length;
+
+  scriptsStore.updateSegment("cliche", 1, target.id, { text: "Trimmed." });
+  const after = scriptsStore.segmentsOf("cliche", 1);
+  expect(after).toHaveLength(count);
+  expect(after.find((s) => s.id === target.id)!.text).toBe("Trimmed.");
+  expect(target.edited).toBe(true);
+  expect(target.audio.status).toBe("stale");
+});
+
 test("the last segment has nothing to join into", () => {
   const last = scriptsStore.segmentsOf("cliche", 1).at(-1)!;
   expect(scriptsStore.joinSegments("cliche", 1, last.id)).toBe(false);

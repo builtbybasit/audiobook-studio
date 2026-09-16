@@ -452,6 +452,37 @@ export const useScriptsStore = defineStore("scripts", {
       });
       return true;
     },
+    /**
+     * Drop a line from the chapter. Contents keeps a chapter whole when the story has something
+     * else around it — an author's note, a translator's aside — and promises it can be trimmed
+     * here once the chapter is scripted; this is that trim. Also the way out for a line the model
+     * invented or doubled.
+     *
+     * Refuses the last line, because a chapter with nothing in it can't be narrated and there
+     * would be no row left to undo from. Undoable, like every other boundary edit.
+     */
+    deleteSegment(bookId: string, chId: number, segId: number): boolean {
+      const castStore = useCastStore();
+      const libraryStore = useLibraryStore();
+      const uiStore = useUiStore();
+
+      const segs = this.segments[key(bookId, chId)];
+      const i = segs?.findIndex((x) => x.id === segId) ?? -1;
+      if (i < 0 || segs.length < 2) return false;
+      const revert = this._segSnapshot(bookId, chId);
+      const [gone] = segs.splice(i, 1);
+      // its audio goes with it, so a finished chapter no longer matches what was rendered
+      const c = libraryStore.chapter(bookId, chId);
+      if (c && c.narration === "done" && gone.audio.status !== "none") c.narration = "stale";
+      castStore._retime(bookId, chId);
+      uiStore.toast(`#${gone.id} deleted`, {
+        description: `${gone.speaker}: “${
+          gone.text.length > 70 ? gone.text.slice(0, 70).trimEnd() + "…" : gone.text
+        }”`,
+        undo: revert,
+      });
+      return true;
+    },
     dismissDiff(bookId: string, chId: number): void {
       delete this._previous[key(bookId, chId)];
     },

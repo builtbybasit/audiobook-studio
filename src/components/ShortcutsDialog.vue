@@ -36,6 +36,7 @@ const groups = [
       ["j / k · ↑ ↓", "move between lines"],
       ["↵", "edit the focused line"],
       ["1 – 9", "assign speaker (chapter order)"],
+      ["e", "correct the words of the focused line"],
       ["s", "split the focused line at a word gap"],
       ["m", "join the focused line with the next one"],
       ["c", "toggle the cast rail"],
@@ -97,7 +98,8 @@ const groups = [
       >
         <DialogTitle class="mb-1 text-lg font-semibold">Keyboard shortcuts</DialogTitle>
         <DialogDescription class="mb-4 text-xs text-zinc-500"
-          >Shortcuts are ignored while you type in a field.</DialogDescription
+          >Shortcuts are ignored while you type in a field. Apart from the first group, each set
+          belongs to its own pane and acts on the pane you last clicked in.</DialogDescription
         >
         <div class="grid gap-4 sm:grid-cols-2">
           <div v-for="g in groups" :key="g.title">

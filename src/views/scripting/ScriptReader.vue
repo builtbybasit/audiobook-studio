@@ -4,6 +4,7 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 
 // Script reader: narration flows as prose; dialogue and thought are lifted into cards with a
 // speaker pill and the voice direction. Right rail (toggleable) = the cast *in this chapter* with
@@ -34,6 +35,8 @@ import {
   Pause as PauseIcon,
   RotateCcw as RetryIcon,
   Scissors as SplitIcon,
+  Trash2 as TrashIcon,
+  Type as TextIcon,
   TriangleAlert as WarnIcon,
   Users as CastIcon,
 } from "@lucide/vue";
@@ -47,7 +50,7 @@ const speakerOpts = computed(() => [
     label: c.name,
     color: c.color,
     group: "In this chapter",
-    hint: counts.value[c.name] + " lines",
+    hint: `${counts.value[c.name]} line${counts.value[c.name] === 1 ? "" : "s"}`,
     keywords: c.aliases.join(" "),
   })),
   ...rest.value.map((c) => ({
@@ -79,6 +82,7 @@ const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 const scriptsStore = useScriptsStore();
+const uiStore = useUiStore();
 const reader = useReader();
 const route = useRoute();
 const router = useRouter();
@@ -161,6 +165,38 @@ function doSplit(s: Segment, offset: number) {
     document.getElementById("seg-" + id)?.scrollIntoView({ block: "center", behavior: "smooth" }),
   );
 }
+// ---- the words themselves. The model mis-hears a word, doubles a line, or carries an author's
+// note into the story — Contents keeps such a chapter whole and says the note can be trimmed here,
+// so the editor has to be able to say what the line is, and to drop it.
+const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
+const editingText = ref<number | null>(null);
+const textDraft = ref("");
+function startTextEdit(s: Segment) {
+  open.value = s.id;
+  focus.value = s.id;
+  editingText.value = s.id;
+  textDraft.value = s.text;
+  void nextTick(() => document.getElementById(`seg-text-${s.id}`)?.focus());
+}
+/** Save the rewritten line. Expressions move with the words they sit on (the store remaps them),
+ *  and the clip no longer matches the words, so it goes stale — worth an undo. */
+function commitText(s: Segment) {
+  const text = textDraft.value.trim();
+  editingText.value = null;
+  if (!text || text === s.text) return;
+  const before = preview(s.text, 60);
+  const revert = scriptsStore._segSnapshot(props.bookId, props.chapterId);
+  scriptsStore.updateSegment(props.bookId, props.chapterId, s.id, { text });
+  uiStore.toast(`#${s.id} rewritten`, { description: `Was “${before}”`, undo: revert });
+}
+function dropSegment(s: Segment) {
+  if (scriptsStore.deleteSegment(props.bookId, props.chapterId, s.id)) {
+    if (open.value === s.id) open.value = null;
+    if (focus.value === s.id) focus.value = null;
+    editingText.value = null;
+  }
+}
+
 function doJoin(s: Segment, dir: "next" | "prev") {
   const first = dir === "next" ? s : prevOf(s);
   if (!first || !nextOf(first)) return;
@@ -177,6 +213,54 @@ const gapOf = (s: Segment) => pauseAfter(s, nextOf(s), pacing.value);
 const bookGap = (s: Segment) => defaultPause(s, nextOf(s), pacing.value);
 const setPause = (s: Segment, v: number | null) =>
   castStore.setPause(props.bookId, props.chapterId, s.id, v);
+
+// ---- one message per burst of keypresses ----
+// The keys that repeat — [ ] on the pause, 1–9 on the speaker — change a line you may not be
+// looking at, so they have to say what they did. One toast per press would bury the page under
+// near-identical messages, so a run of presses on the same line is announced once it settles, and
+// its undo steps back to where the run began rather than one press into it.
+const BURST_MS = 700;
+let burst: { key: string; timer: ReturnType<typeof setTimeout>; send: () => void } | null = null;
+/** Still mid-run on this key — the caller keeps the value the run started from. */
+const continuing = (key: string) => burst?.key === key;
+function announce(key: string, send: () => void) {
+  if (burst) {
+    clearTimeout(burst.timer);
+    if (burst.key !== key) burst.send(); // a different line: let its message out before this one
+  }
+  burst = { key, send, timer: setTimeout(flushBurst, BURST_MS) };
+}
+function flushBurst() {
+  const pending = burst;
+  burst = null;
+  pending?.send();
+}
+
+/** Lengthen or shorten the silence after a line from the keyboard. The chips in the editor show
+ *  what they did; a keystroke can land on a line that has scrolled away, so this one says the new
+ *  gap out loud and can be stepped back. */
+let pauseWas: number | null = null;
+function nudgePause(s: Segment, step: number) {
+  const key = `pause:${s.id}`;
+  if (!continuing(key)) pauseWas = s.pause ?? null;
+  const was = pauseWas;
+  const v = Math.max(0, Math.round((gapOf(s) + step) * 100) / 100);
+  const next = v === bookGap(s) ? null : v;
+  if (next === (s.pause ?? null)) return;
+  setPause(s, next);
+  const say = (p: number | null) =>
+    p === null
+      ? `the book's ${secs(bookGap(s))}`
+      : p === 0
+        ? "no pause — runs straight on"
+        : secs(p);
+  announce(key, () =>
+    uiStore.toast(`Pause after #${s.id}: ${say(next)}`, {
+      description: `Was ${say(was)}. Silence is stitched at build time, so no clip goes stale.`,
+      undo: () => setPause(s, was),
+    }),
+  );
+}
 
 const GENDER_LABEL: Partial<Record<Gender, string>> = { m: "male", f: "female", n: "neutral" };
 const sameSpeakerCount = (s: Segment) =>
@@ -212,6 +296,28 @@ function jumpTo(id: number) {
 }
 
 // keyboard: j/k or ↑/↓ move, Enter edit, Esc close, 1–9 assign speaker (in-chapter order), c toggles cast
+//
+// These are single letters with no modifier, and they used to be listened for on `window`: the
+// reader kept the keyboard wherever you had wandered to, so clicking a line here and then working
+// in the chapter list meant pressing 3 over there silently reassigned a speaker in here. They now
+// belong to this pane, and the one that changes something you may not be looking at says so.
+const root = ref<HTMLElement | null>(null);
+/** Where the last press landed. Prose and most rows are not focusable, so a click usually leaves
+ *  `document.activeElement` on `<body>` and only the pointer says which pane you are working in.
+ *  Starts inside, so a chapter you have just opened answers j/k without a click first. */
+let pointerInside = true;
+const onPointerDown = (e: PointerEvent) => {
+  pointerInside = !!root.value?.contains(e.target as Node);
+};
+/** Whether the reader owns the keyboard: something in it has focus, or nothing anywhere does and
+ *  this is where you last clicked. */
+function owns(): boolean {
+  const el = root.value;
+  if (!el) return false;
+  const active = document.activeElement;
+  if (active && active !== document.body) return el.contains(active);
+  return pointerInside;
+}
 const focus = ref<number | null>(null);
 watch(focus, (value) => {
   const current = Number(route.query.seg) || null;
@@ -227,6 +333,7 @@ function moveFocus(d: number) {
     ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 function onKey(e: KeyboardEvent) {
+  if (!owns()) return;
   const t = e.target as HTMLElement;
   if (t.closest('[data-expression-editor], [role="dialog"]')) return;
   // inside a field: let the widget (combobox/select) handle Escape itself; a second Escape closes the editor
@@ -262,10 +369,11 @@ function onKey(e: KeyboardEvent) {
     if (s) doJoin(s, "next");
   } else if ((e.key === "[" || e.key === "]") && focus.value) {
     const s = segments.value.find((x) => x.id === focus.value);
-    if (s && nextOf(s)) {
-      const v = Math.max(0, Math.round((gapOf(s) + (e.key === "]" ? 0.25 : -0.25)) * 100) / 100);
-      setPause(s, v === bookGap(s) ? null : v);
-    }
+    if (s && nextOf(s)) nudgePause(s, e.key === "]" ? 0.25 : -0.25);
+  } else if (e.key === "e" && focus.value) {
+    e.preventDefault(); // the field opens focused, and would otherwise be handed this very "e"
+    const s = segments.value.find((x) => x.id === focus.value);
+    if (s) startTextEdit(s);
   } else if (e.key === "c") {
     reader.showCast = !reader.showCast;
   } else if (e.key === "f") {
@@ -275,14 +383,46 @@ function onKey(e: KeyboardEvent) {
     document.querySelector<HTMLInputElement>('input[placeholder^="Find chapter"]')?.focus();
   } else if (/^[1-9]$/.test(e.key) && focus.value) {
     const c = inChapter.value[Number(e.key) - 1];
-    if (c) scriptsStore.setSpeaker(props.bookId, props.chapterId, focus.value, c.name);
+    if (c) assignSpeaker(focus.value, c.name);
   }
 }
+/** Reassign the focused line by number key. The picker in the editor needs no toast — you are
+ *  looking at what you changed — but a keystroke can land on a line that has scrolled away, and a
+ *  speaker swapped in silence is only found later, in the audio. So this one names both speakers,
+ *  quotes the line, and carries the undo. A mistyped number corrected straight away is one
+ *  message, from the speaker you started with to the one you meant. */
+let assignWas = "";
+let assignUndo: () => void = () => {};
+function assignSpeaker(id: number, name: string) {
+  const s = segments.value.find((x) => x.id === id);
+  if (!s || s.speaker === name) return;
+  const key = `speaker:${id}`;
+  if (!continuing(key)) {
+    assignWas = s.speaker;
+    assignUndo = scriptsStore._segSnapshot(props.bookId, props.chapterId);
+  }
+  const was = assignWas;
+  const revert = assignUndo;
+  const line = preview(s.text, 60);
+  scriptsStore.setSpeaker(props.bookId, props.chapterId, id, name);
+  announce(key, () =>
+    uiStore.toast(`#${id} is now ${name}`, {
+      description: `Was ${was}. “${line}”`,
+      undo: revert,
+    }),
+  );
+}
+
 onMounted(() => {
   window.addEventListener("keydown", onKey);
+  window.addEventListener("pointerdown", onPointerDown, true);
   if (route.query.seg) jumpTo(Number(route.query.seg));
 });
-onUnmounted(() => window.removeEventListener("keydown", onKey));
+onUnmounted(() => {
+  window.removeEventListener("keydown", onKey);
+  window.removeEventListener("pointerdown", onPointerDown, true);
+  flushBurst(); // leaving the chapter mid-run still owes you the message
+});
 watch(
   () => route.query.seg,
   (v) => {
@@ -291,11 +431,13 @@ watch(
 );
 watch(open, (v) => {
   if (v) focus.value = v;
+  if (v !== editingText.value) editingText.value = null;
 });
 </script>
 
 <template>
   <div
+    ref="root"
     class="grid h-full gap-4"
     :class="reader.showCast ? 'lg:grid-cols-[1fr_300px]' : 'grid-cols-1'"
   >
@@ -670,11 +812,60 @@ watch(open, (v) => {
                 >
                 <button
                   class="btn-ghost btn-xs ml-auto"
+                  :class="
+                    editingText === s.id && 'border-violet-400 text-violet-700 dark:text-violet-300'
+                  "
+                  :aria-pressed="editingText === s.id"
+                  title="Correct the words of this line — a mis-heard name, a doubled sentence, a note that isn’t story"
+                  @click="editingText === s.id ? (editingText = null) : startTextEdit(s)"
+                >
+                  <TextIcon class="icon-sm" /> Edit text
+                  <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">e</kbd>
+                </button>
+                <button
+                  class="btn-ghost btn-xs"
                   title="Close the editor (Esc)"
                   @click="((open = null), (splitting = null))"
                 >
                   Done <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">esc</kbd>
                 </button>
+              </div>
+              <div
+                v-if="editingText === s.id"
+                class="col-span-2 space-y-1.5 border-b border-zinc-100 pb-2 2xl:col-span-3 dark:border-zinc-800"
+              >
+                <span class="text-zinc-400">Line text</span>
+                <textarea
+                  :id="`seg-text-${s.id}`"
+                  v-model="textDraft"
+                  class="input min-h-24 w-full resize-y font-serif text-sm leading-relaxed"
+                  :class="s.type === 'thought' && 'italic'"
+                  spellcheck="true"
+                  @keydown.esc.stop="editingText = null"
+                  @keydown.enter.meta.prevent="commitText(s)"
+                  @keydown.enter.ctrl.prevent="commitText(s)"
+                ></textarea>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button
+                    class="btn-primary btn-xs"
+                    :disabled="!textDraft.trim() || textDraft.trim() === s.text"
+                    @click="commitText(s)"
+                  >
+                    Save text
+                    <kbd class="rounded bg-white/20 px-1 text-[10px]">{{ modKey }}↵</kbd>
+                  </button>
+                  <button class="btn-ghost btn-xs" @click="editingText = null">Cancel</button>
+                  <span class="text-[10px] text-zinc-400">
+                    {{ textDraft.trim().length }} chars ·
+                    <template v-if="!textDraft.trim()"
+                      >a line can’t be empty — use Delete line instead</template
+                    ><template v-else
+                      >expressions follow the words they sit on<template v-if="s.audio.duration"
+                        >, and this line’s audio goes stale</template
+                      ></template
+                    >
+                  </span>
+                </div>
               </div>
               <label
                 >Speaker<UiCombobox
@@ -779,9 +970,19 @@ watch(open, (v) => {
                     <ChevronDownIcon class="icon-sm" /> Join next
                     <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">m</kbd>
                   </button>
-                  <span v-if="s.audio.duration" class="ml-auto text-[10px] text-amber-600"
-                    >either one makes this line's audio stale</span
-                  >
+                  <div class="ml-auto flex items-center gap-2">
+                    <span v-if="s.audio.duration" class="text-[10px] text-amber-600"
+                      >either one makes this line's audio stale</span
+                    >
+                    <button
+                      v-if="segments.length > 1"
+                      class="btn-ghost btn-xs hover:border-red-300 hover:text-red-600 dark:hover:text-red-400"
+                      :title="`Drop #${s.id} from the chapter — the prose closes over it. Undoable from the toast.`"
+                      @click="dropSegment(s)"
+                    >
+                      <TrashIcon class="icon-sm" /> Delete line
+                    </button>
+                  </div>
                 </div>
 
                 <!-- split: the line as a strip of words, and both halves as they would come out -->
@@ -986,7 +1187,7 @@ watch(open, (v) => {
           <span class="text-[11px] text-zinc-400">{{ GENDER_LABEL[c.gender] ?? "unknown" }}</span>
         </div>
         <div class="mt-1 flex flex-wrap items-center gap-1 pl-4 text-[11px] text-zinc-500">
-          <span>{{ counts[c.name] }} lines</span>
+          <span>{{ counts[c.name] }} line{{ counts[c.name] === 1 ? "" : "s" }}</span>
           <template v-if="c.aliases.length"
             ><span>· a.k.a.</span
             ><span

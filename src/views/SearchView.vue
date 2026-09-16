@@ -42,7 +42,9 @@ const router = useRouter();
 const bookId = useBookId();
 const q = ref(String(route.query.q ?? ""));
 const speaker = ref(String(route.query.speaker ?? ""));
-const type = ref("all");
+const TYPES = ["all", "dialogue", "narration", "thought"];
+const asType = (v: unknown): string => (TYPES.includes(String(v)) ? String(v) : "all");
+const type = ref(asType(route.query.type));
 watch(
   () => route.query.q,
   (v) => {
@@ -57,6 +59,15 @@ watch(
   },
 );
 watch(speaker, (v) => router.replace({ query: { ...route.query, speaker: v || undefined } }));
+watch(
+  () => route.query.type,
+  (v) => {
+    type.value = asType(v);
+  },
+);
+watch(type, (v) =>
+  router.replace({ query: { ...route.query, type: v === "all" ? undefined : v } }),
+);
 const { contains } = useFilter({ sensitivity: "base" });
 const cast = computed(() => castStore.charactersOf(bookId));
 const speakerOpts = computed(() => [

@@ -460,10 +460,12 @@ async function toggleNotify() {
               {{ e.price ? "$" + e.price + "/1M" : "free" }}
             </div>
           </div>
+          <!-- the pool is app-wide and so is the page that edits it; a book's Narration tab only
+               shows where that book's lines land -->
           <RouterLink
-            v-if="uiStore.currentBookId"
-            :to="`/book/${uiStore.currentBookId}/narration`"
+            to="/endpoints"
             class="btn-ghost btn-xs mt-2 w-full justify-center"
+            title="Health, keys, voices, spend and concurrency for every endpoint"
             >Manage endpoints</RouterLink
           >
         </div>

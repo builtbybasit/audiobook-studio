@@ -22,7 +22,7 @@ import { useUiStore } from "@/stores/ui";
 import { computed, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isNarrated } from "@/lib/scriptReview";
-import { useBookId } from "@/router";
+import { useBookId } from "@/composables/useBookId";
 import { DEFAULT_EXPORT_SETTINGS, readinessOf } from "@/lib/exports";
 import { queryIds } from "@/lib/query";
 import { plural } from "@/views/export/shared";

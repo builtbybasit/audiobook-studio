@@ -16,7 +16,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useMediaQuery } from "@vueuse/core";
 import { importLabel, isUndecided, plural } from "@/lib/contents";
-import { useBookId } from "@/router";
+import { useBookId } from "@/composables/useBookId";
 import ContentsList, { type VolumeRow } from "@/views/contents/ContentsList.vue";
 import ContentsPreview from "@/views/contents/ContentsPreview.vue";
 import ContentsSuggestions from "@/views/contents/ContentsSuggestions.vue";

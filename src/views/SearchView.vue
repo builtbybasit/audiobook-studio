@@ -18,7 +18,7 @@ import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
 import { UiCheckbox, UiSelect, UiToggleGroup } from "@/ui";
 import { useFilter } from "reka-ui";
-import { useBookId } from "@/router";
+import { useBookId } from "@/composables/useBookId";
 import {
   Flag as FlagIcon,
   Megaphone as DirectionIcon,

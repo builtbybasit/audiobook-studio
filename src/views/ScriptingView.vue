@@ -13,7 +13,7 @@ import { PencilLine as ScriptingIcon, TriangleAlert as WarnIcon } from "@lucide/
 import ScriptReader from "@/views/scripting/ScriptReader.vue";
 import ScriptSettings from "@/views/scripting/ScriptSettings.vue";
 import ScriptEndpoints from "@/views/scripting/ScriptEndpoints.vue";
-import { useBookId } from "@/router";
+import { useBookId } from "@/composables/useBookId";
 
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();

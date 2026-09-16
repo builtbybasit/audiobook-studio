@@ -7,7 +7,7 @@ import { useLibraryStore } from "@/stores/library";
 // aliases and voice. Merge suggestions for near-duplicate names; bulk merge; rename inline.
 import { computed, ref } from "vue";
 
-import { useBookId } from "@/router";
+import { useBookId } from "@/composables/useBookId";
 import { UiSelect, UiCombobox, UiCheckbox } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
 import { X as CloseIcon } from "@lucide/vue";

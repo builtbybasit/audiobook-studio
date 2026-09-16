@@ -24,7 +24,7 @@ import { UiNumber } from "@/ui";
 import AddEpubDialog from "@/components/AddEpubDialog.vue";
 import { pendingFor, type PendingAdd } from "@/components/addEpub";
 import type { Volume } from "@/types";
-import { useBookId } from "@/router";
+import { useBookId } from "@/composables/useBookId";
 
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();

@@ -1,37 +1,21 @@
-import { createRouter, createWebHistory, useRoute } from "vue-router";
+import { createRouter, createWebHistory } from "vue-router";
 import LibraryView from "@/views/LibraryView.vue";
-import ScriptingView from "@/views/ScriptingView.vue";
-import NarrationView from "@/views/NarrationView.vue";
-import ExportView from "@/views/ExportView.vue";
-import QueueView from "@/views/QueueView.vue";
-import BookView from "@/views/BookView.vue";
-import CastView from "@/views/CastView.vue";
-import SearchView from "@/views/SearchView.vue";
-import ContentsView from "@/views/ContentsView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: "/", redirect: "/library" },
     { path: "/library", component: LibraryView },
-    { path: "/queue", component: QueueView },
-    // Lazy: the charting library only this page uses is a third of the bundle, and most sessions
-    // never open it.
+    { path: "/queue", component: () => import("@/views/QueueView.vue") },
     { path: "/endpoints", component: () => import("@/views/EndpointsView.vue") },
-    { path: "/book/:bookId", component: BookView },
-    { path: "/book/:bookId/cast", component: CastView },
-    { path: "/book/:bookId/contents", component: ContentsView },
-    { path: "/book/:bookId/search", component: SearchView },
-    { path: "/book/:bookId/scripting", component: ScriptingView },
-    { path: "/book/:bookId/narration", component: NarrationView },
-    { path: "/book/:bookId/export", component: ExportView },
+    // Every route below declares `:bookId` as a single segment, never a repeatable one — that is
+    // what lets `useBookId` narrow the param to a plain string.
+    { path: "/book/:bookId", component: () => import("@/views/BookView.vue") },
+    { path: "/book/:bookId/cast", component: () => import("@/views/CastView.vue") },
+    { path: "/book/:bookId/contents", component: () => import("@/views/ContentsView.vue") },
+    { path: "/book/:bookId/search", component: () => import("@/views/SearchView.vue") },
+    { path: "/book/:bookId/scripting", component: () => import("@/views/ScriptingView.vue") },
+    { path: "/book/:bookId/narration", component: () => import("@/views/NarrationView.vue") },
+    { path: "/book/:bookId/export", component: () => import("@/views/ExportView.vue") },
   ],
 });
-
-/**
- * Route params arrive typed as `string | string[]`; every route above declares `:bookId` as a
- * single segment, so this narrows it once instead of at each call site.
- */
-export function useBookId(): string {
-  return String(useRoute().params.bookId);
-}

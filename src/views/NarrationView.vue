@@ -20,7 +20,7 @@ import LexiconPanel from "@/views/narration/LexiconPanel.vue";
 import RunEstimate from "@/views/narration/RunEstimate.vue";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import JobLedger from "@/views/narration/JobLedger.vue";
-import { useBookId } from "@/router";
+import { useBookId } from "@/composables/useBookId";
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();

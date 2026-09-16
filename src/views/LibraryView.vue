@@ -94,7 +94,7 @@ function stageOf(p: BookProgress) {
       <div>
         <h1 class="text-2xl font-semibold">Library</h1>
         <p class="text-sm text-zinc-500">
-          {{ libraryStore.books.length }} books · pick one to start scripting
+          {{ libraryStore.books.length }} books · open one to continue
         </p>
       </div>
       <label class="btn-primary cursor-pointer"
@@ -130,67 +130,70 @@ function stageOf(p: BookProgress) {
       body="Add an EPUB to start. Each file becomes a novel, or a volume of one you already have."
     />
     <div class="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-4">
-      <button
+      <div
         v-for="b in libraryStore.books"
         :key="b.id"
-        class="card group overflow-hidden text-left transition-shadow hover:shadow-lg hover:shadow-violet-500/10"
-        @click="open(b)"
+        class="card overflow-hidden text-left transition-shadow hover:shadow-lg hover:shadow-violet-500/10"
       >
-        <div
-          class="relative aspect-[3/4] p-4"
-          :style="{ background: `linear-gradient(160deg, ${b.cover[0]}, ${b.cover[1]})` }"
+        <button
+          class="group block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500"
+          :aria-label="`Open ${b.title}`"
+          @click="open(b)"
         >
-          <div class="font-serif text-lg font-semibold leading-tight text-white drop-shadow">
-            {{ b.title }}
-          </div>
-          <div class="mt-1 text-xs text-white/80">{{ b.author }}</div>
-          <span
-            class="absolute bottom-3 left-3 rounded-full px-2 py-0.5 text-[11px] font-semibold backdrop-blur"
-            :class="stageOf(libraryStore.progress(b.id)).cls"
-            >{{ stageOf(libraryStore.progress(b.id)).label }}</span
+          <div
+            class="relative aspect-[3/4] p-4"
+            :style="{ background: `linear-gradient(160deg, ${b.cover[0]}, ${b.cover[1]})` }"
           >
-          <span
-            v-if="libraryStore.progress(b.id).running"
-            class="absolute bottom-3 right-3 h-2 w-2 animate-pulse rounded-full bg-emerald-400"
-          ></span>
-        </div>
-        <div class="space-y-1.5 p-3 text-xs">
-          <div class="flex justify-between">
-            <span class="text-zinc-500">Chapters</span
-            ><span
-              >{{ libraryStore.progress(b.id).total
-              }}<span v-if="b.volumes.length > 1" class="text-zinc-400">
-                · {{ b.volumes.length }} vols</span
-              ></span
+            <div class="font-serif text-lg font-semibold leading-tight text-white drop-shadow">
+              {{ b.title }}
+            </div>
+            <div class="mt-1 text-xs text-white/80">{{ b.author }}</div>
+            <span
+              class="absolute bottom-3 left-3 rounded-full px-2 py-0.5 text-[11px] font-semibold backdrop-blur"
+              :class="stageOf(libraryStore.progress(b.id)).cls"
+              >{{ stageOf(libraryStore.progress(b.id)).label }}</span
             >
+            <span
+              v-if="libraryStore.progress(b.id).running"
+              class="absolute bottom-3 right-3 h-2 w-2 animate-pulse rounded-full bg-emerald-400"
+            ></span>
           </div>
-          <MiniBar
-            label="Scripted"
-            :n="libraryStore.progress(b.id).scripted"
-            :of="libraryStore.progress(b.id).total"
-            color="bg-amber-500"
-          />
-          <MiniBar
-            label="Narrated"
-            :n="libraryStore.progress(b.id).narrated"
-            :of="libraryStore.progress(b.id).total"
-            color="bg-sky-500"
-          />
-          <div class="flex justify-between">
-            <span class="text-zinc-500">Exports</span
-            ><span>{{ libraryStore.progress(b.id).exported }}</span>
+          <div class="space-y-1.5 p-3 text-xs">
+            <div class="flex justify-between">
+              <span class="text-zinc-500">Chapters</span
+              ><span
+                >{{ libraryStore.progress(b.id).total
+                }}<span v-if="b.volumes.length > 1" class="text-zinc-400">
+                  · {{ b.volumes.length }} vols</span
+                ></span
+              >
+            </div>
+            <MiniBar
+              label="Scripted"
+              :n="libraryStore.progress(b.id).scripted"
+              :of="libraryStore.progress(b.id).total"
+              color="bg-amber-500"
+            />
+            <MiniBar
+              label="Narrated"
+              :n="libraryStore.progress(b.id).narrated"
+              :of="libraryStore.progress(b.id).total"
+              color="bg-sky-500"
+            />
+            <div class="flex justify-between">
+              <span class="text-zinc-500">Exports</span
+              ><span>{{ libraryStore.progress(b.id).exported }}</span>
+            </div>
           </div>
+        </button>
+        <div class="border-t border-zinc-100 px-3 py-2 dark:border-zinc-800">
           <label
-            class="mt-1 block cursor-pointer text-center text-[11px] text-zinc-400 hover:text-violet-500"
-            @click.stop
-            ><AddIcon class="icon-sm" /> add volume<input
-              type="file"
-              accept=".epub"
-              class="hidden"
-              @change="addFake($event, b.id)"
+            class="block cursor-pointer text-center text-[11px] text-zinc-400 hover:text-violet-500"
+            ><AddIcon class="icon-sm" /> Add volume to {{ b.title
+            }}<input type="file" accept=".epub" class="hidden" @change="addFake($event, b.id)"
           /></label>
         </div>
-      </button>
+      </div>
     </div>
 
     <!-- add dialog -->

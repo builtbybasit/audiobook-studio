@@ -19,11 +19,11 @@ import type {
   VoiceRef,
 } from "@/types";
 import { defineStore } from "pinia";
-import { useEndpointsStore } from "./endpoints";
-import { useLibraryStore } from "./library";
-import { useScriptsStore } from "./scripts";
-import { seedState } from "./seed";
-import { useUiStore } from "./ui";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
+import { seedState } from "@/stores/seed";
+import { useUiStore } from "@/stores/ui";
 interface CastState {
   characters: Record<string, Character[]>;
   lexicon: Record<string, LexEntry[]>;
@@ -154,7 +154,10 @@ export const useCastStore = defineStore("cast", {
         const out: MergeSuggestion[] = [];
         for (const a of cast)
           for (const b of cast) {
-            if (a === b || a.name === "Narrator" || b.name === "Narrator") continue;
+            // `keep` is the user saying "this name is its own speaker". Without it here the
+            // suggestion came straight back on the next read, so dismissing it settled nothing —
+            // and the review inbox would have listed the same decision for ever.
+            if (a === b || a.name === "Narrator" || b.name === "Narrator" || b.keep) continue;
             const na = norm(a.name);
             const nb = norm(b.name);
             if (
@@ -410,6 +413,59 @@ export const useCastStore = defineStore("cast", {
         }
       if (n)
         uiStore.toast(`Merged ${n} speaker${n === 1 ? "" : "s"} into ${into}`, { undo: revert });
+    },
+    /** A speaker typed in by hand, before any line is attributed to them — so they are not "new"
+     *  in the review sense (nothing detected them, you did) and start as main cast. Returns false
+     *  when the name is taken; the caller should offer to merge instead. */
+    addCharacter(bookId: string, name: string): boolean {
+      const uiStore = useUiStore();
+
+      name = (name ?? "").trim();
+      const cast = (this.characters[bookId] ??= []);
+      if (!name || cast.some((c) => c.name === name)) return false;
+      const c: Character = { ...newSpeaker(name, cast.length), major: true, isNew: false };
+      cast.push(c);
+      uiStore.toast(`Added “${name}”`, {
+        description:
+          "No lines are attributed to them yet — merge a detected name in, or re-script.",
+        undo: () => {
+          this.characters[bookId] = (this.characters[bookId] ?? []).filter((x) => x !== c);
+        },
+      });
+      return true;
+    },
+    /** Patch the fields that are the speaker's own description of themselves — gender, notes,
+     *  delivery style, main/minor. Nothing here moves a line, so none of it needs a snapshot. */
+    updateCharacter(bookId: string, name: string, patch: Partial<Character>): void {
+      const c = this.characters[bookId]?.find((x) => x.name === name);
+      if (!c) return;
+      const { name: _name, aliases: _aliases, ...rest } = patch;
+      Object.assign(c, rest);
+    },
+    /** An alias is a name the same speaker is called by. It is matching metadata only — moving
+     *  lines from one name to another is `mergeCharacter`, which is why an existing speaker's name
+     *  is refused here. */
+    addAlias(bookId: string, name: string, alias: string): boolean {
+      alias = (alias ?? "").trim();
+      const cast = this.characters[bookId] ?? [];
+      const c = cast.find((x) => x.name === name);
+      if (!c || !alias || alias === name) return false;
+      if (cast.some((x) => x.name === alias)) return false;
+      if (c.aliases.includes(alias)) return false;
+      c.aliases = [...c.aliases, alias];
+      return true;
+    },
+    removeAlias(bookId: string, name: string, alias: string): void {
+      const uiStore = useUiStore();
+
+      const c = this.characters[bookId]?.find((x) => x.name === name);
+      if (!c || !c.aliases.includes(alias)) return;
+      c.aliases = c.aliases.filter((a) => a !== alias);
+      uiStore.toast(`Removed alias “${alias}”`, {
+        undo: () => {
+          c.aliases = [...c.aliases, alias];
+        },
+      });
     },
     deleteCharacter(bookId: string, name: string): void {
       const scriptsStore = useScriptsStore();

@@ -11,6 +11,7 @@ export const router = createRouter({
     // Every route below declares `:bookId` as a single segment, never a repeatable one — that is
     // what lets `useBookId` narrow the param to a plain string.
     { path: "/book/:bookId", component: () => import("@/views/BookView.vue") },
+    { path: "/book/:bookId/review", component: () => import("@/views/ReviewView.vue") },
     { path: "/book/:bookId/cast", component: () => import("@/views/CastView.vue") },
     { path: "/book/:bookId/contents", component: () => import("@/views/ContentsView.vue") },
     { path: "/book/:bookId/search", component: () => import("@/views/SearchView.vue") },

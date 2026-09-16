@@ -1,15 +1,15 @@
-import { useDemoStore } from "../src/stores/demo";
-import { useJobsStore } from "../src/stores/jobs";
-import { useLibraryStore } from "../src/stores/library";
-import { useUiStore } from "../src/stores/ui";
+import { useDemoStore } from "@/stores/demo";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useUiStore } from "@/stores/ui";
 // The Library shelf: the one next thing a card says about a book, as a verb with a destination;
 // and the search, the filters and the order that make a shelf of twenty books usable.
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 
-import { SHELF_BOOKS } from "../src/mock";
-import { bookFacts, type BookFacts } from "../src/views/library/bookFacts";
-import { hours, nextStepOf, updateReason } from "../src/views/library/shared";
+import { SHELF_BOOKS } from "@/mock";
+import { bookFacts, type BookFacts } from "@/views/library/bookFacts";
+import { hours, nextStepOf, updateReason } from "@/views/library/shared";
 import {
   filterCounts,
   matchesQuery,
@@ -17,8 +17,8 @@ import {
   sortEntries,
   todoScore,
   type ShelfEntry,
-} from "../src/views/library/shelf";
-import type { Book, BookProgress } from "../src/types";
+} from "@/views/library/shelf";
+import type { Book, BookProgress } from "@/types";
 
 const progress = (over: Partial<BookProgress> = {}): BookProgress => ({
   total: 24,
@@ -34,6 +34,8 @@ const progress = (over: Partial<BookProgress> = {}): BookProgress => ({
 const quiet = {
   failedScripting: 0,
   failedNarration: 0,
+  unreviewed: 0,
+  unvoiced: 0,
   exports: 0,
   behind: false,
   building: false,
@@ -75,6 +77,62 @@ describe("the next step on a card", () => {
     expect(nextStepOf(progress(), { ...quiet, building: true }).label).toContain("Building");
   });
 
+  test("the cast steps the overview used to own are in the one chain", () => {
+    // These three used to exist only in BookView's private copy, so a card could never say them.
+    expect(nextStepOf(progress(), { ...quiet, unreviewed: 2 })).toMatchObject({
+      label: "Review cast",
+      to: "cast",
+    });
+    expect(nextStepOf(progress({ fallback: 1 }), quiet)).toMatchObject({
+      label: "Inspect fallbacks",
+      to: "scripting",
+    });
+    expect(nextStepOf(progress(), { ...quiet, unvoiced: 3 })).toMatchObject({
+      label: "Assign voices",
+      to: "narration",
+    });
+  });
+
+  test("a stale chapter no longer hides a speaker waiting to be reviewed", () => {
+    // The bug this chain was merged for: the shelf said "Re-narrate 1 stale chapter" while the
+    // book's own overview said a new speaker needed review. One question, one answer.
+    const step = nextStepOf(progress({ narrated: 20, stale: 1 }), { ...quiet, unreviewed: 1 });
+    expect(step.label).toBe("Review cast");
+    expect(step.text).toBe("1 newly detected speaker needs review — probably aliases to merge.");
+  });
+
+  test("a failure outranks a review, so the attention filter still finds it", () => {
+    const step = nextStepOf(progress({ scripted: 12, narrated: 3 }), {
+      ...quiet,
+      failedScripting: 1,
+      unreviewed: 4,
+    });
+    expect(step).toMatchObject({ label: "Retry 1 failed chapter", tone: "red" });
+  });
+
+  test("every step carries both a verb and a sentence", () => {
+    const steps = [
+      nextStepOf(progress({ total: 0, scripted: 0, narrated: 0 }), quiet),
+      nextStepOf(progress({ scripted: 0, narrated: 0 }), quiet),
+      nextStepOf(progress(), { ...quiet, failedScripting: 1 }),
+      nextStepOf(progress(), { ...quiet, unreviewed: 1 }),
+      nextStepOf(progress({ fallback: 2 }), quiet),
+      nextStepOf(progress(), { ...quiet, unvoiced: 1 }),
+      nextStepOf(progress({ stale: 2 }), quiet),
+      nextStepOf(progress(), { ...quiet, failedNarration: 1 }),
+      nextStepOf(progress({ scripted: 12, narrated: 3 }), quiet),
+      nextStepOf(progress({ scripted: 12, narrated: 12 }), quiet),
+      nextStepOf(progress(), { ...quiet, building: true }),
+      nextStepOf(progress(), quiet),
+      nextStepOf(progress(), { ...quiet, exports: 1, behind: true }),
+      nextStepOf(progress(), { ...quiet, exports: 1 }),
+    ];
+    for (const step of steps) {
+      expect(step.label.length).toBeGreaterThan(0);
+      expect(step.text.length).toBeGreaterThan(0);
+    }
+  });
+
   test("a book with every chapter skipped points back at the contents review", () => {
     expect(
       nextStepOf(progress({ total: 0, scripted: 0, narrated: 0, excluded: 5 }), quiet).to,
@@ -111,6 +169,8 @@ const facts = (over: Partial<BookFacts> = {}, p: Partial<BookProgress> = {}): Bo
   progress: progress(p),
   contents: { total: 24, included: 24, skipped: 0, suggested: 0, review: 0, kept: 0, noted: 0 },
   next: nextStepOf(progress(p), quiet),
+  unreviewed: 0,
+  unvoiced: 0,
   activity: "",
   running: false,
   failedJobs: 0,

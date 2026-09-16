@@ -1,5 +1,6 @@
 // Everything a shelf can say about one book, gathered once. Each layout decides what to show and
 // where; none of them recompute it. Read-only over the stores.
+import { useCastStore } from "@/stores/cast";
 import { useExportsStore } from "@/stores/exports";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
@@ -14,6 +15,10 @@ export interface BookFacts {
   next: NextStep;
   failedScripting: number;
   failedNarration: number;
+  /** new speakers awaiting review, and main cast still on the Narrator's voice — the next step
+   *  chain reads both, so a card can say "Review cast" the way the overview does */
+  unreviewed: number;
+  unvoiced: number;
   /** "Scripting 3 chapters · Narrating 2 chapters", or "" */
   activity: string;
   running: boolean;
@@ -29,6 +34,7 @@ export interface BookFacts {
 
 /** The facts as they stand now. Plain, so a list can gather them for every book in one pass. */
 export function bookFacts(id: string): BookFacts {
+  const castStore = useCastStore();
   const exportsStore = useExportsStore();
   const jobsStore = useJobsStore();
   const libraryStore = useLibraryStore();
@@ -38,6 +44,9 @@ export function bookFacts(id: string): BookFacts {
   const contents = libraryStore.contentsOf(id);
   const failedScripting = chapters.filter((c) => c.scripting === "failed").length;
   const failedNarration = chapters.filter((c) => c.narration === "failed").length;
+  const cast = castStore.charactersOf(id);
+  const unreviewed = cast.filter((c) => c.isNew).length;
+  const unvoiced = cast.filter((c) => !c.voice && c.major).length;
   const all = exportsStore.exportsOf(id);
   const done = all.filter((e) => e.status === "done");
   const latest = done.length ? done.reduce((a, b) => (b.version > a.version ? b : a)) : null;
@@ -59,12 +68,16 @@ export function bookFacts(id: string): BookFacts {
     next: nextStepOf(progress, {
       failedScripting,
       failedNarration,
+      unreviewed,
+      unvoiced,
       exports: done.length,
       behind,
       building,
     }),
     failedScripting,
     failedNarration,
+    unreviewed,
+    unvoiced,
     activity,
     running: active.length > 0,
     failedJobs: jobsStore.jobs.filter((j) => j.bookId === id && j.status === "failed").length,

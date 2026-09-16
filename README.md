@@ -49,8 +49,9 @@ Switching scenarios or resetting **abandons simulated work in flight**. Each run
 
 ## Pages
 
-- **Library** → **Add EPUB** → **Contents** (what goes in the audiobook) → **Book overview** (volumes, per-stage progress, cast summary, "what next") → stages **Scripting / Narration / Export**.
+- **Library** → **Add EPUB** → **Contents** (what goes in the audiobook) → **Book overview** (volumes, per-stage progress, cast summary, "what next", and what else is waiting) → stages **Scripting / Narration / Export**.
 - **Contents** (per book): every chapter in reading order, grouped by volume, with the notices the import found beside the titles; skip or restore chapters, singly, in ranges, by volume or by kind of notice. Reached from the import and again from the overview.
+- **Review** (per book): every decision the book is waiting on, in one list — retakes waiting for a verdict, flagged clips, speakers a re-script brought in, merge suggestions, expressions the text moved under, chunks that didn't verify, chapters the import wasn't sure about, and runs that failed. Grouped by where each is settled, with a link that lands on the row itself rather than the top of its page; a batch of chapters carrying the same notice is one row, because one verdict settles them all. It decides nothing itself, and a decision settled anywhere leaves the list. Reached from the overview strip under "what next", from the sidebar, from the palette, and from Export's unfinished-review block.
 - **Cast** (per book): every speaker across all chapters, line counts, first appearance, merge suggestions for near-duplicate names, bulk merge.
 - **Queue**: all jobs across books with cancel / retry / remove, endpoint pool utilisation. Click a job to open its activity log and run details.
 - **Endpoints**: every scripting and speech endpoint in one place — health, throughput, spend, request history, connection, limits and budgets.

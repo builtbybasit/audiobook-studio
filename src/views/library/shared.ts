@@ -1,53 +1,147 @@
-// What a book card says next to its cover: the one thing worth doing on this book, as a verb, and
-// where it happens. Pure over the counts, so the card and the test can agree on the words.
+// The one thing worth doing on this book, as a verb and where it happens.
+//
+// Both surfaces that answer "what next" read this: the shelf card next to its cover, and the book
+// overview's banner. They used to each walk their own chain, so the same book could be told to
+// re-narrate a stale chapter on the shelf and to review a new speaker on its own overview — two
+// answers, both true, neither complete. One chain, two renderings: `label` is the button, `text`
+// is the sentence the overview has room for.
+//
+// Pure over the counts, so the card, the overview and the test can agree on the words.
 import type { BookProgress, ExportUpdate } from "@/types";
 
 export interface NextStep {
+  /** the verb, short enough for a card chip and a button */
   label: string;
+  /** one sentence saying why, for the surfaces with room for it */
+  text: string;
   /** the stage path segment under /book/:id — "" is the overview */
-  to: "scripting" | "narration" | "export" | "contents" | "";
+  to: "scripting" | "narration" | "export" | "contents" | "cast" | "";
   tone: "amber" | "sky" | "violet" | "emerald" | "zinc" | "red";
 }
 
-export function nextStepOf(
-  p: BookProgress,
-  extra: {
-    failedScripting: number;
-    failedNarration: number;
-    exports: number;
-    behind: boolean;
-    building: boolean;
-  },
-): NextStep {
+/** Everything the chain needs that isn't a chapter count. */
+export interface NextStepContext {
+  failedScripting: number;
+  failedNarration: number;
+  /** speakers first seen in a re-script and not yet reviewed — usually aliases to merge */
+  unreviewed: number;
+  /** main cast still borrowing the Narrator's voice */
+  unvoiced: number;
+  /** finished audiobooks */
+  exports: number;
+  behind: boolean;
+  building: boolean;
+}
+
+export function nextStepOf(p: BookProgress, extra: NextStepContext): NextStep {
+  const n = (count: number, one: string, many = one + "s") =>
+    `${count} ${count === 1 ? one : many}`;
+  // Broken work first, then work that needs a decision, then work that just needs doing. A retry
+  // outranks a review on purpose: the shelf's "needs attention" filter keys on the red tone, so
+  // a book with a failed chapter has to stay findable even when it also has a speaker to review.
   if (!p.total)
-    return { label: "Nothing included — review contents", to: "contents", tone: "zinc" };
-  if (p.scripted === 0) return { label: "Start scripting", to: "scripting", tone: "amber" };
+    return {
+      label: "Nothing included — review contents",
+      text: "Every chapter is excluded, so there is nothing to script or narrate.",
+      to: "contents",
+      tone: "zinc",
+    };
+  if (p.scripted === 0)
+    return {
+      label: "Start scripting",
+      text: "Nothing is scripted yet. Run scripting on the first few chapters to extract the cast.",
+      to: "scripting",
+      tone: "amber",
+    };
   if (extra.failedScripting)
     return {
-      label: `Retry ${extra.failedScripting} failed chapter${extra.failedScripting === 1 ? "" : "s"}`,
+      label: `Retry ${n(extra.failedScripting, "failed chapter")}`,
+      text: `${n(extra.failedScripting, "chapter")} failed scripting.`,
       to: "scripting",
       tone: "red",
     };
+  if (extra.unreviewed)
+    return {
+      label: "Review cast",
+      text: `${n(extra.unreviewed, "newly detected speaker")} ${
+        extra.unreviewed === 1 ? "needs" : "need"
+      } review — probably aliases to merge.`,
+      to: "cast",
+      tone: "amber",
+    };
+  if (p.fallback)
+    return {
+      label: "Inspect fallbacks",
+      text: `${n(p.fallback, "chapter")} kept a chunk as plain narration because it didn’t verify.`,
+      to: "scripting",
+      tone: "amber",
+    };
+  if (extra.unvoiced)
+    return {
+      label: "Assign voices",
+      text: `${n(extra.unvoiced, "main character")} still ${
+        extra.unvoiced === 1 ? "uses" : "use"
+      } the Narrator’s voice.`,
+      to: "narration",
+      tone: "sky",
+    };
   if (p.stale)
     return {
-      label: `Re-narrate ${p.stale} stale chapter${p.stale === 1 ? "" : "s"}`,
+      label: `Re-narrate ${n(p.stale, "stale chapter")}`,
+      text: `${n(p.stale, "chapter")} edited after narration — audio is stale.`,
       to: "narration",
       tone: "amber",
     };
   if (extra.failedNarration)
     return {
-      label: `Retry ${extra.failedNarration} failed narration${extra.failedNarration === 1 ? "" : "s"}`,
+      label: `Retry ${n(extra.failedNarration, "failed narration")}`,
+      text: `${n(extra.failedNarration, "chapter")} have failed segments.`,
       to: "narration",
       tone: "red",
     };
   if (p.narrated < p.scripted)
-    return { label: `Narrate ${p.scripted - p.narrated} chapters`, to: "narration", tone: "sky" };
+    return {
+      label: `Narrate ${n(p.scripted - p.narrated, "chapter")}`,
+      text: `${n(p.scripted - p.narrated, "scripted chapter")} ${
+        p.scripted - p.narrated === 1 ? "is" : "are"
+      } not narrated yet.`,
+      to: "narration",
+      tone: "sky",
+    };
   if (p.scripted < p.total)
-    return { label: `Script ${p.total - p.scripted} more`, to: "scripting", tone: "amber" };
-  if (extra.building) return { label: "Building the audiobook…", to: "export", tone: "violet" };
-  if (!extra.exports) return { label: "Build the audiobook", to: "export", tone: "violet" };
-  if (extra.behind) return { label: "Update the audiobook", to: "export", tone: "violet" };
-  return { label: "Audiobook up to date", to: "export", tone: "emerald" };
+    return {
+      label: `Script ${p.total - p.scripted} more`,
+      text: `${n(p.total - p.scripted, "chapter")} still to script.`,
+      to: "scripting",
+      tone: "amber",
+    };
+  if (extra.building)
+    return {
+      label: "Building the audiobook…",
+      text: "The audiobook is being built.",
+      to: "export",
+      tone: "violet",
+    };
+  if (!extra.exports)
+    return {
+      label: "Build the audiobook",
+      text: "Everything is narrated. Build the audiobook.",
+      to: "export",
+      tone: "violet",
+    };
+  if (extra.behind)
+    return {
+      label: "Update the audiobook",
+      text: "New chapters narrated since the last audiobook build.",
+      to: "export",
+      tone: "violet",
+    };
+  return {
+    label: "Audiobook up to date",
+    text: "This book is complete and exported.",
+    to: "export",
+    tone: "emerald",
+  };
 }
 
 export const TONE: Record<NextStep["tone"], string> = {

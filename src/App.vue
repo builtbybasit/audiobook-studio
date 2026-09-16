@@ -14,6 +14,7 @@ import { useRoute } from "vue-router";
 import { keyring } from "@/lib/keyring";
 import { usePlayer } from "@/composables/usePlayer";
 import { endpointErrors, unifyEndpoint, unifyProfile } from "@/lib/endpoints";
+import { reviewCount } from "@/views/review/inbox";
 import JobIndicator from "@/components/JobIndicator.vue";
 import CommandPalette from "@/components/CommandPalette.vue";
 import DemoTools from "@/components/DemoTools.vue";
@@ -154,6 +155,8 @@ const activeKey = computed(() =>
 const p = computed(() =>
   uiStore.currentBookId ? libraryStore.progress(uiStore.currentBookId) : null,
 );
+/** Decisions waiting on the open book. The stage rows count work; this counts verdicts. */
+const waiting = computed(() => (uiStore.currentBookId ? reviewCount(uiStore.currentBookId) : 0));
 /** enabled endpoints that can't currently run: no key, or settings that don't validate */
 const endpointsNeedingAttention = computed(
   () =>
@@ -329,6 +332,16 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
                   libraryStore.contentsOf(libraryStore.book.id).total
                 }}</span
               ></RouterLink
+            >
+            <RouterLink
+              :to="`/book/${libraryStore.book.id}/review`"
+              class="rounded border border-zinc-200 px-2 py-0.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+              :class="[
+                activeKey === 'review' && 'border-violet-400',
+                waiting && 'border-amber-400 text-amber-700 dark:text-amber-300',
+              ]"
+              >Review <span v-if="waiting" class="font-medium">{{ waiting }}</span
+              ><span v-else class="text-zinc-400">0</span></RouterLink
             >
             <RouterLink
               :to="`/book/${libraryStore.book.id}/cast`"

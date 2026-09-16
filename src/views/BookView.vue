@@ -19,12 +19,15 @@ import {
   Play as PlayIcon,
   Plus as AddIcon,
   ArrowRight as NextIcon,
+  Inbox as ReviewIcon,
 } from "@lucide/vue";
 import { UiNumber } from "@/ui";
 import AddEpubDialog from "@/components/AddEpubDialog.vue";
 import { pendingFor, type PendingAdd } from "@/components/addEpub";
 import type { Volume } from "@/types";
 import { useBookId } from "@/composables/useBookId";
+import { nextStepOf } from "@/views/library/shared";
+import { countOf, useReviewInbox } from "@/views/review/inbox";
 
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
@@ -44,6 +47,9 @@ const unvoiced = computed(() => cast.value.filter((c) => !c.voice && c.major).le
 const suggestions = computed(() => castStore.mergeSuggestions(bookId).length);
 const exportsHere = computed(() =>
   exportsStore.exports.filter((e) => e.bookId === bookId && e.status === "done"),
+);
+const building = computed(() =>
+  exportsStore.exports.some((e) => e.bookId === bookId && e.status === "building"),
 );
 /** A finished audiobook that no longer matches the book — new chapters, or chapters re-rendered. */
 const behind = computed(() =>
@@ -105,75 +111,25 @@ const fmt = (s: number) =>
     : `${Math.floor(s / 60)}m`;
 const runtime = computed(() => chapters.value.reduce((a, c) => a + c.duration, 0));
 
-// the single most useful next action
-const next = computed(() => {
-  const failedS = chapters.value.filter((c) => c.scripting === "failed").length;
-  const failedN = chapters.value.filter((c) => c.narration === "failed").length;
-  if (p.value.scripted === 0)
-    return {
-      text: "Nothing is scripted yet. Run scripting on the first few chapters to extract the cast.",
-      to: "scripting",
-      label: "Start scripting",
-    };
-  if (unreviewed.value)
-    return {
-      text: `${unreviewed.value} newly detected speaker${unreviewed.value > 1 ? "s" : ""} need${unreviewed.value > 1 ? "" : "s"} review — probably aliases to merge.`,
-      to: "cast",
-      label: "Review cast",
-    };
-  if (failedS)
-    return {
-      text: `${failedS} chapter${failedS > 1 ? "s" : ""} failed scripting.`,
-      to: "scripting",
-      label: "Retry scripting",
-    };
-  if (p.value.fallback)
-    return {
-      text: `${p.value.fallback} chapter${p.value.fallback > 1 ? "s" : ""} kept a chunk as plain narration because it didn’t verify.`,
-      to: "scripting",
-      label: "Inspect fallbacks",
-    };
-  if (unvoiced.value)
-    return {
-      text: `${unvoiced.value} main character${unvoiced.value > 1 ? "s" : ""} still use${unvoiced.value > 1 ? "" : "s"} the Narrator’s voice.`,
-      to: "narration",
-      label: "Assign voices",
-    };
-  if (p.value.stale)
-    return {
-      text: `${p.value.stale} chapter${p.value.stale > 1 ? "s" : ""} edited after narration — audio is stale.`,
-      to: "narration",
-      label: "Re-narrate changes",
-    };
-  if (failedN)
-    return {
-      text: `${failedN} chapter${failedN > 1 ? "s" : ""} have failed segments.`,
-      to: "narration",
-      label: "Retry narration",
-    };
-  if (p.value.narrated < p.value.scripted)
-    return {
-      text: `${p.value.scripted - p.value.narrated} scripted chapter${p.value.scripted - p.value.narrated > 1 ? "s are" : " is"} not narrated yet.`,
-      to: "narration",
-      label: "Narrate",
-    };
-  if (p.value.scripted < p.value.total)
-    return {
-      text: `${p.value.total - p.value.scripted} chapter${p.value.total - p.value.scripted > 1 ? "s" : ""} still to script.`,
-      to: "scripting",
-      label: "Continue scripting",
-    };
-  const fresh = behind.value;
-  if (!exportsHere.value.length || fresh)
-    return {
-      text: fresh
-        ? "New chapters narrated since the last audiobook build."
-        : "Everything is narrated. Build the audiobook.",
-      to: "export",
-      label: fresh ? "Rebuild audiobook" : "Build audiobook",
-    };
-  return { text: "This book is complete and exported.", to: "export", label: "Exports" };
-});
+// The banner answers "what next"; the strip under it answers "what else". The chain below can only
+// name one thing at a time, so a book with four retakes and two flagged clips was told to narrate a
+// chapter and never heard about either — the inbox is where the rest of them are listed.
+const inbox = useReviewInbox(bookId);
+const waiting = computed(() => inbox.value.reduce((n, g) => n + g.items.length, 0));
+
+// The single most useful next action. The shelf card asks the same question of the same function,
+// so a book cannot be told to do one thing here and another on its cover.
+const next = computed(() =>
+  nextStepOf(p.value, {
+    failedScripting: chapters.value.filter((c) => c.scripting === "failed").length,
+    failedNarration: chapters.value.filter((c) => c.narration === "failed").length,
+    unreviewed: unreviewed.value,
+    unvoiced: unvoiced.value,
+    exports: exportsHere.value.length,
+    behind: behind.value,
+    building: building.value,
+  }),
+);
 </script>
 
 <template>
@@ -200,6 +156,22 @@ const next = computed(() => {
             next.label
           }}</RouterLink>
         </div>
+        <RouterLink
+          v-if="waiting"
+          :to="`/book/${bookId}/review`"
+          class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-amber-300 bg-amber-400/10 px-4 py-2 text-sm hover:bg-amber-400/20 dark:border-amber-500/40"
+        >
+          <ReviewIcon class="icon-lg shrink-0 text-amber-500" />
+          <span
+            ><b>{{ waiting }}</b> decision{{ waiting === 1 ? "" : "s" }} waiting on you</span
+          >
+          <span class="min-w-0 truncate text-xs text-zinc-500"
+            >{{ inbox.map(countOf).join(" · ") }}
+          </span>
+          <span class="ml-auto whitespace-nowrap text-xs text-zinc-500"
+            >Review <NextIcon class="icon-sm"
+          /></span>
+        </RouterLink>
       </div>
     </div>
 

@@ -388,6 +388,9 @@ const ACTION_LABEL: Record<string, string> = {
               <button class="btn-ghost btn-xs" @click="emit('show', audioReview.chapterIds)">
                 Show affected chapters
               </button>
+              <RouterLink :to="`/book/${bookId}/review`" class="btn-ghost btn-xs">
+                Every decision on this book
+              </RouterLink>
             </div>
             <label class="mt-3 flex items-start gap-2 text-xs">
               <input v-model="acceptUnreviewed" type="checkbox" class="mt-0.5 accent-violet-600" />

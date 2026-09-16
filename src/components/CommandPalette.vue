@@ -30,6 +30,7 @@ import {
   useFilter,
 } from "reka-ui";
 import { Search as SearchIcon } from "@lucide/vue";
+import { reviewCount } from "@/views/review/inbox";
 
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
@@ -106,6 +107,17 @@ const commands = computed(() => {
       group: "Go to",
       label: `Overview · ${book.value!.title}`,
       run: go(`/book/${b}`),
+    });
+    out.push({
+      id: "nav-review",
+      group: "Go to",
+      label: "Review",
+      hint: (() => {
+        const n = reviewCount(b);
+        return n ? `${n} decision${n === 1 ? "" : "s"} waiting` : "nothing waiting";
+      })(),
+      keywords: "inbox decisions retakes flagged unreviewed pending waiting",
+      run: go(`/book/${b}/review`),
     });
     out.push({
       id: "nav-cast",

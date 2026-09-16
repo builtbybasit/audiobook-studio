@@ -5,13 +5,13 @@ import { clone } from "@/lib/utils";
 import { importedBook, importedVolume, PALETTE, sampleForFile } from "@/mock";
 import type { Book, Chapter, ContentsSummary, NoticeGroup, SegmentMap, Volume } from "@/types";
 import { defineStore } from "pinia";
-import { useCastStore } from "./cast";
-import { useEndpointsStore } from "./endpoints";
-import { useExportsStore } from "./exports";
-import { useJobsStore } from "./jobs";
-import { useScriptsStore } from "./scripts";
-import { seedState } from "./seed";
-import { useUiStore } from "./ui";
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useExportsStore } from "@/stores/exports";
+import { useJobsStore } from "@/stores/jobs";
+import { useScriptsStore } from "@/stores/scripts";
+import { seedState } from "@/stores/seed";
+import { useUiStore } from "@/stores/ui";
 interface LibraryState {
   books: Book[];
   chapters: Record<string, Chapter[]>;
@@ -392,8 +392,34 @@ export const useLibraryStore = defineStore("library", {
       const v = this.bookById(bookId)?.volumes.find((v) => v.id === volId);
       if (v && name.trim()) v.name = name.trim();
     },
+    /**
+     * Runs of this book that a removal would cancel. A snapshot puts back finished work, not work
+     * that was still going, so this is the one thing Undo cannot return — and therefore the one
+     * thing the toast has to say out loud.
+     */
+    _inFlight(bookId: string, chapterIds?: Set<number>): number {
+      const jobsStore = useJobsStore();
+      return jobsStore.jobs.filter(
+        (j) =>
+          j.bookId === bookId &&
+          (j.status === "running" || j.status === "queued") &&
+          (!chapterIds || (j.chapterId != null && chapterIds.has(j.chapterId))),
+      ).length;
+    },
+    /** "· 2 runs in flight were cancelled and do not come back." — "" when nothing was running. */
+    _lostNote(n: number): string {
+      return n
+        ? ` ${n} run${n === 1 ? "" : "s"} in flight ${n === 1 ? "was" : "were"} cancelled and ${
+            n === 1 ? "does" : "do"
+          } not come back with Undo.`
+        : "";
+    },
     // Remove a volume (wrong EPUB added): its chapters, segments, jobs and exports go; the remaining
     // chapters are renumbered so numbering stays continuous. Removing the last volume removes the novel.
+    //
+    // It happens at once and offers Undo, like every other removal in the app — see the rule in
+    // `src/stores/README.md`. What a confirmation step used to say is said by the control that
+    // starts it and by the toast that follows.
     removeVolume(bookId: string, volId: number): "book" | "volume" | null {
       const uiStore = useUiStore();
 
@@ -405,8 +431,17 @@ export const useLibraryStore = defineStore("library", {
       }
       const revert = this._bookSnapshot(bookId);
       const vname = book.volumes.find((v) => v.id === volId)?.name;
+      const lost = this._lostNote(
+        this._inFlight(
+          bookId,
+          new Set(this.chapters[bookId].filter((c) => c.volumeId === volId).map((c) => c.id)),
+        ),
+      );
       const gone = this._dropVolume(bookId, volId);
-      uiStore.toast(`Removed ${vname} · ${gone} chapters`, { undo: revert });
+      uiStore.toast(`Removed ${vname} · ${gone} chapters`, {
+        description: `Its scripts, clips and export entries went with it, and the remaining chapters were renumbered.${lost}`,
+        undo: revert,
+      });
       return "volume";
     },
     /** Take a volume off its book without a word: its chapters, jobs and export entries go, the
@@ -519,9 +554,15 @@ export const useLibraryStore = defineStore("library", {
       const uiStore = useUiStore();
 
       const revert = this._bookSnapshot(bookId);
-      const title = this.bookById(bookId)?.title;
+      const book = this.bookById(bookId);
+      const title = book?.title;
+      const chapters = (this.chapters[bookId] ?? []).length;
+      const lost = this._lostNote(this._inFlight(bookId));
       this._dropBook(bookId);
-      uiStore.toast(`Removed “${title}” from the library`, { undo: revert });
+      uiStore.toast(`Removed “${title}” from the library`, {
+        description: `Its ${chapters} chapter${chapters === 1 ? "" : "s"}, script, cast and audiobooks went with it.${lost}`,
+        undo: revert,
+      });
     },
     /** Everything a book owns, gone without a word. */
     _dropBook(bookId: string): void {

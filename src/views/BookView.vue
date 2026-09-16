@@ -58,7 +58,6 @@ function addVolume(e: Event) {
 }
 const editing = ref<number | null>(null);
 const draft = ref("");
-const removing = ref<number | null>(null);
 const dragging = ref<number | null>(null);
 const dragOver = ref<number | null>(null);
 function drop(toIndex: number) {
@@ -72,8 +71,17 @@ function saveName(v: Volume) {
 }
 function remove(v: Volume) {
   const r = libraryStore.removeVolume(bookId, v.id);
-  removing.value = null;
   if (r === "book") router.push("/library");
+}
+/** What the row is about to take, read before the click rather than in a step after it. */
+function removeWarning(v: Volume): string {
+  const { n, scripted, narrated } = volStats(v);
+  const work = [scripted && `${scripted} scripted`, narrated && `${narrated} narrated`]
+    .filter(Boolean)
+    .join(", ");
+  return book.value.volumes.length === 1
+    ? `${v.name} is the only volume, so this removes the whole novel: its ${n} chapters${work ? ` (${work})` : ""}, script, cast and audiobooks. Undo is offered afterwards.`
+    : `Removes ${v.name} (${v.file}) and its ${n} chapters${work ? ` (${work})` : ""}, and renumbers the rest. Undo is offered afterwards.`;
 }
 const budget = computed(() => book.value.budget ?? { cap: null, paused: false });
 const spent = computed(() => jobsStore.spent(bookId));
@@ -370,39 +378,16 @@ const next = computed(() => {
                 ></div>
               </div>
             </div>
+            <!-- Acts at once and offers Undo, like every other removal: the button says what it
+                 will do — including the escalation to the whole novel when it is the last volume —
+                 and the title says what goes with it. -->
             <button
               class="text-[11px] text-zinc-400 hover:text-red-500"
-              title="remove this volume (wrong EPUB?)"
-              @click="removing = removing === v.id ? null : v.id"
+              :title="removeWarning(v)"
+              @click="remove(v)"
             >
-              remove
+              {{ book.volumes.length === 1 ? "remove the novel" : "remove volume" }}
             </button>
-          </div>
-          <div
-            v-if="removing === v.id"
-            class="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-red-300 bg-red-500/5 px-3 py-2 text-xs dark:border-red-500/40"
-          >
-            <span
-              >Remove <b>{{ v.name }}</b> ({{ v.file }})? Its {{ volStats(v).n }} chapters<template
-                v-if="volStats(v).scripted"
-              >
-                · {{ volStats(v).scripted }} scripted</template
-              ><template v-if="volStats(v).narrated">
-                · {{ volStats(v).narrated }} narrated</template
-              >
-              are deleted and the rest are renumbered.<template v-if="book.volumes.length === 1">
-                This is the only volume, so the novel is removed from the library.</template
-              ></span
-            >
-            <span class="ml-auto flex gap-1"
-              ><button class="btn-ghost btn-xs" @click="removing = null">Keep</button
-              ><button
-                class="rounded-md bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-500"
-                @click="remove(v)"
-              >
-                Remove volume
-              </button></span
-            >
           </div>
         </div>
       </div>

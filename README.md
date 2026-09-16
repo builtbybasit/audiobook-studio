@@ -89,7 +89,7 @@ Ideas borrowed from the older narrata web UI: major/minor cast split with Narrat
 
 - **Chapter peek & skip** — every picker row has a ⌕ popover with the raw text and word count and a "Skip this chapter" toggle; skipped chapters leave every stage, the run totals and the audiobook.
 - **Re-script** from the reader header: profile + chunk size, "keep my N manual edits" (re-applied where the text still matches), then a "what changed" panel (speaker / direction changes, new / gone segments, click to jump). Edited segments carry `edited: true`.
-- **Undo** — merge, rename, delete speaker, remove volume / novel / endpoint / voice, delete export all toast with Undo; `⌘Z`/`Ctrl+Z` outside a field undoes the latest. Snapshots in `_castSnapshot` / `_bookSnapshot`.
+- **Undo** — merge, rename, delete speaker, remove volume / novel / endpoint / voice, delete export all toast with Undo; `⌘Z`/`Ctrl+Z` outside a field undoes the latest. Snapshots in `_castSnapshot` / `_bookSnapshot`. This is the app's one rule for danger: **undoable actions happen at once and offer Undo, and only what cannot be undone asks first** — discarding an import, and cancelling runs in flight. Nothing asks _and_ offers Undo, which is what removing a novel and removing a volume used to do; what their confirmation step explained now sits on the control (its label and `title`) and in the toast, which also names the runs the removal cancelled, since those are the one thing Undo does not bring back.
 - **Export**: custom cover, chapter markers with a title pattern and preview, listen / download / on-disk path per finished file. (Rebuilt in round eight — see below.)
 - **Script search** (`/book/:id/search`, or type ≥2 chars in the palette): text, speaker, direction across every scripted chapter; results deep-link to the segment (`?ch=&seg=`), and can be selected for a bulk correction (see round seven).
 - **Audit trail**: each rendered clip records voice, model, direction, style, type, time, cost. Clicking a ledger row (or `i`) shows it and spells out what differs from the script now (why a row is stale). Failures carry HTTP status + body and a "copy request".
@@ -429,7 +429,8 @@ since_ (`updateReason`). The table reports the same book per stage instead, the 
 does. A
 book still in its contents review is a strip above the shelf with **Resume review** and
 **Discard**, not a book that went missing. The cover's `⋯` menu holds Overview, Contents, Cast, Add
-a volume and Remove from library (two steps, then the usual Undo). The numbers sit outside the
+a volume and Remove from library — one step, with what it takes written under it, then the usual
+Undo. The numbers sit outside the
 cover button so a screen reader hears them as text; arrow keys move between covers.
 
 The shelf has a second shape. The two icons beside **Try a sample** switch between the grid of

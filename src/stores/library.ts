@@ -1,8 +1,9 @@
 // Books, chapters and library structure. Cross-feature removal/undo is coordinated here.
+import { noticeGroups, plural, summarize } from "@/lib/contents";
 import { isNarrated, isScripted, key } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
-import { importedChapterCount, PALETTE } from "@/mock";
-import type { Book, Chapter, SegmentMap, Volume } from "@/types";
+import { importedBook, importedVolume, PALETTE, sampleForFile } from "@/mock";
+import type { Book, Chapter, ContentsSummary, NoticeGroup, SegmentMap, Volume } from "@/types";
 import { defineStore } from "pinia";
 import { useCastStore } from "./cast";
 import { useEndpointsStore } from "./endpoints";
@@ -40,6 +41,24 @@ export const useLibraryStore = defineStore("library", {
         const c = (s.chapters[bookId] ?? []).find((c) => c.id === chId);
         return s.books.find((b) => b.id === bookId)?.volumes.find((v) => v.id === c?.volumeId);
       };
+    },
+    // ---------- contents ----------
+    /** The counts the contents review keeps on screen: what goes in, what is skipped, what is undecided. */
+    contentsOf(s): (id: string) => ContentsSummary {
+      return (id: string): ContentsSummary => summarize(s.chapters[id] ?? []);
+    },
+    /** Chapters with the same kind of note, so one decision can cover them all. */
+    noticeGroupsOf(s): (id: string) => NoticeGroup[] {
+      return (id: string): NoticeGroup[] => noticeGroups(s.chapters[id] ?? []);
+    },
+    /** The volume still waiting in the contents review, when the book itself is already in the library. */
+    importingVolume(s): (id: string) => Volume | undefined {
+      return (id: string): Volume | undefined =>
+        s.books.find((b) => b.id === id)?.volumes.find((v) => v.importing);
+    },
+    /** Books the library shows: one still in its contents review is not in the library yet. */
+    shelved(s): Book[] {
+      return s.books.filter((b) => !b.importing);
     },
     progress(s): (id: string) => {
       total: number;
@@ -135,10 +154,89 @@ export const useLibraryStore = defineStore("library", {
         );
       };
     },
-    // ---------- chapters ----------
+    // ---------- chapters: skip for the audiobook ----------
     setExcluded(bookId: string, chId: number, v: boolean): void {
-      const c = this.chapter(bookId, chId);
-      if (c) c.excluded = v;
+      this.skipChapters(bookId, [chId], v, { quiet: true });
+    },
+    /**
+     * Skip chapters for the audiobook, or include them again. Nothing is deleted: a skipped chapter
+     * keeps its text, its number and its place, leaves every stage, and can be restored from the
+     * same review. Including a chapter that carries a note counts as having looked at it, so the
+     * suggestion stops asking. A batch toasts with Undo; a single click is its own undo.
+     */
+    skipChapters(
+      bookId: string,
+      ids: number[],
+      skip: boolean,
+      { quiet = false, scope = "" }: { quiet?: boolean; scope?: string } = {},
+    ): number {
+      const uiStore = useUiStore();
+
+      const before: { id: number; excluded?: boolean; kept?: boolean }[] = [];
+      for (const id of ids) {
+        const c = this.chapter(bookId, id);
+        if (!c || !!c.excluded === skip) continue;
+        before.push({ id, excluded: c.excluded, kept: c.kept });
+        if (skip) c.excluded = true;
+        else {
+          delete c.excluded;
+          if (c.note) c.kept = true;
+        }
+      }
+      const n = before.length;
+      if (!n || quiet) return n;
+      const revert = () => {
+        for (const w of before) {
+          const c = this.chapter(bookId, w.id);
+          if (!c) continue;
+          if (w.excluded) c.excluded = true;
+          else delete c.excluded;
+          if (w.kept) c.kept = true;
+          else delete c.kept;
+        }
+      };
+      const s = this.contentsOf(bookId);
+      uiStore.toast(
+        skip
+          ? `Skipped ${plural(n, "chapter")}${scope ? ` · ${scope}` : ""}`
+          : `Included ${plural(n, "chapter")} again${scope ? ` · ${scope}` : ""}`,
+        {
+          kind: "info",
+          description: `${s.included} of ${s.total} chapters now go in the audiobook. Skipped chapters stay in the book and can be restored here.`,
+          undo: revert,
+        },
+      );
+      return n;
+    },
+    /** The user looked at a note and is keeping the chapter: it stays in, and the suggestion stops asking. */
+    keepChapters(bookId: string, ids: number[], { quiet = false } = {}): number {
+      const uiStore = useUiStore();
+
+      const before: { id: number; excluded?: boolean; kept?: boolean }[] = [];
+      for (const id of ids) {
+        const c = this.chapter(bookId, id);
+        if (!c || !c.note || (c.kept && !c.excluded)) continue;
+        before.push({ id, excluded: c.excluded, kept: c.kept });
+        delete c.excluded;
+        c.kept = true;
+      }
+      const n = before.length;
+      if (!n || quiet) return n;
+      uiStore.toast(`Kept ${plural(n, "chapter")}`, {
+        kind: "info",
+        description: "They go in the audiobook as they are; the note stays visible in the review.",
+        undo: () => {
+          for (const w of before) {
+            const c = this.chapter(bookId, w.id);
+            if (!c) continue;
+            if (w.excluded) c.excluded = true;
+            else delete c.excluded;
+            if (w.kept) c.kept = true;
+            else delete c.kept;
+          }
+        },
+      });
+      return n;
     },
     // ---------- budget & pause ----------
     pauseBook(bookId: string): void {
@@ -180,43 +278,30 @@ export const useLibraryStore = defineStore("library", {
       }
       return false;
     },
-    // ---------- library ----------
-    _blankChapters(
-      count: number,
-      volumeId: number,
-      startAt: number,
-      prefix = "Chapter",
-    ): Chapter[] {
-      return Array.from({ length: count }, (_, i): Chapter => ({
-        id: startAt + i,
-        index: startAt + i,
-        volumeId,
-        volumeIndex: i + 1,
-        title: `${prefix} ${i + 1}`,
-        words: 3000,
-        scripting: "none",
-        scriptingProgress: 0,
-        narration: "none",
-        narrationProgress: 0,
-        duration: 0,
-      }));
-    },
-    addNovel(file: string, title?: string): string {
+    // ---------- library: importing ----------
+    // Import → review contents → add. An EPUB is read into a book (or a volume) marked `importing`,
+    // the contents review works on it in place — the same review the book keeps afterwards — and
+    // confirming clears the mark. Until then the library does not list it and nothing runs on it.
+    /**
+     * Read an EPUB into a new book waiting for its contents review. Nothing parses a file in this
+     * prototype: `sample` names what the file turns out to contain. Returns the book's id.
+     */
+    importBook(
+      sample: string,
+      { id, file, title }: { id?: string; file?: string; title?: string } = {},
+    ): string {
       const castStore = useCastStore();
       const endpointsStore = useEndpointsStore();
 
-      const id = "new" + Date.now();
-      const count = importedChapterCount("novel");
-      this.books.push({
-        id,
-        title: title || file.replace(/\.epub$/i, ""),
-        author: "Unknown",
-        cover: ["#1e293b", "#94a3b8"],
-        addedAt: "just now",
-        volumes: [{ id: 1, name: title || file.replace(/\.epub$/i, ""), file, from: 1, to: count }],
-      });
-      this.chapters[id] = this._blankChapters(count, 1, 1);
-      castStore.characters[id] = [
+      const base = id ?? `import-${sample}`;
+      let bookId = base;
+      for (let n = 2; this.books.some((b) => b.id === bookId); n++) bookId = `${base}-${n}`;
+      const { book, chapters } = importedBook(sample, bookId);
+      if (title?.trim()) book.title = title.trim();
+      if (file) book.volumes[0].file = file;
+      this.books.push(book);
+      this.chapters[bookId] = chapters;
+      castStore.characters[bookId] = [
         {
           name: "Narrator",
           aliases: [],
@@ -228,25 +313,80 @@ export const useLibraryStore = defineStore("library", {
           major: true,
         },
       ];
-      return id;
+      return bookId;
     },
-    // A novel split across several EPUBs: each file becomes a volume, chapters keep numbering continuously
-    // so roster / recap continuity can carry across the volume boundary.
-    addVolume(bookId: string, file: string, name?: string): void {
+    /**
+     * A novel split across several EPUBs: the file becomes one more volume, chapters keep numbering
+     * continuously so roster / recap continuity carries across the boundary, and the new volume
+     * waits in the contents review like a new book would. Returns the volume's id.
+     */
+    importVolume(bookId: string, sample: string, file: string, name?: string): number | null {
+      const book = this.bookById(bookId);
+      if (!book) return null;
+      const chs = this.chapters[bookId];
+      const { volume, chapters } = importedVolume(
+        sample,
+        Math.max(0, ...book.volumes.map((v) => v.id)) + 1,
+        chs.length + 1,
+        name?.trim() || `Vol. ${book.volumes.length + 1}`,
+        file,
+      );
+      book.volumes.push(volume);
+      chs.push(...chapters);
+      return volume.id;
+    },
+    /** The review is done: the book, or its new volume, is in the library. Nothing starts running. */
+    confirmImport(bookId: string): void {
+      const uiStore = useUiStore();
+
       const book = this.bookById(bookId);
       if (!book) return;
-      const chs = this.chapters[bookId];
-      const count = importedChapterCount("volume");
-      const from = chs.length + 1;
-      const vol: Volume = {
-        id: book.volumes.length + 1,
-        name: name || `Vol. ${book.volumes.length + 1}`,
-        file,
-        from,
-        to: from + count - 1,
-      };
-      book.volumes.push(vol);
-      chs.push(...this._blankChapters(count, vol.id, from));
+      const wasBook = !!book.importing;
+      const vol = book.volumes.find((v) => v.importing);
+      delete book.importing;
+      for (const v of book.volumes) delete v.importing;
+      const s = this.contentsOf(bookId);
+      const mine = vol ? this.chapters[bookId].filter((c) => c.volumeId === vol.id) : [];
+      const volIn = mine.filter((c) => !c.excluded).length;
+      uiStore.toast(
+        wasBook
+          ? `Added “${book.title}” to the library`
+          : `Added ${vol?.name ?? "a volume"} to “${book.title}”`,
+        {
+          kind: "success",
+          description: wasBook
+            ? `${s.included} of ${s.total} chapters go in the audiobook` +
+              (s.skipped ? `; ${s.skipped} skipped, kept in the book.` : ".")
+            : `${volIn} of ${mine.length} chapters go in the audiobook` +
+              (mine.length - volIn ? `; ${mine.length - volIn} skipped.` : "."),
+          timeout: 6000,
+        },
+      );
+    },
+    /** Cancel an import: a book that was never added goes entirely; a new volume comes off its book. */
+    discardImport(bookId: string): "book" | "volume" | null {
+      const book = this.bookById(bookId);
+      if (!book) return null;
+      if (book.importing) {
+        this._dropBook(bookId);
+        return "book";
+      }
+      const vol = book.volumes.find((v) => v.importing);
+      if (!vol) return null;
+      this._dropVolume(bookId, vol.id);
+      return "volume";
+    },
+    /** The old one-step import, kept for callers that want a book straight on the shelf. */
+    addNovel(file: string, title?: string): string {
+      const id = this.importBook(sampleForFile(file), { id: "new" + Date.now(), file, title });
+      const book = this.bookById(id)!;
+      delete book.importing;
+      return id;
+    },
+    addVolume(bookId: string, file: string, name?: string): void {
+      const volId = this.importVolume(bookId, sampleForFile(file), file, name);
+      const v = this.bookById(bookId)?.volumes.find((v) => v.id === volId);
+      if (v) delete v.importing;
     },
     renameVolume(bookId: string, volId: number, name: string): void {
       const v = this.bookById(bookId)?.volumes.find((v) => v.id === volId);
@@ -255,7 +395,6 @@ export const useLibraryStore = defineStore("library", {
     // Remove a volume (wrong EPUB added): its chapters, segments, jobs and exports go; the remaining
     // chapters are renumbered so numbering stays continuous. Removing the last volume removes the novel.
     removeVolume(bookId: string, volId: number): "book" | "volume" | null {
-      const jobsStore = useJobsStore();
       const uiStore = useUiStore();
 
       const book = this.bookById(bookId);
@@ -266,6 +405,17 @@ export const useLibraryStore = defineStore("library", {
       }
       const revert = this._bookSnapshot(bookId);
       const vname = book.volumes.find((v) => v.id === volId)?.name;
+      const gone = this._dropVolume(bookId, volId);
+      uiStore.toast(`Removed ${vname} · ${gone} chapters`, { undo: revert });
+      return "volume";
+    },
+    /** Take a volume off its book without a word: its chapters, jobs and export entries go, the
+     *  rest renumber. Returns how many chapters went. */
+    _dropVolume(bookId: string, volId: number): number {
+      const jobsStore = useJobsStore();
+
+      const book = this.bookById(bookId);
+      if (!book) return 0;
       const gone = new Set(
         this.chapters[bookId].filter((c) => c.volumeId === volId).map((c) => c.id),
       );
@@ -285,8 +435,7 @@ export const useLibraryStore = defineStore("library", {
         bookId,
         this.chapters[bookId].filter((c) => !gone.has(c.id)),
       );
-      uiStore.toast(`Removed ${vname} · ${gone.size} chapters`, { undo: revert });
-      return "volume";
+      return gone.size;
     },
     // Volumes are sortable: chapters follow the volume order and are renumbered continuously.
     moveVolume(bookId: string, volId: number, toIndex: number): void {
@@ -367,14 +516,21 @@ export const useLibraryStore = defineStore("library", {
         if (e.bookId === bookId) e.chapters = e.chapterIds.length;
     },
     removeBook(bookId: string): void {
+      const uiStore = useUiStore();
+
+      const revert = this._bookSnapshot(bookId);
+      const title = this.bookById(bookId)?.title;
+      this._dropBook(bookId);
+      uiStore.toast(`Removed “${title}” from the library`, { undo: revert });
+    },
+    /** Everything a book owns, gone without a word. */
+    _dropBook(bookId: string): void {
       const castStore = useCastStore();
       const exportsStore = useExportsStore();
       const jobsStore = useJobsStore();
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
-      const revert = this._bookSnapshot(bookId);
-      const title = this.bookById(bookId)?.title;
       for (const j of jobsStore.jobs)
         if (j.bookId === bookId && (j.status === "running" || j.status === "queued"))
           jobsStore.cancelJob(j.id);
@@ -391,7 +547,6 @@ export const useLibraryStore = defineStore("library", {
       );
       exportsStore.exports = exportsStore.exports.filter((e) => e.bookId !== bookId);
       if (uiStore.currentBookId === bookId) uiStore.currentBookId = null;
-      uiStore.toast(`Removed “${title}” from the library`, { undo: revert });
     },
   },
 });

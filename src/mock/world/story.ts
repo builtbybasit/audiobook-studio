@@ -7,6 +7,7 @@
 // fresh set of situations.
 import { silenceOf, DEFAULT_PACING } from "@/lib/speech";
 import { PALETTE } from "../fixtures/style";
+import { noteOf } from "../fixtures/notices";
 import { routeOf, seedAudit, timeOf } from "./audio";
 import type { WorldDraft } from "./draft";
 import type { SegmentAudio } from "@/types";
@@ -164,6 +165,7 @@ export function seedStory(w: WorldDraft): void {
     // the tail is scripted but not narrated, and the last chapter is back matter
     const last = chs[chs.length - 1];
     last.title = "Author’s afterword and release schedule";
+    last.note = noteOf("afterword", undefined, 0);
     last.excluded = true;
     chs[212].title = "Interlude · A Letter Left at the Ninth Gate (bonus)";
   }
@@ -171,6 +173,7 @@ export function seedStory(w: WorldDraft): void {
   // a chapter worth skipping: translator notes at the end of Drowned City
   const notes = w.chapters.drowned[w.chapters.drowned.length - 1];
   notes.title = "Translator’s notes";
+  notes.note = noteOf("translator");
   notes.excluded = true;
   notes.words = 900;
 }

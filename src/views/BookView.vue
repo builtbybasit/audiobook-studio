@@ -21,6 +21,8 @@ import {
   ArrowRight as NextIcon,
 } from "@lucide/vue";
 import { UiNumber } from "@/ui";
+import AddEpubDialog from "@/components/AddEpubDialog.vue";
+import { pendingFor, type PendingAdd } from "@/components/addEpub";
 import type { Volume } from "@/types";
 import { useBookId } from "@/router";
 
@@ -47,6 +49,13 @@ const exportsHere = computed(() =>
 const behind = computed(() =>
   exportsHere.value.some((e) => exportsStore.exportUpdateFor(e).needed),
 );
+const contents = computed(() => libraryStore.contentsOf(bookId));
+const pendingAdd = ref<PendingAdd | null>(null);
+function addVolume(e: Event) {
+  const input = e.target as HTMLInputElement;
+  pendingAdd.value = pendingFor(input.files?.[0]?.name ?? "volume.epub", bookId);
+  input.value = "";
+}
 const editing = ref<number | null>(null);
 const draft = ref("");
 const removing = ref<number | null>(null);
@@ -260,13 +269,7 @@ const next = computed(() => {
               type="file"
               accept=".epub"
               class="hidden"
-              @change="
-                (e: Event) =>
-                  libraryStore.addVolume(
-                    bookId,
-                    (e.target as HTMLInputElement).files?.[0]?.name ?? 'volume.epub',
-                  )
-              "
+              @change="addVolume"
           /></label>
         </div>
         <div
@@ -405,6 +408,27 @@ const next = computed(() => {
       </div>
 
       <div class="space-y-4">
+        <RouterLink :to="`/book/${bookId}/contents`" class="card block p-4 hover:border-violet-400">
+          <div class="flex items-baseline justify-between">
+            <span class="label">Contents</span
+            ><span class="text-xs text-zinc-500">review <NextIcon class="icon-sm" /></span>
+          </div>
+          <div class="mt-2 text-sm">
+            <b>{{ contents.included }}</b> of {{ contents.total }} chapters in the audiobook
+          </div>
+          <div class="mt-1 text-xs text-zinc-500">
+            <span v-if="contents.suggested" class="text-amber-600 dark:text-amber-400"
+              >{{ contents.suggested }} suggested skip{{
+                contents.suggested === 1 ? "" : "s"
+              }}
+              undecided · </span
+            ><span v-if="contents.review" class="text-violet-600 dark:text-violet-400"
+              >{{ contents.review }} need{{ contents.review === 1 ? "s" : "" }} review · </span
+            ><template v-if="contents.skipped"
+              >{{ contents.skipped }} skipped, still in the book</template
+            ><template v-else>nothing skipped</template>
+          </div>
+        </RouterLink>
         <RouterLink :to="`/book/${bookId}/cast`" class="card block p-4 hover:border-violet-400">
           <div class="flex items-baseline justify-between">
             <span class="label">Cast</span
@@ -511,5 +535,6 @@ const next = computed(() => {
         </div>
       </div>
     </div>
+    <AddEpubDialog :pending="pendingAdd" @close="pendingAdd = null" />
   </div>
 </template>

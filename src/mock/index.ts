@@ -26,10 +26,15 @@ export { makeProfiles, makeScriptSettings } from "./fixtures/profiles";
 export { makeLexicon } from "./fixtures/lexicon";
 export { makeJobHistory } from "./fixtures/jobs";
 export { REQUEST_ERRORS } from "./fixtures/errors";
+export { NOTICES, noteOf, noticeBody, noticeTitle } from "./fixtures/notices";
+export { IMPORT_SAMPLES, importSample, sampleForFile, type ImportSample } from "./fixtures/imports";
+export { SHELF_BOOKS, type ShelfBook, type ShelfState } from "./fixtures/shelf";
 
 // the world
 export { makeWorld } from "./world";
-export { makeVolumes, makeChapters, volumesOfSeed, importedChapterCount } from "./world/chapters";
+export { makeVolumes, makeChapters, volumesOfSeed } from "./world/chapters";
+export { importedBook, importedVolume, type ImportedBook } from "./world/imports";
+export { chapterParts, partsText, type ContentPart } from "./world/text";
 export { generateSegments } from "./world/script";
 export { makeCharacters, newSpeaker } from "./world/cast";
 export { routeOf, seedClip, timeOf, type ClipWorld } from "./world/audio";

@@ -1,278 +1,396 @@
 <script setup lang="ts">
+import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 
-import { ref } from "vue";
-import { useRouter } from "vue-router";
+// The shelf. Books first: each card says the one next thing to do, how far along it is, what is
+// running or broken, and whether its audiobook still matches it. Adding is a button, a sample
+// menu, or a drop anywhere on the page — the drop target only grows when a file is actually being
+// dragged, so it never takes the room the books need. A book still in its contents review is a
+// card of its own rather than a book that quietly went missing.
+//
+// The shelf has two shapes — a grid of covers, and a table with the pipeline as columns — and can
+// be narrowed by a search and a state filter and put in an order. All of that lives in the URL
+// (`?view=list&q=harbour&filter=attention&sort=todo`) like the rest of the workspace state, so a
+// narrowed shelf can be linked to and survives a reload; the shape is remembered for the next
+// visit as well.
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
-import type { Book, BookProgress } from "@/types";
-import MiniBar from "@/components/MiniBar.vue";
+import type { Book } from "@/types";
 import EmptyState from "@/components/EmptyState.vue";
-import { Library as LibraryIcon } from "@lucide/vue";
-import { Plus as AddIcon } from "@lucide/vue";
-import { UiSelect } from "@/ui";
+import AddEpubDialog from "@/components/AddEpubDialog.vue";
+import { pendingFor, type PendingAdd } from "@/components/addEpub";
+import ImportingCard from "@/views/library/ImportingCard.vue";
+import SampleMenu from "@/views/library/SampleMenu.vue";
+import ShelfGrid from "@/views/library/ShelfGrid.vue";
+import ShelfTable from "@/views/library/ShelfTable.vue";
+import { bookFacts } from "@/views/library/bookFacts";
 import {
-  DialogContent,
-  DialogDescription,
-  DialogOverlay,
-  DialogPortal,
-  DialogRoot,
-  DialogTitle,
-} from "reka-ui";
+  asShelfFilter,
+  asShelfSort,
+  filterCounts,
+  SHELF_FILTERS,
+  SHELF_SORTS,
+  shelfView,
+  type ShelfEntry,
+  type ShelfFilter,
+  type ShelfSort,
+} from "@/views/library/shelf";
+import { plural } from "@/views/library/shared";
+import { IMPORT_SAMPLES } from "@/mock";
+import {
+  LayoutGrid as GridIcon,
+  Library as LibraryIcon,
+  Plus as AddIcon,
+  Rows3 as ListIcon,
+  Search as SearchIcon,
+  Upload as DropIcon,
+  X as ClearIcon,
+} from "@lucide/vue";
+
+const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const uiStore = useUiStore();
+const route = useRoute();
 const router = useRouter();
-const dragging = ref(false);
-/** The add-a-file dialog: what was dropped, and whether it becomes a new novel or a new volume. */
-interface PendingAdd {
-  file: string;
-  mode: "new" | "volume";
-  bookId: string;
-  title: string;
-  volName: string;
-}
 const pending = ref<PendingAdd | null>(null);
+
+const shelved = computed(() => libraryStore.shelved);
+const importing = computed(() => libraryStore.books.filter((b) => b.importing));
+const running = computed(
+  () =>
+    new Set(jobsStore.activeJobs.map((j) => j.bookId).filter((id) => libraryStore.bookById(id)))
+      .size,
+);
+const subtitle = computed(() => {
+  if (!shelved.value.length) return "Add an EPUB, or try a sample, to start.";
+  const parts = [plural(shelved.value.length, "book")];
+  if (running.value) parts.push(`${running.value} running`);
+  if (importing.value.length) parts.push(`${importing.value.length} being reviewed`);
+  return parts.join(" · ");
+});
+
+// ---- grid or list
+type View = "grid" | "list";
+const VIEW_KEY = "library.view";
+const VIEWS: { key: View; label: string; icon: typeof GridIcon }[] = [
+  { key: "grid", label: "Covers", icon: GridIcon },
+  { key: "list", label: "Table", icon: ListIcon },
+];
+const remembered = (): View => {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "grid";
+  } catch {
+    return "grid";
+  }
+};
+const view = computed<View>(() => {
+  const v = route.query.view;
+  return v === "list" || v === "grid" ? v : remembered();
+});
+function setView(v: View) {
+  try {
+    localStorage.setItem(VIEW_KEY, v);
+  } catch {
+    // a private window: the URL still carries it
+  }
+  void router.replace({ query: { ...route.query, view: v } });
+}
+// a remembered choice shows in the URL too, so the link a person copies says what they saw
+watch(
+  () => route.query.view,
+  (v) => {
+    if (v !== "list" && v !== "grid" && route.path === "/library" && remembered() === "list")
+      void router.replace({ query: { ...route.query, view: "list" } });
+  },
+  { immediate: true },
+);
+
+// ---- search, filter, order — in the URL, read back when the URL changes
+const text = (v: unknown): string => (typeof v === "string" ? v : "");
+const q = ref(text(route.query.q));
+const filter = ref<ShelfFilter>(asShelfFilter(route.query.filter));
+const sort = ref<ShelfSort>(asShelfSort(route.query.sort));
+watch([q, filter, sort], () => {
+  const next = {
+    ...route.query,
+    q: q.value.trim() || undefined,
+    filter: filter.value === "all" ? undefined : filter.value,
+    sort: sort.value === "added" ? undefined : sort.value,
+  };
+  if (JSON.stringify(next) !== JSON.stringify(route.query)) void router.replace({ query: next });
+});
+watch(
+  () => route.query,
+  (query) => {
+    if (route.path !== "/library") return;
+    if (text(query.q) !== q.value.trim()) q.value = text(query.q);
+    filter.value = asShelfFilter(query.filter);
+    sort.value = asShelfSort(query.sort);
+  },
+);
+
+const entries = computed<ShelfEntry[]>(() =>
+  shelved.value.map((book) => ({ book, facts: bookFacts(book.id) })),
+);
+const visible = computed(() =>
+  shelfView(entries.value, { q: q.value, filter: filter.value, sort: sort.value }),
+);
+const counts = computed(() => filterCounts(entries.value, q.value));
+const narrowed = computed(() => !!q.value.trim() || filter.value !== "all");
+const visibleBooks = computed(() => visible.value.map((e) => e.book));
+function clear() {
+  q.value = "";
+  filter.value = "all";
+}
+
+// `/` puts the cursor in the search, as in the contents review
+const searchBox = ref<HTMLInputElement | null>(null);
+function onKey(e: KeyboardEvent) {
+  const t = e.target as HTMLElement | null;
+  if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (t && (t.closest("input, textarea, select, [contenteditable]") || t.closest("[role=dialog]")))
+    return;
+  e.preventDefault();
+  searchBox.value?.focus();
+}
 
 function open(b: Book) {
   uiStore.currentBookId = b.id;
   router.push(`/book/${b.id}`);
 }
-function addFake(e: Event | DragEvent | null, bookId: string | null = null) {
-  const file =
-    (e?.target as HTMLInputElement | null)?.files?.[0]?.name ??
-    (e as DragEvent | null)?.dataTransfer?.files?.[0]?.name ??
-    "Untitled Upload.epub";
-  const guess = file.replace(/\.epub$/i, "");
-  pending.value = {
-    file,
-    mode: bookId ? "volume" : "new",
-    bookId: bookId ?? libraryStore.books[0]?.id ?? "",
-    title: guess,
-    volName: guess,
-  };
+/** A chosen file opens the Add dialog; the review comes after. */
+function addFile(name: string, bookId: string | null = null) {
+  pending.value = pendingFor(name, bookId);
 }
-function confirmAdd() {
-  const p = pending.value;
-  if (!p) return;
-  if (p.mode === "new") libraryStore.addNovel(p.file, p.title);
-  else libraryStore.addVolume(p.bookId, p.file, p.volName);
-  pending.value = null;
+function onPick(e: Event) {
+  const input = e.target as HTMLInputElement;
+  addFile(input.files?.[0]?.name ?? "Untitled Upload.epub");
+  input.value = "";
 }
-function stageOf(p: BookProgress) {
-  if (p.scripted < p.total)
-    return {
-      label: `${p.total - p.scripted} to script`,
-      cls: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-    };
-  if (p.narrated < p.total)
-    return {
-      label: `${p.total - p.narrated} to narrate`,
-      cls: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-    };
-  if (p.stale)
-    return {
-      label: `${p.stale} stale`,
-      cls: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-    };
-  if (p.exported)
-    return {
-      label: `Complete · export v${p.exported}`,
-      cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-    };
-  if (p.narrated)
-    return {
-      label: "Ready to export",
-      cls: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
-    };
-  return { label: "New", cls: "bg-zinc-500/15 text-zinc-500" };
+/** One of the sample EPUBs: the same dialog, with the file and its contents already chosen. */
+function addSample(id: string) {
+  const s = IMPORT_SAMPLES.find((x) => x.id === id);
+  if (!s) return;
+  pending.value = { ...pendingFor(s.volumes[0].file, null, s.id), title: s.title };
 }
+
+// ---- drop anywhere on the page. The strip under the header is the standing hint; the full-page
+// target appears only while a file is over the window, counted in and out so a drag across child
+// elements does not flicker it.
+const dragging = ref(false);
+let depth = 0;
+const hasFiles = (e: DragEvent) => [...(e.dataTransfer?.types ?? [])].includes("Files");
+function onEnter(e: DragEvent) {
+  if (!hasFiles(e)) return;
+  depth++;
+  dragging.value = true;
+}
+function onLeave(e: DragEvent) {
+  if (!hasFiles(e)) return;
+  depth = Math.max(0, depth - 1);
+  if (!depth) dragging.value = false;
+}
+function onOver(e: DragEvent) {
+  if (hasFiles(e)) e.preventDefault();
+}
+function onDrop(e: DragEvent) {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  depth = 0;
+  dragging.value = false;
+  addFile(e.dataTransfer?.files?.[0]?.name ?? "Untitled Upload.epub");
+}
+onMounted(() => {
+  window.addEventListener("dragenter", onEnter);
+  window.addEventListener("dragleave", onLeave);
+  window.addEventListener("dragover", onOver);
+  window.addEventListener("drop", onDrop);
+  window.addEventListener("keydown", onKey);
+});
+onUnmounted(() => {
+  window.removeEventListener("dragenter", onEnter);
+  window.removeEventListener("dragleave", onLeave);
+  window.removeEventListener("dragover", onOver);
+  window.removeEventListener("drop", onDrop);
+  window.removeEventListener("keydown", onKey);
+});
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl p-6">
-    <div class="mb-5 flex items-end justify-between">
+  <div class="mx-auto max-w-6xl p-4 sm:p-6">
+    <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 class="text-2xl font-semibold">Library</h1>
-        <p class="text-sm text-zinc-500">
-          {{ libraryStore.books.length }} books · open one to continue
-        </p>
+        <p class="text-sm text-zinc-500">{{ subtitle }}</p>
       </div>
+      <div class="flex items-center gap-2">
+        <div
+          class="mr-1 inline-flex rounded-md border border-zinc-300 p-0.5 dark:border-zinc-700"
+          role="group"
+          aria-label="Shelf layout"
+        >
+          <button
+            v-for="v in VIEWS"
+            :key="v.key"
+            class="grid h-7 w-8 place-items-center rounded transition-colors"
+            :class="
+              view === v.key
+                ? 'bg-violet-600 text-white'
+                : 'text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-100'
+            "
+            :aria-pressed="view === v.key"
+            :aria-label="v.label"
+            :title="v.label"
+            @click="setView(v.key)"
+          >
+            <component :is="v.icon" class="icon" />
+          </button>
+        </div>
+        <SampleMenu @pick="addSample" />
+        <label class="btn-primary cursor-pointer"
+          ><AddIcon class="icon" /> Add EPUB<input
+            type="file"
+            accept=".epub"
+            class="hidden"
+            @change="onPick"
+        /></label>
+      </div>
+    </div>
+
+    <!-- the standing hint: one line, out of the way -->
+    <p
+      class="mb-4 flex items-center gap-2 rounded-lg border border-dashed border-zinc-300 px-3 py-1.5 text-xs text-zinc-500 dark:border-zinc-700"
+    >
+      <DropIcon class="icon-sm text-zinc-400" />
+      Drop an .epub anywhere on this page — a new novel, or another volume of one you already have.
+    </p>
+
+    <EmptyState
+      v-if="!shelved.length && !importing.length"
+      :icon="LibraryIcon"
+      title="No books yet"
+      body="Each EPUB becomes a novel, or a volume of one you already have. You review what goes in the audiobook before it is added."
+    >
       <label class="btn-primary cursor-pointer"
         ><AddIcon class="icon" /> Add EPUB<input
           type="file"
           accept=".epub"
           class="hidden"
-          @change="addFake($event)"
+          @change="onPick"
       /></label>
-    </div>
+      <SampleMenu @pick="addSample" />
+    </EmptyState>
 
-    <div
-      class="mb-6 grid place-items-center rounded-xl border-2 border-dashed px-6 py-8 text-sm text-zinc-500 transition-colors"
-      :class="
-        dragging
-          ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
-          : 'border-zinc-300 dark:border-zinc-700'
-      "
-      @dragover.prevent="dragging = true"
-      @dragleave="dragging = false"
-      @drop.prevent="
-        dragging = false;
-        addFake($event);
-      "
-    >
-      Drop .epub files here — a new novel, or another volume of one you already have
-    </div>
+    <template v-else>
+      <!-- a file read but not yet added: not on the shelf, not lost either -->
+      <div v-if="importing.length" class="mb-4 space-y-2">
+        <ImportingCard v-for="b in importing" :key="b.id" :book="b" />
+      </div>
 
-    <EmptyState
-      v-if="!libraryStore.books.length"
-      :icon="LibraryIcon"
-      title="No books yet"
-      body="Add an EPUB to start. Each file becomes a novel, or a volume of one you already have."
-    />
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-4">
-      <div
-        v-for="b in libraryStore.books"
-        :key="b.id"
-        class="card overflow-hidden text-left transition-shadow hover:shadow-lg hover:shadow-violet-500/10"
-      >
-        <button
-          class="group block w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500"
-          :aria-label="`Open ${b.title}`"
-          @click="open(b)"
-        >
-          <div
-            class="relative aspect-[3/4] p-4"
-            :style="{ background: `linear-gradient(160deg, ${b.cover[0]}, ${b.cover[1]})` }"
+      <!-- find, narrow, order -->
+      <div v-if="shelved.length" class="mb-4 flex flex-wrap items-center gap-2 text-xs">
+        <label class="relative">
+          <SearchIcon
+            class="pointer-events-none absolute left-2 top-1/2 icon-sm -translate-y-1/2 text-zinc-400"
+          />
+          <input
+            ref="searchBox"
+            v-model="q"
+            type="search"
+            class="input w-56 pl-7 pr-7 text-xs"
+            placeholder="Find a book or author…  /"
+            aria-label="Find a book or author"
+            @keydown.esc="q = ''"
+          />
+          <button
+            v-if="q"
+            class="absolute right-1.5 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200"
+            aria-label="Clear the search"
+            @click="q = ''"
           >
-            <div class="font-serif text-lg font-semibold leading-tight text-white drop-shadow">
-              {{ b.title }}
-            </div>
-            <div class="mt-1 text-xs text-white/80">{{ b.author }}</div>
-            <span
-              class="absolute bottom-3 left-3 rounded-full px-2 py-0.5 text-[11px] font-semibold backdrop-blur"
-              :class="stageOf(libraryStore.progress(b.id)).cls"
-              >{{ stageOf(libraryStore.progress(b.id)).label }}</span
-            >
-            <span
-              v-if="libraryStore.progress(b.id).running"
-              class="absolute bottom-3 right-3 h-2 w-2 animate-pulse rounded-full bg-emerald-400"
-            ></span>
-          </div>
-          <div class="space-y-1.5 p-3 text-xs">
-            <div class="flex justify-between">
-              <span class="text-zinc-500">Chapters</span
-              ><span
-                >{{ libraryStore.progress(b.id).total
-                }}<span v-if="b.volumes.length > 1" class="text-zinc-400">
-                  · {{ b.volumes.length }} vols</span
-                ></span
-              >
-            </div>
-            <MiniBar
-              label="Scripted"
-              :n="libraryStore.progress(b.id).scripted"
-              :of="libraryStore.progress(b.id).total"
-              color="bg-amber-500"
-            />
-            <MiniBar
-              label="Narrated"
-              :n="libraryStore.progress(b.id).narrated"
-              :of="libraryStore.progress(b.id).total"
-              color="bg-sky-500"
-            />
-            <div class="flex justify-between">
-              <span class="text-zinc-500">Exports</span
-              ><span>{{ libraryStore.progress(b.id).exported }}</span>
-            </div>
-          </div>
-        </button>
-        <div class="border-t border-zinc-100 px-3 py-2 dark:border-zinc-800">
-          <label
-            class="block cursor-pointer text-center text-[11px] text-zinc-400 hover:text-violet-500"
-            ><AddIcon class="icon-sm" /> Add volume to {{ b.title
-            }}<input type="file" accept=".epub" class="hidden" @change="addFake($event, b.id)"
-          /></label>
+            <ClearIcon class="icon-sm" />
+          </button>
+        </label>
+        <div class="flex flex-wrap gap-1" role="group" aria-label="Show only">
+          <button
+            v-for="f in SHELF_FILTERS"
+            :key="f.key"
+            class="chip"
+            :class="filter === f.key ? 'chip-on' : 'chip-off'"
+            :aria-pressed="filter === f.key"
+            :disabled="!counts[f.key] && filter !== f.key"
+            @click="filter = f.key"
+          >
+            {{ f.label }}
+            <span class="ml-1 font-mono text-[10px] opacity-70">{{ counts[f.key] }}</span>
+          </button>
         </div>
+        <label class="ml-auto flex items-center gap-1.5 text-zinc-500">
+          Order
+          <select v-model="sort" class="input py-0.5 text-xs" aria-label="Order the shelf by">
+            <option v-for="s in SHELF_SORTS" :key="s.key" :value="s.key">{{ s.label }}</option>
+          </select>
+        </label>
+      </div>
+
+      <p v-if="narrowed && visible.length" class="mb-2 text-xs text-zinc-500" aria-live="polite">
+        {{ visible.length }} of {{ plural(shelved.length, "book") }} ·
+        <button class="underline hover:text-zinc-800 dark:hover:text-zinc-200" @click="clear">
+          Show all
+        </button>
+      </p>
+
+      <div
+        v-if="narrowed && !visible.length"
+        class="card grid place-items-center px-6 py-10 text-center text-sm"
+        aria-live="polite"
+      >
+        <div>
+          <div class="font-medium">
+            <template v-if="q.trim()">Nothing matches “{{ q.trim() }}”</template>
+            <template v-else>No books here</template>
+          </div>
+          <p class="mt-1 text-xs text-zinc-500">
+            {{ plural(shelved.length, "book") }} on the shelf<template v-if="filter !== 'all'"
+              >, none of them {{ SHELF_FILTERS.find((f) => f.key === filter)?.label.toLowerCase() }}
+              <template v-if="q.trim()">and matching the search</template></template
+            >.
+          </p>
+          <button class="btn-ghost btn-xs mt-3" @click="clear">Show all books</button>
+        </div>
+      </div>
+      <ShelfGrid
+        v-else-if="view === 'grid'"
+        :books="visibleBooks"
+        @open="open"
+        @add-volume="(b, file) => addFile(file, b.id)"
+      />
+      <ShelfTable
+        v-else
+        :books="visibleBooks"
+        :sort="sort"
+        @open="open"
+        @add-volume="(b, file) => addFile(file, b.id)"
+        @sort="(s) => (sort = s)"
+      />
+    </template>
+
+    <!-- the full-page drop target, only while a file is over the window -->
+    <div
+      v-if="dragging"
+      class="pointer-events-none fixed inset-0 z-30 grid place-items-center bg-violet-500/10 p-6 backdrop-blur-[1px]"
+    >
+      <div
+        class="grid place-items-center rounded-2xl border-4 border-dashed border-violet-500 bg-white/90 px-10 py-8 text-center shadow-2xl dark:bg-zinc-900/90"
+      >
+        <DropIcon class="mb-2 h-8 w-8 text-violet-500" />
+        <div class="text-lg font-medium">Drop to add</div>
+        <div class="text-sm text-zinc-500">A new novel, or another volume of one you have.</div>
       </div>
     </div>
 
-    <!-- add dialog -->
-    <DialogRoot
-      :open="!!pending"
-      @update:open="
-        (v) => {
-          if (!v) pending = null;
-        }
-      "
-    >
-      <DialogPortal>
-        <DialogOverlay class="fixed inset-0 z-40 bg-black/40" />
-        <DialogContent
-          class="card fixed left-1/2 top-1/2 z-50 w-[420px] -translate-x-1/2 -translate-y-1/2 p-5 text-sm shadow-2xl focus:outline-none"
-        >
-          <DialogTitle class="label mb-1">Add EPUB</DialogTitle>
-          <DialogDescription class="mb-4 truncate font-mono text-xs text-zinc-500">{{
-            pending?.file
-          }}</DialogDescription>
-          <template v-if="pending">
-            <div class="mb-3 grid grid-cols-2 gap-2">
-              <button
-                class="rounded-lg border p-3 text-left"
-                :class="
-                  pending.mode === 'new'
-                    ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
-                    : 'border-zinc-200 dark:border-zinc-800'
-                "
-                @click="pending.mode = 'new'"
-              >
-                <div class="font-medium">New novel</div>
-                <div class="text-xs text-zinc-500">Standalone book, its own cast.</div>
-              </button>
-              <button
-                class="rounded-lg border p-3 text-left"
-                :class="
-                  pending.mode === 'volume'
-                    ? 'border-violet-500 bg-violet-50 dark:bg-violet-500/10'
-                    : 'border-zinc-200 dark:border-zinc-800'
-                "
-                @click="pending.mode = 'volume'"
-              >
-                <div class="font-medium">Next volume of…</div>
-                <div class="text-xs text-zinc-500">
-                  Continues an existing novel: shared cast, continuous chapter numbers.
-                </div>
-              </button>
-            </div>
-            <template v-if="pending.mode === 'new'">
-              <label class="block text-xs"
-                >Title<input v-model="pending.title" class="input mt-1 w-full"
-              /></label>
-            </template>
-            <template v-else>
-              <label class="block text-xs"
-                >Novel<UiSelect
-                  v-model="pending.bookId"
-                  :options="
-                    libraryStore.books.map((b) => ({
-                      value: b.id,
-                      label: b.title,
-                      hint: b.volumes.length + ' vol.',
-                    }))
-                  "
-                  class="mt-1"
-                  block
-              /></label>
-              <label class="mt-2 block text-xs"
-                >Volume name<input v-model="pending.volName" class="input mt-1 w-full"
-              /></label>
-            </template>
-            <div class="mt-4 flex justify-end gap-2">
-              <button class="btn-ghost" @click="pending = null">Cancel</button
-              ><button class="btn-primary" @click="confirmAdd">Add</button>
-            </div>
-          </template>
-        </DialogContent>
-      </DialogPortal>
-    </DialogRoot>
+    <AddEpubDialog :pending="pending" @close="pending = null" />
   </div>
 </template>

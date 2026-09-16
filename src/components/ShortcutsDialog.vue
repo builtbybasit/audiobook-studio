@@ -54,6 +54,17 @@ const groups = [
     ],
   },
   {
+    title: "Contents review",
+    keys: [
+      ["↑ ↓ · j k", "move between chapters"],
+      ["space", "include / skip for the audiobook"],
+      ["↵", "read the chapter in full"],
+      ["n", "next chapter still to decide"],
+      ["shift-click", "include / skip a range"],
+      ["/", "search the chapters"],
+    ],
+  },
+  {
     title: "Narration ledger",
     keys: [
       ["j / k", "move between segments"],

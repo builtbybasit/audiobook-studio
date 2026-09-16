@@ -9,7 +9,7 @@
 // world the running simulators were started against, and every simulator checks it before writing.
 // A run from the world you just left cannot finish a chapter, fail a build or spend a budget in the
 // one you are looking at now.
-import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
+import { DEFAULT_EXPORT_SETTINGS, exportKey } from "@/lib/exports";
 import { keyring } from "@/lib/keyring";
 import { clearPageState } from "@/lib/pageState";
 import { isScripted, key } from "@/lib/scriptReview";
@@ -246,7 +246,75 @@ export const useDemoStore = defineStore("demo", {
           jobsStore.scriptUsage.push({ bookId, profileId, cost, inputTokens: 0, outputTokens: 0 });
         },
         retime: (bookId, chId) => castStore._retime(bookId, chId),
+        importSample: (sampleId, bookId) => libraryStore.importBook(sampleId, { id: bookId }),
+        shelveBook: (spec) => {
+          const id = libraryStore.importBook(spec.sample, { id: spec.id, title: spec.title });
+          const book = libraryStore.bookById(id)!;
+          book.author = spec.author;
+          book.cover = spec.cover;
+          book.addedAt = spec.addedAt;
+          delete book.importing;
+          return id;
+        },
+        addFinishedExport: (bookId, ids) => this._addFinishedExport(bookId, ids),
       };
+    },
+    /** An audiobook built earlier from exactly these chapters, fingerprinted as they stand now. */
+    _addFinishedExport(bookId: string, ids: number[]): void {
+      const exportsStore = useExportsStore();
+      const libraryStore = useLibraryStore();
+
+      const book = libraryStore.bookById(bookId);
+      if (!book) return;
+      const chapters = libraryStore.chaptersOf(bookId).filter((c) => ids.includes(c.id));
+      const duration =
+        chapters.reduce((a, c) => a + c.duration, 0) + Math.max(0, ids.length - 1) * 2;
+      const settings: ExportSettings = {
+        ...DEFAULT_EXPORT_SETTINGS,
+        title: book.title,
+        series: book.title,
+        author: book.author,
+        filename: book.title,
+      };
+      const size = Math.max(1, Math.round(((duration * settings.bitrate) / 8 / 1024) * 1.04));
+      const file = {
+        name: `${book.title}.m4b`,
+        chapterIds: ids,
+        duration,
+        size,
+        markers: ids.length,
+        volume: null,
+      };
+      exportsStore.exports.push({
+        id: Date.now() + Math.random(),
+        bookId,
+        key: exportKey(settings),
+        filename: file.name,
+        title: book.title,
+        series: book.title,
+        author: book.author,
+        narrator: "OpenAI TTS · multi-voice",
+        year: settings.year,
+        description: "",
+        format: settings.format,
+        grouping: settings.grouping,
+        files: [file],
+        chapterIds: ids,
+        chapters: ids.length,
+        duration,
+        bitrate: settings.bitrate,
+        chapterGap: settings.chapterGap,
+        normalize: settings.normalize,
+        loudness: settings.loudness,
+        size,
+        markers: ids.length,
+        createdAt: `${book.addedAt} 20:10`,
+        version: 1,
+        replaces: null,
+        status: "done",
+        settings,
+        state: exportsStore.exportStateFor(bookId, ids),
+      });
     },
     /**
      * A finished row in the queue, as an earlier session would have left it — including the activity

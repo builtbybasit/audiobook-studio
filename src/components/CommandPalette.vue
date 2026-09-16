@@ -135,6 +135,14 @@ const commands = computed(() => {
       hint: "stage 3",
       run: go(`/book/${b}/export`),
     });
+    out.push({
+      id: "nav-contents",
+      group: "Go to",
+      label: "Contents",
+      hint: "what goes in the audiobook",
+      keywords: "chapters skip notices review",
+      run: go(`/book/${b}/contents`),
+    });
   }
   // actions on the open book
   if (b) {
@@ -291,7 +299,7 @@ const commands = computed(() => {
         book.value!.budget?.paused ? libraryStore.resumeBook(b) : libraryStore.pauseBook(b),
     });
   // books
-  for (const bk of libraryStore.books)
+  for (const bk of libraryStore.shelved)
     if (bk.id !== b)
       out.push({
         id: "book-" + bk.id,

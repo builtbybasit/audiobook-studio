@@ -4,10 +4,13 @@
 // This file is the menu; `situations.ts` is what each row does to the world. They are kept apart so
 // the wording can be read in one place, and so a row can be added without reading the mutations.
 import { exportScenarios } from "./export";
+import { IMPORT_SAMPLES } from "../fixtures/imports";
 import type { DemoGroup, DemoScenario } from "@/types";
 
 /** The order the panel lists them in, and what each heading is called. */
 export const DEMO_GROUPS: { id: DemoGroup; label: string }[] = [
+  { id: "import", label: "Importing an EPUB" },
+  { id: "shelf", label: "The shelf" },
   { id: "start", label: "Starting a book" },
   { id: "trouble", label: "Runs that go wrong" },
   { id: "blocked", label: "Blocked before a run" },
@@ -18,6 +21,26 @@ export const DEMO_GROUPS: { id: DemoGroup; label: string }[] = [
 /** Fresh rows every call — the panel renders these, it never holds on to them. */
 export function demoScenarios(): DemoScenario[] {
   return [
+    // the import rows open the contents review on a book the scenario itself creates; the id is
+    // fixed so the row knows where it opens before the book exists
+    ...IMPORT_SAMPLES.map((s): DemoScenario => ({
+      id: `import-${s.id}`,
+      group: "import",
+      name: s.label,
+      blurb: s.hint,
+      bookId: `import-${s.id}`,
+      path: `/book/import-${s.id}/contents`,
+    })),
+    {
+      id: "full-shelf",
+      group: "shelf",
+      name: "A full shelf",
+      blurb:
+        "Eighteen more books, in every state the shelf tells apart — nothing run, part way, failed, stale, built, behind — with three chapters scripting as you arrive. For the search, the filters and the sort.",
+      bookId: "cliche",
+      path: "/library",
+      runs: [{ kind: "scripting", chapterIds: [13, 14, 15] }],
+    },
     {
       id: "fresh-book",
       group: "start",

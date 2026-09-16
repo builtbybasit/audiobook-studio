@@ -28,17 +28,18 @@ The app always runs in demo mode: seeded books, seeded cast and voices, and time
 
 Each scenario puts the book, its script, its cast, the queue and its exports into one situation together and opens the page it is about. A scenario is always applied to the seeded world rather than on top of the last one, so picking the same row twice — or three others in between — gives the same situation. **Reset the demo data** puts everything back.
 
-| Scenario                                       | What you get                                                                                                                                                                         |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| A new book, nothing scripted                   | _Letters from the Drowned City_ straight after import: chapters to pick over, no script, no jobs, and the Narrator alone in the cast. Opens Scripting.                               |
-| A book part-way through                        | _The Cliché Cultivation World_: 12 chapters scripted, 3 narrated, one stale, one failed, one unverified chunk — and three chapters scripting as you arrive. Opens the book overview. |
-| Scripting that failed and was rate-limited     | Two chapters that kept nothing, the scripting endpoint inside a 429 cooldown, and the rows to retry. Opens the Queue.                                                                |
-| Narration that failed and was rate-limited     | One chapter failed outright, one with failed clips among finished ones, and the speech endpoint backing off. Opens Narration.                                                        |
-| Speakers with no voice                         | The Narrator and a speaker unassigned, one pointing at a voice that no longer exists and one at the paused Azure proxy — lines that cannot be routed, and issues to fix. Opens Cast. |
-| The budget is spent                            | The book's cap and its scripting budget used up, so every estimate reports a blocker instead of starting. Opens Narration.                                                           |
-| Edited script, stale audio, retakes to compare | Lines edited after narration and the clips that no longer match them, flagged audio, a second take waiting beside the first and one already rejected. Opens the ledger.              |
-| One speaker mis-attributed all through         | An alias scattered through the book, with Search open on the matches — the bulk corrections flow.                                                                                    |
-| The five Export rows                           | A book ready to export, ready/missing/stale together, a 214-chapter serial, an export that needs updating, and running/failed/finished builds. Opens Export.                         |
+| Scenario                                       | What you get                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Importing an EPUB (seven rows)                 | The contents review on a file just read: a clean novel, a 212-chapter serial with updates scattered through, three volumes with notices between, one announcement repeated a dozen times, titles that only look like notices, chapters that mix a note with story, and a file of nothing but notices. Nothing is added until you confirm. |
+| A new book, nothing scripted                   | _Letters from the Drowned City_ straight after import: chapters to pick over, no script, no jobs, and the Narrator alone in the cast. Opens Scripting.                                                                                                                                                                                    |
+| A book part-way through                        | _The Cliché Cultivation World_: 12 chapters scripted, 3 narrated, one stale, one failed, one unverified chunk — and three chapters scripting as you arrive. Opens the book overview.                                                                                                                                                      |
+| Scripting that failed and was rate-limited     | Two chapters that kept nothing, the scripting endpoint inside a 429 cooldown, and the rows to retry. Opens the Queue.                                                                                                                                                                                                                     |
+| Narration that failed and was rate-limited     | One chapter failed outright, one with failed clips among finished ones, and the speech endpoint backing off. Opens Narration.                                                                                                                                                                                                             |
+| Speakers with no voice                         | The Narrator and a speaker unassigned, one pointing at a voice that no longer exists and one at the paused Azure proxy — lines that cannot be routed, and issues to fix. Opens Cast.                                                                                                                                                      |
+| The budget is spent                            | The book's cap and its scripting budget used up, so every estimate reports a blocker instead of starting. Opens Narration.                                                                                                                                                                                                                |
+| Edited script, stale audio, retakes to compare | Lines edited after narration and the clips that no longer match them, flagged audio, a second take waiting beside the first and one already rejected. Opens the ledger.                                                                                                                                                                   |
+| One speaker mis-attributed all through         | An alias scattered through the book, with Search open on the matches — the bulk corrections flow.                                                                                                                                                                                                                                         |
+| The five Export rows                           | A book ready to export, ready/missing/stale together, a 214-chapter serial, an export that needs updating, and running/failed/finished builds. Opens Export.                                                                                                                                                                              |
 
 The **make the next build fail** switch is one-shot: the build stops part-way, the version already on disk is untouched, and the failure offers a retry.
 
@@ -48,7 +49,8 @@ Switching scenarios or resetting **abandons simulated work in flight**. Each run
 
 ## Pages
 
-- **Library** → **Book overview** (volumes, per-stage progress, cast summary, "what next") → stages **Scripting / Narration / Export**.
+- **Library** → **Add EPUB** → **Contents** (what goes in the audiobook) → **Book overview** (volumes, per-stage progress, cast summary, "what next") → stages **Scripting / Narration / Export**.
+- **Contents** (per book): every chapter in reading order, grouped by volume, with the notices the import found beside the titles; skip or restore chapters, singly, in ranges, by volume or by kind of notice. Reached from the import and again from the overview.
 - **Cast** (per book): every speaker across all chapters, line counts, first appearance, merge suggestions for near-duplicate names, bulk merge.
 - **Queue**: all jobs across books with cancel / retry / remove, endpoint pool utilisation. Click a job to open its activity log and run details.
 - **Endpoints**: every scripting and speech endpoint in one place — health, throughput, spend, request history, connection, limits and budgets.
@@ -361,6 +363,124 @@ partial ≠ failed), loudness (deterministic, gain closes to target), and the st
 what it cannot use, replaces the version it supersedes, keeps the finished version when the next one
 fails or is cancelled, and reuses exactly the chapters whose fingerprints have not moved.
 
+## Round nine: what goes in the audiobook (2026-09-16)
+
+A web-novel EPUB is not all story. Between the chapters sit hiatus notices, health updates, release
+schedules, sponsor thanks, vote reminders, links — and an audiobook that reads them aloud is an
+audiobook nobody finishes. Import used to drop a file straight onto the shelf; skipping was a toggle
+buried in a peek popover, one chapter at a time. Now the file is **read, reviewed and then added**.
+
+**Import → Contents → Add.** `Add EPUB` (or a sample from the row under the drop zone) opens the
+same dialog as before, and _Read the file_ lands on `/book/:id/contents` with the book marked
+`importing`: off the shelf, not the open book, nothing running on it. **Add to library · 202
+chapters** is the only way on, and it says what it adds; _Cancel import_ leaves no trace. The same
+page is the book's **Contents** afterwards — overview card, sidebar chip, the picker's "skipped"
+count — so a chapter skipped on import is restored in the same place with the same words, and every
+change there applies at once to scripting, narration and export.
+
+**A suggestion is a reason beside a title, not a removal.** The import attaches a `note` to a
+chapter that did not look like story: a verdict (`skip` — a notice through and through; `review` —
+story with something else around it), a kind, one line of reason (_Possible hiatus announcement_,
+_Mostly promotional links_) and the evidence behind it. Every chapter arrives **included**;
+`excluded` is the person's decision and stays the one flag every stage already reads, and a chapter
+looked at and kept records `kept` so the suggestion stops asking. The row's checkbox _is_ the
+decision — ticked means in the audiobook — so there is no second selection to lose track of.
+Shift ticks a range of what is on screen; the volume header ticks a volume; the strip above the list
+groups the notes by kind (_Sponsor thanks · 12_) with **Skip 12** beside each and **Skip all N
+suggested** for the lot, each a toast with the count and Undo (`⌘Z`). Single ticks are quiet — the
+click is its own undo. On a clean book the strip does not appear: one line says nothing was found,
+and the button is one click away.
+
+**Prologues, interludes and side stories are story.** Nothing is flagged for being short or oddly
+titled. Two kinds are flagged for a _look_ rather than a skip: a chapter whose **title** reads like a
+notice but whose text is story, and a chapter that **mixes** an author note with story. The preview
+marks the note in amber, says how many words it is, and offers **Keep chapter** — the whole chapter
+goes in, and the note can be trimmed in Scripting once it is scripted. Nothing is cut here and no
+editor was built for it.
+
+**Reading never changes a tick.** The right-hand pane (a bottom sheet under `lg`) shows the chapter
+in full with its place in the book (_Vol. 2 · chapter 14 of 32 · #50 of 212_), and the list keeps
+its scroll, its filter and its search. `↑↓` move, `space` ticks, `↵` reads, `n` jumps to the next
+chapter still to decide, `/` searches. Filters — _Included · Suggested skips · Needs review ·
+Skipped_ — and a search over title, number or reason live in the URL; the footer says when they hide
+chapters, and the batch buttons say they act on the whole book.
+
+**What is real.** Nothing parses a file. The dialog asks what the file turns out to contain, and the
+answer is one of `IMPORT_SAMPLES` (`src/mock/fixtures/imports.ts`): the sample fixes the chapters,
+which of them carry a note, and where a mixed chapter's note sits; `src/mock/fixtures/notices.ts`
+supplies the reasons, the evidence and the bodies; `src/mock/world/text.ts` composes a chapter's
+text from its note, so the peek, the preview, the scripting estimate and the mock run all read the
+same thing. The seeded books' two skipped chapters now carry the note that explains them. The Demo
+chip has an **Importing an EPUB** group, one row per sample; a reset drops the imported book.
+
+**The shelf, redone (2026-09-16).** The Library used to spend a third of the viewport on a drop
+zone and a sample banner before a book appeared, and each card offered three bare numbers and a
+badge over a gradient. Now the books come first. The drop target is a one-line hint, and grows into
+a full-page target only while a file is over the window; the samples are a **Try a sample** menu
+beside **Add EPUB**. Each card says the one next thing to do as a verb with a destination
+(_Narrate 9 chapters_, _Retry 2 failed chapters_, _Update the audiobook_ — `nextStepOf` in
+`src/views/library/shared.ts`), draws progress as one segmented bar (narrated · scripted · not
+started · skipped) and nothing else — the counts behind it, scripted, narrated, in the audiobook,
+skipped, appear while the pointer or the keyboard focus is on the bar and not otherwise — shows
+what is running or has failed on the book with a
+link to the queue, and names the audiobook built from it — **Audiobook v2 · 6 min** — with what
+has changed since, not "behind the book" but _1 chapter not in it yet_ or _2 chapters re-narrated
+since_ (`updateReason`). The table reports the same book per stage instead, the way the overview
+does. A
+book still in its contents review is a strip above the shelf with **Resume review** and
+**Discard**, not a book that went missing. The cover's `⋯` menu holds Overview, Contents, Cast, Add
+a volume and Remove from library (two steps, then the usual Undo). The numbers sit outside the
+cover button so a screen reader hears them as text; arrow keys move between covers.
+
+The shelf has a second shape. The two icons beside **Try a sample** switch between the grid of
+covers and a table (`src/views/library/ShelfTable.vue`) with one row per book and the pipeline as
+columns — in the audiobook, scripted, narrated, audiobook, next — with progress per stage the way
+the overview shows it, so the two pages agree. The choice sits in the URL as `?view=list` and is
+remembered for the next visit. A third layout, lanes by what each book needs, was prototyped on
+the same route and dropped: with a shelf this size every book landed in one lane.
+
+**Finding a book on it (2026-09-16).** Four seeded books never made the shelf cope with twenty,
+so the Demo tools gained **A full shelf**: eighteen more books (`src/mock/fixtures/shelf.ts`),
+each left at one point in the pipeline — nothing run, part scripted, part narrated, failed
+scripting, stale audio, everything narrated, an audiobook that matches, one the book has moved on
+from — with their reviews already done. Against it the shelf has a search (title or author, every
+word, accents ignored, `/` to focus), filter chips with counts (**Needs attention**, **Running**,
+**Behind**, **Up to date** — the lanes of the dropped board, as filters), and an order (recently
+added, title, author, most to do, least scripted, least narrated; the table's column headers order
+it too). Search, filter, order and shape all sit in the URL (`?q=harbour&filter=attention&sort=todo&view=list`),
+so a narrowed shelf can be linked to and survives a reload. A search that matches nothing says so
+and offers **Show all books**, so a stale filter is never mistaken for an empty library. The `⋯`
+menu is now on table rows as well as covers (`src/views/library/BookMenu.vue`); its popover
+content is mounted only while open, because a closed one left inside a card that a search then
+narrows away froze the renderer on unmount. `src/views/library/shelf.ts` holds the pure
+filter and order logic, covered in `tests/library.test.ts` along with the demo row itself.
+
+**Editing a line where it is (2026-09-16).** Placing an expression used to mean a form: a tag
+from one dropdown, a position from another whose options were fragments of the sentence, then
+Insert; every placed expression was a card of its own, and on the seeded models the button led to
+a grey box saying the model had no tags. Cutting a segment hid its cut points until hovered,
+dropped the quotes and chips from the line while cutting, and lived outside the editor the joins
+lived in. Both now use one gesture, the gaps between words (`src/lib/gaps.ts`,
+`src/components/WordStrip.vue`): **Add expression** turns the line into a strip with its gaps
+showing as ticks, darker where a sentence ends; click the gap and a picker opens under it with the
+model's tags, searchable, sounds and delivery apart. The chips on the line are the controls —
+click one to replace, move (back to the gaps), omit or remove it. **Split…** sits beside the
+joins in the editor and shows the same strip, with the quotes and chips kept; hovering a gap shows
+both halves as they would come out, and hovering a join shows the merged line and who would read
+it, inline rather than in a tooltip. ← → walk the gaps, Enter cuts or places, Esc leaves; `s` and
+`m` still split and join from the reader. When a model has no tags the button reads **Set up
+expressions for gpt-4o-mini-tts** and opens the configuration in place. The main OpenAI model now
+ships with a dozen tags (`EXPRESSION_TAGS` in `src/mock/fixtures/endpoints.ts`), and the Demo tools
+row **Expressions placed in a line** opens the reader on a line that has some, one of which needs
+its position chosen again. `tests/reader.test.ts` covers the gaps and the row.
+
+`tests/contents.test.ts` covers the states and counts, every sample's shape (continuous numbering,
+volumes that cover their chapters, nothing pre-skipped), the situations (clean, scattered, between
+volumes, repeated, misleading, mixed, all-notices), text composition with the note marked, import →
+confirm → cancel for a book and for a volume, batch skip with an Undo that restores `kept` too, and
+that a skipped chapter leaves the scripting estimate and export readiness and comes back when
+restored.
+
 ## Toasts (Toastflow, 2026-09-14)
 
 Toasts run on [vue-toastflow](https://www.toastflow.top) for the runtime only — queue, timers, pause on hover, swipe to dismiss, Escape, focus handling, live regions, the promise `loading` helper. The plugin is created with `{ css: false }`, so none of its stylesheet loads: stack layout, motion and the time-left bar are in `src/toasts.css`, and the card is our own Tailwind markup in `components/Toasts.vue` through the headless slot (`ui.getRootProps / getCloseProps / getButtonProps / progress.*` keep the a11y and behaviour wiring). The app only ever calls `app.toast(msg, { kind, description, undo, action, timeout })` and `app.toastLoading(promise, { loading, success, error })`.
@@ -390,6 +510,7 @@ inside the box (`$ 12`, `0.35 s`), and `empty` lets a blank field mean something
 
 ## Things to try
 
+- Importing: on the Library page pick **A long serial with scattered updates** from the sample row and press _Read the file_. Skip the release schedules with the group's **Skip 2**, press **Skip all 10 suggested**, `⌘Z` it back; open **Needs review** and read _The Widow's Percentage, Revisited_ — the note at the end is marked — then **Keep chapter**. **Add to library · 202 chapters** lands on the overview, where Scripting counts 202 and the picker's "10 skipped" links back here. Try **An EPUB that is nothing but notices** for the all-skipped state, and **A clean novel** for the one-click add.
 - Difficult states: open the header's **Demo** chip and pick a row — a new book with nothing scripted, a rate-limited scripting run, speakers with no voice, a spent budget, or a chapter edited after narration. Pick another straight after: whatever was running is abandoned, and the new one starts from the seeded data rather than on top of the last. **Reset the demo data** puts everything back.
 - Scripting: _The Cliché Cultivation World_ has three volumes — collapse them in the chapter list. Tick unscripted chapters on _Letters from the Drowned City_ and run; new chapters sometimes surface an alias (dashed "new") — the chip opens the Cast page, where merging lives. The cast rail sets each speaker's voice where you are reading them; hide it with its own button, the Cast button or `c`, and change type with `Aa`.
 - Narration: _Cliché_ ch 4 is partly failed — retry from the ledger. The Narrator sits on the free local Kokoro (limit 500 chars) and dialogue on OpenAI; narrate ch 7 and watch rows split into parts. On _Drowned City_, Old Tobiah's voice lives on the paused Azure proxy — resume it or repick. In Endpoints, add an endpoint and “Fetch from server” to pull its voice list.

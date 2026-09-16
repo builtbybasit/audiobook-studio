@@ -129,7 +129,8 @@ describe("the scenario catalogue", () => {
     expect(rows.length).toBeGreaterThan(5);
     expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);
     for (const r of rows) {
-      expect(libraryStore.bookById(r.bookId), r.id).toBeDefined();
+      // an import row creates the book it opens on; every other row names a seeded one
+      if (r.group !== "import") expect(libraryStore.bookById(r.bookId), r.id).toBeDefined();
       expect(groups.has(r.group), r.id).toBe(true);
       expect(r.name.length, r.id).toBeGreaterThan(0);
       expect(r.blurb.length, r.id).toBeGreaterThan(0);

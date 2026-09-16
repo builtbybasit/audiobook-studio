@@ -12,6 +12,7 @@ import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { snapshotTake } from "@/lib/takes";
 import { EXPRESSION_TAGS } from "../fixtures/endpoints";
 import { gapsOf } from "@/lib/gaps";
+import { SHELF_BOOKS, type ShelfBook } from "../fixtures/shelf";
 import { voiceRef } from "../fixtures/voices";
 import { routeOf, seedClip, type ClipWorld } from "../world/audio";
 import { exportDemoPrep, freshenChapters } from "./export";
@@ -78,6 +79,12 @@ export interface ScenarioContext {
   addScriptUsage(bookId: string, profileId: string, cost: number): void;
   /** the chapter's running time, after its clips changed */
   retime(bookId: string, chId: number): void;
+  /** an EPUB just read, waiting in the contents review; returns the book's id */
+  importSample(sampleId: string, bookId: string): string;
+  /** a book straight onto the shelf, its review already done; returns the book's id */
+  shelveBook(spec: ShelfBook): string;
+  /** an audiobook built earlier from exactly these chapters, as they stand now */
+  addFinishedExport(bookId: string, ids: number[]): void;
 }
 
 const rateLimitBody = (cooldown: number): string =>
@@ -89,7 +96,10 @@ const plural = (n: number, one: string, many = one + "s"): string => `${n} ${n =
 
 /** Apply one situation to the seeded world and say what it did. Unknown ids do nothing. */
 export function applySituation(ctx: ScenarioContext, id: string, bookId: string): DemoResult {
+  if (id.startsWith("import-")) return importReview(ctx, id.slice("import-".length), bookId);
   switch (id) {
+    case "full-shelf":
+      return fullShelf(ctx);
     case "fresh-book":
       return freshBook(ctx, bookId);
     case "resume-book":
@@ -111,6 +121,104 @@ export function applySituation(ctx: ScenarioContext, id: string, bookId: string)
     default:
       return exportSituation(ctx, id, bookId);
   }
+}
+
+// ---------- a full shelf ----------
+
+/**
+ * Eighteen more books, each left at one point in the pipeline. Their reviews are done — flagged
+ * chapters skipped, the ones to look at kept — so the shelf reads them as books, not imports.
+ * The chapter flags are set directly: these books are here to be found, filtered and ordered,
+ * not to be scripted, and the seeded four remain the ones with real scripts and clips.
+ */
+function fullShelf(ctx: ScenarioContext): DemoResult {
+  const counts: Record<string, number> = {};
+  for (const spec of SHELF_BOOKS) {
+    const id = ctx.shelveBook(spec);
+    const chapters = ctx.chapters(id);
+    for (const c of chapters) {
+      if (c.note?.verdict === "skip") c.excluded = true;
+      else if (c.note) c.kept = true;
+    }
+    const inBook = chapters.filter((c) => !c.excluded);
+    const n = inBook.length;
+    const script = (c: Chapter) => {
+      c.scripting = "done";
+      c.scriptingProgress = 100;
+    };
+    const narrate = (c: Chapter) => {
+      script(c);
+      c.narration = "done";
+      c.narrationProgress = 100;
+      c.duration = Math.round((c.words / 150) * 60);
+    };
+    switch (spec.state) {
+      case "fresh":
+        break;
+      case "scripting":
+        inBook.slice(0, Math.ceil(n / 3)).forEach(script);
+        break;
+      case "narrating":
+        inBook.forEach(script);
+        inBook.slice(0, Math.floor(n / 2)).forEach(narrate);
+        break;
+      case "failed": {
+        const half = Math.ceil(n / 2);
+        inBook.slice(0, half).forEach(script);
+        for (const c of inBook.slice(half, half + 2)) {
+          c.scripting = "failed";
+          ctx.addHistory({
+            kind: "scripting",
+            bookId: id,
+            chapterId: c.id,
+            label: `Script · ch ${c.id}`,
+            status: "failed",
+            minutesAgo: 35 + c.id,
+            seconds: 14,
+            activity: [
+              { message: "Scripting plan prepared", detail: { requests: 3 } },
+              {
+                level: "error",
+                message: "The scripting endpoint returned 502 Bad Gateway",
+                detail: { status: 502 },
+              },
+            ],
+          });
+        }
+        break;
+      }
+      case "stale":
+        inBook.forEach(narrate);
+        for (const c of inBook.slice(1, 4)) c.narration = "stale";
+        break;
+      case "ready":
+        inBook.forEach(narrate);
+        break;
+      case "built":
+        inBook.forEach(narrate);
+        ctx.addFinishedExport(
+          id,
+          inBook.map((c) => c.id),
+        );
+        break;
+      case "behind":
+        // built before the last three chapters were narrated
+        inBook.forEach(narrate);
+        ctx.addFinishedExport(
+          id,
+          inBook.slice(0, n - 3).map((c) => c.id),
+        );
+        break;
+    }
+    counts[spec.state] = (counts[spec.state] ?? 0) + 1;
+  }
+  const failed = SHELF_BOOKS.filter((b) => b.state === "failed").length;
+  const behind = SHELF_BOOKS.filter((b) => b.state === "behind").length;
+  return {
+    note:
+      `${SHELF_BOOKS.length} books added to the shelf: ${failed} with failed scripting, ` +
+      `${behind} whose audiobook is behind the book, and the rest at every step between.`,
+  };
 }
 
 // ---------- expressions on a line ----------
@@ -148,6 +256,24 @@ function expressionsPlaced(ctx: ScenarioContext, bookId: string): DemoResult {
   return {
     note: `Two expressions placed on line ${a?.id ?? "?"}, and one on line ${b?.id ?? "?"} that needs its position chosen again.`,
     open: a ? `/book/${bookId}/scripting?ch=${chapter.id}&seg=${a.id}` : undefined,
+  };
+}
+
+// ---------- importing an EPUB ----------
+
+/** A file just read, with nothing decided: the review opens on it exactly as the import left it. */
+function importReview(ctx: ScenarioContext, sampleId: string, bookId: string): DemoResult {
+  ctx.importSample(sampleId, bookId);
+  const chapters = ctx.chapters(bookId);
+  const suggested = chapters.filter((c) => c.note?.verdict === "skip").length;
+  const review = chapters.filter((c) => c.note?.verdict === "review").length;
+  return {
+    note:
+      `${plural(chapters.length, "chapter")} read from the file` +
+      (suggested ? `, ${suggested} suggested for skipping` : "") +
+      (review ? `, ${review} to look at` : "") +
+      (!suggested && !review ? ", nothing flagged" : "") +
+      ". Nothing is added until you confirm.",
   };
 }
 

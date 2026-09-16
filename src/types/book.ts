@@ -29,6 +29,42 @@ export interface Pacing {
 }
 
 export type ScriptingStatus = "none" | "queued" | "running" | "done" | "failed" | "fallback";
+
+/** What a non-story chapter turned out to be. `mixed` and `title` are the two that need a person. */
+export type NoticeKind =
+  | "hiatus"
+  | "health"
+  | "return"
+  | "schedule"
+  | "progress"
+  | "promo"
+  | "donation"
+  | "duplicate"
+  | "sponsor"
+  | "vote"
+  | "afterword"
+  | "translator"
+  | "mixed"
+  | "title";
+
+/**
+ * A suggestion attached to a chapter when the EPUB was read: this looks like a notice rather than
+ * story. It never removes anything by itself — `Chapter.excluded` is the user's decision, and a
+ * chapter the user looked at and kept records that in `Chapter.kept`.
+ */
+export interface ChapterNote {
+  /** skip: the whole chapter reads as a notice; review: story and a note together, or a title that only looks like one */
+  verdict: "skip" | "review";
+  kind: NoticeKind;
+  /** the one line shown beside the title, e.g. “Possible hiatus announcement” */
+  reason: string;
+  /** what was seen in the text, for the preview */
+  evidence: string[];
+  /** for a chapter that mixes a note with story: where the note sits */
+  at?: "start" | "end";
+  /** which wording of the notice this chapter reads with, so repeats differ (prototype text only) */
+  variant?: number;
+}
 export type NarrationStatus = "none" | "queued" | "running" | "done" | "failed" | "stale";
 
 export interface Chapter {
@@ -43,8 +79,12 @@ export interface Chapter {
   narration: NarrationStatus;
   narrationProgress: number;
   duration: number;
-  /** front/back matter the user chose to skip */
+  /** skipped for the audiobook: left out of every stage, kept in the book, restorable */
   excluded?: boolean;
+  /** what the import saw in this chapter, when it did not look like story */
+  note?: ChapterNote;
+  /** the user reviewed the note and chose to keep the chapter */
+  kept?: boolean;
   /** set while a re-script is queued, so the run knows whether to re-apply manual edits */
   rescript?: { keepEdits: boolean };
 }
@@ -56,6 +96,8 @@ export interface Volume {
   /** chapter index range this volume covers, inclusive */
   from: number;
   to: number;
+  /** added in this session and not yet confirmed from the contents review */
+  importing?: boolean;
 }
 
 export interface Book {
@@ -66,6 +108,10 @@ export interface Book {
   cover: [string, string];
   addedAt: string;
   volumes: Volume[];
+  /** imported in this session and not yet added to the library */
+  importing?: boolean;
+  /** prototype: the import sample this book's text is read from; a seeded book reads as itself */
+  sample?: string;
   /** spend ceiling and the user's pause switch; absent until either is set */
   budget?: { cap: number | null; paused: boolean };
   scriptBudget?: number | null;
@@ -98,6 +144,37 @@ export interface BookProgress {
   stale: number;
   exported: number;
   running: boolean;
+}
+
+/** How a chapter stands in the contents review. */
+export type ContentState = "included" | "suggested" | "review" | "kept" | "skipped";
+
+/** The counts the contents review keeps on screen. */
+export interface ContentsSummary {
+  total: number;
+  included: number;
+  skipped: number;
+  /** suggested skips the user has not decided on */
+  suggested: number;
+  /** chapters that need a look and have not had one */
+  review: number;
+  /** chapters with a note the user chose to keep */
+  kept: number;
+  /** notes of any kind, decided or not */
+  noted: number;
+}
+
+/** Chapters with the same kind of note, so one decision can cover them all. */
+export interface NoticeGroup {
+  kind: NoticeKind;
+  verdict: "skip" | "review";
+  label: string;
+  /** every chapter with this note */
+  ids: number[];
+  /** the ones still to decide */
+  pending: number[];
+  skipped: number;
+  kept: number;
 }
 
 export interface CastStat {

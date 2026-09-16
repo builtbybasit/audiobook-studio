@@ -245,8 +245,16 @@ const peek = (c: Chapter) => {
         <div class="text-xs text-zinc-500">
           {{ counts.done }} done · {{ counts.failed }} failed<span v-if="counts.stale">
             · <span class="text-amber-600">{{ counts.stale }} stale</span></span
-          ><span v-if="counts.excluded"> · {{ counts.excluded }} skipped</span> ·
-          {{ modelValue.length }} selected
+          ><span v-if="counts.excluded">
+            ·
+            <RouterLink
+              :to="`/book/${bookId}/contents`"
+              class="underline decoration-zinc-300"
+              title="review contents"
+              >{{ counts.excluded }} skipped</RouterLink
+            ></span
+          >
+          · {{ modelValue.length }} selected
         </div>
       </div>
       <div class="flex gap-1">
@@ -372,11 +380,18 @@ const peek = (c: Chapter) => {
                   <div
                     class="mt-2 flex items-center gap-2 border-t border-zinc-100 pt-2 dark:border-zinc-800"
                   >
-                    <span class="text-zinc-500">{{
-                      c.excluded
-                        ? "Skipped: left out of every stage and the audiobook."
-                        : "Front matter, notes, or a duplicate? Skip it."
-                    }}</span>
+                    <span class="text-zinc-500"
+                      >{{
+                        c.excluded
+                          ? "Skipped: left out of every stage and the audiobook."
+                          : c.note
+                            ? c.note.reason + "."
+                            : "A notice, front matter, or a duplicate? Skip it."
+                      }}
+                      <RouterLink :to="`/book/${bookId}/contents?ch=${c.id}`" class="underline"
+                        >Review contents</RouterLink
+                      ></span
+                    >
                     <button class="btn-ghost btn-xs ml-auto" @click="skip(c, !c.excluded)">
                       {{ c.excluded ? "Include again" : "Skip this chapter" }}
                     </button>

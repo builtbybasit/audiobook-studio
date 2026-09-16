@@ -53,7 +53,8 @@ watch(
 watch(
   () => route.params.bookId,
   (id) => {
-    if (id) uiStore.currentBookId = String(id);
+    // a book still in its contents review is not on the shelf yet, so it is not the open book
+    if (id && !libraryStore.bookById(String(id))?.importing) uiStore.currentBookId = String(id);
   },
   { immediate: true },
 );
@@ -315,6 +316,19 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
               class="rounded border border-zinc-200 px-2 py-0.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
               :class="activeKey === 'overview' && 'border-violet-400'"
               >Overview</RouterLink
+            >
+            <RouterLink
+              :to="`/book/${libraryStore.book.id}/contents`"
+              class="rounded border border-zinc-200 px-2 py-0.5 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+              :class="activeKey === 'contents' && 'border-violet-400'"
+              >Contents
+              <span
+                v-if="libraryStore.contentsOf(libraryStore.book.id).skipped"
+                class="text-zinc-400"
+                >{{ libraryStore.contentsOf(libraryStore.book.id).included }}/{{
+                  libraryStore.contentsOf(libraryStore.book.id).total
+                }}</span
+              ></RouterLink
             >
             <RouterLink
               :to="`/book/${libraryStore.book.id}/cast`"

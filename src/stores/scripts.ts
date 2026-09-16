@@ -3,7 +3,7 @@ import { bulkInvalidates, bulkOutcome, scriptFingerprint, segmentFingerprint } f
 import { remapExpressions } from "@/lib/expressions";
 import { afterOf, beforeOf, bulkLabel, key, SKIP_SUMMARY, SKIP_TEXT } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
-import { generateSegments } from "@/mock";
+import { chapterParts, partsText, type ContentPart } from "@/mock";
 import type {
   AudioStatus,
   BulkAction,
@@ -34,11 +34,20 @@ export const useScriptsStore = defineStore("scripts", {
     segmentsOf(s): (bookId: string, chId: number) => Segment[] {
       return (bookId: string, chId: number): Segment[] => s.segments[key(bookId, chId)] ?? [];
     },
+    /** A chapter's source text in the order it is read, with any author note marked. */
+    partsOf(): (bookId: string, chId: number) => ContentPart[] {
+      const libraryStore = useLibraryStore();
+
+      return (bookId: string, chId: number): ContentPart[] =>
+        chapterParts(
+          bookId,
+          chId,
+          libraryStore.chapter(bookId, chId),
+          libraryStore.bookById(bookId)?.sample,
+        );
+    },
     rawText(): (bookId: string, chId: number) => string {
-      return (bookId: string, chId: number): string =>
-        generateSegments(bookId, chId)
-          .map((x) => x.text)
-          .join("\n\n");
+      return (bookId: string, chId: number): string => partsText(this.partsOf(bookId, chId));
     },
     scriptDiff(s): (bookId: string, chId: number) => ScriptDiff | null {
       return (bookId: string, chId: number): ScriptDiff | null => {

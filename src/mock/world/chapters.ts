@@ -37,11 +37,3 @@ export function makeChapters(book: BookSeed, r: Rng): Chapter[] {
 
 /** The volumes of one seeded book, by id — what the export fixtures split their files along. */
 export const volumesOfSeed = (id: string): Volume[] => makeVolumes(bookSeed(id));
-
-/**
- * How many chapters a freshly-dropped EPUB turns out to have. Nothing parses the file, so this is
- * the one piece of an import that has to be invented — kept here rather than in the store so the
- * store's import actions read as "wire up a book and its volume", which is all they really do.
- */
-export const importedChapterCount = (kind: "novel" | "volume"): number =>
-  kind === "novel" ? 12 + Math.floor(Math.random() * 10) : 8 + Math.floor(Math.random() * 8);

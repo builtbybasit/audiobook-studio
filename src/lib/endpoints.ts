@@ -15,6 +15,7 @@ import type {
   Gender,
   MetricTotals,
   Profile,
+  RequestRecord,
   TtsBilling,
   TtsBillingUnit,
   Voice,
@@ -512,6 +513,14 @@ export const WAIT_DETAIL: Record<WaitReason, string> = {
     "The remaining budget can’t cover this request. Raise the endpoint limit or the book budget to release it.",
   ordered:
     "Chapters of one book run in order — an earlier chapter is still going through this endpoint.",
+};
+
+/** Where a request's cost figure came from — shown wherever a cost is, so "unknown" reads as a
+ *  missing rate rather than a free request. */
+export const COST_BASIS_DETAIL: Record<RequestRecord["costBasis"], string> = {
+  recorded: "billed amount reported by the provider",
+  estimated: "worked out from this endpoint's configured rate",
+  unknown: "no rate is set for this endpoint, so nothing can be worked out",
 };
 
 // ---------- formatting helpers shared by the page ----------

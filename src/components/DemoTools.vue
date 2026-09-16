@@ -69,7 +69,7 @@ async function reset() {
       <PopoverContent
         align="end"
         :side-offset="6"
-        class="ui-popup flex max-h-[min(34rem,80vh)] w-[min(24rem,92vw)] flex-col text-xs"
+        class="ui-popup flex max-h-[min(34rem,80vh)] w-[min(28rem,92vw)] flex-col text-xs"
       >
         <div class="border-b border-zinc-200 p-3 dark:border-zinc-800">
           <div class="label mb-1">Demo mode</div>
@@ -80,11 +80,6 @@ async function reset() {
         </div>
 
         <div class="min-h-0 flex-1 overflow-auto p-3">
-          <p class="mb-2 leading-relaxed text-zinc-500">
-            Each scenario puts the book, its script, its cast, the queue and its exports into one
-            situation together, and opens the page it is about. Picking one starts from the seeded
-            data every time, so the same scenario always gives the same situation.
-          </p>
           <div v-for="g in groups" :key="g.id" role="group" :aria-labelledby="`demo-${g.id}`">
             <div :id="`demo-${g.id}`" class="label mb-1 mt-2">{{ g.label }}</div>
             <button

@@ -16,6 +16,7 @@ import {
   Play as PlayIcon,
   TriangleAlert as WarnIcon,
   ArrowRight as NextIcon,
+  UserPen as EditCastIcon,
 } from "@lucide/vue";
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "reka-ui";
 import {
@@ -32,7 +33,8 @@ const props = defineProps<{ bookId: string }>();
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const scriptsStore = useScriptsStore();
-// voices come from the endpoints (Endpoints tab); grouped per endpoint, paused endpoints listed but disabled
+// voices come from the endpoints, which are configured app-wide on /endpoints; grouped per
+// endpoint here, paused endpoints listed but disabled
 const voiceOpts = computed(() => endpointsStore.voiceOptions);
 const missing = (c: Character) => c.voice && !endpointsStore.resolveVoice(c.voice);
 const issueOf = (c: Character) =>
@@ -65,6 +67,12 @@ const genderLabel: Record<Gender, string> = {
   n: "neutral",
   "?": "unknown",
 };
+/** The Cast page holds the whole record; this opens it on one speaker rather than at the top of a
+ *  list you then have to find them in. */
+const editLink = (c: Character) => ({
+  path: `/book/${props.bookId}/cast`,
+  query: { speaker: c.name },
+});
 const sample = (c: Character) =>
   c.name === "Narrator"
     ? "The mountain mist thinned as dawn crept over the outer sect grounds."
@@ -110,8 +118,9 @@ function applyAssignments() {
       v-if="!voiceOpts.length"
       class="mb-3 rounded-md border border-amber-400 bg-amber-400/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
     >
-      No endpoint has any voices yet. Open the Endpoints tab and fetch or add voices — the pickers
-      here only list voices that exist on an endpoint.
+      No endpoint has any voices yet. A picker here only lists voices that exist on an endpoint, so
+      fetch or add some first —
+      <RouterLink to="/endpoints" class="underline hover:text-violet-500">Endpoints</RouterLink>.
     </div>
 
     <div class="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3">
@@ -125,7 +134,22 @@ function applyAssignments() {
         <div class="flex items-center gap-2">
           <span class="h-2.5 w-2.5 rounded-full" :style="{ background: c.color }"></span>
           <b class="min-w-0 flex-1 truncate">{{ c.name }}</b>
-          <span class="text-[11px] text-zinc-400">{{ genderLabel[c.gender] ?? "unknown" }}</span>
+          <span
+            v-if="c.gender === '?'"
+            class="text-[11px] text-amber-600 dark:text-amber-400"
+            title="Auto-assign pools voices by gender and skips a speaker without one"
+            >unknown gender</span
+          >
+          <span v-else class="text-[11px] text-zinc-400">{{ genderLabel[c.gender] }}</span>
+          <RouterLink
+            :to="editLink(c)"
+            class="icon-btn"
+            :class="c.gender === '?' && 'icon-btn-flag'"
+            :aria-label="`Edit ${c.name}’s full record`"
+            :title="`Gender, description, aliases and main cast for ${c.name} — opens the Cast page on this speaker`"
+          >
+            <EditCastIcon class="icon-sm" />
+          </RouterLink>
         </div>
         <div class="mt-1 text-[11px] text-zinc-500">
           {{ counts[c.name] ?? 0 }} segments<span v-if="c.aliases.length">
@@ -184,11 +208,6 @@ function applyAssignments() {
             {{ endpointsStore.resolveVoice(c.voice)!.endpoint.maxChars }} chars</template
           >
         </div>
-        <input
-          v-model="c.style"
-          class="input mt-1.5 w-full py-1 text-xs"
-          placeholder="style: e.g. gravelly, elderly; speaks slowly"
-        />
       </div>
     </div>
 
@@ -221,10 +240,29 @@ function applyAssignments() {
                 >{{ c.name }}</span
               >
             </td>
-            <td class="w-20 text-xs text-zinc-500">{{ genderLabel[c.gender] ?? "unknown" }}</td>
+            <td class="w-20 text-xs">
+              <span
+                v-if="c.gender === '?'"
+                class="text-amber-600 dark:text-amber-400"
+                title="Auto-assign pools voices by gender and skips a speaker without one"
+                >unknown</span
+              >
+              <span v-else class="text-zinc-500">{{ genderLabel[c.gender] }}</span>
+            </td>
             <td class="w-16 font-mono text-xs text-zinc-400">{{ counts[c.name] ?? 0 }} seg</td>
-            <td class="w-56 py-1 pr-3 text-right">
+            <td class="w-56 py-1">
               <VoicePicker v-model="c.voice" :book-id="bookId" :speaker="c.name" size="xs" block />
+            </td>
+            <td class="w-8 py-1 pl-2 pr-3">
+              <RouterLink
+                :to="editLink(c)"
+                class="icon-btn"
+                :class="c.gender === '?' && 'icon-btn-flag'"
+                :aria-label="`Edit ${c.name}’s full record`"
+                :title="`Gender, description, aliases and main cast for ${c.name} — opens the Cast page on this speaker`"
+              >
+                <EditCastIcon class="icon-sm" />
+              </RouterLink>
             </td>
           </tr>
         </table>

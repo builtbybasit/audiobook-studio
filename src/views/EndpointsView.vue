@@ -18,6 +18,7 @@ import { useUiStore } from "@/stores/ui";
 //   · everything historical — `endpointService`, which in this build is a fixture generator
 // Both are simulated. No provider is called, nothing is billed, and nothing persists.
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import { keyring } from "@/lib/keyring";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import { UiToggleGroup, UiTooltip } from "@/ui";
@@ -26,8 +27,10 @@ import {
   Pause as PauseIcon,
   Play as PlayIcon,
   Plus as AddIcon,
+  Download as ExportIcon,
   Search as SearchIcon,
   Server as EndpointIcon,
+  Upload as ImportIcon,
   TriangleAlert as WarnIcon,
 } from "@lucide/vue";
 import EndpointCard from "@/views/endpoints/EndpointCard.vue";
@@ -35,6 +38,7 @@ import OverviewTab from "@/views/endpoints/OverviewTab.vue";
 import ConnectionTab from "@/views/endpoints/ConnectionTab.vue";
 import RequestsTab from "@/views/endpoints/RequestsTab.vue";
 import ExpressionsTab from "@/views/endpoints/ExpressionsTab.vue";
+import VoicesTab from "@/views/endpoints/VoicesTab.vue";
 import PricingTab from "@/views/endpoints/PricingTab.vue";
 import ActivityTab from "@/views/endpoints/ActivityTab.vue";
 import { endpointService, seriesFrom, RANGES } from "@/services/endpoints";
@@ -56,9 +60,9 @@ import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
 import { bindCredential } from "@/lib/credentials";
 import { useEndpointActivity } from "@/views/endpoints/live";
 const { jobsUsing, liveActivity, liveRequests } = useEndpointActivity();
-import { TABS, draftDirty, filterOf, ui } from "@/views/endpoints/state";
+import { TABS, draftDirty, filterOf, tabOf, tabsFor, ui } from "@/views/endpoints/state";
 import type { TabId } from "@/views/endpoints/state";
-import type { MetricBucket, RequestRecord } from "@/types";
+import type { MetricBucket, RequestRecord, SettingsFile } from "@/types";
 
 const endpointsStore = useEndpointsStore();
 const jobsStore = useJobsStore();
@@ -181,11 +185,16 @@ async function select(u: UnifiedEndpoint) {
 }
 
 const tab = computed<TabId>({
-  get: () => (selected.value ? (ui.tab[selected.value.key] ?? "overview") : "overview"),
+  get: () => (selected.value ? tabOf(selected.value.key, selected.value.kind) : "overview"),
   set: (v) => {
     if (selected.value) ui.tab[selected.value.key] = v;
   },
 });
+const tabs = computed(() => tabsFor(selected.value?.kind ?? "tts"));
+/** A speech endpoint with no voices can't render anything, so the tab that fixes it says so. */
+const noVoices = computed(
+  () => !!selected.value?.endpoint && !selected.value.endpoint.voices.length,
+);
 
 const series = computed(() => (selected.value ? seriesFor(selected.value) : null));
 const live = computed(() =>
@@ -324,6 +333,60 @@ function add(kind: "scripting" | "tts") {
   ui.search = "";
 }
 
+// ---------- deep links ----------
+// A stage inside a book links here to fix one endpoint — `?endpoint=tts:ep1&tab=voices`. The page
+// keeps its selection in module state so it survives leaving the route, so a link just writes into
+// that state rather than becoming a second source of truth for it.
+const route = useRoute();
+function applyQuery() {
+  const key = route.query.endpoint;
+  if (typeof key !== "string" || !all.value.some((u) => u.key === key)) return;
+  ui.selected = key;
+  ui.kind = "all";
+  ui.search = "";
+  const wanted = route.query.tab;
+  if (typeof wanted === "string" && TABS.some((t) => t.id === wanted))
+    ui.tab[key] = wanted as TabId;
+}
+onMounted(applyQuery);
+watch(() => [route.query.endpoint, route.query.tab], applyQuery);
+
+// ---------- settings file ----------
+// Endpoints, scripting profiles and script settings as JSON, never keys. It used to live in the
+// two per-book stages, which meant a library with no books had no way to move a configuration
+// between machines.
+function exportSettings() {
+  const blob = new Blob([JSON.stringify(endpointsStore.exportSettings(), null, 2)], {
+    type: "application/json",
+  });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "audiobook-studio-settings.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  uiStore.toast("Settings exported", {
+    kind: "success",
+    description: "audiobook-studio-settings.json — API keys are never included.",
+    timeout: 4000,
+  });
+}
+function importSettings(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  void file.text().then((text: string) => {
+    try {
+      endpointsStore.importSettings(JSON.parse(text) as SettingsFile);
+    } catch (error) {
+      uiStore.toast("Could not import settings", {
+        kind: "error",
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+  input.value = "";
+}
+
 // sample text for the split preview: a real chapter when a book is open
 const SAMPLE =
   "The mountain mist thinned as dawn crept over the outer sect grounds. “You are late,” said the steward, without looking up from his ledger. Ji Ning bowed, and said nothing; there was nothing to say that would not cost him another month of hauling water. The steward wrote a line, blotted it, and finally raised his eyes. “Twice this week. The elders notice such things — and so, unfortunately, do I.”";
@@ -355,13 +418,30 @@ function pickBucket(b: MetricBucket | null) {
           from a fixture service — nothing here calls a provider or is billed.
         </p>
       </div>
-      <div class="flex gap-2">
+      <div class="flex flex-wrap gap-2">
         <button class="btn-ghost btn-xs" @click="add('scripting')">
           <AddIcon class="icon-sm" /> Scripting endpoint
         </button>
         <button class="btn-ghost btn-xs" @click="add('tts')">
           <AddIcon class="icon-sm" /> TTS endpoint
         </button>
+        <button
+          class="btn-ghost btn-xs"
+          title="Download every endpoint, profile and script setting as JSON. Keys are never included."
+          @click="exportSettings"
+        >
+          <ExportIcon class="icon-sm" /> Export
+        </button>
+        <label
+          class="btn-ghost btn-xs cursor-pointer"
+          title="Merge a settings JSON into what is configured here"
+          ><ImportIcon class="icon-sm" /> Import<input
+            type="file"
+            accept="application/json"
+            class="hidden"
+            aria-label="Import a settings file"
+            @change="importSettings"
+        /></label>
       </div>
     </div>
 
@@ -590,7 +670,7 @@ function pickBucket(b: MetricBucket | null) {
             aria-label="Endpoint detail"
           >
             <TabsTrigger
-              v-for="t in TABS.filter((t) => t.id !== 'expressions' || selected?.kind === 'tts')"
+              v-for="t in tabs"
               :key="t.id"
               :value="t.id"
               class="whitespace-nowrap border-b-2 px-2 pb-2 text-xs sm:px-3 sm:text-sm"
@@ -606,6 +686,16 @@ function pickBucket(b: MetricBucket | null) {
                 class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle"
                 aria-label="unsaved changes"
               ></span>
+              <span
+                v-else-if="t.id === 'voices' && noVoices"
+                class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 align-middle"
+                aria-label="no voices yet"
+              ></span>
+              <span
+                v-else-if="t.id === 'voices' && selected.endpoint"
+                class="ml-1 text-[11px] text-zinc-400"
+                >{{ selected.endpoint.voices.length }}</span
+              >
             </TabsTrigger>
           </TabsList>
 
@@ -634,6 +724,9 @@ function pickBucket(b: MetricBucket | null) {
               @remove="remove(selected)"
             />
           </TabsContent>
+          <TabsContent value="voices"
+            ><VoicesTab v-if="selected.endpoint" :key="selected.key" :endpoint="selected.endpoint"
+          /></TabsContent>
           <TabsContent value="requests">
             <RequestsTab
               :u="selected"

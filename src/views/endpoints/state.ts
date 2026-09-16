@@ -11,16 +11,32 @@ import { opsOf } from "@/lib/endpoints";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import type { ConnectionTest, EndpointKind, RangeKey, RequestStatus } from "@/types";
 
-export type TabId = "overview" | "connection" | "requests" | "pricing" | "activity" | "expressions";
+export type TabId =
+  | "overview"
+  | "connection"
+  | "voices"
+  | "requests"
+  | "pricing"
+  | "activity"
+  | "expressions";
 
 export const TABS: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "connection", label: "Connection" },
+  { id: "voices", label: "Voices" },
   { id: "requests", label: "Requests" },
   { id: "expressions", label: "Expressions" },
   { id: "pricing", label: "Pricing & budgets" },
   { id: "activity", label: "Activity" },
 ];
+
+/** Tabs that only make sense for a speech endpoint: a chat model has neither a voice catalogue nor
+ *  expression tags. Kept here so the trigger list and the "is this tab still valid" check that
+ *  guards a remembered tab can't drift apart. */
+const TTS_ONLY: TabId[] = ["voices", "expressions"];
+
+export const tabsFor = (kind: EndpointKind): { id: TabId; label: string }[] =>
+  TABS.filter((t) => kind === "tts" || !TTS_ONLY.includes(t.id));
 
 /** Connection changes are staged, never live-applied: switching provider under a running book is
  *  exactly the kind of silent change this page is supposed to prevent. */
@@ -78,7 +94,12 @@ export const ui = reactive<PageState>(blank());
 // survive it, and the form would claim unsaved changes against a model that had just been put back.
 onDemoReset(() => Object.assign(ui, blank()));
 
-export const tabOf = (key: string): TabId => ui.tab[key] ?? "overview";
+/** The remembered tab, or the first one this kind has. Selecting a scripting endpoint while
+ *  Voices was open must land somewhere real rather than on an empty panel. */
+export const tabOf = (key: string, kind: EndpointKind = "tts"): TabId => {
+  const want = ui.tab[key] ?? "overview";
+  return tabsFor(kind).some((t) => t.id === want) ? want : "overview";
+};
 export const filterOf = (key: string): ActivityFilter => (ui.activity[key] ??= newFilter());
 
 // ---------- connection drafts ----------

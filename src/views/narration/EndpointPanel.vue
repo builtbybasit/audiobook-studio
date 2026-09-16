@@ -2,596 +2,294 @@
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useScriptsStore } from "@/stores/scripts";
-import { useUiStore } from "@/stores/ui";
 
-// Endpoint pool as master/detail: a compact list on the left (health, voices, on/off), the selected
-// endpoint's full settings on the right — connection, key (kept in the keyring, not the store),
-// price, concurrency, per-request limit + cut strategy with a preview, the voice list, last error.
-// Settings export/import writes a JSON without keys.
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+// Routing, not configuration: where this book's lines go, and what would stop them getting there.
+//
+// Endpoints are app-wide — one pool, shared by every book — so they are configured in one place,
+// on /endpoints. This panel used to be a second editor for the same objects, with its own copies
+// of the same fields and its own idea of what a legal concurrency was; two editors for one object
+// is how a book quietly ends up pointed at a different provider than the one you were looking at.
+// What is left is the half that is genuinely per book: which endpoint each speaker resolves to,
+// and which of them can't currently render.
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { keyring } from "@/lib/keyring";
-import { speak } from "@/composables/usePlayer";
-import type { Component } from "vue";
 import {
-  ChevronRight as ChevronRightIcon,
-  Dot as NeutralIcon,
-  Download as ExportIcon,
-  Mars as MaleIcon,
-  Pause as PauseIcon,
-  Play as PlayIcon,
-  Plus as AddIcon,
-  Upload as ImportIcon,
-  Venus as FemaleIcon,
-  X as CloseIcon,
   ArrowUpRight as ArrowIcon,
+  Server as EndpointIcon,
+  TriangleAlert as WarnIcon,
 } from "@lucide/vue";
-import { UiNumber, UiSlider, UiSelect, UiSwitch, UiTooltip } from "@/ui";
-import { SPLIT_MODES, splitText } from "@/lib/split";
-import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "reka-ui";
-import type { Endpoint, Gender, Segment, SplitMode, Voice } from "@/types";
+import { DOT, TEXT } from "@/lib/endpoints";
+import type { HealthTone } from "@/lib/endpoints";
+import type { Endpoint } from "@/types";
+
 const props = defineProps<{ bookId: string }>();
+/** "assign a voice" belongs to the Voices tab next door, not to a second picker in here. */
+const emit = defineEmits<{ voices: [] }>();
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const scriptsStore = useScriptsStore();
-const uiStore = useUiStore();
+
 const now = ref(Date.now());
-let t: ReturnType<typeof setInterval>;
+let clock: ReturnType<typeof setInterval>;
 onMounted(() => {
-  t = setInterval(() => (now.value = Date.now()), 500);
+  clock = setInterval(() => (now.value = Date.now()), 1000);
 });
-onUnmounted(() => clearInterval(t));
-const selectedId = ref<string | null>(endpointsStore.endpoints[0]?.id ?? null);
-const e = computed(
-  () =>
-    endpointsStore.endpoints.find((x) => x.id === selectedId.value) ?? endpointsStore.endpoints[0],
-);
-watch(
-  () => endpointsStore.endpoints.length,
-  () => {
-    if (!endpointsStore.endpoints.some((x) => x.id === selectedId.value))
-      selectedId.value = endpointsStore.endpoints.at(-1)?.id ?? null;
-  },
-);
+onUnmounted(() => clearInterval(clock));
 
-/** Per-endpoint "add a voice" form state, kept out of the store. */
-interface VoiceDraft {
-  id: string;
+/** Deep link to the one page that edits endpoints, landing on the tab that fixes this. */
+const settingsLink = (e: Endpoint, tab = "overview") =>
+  `/endpoints?endpoint=tts:${e.id}&tab=${tab}`;
+
+interface Status {
   label: string;
-  gender: Gender;
-  open: boolean;
+  tone: HealthTone;
+  /** what to do about it, and which tab does it — empty when nothing is wrong */
+  fix: string;
+  tab: string;
 }
-const draft = reactive<Record<string, VoiceDraft>>({});
-const form = (e: Endpoint): VoiceDraft =>
-  (draft[e.id] ??= { id: "", label: "", gender: "n", open: false });
-const GENDERS: { value: Gender; label: string }[] = [
-  { value: "f", label: "female" },
-  { value: "m", label: "male" },
-  { value: "n", label: "neutral" },
-];
-const LIMITS = [
-  { value: 0, label: "no limit" },
-  { value: 300, label: "300" },
-  { value: 500, label: "500" },
-  { value: 1000, label: "1,000" },
-  { value: 2000, label: "2,000" },
-  { value: 4096, label: "4,096" },
-];
-const MODE_OPTS = SPLIT_MODES.map((m) => ({ value: m.value, label: m.label, hint: m.hint }));
-const AT: Record<SplitMode, string> = {
-  sentence: "sentence end",
-  clause: "clause",
-  word: "word",
-  char: "hard cut",
-};
-function submit(e: Endpoint) {
-  const f = form(e);
-  if (endpointsStore.addVoice(e, f)) {
-    f.id = "";
-    f.label = "";
-  }
-}
-const usedBy = (e: Endpoint, v: Voice) =>
-  (castStore.characters[props.bookId] ?? [])
-    .filter((c) => c.voice === `${e.id}/${v.id}`)
-    .map((c) => c.name);
-const inUse = computed(() => {
-  const m: Record<string, number> = {};
-  for (const c of castStore.characters[props.bookId] ?? [])
-    if (c.voice) m[c.voice.split("/")[0]] = (m[c.voice.split("/")[0]] ?? 0) + 1;
-  return m;
-});
-const GENDER_CH: Partial<Record<Gender, Component>> = {
-  m: MaleIcon,
-  f: FemaleIcon,
-  n: NeutralIcon,
-};
-const splitOf = (e: Endpoint) => endpointsStore.splitCount(props.bookId, e);
-const longest = (e: Endpoint): Segment | null => {
-  let best: Segment | null = null;
-  for (const k of Object.keys(scriptsStore.segments))
-    if (k.startsWith(props.bookId + ":"))
-      for (const s of scriptsStore.segments[k])
-        if (
-          castStore.effectiveVoice(props.bookId, s.speaker).endpoint?.id === e.id &&
-          (!best || s.text.length > best.text.length)
-        )
-          best = s;
-  return best;
-};
-const preview = (e: Endpoint) => {
-  const s = longest(e);
-  return s ? { seg: s, parts: splitText(s.text, e.maxChars, e.splitAt) } : null;
-};
-const cutPreview = computed(() => preview(e.value));
 
-function spark(e: Endpoint) {
-  const h = (e.history ?? []).slice(-30);
-  if (!h.length) return "";
-  const max = Math.max(...h.map((x) => x.ms)) || 1;
-  return h
-    .map(
-      (x, i) =>
-        `${((i / Math.max(1, h.length - 1)) * 100).toFixed(1)},${(28 - (x.ms / max) * 26).toFixed(1)}`,
-    )
-    .join(" ");
+/** Only the states that decide whether this book's lines can render. Observed health — latency,
+ *  error rates, spend — is the app-wide page's job, and is a click away. */
+function statusOf(e: Endpoint): Status {
+  const cooling = Math.ceil((e.backoffUntil - now.value) / 1000);
+  if (!e.enabled)
+    return {
+      label: "Paused",
+      tone: "muted",
+      fix: "Lines routed here wait instead of going out. Resume it to narrate them.",
+      tab: "overview",
+    };
+  if (e.needsKey && !keyring.has(e.id))
+    return {
+      label: "No API key",
+      tone: "warn",
+      fix: "This endpoint needs a key. Lines routed here fail until one is set.",
+      tab: "connection",
+    };
+  if (!e.voices.length)
+    return {
+      label: "No voices",
+      tone: "warn",
+      fix: "Nothing can be routed here until it has at least one voice.",
+      tab: "voices",
+    };
+  if (cooling > 0)
+    return {
+      label: `Cooling down ${cooling}s`,
+      tone: "warn",
+      fix: "The provider rate limited us. Dispatch resumes on its own.",
+      tab: "overview",
+    };
+  return { label: "Ready", tone: "good", fix: "", tab: "overview" };
 }
-const avg = (e: Endpoint) => {
-  const h = (e.history ?? []).slice(-30);
-  return h.length ? Math.round(h.reduce((a, x) => a + x.ms, 0) / h.length) : null;
-};
-const okRate = (e: Endpoint) => {
-  const h = (e.history ?? []).slice(-30);
-  return h.length ? Math.round((h.filter((x) => x.ok).length / h.length) * 100) : null;
-};
-const backoff = (e: Endpoint) => Math.max(0, Math.ceil((e.backoffUntil - now.value) / 1000));
-const health = (e: Endpoint) =>
-  !e.enabled
-    ? "paused"
-    : backoff(e)
-      ? "backing off"
-      : (okRate(e) ?? 100) < 85
-        ? "degraded"
-        : "healthy";
-const healthCls: Record<string, string> = {
-  healthy: "text-emerald-500",
-  degraded: "text-amber-500",
-  "backing off": "text-violet-500",
-  paused: "text-zinc-400",
-};
-const dotCls: Record<string, string> = {
-  healthy: "bg-emerald-500",
-  degraded: "bg-amber-500",
-  "backing off": "bg-violet-500 animate-pulse",
-  paused: "bg-zinc-400",
-};
-const ago = (ts: number) => {
-  const s = Math.round((now.value - ts) / 1000);
-  return s < 60
-    ? `${s}s ago`
-    : s < 3600
-      ? `${Math.round(s / 60)}m ago`
-      : `${Math.round(s / 3600)}h ago`;
-};
 
-// settings file: endpoints + profiles + script settings, never keys
-function exportSettings() {
-  const blob = new Blob([JSON.stringify(endpointsStore.exportSettings(), null, 2)], {
-    type: "application/json",
-  });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "audiobook-studio-settings.json";
-  a.click();
-  URL.revokeObjectURL(a.href);
-  uiStore.toast("Settings exported", {
-    kind: "success",
-    description: "audiobook-studio-settings.json — API keys are never included.",
-    timeout: 4000,
-  });
+interface Route {
+  endpoint: Endpoint;
+  lines: number;
+  speakers: { name: string; lines: number; own: boolean; voice: string }[];
 }
-function importSettings(ev: Event) {
-  const input = ev.target as HTMLInputElement;
-  const f = input.files?.[0];
-  if (!f) return;
-  f.text().then((txt: string) => {
-    try {
-      endpointsStore.importSettings(JSON.parse(txt));
-    } catch (err) {
-      uiStore.toast("Could not import settings", {
-        kind: "error",
-        description: err instanceof Error ? err.message : String(err),
-      });
+
+const counts = computed(() => scriptsStore.lineCounts(props.bookId));
+const linesOf = (name: string) => counts.value[name] ?? 0;
+
+/** Every speaker resolved the way narration resolves it — a speaker with no voice of its own is
+ *  read in the Narrator's, and lands on the Narrator's endpoint. */
+const resolved = computed(() => {
+  const routes: Route[] = [];
+  const unvoiced: { name: string; lines: number }[] = [];
+  const dangling: { name: string; lines: number }[] = [];
+  for (const c of castStore.charactersOf(props.bookId)) {
+    const v = castStore.effectiveVoice(props.bookId, c.name);
+    const lines = linesOf(c.name);
+    if (!v.endpoint) {
+      if (v.ref) dangling.push({ name: c.name, lines });
+      else unvoiced.push({ name: c.name, lines });
+      continue;
     }
-  });
-  input.value = "";
-}
-function copyErr(e: Endpoint) {
-  navigator.clipboard?.writeText(
-    JSON.stringify(
-      { endpoint: e.baseUrl + "/audio/speech", model: e.model, lastError: e.lastError },
-      null,
-      2,
-    ),
-  );
-  uiStore.toast("Copied", {
-    kind: "success",
-    description: "Last error and request details are on the clipboard.",
-    timeout: 2500,
-  });
-}
+    let row = routes.find((r) => r.endpoint!.id === v.endpoint!.id);
+    if (!row) routes.push((row = { endpoint: v.endpoint, lines: 0, speakers: [] }));
+    row.lines += lines;
+    row.speakers.push({ name: c.name, lines, own: v.own, voice: v.label ?? "" });
+  }
+  for (const r of routes) r.speakers.sort((a, b) => b.lines - a.lines);
+  routes.sort((a, b) => b.lines - a.lines);
+  return {
+    routes,
+    unvoiced: unvoiced.sort((a, b) => b.lines - a.lines),
+    dangling: dangling.sort((a, b) => b.lines - a.lines),
+  };
+});
+
+/** Endpoints in the pool that nothing in this book reaches — listed so the pool is never a
+ *  mystery, but kept out of the way. */
+const unused = computed(() =>
+  endpointsStore.endpoints.filter(
+    (e) => !resolved.value.routes.some((r) => r.endpoint.id === e.id),
+  ),
+);
+const blocked = computed(() => resolved.value.routes.filter((r) => statusOf(r.endpoint).fix));
 </script>
+
 <template>
-  <div class="grid gap-3 p-3 lg:grid-cols-[260px_minmax(0,1fr)]">
-    <!-- list -->
-    <div class="flex flex-col gap-1">
-      <div class="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
-        <!-- the section heading is itself the way out to the full endpoint page: "all endpoints"
-             spelled out alongside export/import cost more width than this column has. -->
-        <RouterLink
-          to="/endpoints"
-          class="label inline-flex items-center gap-1 whitespace-nowrap hover:text-violet-500!"
-          title="health, spend and request history for every endpoint"
-          aria-label="All endpoints — health, spend and request history"
-          >Endpoints <ArrowIcon class="icon-sm"
-        /></RouterLink>
-        <span class="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
-          <button
-            class="inline-flex items-center gap-1 whitespace-nowrap text-zinc-400 hover:text-violet-500"
-            title="download endpoints + profiles as JSON (no keys)"
-            @click="exportSettings"
-          >
-            <ExportIcon class="icon-sm" /> export
-          </button>
-          <label
-            class="cursor-pointer inline-flex items-center gap-1 whitespace-nowrap text-zinc-400 hover:text-violet-500"
-            title="import a settings JSON"
-            ><ImportIcon class="icon-sm" /> import<input
-              type="file"
-              accept="application/json"
-              class="hidden"
-              @change="importSettings"
-          /></label>
-        </span>
-      </div>
-      <button
-        v-for="x in endpointsStore.endpoints"
-        :key="x.id"
-        class="flex items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-sm"
+  <div class="space-y-3 p-3 text-sm">
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span class="label">Routing</span>
+      <span class="text-[11px] text-zinc-500"
+        >Where this book’s lines go. Endpoints are shared by every book and are set up in one
+        place.</span
+      >
+      <RouterLink
+        to="/endpoints"
+        class="btn-ghost btn-xs ml-auto"
+        title="health, spend, voices and request history for every endpoint"
+        >Manage endpoints <ArrowIcon class="icon-sm"
+      /></RouterLink>
+    </div>
+
+    <div
+      v-if="!endpointsStore.endpoints.length"
+      class="grid place-items-center rounded-lg border border-dashed border-zinc-300 p-8 text-center dark:border-zinc-700"
+    >
+      <EndpointIcon class="mb-2 h-7 w-7 text-zinc-400" />
+      <p class="text-sm text-zinc-500">No speech endpoint is configured.</p>
+      <p class="mt-1 max-w-sm text-[11px] leading-relaxed text-zinc-500">
+        Narration needs a server to render a line and a voice to render it in. Both are set up on
+        the Endpoints page, once, for every book.
+      </p>
+      <RouterLink to="/endpoints" class="btn-primary btn-xs mt-3"
+        >Set up an endpoint <ArrowIcon class="icon-sm"
+      /></RouterLink>
+    </div>
+
+    <template v-else>
+      <p
+        v-if="blocked.length"
+        class="rounded-md border border-amber-400 bg-amber-400/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300"
+        role="status"
+      >
+        <WarnIcon class="icon-sm" />
+        {{ blocked.length }} of {{ resolved.routes.length }} endpoint{{
+          resolved.routes.length === 1 ? "" : "s"
+        }}
+        this book uses can’t render right now —
+        {{
+          blocked
+            .map((r) => `${r.endpoint.name} (${statusOf(r.endpoint).label.toLowerCase()})`)
+            .join(", ")
+        }}.
+      </p>
+
+      <!-- one row per endpoint this book reaches -->
+      <div
+        v-for="r in resolved.routes"
+        :key="r.endpoint.id"
+        class="rounded-lg border p-3"
         :class="
-          x.id === e?.id
-            ? 'border-violet-400 bg-violet-50 dark:bg-violet-500/10'
-            : 'border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/60'
+          statusOf(r.endpoint).fix
+            ? 'border-amber-300 dark:border-amber-500/40'
+            : 'border-zinc-200 dark:border-zinc-800'
         "
-        @click="selectedId = x.id"
       >
-        <span class="h-2 w-2 shrink-0 rounded-full" :class="dotCls[health(x)]"></span>
-        <span class="min-w-0 flex-1">
-          <span class="block truncate font-medium" :class="!x.enabled && 'text-zinc-400'">{{
-            x.name
-          }}</span>
-          <span class="block truncate text-[11px] text-zinc-500"
-            >{{ x.voices.length }} voices<span v-if="inUse[x.id]"> · {{ inUse[x.id] }} in use</span>
-            · {{ x.price ? "$" + x.price + "/1M" : "free"
-            }}<span v-if="x.needsKey && !keyring.has(x.id)" class="text-red-500"> · no key</span
-            ><span v-if="x.maxChars"> · ≤{{ x.maxChars }}</span></span
-          >
-        </span>
-        <UiSwitch
-          :model-value="x.enabled"
-          @update:model-value="(v) => (x.enabled = v)"
-          @click.stop
-        />
-      </button>
-      <button
-        class="rounded-lg border border-dashed border-zinc-300 py-2 text-xs text-zinc-500 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
-        @click="selectedId = endpointsStore.addEndpoint().id"
-      >
-        <AddIcon class="icon-sm" /> Add endpoint
-      </button>
-    </div>
-
-    <!-- detail -->
-    <div
-      v-if="e"
-      class="min-w-0 rounded-lg border p-3 text-sm"
-      :class="e.enabled ? 'border-emerald-400/60' : 'border-zinc-200 dark:border-zinc-800'"
-    >
-      <div class="mb-2 flex flex-wrap items-center gap-2">
-        <span class="h-2 w-2 rounded-full" :class="dotCls[health(e)]"></span>
-        <input
-          v-model="e.name"
-          class="min-w-0 flex-1 bg-transparent font-medium focus:outline-none"
-        />
-        <span class="text-[11px] font-semibold capitalize" :class="healthCls[health(e)]"
-          >{{ health(e)
-          }}<span v-if="backoff(e)" class="ml-1 font-mono font-normal text-zinc-400"
-            >{{ backoff(e) }}s</span
-          ></span
-        >
-        <button class="btn-ghost btn-xs" @click="e.enabled = !e.enabled">
-          <component :is="e.enabled ? PauseIcon : PlayIcon" class="icon-sm icon-fill" />
-          {{ e.enabled ? "Pause" : "Resume" }}
-        </button>
-        <button
-          class="text-[11px] text-zinc-400 hover:text-red-500"
-          @click="endpointsStore.removeEndpoint(e.id)"
-        >
-          remove
-        </button>
-      </div>
-      <div
-        v-if="!e.enabled && inUse[e.id]"
-        class="mb-2 rounded bg-amber-400/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
-      >
-        {{ inUse[e.id] }} speaker{{ inUse[e.id] === 1 ? "" : "s" }} in this book use a voice from
-        this endpoint — their lines can’t render while it’s paused.
-      </div>
-
-      <div
-        class="mb-3 flex items-center gap-3 rounded-md bg-zinc-50 px-2 py-1.5 dark:bg-zinc-800/60"
-      >
-        <svg viewBox="0 0 100 30" class="h-7 w-24 shrink-0" preserveAspectRatio="none">
-          <polyline
-            :points="spark(e)"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.5"
-            class="text-violet-500"
-            vector-effect="non-scaling-stroke"
-          />
-        </svg>
-        <div class="grid flex-1 grid-cols-3 gap-2 text-[11px] leading-tight">
-          <div>
-            <div class="text-zinc-400">latency</div>
-            <div class="font-mono">{{ avg(e) ? (avg(e)! / 1000).toFixed(1) + "s" : "—" }}</div>
-          </div>
-          <div>
-            <div class="text-zinc-400">ok rate</div>
-            <div class="font-mono" :class="(okRate(e) ?? 100) < 85 && 'text-amber-500'">
-              {{ okRate(e) != null ? okRate(e) + "%" : "—" }}
-            </div>
-          </div>
-          <div>
-            <div class="text-zinc-400">failed · 429</div>
-            <div class="font-mono">{{ e.failures ?? 0 }} · {{ e.rateLimits ?? 0 }}</div>
-          </div>
-        </div>
-      </div>
-      <div
-        v-if="e.lastError"
-        class="mb-3 rounded-md border border-red-300 bg-red-500/5 px-2 py-1.5 text-[11px] dark:border-red-500/40"
-      >
-        <div class="flex items-center gap-2">
-          <b class="text-red-600">last error · HTTP {{ e.lastError.code || "—" }}</b
-          ><span>{{ e.lastError.message }}</span
-          ><span v-if="e.lastError.retryAfter" class="text-zinc-500"
-            >· retry-after {{ e.lastError.retryAfter }}s</span
-          ><span class="ml-auto text-zinc-400">{{ e.lastError.at ? ago(e.lastError.at) : "" }}</span
-          ><button class="text-violet-500 hover:underline" @click="copyErr(e)">copy</button>
-        </div>
-        <pre
-          v-if="e.lastError.body"
-          class="mt-1 max-h-16 overflow-auto whitespace-pre-wrap break-all rounded bg-white p-1.5 font-mono text-[10px] text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400"
-          >{{ e.lastError.body }}</pre>
-      </div>
-
-      <div class="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-xs">
-        <span class="text-zinc-500">Base URL</span
-        ><input v-model="e.baseUrl" class="input py-0.5 font-mono" />
-        <span class="text-zinc-500">API key</span>
-        <div class="flex items-center gap-2">
-          <input
-            :value="keyring.get(e.id)"
-            type="password"
-            class="input min-w-0 flex-1 py-0.5 font-mono"
-            :placeholder="
-              e.needsKey ? 'paste key — kept in memory, never saved or exported' : 'not needed'
-            "
-            @input="keyring.set(e.id, ($event.target as HTMLInputElement).value)"
-          />
-          <span
-            v-if="e.needsKey && !keyring.has(e.id)"
-            class="rounded bg-red-500/15 px-1.5 text-[10px] font-semibold text-red-500"
-            >no key</span
-          >
-          <UiSwitch
-            :model-value="e.needsKey"
-            label="required"
-            @update:model-value="(v) => (e.needsKey = v)"
-          />
-        </div>
-        <span class="text-zinc-500">Model</span
-        ><input v-model="e.model" class="input py-0.5 font-mono" />
-        <span class="text-zinc-500">Price</span>
-        <div class="flex items-center gap-1">
-          <UiNumber
-            v-model="e.price"
-            class="w-24"
-            prefix="$"
-            :min="0"
-            :step="0.5"
-            label="Price per 1M characters"
-          /><span class="text-zinc-400">per 1M chars</span>
-        </div>
-        <span class="text-zinc-500">Concurrency</span>
-        <div class="flex items-center gap-2">
-          <UiSlider v-model="e.concurrency" :min="1" :max="8" label="Concurrency" /><span
-            class="w-4 font-mono"
-            >{{ e.concurrency }}</span
-          >
-        </div>
-        <span class="self-center text-zinc-500">Max chars / request</span>
         <div class="flex flex-wrap items-center gap-2">
-          <UiNumber
-            v-model="e.maxChars"
-            class="w-20"
-            :min="0"
-            :step="50"
-            placeholder="0"
-            label="Maximum characters per request"
-          />
-          <UiSelect
-            :model-value="LIMITS.some((l) => l.value === e.maxChars) ? e.maxChars : undefined"
-            :options="LIMITS"
-            placeholder="preset"
-            size="xs"
-            class="w-24"
-            @update:model-value="(v) => (e.maxChars = Number(v))"
-          />
-          <UiTooltip
-            text="Segments longer than this are cut, sent as several requests, and the audio joined. 0 = send whole segments."
+          <span
+            class="h-2 w-2 shrink-0 rounded-full"
+            :class="DOT[statusOf(r.endpoint).tone]"
+          ></span>
+          <b class="min-w-0 truncate">{{ r.endpoint.name }}</b>
+          <span class="text-[11px]" :class="TEXT[statusOf(r.endpoint).tone]">{{
+            statusOf(r.endpoint).label
+          }}</span>
+          <span class="text-[11px] text-zinc-500"
+            >· {{ r.speakers.length }} speaker{{ r.speakers.length === 1 ? "" : "s" }} ·
+            {{ r.lines.toLocaleString() }} line{{ r.lines === 1 ? "" : "s" }}</span
           >
-            <span class="text-zinc-400">
-              <template v-if="!e.maxChars">whole segments</template>
-              <template v-else-if="splitOf(e)"
-                ><span class="text-amber-600"
-                  >{{ splitOf(e) }} segment{{ splitOf(e) === 1 ? "" : "s" }} in this book would be
-                  split</span
-                ></template
-              >
-              <template v-else>nothing in this book exceeds it</template>
-            </span>
-          </UiTooltip>
+          <RouterLink
+            :to="settingsLink(r.endpoint, statusOf(r.endpoint).tab)"
+            class="ml-auto shrink-0 text-[11px] text-violet-600 hover:underline dark:text-violet-400"
+            >{{ statusOf(r.endpoint).fix ? "Fix on Endpoints" : "Settings" }}
+            <ArrowIcon class="icon-sm"
+          /></RouterLink>
         </div>
-        <template v-if="e.maxChars">
-          <span class="self-center text-zinc-500">Cut at</span>
-          <div class="flex flex-wrap items-center gap-2">
-            <UiSelect v-model="e.splitAt" :options="MODE_OPTS" size="xs" class="w-36" /><span
-              class="text-zinc-400"
-              >falls back to the next finer boundary when none fits</span
-            >
-          </div>
-        </template>
-      </div>
-      <CollapsibleRoot
-        v-if="e.maxChars && (cutPreview?.parts.length ?? 0) > 1"
-        class="mt-2 text-xs"
-      >
-        <CollapsibleTrigger
-          class="text-zinc-400 hover:text-violet-500 data-[state=open]:text-violet-500"
-          ><ChevronRightIcon class="icon-sm" /> preview: longest routed segment ({{
-            cutPreview!.seg.text.length
-          }}
-          chars, {{ cutPreview!.seg.speaker }}) →
-          {{ cutPreview!.parts.length }} requests</CollapsibleTrigger
-        >
-        <CollapsibleContent>
-          <ol class="mt-1 space-y-1">
-            <li
-              v-for="(pt, i) in cutPreview!.parts"
-              :key="i"
-              class="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-800"
-            >
-              <div class="mb-0.5 flex gap-2 font-mono text-[10px] text-zinc-400">
-                <span>part {{ i + 1 }}</span
-                ><span>{{ pt.text.length }} ch</span
-                ><span v-if="pt.at" :class="pt.fallback && 'text-amber-600'"
-                  >cut at {{ AT[pt.at]
-                  }}{{ pt.fallback ? " (no " + AT[e.splitAt] + " in range)" : "" }}</span
-                >
-              </div>
-              <div class="line-clamp-2 text-zinc-600 dark:text-zinc-400">{{ pt.text }}</div>
-            </li>
-          </ol>
-        </CollapsibleContent>
-      </CollapsibleRoot>
 
-      <!-- voices -->
-      <div class="mt-3 border-t border-zinc-100 pt-2 dark:border-zinc-800">
-        <div class="mb-1.5 flex flex-wrap items-center gap-2 text-xs">
-          <b>Voices</b><span class="text-zinc-400">{{ e.voices.length }}</span>
-          <span v-if="inUse[e.id]" class="text-zinc-400">· {{ inUse[e.id] }} in use here</span>
-          <span class="ml-auto flex gap-1">
-            <button
-              class="btn-ghost btn-xs"
-              :disabled="e.fetching"
-              @click="endpointsStore.fetchVoices(e)"
-            >
-              <ImportIcon v-if="!e.fetching" class="icon-sm" />
-              {{ e.fetching ? "fetching…" : "Fetch from server" }}
-            </button>
-            <button class="btn-ghost btn-xs" @click="form(e).open = !form(e).open">
-              <AddIcon v-if="!form(e).open" class="icon-sm" />
-              {{ form(e).open ? "close" : "Add voice" }}
-            </button>
-          </span>
-        </div>
-        <div
-          v-if="!e.voices.length"
-          class="rounded border border-dashed border-zinc-300 px-2 py-2 text-[11px] text-zinc-400 dark:border-zinc-700"
+        <p
+          v-if="statusOf(r.endpoint).fix"
+          class="mt-1 text-[11px] text-amber-700 dark:text-amber-400"
         >
-          No voices yet — fetch the server’s list or add one by its id. Characters can only pick
-          voices that exist here.
-        </div>
-        <div class="flex flex-wrap gap-1">
-          <span
-            v-for="v in e.voices"
-            :key="v.id"
-            class="group inline-flex items-center gap-1 rounded-full border border-zinc-200 py-0.5 pl-2 pr-1 text-[11px] dark:border-zinc-700"
-            :class="
-              usedBy(e, v).length ? 'border-violet-400 bg-violet-50 dark:bg-violet-500/10' : ''
-            "
-            :title="usedBy(e, v).length ? 'used by ' + usedBy(e, v).join(', ') : v.id"
+          {{ statusOf(r.endpoint).fix }}
+        </p>
+
+        <p class="mt-1 font-mono text-[11px] text-zinc-500">
+          {{ r.endpoint.model || "model required" }} · {{ r.endpoint.concurrency }} at a time ·
+          {{ r.endpoint.maxChars ? `≤${r.endpoint.maxChars.toLocaleString()} chars` : "whole lines"
+          }}<span v-if="r.endpoint.voices.length">
+            · {{ r.endpoint.voices.length }} voice{{
+              r.endpoint.voices.length === 1 ? "" : "s"
+            }}</span
           >
-            <component :is="GENDER_CH[v.gender] ?? NeutralIcon" class="icon-sm text-zinc-400" />
-            <span>{{ v.label }}</span
-            ><span v-if="v.label !== v.id" class="font-mono text-[9px] text-zinc-400">{{
-              v.id
-            }}</span>
-            <span
-              v-if="usedBy(e, v).length"
-              class="rounded bg-violet-500/15 px-1 font-mono text-[9px] text-violet-600 dark:text-violet-300"
-              >{{ usedBy(e, v).length }}</span
-            >
-            <button
-              class="rounded px-1 text-zinc-400 hover:bg-zinc-100 hover:text-violet-500 dark:hover:bg-zinc-800"
-              title="demo (browser voice)"
-              @click="
-                speak('The mountain mist thinned as dawn crept over the outer sect grounds.', v.id)
-              "
-            >
-              <PlayIcon class="icon-sm icon-fill" />
-            </button>
-            <button
-              class="rounded px-1 text-zinc-400 hover:bg-red-500/10 hover:text-red-500"
-              :title="
-                usedBy(e, v).length
-                  ? 'remove — ' + usedBy(e, v).length + ' speaker(s) will show a missing voice'
-                  : 'remove'
-              "
-              @click="endpointsStore.removeVoice(e, v.id)"
-            >
-              <CloseIcon class="icon-sm" />
-            </button>
+        </p>
+
+        <div class="mt-2 flex flex-wrap gap-1">
+          <span
+            v-for="s in r.speakers.slice(0, 12)"
+            :key="s.name"
+            class="inline-flex items-center gap-1 rounded-full border border-zinc-200 py-0.5 pl-2 pr-1.5 text-[11px] dark:border-zinc-700"
+            :title="`${s.name} → ${s.voice}${s.own ? '' : ' (the Narrator’s voice)'} · ${s.lines} lines`"
+          >
+            <span :class="!s.own && 'text-zinc-400'">{{ s.name }}</span>
+            <span class="text-zinc-400">{{ s.voice }}</span>
+            <span class="font-mono text-[9px] text-zinc-400">{{ s.lines }}</span>
           </span>
-        </div>
-        <form
-          v-if="form(e).open"
-          class="mt-2 flex flex-wrap items-center gap-1.5 text-xs"
-          @submit.prevent="submit(e)"
-        >
-          <input
-            v-model="form(e).id"
-            class="input w-28 py-0.5 font-mono"
-            placeholder="voice id"
-            required
-          />
-          <input v-model="form(e).label" class="input w-24 py-0.5" placeholder="label (optional)" />
-          <UiSelect v-model="form(e).gender" :options="GENDERS" size="xs" class="w-24" />
-          <button class="btn-primary btn-xs" type="submit">Add</button>
-          <span
-            v-if="form(e).id && e.voices.some((v) => v.id === form(e).id.trim())"
-            class="text-amber-600"
-            >already exists</span
+          <span v-if="r.speakers.length > 12" class="self-center text-[11px] text-zinc-500"
+            >+{{ r.speakers.length - 12 }} more</span
           >
-        </form>
+        </div>
       </div>
-    </div>
-    <div
-      v-else
-      class="grid place-items-center rounded-lg border border-dashed border-zinc-300 p-8 text-sm text-zinc-500 dark:border-zinc-700"
-    >
-      No endpoints. Add one to start.
-    </div>
+
+      <!-- speakers that reach no endpoint at all -->
+      <div
+        v-if="resolved.dangling.length || resolved.unvoiced.length"
+        class="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800"
+      >
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="h-2 w-2 shrink-0 rounded-full bg-zinc-400"></span>
+          <b class="text-[13px]">Not routed</b>
+          <button
+            class="ml-auto text-[11px] text-violet-600 hover:underline dark:text-violet-400"
+            @click="emit('voices')"
+          >
+            Assign voices
+          </button>
+        </div>
+        <p
+          v-if="resolved.dangling.length"
+          class="mt-1.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400"
+        >
+          <WarnIcon class="icon-sm" />
+          {{ resolved.dangling.length }} speaker{{
+            resolved.dangling.length === 1 ? "" : "s"
+          }}
+          point at a voice that no longer exists ({{
+            resolved.dangling
+              .slice(0, 4)
+              .map((d) => d.name)
+              .join(", ")
+          }}{{ resolved.dangling.length > 4 ? ", …" : "" }}). Pick another voice, or add that id
+          back on the endpoint that had it.
+        </p>
+        <p v-if="resolved.unvoiced.length" class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
+          {{ resolved.unvoiced.length }} speaker{{ resolved.unvoiced.length === 1 ? "" : "s" }} have
+          no voice and no Narrator to borrow from — assign the Narrator’s voice first and the rest
+          follow it.
+        </p>
+      </div>
+
+      <p v-if="unused.length" class="text-[11px] leading-relaxed text-zinc-500">
+        Also in the pool, unused by this book:
+        <template v-for="(e, i) in unused" :key="e.id"
+          ><RouterLink :to="settingsLink(e)" class="hover:text-violet-500">{{ e.name }}</RouterLink
+          >{{ i < unused.length - 1 ? ", " : "" }}</template
+        >. Pausing one of those changes nothing here.
+      </p>
+    </template>
   </div>
 </template>

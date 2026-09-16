@@ -5,7 +5,9 @@ import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 
-// Narration stage: voices + endpoints on top, chapter picker + run estimate + job ledger below.
+// Narration stage: voices + routing on top, chapter picker + run estimate + job ledger below.
+// Endpoints themselves are configured app-wide on /endpoints; the Routing tab only shows where
+// this book's lines land.
 import { computed, nextTick, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
@@ -105,9 +107,9 @@ const ready = computed(
           <span class="text-zinc-400">{{ voices.assigned }}/{{ voices.total }}</span></TabsTrigger
         >
         <TabsTrigger
-          value="endpoints"
+          value="routing"
           class="border-b-2 border-transparent px-3 py-2 text-sm text-zinc-500 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:data-[state=active]:text-zinc-100"
-          >Endpoints
+          >Routing
           <span class="text-zinc-400"
             >{{ endpointsStore.enabledEndpoints.length }}/{{
               endpointsStore.endpoints.length
@@ -128,7 +130,9 @@ const ready = computed(
       </TabsList>
       <div v-show="!collapsed" class="max-h-[420px] overflow-auto">
         <TabsContent value="voices"><VoiceTable :book-id="bookId" /></TabsContent>
-        <TabsContent value="endpoints"><EndpointPanel :book-id="bookId" /></TabsContent>
+        <TabsContent value="routing"
+          ><EndpointPanel :book-id="bookId" @voices="tab = 'voices'"
+        /></TabsContent>
         <TabsContent value="pronunciation"
           ><LexiconPanel ref="lexicon" :book-id="bookId"
         /></TabsContent>

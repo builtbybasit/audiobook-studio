@@ -196,7 +196,8 @@ defineExpose({ open });
               </ListboxItem>
             </ListboxGroup>
             <div v-if="!rows.length" class="p-4 text-center text-xs text-zinc-500">
-              No voice matches. Voices come from the Endpoints tab.
+              No voice matches. Voices live on the endpoint that renders them — add or fetch them on
+              the Endpoints page.
             </div>
           </ListboxContent>
         </ListboxRoot>

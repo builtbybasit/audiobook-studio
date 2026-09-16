@@ -19,11 +19,11 @@ import type {
   SegmentMap,
 } from "@/types";
 import { defineStore } from "pinia";
-import { useCastStore } from "./cast";
-import { useLibraryStore } from "./library";
-import { useNarrationStore } from "./narration";
-import { seedState } from "./seed";
-import { useUiStore } from "./ui";
+import { useCastStore } from "@/stores/cast";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { seedState } from "@/stores/seed";
+import { useUiStore } from "@/stores/ui";
 interface ScriptsState {
   segments: SegmentMap;
   _previous: SegmentMap;

@@ -2,9 +2,9 @@
 // chapters in reading order with continuous numbering, and the notes the import attached to the
 // chapters that did not look like story. Nothing is skipped here — every chapter arrives included
 // and the review is where the person decides.
-import { importSample, type VolumeSpec } from "../fixtures/imports";
-import { noteOf } from "../fixtures/notices";
-import { rng } from "../random";
+import { importSample, type VolumeSpec } from "@/mock/fixtures/imports";
+import { noteOf } from "@/mock/fixtures/notices";
+import { rng } from "@/mock/random";
 import type { Book, Chapter, Volume } from "@/types";
 
 export interface ImportedBook {

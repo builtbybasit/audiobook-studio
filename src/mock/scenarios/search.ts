@@ -5,7 +5,7 @@
 // `applySearchDemo` mutates the book it is handed and reports what it did; the caller took a
 // snapshot first and puts the book back with it, so seeding one scenario can never be observed by
 // the next. Nothing persists.
-import { newSpeaker } from "../world/cast";
+import { newSpeaker } from "@/mock/world/cast";
 import type { Chapter, Character, SearchScenario, Segment } from "@/types";
 
 /** The character an alias is scattered from, and the alias itself. */

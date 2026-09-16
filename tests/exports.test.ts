@@ -1,10 +1,10 @@
-import { useCastStore } from "../src/stores/cast";
-import { useDemoStore } from "../src/stores/demo";
-import { useExportsStore } from "../src/stores/exports";
-import { useJobsStore } from "../src/stores/jobs";
-import { useLibraryStore } from "../src/stores/library";
-import { useScriptsStore } from "../src/stores/scripts";
-import { useUiStore } from "../src/stores/ui";
+import { useCastStore } from "@/stores/cast";
+import { useDemoStore } from "@/stores/demo";
+import { useExportsStore } from "@/stores/exports";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 // Building an audiobook, and keeping it up to date afterwards.
 //
 // Three things are worth pinning down here, because the whole page rests on them: the plan is the
@@ -26,9 +26,9 @@ import {
   reviewOf,
   sameOutput,
   trackNo,
-} from "../src/lib/exports";
-import { DEFAULT_PACING } from "../src/lib/speech";
-import type { Chapter, ExportSettings, Volume } from "../src/types";
+} from "@/lib/exports";
+import { DEFAULT_PACING } from "@/lib/speech";
+import type { Chapter, ExportSettings, Volume } from "@/types";
 
 let callbacks = new Map<number, () => void>();
 let clock = 1000;

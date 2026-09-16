@@ -1,17 +1,17 @@
-import { useCastStore } from "../src/stores/cast";
-import { useEndpointsStore } from "../src/stores/endpoints";
-import { useJobsStore } from "../src/stores/jobs";
-import { useLibraryStore } from "../src/stores/library";
-import { useNarrationStore } from "../src/stores/narration";
-import { useScriptsStore } from "../src/stores/scripts";
-import { useUiStore } from "../src/stores/ui";
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 // Segment boundary corrections (split / join) and audio review (flag → retake → keep one take).
 // The narration simulation runs on setTimeout, so the clock and both timer APIs are faked here.
 import { test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 
-import { silenceOf } from "../src/lib/speech";
-import type { Segment, ToastOptions } from "../src/types";
+import { silenceOf } from "@/lib/speech";
+import type { Segment, ToastOptions } from "@/types";
 
 let timers = new Map<number, () => void>();
 let clock = 1000;

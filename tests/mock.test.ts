@@ -1,9 +1,9 @@
-import { useCastStore } from "../src/stores/cast";
-import { useDemoStore } from "../src/stores/demo";
-import { useExportsStore } from "../src/stores/exports";
-import { useLibraryStore } from "../src/stores/library";
-import { useScriptsStore } from "../src/stores/scripts";
-import { useUiStore } from "../src/stores/ui";
+import { useCastStore } from "@/stores/cast";
+import { useDemoStore } from "@/stores/demo";
+import { useExportsStore } from "@/stores/exports";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 // The mock world, its fixtures and its demo scenarios.
 //
 // Two properties matter here and neither is visible from a screenshot. A world is *fresh*: two
@@ -26,7 +26,7 @@ import {
   makeWorld,
   searchDemoTarget,
   searchScenarios,
-} from "../src/mock";
+} from "@/mock";
 
 let callbacks = new Map<number, () => void>();
 let clock = 1000;

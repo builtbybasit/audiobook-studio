@@ -1,8 +1,8 @@
 // Scripting: the LLM side. A profile is one chat endpoint, the telemetry is what this session
 // observed from it, and the estimate and the diff are what the Scripting page shows before and
 // after a run.
-import type { SplitMode } from "./common";
-import type { Segment } from "./segment";
+import type { SplitMode } from "@/types/common";
+import type { Segment } from "@/types/segment";
 
 /** Session-only observations from simulated scripting requests. */
 export interface ScriptEndpointTelemetry {

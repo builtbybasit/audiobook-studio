@@ -1,9 +1,9 @@
 // The mock scripting model: it turns a (book, chapter) pair into an attributed script. Deterministic
 // on the pair, so the same chapter always produces the same lines — and a re-script that is meant to
 // differ says so through `opts` rather than by drawing different randomness.
-import { pick, rng } from "../random";
-import { BOOK_SEEDS, MINOR_LINES } from "../fixtures/books";
-import { DIRECTIONS } from "../fixtures/style";
+import { pick, rng } from "@/mock/random";
+import { BOOK_SEEDS, MINOR_LINES } from "@/mock/fixtures/books";
+import { DIRECTIONS } from "@/mock/fixtures/style";
 import type { Segment, SegmentType } from "@/types";
 
 export function generateSegments(

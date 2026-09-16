@@ -10,13 +10,13 @@
 // the split the simulators use.
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { snapshotTake } from "@/lib/takes";
-import { EXPRESSION_TAGS } from "../fixtures/endpoints";
+import { EXPRESSION_TAGS } from "@/mock/fixtures/endpoints";
 import { gapsOf } from "@/lib/gaps";
-import { SHELF_BOOKS, type ShelfBook } from "../fixtures/shelf";
-import { voiceRef } from "../fixtures/voices";
-import { routeOf, seedClip, type ClipWorld } from "../world/audio";
-import { exportDemoPrep, freshenChapters } from "./export";
-import { applySearchDemo, searchDemoTarget } from "./search";
+import { SHELF_BOOKS, type ShelfBook } from "@/mock/fixtures/shelf";
+import { voiceRef } from "@/mock/fixtures/voices";
+import { routeOf, seedClip, type ClipWorld } from "@/mock/world/audio";
+import { exportDemoPrep, freshenChapters } from "@/mock/scenarios/export";
+import { applySearchDemo, searchDemoTarget } from "@/mock/scenarios/search";
 import type {
   Book,
   Chapter,

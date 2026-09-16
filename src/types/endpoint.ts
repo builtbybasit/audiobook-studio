@@ -4,10 +4,10 @@
 // The app talks to two kinds of OpenAI-compatible server: a chat model that turns prose into an
 // attributed script, and a speech model that renders a line. They are configured, paused, rate
 // limited and billed the same way, so the Endpoints page treats them as one list of two kinds.
-import type { SplitMode } from "./common";
-import type { Voice } from "./voice";
-import type { ExpressionConfig } from "./expression";
-import type { Profile, ScriptSettings } from "./scripting";
+import type { SplitMode } from "@/types/common";
+import type { Voice } from "@/types/voice";
+import type { ExpressionConfig } from "@/types/expression";
+import type { Profile, ScriptSettings } from "@/types/scripting";
 
 /** One recorded request, for the endpoint's latency sparkline. */
 export interface HistoryPoint {

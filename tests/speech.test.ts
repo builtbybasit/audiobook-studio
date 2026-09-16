@@ -1,17 +1,17 @@
-import { useCastStore } from "../src/stores/cast";
-import { useEndpointsStore } from "../src/stores/endpoints";
-import { useJobsStore } from "../src/stores/jobs";
-import { useLibraryStore } from "../src/stores/library";
-import { useNarrationStore } from "../src/stores/narration";
-import { useScriptsStore } from "../src/stores/scripts";
-import { useUiStore } from "../src/stores/ui";
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 // Pronunciation dictionary and pacing: both change how a book sounds without changing a word of it.
 // The store's narration simulation runs on setTimeout, so the clock and both timer APIs are faked.
 import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 
-import { speak, marks, silenceOf, DEFAULT_PACING, pauseAfter } from "../src/lib/speech";
-import type { LexEntry, Segment, ToastOptions } from "../src/types";
+import { speak, marks, silenceOf, DEFAULT_PACING, pauseAfter } from "@/lib/speech";
+import type { LexEntry, Segment, ToastOptions } from "@/types";
 
 const entry = (term: string, say: string, extra: Partial<LexEntry> = {}): LexEntry => ({
   id: 1,

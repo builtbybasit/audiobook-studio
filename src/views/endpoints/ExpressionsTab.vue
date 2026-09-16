@@ -8,7 +8,7 @@ import { Plus as AddIcon, Trash2 as RemoveIcon, TriangleAlert as WarnIcon } from
 import { UiSelect } from "@/ui";
 
 import { configErrors, expressionId, validToken } from "@/lib/expressions";
-import { expressionDraft, resetExpressionDraft } from "./expressionState";
+import { expressionDraft, resetExpressionDraft } from "@/views/endpoints/expressionState";
 import type { Endpoint, ExpressionTag } from "@/types";
 const props = defineProps<{ endpoint: Endpoint }>();
 const castStore = useCastStore();

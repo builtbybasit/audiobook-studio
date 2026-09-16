@@ -7,7 +7,7 @@
 // that only look like notices, chapters that mix a note with story, and a file of nothing but
 // notices with titles too long for a row.
 import type { NoticeKind } from "@/types";
-import { noticeTitle } from "./notices";
+import { noticeTitle } from "@/mock/fixtures/notices";
 
 /** One chapter as the sample describes it. A `kind` makes it a notice (or a chapter to review). */
 export interface ChapterSpec {

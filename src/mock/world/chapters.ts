@@ -1,6 +1,6 @@
 // Volumes and chapters: the skeleton a book gets before anything is scripted or narrated.
-import type { Rng } from "../random";
-import { bookSeed, type BookSeed } from "../fixtures/books";
+import type { Rng } from "@/mock/random";
+import { bookSeed, type BookSeed } from "@/mock/fixtures/books";
 import type { Chapter, Volume } from "@/types";
 
 export function makeVolumes(book: BookSeed): Volume[] {

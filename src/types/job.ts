@@ -1,7 +1,7 @@
 // The queue. One job per chapter of work, whatever kind it is; `scriptRun` and `exportRun` carry
 // the live detail the Queue page opens up, and everything a retry needs to run it again.
-import type { ExportSettings } from "./export";
-import type { Profile } from "./scripting";
+import type { ExportSettings } from "@/types/export";
+import type { Profile } from "@/types/scripting";
 
 export type JobKind = "scripting" | "narration" | "export";
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";

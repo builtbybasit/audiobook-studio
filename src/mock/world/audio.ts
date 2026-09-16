@@ -3,8 +3,8 @@
 // drift and loudness are all decided from that trail rather than from a timestamp.
 import { splitText } from "@/lib/split";
 import { speak, silenceOf, DEFAULT_PACING } from "@/lib/speech";
-import { generateSegments } from "./script";
-import type { WorldDraft } from "./draft";
+import { generateSegments } from "@/mock/world/script";
+import type { WorldDraft } from "@/mock/world/draft";
 import type { Endpoint, Segment, SegmentAudio, VoiceRef } from "@/types";
 
 /** What seeding a clip has to agree with: who reads the line, how the book says it, and where it

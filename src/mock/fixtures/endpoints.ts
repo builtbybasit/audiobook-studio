@@ -4,7 +4,7 @@
 //
 // A factory, not a constant: every call builds a fresh set, voice entries and billing included, so
 // a scenario that pauses an endpoint or adds a voice cannot leak into the next world.
-import { AZURE_VOICES, KOKORO_VOICES, OPENAI_VOICES } from "./voices";
+import { AZURE_VOICES, KOKORO_VOICES, OPENAI_VOICES } from "@/mock/fixtures/voices";
 import type { Endpoint, ExpressionTag } from "@/types";
 
 /**

@@ -1,8 +1,8 @@
 // Bulk script corrections (Search). One correction applied to many lines at once. The action
 // describes *what* to do; the preview says what it would actually change before anything is
 // touched, and the result carries the batch undo.
-import type { FlagKind } from "./segment";
-import type { UndoEntry } from "./ui";
+import type { FlagKind } from "@/types/segment";
+import type { UndoEntry } from "@/types/ui";
 
 /** Re-attribute every selected line to one character of the book's cast. */
 export interface BulkSpeakerAction {

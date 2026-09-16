@@ -1,9 +1,9 @@
 // The whole mock world in one object: what `makeWorld()` builds and what the store spreads into
 // its state.
-import type { Book, Chapter, Character, LexEntry } from "./book";
-import type { Endpoint } from "./endpoint";
-import type { ExportItem } from "./export";
-import type { SegmentMap } from "./segment";
+import type { Book, Chapter, Character, LexEntry } from "@/types/book";
+import type { Endpoint } from "@/types/endpoint";
+import type { ExportItem } from "@/types/export";
+import type { SegmentMap } from "@/types/segment";
 
 export interface World {
   books: Book[];

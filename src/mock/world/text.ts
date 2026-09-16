@@ -4,9 +4,9 @@
 //
 // This is the one source of chapter text: the picker's peek, the contents preview, the scripting
 // estimate and the mock scripting run all read it, so they cannot disagree about what a chapter says.
-import { generateSegments } from "./script";
-import { noticeBody } from "../fixtures/notices";
-import { BOOK_SEEDS } from "../fixtures/books";
+import { generateSegments } from "@/mock/world/script";
+import { noticeBody } from "@/mock/fixtures/notices";
+import { BOOK_SEEDS } from "@/mock/fixtures/books";
 import type { Chapter } from "@/types";
 
 /** A run of text, marked when it is the note rather than the story. */

@@ -4,12 +4,12 @@ import { logJob } from "@/lib/jobActivity";
 import { makeJobHistory } from "@/mock";
 import type { EndpointLoad, Eta, Job, JobKind, JobStatus, ScriptEndpointTelemetry } from "@/types";
 import { defineStore } from "pinia";
-import { useEndpointsStore } from "./endpoints";
-import { useExportsStore } from "./exports";
-import { useLibraryStore } from "./library";
-import { useNarrationStore } from "./narration";
-import { useScriptingStore } from "./scripting";
-import { useScriptsStore } from "./scripts";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useExportsStore } from "@/stores/exports";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptingStore } from "@/stores/scripting";
+import { useScriptsStore } from "@/stores/scripts";
 const AVG_JOB: Record<JobKind, number> = { scripting: 25, narration: 60, export: 120 };
 
 interface JobsState {

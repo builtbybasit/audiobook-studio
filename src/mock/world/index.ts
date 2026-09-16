@@ -4,17 +4,17 @@
 //
 // Order matters: the cast has to exist before clips can record which voice rendered them, and the
 // clips have to exist before an export can fingerprint the chapters it was built from.
-import { rng } from "../random";
-import { BOOK_SEEDS } from "../fixtures/books";
-import { makeEndpoints } from "../fixtures/endpoints";
-import { makeLexicon } from "../fixtures/lexicon";
-import { makeVolumes, makeChapters } from "./chapters";
-import { makeCharacters } from "./cast";
-import { seedPipeline } from "./audio";
-import { seedStory } from "./story";
-import { makeExports } from "./exports";
-import { voiceRef } from "../fixtures/voices";
-import type { WorldDraft } from "./draft";
+import { rng } from "@/mock/random";
+import { BOOK_SEEDS } from "@/mock/fixtures/books";
+import { makeEndpoints } from "@/mock/fixtures/endpoints";
+import { makeLexicon } from "@/mock/fixtures/lexicon";
+import { makeVolumes, makeChapters } from "@/mock/world/chapters";
+import { makeCharacters } from "@/mock/world/cast";
+import { seedPipeline } from "@/mock/world/audio";
+import { seedStory } from "@/mock/world/story";
+import { makeExports } from "@/mock/world/exports";
+import { voiceRef } from "@/mock/fixtures/voices";
+import type { WorldDraft } from "@/mock/world/draft";
 import type { Book, Chapter, Character, SegmentMap, World } from "@/types";
 
 export function makeWorld(): World {

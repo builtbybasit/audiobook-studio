@@ -3,17 +3,17 @@
 //
 // This barrel is the only import path the app uses — `@/types` — so a type can move between the
 // files below without touching a single consumer.
-export type * from "./common";
-export type * from "./voice";
-export type * from "./expression";
-export type * from "./endpoint";
-export type * from "./segment";
-export type * from "./book";
-export type * from "./job";
-export type * from "./scripting";
-export type * from "./narration";
-export type * from "./export";
-export type * from "./bulk";
-export type * from "./ui";
-export type * from "./demo";
-export type * from "./world";
+export type * from "@/types/common";
+export type * from "@/types/voice";
+export type * from "@/types/expression";
+export type * from "@/types/endpoint";
+export type * from "@/types/segment";
+export type * from "@/types/book";
+export type * from "@/types/job";
+export type * from "@/types/scripting";
+export type * from "@/types/narration";
+export type * from "@/types/export";
+export type * from "@/types/bulk";
+export type * from "@/types/ui";
+export type * from "@/types/demo";
+export type * from "@/types/world";

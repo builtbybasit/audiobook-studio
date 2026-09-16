@@ -1,10 +1,10 @@
-import { useCastStore } from "../src/stores/cast";
-import { useEndpointsStore } from "../src/stores/endpoints";
-import { useJobsStore } from "../src/stores/jobs";
-import { useLibraryStore } from "../src/stores/library";
-import { useNarrationStore } from "../src/stores/narration";
-import { useScriptsStore } from "../src/stores/scripts";
-import { useUiStore } from "../src/stores/ui";
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 // Pause and Cancel are different things, and the dispatcher has to agree with the words the
 // Endpoints page puts on the buttons: pausing holds the queue, cancelling empties it.
 import { test, expect, beforeEach, afterEach, spyOn } from "bun:test";

@@ -17,13 +17,13 @@ import type {
   VoiceRef,
 } from "@/types";
 import { defineStore } from "pinia";
-import { useCastStore } from "./cast";
-import { useJobsStore } from "./jobs";
-import { useNarrationStore } from "./narration";
-import { useScriptingStore } from "./scripting";
-import { useScriptsStore } from "./scripts";
-import { seedState } from "./seed";
-import { useUiStore } from "./ui";
+import { useCastStore } from "@/stores/cast";
+import { useJobsStore } from "@/stores/jobs";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptingStore } from "@/stores/scripting";
+import { useScriptsStore } from "@/stores/scripts";
+import { seedState } from "@/stores/seed";
+import { useUiStore } from "@/stores/ui";
 interface EndpointsState {
   endpoints: Endpoint[];
   profiles: Profile[];

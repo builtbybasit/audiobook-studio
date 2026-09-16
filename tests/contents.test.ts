@@ -1,8 +1,8 @@
-import { useDemoStore } from "../src/stores/demo";
-import { useLibraryStore } from "../src/stores/library";
-import { useScriptingStore } from "../src/stores/scripting";
-import { useScriptsStore } from "../src/stores/scripts";
-import { useUiStore } from "../src/stores/ui";
+import { useDemoStore } from "@/stores/demo";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptingStore } from "@/stores/scripting";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 // The contents review: import → review → add, and the same review afterwards.
 //
 // Two things matter and neither is visible from a screenshot. A suggestion never removes anything:
@@ -12,8 +12,8 @@ import { useUiStore } from "../src/stores/ui";
 import { test, expect, beforeEach, describe } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 
-import { IMPORT_SAMPLES, chapterParts, demoScenarios, importedBook } from "../src/mock";
-import { readinessOf } from "../src/lib/exports";
+import { IMPORT_SAMPLES, chapterParts, demoScenarios, importedBook } from "@/mock";
+import { readinessOf } from "@/lib/exports";
 import {
   excerptOf,
   importLabel,
@@ -21,8 +21,8 @@ import {
   noticeGroups,
   stateOf,
   summarize,
-} from "../src/lib/contents";
-import type { Chapter } from "../src/types";
+} from "@/lib/contents";
+import type { Chapter } from "@/types";
 
 let demoStore: ReturnType<typeof useDemoStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;

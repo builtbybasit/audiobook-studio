@@ -6,8 +6,8 @@
 // `seedPipeline` and `seedStory` are in place.
 import { DEFAULT_PACING } from "@/lib/speech";
 import { chapterSignature } from "@/lib/exports";
-import { volumesOfSeed } from "./chapters";
-import type { WorldDraft } from "./draft";
+import { volumesOfSeed } from "@/mock/world/chapters";
+import type { WorldDraft } from "@/mock/world/draft";
 import type { ExportItem } from "@/types";
 
 export function makeExports(w: WorldDraft): ExportItem[] {

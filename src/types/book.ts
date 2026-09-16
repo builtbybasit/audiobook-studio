@@ -1,7 +1,7 @@
 // The library: a book, the volumes it was assembled from, its chapters, its cast, and the two
 // per-book settings — the pronunciation dictionary and the pacing — that change how it sounds
 // without changing a word of it.
-import type { Gender, VoiceRef } from "./common";
+import type { Gender, VoiceRef } from "@/types/common";
 
 /** One entry of a book's pronunciation dictionary. The book text is never rewritten: the term is
  *  swapped for `say` on the way to the endpoint, so the reader still shows the author's spelling. */

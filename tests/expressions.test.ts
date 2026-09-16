@@ -1,9 +1,9 @@
-import { useCastStore } from "../src/stores/cast";
-import { useEndpointsStore } from "../src/stores/endpoints";
-import { useJobsStore } from "../src/stores/jobs";
-import { useNarrationStore } from "../src/stores/narration";
-import { useScriptsStore } from "../src/stores/scripts";
-import { useUiStore } from "../src/stores/ui";
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useJobsStore } from "@/stores/jobs";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 import { test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 
@@ -12,8 +12,8 @@ import {
   expressionPlan,
   expressionParts,
   expressionSupport,
-} from "../src/lib/expressions";
-import type { ExpressionTag } from "../src/types";
+} from "@/lib/expressions";
+import type { ExpressionTag } from "@/types";
 
 const laugh: ExpressionTag = {
   id: "laughter",

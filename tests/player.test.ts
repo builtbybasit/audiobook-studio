@@ -3,7 +3,7 @@
 // every clip here is timed rather than heard — the same path real audio takes, minus the element.
 // The clock and setInterval are faked, and each test drives the tick by hand.
 import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
-import { usePlayer, type Queue } from "../src/composables/usePlayer";
+import { usePlayer, type Queue } from "@/composables/usePlayer";
 
 const { p, play, playQueue, cue, pause, stop, seek, seekTo, skip, next, prev, setRate } =
   usePlayer();

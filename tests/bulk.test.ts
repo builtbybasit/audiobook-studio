@@ -2,8 +2,8 @@
 // the lines the preview counted, and one undo puts the batch back without stepping on later edits.
 import { test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
-import { bulkOutcome, segmentFingerprint, directionOptions } from "../src/lib/bulk";
-import type { BulkTarget, Segment, UndoEntry } from "../src/types";
+import { bulkOutcome, segmentFingerprint, directionOptions } from "@/lib/bulk";
+import type { BulkTarget, Segment, UndoEntry } from "@/types";
 
 // The batch undo is the store's own undo stack, and that stack lives on a toast. Swap the toast
 // library for a silent one so `revertEntry` can be exercised for real.
@@ -19,12 +19,12 @@ mock.module("vue-toastflow", () => ({
   },
 }));
 
-const { useDemoStore } = await import("../src/stores/demo");
-const { useJobsStore } = await import("../src/stores/jobs");
-const { useLibraryStore } = await import("../src/stores/library");
-const { useNarrationStore } = await import("../src/stores/narration");
-const { useScriptsStore } = await import("../src/stores/scripts");
-const { useUiStore } = await import("../src/stores/ui");
+const { useDemoStore } = await import("@/stores/demo");
+const { useJobsStore } = await import("@/stores/jobs");
+const { useLibraryStore } = await import("@/stores/library");
+const { useNarrationStore } = await import("@/stores/narration");
+const { useScriptsStore } = await import("@/stores/scripts");
+const { useUiStore } = await import("@/stores/ui");
 
 let demoStore: ReturnType<typeof useDemoStore>;
 let jobsStore: ReturnType<typeof useJobsStore>;

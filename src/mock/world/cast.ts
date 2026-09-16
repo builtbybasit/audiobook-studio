@@ -4,9 +4,9 @@
 //
 // Every entry is built fresh, `aliases` included, so a merge or a rename in one world can never
 // reach back into the read-only seeds in `fixtures/books.ts`.
-import { voiceRef } from "../fixtures/voices";
-import { PALETTE } from "../fixtures/style";
-import type { BookSeed } from "../fixtures/books";
+import { voiceRef } from "@/mock/fixtures/voices";
+import { PALETTE } from "@/mock/fixtures/style";
+import type { BookSeed } from "@/mock/fixtures/books";
 import type { Character, Gender, VoiceRef } from "@/types";
 
 const oa = (v: string): VoiceRef => voiceRef("openai", v);

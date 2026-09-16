@@ -1,7 +1,7 @@
 // Voices, and how a speaker is resolved to one. A character stores a `VoiceRef`; everything else
 // here is what the pickers and the routing checks read back out of it.
-import type { Gender, VoiceRef } from "./common";
-import type { Endpoint } from "./endpoint";
+import type { Gender, VoiceRef } from "@/types/common";
+import type { Endpoint } from "@/types/endpoint";
 
 export interface Voice {
   id: string;

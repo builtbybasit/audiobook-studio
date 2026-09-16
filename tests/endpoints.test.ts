@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
-import { newProfile, profileErrors } from "../src/lib/scripting";
-import { splitText } from "../src/lib/split";
+import { newProfile, profileErrors } from "@/lib/scripting";
+import { splitText } from "@/lib/split";
 import {
   ensureOps,
   fishModelsUrl,
@@ -16,10 +16,10 @@ import {
   unifyEndpoint,
   unifyProfile,
   voicesFromFishModels,
-} from "../src/lib/endpoints";
-import type { UnifiedEndpoint } from "../src/lib/endpoints";
-import { FixtureEndpointService, seriesFrom } from "../src/services/endpoints";
-import type { Endpoint, MetricTotals, RequestRecord, TtsBilling } from "../src/types";
+} from "@/lib/endpoints";
+import type { UnifiedEndpoint } from "@/lib/endpoints";
+import { FixtureEndpointService, seriesFrom } from "@/services/endpoints";
+import type { Endpoint, MetricTotals, RequestRecord, TtsBilling } from "@/types";
 
 const NOW = 1_700_000_000_000;
 

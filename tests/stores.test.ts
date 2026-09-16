@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
-import { useCastStore } from "../src/stores/cast";
-import { useEndpointsStore } from "../src/stores/endpoints";
-import { useExportsStore } from "../src/stores/exports";
-import { useJobsStore } from "../src/stores/jobs";
-import { useLibraryStore } from "../src/stores/library";
-import { useNarrationStore } from "../src/stores/narration";
-import { useScriptsStore } from "../src/stores/scripts";
-import { useUiStore } from "../src/stores/ui";
-import { DEFAULT_EXPORT_SETTINGS } from "../src/lib/exports";
-import { clone } from "../src/lib/utils";
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useExportsStore } from "@/stores/exports";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
+import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
+import { clone } from "@/lib/utils";
 
 let restore: (() => void)[] = [];
 beforeEach(() => {

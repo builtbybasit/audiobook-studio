@@ -1,8 +1,8 @@
 // One line of the script and the clip rendered from it. A segment is addressed by `${bookId}:${chId}`
 // plus its own id; the store mutates these in place and nothing here is persisted.
-import type { SplitMode, VoiceRef } from "./common";
-import type { ReqError } from "./endpoint";
-import type { ExpressionAnnotation } from "./expression";
+import type { SplitMode, VoiceRef } from "@/types/common";
+import type { ReqError } from "@/types/endpoint";
+import type { ExpressionAnnotation } from "@/types/expression";
 
 export type SegmentType = "dialogue" | "narration" | "thought";
 

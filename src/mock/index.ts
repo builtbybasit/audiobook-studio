@@ -10,9 +10,9 @@
 // without touching the store or the views.
 
 // fixtures
-export { BOOK_SEEDS, MINOR_LINES, bookSeed } from "./fixtures/books";
-export type { BookSeed, CastSeed } from "./fixtures/books";
-export { DIRECTIONS, PALETTE } from "./fixtures/style";
+export { BOOK_SEEDS, MINOR_LINES, bookSeed } from "@/mock/fixtures/books";
+export type { BookSeed, CastSeed } from "@/mock/fixtures/books";
+export { DIRECTIONS, PALETTE } from "@/mock/fixtures/style";
 export {
   AZURE_VOICES,
   DISCOVERABLE_VOICES,
@@ -20,28 +20,33 @@ export {
   KOKORO_VOICES,
   OPENAI_VOICES,
   voiceRef,
-} from "./fixtures/voices";
-export { EXPRESSION_TAGS, makeEndpoints } from "./fixtures/endpoints";
-export { makeProfiles, makeScriptSettings } from "./fixtures/profiles";
-export { makeLexicon } from "./fixtures/lexicon";
-export { makeJobHistory } from "./fixtures/jobs";
-export { REQUEST_ERRORS } from "./fixtures/errors";
-export { NOTICES, noteOf, noticeBody, noticeTitle } from "./fixtures/notices";
-export { IMPORT_SAMPLES, importSample, sampleForFile, type ImportSample } from "./fixtures/imports";
-export { SHELF_BOOKS, type ShelfBook, type ShelfState } from "./fixtures/shelf";
+} from "@/mock/fixtures/voices";
+export { EXPRESSION_TAGS, makeEndpoints } from "@/mock/fixtures/endpoints";
+export { makeProfiles, makeScriptSettings } from "@/mock/fixtures/profiles";
+export { makeLexicon } from "@/mock/fixtures/lexicon";
+export { makeJobHistory } from "@/mock/fixtures/jobs";
+export { REQUEST_ERRORS } from "@/mock/fixtures/errors";
+export { NOTICES, noteOf, noticeBody, noticeTitle } from "@/mock/fixtures/notices";
+export {
+  IMPORT_SAMPLES,
+  importSample,
+  sampleForFile,
+  type ImportSample,
+} from "@/mock/fixtures/imports";
+export { SHELF_BOOKS, type ShelfBook, type ShelfState } from "@/mock/fixtures/shelf";
 
 // the world
-export { makeWorld } from "./world";
-export { makeVolumes, makeChapters, volumesOfSeed } from "./world/chapters";
-export { importedBook, importedVolume, type ImportedBook } from "./world/imports";
-export { chapterParts, partsText, type ContentPart } from "./world/text";
-export { generateSegments } from "./world/script";
-export { makeCharacters, newSpeaker } from "./world/cast";
-export { routeOf, seedClip, timeOf, type ClipWorld } from "./world/audio";
+export { makeWorld } from "@/mock/world";
+export { makeVolumes, makeChapters, volumesOfSeed } from "@/mock/world/chapters";
+export { importedBook, importedVolume, type ImportedBook } from "@/mock/world/imports";
+export { chapterParts, partsText, type ContentPart } from "@/mock/world/text";
+export { generateSegments } from "@/mock/world/script";
+export { makeCharacters, newSpeaker } from "@/mock/world/cast";
+export { routeOf, seedClip, timeOf, type ClipWorld } from "@/mock/world/audio";
 
 // helpers the simulators share
-export { rnd, rng, pick } from "./random";
-export type { Rng } from "./random";
+export { rnd, rng, pick } from "@/mock/random";
+export type { Rng } from "@/mock/random";
 
 // demo scenarios — seeded situations a page can be dropped into
 export {
@@ -50,26 +55,31 @@ export {
   searchScenarios,
   type SearchDemoResult,
   type SearchDemoTarget,
-} from "./scenarios/search";
-export { SEEDED_KEYS, STARTUP_DELAY_MS, startupRuns, type StartupRun } from "./scenarios/startup";
+} from "@/mock/scenarios/search";
+export {
+  SEEDED_KEYS,
+  STARTUP_DELAY_MS,
+  startupRuns,
+  type StartupRun,
+} from "@/mock/scenarios/startup";
 export {
   exportDemoPrep,
   exportScenarios,
   freshenChapters,
   type ExportDemoPrep,
-} from "./scenarios/export";
-export { DEMO_GROUPS, demoScenario, demoScenarios } from "./scenarios/catalogue";
-export { applySituation, type HistoryRow, type ScenarioContext } from "./scenarios/situations";
+} from "@/mock/scenarios/export";
+export { DEMO_GROUPS, demoScenario, demoScenarios } from "@/mock/scenarios/catalogue";
+export { applySituation, type HistoryRow, type ScenarioContext } from "@/mock/scenarios/situations";
 
 // simulators — the timer-driven fakes that stand in for the endpoints
-export { discoverVoices, voicesUrl } from "./simulators/voices";
-export { runBuild, failBuild, type BuildSimContext } from "./simulators/build";
-export { dispatchNarration, type NarrationSimContext } from "./simulators/narration";
+export { discoverVoices, voicesUrl } from "@/mock/simulators/voices";
+export { runBuild, failBuild, type BuildSimContext } from "@/mock/simulators/build";
+export { dispatchNarration, type NarrationSimContext } from "@/mock/simulators/narration";
 export {
   collapseChunk,
   reseg,
   simulateScriptRun,
   type ScriptRun,
   type ScriptSimContext,
-} from "./simulators/scripting";
-export type { SimulatorContext } from "./simulators/context";
+} from "@/mock/simulators/scripting";
+export type { SimulatorContext } from "@/mock/simulators/context";

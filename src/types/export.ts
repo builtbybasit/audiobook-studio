@@ -1,6 +1,6 @@
 // Export: what a build would produce, what it did produce, and why a finished one no longer matches
 // the book. A build makes one *export*, which is one or more files; grouping decides how many.
-import type { VoiceRef } from "./common";
+import type { VoiceRef } from "@/types/common";
 
 export type ExportStatus = "building" | "done" | "failed" | "cancelled" | "replaced";
 

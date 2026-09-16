@@ -1,6 +1,6 @@
 // Narration estimates. Cost and load are per endpoint: each segment goes to the endpoint that owns
 // its speaker's voice, and a segment longer than that endpoint's limit becomes several requests.
-import type { Endpoint } from "./endpoint";
+import type { Endpoint } from "@/types/endpoint";
 
 /** Per-endpoint slice of a narration estimate. */
 export interface EndpointEstimate {

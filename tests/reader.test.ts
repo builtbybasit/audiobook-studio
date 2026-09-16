@@ -1,17 +1,17 @@
-import { useCastStore } from "../src/stores/cast";
-import { useDemoStore } from "../src/stores/demo";
-import { useEndpointsStore } from "../src/stores/endpoints";
-import { useNarrationStore } from "../src/stores/narration";
-import { useScriptsStore } from "../src/stores/scripts";
-import { useUiStore } from "../src/stores/ui";
+import { useCastStore } from "@/stores/cast";
+import { useDemoStore } from "@/stores/demo";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 // The reader's one gesture for cutting a line and placing an expression on it: the gaps between
 // words. And the demo row that puts expressions on a line so the gesture has something to show.
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 
-import { EXPRESSION_TAGS, demoScenario } from "../src/mock";
-import { expressionSupport } from "../src/lib/expressions";
-import { gapLabel, gapsOf, tokensOf } from "../src/lib/gaps";
+import { EXPRESSION_TAGS, demoScenario } from "@/mock";
+import { expressionSupport } from "@/lib/expressions";
+import { gapLabel, gapsOf, tokensOf } from "@/lib/gaps";
 
 describe("the gaps between words", () => {
   const text = "I am not asking. Doctor, sit down.";

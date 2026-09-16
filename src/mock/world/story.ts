@@ -6,10 +6,10 @@
 // Everything here mutates the draft it is handed and nothing here is shared, so a fresh world is a
 // fresh set of situations.
 import { silenceOf, DEFAULT_PACING } from "@/lib/speech";
-import { PALETTE } from "../fixtures/style";
-import { noteOf } from "../fixtures/notices";
-import { routeOf, seedAudit, timeOf } from "./audio";
-import type { WorldDraft } from "./draft";
+import { PALETTE } from "@/mock/fixtures/style";
+import { noteOf } from "@/mock/fixtures/notices";
+import { routeOf, seedAudit, timeOf } from "@/mock/world/audio";
+import type { WorldDraft } from "@/mock/world/draft";
 import type { SegmentAudio } from "@/types";
 
 export function seedStory(w: WorldDraft): void {

@@ -1,16 +1,16 @@
-import { useEndpointsStore } from "../src/stores/endpoints";
-import { useExportsStore } from "../src/stores/exports";
-import { useJobsStore } from "../src/stores/jobs";
-import { useLibraryStore } from "../src/stores/library";
-import { useScriptingStore } from "../src/stores/scripting";
-import { useScriptsStore } from "../src/stores/scripts";
-import { useUiStore } from "../src/stores/ui";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useExportsStore } from "@/stores/exports";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptingStore } from "@/stores/scripting";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 import { test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
-import { newProfile, profileErrors, scriptParts, tokenEstimate } from "../src/lib/scripting";
+import { newProfile, profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
 
-import { jobDiagnostics, logJob, MAX_JOB_EVENTS } from "../src/lib/jobActivity";
-import { DEFAULT_EXPORT_SETTINGS } from "../src/lib/exports";
+import { jobDiagnostics, logJob, MAX_JOB_EVENTS } from "@/lib/jobActivity";
+import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 
 let callbacks = new Map<number, () => void>();
 let clock = 1000;

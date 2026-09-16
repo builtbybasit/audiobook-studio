@@ -26,13 +26,13 @@ import type {
   SegmentFlag,
 } from "@/types";
 import { defineStore } from "pinia";
-import { useCastStore } from "./cast";
-import { useDemoStore } from "./demo";
-import { useEndpointsStore } from "./endpoints";
-import { useJobsStore } from "./jobs";
-import { useLibraryStore } from "./library";
-import { useScriptsStore } from "./scripts";
-import { useUiStore } from "./ui";
+import { useCastStore } from "@/stores/cast";
+import { useDemoStore } from "@/stores/demo";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 interface NarrationState {
   expressionReview: {
     bookId: string;

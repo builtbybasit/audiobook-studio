@@ -7,7 +7,7 @@
 // opens the page the situation is about. Reset puts everything back to the seeded world.
 import { useDemoStore } from "@/stores/demo";
 
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { FlaskConical as DemoIcon, RotateCcw as ResetIcon } from "@lucide/vue";
@@ -28,6 +28,7 @@ const groups = computed(() =>
   })).filter((g) => g.rows.length),
 );
 const active = computed(() => demoStore.activeScenario);
+const open = ref(false);
 
 /**
  * A book imported during the session is not in the seeded world, so restoring it takes the book out
@@ -42,17 +43,19 @@ async function pick(id: string) {
   player.stop(); // it is timing clips from a world that is about to be replaced
   await leaveIfBookGoes();
   const to = demoStore.applyScenario(id);
+  open.value = false;
   if (to) router.push(to);
 }
 async function reset() {
   player.stop();
   await leaveIfBookGoes();
   demoStore.resetDemo();
+  open.value = false;
 }
 </script>
 
 <template>
-  <PopoverRoot>
+  <PopoverRoot v-model:open="open">
     <PopoverTrigger
       class="chip"
       :class="active && 'chip-on'"

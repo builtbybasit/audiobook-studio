@@ -2,9 +2,10 @@
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
+import { useUiStore } from "@/stores/ui";
 
 // Scripting stage: chapter picker + run settings on the left, script reader on the right.
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
 import ChapterPicker from "@/components/ChapterPicker.vue";
@@ -18,6 +19,7 @@ import { useBookId } from "@/composables/useBookId";
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
+const uiStore = useUiStore();
 const route = useRoute();
 const router = useRouter();
 const bookId = useBookId();
@@ -40,6 +42,7 @@ function smallerChunks() {
 }
 const opened = ref(
   Number(route.query.ch) ||
+    uiStore.chapterIn(bookId, libraryStore.chaptersOf(bookId)) ||
     (libraryStore.chaptersOf(bookId).find((c) => c.scripting === "fallback")?.id ??
       libraryStore.chaptersOf(bookId).find(isScripted)?.id ??
       1),
@@ -52,8 +55,16 @@ watch(
 ); // ?ch= from the command palette
 function openChapter(id: number) {
   opened.value = id;
-  void router.replace({ query: { ...route.query, ch: String(id), seg: undefined } });
 }
+// The chapter follows you between stages: whichever way it changed here — the picker, ?ch=, the
+// palette, or the book's own memory — record it and keep the URL saying which one you are on.
+function remember(id: number) {
+  uiStore.openChapter(bookId, id);
+  if (Number(route.query.ch) !== id)
+    void router.replace({ query: { ...route.query, ch: String(id), seg: undefined } });
+}
+watch(opened, remember);
+onMounted(() => remember(opened.value));
 const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
 const hasScript = computed(() => chapter.value && isScripted(chapter.value));
 const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));

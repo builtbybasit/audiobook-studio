@@ -4,11 +4,12 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 
 // Narration stage: voices + routing on top, chapter picker + run estimate + job ledger below.
 // Endpoints themselves are configured app-wide on /endpoints; the Routing tab only shows where
 // this book's lines land.
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
 import { isNarrated } from "@/lib/scriptReview";
@@ -28,6 +29,7 @@ const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
 const scriptsStore = useScriptsStore();
+const uiStore = useUiStore();
 const route = useRoute();
 const router = useRouter();
 const bookId = useBookId();
@@ -69,6 +71,7 @@ watch(
 const selected = ref([]);
 const opened = ref(
   Number(route.query.ch) ||
+    uiStore.chapterIn(bookId, libraryStore.chaptersOf(bookId)) ||
     (libraryStore.chaptersOf(bookId).find((c) => c.narration === "stale")?.id ??
       libraryStore.chaptersOf(bookId).find((c) => c.narration === "failed")?.id ??
       libraryStore.chaptersOf(bookId).find(isNarrated)?.id ??
@@ -82,8 +85,16 @@ watch(
 ); // ?ch= from the command palette
 function openChapter(id: number) {
   opened.value = id;
-  void router.replace({ query: { ...route.query, ch: String(id), seg: undefined } });
 }
+// The chapter follows you between stages: whichever way it changed here — the picker, ?ch=, the
+// palette, or the book's own memory — record it and keep the URL saying which one you are on.
+function remember(id: number) {
+  uiStore.openChapter(bookId, id);
+  if (Number(route.query.ch) !== id)
+    void router.replace({ query: { ...route.query, ch: String(id), seg: undefined } });
+}
+watch(opened, remember);
+onMounted(() => remember(opened.value));
 const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));
 /** The tab carries the cast's progress, so the Voices panel needs no summary line of its own. */
 const voices = computed(() => {

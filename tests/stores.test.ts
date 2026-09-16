@@ -169,3 +169,25 @@ test("automatic voice assignment previews the exact change and undoes it as one 
     before,
   );
 });
+
+test("a book remembers the chapter it is open on, and forgets one it no longer has", () => {
+  const uiStore = useUiStore();
+  const libraryStore = useLibraryStore();
+  const chapters = libraryStore.chaptersOf("cliche");
+
+  // nothing opened yet: every stage falls back to its own pick
+  expect(uiStore.chapterIn("cliche", chapters)).toBeNull();
+
+  uiStore.openChapter("cliche", chapters[2].id);
+  expect(uiStore.chapterIn("cliche", chapters)).toBe(chapters[2].id);
+  // one book's place is not another's
+  expect(uiStore.chapterIn("drowned", libraryStore.chaptersOf("drowned"))).toBeNull();
+
+  // a re-import can take the chapter away; the stages must not open a chapter that isn't there
+  expect(
+    uiStore.chapterIn(
+      "cliche",
+      chapters.filter((c) => c.id !== chapters[2].id),
+    ),
+  ).toBeNull();
+});

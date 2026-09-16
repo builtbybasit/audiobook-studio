@@ -82,6 +82,17 @@ onMounted(async () => {
       ?.scrollIntoView({ block: "center" });
 });
 
+// Reading a chapter here makes it the book's current chapter, so Scripting opens on the one you
+// were just reading. Contents keeps its own first pick — the chapter still to decide — because
+// that is the job this page is for.
+watch(
+  opened,
+  (id) => {
+    if (id != null) uiStore.openChapter(bookId, id);
+  },
+  { immediate: true },
+);
+
 watch([q, filter, kind, collapsed, opened], () => {
   const next = {
     ...route.query,

@@ -8,6 +8,8 @@ interface UiState {
   notify: boolean;
   dark: boolean;
   currentBookId: string | null;
+  /** the chapter each book is open on — see `openChapter` */
+  currentChapter: Record<string, number>;
 }
 export const useUiStore = defineStore("ui", {
   state: (): UiState => ({
@@ -15,6 +17,7 @@ export const useUiStore = defineStore("ui", {
     notify: false,
     dark: window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true,
     currentBookId: null,
+    currentChapter: {},
   }),
   getters: {
     undoPending(s): (entry: UndoEntry | null) => boolean {
@@ -22,6 +25,21 @@ export const useUiStore = defineStore("ui", {
     },
   },
   actions: {
+    // ---------- which chapter the book is open on ----------
+    // Each stage used to choose its own chapter — scripting opened the first unverified one,
+    // narration the first stale one — so walking from Scripting to Narration landed you somewhere
+    // else and you had to find your place again. The book remembers one chapter instead, and every
+    // stage opens on it; `?ch=` in the URL still wins, and a stage only falls back to its own pick
+    // when the book has no chapter yet.
+    /** Remember the chapter this book is being worked on. */
+    openChapter(bookId: string, chapterId: number): void {
+      this.currentChapter[bookId] = chapterId;
+    },
+    /** That chapter, if it is still one of `chapters` — a book can lose one to a re-import. */
+    chapterIn(bookId: string, chapters: { id: number }[]): number | null {
+      const id = this.currentChapter[bookId];
+      return id && chapters.some((c) => c.id === id) ? id : null;
+    },
     // ---------- toasts & undo ----------
     // Thin wrapper over Toastflow so the rest of the app never imports it. `undo` makes the toast
     // undoable (↻, Undo button, 10 s, ⌘Z); `action` adds a second button; `timeout: 0` sticks.

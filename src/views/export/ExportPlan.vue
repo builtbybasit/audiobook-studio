@@ -12,7 +12,7 @@ import { useUiStore } from "@/stores/ui";
 // Problems are stated as things to do. Nothing is ever dropped quietly: "leave them out" is one of
 // the offered actions and it *removes the chapters from the selection*, so what the list shows and
 // what the build contains stay the same set.
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 
 import { usePlayer } from "@/composables/usePlayer";
 import { pauseAfter } from "@/lib/speech";
@@ -76,6 +76,37 @@ const running = computed(() =>
     .exportsOf(props.bookId)
     .find((e) => e.key === exportKey(props.settings) && e.status === "building"),
 );
+
+/** Review work is separate from render readiness: a playable clip can still be flagged as wrong,
+ * and a finished retake can still be waiting beside the clip in the book for a human verdict. */
+const audioReview = computed(() => {
+  const flagged: { chId: number; segId: number }[] = [];
+  const retakes: { chId: number; segId: number }[] = [];
+  for (const chId of props.selected)
+    for (const segment of scriptsStore.segmentsOf(props.bookId, chId)) {
+      if (segment.flag) flagged.push({ chId, segId: segment.id });
+      if (segment.candidate) retakes.push({ chId, segId: segment.id });
+    }
+  return {
+    flagged,
+    retakes,
+    chapterIds: [...new Set([...flagged, ...retakes].map((row) => row.chId))],
+    total: flagged.length + retakes.length,
+  };
+});
+const acceptUnreviewed = ref(false);
+watch(
+  () =>
+    `${props.selected.join(",")}|${audioReview.value.flagged.map((x) => `${x.chId}:${x.segId}`).join(",")}|${audioReview.value.retakes.map((x) => `${x.chId}:${x.segId}`).join(",")}`,
+  () => (acceptUnreviewed.value = false),
+);
+const reviewLink = (kind: "flagged" | "review") => {
+  const row = kind === "flagged" ? audioReview.value.flagged[0] : audioReview.value.retakes[0];
+  return {
+    path: `/book/${props.bookId}/narration`,
+    query: row ? { ch: row.chId, filter: kind, seg: row.segId } : {},
+  };
+};
 
 /** Selected chapters that would contribute nothing but the gap around them. */
 const silent = computed(() => chapters.value.filter((c) => c.duration <= 0).length);
@@ -152,6 +183,8 @@ const buildLabel = computed(() => {
     const n = review.value.blockers.length;
     return `Resolve ${n === 1 ? "the problem" : `${n} problems`} above first`;
   }
+  if (audioReview.value.total && !acceptUnreviewed.value)
+    return "Resolve or accept the audio review above";
   return replaces.value
     ? `Build v${replaces.value.version + 1}`
     : `Build ${plural(plan.value.files.length, "file")}`;
@@ -321,6 +354,50 @@ const ACTION_LABEL: Record<string, string> = {
       </div>
     </div>
 
+    <div v-if="audioReview.total" class="border-b border-zinc-200 p-4 dark:border-zinc-800">
+      <div class="rounded-lg border-l-2 border-amber-400 bg-amber-400/10 p-3">
+        <div class="flex items-start gap-2">
+          <WarnIcon class="icon mt-0.5 shrink-0 text-amber-600" />
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium">Audio review is unfinished</div>
+            <p class="mt-0.5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-300">
+              The selected chapters contain
+              <template v-if="audioReview.flagged.length">
+                {{ plural(audioReview.flagged.length, "flagged clip") }}</template
+              ><template v-if="audioReview.flagged.length && audioReview.retakes.length">
+                and </template
+              ><template v-if="audioReview.retakes.length">
+                {{ plural(audioReview.retakes.length, "retake decision") }}</template
+              >. They are playable, but they still need a listener's decision.
+            </p>
+            <div class="mt-2 flex flex-wrap gap-1.5">
+              <RouterLink
+                v-if="audioReview.flagged.length"
+                :to="reviewLink('flagged')"
+                class="btn-ghost btn-xs"
+              >
+                Review flagged ({{ audioReview.flagged.length }})
+              </RouterLink>
+              <RouterLink
+                v-if="audioReview.retakes.length"
+                :to="reviewLink('review')"
+                class="btn-ghost btn-xs"
+              >
+                Compare retakes ({{ audioReview.retakes.length }})
+              </RouterLink>
+              <button class="btn-ghost btn-xs" @click="emit('show', audioReview.chapterIds)">
+                Show affected chapters
+              </button>
+            </div>
+            <label class="mt-3 flex items-start gap-2 text-xs">
+              <input v-model="acceptUnreviewed" type="checkbox" class="mt-0.5 accent-violet-600" />
+              <span>Build with these unresolved review items. The current clips will be used.</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- what a build will do -->
     <div class="p-4">
       <div
@@ -356,7 +433,9 @@ const ACTION_LABEL: Record<string, string> = {
 
       <button
         class="btn-primary w-full justify-center"
-        :disabled="blocked || !selected.length || !!running"
+        :disabled="
+          blocked || !selected.length || !!running || (!!audioReview.total && !acceptUnreviewed)
+        "
         @click="emit('build')"
       >
         <BuildIcon class="icon" /> {{ buildLabel }}

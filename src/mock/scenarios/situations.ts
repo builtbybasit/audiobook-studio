@@ -9,6 +9,7 @@
 // hands it and reports what it did; the caller owns the state, the queue and the clock — exactly
 // the split the simulators use.
 import { isNarrated, isScripted } from "@/lib/scriptReview";
+import { snapshotScript } from "@/lib/scriptHistory";
 import { snapshotTake } from "@/lib/takes";
 import { EXPRESSION_TAGS } from "@/mock/fixtures/endpoints";
 import { gapsOf } from "@/lib/gaps";
@@ -22,10 +23,12 @@ import type {
   Chapter,
   Character,
   DemoResult,
+  HistoryHead,
   JobKind,
   JobStatus,
   Profile,
   ScriptEndpointTelemetry,
+  ScriptVersion,
   Segment,
 } from "@/types";
 
@@ -65,8 +68,14 @@ export interface ScenarioContext {
   chapters(bookId: string): Chapter[];
   cast(bookId: string): Character[];
   segmentsOf(bookId: string, chId: number): Segment[];
-  /** back to a chapter nothing has been run on: no script, and no saved revision of one */
+  /** back to a chapter nothing has been run on: no script, no saved revision and no history */
   clearScript(bookId: string, chId: number): void;
+  /** the versions a chapter's script has been through, as an earlier session would have left them */
+  seedHistory(
+    bookId: string,
+    chId: number,
+    history: { versions: Omit<ScriptVersion, "id">[]; head: HistoryHead },
+  ): void;
   profiles(): Profile[];
   telemetry(profileId: string): ScriptEndpointTelemetry;
   addHistory(row: HistoryRow): void;
@@ -116,6 +125,8 @@ export function applySituation(ctx: ScenarioContext, id: string, bookId: string)
       return staleAndRetakes(ctx, bookId);
     case "mis-attributed":
       return misAttributed(ctx, bookId);
+    case "script-history":
+      return chapterHistory(ctx, bookId);
     case "expressions":
       return expressionsPlaced(ctx, bookId);
     default:
@@ -713,6 +724,185 @@ function misAttributed(ctx: ScenarioContext, bookId: string): DemoResult {
   return {
     note: `${plural(moved, "line")} re-attributed to “${target.alias}”, ${flagged} flagged and ${staled} clips made stale.`,
     open: `/book/${bookId}/search?q=${encodeURIComponent(target.alias)}&speaker=${encodeURIComponent(target.alias)}`,
+  };
+}
+
+// ---------- a chapter's script history ----------
+
+/**
+ * One chapter with a past worth looking at: the model's first pass, the corrections a person made
+ * to it, the checkpoint they saved before trying another model, and the re-script that followed.
+ *
+ * The clips were rendered from the corrected script, so the re-script leaves audio that no longer
+ * matches it — which is what makes restoring the checkpoint worth watching: the clips come back to
+ * the lines they belong to, including the one whose paragraph the new model cut in two.
+ */
+function chapterHistory(ctx: ScenarioContext, bookId: string): DemoResult {
+  const chapters = ctx.chapters(bookId);
+  const chapter = chapters.find(isNarrated) ?? chapters.find(isScripted);
+  if (!chapter) return { note: "This book has no scripted chapter to keep a history for." };
+  const live = ctx.segmentsOf(bookId, chapter.id);
+  const cast = ctx.cast(bookId);
+  const majors = cast.filter((c) => c.major && c.name !== "Narrator").map((c) => c.name);
+  const main = cast.find((c) => c.major && c.name !== "Narrator");
+  const rotate = (name: string): string =>
+    majors.length > 1 ? majors[(majors.indexOf(name) + 1) % majors.length] : name;
+  const profiles = ctx.profiles();
+  const firstPass = profiles.find((p) => p.id === "openai") ?? profiles[0];
+  const secondPass = profiles.find((p) => p.id === "deepseek") ?? profiles[1] ?? firstPass;
+  const minutes = (n: number): number => ctx.now() - n * 60000;
+
+  // the script the clips were rendered from — every version below is a variation on this one
+  const corrected = snapshotScript(live);
+
+  // ---- the model's first pass, before anybody corrected it
+  const initial = snapshotScript(live);
+  let corrections = 0;
+  // An alias the first pass invented for the main character and the person renamed away, so the
+  // book's cast no longer has it: what previewing an old version has to be able to say, and what
+  // restoring one has to be able to put right.
+  const alias = main?.aliases.find((a) => !cast.some((c) => c.name === a));
+  const own = initial.find((s) => s.type === "dialogue" && s.speaker === main?.name);
+  if (own && alias) {
+    own.speaker = alias;
+    corrections++;
+  }
+  for (const s of initial
+    .filter((s) => s.type === "dialogue" && s.speaker !== main?.name && s !== own)
+    .slice(0, 2)) {
+    s.speaker = rotate(s.speaker);
+    corrections++;
+  }
+  const directed = initial.find((s) => s.direction && s.type !== "narration");
+  if (directed) {
+    directed.direction = "";
+    corrections++;
+  }
+  const named = initial.find((s) => !!main && s.text.includes(main.name));
+  if (named && main) {
+    named.text = named.text.replace(main.name, main.name.replace(/[\s’']/g, ""));
+    corrections++;
+  }
+  // a quote the first pass kept in the same chunk as the line that introduces it
+  const merged = initial.findIndex(
+    (s, i) => s.type === "dialogue" && initial[i + 1]?.type === "narration",
+  );
+  if (merged >= 0) {
+    const [after] = initial.splice(merged + 1, 1);
+    initial[merged] = {
+      ...initial[merged],
+      type: "narration",
+      speaker: "Narrator",
+      direction: "",
+      text: `${initial[merged].text} ${after.text}`,
+    };
+    corrections++;
+  }
+  initial.forEach((s, i) => (s.id = i + 1));
+
+  // ---- and two pauses nudged after the checkpoint was saved: script, but no clip goes stale
+  const settled = snapshotScript(live);
+  const held = settled.filter((s) => s.type === "dialogue").slice(0, 2);
+  for (const s of held) s.pause = 1.5;
+
+  // ---- the re-script that is now the current script
+  let moved = 0;
+  let dropped = 0;
+  const reattributed = live
+    .filter((s) => s.type === "dialogue" && s.speaker !== "Narrator")
+    .slice(0, 3);
+  for (const s of reattributed) {
+    s.speaker = rotate(s.speaker);
+    if (s.audio.status === "done") s.audio.status = "stale";
+    moved++;
+  }
+  for (const s of live.filter((s) => s.direction && !reattributed.includes(s)).slice(0, 2)) {
+    s.direction = "";
+    if (s.audio.status === "done") s.audio.status = "stale";
+    dropped++;
+  }
+  // one paragraph the new model cut in two: the first half keeps the clip, the second has none
+  const long = live.find(
+    (s) => s.type === "narration" && s.audio.duration > 0 && s.text.length > 80,
+  );
+  const gaps = long ? gapsOf(long.text, "split") : [];
+  const strong = gaps.filter((g) => g.strong);
+  const cut = (strong[Math.floor(strong.length / 2)] ?? gaps[Math.floor(gaps.length / 2)])?.at ?? 0;
+  if (long && cut) {
+    const head = long.text.slice(0, cut).trimEnd();
+    const tail = long.text.slice(cut).trimStart();
+    const sep = long.text.slice(head.length, long.text.length - tail.length);
+    const id = Math.max(0, ...live.map((s) => s.id)) + 1;
+    const index = live.indexOf(long);
+    long.text = head;
+    if (sep === " ") delete long.sep;
+    else long.sep = sep;
+    if (long.audio.status === "done") long.audio.status = "stale";
+    live.splice(index + 1, 0, {
+      id,
+      type: "narration",
+      speaker: long.speaker,
+      text: tail,
+      direction: long.direction,
+      audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
+    });
+  }
+  chapter.narration = "stale";
+  ctx.retime(bookId, chapter.id);
+
+  ctx.seedHistory(bookId, chapter.id, {
+    versions: [
+      {
+        at: minutes(190),
+        origin: { kind: "scripted", profile: firstPass.name, model: firstPass.model },
+        segments: initial,
+      },
+      {
+        at: minutes(42),
+        origin: {
+          kind: "checkpoint",
+          name: "Before trying DeepSeek",
+          was: { kind: "edited", edits: corrections },
+        },
+        segments: corrected,
+      },
+      { at: minutes(12), origin: { kind: "edited", edits: held.length }, segments: settled },
+    ],
+    head: {
+      at: minutes(4),
+      origin: {
+        kind: "scripted",
+        profile: secondPass.name,
+        model: secondPass.model,
+        again: true,
+      },
+    },
+  });
+  ctx.addHistory({
+    kind: "scripting",
+    bookId,
+    chapterId: chapter.id,
+    label: `Script · ch ${chapter.id} · ${secondPass.name}`,
+    status: "done",
+    minutesAgo: 5,
+    seconds: 41,
+    activity: [
+      {
+        message: "Scripting plan prepared",
+        detail: { endpoint: secondPass.name, model: secondPass.model, requests: 3 },
+      },
+      { message: "3 of 3 requests completed", detail: { costUSD: 0.01 } },
+    ],
+  });
+
+  const stale = moved + dropped + (long && cut ? 1 : 0);
+  return {
+    note:
+      `Chapter ${chapter.id} has three saved versions: ${firstPass.name}’s first pass, ` +
+      `${plural(corrections, "correction")} kept as “Before trying DeepSeek”, and two pause edits. ` +
+      `The ${secondPass.name} re-script that replaced them moved ${plural(moved, "speaker")}, dropped ${plural(dropped, "direction")} ` +
+      `and cut one paragraph in two, so ${plural(stale, "clip")} are stale and one line has no audio at all.`,
+    open: `/book/${bookId}/scripting?ch=${chapter.id}&history=1`,
   };
 }
 

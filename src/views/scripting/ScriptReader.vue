@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
+import { useHistoryStore } from "@/stores/history";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
@@ -19,6 +20,7 @@ import { useScript, TYPES } from "@/views/scripting/shared";
 import { directionOptions } from "@/lib/bulk";
 import { useReader } from "@/stores/reader";
 import ReaderSettings from "@/components/ReaderSettings.vue";
+import ScriptHistory from "@/views/scripting/ScriptHistory.vue";
 import VoicePicker from "@/components/VoicePicker.vue";
 import ExpressionText from "@/components/ExpressionText.vue";
 import ExpressionEditor from "@/components/ExpressionEditor.vue";
@@ -34,6 +36,7 @@ import {
   Maximize2 as FocusIcon,
   Minimize2 as ExitFocusIcon,
   Flag as FlagIcon,
+  History as HistoryIcon,
   Pause as PauseIcon,
   Play as PlayIcon,
   RotateCcw as RetryIcon,
@@ -82,6 +85,7 @@ const emit = defineEmits<{ "toggle-focus": [] }>();
 const { segments, cast, counts, inChapter, colorOf } = useScript(props);
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
+const historyStore = useHistoryStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 const scriptsStore = useScriptsStore();
@@ -188,7 +192,7 @@ function commitText(s: Segment) {
   editingText.value = null;
   if (!text || text === s.text) return;
   const before = preview(s.text, 60);
-  const revert = scriptsStore._segSnapshot(props.bookId, props.chapterId);
+  const revert = scriptsStore._editSnapshot(props.bookId, props.chapterId);
   scriptsStore.updateSegment(props.bookId, props.chapterId, s.id, { text });
   uiStore.toast(`#${s.id} rewritten`, { description: `Was “${before}”`, undo: revert });
 }
@@ -327,6 +331,26 @@ function jumpTo(id: number) {
   );
 }
 
+// ---- history: the versions this chapter's script has been through. It takes over the reader's
+// body rather than opening beside it, so there is never a question of which script is on screen —
+// and `?history=1` opens it, which is how the seeded scenario lands on it.
+const history = ref(route.query.history === "1");
+const historyPanel = ref<{ back: () => boolean } | null>(null);
+const versionCount = computed(() => historyStore.versionsOf(props.bookId, props.chapterId).length);
+watch(history, (on) => {
+  if (!!route.query.history === on) return;
+  void router.replace({ query: { ...route.query, history: on ? "1" : undefined } });
+});
+watch(
+  () => route.query.history,
+  (v) => (history.value = v === "1"),
+);
+/** Follow a change in the comparison back to the line it belongs to, in the script itself. */
+function jumpFromHistory(id: number) {
+  history.value = false;
+  jumpTo(id);
+}
+
 // keyboard: j/k or ↑/↓ move, Enter edit, Esc close, 1–9 assign speaker (in-chapter order), c toggles cast
 //
 // These are single letters with no modifier, and they used to be listened for on `window`: the
@@ -368,6 +392,13 @@ function onKey(e: KeyboardEvent) {
   if (!owns()) return;
   const t = e.target as HTMLElement;
   if (t.closest('[data-expression-editor], [role="dialog"]')) return;
+  // the history panel is over the script: the reader's single-key edits would land on lines nobody
+  // is looking at, so it keeps only the way out
+  if (history.value) {
+    if (e.key !== "Escape" || ["INPUT", "TEXTAREA"].includes(t.tagName)) return;
+    if (!historyPanel.value?.back()) history.value = false;
+    return;
+  }
   // inside a field: let the widget (combobox/select) handle Escape itself; a second Escape closes the editor
   if (
     ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) ||
@@ -434,7 +465,7 @@ function assignSpeaker(id: number, name: string) {
   const key = `speaker:${id}`;
   if (!continuing(key)) {
     assignWas = s.speaker;
-    assignUndo = scriptsStore._segSnapshot(props.bookId, props.chapterId);
+    assignUndo = scriptsStore._editSnapshot(props.bookId, props.chapterId);
   }
   const was = assignWas;
   const revert = assignUndo;
@@ -565,6 +596,20 @@ watch(open, (v) => {
           </PopoverRoot>
           <button
             class="btn-ghost btn-xs"
+            :class="history && 'border-violet-400 text-violet-700 dark:text-violet-300'"
+            :aria-pressed="history"
+            :title="
+              history
+                ? 'Back to the current script (Esc)'
+                : 'Earlier versions of this chapter’s script — preview, compare and restore'
+            "
+            @click="history = !history"
+          >
+            <HistoryIcon class="icon-sm" /> History
+            <span v-if="versionCount" class="text-zinc-400">{{ versionCount }}</span>
+          </button>
+          <button
+            class="btn-ghost btn-xs"
             :class="reader.showCast && 'bg-zinc-200 dark:bg-zinc-800'"
             @click="reader.showCast = !reader.showCast"
           >
@@ -582,7 +627,7 @@ watch(open, (v) => {
           </button>
           <ReaderSettings />
         </div>
-        <div class="mt-3 flex flex-wrap items-center gap-2">
+        <div v-if="!history" class="mt-3 flex flex-wrap items-center gap-2">
           <UiToggleGroup
             v-model="mode"
             :options="[
@@ -597,8 +642,18 @@ watch(open, (v) => {
         </div>
       </div>
 
+      <!-- the versions this chapter's script has been through, in place of the script itself -->
+      <ScriptHistory
+        v-if="history"
+        ref="historyPanel"
+        :book-id="bookId"
+        :chapter-id="chapterId"
+        @close="history = false"
+        @jump="jumpFromHistory"
+      />
+
       <div
-        v-if="fallbacks.length"
+        v-if="!history && fallbacks.length"
         class="border-b border-amber-300 bg-amber-400/10 text-xs text-amber-700 dark:border-amber-500/40 dark:text-amber-300"
       >
         <div class="flex items-center gap-3 px-6 py-1.5">
@@ -635,7 +690,7 @@ watch(open, (v) => {
         </p>
       </div>
       <div
-        v-if="stale"
+        v-if="!history && stale"
         class="flex items-center gap-3 border-b border-amber-300 bg-amber-400/10 px-6 py-2 text-xs text-amber-700 dark:border-amber-500/40 dark:text-amber-300"
       >
         <NarrationIcon class="icon shrink-0" />
@@ -650,7 +705,7 @@ watch(open, (v) => {
         >
       </div>
       <div
-        v-if="diff && showDiff"
+        v-if="!history && diff && showDiff"
         class="border-b border-violet-300 bg-violet-50 px-6 py-2 text-xs dark:border-violet-500/40 dark:bg-violet-500/10"
       >
         <div class="flex items-center gap-3">
@@ -704,7 +759,7 @@ watch(open, (v) => {
           </li>
         </ul>
       </div>
-      <div class="min-h-0 flex-1 overflow-auto px-4 py-5 sm:px-6">
+      <div v-if="!history" class="min-h-0 flex-1 overflow-auto px-4 py-5 sm:px-6">
         <div
           class="mx-auto"
           :class="[reader.widthClass, reader.fontClass]"
@@ -744,8 +799,8 @@ watch(open, (v) => {
                 <summary class="cursor-pointer">Why it failed</summary>
                 <div class="mt-1 rounded bg-white p-2 font-mono dark:bg-zinc-900">
                   verify: reconstructed text diverged near
-                  <span class="bg-red-500/15 text-red-600">“{{ s.fallbackMismatch }}…”</span> after
-                  2 retries → kept chunk whole (no prose dropped)
+                  <span class="bg-red-500/15 text-red-600">“{{ s.fallbackMismatch }}…”</span>
+                  after 2 retries → kept chunk whole (no prose dropped)
                 </div>
               </details>
             </div>
@@ -888,7 +943,8 @@ watch(open, (v) => {
                   title="Close the editor (Esc)"
                   @click="((open = null), (splitting = null))"
                 >
-                  Done <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">esc</kbd>
+                  Done
+                  <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">esc</kbd>
                 </button>
               </div>
               <div
@@ -1032,9 +1088,6 @@ watch(open, (v) => {
                     <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">m</kbd>
                   </button>
                   <div class="ml-auto flex items-center gap-2">
-                    <span v-if="s.audio.duration" class="text-[10px] text-amber-600"
-                      >either one makes this line's audio stale</span
-                    >
                     <button
                       v-if="segments.length > 1"
                       class="btn-ghost btn-xs hover:border-red-300 hover:text-red-600 dark:hover:text-red-400"
@@ -1141,10 +1194,6 @@ watch(open, (v) => {
                 >
                   {{ v === null ? `book · ${secs(bookGap(s))}` : v === 0 ? "run on" : secs(v) }}
                 </button>
-                <span class="ml-auto text-[10px] text-zinc-400"
-                  >silence is stitched, not rendered — nothing goes stale
-                  (<kbd>[</kbd>&nbsp;<kbd>]</kbd>)</span
-                >
               </div>
             </div>
             <!-- a line that holds, or runs straight on, shown where the gap actually falls -->
@@ -1170,6 +1219,7 @@ watch(open, (v) => {
         </div>
       </div>
       <div
+        v-if="!history"
         class="hidden border-t border-zinc-200 px-6 py-1 font-sans text-[11px] text-zinc-400 xl:block dark:border-zinc-800"
       >
         <kbd class="rounded bg-zinc-100 px-1 dark:bg-zinc-800">j</kbd>/<kbd

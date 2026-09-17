@@ -20,6 +20,7 @@ import type {
 } from "@/types";
 import { defineStore } from "pinia";
 import { useCastStore } from "@/stores/cast";
+import { useHistoryStore } from "@/stores/history";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { seedState } from "@/stores/seed";
@@ -161,16 +162,21 @@ export const useScriptsStore = defineStore("scripts", {
   actions: {
     // apply one direction to every line of a speaker in a chapter (marks rendered ones stale)
     applyDirection(bookId: string, chId: number, speaker: string, direction: string): number {
+      const historyStore = useHistoryStore();
       const uiStore = useUiStore();
 
+      // history is preserved before the change, so the lines are counted before they are touched
+      const targets = this.segmentsOf(bookId, chId).filter(
+        (s) => s.speaker === speaker && (s.direction || "") !== direction,
+      );
+      if (targets.length) historyStore.noteEdit(bookId, chId);
       let n = 0;
-      for (const s of this.segmentsOf(bookId, chId))
-        if (s.speaker === speaker && (s.direction || "") !== direction) {
-          s.direction = direction;
-          s.edited = true;
-          this._markStale(bookId, chId, s);
-          n++;
-        }
+      for (const s of targets) {
+        s.direction = direction;
+        s.edited = true;
+        this._markStale(bookId, chId, s);
+        n++;
+      }
       if (n)
         uiStore.toast(`Direction applied to ${n} ${speaker} line${n === 1 ? "" : "s"}`, {
           kind: "success",
@@ -180,17 +186,23 @@ export const useScriptsStore = defineStore("scripts", {
       return n;
     },
     setSpeaker(bookId: string, chId: number, segId: number, speaker: string): void {
+      const historyStore = useHistoryStore();
+
       const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
       if (s && s.speaker !== speaker) {
+        historyStore.noteEdit(bookId, chId);
         s.speaker = speaker;
         s.edited = true;
         this._markStale(bookId, chId, s);
       }
     },
     updateSegment(bookId: string, chId: number, segId: number, patch: Partial<Segment>): void {
+      const historyStore = useHistoryStore();
+
       const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
       if (!s) return;
       const changed = (Object.keys(patch) as (keyof Segment)[]).some((k) => s[k] !== patch[k]);
+      if (changed) historyStore.noteEdit(bookId, chId);
       if (patch.text != null && s.expressions && patch.expressions === undefined)
         s.expressions = remapExpressions(s.expressions, s.text, patch.text);
       Object.assign(s, patch);
@@ -206,6 +218,7 @@ export const useScriptsStore = defineStore("scripts", {
     /** Apply `action` to the lines the preview counted. Lines that already have the requested value
      *  are left alone. Returns the batch's single undo, or null when nothing changed. */
     applyBulk(bookId: string, targets: BulkTarget[], action: BulkAction): BulkResult {
+      const historyStore = useHistoryStore();
       const libraryStore = useLibraryStore();
       const narrationStore = useNarrationStore();
       const uiStore = useUiStore();
@@ -238,34 +251,53 @@ export const useScriptsStore = defineStore("scripts", {
       }[] = [];
       const chapters = new Set<number>();
       const narration = new Map<number, NarrationStatus>();
-      for (const row of preview.rows) {
-        if (!row.changes) continue;
-        const at = () => this.segmentsOf(bookId, row.chId).find((x) => x.id === row.segId);
-        const s = at();
-        if (!s) continue;
-        if (!narration.has(row.chId))
-          narration.set(row.chId, libraryStore.chapter(bookId, row.chId)?.narration ?? "none");
-        const was = {
-          chId: row.chId,
-          segId: row.segId,
-          speaker: s.speaker,
-          direction: s.direction,
-          flag: s.flag ? clone(s.flag) : undefined,
-          edited: s.edited,
-          status: s.audio.status,
-          after: "",
-        };
-        if (action.kind === "speaker") this.setSpeaker(bookId, row.chId, row.segId, action.speaker);
-        else if (action.kind === "direction")
-          this.updateSegment(bookId, row.chId, row.segId, {
-            direction: action.mode === "clear" ? "" : action.direction.trim(),
-          });
-        else narrationStore.flagSegment(bookId, row.chId, row.segId, action.flag, action.note);
-        was.after = fingerprint(at());
-        before.push(was);
-        chapters.add(row.chId);
+      // Each chapter this batch rewrites keeps the script it had, under the batch's own name — one
+      // entry per chapter, taken before a single line moves. A flag batch says something about the
+      // audio without changing a word of the script, so it leaves no version behind.
+      const perChapter = new Map<number, number>();
+      for (const row of preview.rows)
+        if (row.changes) perChapter.set(row.chId, (perChapter.get(row.chId) ?? 0) + 1);
+      const historyUndo = touchesAudio
+        ? [...perChapter].map(([chId, lines]) =>
+            historyStore.noteBulk(bookId, chId, preview.label, lines),
+          )
+        : [];
+      // the per-line actions below each note an edit of their own; the batch has already preserved
+      // the script once, so they are silenced rather than opening an editing session per line
+      historyStore.silence(() => {
+        for (const row of preview.rows) {
+          if (!row.changes) continue;
+          const at = () => this.segmentsOf(bookId, row.chId).find((x) => x.id === row.segId);
+          const s = at();
+          if (!s) continue;
+          if (!narration.has(row.chId))
+            narration.set(row.chId, libraryStore.chapter(bookId, row.chId)?.narration ?? "none");
+          const was = {
+            chId: row.chId,
+            segId: row.segId,
+            speaker: s.speaker,
+            direction: s.direction,
+            flag: s.flag ? clone(s.flag) : undefined,
+            edited: s.edited,
+            status: s.audio.status,
+            after: "",
+          };
+          if (action.kind === "speaker")
+            this.setSpeaker(bookId, row.chId, row.segId, action.speaker);
+          else if (action.kind === "direction")
+            this.updateSegment(bookId, row.chId, row.segId, {
+              direction: action.mode === "clear" ? "" : action.direction.trim(),
+            });
+          else narrationStore.flagSegment(bookId, row.chId, row.segId, action.flag, action.note);
+          was.after = fingerprint(at());
+          before.push(was);
+          chapters.add(row.chId);
+        }
+      });
+      if (!before.length) {
+        for (const undo of historyUndo) undo();
+        return empty;
       }
-      if (!before.length) return empty;
       const revert = () => {
         const clean = new Set(chapters);
         let conflicts = 0;
@@ -300,6 +332,8 @@ export const useScriptsStore = defineStore("scripts", {
               timeout: 7000,
             },
           );
+        // the batch is off the script, so it comes off the history with it
+        for (const undo of historyUndo) undo();
       };
       // flagging says something about a clip; it does not change what would be sent to the endpoint
       const stale = bulkInvalidates(action) ? before.filter((w) => w.status === "done").length : 0;
@@ -343,9 +377,26 @@ export const useScriptsStore = defineStore("scripts", {
         }
       };
     },
+    /**
+     * One edit's undo, for both owners it touches: the chapter's script here, and its place in the
+     * history next door. An edit that is undone has to leave the history saying what the script now
+     * is — not that a manual edit happened which no longer exists — so the two are put back
+     * together or not at all. Taken *before* the edit, like every other snapshot.
+     */
+    _editSnapshot(bookId: string, chId: number): () => void {
+      const historyStore = useHistoryStore();
+
+      const script = this._segSnapshot(bookId, chId);
+      const history = historyStore._chapterSnapshot(bookId, chId);
+      return () => {
+        script();
+        history();
+      };
+    },
     /** Cut a segment in two at character offset `at`. Returns the new segment's id. */
     splitSegment(bookId: string, chId: number, segId: number, at: number): number | null {
       const castStore = useCastStore();
+      const historyStore = useHistoryStore();
       const libraryStore = useLibraryStore();
       const uiStore = useUiStore();
 
@@ -356,10 +407,11 @@ export const useScriptsStore = defineStore("scripts", {
       const head = s.text.slice(0, at).trimEnd();
       const tail = s.text.slice(at).trimStart();
       if (!head || !tail) return null;
+      const revert = this._editSnapshot(bookId, chId);
+      historyStore.noteEdit(bookId, chId);
       // the whitespace the cut falls in is the prose, not padding: a paragraph break has to survive
       // the split so that joining the halves back restores the source exactly
       const sep = s.text.slice(head.length, s.text.length - tail.length);
-      const revert = this._segSnapshot(bookId, chId);
       const id = Math.max(0, ...segs.map((x) => x.id)) + 1;
       const second: Segment = {
         ...clone(s),
@@ -406,15 +458,17 @@ export const useScriptsStore = defineStore("scripts", {
     /** Join a segment with the one after it. The first segment's speaker, type and direction win. */
     joinSegments(bookId: string, chId: number, segId: number): boolean {
       const castStore = useCastStore();
+      const historyStore = useHistoryStore();
       const libraryStore = useLibraryStore();
       const uiStore = useUiStore();
 
       const segs = this.segments[key(bookId, chId)];
       const i = segs?.findIndex((x) => x.id === segId) ?? -1;
       if (i < 0 || i + 1 >= segs.length) return false;
+      const revert = this._editSnapshot(bookId, chId);
+      historyStore.noteEdit(bookId, chId);
       const a = segs[i];
       const b = segs[i + 1];
-      const revert = this._segSnapshot(bookId, chId);
       // put back whatever stood between them — a single space unless a split recorded otherwise
       const head = a.text.trimEnd();
       const tail = b.text.trimStart();
@@ -463,13 +517,15 @@ export const useScriptsStore = defineStore("scripts", {
      */
     deleteSegment(bookId: string, chId: number, segId: number): boolean {
       const castStore = useCastStore();
+      const historyStore = useHistoryStore();
       const libraryStore = useLibraryStore();
       const uiStore = useUiStore();
 
       const segs = this.segments[key(bookId, chId)];
       const i = segs?.findIndex((x) => x.id === segId) ?? -1;
       if (i < 0 || segs.length < 2) return false;
-      const revert = this._segSnapshot(bookId, chId);
+      const revert = this._editSnapshot(bookId, chId);
+      historyStore.noteEdit(bookId, chId);
       const [gone] = segs.splice(i, 1);
       // its audio goes with it, so a finished chapter no longer matches what was rendered
       const c = libraryStore.chapter(bookId, chId);

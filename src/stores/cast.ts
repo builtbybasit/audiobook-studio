@@ -20,6 +20,7 @@ import type {
 } from "@/types";
 import { defineStore } from "pinia";
 import { useEndpointsStore } from "@/stores/endpoints";
+import { useHistoryStore } from "@/stores/history";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { seedState } from "@/stores/seed";
@@ -208,12 +209,30 @@ export const useCastStore = defineStore("cast", {
         for (const [k, v] of Object.entries(segs)) scriptsStore.segments[k] = v;
       };
     },
-    _absorbCast(bookId: string, chId: number): void {
+    /** Add any speaker this chapter uses that the cast does not have yet. Returns their names, so
+     *  an undo of whatever brought them in can take exactly those back off again. */
+    _absorbCast(bookId: string, chId: number): string[] {
       const scriptsStore = useScriptsStore();
 
       const cast = this.characters[bookId];
+      const added: string[] = [];
       for (const s of scriptsStore.segmentsOf(bookId, chId))
-        if (!cast.some((c) => c.name === s.speaker)) cast.push(newSpeaker(s.speaker, cast.length));
+        if (!cast.some((c) => c.name === s.speaker)) {
+          cast.push(newSpeaker(s.speaker, cast.length));
+          added.push(s.speaker);
+        }
+      return added;
+    },
+    /** Take those speakers off again — but never one that some line still gives words to. */
+    _dropSpeakers(bookId: string, names: string[]): void {
+      const scriptsStore = useScriptsStore();
+
+      if (!names.length) return;
+      const gone = new Set(names);
+      const lines = scriptsStore.lineCounts(bookId);
+      this.characters[bookId] = (this.characters[bookId] ?? []).filter(
+        (c) => !gone.has(c.name) || lines[c.name],
+      );
     },
     /** Chapter length is the sum of what is actually rendered, plus the silence stitched between. */
     _retime(bookId: string, chId: number): void {
@@ -323,10 +342,13 @@ export const useCastStore = defineStore("cast", {
     },
     /** Silence after one line, in seconds; null goes back to the book's pacing. */
     setPause(bookId: string, chId: number, segId: number, pause: number | null): void {
+      const historyStore = useHistoryStore();
       const scriptsStore = useScriptsStore();
 
       const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
       if (!s) return;
+      // the pacing of a line is part of the script, so a nudge joins the editing session
+      if ((s.pause ?? null) !== pause) historyStore.noteEdit(bookId, chId);
       if (pause == null) delete s.pause;
       else s.pause = pause;
       this._retime(bookId, chId);

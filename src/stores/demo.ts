@@ -34,6 +34,7 @@ import { defineStore } from "pinia";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useExportsStore } from "@/stores/exports";
+import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
@@ -113,6 +114,7 @@ export const useDemoStore = defineStore("demo", {
       const castStore = useCastStore();
       const endpointsStore = useEndpointsStore();
       const exportsStore = useExportsStore();
+      const historyStore = useHistoryStore();
       const jobsStore = useJobsStore();
       const libraryStore = useLibraryStore();
       const narrationStore = useNarrationStore();
@@ -121,10 +123,14 @@ export const useDemoStore = defineStore("demo", {
       const uiStore = useUiStore();
 
       this.abandonRuns();
+      // an editing session groups the edits of a world that is about to be replaced; its timer must
+      // not close a session in the next one, so it is dropped rather than left to fire
+      historyStore.abandonSessions();
       for (const store of [
         castStore,
         endpointsStore,
         exportsStore,
+        historyStore,
         jobsStore,
         libraryStore,
         narrationStore,
@@ -222,6 +228,7 @@ export const useDemoStore = defineStore("demo", {
       const castStore = useCastStore();
       const endpointsStore = useEndpointsStore();
       const exportsStore = useExportsStore();
+      const historyStore = useHistoryStore();
       const jobsStore = useJobsStore();
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
@@ -240,7 +247,9 @@ export const useDemoStore = defineStore("demo", {
         clearScript: (bookId, chId) => {
           delete scriptsStore.segments[key(bookId, chId)];
           delete scriptsStore._previous[key(bookId, chId)];
+          historyStore.clearChapter(bookId, chId);
         },
+        seedHistory: (bookId, chId, history) => historyStore.seed(bookId, chId, history),
         profiles: () => endpointsStore.profiles,
         telemetry: (profileId) => jobsStore.scriptingTelemetry(profileId),
         addHistory: (row) => this._addHistory(row),

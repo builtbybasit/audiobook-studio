@@ -29,6 +29,7 @@ import { defineStore } from "pinia";
 import { useCastStore } from "@/stores/cast";
 import { useDemoStore } from "@/stores/demo";
 import { useEndpointsStore } from "@/stores/endpoints";
+import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
@@ -191,6 +192,7 @@ export const useNarrationStore = defineStore("narration", {
       at: number,
     ): void {
       const castStore = useCastStore();
+      const historyStore = useHistoryStore();
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
@@ -206,7 +208,8 @@ export const useNarrationStore = defineStore("narration", {
         at > s.text.length
       )
         return;
-      const undo = scriptsStore._segSnapshot(bookId, chId);
+      const undo = scriptsStore._editSnapshot(bookId, chId);
+      historyStore.noteEdit(bookId, chId); // an annotation is script, not audio
       (s.expressions ??= []).push(
         annotationFrom(
           definition,
@@ -228,13 +231,22 @@ export const useNarrationStore = defineStore("narration", {
       annotationId: number,
       patch: Partial<ExpressionAnnotation> | null,
     ): void {
+      const historyStore = useHistoryStore();
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
       const s = scriptsStore.segmentsOf(bookId, chId).find((s) => s.id === segId);
       const a = s?.expressions?.find((a) => a.annotationId === annotationId);
       if (!s || !a) return;
-      const undo = scriptsStore._segSnapshot(bookId, chId);
+      // dragging a tag back where it already was is not an edit: it must not open a history entry,
+      // and it must not make a clip that still matches the script look stale
+      if (
+        patch &&
+        (Object.keys(patch) as (keyof ExpressionAnnotation)[]).every((k) => a[k] === patch[k])
+      )
+        return;
+      const undo = scriptsStore._editSnapshot(bookId, chId);
+      historyStore.noteEdit(bookId, chId);
       if (patch) Object.assign(a, patch, { annotationId });
       else s.expressions = s.expressions!.filter((a) => a.annotationId !== annotationId);
       s.edited = true;
@@ -265,31 +277,34 @@ export const useNarrationStore = defineStore("narration", {
       pending.resume(); // rechecks current annotations, routing and launch prerequisites
     },
     omitReviewExpressions(): void {
+      const historyStore = useHistoryStore();
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
       const pending = this.expressionReview;
       if (!pending) return;
-      const undos = [...new Set(pending.targets.map((t) => t.chId))].map((chId) =>
-        scriptsStore._segSnapshot(pending.bookId, chId),
-      );
-      let count = 0;
-      for (const t of pending.targets) {
+      // what would actually be omitted, worked out before anything is touched: a chapter whose
+      // annotations all render cleanly is not edited, so it neither goes stale nor gains an entry
+      const work = pending.targets.flatMap((t) => {
         const s = scriptsStore.segmentsOf(pending.bookId, t.chId).find((s) => s.id === t.segId);
-        if (!s) continue;
-        const issues = this.expressionRender(pending.bookId, s).issues;
-        for (const issue of issues) {
-          s.expressions!.find((a) => a.annotationId === issue.annotationId)!.omitted = true;
+        const issues = s ? this.expressionRender(pending.bookId, s).issues : [];
+        return issues.length ? [{ chId: t.chId, segment: s!, issues }] : [];
+      });
+      const chapters = [...new Set(work.map((w) => w.chId))];
+      const undos = chapters.map((chId) => scriptsStore._editSnapshot(pending.bookId, chId));
+      for (const chId of chapters) historyStore.noteEdit(pending.bookId, chId);
+      let count = 0;
+      for (const w of work) {
+        for (const issue of w.issues) {
+          w.segment.expressions!.find((a) => a.annotationId === issue.annotationId)!.omitted = true;
           count++;
         }
-        if (issues.length) {
-          s.edited = true;
-          scriptsStore._markStale(pending.bookId, t.chId, s);
-        }
+        w.segment.edited = true;
+        scriptsStore._markStale(pending.bookId, w.chId, w.segment);
       }
       uiStore.toast(`${count} expressions omitted from narration`, {
         description: "Annotations stay in the script until you enable them again.",
-        undo: () => undos.forEach((undo) => undo()),
+        undo: count ? () => undos.forEach((undo) => undo()) : undefined,
       });
     },
     // "changed" is both edited-after-narration lines and halves of a hand-split segment that were

@@ -6,11 +6,12 @@ import { key } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
 import type { ScriptSimContext } from "@/mock";
 import { makeScriptSettings, simulateScriptRun } from "@/mock";
-import type { ScriptEstimate, ScriptSettings } from "@/types";
+import type { Profile, ScriptEstimate, ScriptSettings } from "@/types";
 import { defineStore } from "pinia";
 import { useCastStore } from "@/stores/cast";
 import { useDemoStore } from "@/stores/demo";
 import { useEndpointsStore } from "@/stores/endpoints";
+import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
@@ -174,7 +175,7 @@ export const useScriptingStore = defineStore("scripting", {
         return job;
       });
       jobsStore._sequential(jobs, (job, done) =>
-        simulateScriptRun(this._scriptSim(), {
+        simulateScriptRun(this._scriptSim(profile), {
           bookId,
           c: libraryStore.chapter(bookId, job.chapterId!)!,
           job,
@@ -195,10 +196,11 @@ export const useScriptingStore = defineStore("scripting", {
       if (!seg?.fallback) return;
       this.runScripting(bookId, [chId], { keepEdits: true, retrySegmentId: segId });
     },
-    _scriptSim(): ScriptSimContext {
+    _scriptSim(profile: Profile): ScriptSimContext {
       const castStore = useCastStore();
       const demoStore = useDemoStore();
       const endpointsStore = useEndpointsStore();
+      const historyStore = useHistoryStore();
       const jobsStore = useJobsStore();
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
@@ -215,7 +217,11 @@ export const useScriptingStore = defineStore("scripting", {
         profiles: () => endpointsStore.profiles,
         bookById: (id) => libraryStore.bookById(id),
         segmentsOf: (bookId, chId) => scriptsStore.segmentsOf(bookId, chId),
+        // The run's one way of writing a script, so this is where the script it replaces is kept.
+        // A run that failed, was cancelled or ran out of budget never gets here, so a good script is
+        // never pushed into the history by an attempt that produced nothing.
         setSegments: (bookId, chId, segs) => {
+          historyStore.noteScripted(bookId, chId, profile, segs);
           scriptsStore.segments[key(bookId, chId)] = segs;
         },
         previousSegments: (bookId, chId) => scriptsStore._previous[key(bookId, chId)],

@@ -1,5 +1,6 @@
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
+import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
@@ -23,6 +24,7 @@ const laugh: ExpressionTag = {
 };
 let castStore: ReturnType<typeof useCastStore>;
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
+let historyStore: ReturnType<typeof useHistoryStore>;
 let jobsStore: ReturnType<typeof useJobsStore>;
 let narrationStore: ReturnType<typeof useNarrationStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
@@ -35,6 +37,7 @@ beforeEach(() => {
   setActivePinia(createPinia());
   castStore = useCastStore();
   endpointsStore = useEndpointsStore();
+  historyStore = useHistoryStore();
   jobsStore = useJobsStore();
   narrationStore = useNarrationStore();
   scriptsStore = useScriptsStore();
@@ -136,9 +139,11 @@ test("unknown and unsupported expressions require review before any audio is cha
   insert();
   endpoint().expressions!.status = "unsupported";
   const before = JSON.stringify(segment().audio);
+  // placing the annotation opened an editing session in the chapter's history; nothing else is due
+  const scheduled = timers.length;
   narrationStore.runNarration("cliche", [1]);
   expect(jobsStore.jobs).toHaveLength(0);
-  expect(timers).toHaveLength(0);
+  expect(timers).toHaveLength(scheduled);
   expect(JSON.stringify(segment().audio)).toBe(before);
   expect(narrationStore.expressionReview).not.toBeNull();
   narrationStore.continueExpressionReview();
@@ -150,6 +155,51 @@ test("unknown and unsupported expressions require review before any audio is cha
   expect(jobsStore.jobs[0].status).toBe("done");
   expect(segment().expressions![0].omitted).toBe(true);
   expect(segment().audio.said).not.toContain("[laughter]");
+});
+
+test("an annotation put back where it already was is not an edit of the script", () => {
+  insert(8);
+  narrationStore.retrySegment("cliche", 1, 1);
+  drain();
+  expect(segment().audio.status).toBe("done");
+  const entries = historyStore.versionsOf("cliche", 1).length;
+
+  // dragging a tag home again: the script still says what the clip was rendered from
+  narrationStore.updateExpression("cliche", 1, 1, 1, { at: 8 });
+  expect(segment().audio.status).toBe("done");
+  expect(historyStore.versionsOf("cliche", 1)).toHaveLength(entries);
+
+  // …and a real move is still an edit, with the clip marked and the session opened
+  narrationStore.updateExpression("cliche", 1, 1, 1, { at: 9 });
+  expect(segment().audio.status).toBe("stale");
+  expect(historyStore.headOf("cliche", 1).origin).toMatchObject({ kind: "edited" });
+});
+
+test("omitting the reviewed expressions only touches the lines that had any", () => {
+  insert();
+  endpoint().expressions!.status = "unsupported";
+  // a second chapter in the review with nothing wrong with it: it is not edited, so it neither
+  // goes stale nor gains an entry in its own history
+  scriptsStore.segments["cliche:2"] = [
+    {
+      id: 1,
+      text: "The mountain said nothing.",
+      speaker: "Narrator",
+      type: "narration",
+      direction: "",
+      audio: { status: "done", endpoint: "local", duration: 2, ms: 900 },
+    },
+  ];
+  const clean = JSON.stringify(scriptsStore.segmentsOf("cliche", 2));
+  narrationStore.runNarration("cliche", [1]);
+  narrationStore.expressionReview!.targets.push({ chId: 2, segId: 1 });
+
+  narrationStore.omitReviewExpressions();
+  expect(segment().expressions![0].omitted).toBe(true);
+  expect(historyStore.headOf("cliche", 1).origin).toMatchObject({ kind: "edited" });
+  expect(JSON.stringify(scriptsStore.segmentsOf("cliche", 2))).toBe(clean);
+  expect(historyStore.versionsOf("cliche", 2)).toHaveLength(0);
+  expect(historyStore.headOf("cliche", 2).origin.kind).not.toBe("edited");
 });
 
 test("dispatch uses the preview, retains expressions in its audit trail and job events", () => {

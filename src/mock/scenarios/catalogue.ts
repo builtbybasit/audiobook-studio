@@ -85,6 +85,12 @@ const STEPS: Record<string, string[]> = {
     "One expression needs its position chosen again after an edit.",
     "Add expression turns the line into word gaps; click a gap to place a tag.",
   ],
+  "script-history": [
+    "Press History in the reader header: four entries, newest first, with what made each one.",
+    "Preview “Before trying DeepSeek” — read-only, the current script is untouched — then Compare with current.",
+    "Read the summary before the detail, filter it to Speakers or Structure, and jump to a line.",
+    "Restore it: the plan counts the clips that come back, the one recovered from the split paragraph, and the chapter goes from stale to done. ⌘Z puts the re-script back.",
+  ],
   "mis-attributed": [
     "Search is open on the alias: tick a chapter, or Select all matching results.",
     "Change speaker… to the main character: the panel says how many change, how many already match and how many clips go stale.",
@@ -215,6 +221,15 @@ export function demoScenarios(): DemoScenario[] {
         "Ashes of the Starforge, chapter 1: a sigh and a softer delivery placed on the Captain’s line, and a laugh on the next line whose position needs a look after an edit. The reader opens on the line.",
       bookId: "starforge",
       path: "/book/starforge/scripting?ch=1",
+    },
+    {
+      id: "script-history",
+      group: "review",
+      name: "A chapter with a script history",
+      blurb:
+        "Chapter 1 of The Cliché Cultivation World through four versions: OpenAI’s first pass, the corrections a person made to it, the checkpoint saved before trying another model, and the DeepSeek re-script that is the current script — with clips that no longer match it. Opens the reader with History open.",
+      bookId: "cliche",
+      path: "/book/cliche/scripting",
     },
     {
       id: "mis-attributed",

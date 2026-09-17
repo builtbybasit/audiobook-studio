@@ -8,6 +8,7 @@ import { defineStore } from "pinia";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useExportsStore } from "@/stores/exports";
+import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
 import { useScriptsStore } from "@/stores/scripts";
 import { seedState } from "@/stores/seed";
@@ -92,6 +93,7 @@ export const useLibraryStore = defineStore("library", {
     _bookSnapshot(bookId: string): () => void {
       const castStore = useCastStore();
       const exportsStore = useExportsStore();
+      const historyStore = useHistoryStore();
       const jobsStore = useJobsStore();
       const scriptsStore = useScriptsStore();
 
@@ -114,7 +116,10 @@ export const useLibraryStore = defineStore("library", {
           (j) => j.bookId === bookId && j.status !== "running" && j.status !== "queued",
         ),
       );
+      // each chapter's script history belongs to history.ts; it puts its own back
+      const history = historyStore._bookSnapshot(bookId);
       return () => {
+        history();
         if (!this.books.some((b) => b.id === bookId))
           this.books.splice(Math.min(i, this.books.length), 0, book);
         else
@@ -495,6 +500,7 @@ export const useLibraryStore = defineStore("library", {
     // give `ordered` chapters ids 1..n in that order; re-key segments, remap jobs/exports, fix volume ranges
     _renumber(bookId: string, ordered: Chapter[]): void {
       const exportsStore = useExportsStore();
+      const historyStore = useHistoryStore();
       const jobsStore = useJobsStore();
       const scriptsStore = useScriptsStore();
 
@@ -514,6 +520,8 @@ export const useLibraryStore = defineStore("library", {
         if (map[old]) segs[key(bookId, map[old])] = v;
       }
       scriptsStore.segments = segs;
+      // a chapter's script history is keyed by its number too, so it moves with the script
+      historyStore.remapBook(bookId, map);
       ordered.forEach((c) => {
         c.id = map[c.id];
         c.index = c.id;
@@ -568,6 +576,7 @@ export const useLibraryStore = defineStore("library", {
     _dropBook(bookId: string): void {
       const castStore = useCastStore();
       const exportsStore = useExportsStore();
+      const historyStore = useHistoryStore();
       const jobsStore = useJobsStore();
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
@@ -587,6 +596,7 @@ export const useLibraryStore = defineStore("library", {
         Object.entries(scriptsStore.segments).filter(([k]) => !k.startsWith(bookId + ":")),
       );
       exportsStore.exports = exportsStore.exports.filter((e) => e.bookId !== bookId);
+      historyStore.clearBook(bookId);
       if (uiStore.currentBookId === bookId) uiStore.currentBookId = null;
     },
   },

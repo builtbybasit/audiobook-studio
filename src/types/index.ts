@@ -11,6 +11,7 @@ export type * from "@/types/segment";
 export type * from "@/types/book";
 export type * from "@/types/job";
 export type * from "@/types/scripting";
+export type * from "@/types/history";
 export type * from "@/types/narration";
 export type * from "@/types/export";
 export type * from "@/types/bulk";

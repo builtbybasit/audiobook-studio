@@ -2,6 +2,7 @@ import { useCastStore } from "@/stores/cast";
 import { useDemoStore } from "@/stores/demo";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useExportsStore } from "@/stores/exports";
+import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
@@ -20,8 +21,10 @@ import { useUiStore } from "@/stores/ui";
 // The simulated runs are timer-driven, so the clock and both timer APIs are faked here.
 import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
+import { toRaw } from "vue";
 
 import { clock as simClock, demoScenarios, DEMO_GROUPS, simMs } from "@/mock";
+import { scriptSignature } from "@/lib/scriptHistory";
 import { isScripted } from "@/lib/scriptReview";
 
 let timers = new Map<number, { fn: () => void; repeat: boolean }>();
@@ -31,6 +34,7 @@ let castStore: ReturnType<typeof useCastStore>;
 let demoStore: ReturnType<typeof useDemoStore>;
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
 let exportsStore: ReturnType<typeof useExportsStore>;
+let historyStore: ReturnType<typeof useHistoryStore>;
 let jobsStore: ReturnType<typeof useJobsStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let narrationStore: ReturnType<typeof useNarrationStore>;
@@ -57,6 +61,7 @@ beforeEach(() => {
   demoStore = useDemoStore();
   endpointsStore = useEndpointsStore();
   exportsStore = useExportsStore();
+  historyStore = useHistoryStore();
   jobsStore = useJobsStore();
   libraryStore = useLibraryStore();
   narrationStore = useNarrationStore();
@@ -102,12 +107,24 @@ const digest = (s: string): string => {
 const worldState = (): string =>
   digest(
     JSON.stringify({
-      books: libraryStore.books,
-      chapters: libraryStore.chapters,
-      characters: castStore.characters,
-      lexicon: castStore.lexicon,
-      segments: Object.entries(scriptsStore.segments).sort(([a], [b]) => a.localeCompare(b)),
+      // read past the reactive proxies: the digest walks every book, chapter and segment, and
+      // going through Pinia's proxy for each property makes the whole catalogue an order of
+      // magnitude slower to hash
+      books: toRaw(libraryStore.books),
+      chapters: toRaw(libraryStore.chapters),
+      characters: toRaw(castStore.characters),
+      lexicon: toRaw(castStore.lexicon),
+      segments: Object.entries(toRaw(scriptsStore.segments)).sort(([a], [b]) => a.localeCompare(b)),
       previous: Object.keys(scriptsStore._previous).sort(),
+      // a chapter's script history, by what each version says and holds rather than when it was made
+      history: Object.entries(historyStore.chapters)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, h]) => [
+          k,
+          h.nextId,
+          h.head.origin,
+          h.versions.map((v) => [v.id, v.origin, digest(scriptSignature(v.segments))]),
+        ]),
       exports: exportsStore.exports.map((e) => [e.bookId, e.key, e.version, e.status, e.chapters]),
       jobs: jobsStore.jobs.map((j) => [j.kind, j.bookId, j.chapterId, j.status, j.label]),
       usage: jobsStore.scriptUsage,
@@ -151,9 +168,14 @@ describe("the scenario catalogue", () => {
 });
 
 describe("applying a scenario", () => {
-  test("every scenario applies, opens a page and leaves the world it describes", () => {
-    const seeded = worldState();
-    for (const s of demoScenarios()) {
+  // A row at a time rather than one loop over the catalogue: digesting the whole world is what
+  // costs, three digests a row, and a single test carrying every row grew slow enough to sit
+  // against its own timeout. A row now has its own budget and names itself when it fails.
+  test.each(demoScenarios().map((s) => [s.id] as const))(
+    "%s applies, opens a page and leaves the world it describes",
+    (id) => {
+      const s = demoScenarios().find((x) => x.id === id)!;
+      const seeded = worldState();
       const to = demoStore.applyScenario(s.id);
       expect(to, s.id).toBeTruthy();
       expect(to!.startsWith("/"), s.id).toBe(true);
@@ -165,16 +187,16 @@ describe("applying a scenario", () => {
       drain();
       expect(worldState(), `${s.id} did not reset cleanly`).toBe(seeded);
       expect(demoStore.activeScenario).toBeNull();
-    }
-  });
+    },
+  );
 
-  test("a scenario applied after others is the same as one applied first", () => {
+  test("a scenario applied after every other row is the same as one applied first", () => {
     demoStore.applyScenario("no-voices");
     const first = worldState();
 
     demoStore.resetDemo();
-    demoStore.applyScenario("stale-audio");
-    demoStore.applyScenario("budget-spent");
+    // the whole catalogue, one on top of the last, with nothing reset in between
+    for (const s of demoScenarios()) demoStore.applyScenario(s.id);
     drain(); // let anything those started run to wherever it gets to
     demoStore.applyScenario("no-voices");
     expect(worldState()).toBe(first);

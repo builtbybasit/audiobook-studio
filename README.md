@@ -38,6 +38,7 @@ Each scenario puts the book, its script, its cast, the queue and its exports int
 | Speakers with no voice                         | The Narrator and a speaker unassigned, one pointing at a voice that no longer exists and one at the paused Azure proxy — lines that cannot be routed, and issues to fix. Opens Cast.                                                                                                                                                      |
 | The budget is spent                            | The book's cap and its scripting budget used up, so every estimate reports a blocker instead of starting. Opens Narration.                                                                                                                                                                                                                |
 | Edited script, stale audio, retakes to compare | Lines edited after narration and the clips that no longer match them, flagged audio, a second take waiting beside the first and one already rejected. Opens the ledger.                                                                                                                                                                   |
+| A chapter with a script history                | _Cliché_ chapter 1 through four versions: OpenAI’s first pass, the corrections a person made to it, the checkpoint saved before trying another model, and the DeepSeek re-script that is the current script — with clips that no longer match it. Opens the reader with History open.                                                     |
 | One speaker mis-attributed all through         | An alias scattered through the book, with Search open on the matches — the bulk corrections flow.                                                                                                                                                                                                                                         |
 | The five Export rows                           | A book ready to export, ready/missing/stale together, a 214-chapter serial, an export that needs updating, and running/failed/finished builds. Opens Export.                                                                                                                                                                              |
 
@@ -84,6 +85,7 @@ Ideas borrowed from the older narrata web UI: major/minor cast split with Narrat
 - **Per-request character limit** per endpoint (`maxChars`, 0 = whole segments). Longer segments are sent as several requests and joined; the endpoint card says how many segments of the open book would split, the run estimate counts requests and splits, and the ledger marks rows "N parts · M ch" (click to see the exact cuts). **Cut at** chooses the boundary: sentence end, clause (`, ; : —`), word, or hard cut; when the preferred boundary doesn't occur inside the window it falls back to the next finer one and the part is flagged. The endpoint card previews how the longest routed segment of the open book would be cut (`src/lib/split.js`).
 - **Command palette** — `⌘K` / `Ctrl+K` (or the header button): reka Dialog + Listbox with `useFilter`. Jump to any page, novel, chapter (opens it at the stage it's at via `?ch=`), speaker or endpoint, or run actions: script pending, narrate scripted, re-narrate changed, retry/cancel jobs, auto-assign voices, pause/resume an endpoint, toggle theme. Enter with nothing highlighted runs the first match.
 - **Volumes are sortable** (drag the handle or ▲▼) and can be **renamed and removed** from the book overview (wrong EPUB added). Reordering renumbers chapters so they follow the volume order. Removing one deletes its chapters, segments, jobs and export entries, renumbers the remaining chapters so numbering stays continuous, and removing the only volume removes the novel.
+- A chapter keeps the **scripts it has been through**: a re-script, a bulk correction, a restore and each run of manual edits preserve the script they replace, and **History** in the reader previews, compares and restores one. A version is the chapter's script only — never the audio, never the book's cast, dictionary or endpoints — and restoring carries the clips that still match the restored lines.
 - Reader keyboard: `j`/`k` move, `↵` edit, `1–9` assign speaker, `s` split, `m` join next, `[`/`]` pause, `c` toggle cast.
 
 ## Round three (2026-09-14): gaps, friction, responsive, backend-shaped
@@ -122,6 +124,9 @@ script reader — a mispronunciation is usually fixed there, not by rendering ag
 The ledger row was compacted to make room for all this: the line itself gets the space, speaker / voice
 / endpoint share one column, and every action is one icon size in a fixed slot — ▶ stays, `⇥ ↻ ⚑`
 appear on hover or keyboard focus (always on touch), so a raised flag is the only standing mark.
+The flag popover and the row's details link to the line in the reader (`e` on a focused row does
+the same), because a wrong speaker, direction or word is fixed in the script, and a retake would
+only read the same request again.
 Clicking a row (no `i` button) opens its details: one strip of labelled facts — voice, endpoint, model,
 type, time, latency, cost, then style and direction last, where a whole-phrase direction can run as long
 as it needs to — then, only when they apply, an amber line saying how the
@@ -483,6 +488,99 @@ confirm → cancel for a book and for a volume, batch skip with an Undo that res
 that a skipped chapter leaves the scripting estimate and export readiness and comes back when
 restored.
 
+## Round ten: a chapter's script history (2026-09-17)
+
+Re-scripting a chapter throws the old script away. So does a bulk correction, in its own smaller way,
+and so does an afternoon of editing that went the wrong direction. The reader could undo the last
+thing you did and nothing else, which made "try DeepSeek on this chapter and see" a bet rather than
+an experiment. A chapter now keeps the scripts it has been through, and going back to one of them is
+a thing you can look at before you do it.
+
+**History** sits in the reader header beside Re-script, with the number of saved versions on it, and
+takes over the reader's body rather than opening beside it: there is never a question of which script
+is on screen. It has three states, and the strip across the top says which one you are in every time
+— **the list**, a read-only **preview** of one version, or a **comparison** of one against the script
+as it stands. `?history=1` opens it, which is how the seeded scenario lands on it.
+
+**What makes an entry.** The working script is preserved _before_ anything replaces it, labelled by
+whatever produced it: a re-script (with the endpoint and model that ran it), a bulk correction (with
+the batch's own name and the lines it changed), a restore, or a run of manual edits. Ordinary editing
+is grouped into **editing sessions** — a run of edits with less than ten seconds between them is one
+entry, so a chapter you worked over for an hour reads as "9 manual edits", not ninety rows. The rule
+is deliberately dumb and easy to predict: the first edit after a quiet spell preserves the script and
+opens the session; every edit after it joins the same entry; the entry that session produces is what
+the _next_ thing to replace it preserves. Speaker, type, direction, the words themselves, expression
+annotations, pauses, splits, joins and deletions all count as edits; a clip finishing in the
+background does not, because a version holds the script and never the audio.
+
+An operation that changes nothing adds nothing: a re-script that comes back with the same attribution,
+a bulk batch that matched nothing, an edit that set a value to what it already was, an expression
+dragged back to where it already sat. A run that **failed, was cancelled or hit the budget** never gets
+as far as writing a script, so it cannot push a good one into the list — history is taken at the run's
+one write path, not when it starts. "Changes nothing" is judged losslessly, spacing and all: two
+scripts with the same words laid out differently are two scripts, and the comparison names that
+difference in words rather than drawing a diff with nothing marked in it.
+
+**An edit and its entry are one thing.** Every edit that offers Undo snapshots both owners before it
+runs, so `⌘Z` puts the script and the history back together: take a split back and the entry it opened
+goes with it, rather than leaving the list insisting a manual edit happened. Undoing one edit of a
+session leaves the rest of the session standing, still collecting.
+
+**Save a checkpoint** names the script as it stands — _Dialogue reviewed_, _Before trying DeepSeek_ —
+without changing a word of it, and the entry still says how that state was reached ("saved by hand ·
+6 manual edits").
+
+**What changed.** A comparison leads with the summary — _6 lines differ · 1 line rewritten · 1 speaker
+change · 3 direction changes · 2 line splits_ — then lists only the lines that moved, filtered by kind
+(words, speakers, directions, types, expressions, pauses, structure) and paged, so a 600-line chapter
+stays readable. Lines are matched on their words first, so a line that only changed speaker, pacing or
+expressions is recognised as the same line rather than as one gone and one new; what is left over is
+checked for the two structural edits the reader can make — a line cut in two, two lines run into one —
+before anything is called new or gone. A rewritten line is shown as the two lines it reads as, the
+removed words struck out of the first and the added words underlined in the second, each row marked
+`−` / `+` and badged in words: nothing here is told by colour alone. Every change on the current side
+opens the line in the reader.
+
+**Restoring** says what it will do before it does it, in counts: how many lines change, how many clips
+still match and stay usable, how many carry over but go stale, how many belong to lines this version
+does not have and are dropped, how many restored lines have no audio at all, what the chapter's
+narration becomes. Then it happens at once and the toast carries Undo (`⌘Z`), like every other
+undoable thing in the app. That Undo is as narrow as the restore was: this chapter's script and its
+place in the history, the chapter's own status, and the speakers the restore had to put back into the
+cast — a chapter edited or a voice changed while the toast was still up is not a restore's to take
+back.
+
+**The audio is not thrown away.** A clip belongs to a restored line when that line reads as the clip's
+own text does — either because the script says so, or because the clip itself was rendered from those
+exact words, which is how a line that has since been joined into its neighbour finds its own clip
+again. Carried clips are then re-judged against the restored line by the same `clipDrift` the ledger
+uses: still current, or stale because the speaker, direction, expressions or dictionary have moved on.
+Takes and a retake waiting for a verdict travel with the clip they belong to. The chapter's narration
+status, its running time and the export's "needs an update" all follow from that, so a restore can
+take a chapter from stale back to done.
+
+**A version is the chapter's script, not the book.** The cast, the voices, the pronunciation
+dictionary, the pacing and the endpoint settings belong to the book and are never rolled back with a
+chapter — the panel says so where it matters. When a version uses a speaker the cast no longer has
+(an alias merged away since), the restore block names it, counts its lines, and restoring puts it back
+as an unreviewed speaker, which is exactly what the Cast page's merge and rename exist for.
+
+**A run in flight is not raced.** A scripting or narration job on this chapter would write a script, a
+clip or a chapter status belonging to the version you just left, so restoring waits: the block names
+the run, offers Cancel — the one thing here that cannot be undone, which is why it asks — and the
+Restore button enables itself when the queue settles.
+
+A chapter's history belongs to its chapter, not to its number: removing or reordering a volume
+renumbers the chapters after it, and the histories move with the scripts, jobs and export entries in
+the same transaction — with the same Undo.
+
+Store ownership: `history.ts` owns the versions, the editing sessions and restoring; `lib/scriptHistory.ts`
+is the pure part (what a version preserves, what two of them disagree on, what a restore would do), and
+the panel renders exactly what the plan counted. `tests/history.test.ts` covers snapshot independence,
+session grouping, the runs that must leave no entry, comparison accuracy including splits and joins,
+restoring with its audio consequences and the narrow undo, the missing speaker, the run in flight,
+renumbering a book, and a demo reset while an editing session is still collecting.
+
 ## Toasts (Toastflow, 2026-09-14)
 
 Toasts run on [vue-toastflow](https://www.toastflow.top) for the runtime only — queue, timers, pause on hover, swipe to dismiss, Escape, focus handling, live regions, the promise `loading` helper. The plugin is created with `{ css: false }`, so none of its stylesheet loads: stack layout, motion and the time-left bar are in `src/toasts.css`, and the card is our own Tailwind markup in `components/Toasts.vue` through the headless slot (`ui.getRootProps / getCloseProps / getButtonProps / progress.*` keep the a11y and behaviour wiring). The app only ever calls `app.toast(msg, { kind, description, undo, action, timeout })` and `app.toastLoading(promise, { loading, success, error })`.
@@ -517,6 +615,7 @@ inside the box (`$ 12`, `0.35 s`), and `empty` lets a blank field mean something
 - Scripting: _The Cliché Cultivation World_ has three volumes — collapse them in the chapter list. Tick unscripted chapters on _Letters from the Drowned City_ and run; new chapters sometimes surface an alias (dashed "new") — the chip opens the Cast page, where merging lives. The cast rail sets each speaker's voice where you are reading them; hide it with its own button, the Cast button or `c`, and change type with `Aa`.
 - Narration: _Cliché_ ch 4 is partly failed — retry from the ledger. The Narrator sits on the free local Kokoro (limit 500 chars) and dialogue on OpenAI; narrate ch 7 and watch rows split into parts. On _Drowned City_, Old Tobiah's voice lives on the paused Azure proxy — resume it or repick. In Endpoints, add an endpoint and “Fetch from server” to pull its voice list.
 - Export: open the header's **Demo** chip and pick an Export scenario. _A long book_ opens **Thousand Gates of the Ninth Heaven** — 214 chapters over 6 volumes: filter to **Needs attention**, switch **Files** between one file / per volume / per chapter and watch the names and the count follow, then **See the chapter order**. _An export that needs updating_ shows v2 nine chapters behind with 191 carried over — press **Update to v3** and watch the Queue say `Encoding 50 of 204 · file 2 of 6`. On _Ashes of the Starforge_ chapter 1 is stale, so the build waits for you to choose. Open **Loudness** to see five voices 4.3 LU apart and what matching would do; open **Pauses** and nudge "after a line" — the running time, the size and the preview all move, and the finished export says it is behind the book. Turn on **make the next build fail** in the Demo drawer and build: the previous version is untouched and Retry starts over.
+- Script history: open the header’s **Demo** chip and pick _A chapter with a script history_. The reader opens on **History**: four entries, newest first. **Preview** “Before trying DeepSeek” — read-only, the current script untouched — then **Compare with current**: read the summary before the detail, filter to _Speakers_ or _Split, joined, new, gone_, and **Open the line** to land on it in the reader. **Restore…** counts what comes back before you press it — six clips match again, one of them recovered from the paragraph the re-script cut in two — and the chapter goes from stale to done; `⌘Z` puts the re-script back. Restore v1 instead to see the warning about a speaker the cast no longer has. Then edit a few lines yourself and watch them collect as one “N manual edits” entry.
 - Review: _Starforge_ ch 1 has three flagged clips and one retake already waiting — play both takes and keep one. Flag another line yourself (⚑), then `↻ Retake flagged`.
 - Pronunciation: Narration → **Pronunciation** on _Cliché_ — `Ji Ning → Jee Ning` and `Lan’er → Lahn-urr` are already in; click the count for a before/after on a real line, change one and watch the clips that used it go stale. In the reader those words are underlined; hover for the respelling.
 - Pacing: _Starforge_ ch 1 holds 1.5s after the Captain's threat and runs straight on into the reply — the ledger's scrubber draws both gaps. Set your own in the reader under **Pause after**, or `[`/`]`.
@@ -633,7 +732,7 @@ syntax, and whether each tag is a vocal sound or delivery instruction. Support s
 bound to the configured model and base URL; changing either requires confirming support again.
 No provider capabilities are assumed from its name.
 
-Expanded script and narration lines offer a searchable expression picker, placement controls,
+Expanded script lines offer a searchable expression picker, placement controls,
 inline annotations, and an exact outgoing-text preview after pronunciation replacements. Annotations
 are separate from prose: existing bracketed text is never automatically interpreted as a control.
 Splitting, joining, and editing preserve annotation positions where possible and request review

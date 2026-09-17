@@ -258,9 +258,13 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
           if (index >= 0) {
             const original = cur[index];
             const fresh = generateSegments(bookId, c.id).slice(0, original.fallbackCount ?? 6);
-            cur.splice(index, 1, ...fresh);
-            cur.forEach((x, i) => (x.id = i + 1));
-            c.scripting = cur.some((x) => x.fallback) ? "fallback" : "done";
+            // the whole chapter goes back through `setSegments`: one write path, so the script this
+            // re-split replaces is preserved exactly as a full re-script's would be
+            const next = [...cur.slice(0, index), ...fresh, ...cur.slice(index + 1)].map((x, i) =>
+              x.id === i + 1 ? x : { ...x, id: i + 1 },
+            );
+            ctx.setSegments(bookId, c.id, next);
+            c.scripting = next.some((x) => x.fallback) ? "fallback" : "done";
             c.narration = c.duration ? "stale" : "none";
             ctx.absorbCast(bookId, c.id);
           }

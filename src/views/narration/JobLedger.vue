@@ -29,7 +29,6 @@ import { pauseAfter, secs } from "@/lib/speech";
 import { usePlayer, type Queue } from "@/composables/usePlayer";
 import { chapterQueue, chapterQueueId } from "@/composables/useChapterQueue";
 import { speechPeaks } from "@/lib/peaks";
-import ExpressionEditor from "@/components/ExpressionEditor.vue";
 import ExpressionText from "@/components/ExpressionText.vue";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { UiToggleGroup } from "@/ui";
@@ -528,7 +527,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
             <th class="hidden w-36 sm:table-cell">Speaker</th>
             <th>Text</th>
             <th class="hidden w-12 text-right sm:table-cell">Audio</th>
-            <th class="w-28 sm:w-32"></th>
+            <th class="w-24 sm:w-28"></th>
           </tr>
         </thead>
         <tbody>
@@ -782,16 +781,6 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                       </PopoverPortal>
                     </PopoverRoot>
                   </span>
-                  <span class="grid w-5 place-items-center">
-                    <RouterLink
-                      :to="lineLink(s)"
-                      class="icon-btn row-tool"
-                      title="edit this line in the reader — speaker, direction, boundaries, the words"
-                      :aria-label="`Edit line ${s.id} in the reader`"
-                    >
-                      <EditIcon class="icon-sm" />
-                    </RouterLink>
-                  </span>
                 </div>
               </td>
             </tr>
@@ -957,12 +946,6 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
               <td></td>
               <td colspan="5" class="py-2 pr-4">
                 <div class="border-l-2 border-violet-400 pl-3 text-xs dark:border-violet-500">
-                  <ExpressionEditor
-                    :book-id="bookId"
-                    :chapter-id="chapterId"
-                    :segment="s"
-                    class="mb-3 border-b border-zinc-200 pb-3 dark:border-zinc-700"
-                  />
                   <!-- what this clip was rendered with -->
                   <div v-if="facts(s).length" class="flex items-start gap-3">
                     <div class="flex min-w-0 flex-1 flex-wrap gap-x-5 gap-y-1.5">

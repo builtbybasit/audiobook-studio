@@ -11,7 +11,15 @@ import { clone } from "@/lib/utils";
 import { generateSegments } from "@/mock/world/script";
 import { clock, simMs } from "@/mock/simulators/clock";
 import type { SimulatorContext } from "@/mock/simulators/context";
-import type { Book, Chapter, Job, Profile, ScriptEndpointTelemetry, Segment } from "@/types";
+import type {
+  Book,
+  Chapter,
+  Job,
+  Profile,
+  RescriptReport,
+  ScriptEndpointTelemetry,
+  Segment,
+} from "@/types";
 
 export interface ScriptSimContext extends SimulatorContext {
   /** every job in the queue, not just this run's — concurrency is shared across books. Read
@@ -24,6 +32,8 @@ export interface ScriptSimContext extends SimulatorContext {
   setSegments(bookId: string, chId: number, segs: Segment[]): void;
   /** the script as it stood before this re-run, when there is one */
   previousSegments(bookId: string, chId: number): Segment[] | undefined;
+  /** what the run could and could not re-apply of the chapter's manual corrections */
+  noteCorrections(bookId: string, chId: number, report: RescriptReport): void;
   absorbCast(bookId: string, chId: number): void;
   scriptSpent(bookId: string): number;
   scriptReserved(bookId: string): number;
@@ -79,8 +89,9 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
       clearInterval(t);
       run.active = 0;
       run.reserved = 0;
-      c.scripting = ctx.segmentsOf(bookId, c.id).length ? "done" : "none";
-      c.scriptingProgress = 0;
+      // Nothing was written: a cancelled re-script leaves the script it was replacing exactly where
+      // it was, so the chapter goes back to the status it had rather than reading as unscripted.
+      settleWithoutWriting(ctx, bookId, c, job, true);
       ctx.finishJob(job, "cancelled");
       return done();
     }
@@ -172,11 +183,11 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
               "Increase the budget and retry this chapter. Completed request costs are retained.",
           });
           clearInterval(t);
-          c.scripting = "failed";
           logJob(job, "Remaining budget cannot cover the next request", "error", {
             requiredUSD: usage.reserve,
             remainingUSD: Math.min(remaining, overall),
           });
+          settleWithoutWriting(ctx, bookId, c, job, false);
           ctx.finishJob(job, "failed");
           for (const pending of jobs) ctx.cancelJob(pending.id);
           done();
@@ -241,64 +252,160 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
       clearInterval(t);
       const roll = Math.random();
       const outcome = roll < 0.06 ? "failed" : roll < 0.16 ? "fallback" : "done";
-      c.scripting = outcome;
-      if (outcome !== "done")
+      if (outcome === "failed") {
+        logJob(job, "Script verification failed", "error");
+        settleWithoutWriting(ctx, bookId, c, job, false);
+        ctx.finishJob(job, "failed");
+        return done();
+      }
+      // A result belonging to a run this chapter has moved on from — a newer run was started, or a
+      // version was restored — must not land on top of what replaced it.
+      if (c.rescript && c.rescript.token !== job.id) {
         logJob(
           job,
-          outcome === "failed"
-            ? "Script verification failed"
-            : "An unverified chunk was kept as narration for review",
-          outcome === "failed" ? "error" : "warning",
+          "Result discarded: this chapter changed while the run was in flight",
+          "warning",
+          { chapter: c.id },
         );
-      ctx.finishJob(job, outcome === "failed" ? "failed" : "done");
-      if (outcome !== "failed") {
-        if (retrySegmentId !== null) {
-          const cur = ctx.segmentsOf(bookId, c.id);
-          const index = cur.findIndex((x) => x.id === retrySegmentId);
-          if (index >= 0) {
-            const original = cur[index];
-            const fresh = generateSegments(bookId, c.id).slice(0, original.fallbackCount ?? 6);
-            // the whole chapter goes back through `setSegments`: one write path, so the script this
-            // re-split replaces is preserved exactly as a full re-script's would be
-            const next = [...cur.slice(0, index), ...fresh, ...cur.slice(index + 1)].map((x, i) =>
-              x.id === i + 1 ? x : { ...x, id: i + 1 },
-            );
-            ctx.setSegments(bookId, c.id, next);
-            c.scripting = next.some((x) => x.fallback) ? "fallback" : "done";
-            c.narration = c.duration ? "stale" : "none";
-            ctx.absorbCast(bookId, c.id);
-          }
-          done();
-          return;
-        }
-        let segs = generateSegments(bookId, c.id, { aliasNoise: true });
-        if (outcome === "fallback") segs = collapseChunk(segs); // verifier couldn't reconstruct one chunk → kept whole as narration
-        const prev = ctx.previousSegments(bookId, c.id);
-        if (prev) {
-          // mock a *different* LLM run: a few speakers move, one narration pair merges
-          segs = reseg(segs);
-          if (c.rescript?.keepEdits)
-            for (const p of prev)
-              if (p.edited) {
-                const t = segs.find((x) => x.text === p.text);
-                if (t) {
-                  t.speaker = p.speaker;
-                  t.direction = p.direction;
-                  t.type = p.type;
-                  if (p.expressions) t.expressions = clone(p.expressions);
-                  t.edited = true;
-                }
-              }
-        }
-        ctx.setSegments(bookId, c.id, segs);
-        ctx.absorbCast(bookId, c.id);
-        c.narration = "none";
-        c.narrationProgress = 0;
-        c.duration = 0;
+        settleWithoutWriting(ctx, bookId, c, job, true);
+        ctx.finishJob(job, "cancelled");
+        return done();
       }
+      c.scripting = outcome;
+      if (outcome === "fallback")
+        logJob(job, "An unverified chunk was kept as narration for review", "warning");
+      if (retrySegmentId !== null) {
+        const cur = ctx.segmentsOf(bookId, c.id);
+        const index = cur.findIndex((x) => x.id === retrySegmentId);
+        if (index >= 0) {
+          const original = cur[index];
+          const fresh = generateSegments(bookId, c.id).slice(0, original.fallbackCount ?? 6);
+          // the whole chapter goes back through `setSegments`: one write path, so the script this
+          // re-split replaces is preserved exactly as a full re-script's would be
+          const next = [...cur.slice(0, index), ...fresh, ...cur.slice(index + 1)].map((x, i) =>
+            x.id === i + 1 ? x : { ...x, id: i + 1 },
+          );
+          ctx.setSegments(bookId, c.id, next);
+          c.scripting = next.some((x) => x.fallback) ? "fallback" : "done";
+          c.narration = c.duration ? "stale" : "none";
+          ctx.absorbCast(bookId, c.id);
+        }
+        delete c.rescript;
+        ctx.finishJob(job, "done");
+        done();
+        return;
+      }
+      let segs = generateSegments(bookId, c.id, { aliasNoise: true });
+      if (outcome === "fallback") segs = collapseChunk(segs); // verifier couldn't reconstruct one chunk → kept whole as narration
+      const prev = ctx.previousSegments(bookId, c.id);
+      if (prev) {
+        // mock a *different* LLM run: a few speakers move, one narration pair merges
+        segs = reseg(segs);
+        const asked = !!c.rescript?.keepEdits;
+        const report = reapplyCorrections(prev, segs, asked);
+        ctx.noteCorrections(bookId, c.id, {
+          profile: profile.name,
+          model: profile.model,
+          asked,
+          ...report,
+        });
+        logJob(
+          job,
+          asked
+            ? `Manual corrections: ${report.kept} re-applied, ${report.unmatched.length} could not be`
+            : `${report.unmatched.length} manual corrections discarded as asked`,
+          report.unmatched.length ? "warning" : "info",
+          {
+            reApplied: report.kept,
+            unmatched: report.unmatched.length,
+            ...(report.unmatched.length
+              ? { why: "the new script does not have the line the correction was made on" }
+              : {}),
+          },
+        );
+      }
+      ctx.setSegments(bookId, c.id, segs);
+      ctx.absorbCast(bookId, c.id);
+      delete c.rescript;
+      c.narration = "none";
+      c.narrationProgress = 0;
+      c.duration = 0;
+      ctx.finishJob(job, "done");
       done();
     }
   }, 220);
+}
+
+/**
+ * A run that produced nothing leaves the chapter as it found it. A chapter that still holds a
+ * script goes back to reading as scripted — a failed or cancelled *replacement* must not make
+ * finished work look unscripted, unnarratable and unexportable — and one that never had a script
+ * reads as failed, or as untouched when it was simply called off.
+ */
+function settleWithoutWriting(
+  ctx: ScriptSimContext,
+  bookId: string,
+  c: Chapter,
+  job: Job,
+  cancelled: boolean,
+): void {
+  const was = c.rescript?.was;
+  const kept = ctx.segmentsOf(bookId, c.id).length;
+  c.scripting = kept
+    ? was === "done" || was === "fallback"
+      ? was
+      : "done"
+    : cancelled
+      ? (was ?? "none")
+      : "failed";
+  c.scriptingProgress = 0;
+  if (kept)
+    logJob(
+      job,
+      cancelled
+        ? "Cancelled before a script was written; the previous script is unchanged"
+        : "Nothing was written; the previous script is unchanged",
+      "warning",
+      { lines: kept, chapterStatus: c.scripting },
+    );
+  delete c.rescript; // nothing from this run may land on the chapter afterwards
+}
+
+/**
+ * Carry the manual corrections of the previous script onto the new one, and say what could not be
+ * carried. A correction belongs to the line it was made on, so it is re-applied when the new run
+ * wrote that line the same way; a line the new run rewrote, split or dropped takes its correction
+ * with it, and that correction is named rather than quietly lost.
+ */
+export function reapplyCorrections(
+  prev: Segment[],
+  next: Segment[],
+  keepEdits: boolean,
+): Pick<RescriptReport, "kept" | "unmatched"> {
+  const corrections = prev.filter((p) => p.edited);
+  const unmatched: RescriptReport["unmatched"] = [];
+  let kept = 0;
+  const taken = new Set<number>();
+  for (const p of corrections) {
+    const target = keepEdits ? next.find((x) => x.text === p.text && !taken.has(x.id)) : undefined;
+    if (!target) {
+      unmatched.push({
+        speaker: p.speaker,
+        text: p.text,
+        direction: p.direction ?? "",
+        type: p.type,
+      });
+      continue;
+    }
+    taken.add(target.id);
+    target.speaker = p.speaker;
+    target.direction = p.direction;
+    target.type = p.type;
+    if (p.expressions) target.expressions = clone(p.expressions);
+    target.edited = true;
+    kept++;
+  }
+  return { kept, unmatched };
 }
 
 /** The verifier could not reconstruct one chunk, so it was kept whole as narration for review. */

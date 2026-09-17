@@ -3,6 +3,7 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
+import { useScriptsStore } from "@/stores/scripts";
 
 import { computed } from "vue";
 
@@ -18,7 +19,16 @@ const endpointsStore = useEndpointsStore();
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
+const scriptsStore = useScriptsStore();
 const est = computed(() => scriptingStore.scriptEstimate(props.bookId, props.selected));
+const plan = computed(() => scriptingStore.scriptPlan(props.bookId, props.selected));
+const edits = computed(() =>
+  plan.value.chapters.reduce(
+    (n, row) =>
+      n + scriptsStore.segmentsOf(props.bookId, row.id).filter((seg) => seg.edited).length,
+    0,
+  ),
+);
 const book = computed(() => libraryStore.bookById(props.bookId)!);
 const spent = computed(() => jobsStore.scriptSpent(props.bookId));
 const reserved = computed(() => jobsStore.scriptReserved(props.bookId));
@@ -69,9 +79,40 @@ const money = (n: number) =>
       v-model="scriptingStore.scriptSettings.stripWatermarks"
       label="Strip site boilerplate"
     />
+    <!-- what a replacement keeps. Off is a deliberate choice, and it says what it costs. -->
+    <div class="rounded-lg bg-zinc-50 p-2.5 dark:bg-zinc-800/60">
+      <UiSwitch
+        v-model="scriptingStore.scriptSettings.keepEdits"
+        label="Preserve manual corrections"
+      />
+      <p class="mt-1 text-[11px] leading-snug text-zinc-500">
+        <template v-if="scriptingStore.scriptSettings.keepEdits"
+          >Speaker, type, direction and expression annotations you set by hand are re-applied to the
+          new script wherever it wrote the same line. A correction whose line the new run rewrote,
+          split or dropped cannot be carried across — the reader lists those afterwards rather than
+          claiming they survived.</template
+        >
+        <template v-else
+          >Every manual correction in the chapters below is discarded; the new run wins
+          outright.</template
+        >
+        <span v-if="edits" class="text-zinc-400">
+          {{ edits }} corrected line{{ edits === 1 ? "" : "s" }} in this selection.</span
+        >
+      </p>
+    </div>
+    <p v-if="plan.replace" class="text-[11px] leading-snug text-amber-700 dark:text-amber-400">
+      {{ plan.replace }} of these chapters already {{ plan.replace === 1 ? "has" : "have" }} a
+      finished script. Each one is kept in its chapter's history before it is replaced, and stays
+      the chapter's script if the new attempt fails or is cancelled.
+    </p>
     <dl class="grid grid-cols-2 gap-y-1.5">
       <dt class="text-zinc-500">Chapters / requests</dt>
       <dd class="text-right font-mono">{{ est.chapters }} / {{ est.chunks }}</dd>
+      <dt v-if="plan.fresh || plan.replace" class="text-zinc-500">New / replacing</dt>
+      <dd v-if="plan.fresh || plan.replace" class="text-right font-mono">
+        {{ plan.fresh }} / {{ plan.replace }}
+      </dd>
       <dt class="text-zinc-500">Input · ~{{ est.inputTokens.toLocaleString() }} tokens</dt>
       <dd class="text-right font-mono">{{ money(est.inputCost) }}</dd>
       <dt class="text-zinc-500">Output · ~{{ est.outputTokens.toLocaleString() }} tokens</dt>
@@ -105,6 +146,14 @@ const money = (n: number) =>
           <p class="text-[11px] leading-snug text-zinc-500">
             {{ money(spent) }} spent<span v-if="reserved"> · {{ money(reserved) }} reserved</span
             ><span v-if="remaining !== null"> · {{ money(remaining) }} available</span>
+          </p>
+          <p
+            v-if="remaining !== null && est.cost"
+            class="text-[11px] leading-snug"
+            :class="est.cost > remaining ? 'text-amber-700 dark:text-amber-400' : 'text-zinc-500'"
+          >
+            This run would leave {{ money(Math.max(0, remaining - est.cost)) }}
+            {{ est.cost > remaining ? "— it does not fit" : "of it" }}.
           </p>
         </div>
         <UiNumber

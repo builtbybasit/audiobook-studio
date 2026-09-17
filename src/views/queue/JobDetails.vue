@@ -42,6 +42,36 @@ watch(
   },
 );
 const events = computed(() => props.job?.activity ?? []);
+/** The other chapters of the same bulk run, so the panel can act on the run rather than one row. */
+const siblings = computed(() => (props.job?.bulk ? jobsStore.runJobs(props.job.bulk.id) : []));
+const runDone = computed(() => siblings.value.filter((j) => j.status === "done").length);
+const runFailed = computed(() => siblings.value.filter((j) => j.status === "failed").length);
+const runLeft = computed(() => siblings.value.filter((j) => !j.finishedAt).length);
+const runRunning = computed(() => siblings.value.filter((j) => j.status === "running").length);
+// stopping the rest of a run cannot be undone, so it is the one control here that asks first. The
+// question closes when it stops being answerable — another job, or nothing left to stop — and not
+// merely because a chapter finished while it was on screen, which happens the whole time a run is
+// live and would take the question away mid-read.
+const confirmCancel = ref(false);
+watch([() => props.job?.id, () => runLeft.value === 0], () => (confirmCancel.value = false));
+/** What stopping this run would actually stop, said in chapters rather than in job rows. */
+const stopNote = computed(() => {
+  const waiting = runLeft.value - runRunning.value;
+  const parts: string[] = [];
+  if (waiting)
+    parts.push(
+      `${waiting} chapter${waiting === 1 ? "" : "s"} waiting never start${waiting === 1 ? "s" : ""}`,
+    );
+  if (runRunning.value)
+    parts.push(
+      `${runRunning.value} still running stop${runRunning.value === 1 ? "s" : ""} after the requests already sent land`,
+    );
+  return parts.join(", and ");
+});
+function cancelRest() {
+  if (props.job?.bulk) jobsStore.cancelRun(props.job.bulk.id);
+  confirmCancel.value = false;
+}
 const filtered = computed(() => {
   const query = search.value.trim().toLowerCase();
   return events.value
@@ -123,6 +153,67 @@ async function copy() {
                 · Chapter {{ job.chapterId }}</span
               ></DialogDescription
             >
+            <!-- the run this chapter belongs to: what was asked for, where this one sits in it,
+                 and the one control that acts on the rest of it -->
+            <div
+              v-if="job.bulk"
+              class="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-zinc-50 p-2 text-xs dark:bg-zinc-800/60"
+            >
+              <span class="font-medium">{{ job.bulk.op }}</span>
+              <span class="text-zinc-500"
+                >chapter {{ job.bulk.index }} of {{ job.bulk.total
+                }}<span v-if="job.bulk.scope"> · {{ job.bulk.scope }}</span></span
+              >
+              <span class="text-zinc-400"
+                >{{ runDone }} done · {{ runFailed }} failed · {{ runLeft }} to go</span
+              >
+              <button
+                v-if="runLeft"
+                class="btn-ghost btn-xs ml-auto"
+                title="stop the chapters this run has not started; chapters it already finished keep their results"
+                @click="confirmCancel = !confirmCancel"
+              >
+                Cancel the rest ({{ runLeft }})
+              </button>
+              <button
+                v-else-if="runFailed"
+                class="btn-ghost btn-xs ml-auto"
+                title="run only the chapters of this run that failed, as one run again"
+                @click="jobsStore.retryRunFailures(job.bulk!.id)"
+              >
+                Retry {{ runFailed }} failed
+              </button>
+              <!-- the one step in this panel Undo cannot take back, so it is asked for -->
+              <div
+                v-if="confirmCancel && runLeft"
+                class="basis-full rounded-md border border-red-300 bg-red-50 px-3 py-2 text-[11px] leading-relaxed text-zinc-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-zinc-200"
+                role="alertdialog"
+              >
+                <p>
+                  Stop the rest of <b>{{ job.bulk!.op }}</b
+                  >? {{ stopNote }}.
+                  <span v-if="runDone"
+                    >The {{ runDone }} chapter{{ runDone === 1 ? "" : "s" }} this run already
+                    finished {{ runDone === 1 ? "keeps its" : "keep their" }} results, and every
+                    chapter it never reached keeps the script and audio it has now.</span
+                  ><span v-else
+                    >Every chapter it never reached keeps the script and audio it has now.</span
+                  >
+                  The run does not come back with Undo.
+                </p>
+                <div class="mt-2 flex gap-2">
+                  <button class="btn-ghost btn-xs" @click="confirmCancel = false">
+                    Keep running
+                  </button>
+                  <button
+                    class="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-2 py-0.5 text-xs font-medium text-white transition-colors hover:bg-red-500"
+                    @click="cancelRest"
+                  >
+                    Cancel {{ runLeft }} chapter{{ runLeft === 1 ? "" : "s" }}
+                  </button>
+                </div>
+              </div>
+            </div>
             <div class="mt-4 grid grid-cols-3 gap-3 text-xs">
               <div>
                 <div class="label">Progress</div>

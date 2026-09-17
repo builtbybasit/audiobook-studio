@@ -9,6 +9,7 @@ import { useScriptsStore } from "@/stores/scripts";
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isNarrated } from "@/lib/scriptReview";
+import { chapterState, selectionSummary } from "@/lib/runPlan";
 import { queryIdSet, queryText } from "@/lib/query";
 import { clockDuration } from "@/lib/time";
 import StatusDot from "@/components/StatusDot.vue";
@@ -29,6 +30,12 @@ const props = withDefaults(
     openedId?: number | null;
     runLabel?: string;
     runDisabled?: boolean;
+    /** what the run will actually do, in one line, under the button */
+    runNote?: string;
+    /** chapters the run will act on, when that differs from the number ticked */
+    runCount?: number | null;
+    /** why some ticked chapters are not in the run */
+    runSkipped?: string;
     /** which chapters this stage may act on */
     selectable?: (c: Chapter) => boolean;
   }>(),
@@ -36,6 +43,9 @@ const props = withDefaults(
     modelValue: () => [],
     openedId: null,
     runLabel: "Run",
+    runNote: "",
+    runCount: null,
+    runSkipped: "",
     selectable: () => true,
   },
 );
@@ -143,11 +153,55 @@ function allEligible() {
 function none() {
   emit("update:modelValue", []);
 }
-function pending() {
-  emit(
-    "update:modelValue",
-    chapters.value.filter((c) => canPick(c) && !isDone(c)).map((c) => c.id),
-  );
+/** What the current selection contains: “8 chapters selected: 3 new, 5 already scripted.” */
+const summary = computed(() =>
+  selectionSummary(
+    chapters.value.filter((c) => props.modelValue.includes(c.id)),
+    props.stage === "export" ? "narration" : props.stage,
+  ),
+);
+/**
+ * Selection shortcuts. They read the whole book, never the search — a filtered list is the one
+ * thing the header says out loud — and only appear when they would select something, so the row
+ * stays short on a book that has nothing failed or stale.
+ */
+const shortcuts = computed(() => {
+  const stage = props.stage === "export" ? "narration" : props.stage;
+  const of = (test: (c: Chapter) => boolean) =>
+    chapters.value.filter((c) => canPick(c) && test(c)).map((c) => c.id);
+  const state = (c: Chapter) => chapterState(c, stage);
+  return [
+    {
+      id: "pending",
+      label: "Pending",
+      ids: of((c) => !isDone(c)),
+      title: "every chapter this stage has not finished",
+    },
+    {
+      id: "done",
+      label: "Completed",
+      ids: of((c) => state(c) === "done"),
+      title:
+        stage === "scripting"
+          ? "chapters that already have a script — running them again replaces it"
+          : "chapters that are already narrated — running them again replaces their audio",
+    },
+    {
+      id: "stale",
+      label: "Stale",
+      ids: of((c) => state(c) === "stale"),
+      title: "narrated, then the script moved under the audio",
+    },
+    {
+      id: "failed",
+      label: "Failed",
+      ids: of((c) => state(c) === "failed"),
+      title: "chapters whose last run at this stage failed",
+    },
+  ].filter((g) => g.ids.length);
+});
+function select(ids: number[]) {
+  emit("update:modelValue", ids);
 }
 function volState(v: VolumeRow) {
   const ids = v.chapters.filter(canPick).map((c) => c.id);
@@ -256,16 +310,55 @@ const peek = (c: Chapter) => {
           · {{ modelValue.length }} selected
         </div>
       </div>
-      <div class="flex gap-1">
-        <button class="btn-ghost btn-xs" @click="all">
-          {{ q ? `All results (${visiblePickable.length})` : "All" }}
+      <div class="flex shrink-0 gap-1">
+        <button
+          class="btn-ghost btn-xs"
+          :title="
+            q
+              ? `select the ${visiblePickable.length} chapters matching “${q}”`
+              : 'select every chapter in the book'
+          "
+          @click="all"
+        >
+          {{ q ? `All ${visiblePickable.length} results` : `All ${eligible.length}` }}
         </button>
-        <button v-if="q" class="btn-ghost btn-xs" @click="allEligible">
-          All eligible ({{ eligible.length }})
+        <button
+          v-if="q"
+          class="btn-ghost btn-xs"
+          title="ignore the filter and select every chapter in the book"
+          @click="allEligible"
+        >
+          Whole book ({{ eligible.length }})
         </button>
-        <button class="btn-ghost btn-xs" @click="pending">Pending</button>
         <button class="btn-ghost btn-xs" @click="none">None</button>
       </div>
+    </div>
+
+    <!-- selection shortcuts, and what the selection actually contains -->
+    <div class="border-b border-zinc-200 px-3 py-1.5 dark:border-zinc-800">
+      <div class="flex flex-wrap items-center gap-1">
+        <span class="mr-0.5 text-[10px] uppercase tracking-wider text-zinc-400">Select</span>
+        <button
+          v-for="g in shortcuts"
+          :key="g.id"
+          class="btn-ghost btn-xs"
+          :title="g.title"
+          @click="select(g.ids)"
+        >
+          {{ g.label }} <span class="text-zinc-400">{{ g.ids.length }}</span>
+        </button>
+        <span v-if="q" class="ml-auto text-[10px] text-zinc-400">whole book, not the filter</span>
+      </div>
+      <p
+        class="mt-1 text-[11px] leading-snug"
+        :class="
+          summary.counts.done || summary.counts.stale
+            ? 'text-amber-700 dark:text-amber-400'
+            : 'text-zinc-500'
+        "
+      >
+        {{ summary.text }}
+      </p>
     </div>
 
     <div class="flex items-center gap-1 border-b border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
@@ -436,15 +529,20 @@ const peek = (c: Chapter) => {
     </div>
 
     <div class="border-t border-zinc-200 p-2 dark:border-zinc-800">
-      <div class="mb-1 text-center text-[10px] text-zinc-400">
+      <p v-if="runNote" class="mb-1 text-[11px] leading-snug text-zinc-500">{{ runNote }}</p>
+      <p v-if="runSkipped" class="mb-1 text-[11px] leading-snug text-amber-700 dark:text-amber-400">
+        {{ runSkipped }}
+      </p>
+      <div v-if="!runNote" class="mb-1 text-center text-[10px] text-zinc-400">
         shift-click selects a range · <PeekIcon class="icon-sm" /> peeks at the text
       </div>
       <button
         class="btn-primary w-full justify-center"
-        :disabled="runDisabled || !modelValue.length"
+        :disabled="runDisabled || !(runCount ?? modelValue.length)"
         @click="emit('run', modelValue)"
       >
-        {{ runLabel }} <span class="opacity-70">({{ modelValue.length }})</span>
+        {{ runLabel }}
+        <span class="opacity-70">({{ runCount ?? modelValue.length }})</span>
       </button>
     </div>
   </div>

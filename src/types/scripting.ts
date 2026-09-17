@@ -2,7 +2,7 @@
 // observed from it, and the estimate and the diff are what the Scripting page shows before and
 // after a run.
 import type { SplitMode } from "@/types/common";
-import type { Segment } from "@/types/segment";
+import type { Segment, SegmentType } from "@/types/segment";
 
 /** Session-only observations from simulated scripting requests. */
 export interface ScriptEndpointTelemetry {
@@ -53,6 +53,8 @@ export interface Profile {
 export interface ScriptSettings {
   profile: string;
   stripWatermarks: boolean;
+  /** re-apply the manual corrections of the script a run replaces, where the line still matches */
+  keepEdits: boolean;
 }
 
 /** One segment whose speaker or direction moved between two script runs. */
@@ -71,6 +73,27 @@ export interface ScriptDiff {
   total: number;
   prevCount: number;
   curCount: number;
+}
+
+/**
+ * What happened to the manual corrections a re-script was asked to preserve. A correction is
+ * re-applied when the new script still has the line it was made on; one whose line the new run
+ * wrote differently cannot be, and is named here rather than quietly dropped — the reader shows
+ * these so "preserved" is never claimed for a correction that was not.
+ */
+export interface RescriptReport {
+  /** the endpoint that produced the new script */
+  profile: string;
+  model: string;
+  /** whether preservation was asked for at all */
+  asked: boolean;
+  kept: number;
+  unmatched: {
+    speaker: string;
+    text: string;
+    direction: string;
+    type: SegmentType;
+  }[];
 }
 
 export interface ScriptEstimate {

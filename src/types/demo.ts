@@ -2,7 +2,15 @@
 // themselves live in `src/mock/scenarios`; these are the shapes the pages render them from.
 
 /** Which part of the workflow a scenario is for. The Demo tools panel groups its rows by this. */
-export type DemoGroup = "import" | "shelf" | "start" | "trouble" | "blocked" | "review" | "export";
+export type DemoGroup =
+  | "import"
+  | "shelf"
+  | "start"
+  | "trouble"
+  | "blocked"
+  | "review"
+  | "bulk"
+  | "export";
 
 /** One seeded situation offered by the Demo tools: a plain-language name, a line saying what you
  *  will be looking at, and where it opens. Applying one always starts from the seeded world, so the

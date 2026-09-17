@@ -15,6 +15,7 @@ export const DEMO_GROUPS: { id: DemoGroup; label: string }[] = [
   { id: "trouble", label: "Runs that go wrong" },
   { id: "blocked", label: "Blocked before a run" },
   { id: "review", label: "Review and retakes" },
+  { id: "bulk", label: "Re-doing finished chapters" },
   { id: "export", label: "Export" },
 ];
 
@@ -90,6 +91,19 @@ const STEPS: Record<string, string[]> = {
     "Preview “Before trying DeepSeek” — read-only, the current script is untouched — then Compare with current.",
     "Read the summary before the detail, filter it to Speakers or Structure, and jump to a line.",
     "Restore it: the plan counts the clips that come back, the one recovered from the split paragraph, and the chapter goes from stale to done. ⌘Z puts the re-script back.",
+  ],
+  "bulk-rework": [
+    "The picker's Select row has Completed, Stale and Failed on it; press one and read the line under it.",
+    "Tick Completed and watch the run button become “Re-script 6 chapters” with what it replaces spelled out under it.",
+    "Preserve manual corrections is on: ch 1 has hand-corrected lines, and the reader lists any the new run could not carry.",
+    "On Narration, switch the scope between Missing & changed, Failed only and Everything — the clip, request and cost numbers follow the scope.",
+    "A retake is waiting on one line; the run leaves it alone until you turn that switch off.",
+  ],
+  "bulk-recovery": [
+    "Two chapters were re-scripted and the attempt kept nothing: both still read as scripted, and the reader still opens their script.",
+    "Open the Queue: one run is 4 chapters, two done and two failed — Retry N failed runs only those.",
+    "The third chapter's cancelled run left the chapters before it replaced and the ones after it untouched.",
+    "On Narration ch 1, the failed replacements are marked on the lines whose clips still play; Retry failed renders only those.",
   ],
   "mis-attributed": [
     "Search is open on the alias: tick a chapter, or Select all matching results.",
@@ -239,6 +253,24 @@ export function demoScenarios(): DemoScenario[] {
         "An alias the model invented, scattered through the book, with the Search page open on the matches to fix in bulk.",
       bookId: "cliche",
       path: "/book/cliche/search",
+    },
+    {
+      id: "bulk-rework",
+      group: "bulk",
+      name: "A book with everything a bulk run has to tell apart",
+      blurb:
+        "Chapters that are new, finished, hand-corrected, stale and failed, side by side, with a retake waiting on one line — for the selection shortcuts, the run summary and the narration scopes.",
+      bookId: "cliche",
+      path: "/book/cliche/scripting",
+    },
+    {
+      id: "bulk-recovery",
+      group: "bulk",
+      name: "Replacements that failed, and a run that was cancelled",
+      blurb:
+        "A four-chapter re-script where two chapters kept nothing and a cancelled one stopped the rest, plus narration replacements that failed — every earlier script and every clip is still there and still usable.",
+      bookId: "cliche",
+      path: "/queue",
     },
     // the Export rows keep their own wording, so the page's own Demo chip and this panel agree
     ...exportScenarios().map((s): DemoScenario => ({

@@ -85,8 +85,13 @@ export interface Chapter {
   note?: ChapterNote;
   /** the user reviewed the note and chose to keep the chapter */
   kept?: boolean;
-  /** set while a re-script is queued, so the run knows whether to re-apply manual edits */
-  rescript?: { keepEdits: boolean };
+  /**
+   * Set while a re-script is queued. `keepEdits` says whether the run re-applies manual
+   * corrections; `was` is the status to go back to if the attempt produces nothing, so a failed or
+   * cancelled replacement leaves a chapter that still has a usable script saying so; `token` is the
+   * job allowed to write the result, so a late callback cannot overwrite a newer run or a restore.
+   */
+  rescript?: { keepEdits: boolean; was?: ScriptingStatus; token?: number };
 }
 
 export interface Volume {

@@ -30,6 +30,20 @@ export interface Job {
   activity?: JobEvent[];
   droppedEvents?: number;
   waitingReason?: string;
+  /**
+   * The bulk run this job belongs to. Several chapters asked for in one press share an id, so the
+   * queue can say "chapter 3 of 8", the whole run can be cancelled at once, and a retry can pick out
+   * the chapters of one run that failed.
+   */
+  bulk?: {
+    id: number;
+    /** what was asked for, in the words the button used */
+    op: string;
+    index: number;
+    total: number;
+    /** the narration scope, or the scripting run's preservation setting */
+    scope?: string;
+  };
   scriptRun?: {
     profile: Profile;
     requests: number;

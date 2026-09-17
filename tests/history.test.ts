@@ -284,7 +284,10 @@ describe("re-scripting", () => {
     spyOn(Math, "random").mockReturnValue(0.01);
     scriptingStore.runScripting("cliche", [1]);
     drain();
-    expect(libraryStore.chapter("cliche", 1)!.scripting).toBe("failed");
+    // the run failed, but the script it was replacing is still there and still usable — so the
+    // chapter reads as scripted rather than as a chapter nothing ever produced a script for
+    expect(jobsStore.jobs.at(-1)!.status).toBe("failed");
+    expect(libraryStore.chapter("cliche", 1)!.scripting).toBe("done");
     expect(versions()).toHaveLength(0);
     expect(scriptSignature(segments())).toBe(before);
   });

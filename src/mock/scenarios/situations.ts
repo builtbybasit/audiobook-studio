@@ -43,6 +43,8 @@ export interface HistoryRow {
   minutesAgo: number;
   /** how long it took */
   seconds: number;
+  /** the bulk run this chapter belonged to, when it was one chapter of several */
+  bulk?: { id: number; op: string; index: number; total: number; scope?: string };
   /**
    * What the run reported, oldest first, without timestamps — the caller dates these between the
    * row's start and its finish. A failed row needs the reason here: the Queue's detail panel is
@@ -127,6 +129,10 @@ export function applySituation(ctx: ScenarioContext, id: string, bookId: string)
       return misAttributed(ctx, bookId);
     case "script-history":
       return chapterHistory(ctx, bookId);
+    case "bulk-rework":
+      return bulkRework(ctx, bookId);
+    case "bulk-recovery":
+      return bulkRecovery(ctx, bookId);
     case "expressions":
       return expressionsPlaced(ctx, bookId);
     default:
@@ -724,6 +730,273 @@ function misAttributed(ctx: ScenarioContext, bookId: string): DemoResult {
   return {
     note: `${plural(moved, "line")} re-attributed to “${target.alias}”, ${flagged} flagged and ${staled} clips made stale.`,
     open: `/book/${bookId}/search?q=${encodeURIComponent(target.alias)}&speaker=${encodeURIComponent(target.alias)}`,
+  };
+}
+
+// ---------- re-doing chapters that are already finished ----------
+
+/**
+ * One book holding every state a bulk run has to tell apart: chapters nothing has been run on,
+ * chapters finished at both stages, a chapter somebody corrected by hand, one whose script moved
+ * after it was narrated, one whose clips failed, and one line with a retake still waiting for a
+ * verdict. The point of the row is the *selection*: what the shortcuts pick, what the summary says
+ * the selection contains, and what the two run panels say pressing the button would do.
+ */
+function bulkRework(ctx: ScenarioContext, bookId: string): DemoResult {
+  const chapters = ctx.chapters(bookId);
+  ctx.clearJobs(bookId);
+  const scripted = chapters.filter(isScripted);
+  const narrated = chapters.filter(isNarrated);
+
+  // ---- a chapter corrected by hand after the model wrote it
+  let corrections = 0;
+  const corrected = scripted[0];
+  if (corrected) {
+    const segs = ctx.segmentsOf(bookId, corrected.id);
+    const others = ctx.cast(bookId).filter((c) => c.name !== "Narrator" && c.major);
+    for (const line of segs.filter((x) => x.type === "dialogue").slice(0, 3)) {
+      line.direction = "flatter — she is holding something back";
+      line.edited = true;
+      corrections++;
+    }
+    // corrections on narration lines, which a second pass is likely to lay out differently: these
+    // are what "could not be re-applied" is meant to show
+    for (const line of segs.filter((x) => x.type === "narration").slice(0, 2)) {
+      line.direction = "unhurried";
+      line.edited = true;
+      corrections++;
+    }
+    const mis = segs.find((x) => x.type === "dialogue" && x.speaker === "Narrator");
+    if (mis && others[0]) {
+      mis.speaker = others[0].name;
+      mis.edited = true;
+      corrections++;
+    }
+  }
+
+  // ---- a narrated chapter whose script moved under its audio
+  let stale = 0;
+  const drifted = narrated.find((c) => c.id !== corrected?.id) ?? narrated[0];
+  if (drifted) {
+    for (const line of ctx
+      .segmentsOf(bookId, drifted.id)
+      .filter((x) => x.audio.status === "done")
+      .slice(0, 4)) {
+      line.direction = "half a step slower";
+      line.edited = true;
+      line.audio.status = "stale";
+      stale++;
+    }
+    if (stale) drifted.narration = "stale";
+    ctx.retime(bookId, drifted.id);
+  }
+
+  // ---- a narrated chapter with failed clips among finished ones, and a retake to judge
+  let failedClips = 0;
+  let waiting = 0;
+  const partly = narrated.find((c) => c.id !== drifted?.id) ?? narrated.at(-1);
+  if (partly) {
+    const segs = ctx.segmentsOf(bookId, partly.id);
+    segs.forEach((line, i) => {
+      if (i % 7 !== 3 || line.audio.status !== "done") return;
+      line.audio = {
+        ...line.audio,
+        status: "failed",
+        duration: 0,
+        error: {
+          code: 500,
+          message: "the provider had an error while processing the request",
+          body: "",
+          at: ctx.now() - 9 * 60000,
+        },
+      };
+      failedClips++;
+    });
+    if (failedClips) partly.narration = "failed";
+    // and one line being listened to: a second take beside the clip in the book
+    const judge = segs.find((x) => x.audio.status === "done" && x.audio.duration > 0);
+    if (judge) {
+      const first = { ...judge.audio };
+      judge.audio = { ...first, n: 1 };
+      judge.candidate = {
+        ...first,
+        n: 2,
+        ms: Math.round(first.ms * 1.06),
+        duration: first.duration * 1.09,
+        at: ctx.now() - 6 * 60000,
+      };
+      waiting++;
+    }
+    ctx.retime(bookId, partly.id);
+  }
+
+  // ---- and one chapter whose scripting kept nothing at all
+  const blank = chapters.find(
+    (c) =>
+      isScripted(c) &&
+      !c.excluded &&
+      !c.duration &&
+      ![corrected?.id, drifted?.id, partly?.id].includes(c.id),
+  );
+  if (blank) {
+    blank.scripting = "failed";
+    blank.scriptingProgress = 0;
+    delete blank.rescript;
+    ctx.clearScript(bookId, blank.id);
+  }
+
+  const fresh = chapters.filter((c) => !c.excluded && c.scripting === "none").length;
+  return {
+    note:
+      `${plural(fresh, "chapter")} never scripted, ${scripted.length - (blank ? 1 : 0)} scripted, ` +
+      `${plural(corrections, "hand correction")} in ch ${corrected?.id ?? "?"}, ${plural(stale, "stale clip")} in ch ${drifted?.id ?? "?"}, ` +
+      `${plural(failedClips, "failed clip")} in ch ${partly?.id ?? "?"}` +
+      (waiting ? ", and one retake waiting for a verdict" : "") +
+      (blank ? `. Ch ${blank.id} kept no script at all.` : "."),
+  };
+}
+
+/**
+ * A bulk re-script that went wrong in both of the ways worth watching, and a bulk re-narration
+ * whose replacements failed. The whole row exists to show what *survived*: two chapters kept
+ * nothing and still read as scripted, because the script each run was replacing is still the
+ * chapter's script; a cancelled chapter stopped the ones behind it without touching the ones in
+ * front; and every clip whose replacement failed is still the clip in the book.
+ */
+function bulkRecovery(ctx: ScenarioContext, bookId: string): DemoResult {
+  const chapters = ctx.chapters(bookId);
+  ctx.clearJobs(bookId);
+  const profiles = ctx.profiles();
+  const profile =
+    profiles.find((p) => p.id === "deepseek") ?? profiles.find((p) => p.enabled) ?? profiles[0];
+  const scripted = chapters.filter(isScripted).slice(0, 4);
+  const op = "Re-script 4 chapters";
+  const bulk = (index: number) => ({
+    id: 1,
+    op,
+    index,
+    total: scripted.length,
+    scope: "preserving manual corrections",
+  });
+  const plan = {
+    message: "Scripting plan prepared",
+    detail: {
+      endpoint: profile.name,
+      model: profile.model,
+      requests: 3,
+      operation: "replace the existing script",
+      manualCorrections: "re-applied where the line still matches",
+    },
+  };
+  scripted.forEach((c, i) => {
+    const replaced = i < 2;
+    const cancelled = i === 3;
+    ctx.addHistory({
+      kind: "scripting",
+      bookId,
+      chapterId: c.id,
+      label: `Re-script · ch ${c.id} · ${profile.name}`,
+      status: replaced ? "done" : cancelled ? "cancelled" : "failed",
+      minutesAgo: 22 - i * 4,
+      seconds: replaced ? 38 : cancelled ? 9 : 26,
+      bulk: bulk(i + 1),
+      activity: replaced
+        ? [
+            plan,
+            { message: "3 of 3 requests completed", detail: { costUSD: 0.01 } },
+            {
+              message: "Manual corrections: 4 re-applied, 1 could not be",
+              level: "warning" as const,
+              detail: {
+                reApplied: 4,
+                unmatched: 1,
+                why: "the new script does not have the line the correction was made on",
+              },
+            },
+          ]
+        : cancelled
+          ? [
+              plan,
+              {
+                level: "warning" as const,
+                message: "Cancellation requested",
+                detail: { behavior: "Stops on the next scheduler tick" },
+              },
+              {
+                level: "warning" as const,
+                message: "Cancelled before a script was written; the previous script is unchanged",
+                detail: { lines: ctx.segmentsOf(bookId, c.id).length, chapterStatus: "done" },
+              },
+            ]
+          : [
+              plan,
+              {
+                level: "error" as const,
+                message: "Script verification failed",
+                detail: {
+                  reason: "the model's segments could not be matched back to the chapter text",
+                },
+              },
+              {
+                level: "warning" as const,
+                message: "Nothing was written; the previous script is unchanged",
+                detail: { lines: ctx.segmentsOf(bookId, c.id).length, chapterStatus: "done" },
+              },
+            ],
+    });
+  });
+
+  // ---- narration replacements that failed beside clips that are still playable
+  let kept = 0;
+  const narrated = chapters.find(isNarrated);
+  if (narrated) {
+    const segs = ctx.segmentsOf(bookId, narrated.id);
+    segs.forEach((line, i) => {
+      if (i % 5 !== 1 || line.audio.status !== "done" || line.audio.duration <= 0) return;
+      line.audio = { ...line.audio, n: line.audio.n ?? 1 };
+      line.candidate = {
+        status: "failed",
+        endpoint: line.audio.endpoint,
+        ms: 0,
+        duration: 0,
+        n: (line.audio.n ?? 1) + 1,
+        auto: true,
+        error: {
+          code: 500,
+          message: "the provider had an error while processing the request",
+          body: "",
+          at: ctx.now() - 3 * 60000,
+        },
+      };
+      kept++;
+    });
+    ctx.addHistory({
+      kind: "narration",
+      bookId,
+      chapterId: narrated.id,
+      label: `Re-narrate · ch ${narrated.id}`,
+      status: "failed",
+      minutesAgo: 6,
+      seconds: 54,
+      bulk: { id: 2, op: "Re-narrate 1 chapter", index: 1, total: 1, scope: "Everything" },
+      activity: [
+        {
+          message: "Narration plan prepared",
+          detail: { scope: "Everything", clips: segs.length, replacing: segs.length },
+        },
+        {
+          level: "warning" as const,
+          message: `${plural(kept, "replacement")} failed; the clips already in the book are unchanged`,
+          detail: { failed: kept, keptClips: kept },
+        },
+      ],
+    });
+  }
+  return {
+    note:
+      `A four-chapter re-script: 2 replaced, 1 kept nothing and 1 was cancelled — all four still read as scripted ` +
+      `because each run's own result is the only thing that was ever going to change. ` +
+      `${plural(kept, "narration replacement")} failed in ch ${narrated?.id ?? "?"}, and every one of those clips still plays.`,
   };
 }
 

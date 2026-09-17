@@ -1,12 +1,13 @@
 // Scripting settings and run coordination. Execution stays in the mock simulator.
 import { jobWaiting, logJob } from "@/lib/jobActivity";
 import { keyring } from "@/lib/keyring";
+import { runActionLabel, scriptingPlan, skipNotes, skipSummary } from "@/lib/runPlan";
 import { profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
 import { key } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
 import type { ScriptSimContext } from "@/mock";
 import { makeScriptSettings, simulateScriptRun } from "@/mock";
-import type { Profile, ScriptEstimate, ScriptSettings } from "@/types";
+import type { Profile, RunPlan, ScriptEstimate, ScriptSettings } from "@/types";
 import { defineStore } from "pinia";
 import { useCastStore } from "@/stores/cast";
 import { useDemoStore } from "@/stores/demo";
@@ -22,6 +23,25 @@ interface ScriptingState {
 export const useScriptingStore = defineStore("scripting", {
   state: (): ScriptingState => ({ scriptSettings: makeScriptSettings() }),
   getters: {
+    /**
+     * What running the current selection would do: which chapters are new work, which replace a
+     * script that is already finished, and which are left out and why. The picker's summary, the
+     * button's label and the work `runScripting` queues all read this.
+     */
+    scriptPlan(): (bookId: string, ids: number[]) => RunPlan {
+      const endpointsStore = useEndpointsStore();
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+
+      return (bookId, ids) => {
+        const p = endpointsStore.profiles.find((p) => p.id === this.scriptSettings.profile);
+        const usable = p && !profileErrors(p).length;
+        return scriptingPlan(
+          libraryStore.chaptersOf(bookId).filter((c) => ids.includes(c.id)),
+          (c) => (usable ? scriptParts(scriptsStore.rawText(bookId, c.id), p!).length : 0),
+        );
+      };
+    },
     scriptEstimate(): (
       bookId: string,
       ids: number[],
@@ -98,15 +118,27 @@ export const useScriptingStore = defineStore("scripting", {
     },
   },
   actions: {
+    /**
+     * Script (or re-script) the given chapters.
+     *
+     * Manual corrections are preserved by default: a bulk re-script over a book somebody has been
+     * correcting by hand must not be the one operation in the app that throws that work away.
+     * Nothing about the chapter changes until the run has a script to write — a run that fails, is
+     * cancelled or hits the budget leaves the script, the cast and the audio exactly as it found
+     * them, and the chapter goes back to the status it had rather than reading as unscripted.
+     */
     runScripting(
       bookId: string,
       ids: number[],
       {
-        keepEdits = false,
+        keepEdits = true,
         retrySegmentId = null,
+        quiet = false,
       }: {
         keepEdits?: boolean;
         retrySegmentId?: number | null;
+        /** a single-chapter run started from the reader says its own piece; no run summary */
+        quiet?: boolean;
       } = {},
     ): void {
       const jobsStore = useJobsStore();
@@ -124,6 +156,7 @@ export const useScriptingStore = defineStore("scripting", {
         return;
       }
       if (!estimate.chapters) return;
+      const plan = this.scriptPlan(bookId, ids);
       const profile = clone(estimate.profile!);
       const textOf = (chId: number) =>
         retrySegmentId === null
@@ -137,23 +170,36 @@ export const useScriptingStore = defineStore("scripting", {
           c.scripting !== "running" &&
           c.scripting !== "queued",
       );
-      // re-scripting: remember what we had so the reader can show what changed (and optionally re-apply manual edits)
-      for (const c of chs)
-        if (retrySegmentId === null && scriptsStore.segments[key(bookId, c.id)]?.length) {
+      const runId = jobsStore._nextRunId();
+      const op = retrySegmentId === null ? runActionLabel(plan) : "Re-split one chunk";
+      const jobs = chs.map((c, i) => {
+        const replacing =
+          retrySegmentId === null && !!scriptsStore.segments[key(bookId, c.id)]?.length;
+        // re-scripting: remember what we had so the reader can show what changed (and re-apply
+        // manual corrections), and what status to go back to if this attempt produces nothing
+        const was = c.scripting;
+        if (replacing)
           scriptsStore._previous[key(bookId, c.id)] = clone(
             scriptsStore.segments[key(bookId, c.id)],
           );
-          c.rescript = { keepEdits };
-        }
-      const jobs = chs.map((c) => {
         c.scripting = "queued";
         c.scriptingProgress = 0;
         const job = jobsStore.addJob(
           "scripting",
           bookId,
-          `Script · ch ${c.id} · ${profile.name}`,
+          `${replacing ? "Re-script" : "Script"} · ch ${c.id} · ${profile.name}`,
           c.id,
         );
+        job.bulk = {
+          id: runId,
+          op,
+          index: i + 1,
+          total: chs.length,
+          scope: keepEdits ? "preserving manual corrections" : "manual corrections discarded",
+        };
+        // the run that is allowed to write this chapter's script: a later run, a restore or a
+        // cancellation take the token away, so a callback from this one can no longer land
+        c.rescript = { keepEdits, was, token: job.id };
         job.scriptRun = {
           profile: clone(profile),
           requests: scriptParts(textOf(c.id), profile).length,
@@ -170,10 +216,32 @@ export const useScriptingStore = defineStore("scripting", {
           requests: job.scriptRun.requests,
           characters: textOf(c.id).length,
           concurrency: profile.concurrency,
+          operation: replacing ? "replace the existing script" : "script for the first time",
+          manualCorrections: keepEdits ? "re-applied where the line still matches" : "discarded",
+          ...(replacing
+            ? {
+                previousScript:
+                  "kept in the chapter's history, and until this run writes a new one",
+              }
+            : {}),
         });
         jobWaiting(job, "Chapter has not been dispatched yet");
         return job;
       });
+      if (!quiet && jobs.length) {
+        const skips = skipNotes(plan);
+        uiStore.toast(`${op} · ${jobs.length === 1 ? "1 chapter" : jobs.length + " chapters"}`, {
+          kind: "info",
+          description:
+            `${profile.name} · ${profile.model} · ${plan.requests} request${plan.requests === 1 ? "" : "s"} · ~$${estimate.cost.toFixed(2)}. ` +
+            (plan.replace
+              ? `${plan.replace} finished script${plan.replace === 1 ? "" : "s"} will be replaced; each is preserved in its chapter's history first. `
+              : "") +
+            (keepEdits ? "Manual corrections are re-applied where the line still matches. " : "") +
+            (skips.length ? skipSummary(plan) : ""),
+          timeout: 10000,
+        });
+      }
       jobsStore._sequential(jobs, (job, done) =>
         simulateScriptRun(this._scriptSim(profile), {
           bookId,
@@ -194,7 +262,11 @@ export const useScriptingStore = defineStore("scripting", {
 
       const seg = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
       if (!seg?.fallback) return;
-      this.runScripting(bookId, [chId], { keepEdits: true, retrySegmentId: segId });
+      this.runScripting(bookId, [chId], {
+        keepEdits: true,
+        retrySegmentId: segId,
+        quiet: true,
+      });
     },
     _scriptSim(profile: Profile): ScriptSimContext {
       const castStore = useCastStore();
@@ -225,6 +297,8 @@ export const useScriptingStore = defineStore("scripting", {
           scriptsStore.segments[key(bookId, chId)] = segs;
         },
         previousSegments: (bookId, chId) => scriptsStore._previous[key(bookId, chId)],
+        noteCorrections: (bookId, chId, report) =>
+          scriptsStore._noteCorrections(bookId, chId, report),
         absorbCast: (bookId, chId) => castStore._absorbCast(bookId, chId),
         scriptSpent: (bookId) => jobsStore.scriptSpent(bookId),
         scriptReserved: (bookId) => jobsStore.scriptReserved(bookId),

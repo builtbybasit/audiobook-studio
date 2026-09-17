@@ -95,6 +95,14 @@ export interface SegmentAudio {
   // retakes
   /** take number of this clip; absent until the segment has been retaken at least once */
   n?: number;
+  /**
+   * A replacement queued by a bulk run rather than a retake asked for by hand. The clip in the book
+   * keeps playing while it renders, exactly as a retake does; the difference is what happens when it
+   * lands — a replacement that succeeds takes over at once and pushes the old clip into the take
+   * list, so a run over 300 lines does not ask for 300 verdicts. One that fails leaves the old clip
+   * alone and stays as a failed take for the listener to see.
+   */
+  auto?: boolean;
   /** every superseded clip, oldest first */
   takes?: Take[];
 

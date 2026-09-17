@@ -1,6 +1,7 @@
 // Shared queue and accounting across books and stages. IDs are scoped to this Pinia instance.
 import { usable } from "@/lib/exports";
 import { logJob } from "@/lib/jobActivity";
+import { chapterNarration } from "@/lib/runPlan";
 import { makeJobHistory } from "@/mock";
 import type { EndpointLoad, Eta, Job, JobKind, JobStatus, ScriptEndpointTelemetry } from "@/types";
 import { defineStore } from "pinia";
@@ -23,12 +24,14 @@ interface JobsState {
   }[];
   scriptTelemetry: Record<string, ScriptEndpointTelemetry>;
   _nextId: number;
+  /** ids for bulk runs: every chapter asked for in one press shares one */
+  _nextRun: number;
 }
 export const useJobsStore = defineStore("jobs", {
   state: (): JobsState => {
     let nextId = 100;
     const jobs = makeJobHistory(() => nextId++);
-    return { jobs, _nextId: nextId, scriptUsage: [], scriptTelemetry: {} };
+    return { jobs, _nextId: nextId, _nextRun: 1, scriptUsage: [], scriptTelemetry: {} };
   },
   getters: {
     activeJobs(s): Job[] {
@@ -53,6 +56,13 @@ export const useJobsStore = defineStore("jobs", {
           else if (seg.audio.status === "failed") l.failed++;
         }
       return load;
+    },
+    /** Every job of one bulk run, in the order the run asked for them. */
+    runJobs(s): (runId: number) => Job[] {
+      return (runId: number): Job[] =>
+        s.jobs
+          .filter((j) => j.bulk?.id === runId)
+          .sort((a, b) => (a.bulk!.index ?? 0) - (b.bulk!.index ?? 0));
     },
     recentJobs(s): Job[] {
       return [...s.jobs].reverse().slice(0, 12);
@@ -122,6 +132,41 @@ export const useJobsStore = defineStore("jobs", {
       logJob(job, "Job queued");
       return job;
     },
+    /** The id every chapter of one bulk run is tagged with. */
+    _nextRunId(): number {
+      return this._nextRun++;
+    },
+    /**
+     * Stop the rest of a bulk run. Chapters it already finished keep their results — that is the
+     * whole point of cancelling one rather than undoing it — and chapters still to come never
+     * start, so nothing half-replaces anything.
+     */
+    cancelRun(runId: number): number {
+      const pending = this.runJobs(runId).filter((j) => !j.finishedAt);
+      for (const j of pending) this.cancelJob(j.id);
+      return pending.length;
+    },
+    /**
+     * Try the chapters of one run that failed, and only those — as one run again, so the retry has
+     * a run of its own to watch and cancel rather than becoming N unrelated single-chapter runs.
+     * The scope is the narrowest one that covers the failure, so nothing that succeeded is redone.
+     */
+    retryRunFailures(runId: number): number {
+      const narrationStore = useNarrationStore();
+      const scriptingStore = useScriptingStore();
+
+      const failed = this.runJobs(runId).filter(
+        (j) => j.status === "failed" && j.chapterId !== null,
+      );
+      if (!failed.length) return 0;
+      const ids = [...new Set(failed.map((j) => j.chapterId!))];
+      const { kind, bookId } = failed[0]; // one press, one book, one stage
+      if (kind === "scripting") scriptingStore.runScripting(bookId, ids, { quiet: true });
+      else if (kind === "narration")
+        narrationStore.runNarration(bookId, ids, { scope: "failed", quiet: true });
+      else for (const j of failed) this.retryJob(j.id);
+      return failed.length;
+    },
     removeJob(id: number): void {
       const j = this.jobs.find((j) => j.id === id);
       if (j && (j.finishedAt || j.status === "queued")) {
@@ -149,6 +194,7 @@ export const useJobsStore = defineStore("jobs", {
     },
     cancelJob(id: number): void {
       const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
 
       const job = this.jobs.find((j) => j.id === id);
       if (!job || job.finishedAt || job.cancelled) return;
@@ -162,8 +208,15 @@ export const useJobsStore = defineStore("jobs", {
       const c = job.chapterId ? libraryStore.chapter(job.bookId, job.chapterId) : null;
       if (job.status === "queued") {
         this._finish(job, "cancelled");
-        if (c && job.kind === "scripting") c.scripting = "none";
-        if (c && job.kind === "narration") c.narration = c.duration ? "done" : "none";
+        // A chapter that never started keeps what it had: a queued re-script cancelled before it
+        // dispatched must leave a finished script reading as finished, not as never scripted.
+        if (c && job.kind === "scripting") {
+          c.scripting = c.rescript?.was ?? "none";
+          c.scriptingProgress = 0;
+          delete c.rescript; // and no result of this run may land afterwards
+        }
+        if (c && job.kind === "narration")
+          c.narration = chapterNarration(scriptsStore.segmentsOf(job.bookId, c.id));
       }
       // running jobs notice `cancelled` on their next tick
     },
@@ -200,17 +253,34 @@ export const useJobsStore = defineStore("jobs", {
         return;
       }
       if (job.chapterId == null) return;
-      if (job.kind === "scripting") scriptingStore.runScripting(job.bookId, [job.chapterId]);
+      if (job.kind === "scripting")
+        scriptingStore.runScripting(job.bookId, [job.chapterId], { quiet: true });
       if (job.kind === "narration") {
         const c = libraryStore.chapter(job.bookId, job.chapterId);
         if (!c) return;
-        if (
-          c.narration === "failed" &&
-          scriptsStore.segmentsOf(job.bookId, c.id).some((x) => x.audio.status === "done")
-        )
-          narrationStore.retryFailed(job.bookId, c.id);
-        else narrationStore.runNarration(job.bookId, [c.id]);
+        // A retry renders what failed, never what already worked. A replacement that failed counts
+        // as a failure even though the chapter still reads as narrated — its own clip was never
+        // touched — so the failures are looked for on the clips, not on the chapter's status.
+        const failed = scriptsStore
+          .segmentsOf(job.bookId, c.id)
+          .some((x) => x.audio.status === "failed" || x.candidate?.status === "failed");
+        narrationStore.runNarration(job.bookId, [c.id], {
+          scope: failed ? "failed" : "fill",
+          quiet: true,
+        });
       }
+    },
+    /** Did a later run of the same stage finish this chapter's work? Then this failure is old news. */
+    _supersededBy(job: Job): boolean {
+      return this.jobs.some(
+        (x) =>
+          x.id !== job.id &&
+          x.kind === job.kind &&
+          x.bookId === job.bookId &&
+          x.chapterId === job.chapterId &&
+          x.status === "done" &&
+          (x.finishedAt ?? 0) > (job.finishedAt ?? 0),
+      );
     },
     clearFinished(): void {
       this.jobs = this.jobs.filter((j) => !j.finishedAt);
@@ -221,6 +291,7 @@ export const useJobsStore = defineStore("jobs", {
     },
     retryAllFailed(): void {
       const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
 
       // one retry per chapter, grouped by book so each book's chapters queue in order
       const seen = new Set<string>();
@@ -230,8 +301,23 @@ export const useJobsStore = defineStore("jobs", {
         seen.add(key);
         const c = j.chapterId == null ? undefined : libraryStore.chapter(j.bookId, j.chapterId);
         if (!c) continue;
-        if (j.kind === "scripting" && c.scripting === "failed") this.retryJob(j.id);
-        if (j.kind === "narration" && c.narration === "failed") this.retryJob(j.id);
+        // A re-script that failed puts the chapter's status back to what it was, so "did this
+        // chapter end up failed" cannot say whether this job's work is still missing. What can is
+        // the queue itself: retry unless the chapter is busy or a later run already did the work.
+        if (
+          j.kind === "scripting" &&
+          !["queued", "running"].includes(c.scripting) &&
+          !this._supersededBy(j)
+        )
+          this.retryJob(j.id);
+        // a chapter whose replacements failed still reads as narrated — the book's own clips are
+        // fine — so the failed requests are looked for on the clips, not only on the chapter
+        if (
+          j.kind === "narration" &&
+          (c.narration === "failed" ||
+            scriptsStore.segmentsOf(j.bookId, c.id).some((s) => s.candidate?.status === "failed"))
+        )
+          this.retryJob(j.id);
       }
     },
     // ---------- scripting ----------

@@ -11,7 +11,16 @@ export const requeue = (a: SegmentAudio): SegmentAudio => ({
   duration: 0,
   ...(a.takes?.length ? { takes: a.takes } : {}),
   ...(a.n ? { n: a.n } : {}),
+  // a rate limit puts a bulk replacement back in the queue; it is still a replacement afterwards
+  ...(a.auto ? { auto: true } : {}),
 });
+
+/**
+ * The number the next take of this line gets: one past the highest the line has seen, the take list
+ * included. Reading it off the clip in the book alone repeats a number after a take was rejected.
+ */
+export const nextTakeNumber = (a: SegmentAudio): number =>
+  Math.max(a.n ?? 1, ...(a.takes ?? []).map((t) => t.n)) + 1;
 
 /** Freeze what `audio` currently holds so it survives the next render. */
 export const snapshotTake = (a: SegmentAudio): Take => ({

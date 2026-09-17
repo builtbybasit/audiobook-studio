@@ -6,10 +6,18 @@ import {
   expressionPlan,
   expressionSupport,
 } from "@/lib/expressions";
-import { jobWaiting } from "@/lib/jobActivity";
+import { jobWaiting, logJob } from "@/lib/jobActivity";
+import {
+  chapterNarration,
+  narrationPlan,
+  narrationTargets,
+  runActionLabel,
+  SCOPE_LABEL,
+  skipSummary,
+} from "@/lib/runPlan";
 import { isScripted } from "@/lib/scriptReview";
 import { partsFor } from "@/lib/split";
-import { requeue, snapshotTake } from "@/lib/takes";
+import { nextTakeNumber, requeue, snapshotTake } from "@/lib/takes";
 import { clone } from "@/lib/utils";
 import type { NarrationSimContext } from "@/mock";
 import { dispatchNarration } from "@/mock";
@@ -21,6 +29,8 @@ import type {
   FlagKind,
   Job,
   NarrationEstimate,
+  NarrationScope,
+  RunPlan,
   Segment,
   SegmentAudio,
   SegmentFlag,
@@ -115,24 +125,87 @@ export const useNarrationStore = defineStore("narration", {
         return out;
       };
     },
-    // Cost and load are per endpoint: each segment goes to the endpoint that owns its speaker's voice,
-    // and a segment longer than that endpoint's limit becomes several requests.
-    estimate(): (bookId: string, ids: number[]) => NarrationEstimate {
+    /** How many endpoint requests one line becomes, after expressions and the endpoint's limit. */
+    requestsFor(): (bookId: string, seg: Segment) => number {
       const castStore = useCastStore();
-      const endpointsStore = useEndpointsStore();
+
+      return (bookId, seg) => {
+        const ep = castStore.effectiveVoice(bookId, seg.speaker).endpoint;
+        if (!ep) return 0;
+        const render = this.expressionRender(bookId, seg);
+        return render.issues.length
+          ? partsFor(render.text, ep)
+          : expressionParts(render, ep).length;
+      };
+    },
+    /**
+     * What running this selection at this scope would do, chapter by chapter, with the reasons a
+     * selected chapter is left out. The picker's summary, the button's label, the estimate and the
+     * work `runNarration` queues are all this one calculation.
+     */
+    narrationRunPlan(): (
+      bookId: string,
+      ids: number[],
+      scope?: NarrationScope,
+      keepPending?: boolean,
+    ) => RunPlan {
+      const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
 
-      return (bookId, ids) => {
+      return (bookId, ids, scope = "all", keepPending = true) =>
+        narrationPlan(
+          libraryStore.chaptersOf(bookId).filter((c) => ids.includes(c.id)),
+          scope,
+          {
+            segmentsOf: (chId) => scriptsStore.segmentsOf(bookId, chId),
+            requestsOf: (s) => this.requestsFor(bookId, s),
+            keepPending,
+          },
+        );
+    },
+    // Cost and load are per endpoint: each segment goes to the endpoint that owns its speaker's voice,
+    // and a segment longer than that endpoint's limit becomes several requests.
+    //
+    // The estimate counts the lines the *chosen scope* would send, not every line in the chapter:
+    // "retry failed clips" over a finished book is a handful of requests, and saying otherwise is
+    // the difference between an estimate and a number.
+    estimate(): (
+      bookId: string,
+      ids: number[],
+      scope?: NarrationScope,
+      keepPending?: boolean,
+    ) => NarrationEstimate {
+      const castStore = useCastStore();
+      const endpointsStore = useEndpointsStore();
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+
+      return (bookId, ids, scope = "all", keepPending = true) => {
         const per: Record<string, EndpointEstimate> = {};
         let chars = 0;
         let segments = 0;
         let unrouted = 0;
         let stale = 0;
-        for (const id of ids)
-          for (const seg of scriptsStore.segments[`${bookId}:${id}`] ?? []) {
+        let replacing = 0;
+        let pending = 0;
+        let chapters = 0;
+        for (const id of ids) {
+          const c = libraryStore.chapter(bookId, id);
+          if (!c || c.excluded || !isScripted(c) || ["running", "queued"].includes(c.narration))
+            continue;
+          const targets = narrationTargets(
+            scriptsStore.segments[`${bookId}:${id}`] ?? [],
+            scope,
+            keepPending,
+          );
+          pending += targets.pending.length;
+          if (!targets.run.length) continue;
+          chapters++;
+          for (const seg of targets.run) {
             chars += seg.text.length;
             segments++;
             if (seg.audio.status === "stale") stale++;
+            if (seg.audio.duration > 0) replacing++;
             const ep = castStore.effectiveVoice(bookId, seg.speaker).endpoint;
             if (!ep) {
               unrouted++;
@@ -154,15 +227,19 @@ export const useNarrationStore = defineStore("narration", {
             e.requests += parts;
             if (parts > 1) e.split++;
           }
+        }
         const rows = Object.values(per);
         const cost = rows.reduce((a, e) => a + (e.chars / 1e6) * e.endpoint.price, 0);
         return {
-          chapters: ids.length,
+          chapters,
           chars,
           segments,
           seconds: chars / 15.5,
           cost,
           stale,
+          replacing,
+          pending,
+          scope,
           unrouted,
           requests: rows.reduce((a, e) => a + e.requests, 0),
           split: rows.reduce((a, e) => a + e.split, 0),
@@ -327,48 +404,193 @@ export const useNarrationStore = defineStore("narration", {
         return;
       for (const s of scriptsStore.segmentsOf(bookId, chId))
         if (s.audio.status === "stale" || (started && s.audio.status === "none"))
-          s.audio = requeue(s.audio);
+          // a stale clip is still playable; its replacement renders beside it and takes over only
+          // when it lands, so the chapter never loses audio it had
+          this._queueRender(s);
       this._resume(bookId, chId);
     },
     // ---------- narration ----------
-    runNarration(bookId: string, ids: number[]): void {
+    /**
+     * Narrate (or re-narrate) the given chapters.
+     *
+     * `scope` is what the run was asked to do — fill the gaps and refresh what the script has moved
+     * past, retry only what failed, or render everything again — and it decides which lines are
+     * queued, what the estimate counted and what the queue reports. Nothing usable is thrown away
+     * to make room: a line that already has a playable clip renders its replacement *beside* it,
+     * exactly as a retake does, and the clip in the book keeps playing, timing the chapter and
+     * going into the export until the replacement actually lands. A bulk run accepts its own
+     * replacements rather than asking for a verdict on each one; the clip it displaces joins the
+     * take list, and a replacement that fails changes nothing at all.
+     *
+     * A retake somebody asked for and has not judged is left alone unless `keepPending` is turned
+     * off — it is a comparison in progress, not spare capacity.
+     */
+    runNarration(
+      bookId: string,
+      ids: number[],
+      {
+        scope = "all",
+        keepPending = true,
+        quiet = false,
+      }: { scope?: NarrationScope; keepPending?: boolean; quiet?: boolean } = {},
+    ): void {
       const jobsStore = useJobsStore();
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
+      const uiStore = useUiStore();
 
       if (libraryStore._blocked(bookId, "narrate")) return;
-      const chs = libraryStore.chapters[bookId].filter(
-        (c) =>
-          ids.includes(c.id) &&
-          !c.excluded &&
-          isScripted(c) &&
-          !["running", "queued"].includes(c.narration),
-      );
+      const plan = this.narrationRunPlan(bookId, ids, scope, keepPending);
+      const chs = plan.chapters
+        .map((p) => libraryStore.chapter(bookId, p.id))
+        .filter((c): c is Chapter => !!c);
+      // only the lines this run would actually send have to render cleanly; a scope that leaves a
+      // chapter's expressions alone should not stop the run to ask about them
       if (
         this._expressionGuard(
           bookId,
           chs.flatMap((c) =>
-            scriptsStore.segmentsOf(bookId, c.id).map((s) => ({ chId: c.id, segId: s.id })),
+            narrationTargets(scriptsStore.segmentsOf(bookId, c.id), scope, keepPending).run.map(
+              (s) => ({ chId: c.id, segId: s.id }),
+            ),
           ),
-          () => this.runNarration(bookId, ids),
+          () => this.runNarration(bookId, ids, { scope, keepPending, quiet }),
         )
       )
         return;
-      const jobs = chs.map((c) => {
+      if (!chs.length) {
+        if (!quiet && ids.length)
+          uiStore.toast("Nothing to narrate in this selection", {
+            kind: "info",
+            description: skipSummary(plan) || `No line is ${SCOPE_LABEL[scope].toLowerCase()}.`,
+          });
+        return;
+      }
+      const runId = jobsStore._nextRunId();
+      const op = runActionLabel(plan);
+      const jobs = chs.map((c, i) => {
+        const row = plan.chapters[i];
         c.narration = "queued";
         c.narrationProgress = 0;
-        const job = jobsStore.addJob("narration", bookId, `Narrate · ch ${c.id}`, c.id);
+        const job = jobsStore.addJob(
+          "narration",
+          bookId,
+          `${row.replacing ? "Re-narrate" : "Narrate"} · ch ${c.id}`,
+          c.id,
+        );
+        job.bulk = { id: runId, op, index: i + 1, total: chs.length, scope: SCOPE_LABEL[scope] };
+        logJob(job, "Narration scope chosen", "info", {
+          scope: SCOPE_LABEL[scope],
+          clips: row.clips,
+          requests: row.requests,
+          replacing: row.replacing,
+          ...(row.pending
+            ? { [keepPending ? "retakesLeftAlone" : "retakesReplaced"]: row.pending }
+            : {}),
+        });
         jobWaiting(job, "Chapter has not been dispatched yet");
         return job;
       });
+      if (!quiet)
+        uiStore.toast(`${op} · ${SCOPE_LABEL[scope]}`, {
+          kind: "info",
+          description:
+            `${plan.clips} clip${plan.clips === 1 ? "" : "s"} in ${chs.length} chapter${chs.length === 1 ? "" : "s"} · ` +
+            `${plan.requests} request${plan.requests === 1 ? "" : "s"} · ~$${this.estimate(bookId, ids, scope, keepPending).cost.toFixed(2)}. ` +
+            (plan.replacing
+              ? `${plan.replacing} clip${plan.replacing === 1 ? " keeps" : "s keep"} playing until the replacement lands. `
+              : "") +
+            (plan.pending
+              ? keepPending
+                ? `${plan.pending} line${plan.pending === 1 ? "" : "s"} with a retake waiting ${plan.pending === 1 ? "was" : "were"} left alone. `
+                : `${plan.pending} retake${plan.pending === 1 ? "" : "s"} waiting for a verdict ${plan.pending === 1 ? "joins" : "join"} the take list and ${plan.pending === 1 ? "is" : "are"} rendered again. `
+              : "") +
+            skipSummary(plan),
+          timeout: 10000,
+        });
       jobsStore._sequential(jobs, (job, done) => {
         const c = libraryStore.chapter(bookId, job.chapterId!)!;
-        for (const s of scriptsStore.segmentsOf(bookId, c.id)) {
-          delete s.candidate; // the whole chapter is being rendered again; a pending retake is moot
-          s.audio = requeue(s.audio);
+        // worked out again here rather than reused from the plan: a chapter waiting behind five
+        // others may have been edited, retaken or narrated by hand while it waited
+        const { run, pending } = narrationTargets(
+          scriptsStore.segmentsOf(bookId, c.id),
+          scope,
+          keepPending,
+        );
+        let replacing = 0;
+        for (const s of run) if (this._queueRender(s) === "replace") replacing++;
+        const queued = run.length;
+        logJob(job, "Narration plan prepared", "info", {
+          scope: SCOPE_LABEL[scope],
+          clips: queued,
+          replacing,
+          segments: scriptsStore.segmentsOf(bookId, c.id).length,
+          ...(pending.length
+            ? { [keepPending ? "retakesLeftAlone" : "retakesReplaced"]: pending.length }
+            : {}),
+        });
+        if (!queued) {
+          logJob(job, "Nothing to render for this scope; the chapter is unchanged", "info");
+          c.narration = chapterNarration(scriptsStore.segmentsOf(bookId, c.id));
+          jobsStore._finish(job, "done");
+          return done();
         }
         this._dispatch(bookId, c, job, done);
       });
+    },
+    /**
+     * Put one line in the queue. A line with a playable clip renders its replacement beside it, so
+     * nothing usable is lost before the new request succeeds; a line with nothing worth keeping —
+     * never rendered, or its last attempt failed — renders in place.
+     *
+     * A retake still waiting for a verdict is only reached here when the run was told to replace
+     * it, and even then it is not thrown away: it joins the take list marked rejected, exactly as
+     * `rejectTake` leaves it, so the comparison the listener was in the middle of is still playable
+     * afterwards. It is never deleted while it is the only render of this line that worked.
+     */
+    _queueRender(s: Segment): "render" | "replace" {
+      const cand = s.candidate;
+      if (cand) {
+        delete s.candidate;
+        // a failed retake is not a comparison; it is in the way of the one about to be made
+        if (cand.duration > 0)
+          s.audio = {
+            ...s.audio,
+            takes: [...(s.audio.takes ?? []), { ...snapshotTake(cand), rejected: true }],
+          };
+      }
+      if (s.audio.duration > 0) {
+        s.candidate = {
+          status: "queued",
+          endpoint: null,
+          ms: 0,
+          duration: 0,
+          n: nextTakeNumber(s.audio),
+          auto: true,
+        };
+        return "replace";
+      }
+      s.audio = requeue(s.audio);
+      return "render";
+    },
+    /**
+     * A bulk replacement that succeeded takes over: it becomes the clip in the book and the one it
+     * displaces joins the take list, so the history is kept and nobody is asked for 300 verdicts.
+     * The listener's flag is left where it is — it is their note, not this run's to clear.
+     */
+    _acceptReplacement(bookId: string, chId: number, segId: number): void {
+      const castStore = useCastStore();
+      const scriptsStore = useScriptsStore();
+
+      const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
+      const cand = s?.candidate;
+      if (!s || !cand || !cand.auto || cand.duration <= 0) return;
+      const takes = [...(s.audio.takes ?? [])];
+      if (s.audio.duration > 0) takes.push(snapshotTake(s.audio));
+      const { auto: _auto, ...clip } = cand;
+      s.audio = { ...clip, ...(takes.length ? { takes } : {}) };
+      delete s.candidate;
+      castStore._retime(bookId, chId);
     },
     retrySegment(bookId: string, chId: number, segId: number): void {
       const scriptsStore = useScriptsStore();
@@ -379,26 +601,30 @@ export const useNarrationStore = defineStore("narration", {
         )
       )
         return;
+      // One line, asked for by hand: a plain re-render in place, not a comparison. `retakeSegment`
+      // is the one that keeps the old clip to judge against.
       const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
       if (s) s.audio = requeue(s.audio);
       this._resume(bookId, chId);
     },
+    /** Every request in this chapter that failed, and only those — a replacement that failed too. */
     retryFailed(bookId: string, chId: number): void {
       const scriptsStore = useScriptsStore();
 
+      const failed = (s: Segment): boolean =>
+        s.audio.status === "failed" || s.candidate?.status === "failed";
       if (
         this._expressionGuard(
           bookId,
           scriptsStore
             .segmentsOf(bookId, chId)
-            .filter((s) => s.audio.status === "failed")
+            .filter(failed)
             .map((s) => ({ chId, segId: s.id })),
           () => this.retryFailed(bookId, chId),
         )
       )
         return;
-      for (const s of scriptsStore.segmentsOf(bookId, chId))
-        if (s.audio.status === "failed") s.audio = requeue(s.audio);
+      for (const s of scriptsStore.segmentsOf(bookId, chId)) if (failed(s)) this._queueRender(s);
       this._resume(bookId, chId);
     },
     // ---------- audio review & retakes ----------
@@ -472,7 +698,7 @@ export const useNarrationStore = defineStore("narration", {
         endpoint: null,
         ms: 0,
         duration: 0,
-        n: (s.audio.n ?? 1) + 1,
+        n: nextTakeNumber(s.audio),
       };
       return true;
     },
@@ -569,6 +795,8 @@ export const useNarrationStore = defineStore("narration", {
         expressionRender: (bookId, segment) => this.expressionRender(bookId, segment),
         clipDrift: (bookId, segment, audio) => this.clipDrift(bookId, segment, audio),
         markStale: (bookId, chId, segment) => scriptsStore._markStale(bookId, chId, segment),
+        acceptReplacement: (bookId, chId, segId) => this._acceptReplacement(bookId, chId, segId),
+        chapterNarration: (bookId, chId) => chapterNarration(scriptsStore.segmentsOf(bookId, chId)),
         retime: (bookId, chId) => castStore._retime(bookId, chId),
         finishJob: (job, status) => jobsStore._finish(job, status),
         toast: (msg, opts) => uiStore.toast(msg, opts),

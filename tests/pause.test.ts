@@ -82,7 +82,10 @@ beforeEach(() => {
 });
 afterEach(() => restore.forEach((fn) => fn()));
 
-const statuses = () => scriptsStore.segmentsOf(bookId, chapterId).map((s) => s.audio.status);
+// The clip this run is rendering: a chapter that already has audio renders its replacements beside
+// the clips in the book, so the queue is on the candidate rather than on `audio`.
+const statuses = () =>
+  scriptsStore.segmentsOf(bookId, chapterId).map((s) => s.candidate?.status ?? s.audio.status);
 const job = () => jobsStore.jobs.find((j) => j.kind === "narration" && j.chapterId === chapterId);
 
 test("pausing an endpoint holds its queue; the run finishes when it is resumed", () => {
@@ -150,9 +153,16 @@ test("a voice whose endpoint is gone still fails rather than waiting forever", (
   endpointsStore.endpoints.splice(0, endpointsStore.endpoints.length);
   advance(120_000);
   expect(job()!.finishedAt).not.toBeNull();
-  expect(libraryStore.chapter(bookId, chapterId)!.narration).toBe("failed");
   expect(job()!.activity!.some((e) => e.level === "error" && e.detail?.segment)).toBe(true);
   expect(job()!.activity!.at(-1)!.message).toBe("Job failed");
+  // the replacements that had not been sent failed, so the run failed — and every clip in the book
+  // is still playable, which is why the chapter itself still reads as narrated
+  expect(statuses().some((s) => s === "failed")).toBe(true);
+  expect(statuses().some((s) => s === "queued" || s === "generating")).toBe(false);
+  expect(scriptsStore.segmentsOf(bookId, chapterId).every((s) => s.audio.status === "done")).toBe(
+    true,
+  );
+  expect(libraryStore.chapter(bookId, chapterId)!.narration).toBe("done");
 });
 
 test("narration activity keeps the segment identity and attempt across a rate-limit retry", () => {

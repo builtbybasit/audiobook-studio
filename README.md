@@ -581,6 +581,108 @@ session grouping, the runs that must leave no entry, comparison accuracy includi
 restoring with its audio consequences and the narrow undo, the missing speaker, the run in flight,
 renumbering a book, and a demo reset while an editing session is still collecting.
 
+## Round eleven: re-doing chapters that are already finished (2026-09-17)
+
+Completed chapters could always be ticked and run again — nothing stopped you — but the app never
+said what that would do. "Run scripting (8)" on a selection of three new chapters and five finished
+ones read the same as "Run scripting (8)" on eight new ones, bulk re-scripting quietly defaulted to
+throwing away every manual correction in those chapters, and a full re-narration requeued clips that
+were perfectly good and deleted the retakes waiting beside them. Re-doing work is now a thing the app
+explains before it does it, and one that keeps what it is replacing until the replacement actually
+lands.
+
+**One plan behind everything.** `lib/runPlan.ts` works out what a selection contains and what pressing
+the button would do to it, without touching anything. The picker's summary line, the button's own
+label, the estimate and the work the store queues are that one calculation, so they cannot disagree.
+A chapter is _new work_, a _replacement_ of something finished, or a _retry_ of something that failed;
+anything left out is left out for a named reason.
+
+**Selecting.** The picker keeps its checkboxes, its volume headers and its shift-click range, and gains
+a Select row — Pending, Completed, Stale, Failed — where each shortcut only appears when it would pick
+something, so the row stays short on a book that has nothing stale. Shortcuts read the whole book, never
+the search; the filter is the one thing the header says out loud, with **All 12 results** beside
+**Whole book (40)** while a search is on. Under it, one sentence says what is ticked:
+_8 chapters selected: 3 new, 5 already scripted._
+
+**The button says the operation.** _Script 3 chapters_, _Re-script 5 chapters_, _Script 2 · re-script 3_
+— and its count is the chapters that will actually run, not the number ticked. Under it: what the run
+does, then what it leaves out and why (_2 chapters left out: 1 already running or queued, 1 skipped from
+the audiobook_).
+
+**Bulk re-scripting.** The endpoint, the model and the cost were already on the Scripting page; the
+budget line now also says what the run would leave. **Preserve manual corrections** is on by default and
+says exactly what it can and cannot do: speaker, type, direction and expression annotations are
+re-applied to the new script wherever it wrote the same line, and a correction whose line the new run
+rewrote, split or dropped _cannot_ be carried across. Those are counted, named and listed in the reader
+beside the re-script diff — the one thing preservation must never do is claim a correction survived when
+it did not. Every replaced script is preserved in its chapter's history before it is replaced, by the
+same `noteScripted` path Round ten built, so **Restore** is always the way back.
+
+**A replacement that produces nothing changes nothing.** A re-script that failed verification, was
+cancelled, ran out of budget or was overtaken by a newer run leaves the script it was replacing as the
+chapter's script — and the chapter goes back to reading as _scripted_, not as a chapter nothing ever
+produced a script for. That last part matters beyond the label: a chapter that reads as failed is not
+narratable and not exportable, so a failed re-script used to take a finished chapter out of the book.
+Each run carries a token; a result from a run the chapter has moved on from is discarded with a line in
+the log rather than written over what replaced it.
+
+**Bulk re-narration has a scope**, and the estimate counts _that_ rather than every line in the chapter:
+
+- **Missing & changed** — lines with no usable clip (never rendered, or the request failed) and lines
+  whose clip no longer matches the script.
+- **Failed only** — the lines whose last request failed. Finished clips are not touched.
+- **Everything** — every line in the selected chapters.
+
+"Retry failed clips" over a finished book is a handful of requests and now says so; it used to quote the
+whole book's characters and cost.
+
+**Current audio stays playable until its replacement succeeds.** A line being re-narrated that already
+has a clip renders its replacement _beside_ it, in the `candidate` slot retakes have always used: the
+clip in the book keeps playing, timing the chapter and going into the export the whole time. The
+difference from a retake is what happens when it lands — a bulk replacement is accepted by the run that
+asked for it, so 300 lines do not become 300 verdicts, and the clip it displaces joins that line's take
+list rather than disappearing. A replacement that fails leaves the book's own clip exactly as it was and
+stays visible as a failed take, which **Retry failed** picks up and nothing else does.
+
+**A retake waiting for a verdict is not spare capacity.** A bulk run leaves those lines alone and says
+how many; the switch beside the scope is how you tell it otherwise. Nothing is silently deleted either
+way: told to go ahead, the run puts the waiting retake in that line's take list marked _not kept_,
+exactly where rejecting it by hand would have put it, and renders the line again. The count the switch
+reports is only the lines this scope would actually have rendered, so it never offers to replace
+retakes on lines it was never going to touch — and it stays on screen in both positions, because the
+question is about the lines, not about the answer you gave last.
+
+**Running and recovering.** Every chapter of one press shares a run id, so the queue shows `3/8` on the
+row, the job panel says _Re-script 4 chapters · chapter 3 of 4 · preserving manual corrections_ with the
+run's own done/failed/to-go counts, and offers the two things worth doing to a run rather than a row:
+**Cancel the rest** and **Retry N failed**. Cancelling keeps every chapter the run finished and starts
+none of the ones it had not, and — being the one step here Undo cannot take back — it asks first, naming
+what stops and what is kept. Retrying a run's failures re-runs only those, as one run again rather than
+N unrelated ones, at the narrowest scope that covers the failure: _Failed only_ where requests failed,
+_Missing & changed_ where a run was stopped before it sent them. A failed replacement is a failure of
+the run even though the chapter still reads as narrated, and a re-script that failed puts the chapter's
+status back — so both are found on the work itself rather than on the chapter's label, which is what
+**Retry failed** and **Retry all failed** now do. The activity log carries the operation,
+the scope, what was skipped and why, what each replacement displaced, and — for a run that produced
+nothing — the line saying the previous script is unchanged.
+
+**Demo rows.** Two new ones under _Re-doing finished chapters_: **A book with everything a bulk run has
+to tell apart** (new, finished, hand-corrected, stale and failed chapters side by side, with a retake
+waiting on one line) and **Replacements that failed, and a run that was cancelled** (a four-chapter
+re-script where two chapters kept nothing and a cancelled one stopped the rest, plus narration
+replacements that failed — every earlier script and every clip still there and still usable). Both are
+seeded, like everything else here; no request leaves the browser. A scenario switch or a Reset abandons
+bulk work in flight the same way it abandons everything else, so no half-finished replacement can land
+in the world you are looking at now.
+
+Store ownership: `lib/runPlan.ts` is the pure part (what a selection contains, which clips a scope runs,
+what a plan reads as); `scripting.ts` and `narration.ts` own their runs and hand the simulators exactly
+the slice they need; `jobs.ts` owns the run ids, cancelling a run and retrying its failures.
+`tests/bulkRuns.test.ts` covers the selection summary and the plan's skip reasons, preservation and the
+corrections that could not be re-applied, a failed and a cancelled replacement, an overtaken result, each
+scope's estimate, a clip kept playable through its replacement, a failed replacement and its narrow
+retry, pending retakes, cancellation, and both seeded rows.
+
 ## Toasts (Toastflow, 2026-09-14)
 
 Toasts run on [vue-toastflow](https://www.toastflow.top) for the runtime only — queue, timers, pause on hover, swipe to dismiss, Escape, focus handling, live regions, the promise `loading` helper. The plugin is created with `{ css: false }`, so none of its stylesheet loads: stack layout, motion and the time-left bar are in `src/toasts.css`, and the card is our own Tailwind markup in `components/Toasts.vue` through the headless slot (`ui.getRootProps / getCloseProps / getButtonProps / progress.*` keep the a11y and behaviour wiring). The app only ever calls `app.toast(msg, { kind, description, undo, action, timeout })` and `app.toastLoading(promise, { loading, success, error })`.

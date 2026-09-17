@@ -77,6 +77,7 @@ export { runBuild, failBuild, type BuildSimContext } from "@/mock/simulators/bui
 export { dispatchNarration, type NarrationSimContext } from "@/mock/simulators/narration";
 export {
   collapseChunk,
+  reapplyCorrections,
   reseg,
   simulateScriptRun,
   type ScriptRun,

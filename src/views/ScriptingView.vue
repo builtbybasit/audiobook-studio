@@ -8,6 +8,7 @@ import { useUiStore } from "@/stores/ui";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
+import { runActionLabel, runSummary, skipSummary } from "@/lib/runPlan";
 import ChapterPicker from "@/components/ChapterPicker.vue";
 import EmptyState from "@/components/EmptyState.vue";
 import { PencilLine as ScriptingIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
@@ -65,6 +66,18 @@ function remember(id: number) {
 }
 watch(opened, remember);
 onMounted(() => remember(opened.value));
+// One plan behind the button's label, the line under it and the work the run queues.
+const plan = computed(() => scriptingStore.scriptPlan(bookId, selected.value));
+const runNote = computed(() => {
+  if (!plan.value.chapters.length) return "";
+  const keep = scriptingStore.scriptSettings.keepEdits;
+  return (
+    runSummary(plan.value).join(" · ") +
+    (plan.value.replace
+      ? ` · each replaced script is kept in its chapter's history${keep ? ", manual corrections re-applied where the line still matches" : ""}`
+      : "")
+  );
+});
 const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
 const hasScript = computed(() => chapter.value && isScripted(chapter.value));
 const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));
@@ -118,11 +131,19 @@ function scriptFirst() {
             stage="scripting"
             v-model="selected"
             :opened-id="opened"
-            run-label="Run scripting"
+            :run-label="runActionLabel(plan)"
+            :run-count="plan.chapters.length"
+            :run-note="runNote"
+            :run-skipped="skipSummary(plan)"
             :run-disabled="!!scriptingStore.scriptEstimate(bookId, selected).blockers.length"
             :selectable="(c) => !['running', 'queued'].includes(c.scripting)"
             @open="openChapter"
-            @run="(ids) => scriptingStore.runScripting(bookId, ids)"
+            @run="
+              (ids) =>
+                scriptingStore.runScripting(bookId, ids, {
+                  keepEdits: scriptingStore.scriptSettings.keepEdits,
+                })
+            "
           />
         </div>
         <div class="card shrink-0 p-3">

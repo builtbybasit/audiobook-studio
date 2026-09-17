@@ -41,4 +41,7 @@ export function makeProfiles(): Profile[] {
 export const makeScriptSettings = (): ScriptSettings => ({
   profile: "openai",
   stripWatermarks: true,
+  // a re-script over chapters somebody has been correcting by hand keeps that work unless they
+  // deliberately say otherwise
+  keepEdits: true,
 });

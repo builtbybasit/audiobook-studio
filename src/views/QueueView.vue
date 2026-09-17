@@ -220,6 +220,12 @@ async function toggleNotify() {
                         · ch {{ chapter(j)!.id }} {{ chapter(j)!.title }}</span
                       ></span
                     >
+                    <span
+                      v-if="j.bulk"
+                      class="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800"
+                      :title="`${j.bulk.op}${j.bulk.scope ? ' · ' + j.bulk.scope : ''}`"
+                      >{{ j.bulk.index }}/{{ j.bulk.total }}</span
+                    >
                   </div>
                   <div class="mt-1.5 h-1.5 rounded bg-zinc-200 dark:bg-zinc-800">
                     <div
@@ -300,7 +306,10 @@ async function toggleNotify() {
                 :aria-label="`View activity for ${j.label}`"
                 @click="selectedId = j.id"
               >
-                {{ j.label }} <span class="text-zinc-500">· {{ book(j)?.title }}</span>
+                {{ j.label }} <span class="text-zinc-500">· {{ book(j)?.title }}</span
+                ><span v-if="j.bulk" class="ml-1.5 text-[10px] text-zinc-400"
+                  >{{ j.bulk.index }}/{{ j.bulk.total }}</span
+                >
               </button>
               <button
                 class="text-xs text-zinc-400 hover:text-red-500"

@@ -13,6 +13,7 @@ export type * from "@/types/job";
 export type * from "@/types/scripting";
 export type * from "@/types/history";
 export type * from "@/types/narration";
+export type * from "@/types/run";
 export type * from "@/types/export";
 export type * from "@/types/bulk";
 export type * from "@/types/ui";

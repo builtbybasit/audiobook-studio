@@ -361,6 +361,11 @@ export const useDemoStore = defineStore("demo", {
       job.finishedAt = finished;
       job.cancelled = row.status === "cancelled";
       job.waitingReason = "";
+      if (row.bulk) {
+        job.bulk = { ...row.bulk };
+        // a seeded run holds its id: the next run started by hand must not be filed under it
+        jobsStore._nextRun = Math.max(jobsStore._nextRun, row.bulk.id + 1);
+      }
       const middle = row.activity ?? [];
       // the run's account, spread over the time it actually took
       job.activity = [

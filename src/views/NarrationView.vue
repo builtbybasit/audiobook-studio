@@ -13,6 +13,8 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
 import { isNarrated } from "@/lib/scriptReview";
+import { runActionLabel, runSummary, SCOPE_LABEL, skipSummary } from "@/lib/runPlan";
+import type { NarrationScope } from "@/types";
 import EmptyState from "@/components/EmptyState.vue";
 import { AudioLines as NarrationIcon } from "@lucide/vue";
 import { ChevronDown as ChevronDownIcon, ChevronUp as ChevronUpIcon } from "@lucide/vue";
@@ -68,7 +70,22 @@ watch(
     if (value) collapsed.value = true;
   },
 );
-const selected = ref([]);
+const selected = ref<number[]>([]);
+// What the run is for, and whether it may take over a comparison somebody started. Both live here
+// so the picker's button, the estimate and the run itself are talking about the same thing.
+const scope = ref<NarrationScope>("fill");
+const keepPending = ref(true);
+const plan = computed(() =>
+  narrationStore.narrationRunPlan(bookId, selected.value, scope.value, keepPending.value),
+);
+const runNote = computed(() =>
+  plan.value.chapters.length
+    ? `${SCOPE_LABEL[scope.value]} · ${runSummary(plan.value).join(" · ")}` +
+      (plan.value.replacing
+        ? ` · ${plan.value.replacing} current clip${plan.value.replacing === 1 ? "" : "s"} stay playable until replaced`
+        : "")
+    : "",
+);
 const opened = ref(
   Number(route.query.ch) ||
     uiStore.chapterIn(bookId, libraryStore.chaptersOf(bookId)) ||
@@ -158,13 +175,29 @@ const ready = computed(
             stage="narration"
             v-model="selected"
             :opened-id="opened"
-            run-label="Narrate"
+            :run-label="runActionLabel(plan)"
+            :run-count="plan.chapters.length"
+            :run-note="runNote"
+            :run-skipped="skipSummary(plan)"
             :selectable="(c) => isScripted(c)"
             @open="openChapter"
-            @run="(ids) => narrationStore.runNarration(bookId, ids)"
+            @run="
+              (ids) =>
+                narrationStore.runNarration(bookId, ids, {
+                  scope,
+                  keepPending,
+                })
+            "
           />
         </div>
-        <div class="card shrink-0 p-3"><RunEstimate :book-id="bookId" :selected="selected" /></div>
+        <div class="card shrink-0 p-3">
+          <RunEstimate
+            :book-id="bookId"
+            :selected="selected"
+            v-model:scope="scope"
+            v-model:keep-pending="keepPending"
+          />
+        </div>
       </div>
       <div class="min-h-0 min-w-0 max-lg:h-[70vh]">
         <JobLedger
@@ -212,7 +245,10 @@ const ready = computed(
               .join(', ') || 'no voices routed yet'
           }.`"
         >
-          <button class="btn-primary" @click="narrationStore.runNarration(bookId, [opened])">
+          <button
+            class="btn-primary"
+            @click="narrationStore.runNarration(bookId, [opened], { scope: 'fill' })"
+          >
             Narrate this chapter
           </button>
         </EmptyState>

@@ -9,18 +9,36 @@ import { useNarrationStore } from "@/stores/narration";
 // long segments split against that endpoint's per-request limit.
 import { computed } from "vue";
 import { keyring } from "@/lib/keyring";
+import { runSummary, SCOPE_HELP, SCOPE_LABEL, skipSummary } from "@/lib/runPlan";
+import { UiSwitch, UiToggleGroup } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
+import type { NarrationScope } from "@/types";
 const props = defineProps<{ bookId: string; selected: number[] }>();
+const scope = defineModel<NarrationScope>("scope", { default: "fill" });
+const keepPending = defineModel<boolean>("keepPending", { default: true });
 const castStore = useCastStore();
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
-const est = computed(() => narrationStore.estimate(props.bookId, props.selected));
+const est = computed(() =>
+  narrationStore.estimate(props.bookId, props.selected, scope.value, keepPending.value),
+);
+const plan = computed(() =>
+  narrationStore.narrationRunPlan(props.bookId, props.selected, scope.value, keepPending.value),
+);
+const scopes: { value: NarrationScope; label: string }[] = (
+  ["fill", "failed", "all"] as NarrationScope[]
+).map((value) => ({ value, label: SCOPE_LABEL[value] }));
 const cast = computed(() => castStore.charactersOf(props.bookId));
 const voiced = computed(() => cast.value.filter((c) => c.voice).length);
 const narratorOk = computed(() => !!cast.value.find((c) => c.name === "Narrator")?.voice);
 const issues = computed(() => castStore.routingIssues(props.bookId));
-const expressions = computed(() => narrationStore.expressionIssues(props.bookId, props.selected));
+const expressions = computed(() =>
+  narrationStore.expressionIssues(
+    props.bookId,
+    plan.value.chapters.map((c) => c.id),
+  ),
+);
 const blockers = computed(() => {
   const b = [];
   if (!narratorOk.value) b.push("Assign the Narrator’s voice to start.");
@@ -44,14 +62,31 @@ const fmt = (s: number) =>
     ? `~${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`
     : `~${Math.round(s / 60)}m`;
 const k = (n: number) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n));
-defineExpose({ blockers });
+defineExpose({ blockers, scope, keepPending, plan });
 </script>
 <template>
   <div class="text-xs">
     <div class="label mb-1.5">This run</div>
+    <!-- what the run is for. The estimate below counts this scope, not every line in the book. -->
+    <UiToggleGroup v-model="scope" :options="scopes" block size="xs" />
+    <p class="mb-2 mt-1 text-[11px] leading-snug text-zinc-500">{{ SCOPE_HELP[scope] }}</p>
+    <!-- only shown when this scope actually reaches lines with a retake waiting, and shown in
+         both switch positions: the count is what the choice is about, not what it left behind. -->
+    <div v-if="est.pending" class="mb-2">
+      <UiSwitch v-model="keepPending" label="Keep retakes waiting for a verdict" />
+      <p class="mt-1 text-[11px] leading-snug text-zinc-500">
+        {{
+          keepPending
+            ? `${est.pending} line${est.pending === 1 ? "" : "s"} this scope would render ${est.pending === 1 ? "has" : "have"} a retake to judge, and ${est.pending === 1 ? "is" : "are"} left out of this run.`
+            : `${est.pending} retake${est.pending === 1 ? "" : "s"} waiting for a verdict ${est.pending === 1 ? "joins" : "join"} that line’s take list, still playable, and the line is rendered again — the clip in the book keeps playing until its replacement lands.`
+        }}
+      </p>
+    </div>
     <div class="grid grid-cols-2 gap-x-4 gap-y-1">
       <span class="text-zinc-500">Chapters</span
       ><span class="text-right font-mono">{{ est.chapters }}</span>
+      <span class="text-zinc-500">Clips to render</span
+      ><span class="text-right font-mono">{{ est.segments }}</span>
       <span class="text-zinc-500">Characters</span
       ><span class="text-right font-mono">{{ k(est.chars) }}</span>
       <span class="text-zinc-500">Requests</span
@@ -74,6 +109,17 @@ defineExpose({ blockers });
         >${{ est.cost.toFixed(2) }}</span
       >
     </div>
+    <p v-if="plan.chapters.length" class="mt-1.5 leading-snug text-zinc-500">
+      {{ runSummary(plan).join(" · ") }}.
+      <span v-if="est.replacing"
+        >{{ est.replacing }} clip{{ est.replacing === 1 ? "" : "s" }} already
+        {{ est.replacing === 1 ? "plays" : "play" }} in the book — each keeps playing until its
+        replacement succeeds, and the clip it displaces joins that line’s take list.</span
+      >
+    </p>
+    <p v-if="skipSummary(plan)" class="mt-1 leading-snug text-amber-700 dark:text-amber-400">
+      {{ skipSummary(plan) }}
+    </p>
     <div v-if="est.per.length" class="mt-2 border-t border-zinc-100 pt-1.5 dark:border-zinc-800">
       <div class="mb-1 text-[10px] uppercase tracking-wider text-zinc-400">By endpoint</div>
       <div v-for="e in est.per" :key="e.endpoint.id" class="flex items-center gap-2 py-0.5">

@@ -500,16 +500,18 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
           <FlagIcon class="icon-sm" /> Retake flagged ({{ count("flagged") }})
         </button>
         <button
-          v-if="stats.failed && chapter.narration !== 'running'"
+          v-if="count('failed') && chapter.narration !== 'running'"
           class="btn-ghost btn-xs"
+          title="render only the requests that failed — finished clips are not touched"
           @click="narrationStore.retryFailed(bookId, chapterId)"
         >
-          Retry failed ({{ stats.failed }})
+          Retry failed ({{ count("failed") }})
         </button>
         <button
           v-if="chapter.narration !== 'running'"
           class="btn-ghost btn-xs"
-          @click="narrationStore.runNarration(bookId, [chapterId])"
+          title="render every line again — each clip in the book keeps playing until its replacement lands, and the clip it displaces joins that line’s take list"
+          @click="narrationStore.runNarration(bookId, [chapterId], { scope: 'all' })"
         >
           Re-narrate all
         </button>
@@ -613,11 +615,13 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                   ><span
                     v-if="s.candidate"
                     class="shrink-0 font-semibold text-sky-600 dark:text-sky-400"
-                    :title="`take ${s.candidate.n} is ${['queued', 'generating'].includes(s.candidate.status) ? 'rendering' : 'waiting for your verdict'} — the book still uses take ${s.audio.n ?? 1}`"
+                    :title="`take ${s.candidate.n} is ${['queued', 'generating'].includes(s.candidate.status) ? 'rendering' : s.candidate.status === 'failed' ? 'failed' : 'waiting for your verdict'} — the book still uses take ${s.audio.n ?? 1}`"
                     >{{
                       ["queued", "generating"].includes(s.candidate.status)
                         ? `take ${s.candidate.n} rendering…`
-                        : `take ${s.candidate.n} waiting`
+                        : s.candidate.status === "failed"
+                          ? `take ${s.candidate.n} failed`
+                          : `take ${s.candidate.n} waiting`
                     }}</span
                   ><span
                     v-if="s.pause != null"
@@ -867,7 +871,9 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                         />
                       </button>
                       <b>B · Take {{ s.candidate!.n }}</b>
-                      <span class="text-zinc-400">retake</span>
+                      <span class="text-zinc-400">{{
+                        s.candidate!.auto ? "replacement" : "retake"
+                      }}</span>
                       <kbd class="ml-auto rounded border px-1 text-[10px] text-sky-500">2</kbd>
                       <span class="font-mono text-zinc-500">{{
                         s.candidate!.duration ? s.candidate!.duration.toFixed(1) + "s" : "…"

@@ -13,6 +13,7 @@ import type {
   BulkSkip,
   BulkTarget,
   NarrationStatus,
+  RescriptReport,
   ScriptDiff,
   Segment,
   SegmentFlag,
@@ -28,9 +29,11 @@ import { useUiStore } from "@/stores/ui";
 interface ScriptsState {
   segments: SegmentMap;
   _previous: SegmentMap;
+  /** what a re-script did with the manual corrections it was asked to preserve, keyed like `segments` */
+  _corrections: Record<string, RescriptReport>;
 }
 export const useScriptsStore = defineStore("scripts", {
-  state: (): ScriptsState => ({ ...seedState("segments"), _previous: {} }),
+  state: (): ScriptsState => ({ ...seedState("segments"), _previous: {}, _corrections: {} }),
   getters: {
     segmentsOf(s): (bookId: string, chId: number) => Segment[] {
       return (bookId: string, chId: number): Segment[] => s.segments[key(bookId, chId)] ?? [];
@@ -49,6 +52,11 @@ export const useScriptsStore = defineStore("scripts", {
     },
     rawText(): (bookId: string, chId: number) => string {
       return (bookId: string, chId: number): string => partsText(this.partsOf(bookId, chId));
+    },
+    /** What the last re-script did with this chapter's manual corrections, while the diff is up. */
+    correctionsOf(s): (bookId: string, chId: number) => RescriptReport | null {
+      return (bookId: string, chId: number): RescriptReport | null =>
+        s._corrections[key(bookId, chId)] ?? null;
     },
     scriptDiff(s): (bookId: string, chId: number) => ScriptDiff | null {
       return (bookId: string, chId: number): ScriptDiff | null => {
@@ -539,8 +547,13 @@ export const useScriptsStore = defineStore("scripts", {
       });
       return true;
     },
+    /** A finished re-script says what it could and could not re-apply; the reader shows both. */
+    _noteCorrections(bookId: string, chId: number, report: RescriptReport): void {
+      this._corrections[key(bookId, chId)] = report;
+    },
     dismissDiff(bookId: string, chId: number): void {
       delete this._previous[key(bookId, chId)];
+      delete this._corrections[key(bookId, chId)];
     },
     // edited after narration → existing audio no longer matches the script
     _markStale(bookId: string, chId: number, s: Segment): void {

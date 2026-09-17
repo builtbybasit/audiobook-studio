@@ -19,6 +19,7 @@ import type {
   Character,
   EffectiveVoice,
   Job,
+  NarrationStatus,
   Segment,
   SegmentAudio,
 } from "@/types";
@@ -30,6 +31,10 @@ export interface NarrationSimContext extends SimulatorContext {
   expressionRender(bookId: string, segment: Segment): ExpressionPlan;
   clipDrift(bookId: string, segment: Segment, audio?: SegmentAudio): string[];
   markStale(bookId: string, chId: number, segment: Segment): void;
+  /** a replacement queued by a bulk run rendered successfully; it becomes the clip in the book */
+  acceptReplacement(bookId: string, chId: number, segId: number): void;
+  /** what the chapter's narration reads as, from its clips as they now stand */
+  chapterNarration(bookId: string, chId: number): NarrationStatus;
   retime(bookId: string, chId: number): void;
 }
 
@@ -69,11 +74,15 @@ export function dispatchNarration(
     // the world this run was dispatched against is gone: stop without writing to the new one
     if (ctx.stale()) return;
     if (job.cancelled) {
+      // Everything already rendered stays rendered — a cancelled run keeps what it finished. A clip
+      // that never started goes back to having no audio, and a replacement that never started is
+      // dropped, which leaves the clip it would have replaced exactly as it was.
       for (const t of targets("queued"))
         if (t.slot === "candidate") delete t.s.candidate;
         else t.s.audio.status = "none";
       if (!targets("generating").length) {
-        c.narration = segs.every((s) => s.audio.status === "done") ? "done" : "failed";
+        c.narration = ctx.chapterNarration(bookId, c.id);
+        ctx.retime(bookId, c.id);
         ctx.finishJob(job, "cancelled");
         return done();
       }
@@ -105,6 +114,7 @@ export function dispatchNarration(
           duration: 0,
           ...(queued.n ? { n: queued.n } : {}),
           ...(queued.takes?.length ? { takes: queued.takes } : {}),
+          ...(queued.auto ? { auto: true } : {}),
           error: {
             code: 0,
             message: !route.ref
@@ -167,7 +177,7 @@ export function dispatchNarration(
       };
       logJob(
         job,
-        `Segment ${next.id}${slot === "candidate" ? " retake" : ""} started`,
+        `Segment ${next.id}${slot === "candidate" ? (queued.auto ? " replacement" : " retake") : ""} started`,
         "info",
         diagnostic,
       );
@@ -178,9 +188,10 @@ export function dispatchNarration(
         ms: 0,
         duration: 0,
         startedAt: Date.now(),
-        // the take number and the history of this clip survive the render
+        // the take number, the history of this clip and what it is for survive the render
         ...(queued.takes?.length ? { takes: queued.takes } : {}),
         ...(queued.n ? { n: queued.n } : {}),
+        ...(queued.auto ? { auto: true } : {}),
         parts,
         cuts:
           parts > 1
@@ -268,12 +279,33 @@ export function dispatchNarration(
             ...(clip.error ? { code: clip.error.code, error: clip.error.message } : {}),
           },
         );
+        // A bulk replacement is accepted by the run that asked for it: the new clip takes over and
+        // the one it displaces joins the take list. A replacement that failed leaves the book's own
+        // clip untouched and stays where the listener can see it.
+        if (slot === "candidate" && clip.auto) {
+          if (fail)
+            logJob(
+              job,
+              `Segment ${next.id} replacement failed; the clip already in the book is unchanged`,
+              "warning",
+              { segment: next.id, keptTake: next.audio.n ?? 1 },
+            );
+          else {
+            ctx.acceptReplacement(bookId, c.id, next.id);
+            logJob(job, `Segment ${next.id} replaced take ${next.audio.n ?? 1}`, "info", {
+              segment: next.id,
+              take: clip.n ?? 1,
+            });
+          }
+        }
       }, simMs(dur));
     }
     jobWaiting(job, [...waiting].sort().join("; "));
     const pending = targets("queued", "generating");
-    const finished = segs.length - pending.filter((t) => t.slot === "audio").length;
-    c.narrationProgress = Math.round((finished / segs.length) * 100);
+    // a line is outstanding wherever its render is going: counting only `audio` showed a run that
+    // replaces finished clips as 100% done before it had rendered a single one
+    const busy = new Set(pending.map((t) => t.s.id));
+    c.narrationProgress = Math.round(((segs.length - busy.size) / segs.length) * 100);
     job.progress = c.narrationProgress;
     // Pausing an endpoint holds its queued clips rather than failing them: that is the whole
     // difference between Pause and Cancel. The run stays open, waiting, until the endpoint is
@@ -305,9 +337,10 @@ export function dispatchNarration(
       // a retake that failed is the listener's to discard: only the book's own clips decide
       // whether this chapter is finished. A clip the script moved under while it rendered came
       // back stale — that is not a failed run, it is one more line to render again.
-      const failed = segs.some((s) => !["done", "stale"].includes(s.audio.status));
-      const stale = segs.some((s) => s.audio.status === "stale");
-      c.narration = failed ? "failed" : stale ? "stale" : "done";
+      const failed =
+        segs.some((s) => !["done", "stale"].includes(s.audio.status)) ||
+        segs.some((s) => s.candidate?.auto && s.candidate.status === "failed");
+      c.narration = ctx.chapterNarration(bookId, c.id);
       ctx.retime(bookId, c.id);
       ctx.finishJob(job, failed ? "failed" : "done");
       done();

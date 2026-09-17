@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { useDemoStore } from "@/stores/demo";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
+import { useUsageStore } from "@/stores/usage";
 
 // Endpoints — app-wide, both kinds, one page.
 //
@@ -41,7 +43,7 @@ import ExpressionsTab from "@/views/endpoints/ExpressionsTab.vue";
 import VoicesTab from "@/views/endpoints/VoicesTab.vue";
 import PricingTab from "@/views/endpoints/PricingTab.vue";
 import ActivityTab from "@/views/endpoints/ActivityTab.vue";
-import { endpointService, seriesFrom, RANGES } from "@/services/endpoints";
+import { endpointService, probeCost, seriesFrom, RANGES } from "@/services/endpoints";
 import type { EndpointDescriptor } from "@/services/endpoints";
 import {
   DOT,
@@ -53,22 +55,27 @@ import {
   healthOf,
   money,
   opsOf,
+  speechPricing,
   unifyEndpoint,
   unifyProfile,
 } from "@/lib/endpoints";
 import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
 import { bindCredential } from "@/lib/credentials";
+import { ensurePricing, pricingOf } from "@/lib/pricing";
+import { usageFormatFor } from "@/mock/simulators/usage";
 import { useEndpointActivity } from "@/views/endpoints/live";
 const { jobsUsing, liveActivity, liveRequests } = useEndpointActivity();
 import { TABS, draftDirty, filterOf, tabOf, tabsFor, ui } from "@/views/endpoints/state";
 import type { TabId } from "@/views/endpoints/state";
 import type { MetricBucket, RequestRecord, SettingsFile } from "@/types";
 
+const demoStore = useDemoStore();
 const endpointsStore = useEndpointsStore();
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
+const usageStore = useUsageStore();
 const now = ref(Date.now());
 let clock: ReturnType<typeof setInterval>;
 onMounted(() => {
@@ -85,8 +92,16 @@ const all = computed<UnifiedEndpoint[]>(() => [
 watch(
   () => [endpointsStore.profiles.length, endpointsStore.endpoints.length] as const,
   () => {
-    for (const p of endpointsStore.profiles) ensureOps(p, "scripting");
-    for (const e of endpointsStore.endpoints) ensureOps(e, "tts");
+    for (const p of endpointsStore.profiles) {
+      ensureOps(p, "scripting");
+      // an endpoint saved before advanced pricing existed gets an empty schedule and no promotions,
+      // which is exactly "ordinary pricing" — nothing on screen changes for it
+      ensurePricing(p);
+    }
+    for (const e of endpointsStore.endpoints) {
+      ensureOps(e, "tts");
+      ensurePricing(e);
+    }
     for (const u of all.value) {
       const cred = opsOf(u).credentialId;
       if (cred) bindCredential(u.slot, cred);
@@ -126,7 +141,12 @@ const describe = (u: UnifiedEndpoint): EndpointDescriptor => ({
   concurrency: u.concurrency,
   inPrice: u.profile?.inPrice,
   outPrice: u.profile?.outPrice,
+  // the whole rate card, so the fixture prices its invented week at the schedule and promotions
+  // that were actually in force at each row's finishing time
+  pricing: u.profile ? pricingOf(u.profile) : u.endpoint ? speechPricing(u.endpoint) : undefined,
+  usageFormat: u.profile ? usageFormatFor(u.profile.model, u.profile.baseUrl) : undefined,
   billing: u.endpoint ? billingOf(u.endpoint) : undefined,
+  maxChars: u.endpoint?.maxChars,
   hasKey: keyring.has(u.slot),
 });
 
@@ -143,12 +163,32 @@ async function load() {
 }
 onMounted(load);
 watch(() => all.value.length, load);
+// A demo reset or a scenario replaces the rate cards this history was priced from, and the fixture
+// service has already dropped it by the time the epoch changes — so pull it again rather than keep
+// showing a week priced against a world that is gone.
+watch(() => demoStore._epoch, load);
 
 const rangeLabel = computed(() => RANGES.find((r) => r.value === ui.range)!.label);
 
+/**
+ * Every settled request against this endpoint: the ones this session actually made, then the
+ * fixture service's invented week.
+ *
+ * The session's own rows come out of the append-only ledger rather than out of the running job
+ * simulator, which only knows about work that has not finished yet. Reading the simulator alone
+ * made a request disappear from this page the moment it completed — the one point at which it had
+ * a receipt worth looking at — and left the page showing unrelated backstory instead.
+ */
+const settledFor = (u: UnifiedEndpoint): RequestRecord[] => [
+  // by id *and* kind: a speech endpoint and a scripting profile may share an id, and the seeded
+  // world has an `openai` of each
+  ...usageStore.ofEndpoint(u.id, u.kind),
+  ...(histories.value[u.key] ?? []),
+];
+
 /** Buckets for one endpoint over one range, folded from its records. */
 const seriesFor = (u: UnifiedEndpoint, range = ui.range) =>
-  seriesFrom(histories.value[u.key] ?? [], u.kind, range, now.value);
+  seriesFrom(settledFor(u), u.kind, range, now.value);
 
 const liveFor = (u: UnifiedEndpoint) => liveActivity(u);
 
@@ -209,15 +249,13 @@ const health = computed(() =>
 );
 const busyJobs = computed(() => (selected.value ? jobsUsing(selected.value) : []));
 
-/** Sample history plus whatever this session has in flight, newest first. */
+/** In flight now, then what this session settled, then the sample history — newest first. */
 const activityRows = computed(() => {
   const u = selected.value;
   if (!u) return [];
   const from = now.value - RANGES.find((r) => r.value === ui.range)!.ms;
-  const historical = (histories.value[u.key] ?? []).filter(
-    (r) => (r.finishedAt ?? r.queuedAt) >= from,
-  );
-  return [...liveRequests(u, now.value), ...historical];
+  const settled = settledFor(u).filter((r) => (r.finishedAt ?? r.queuedAt) >= from);
+  return [...liveRequests(u, now.value), ...settled];
 });
 
 // ---------- the strip ----------
@@ -226,27 +264,27 @@ const startOfToday = computed(() => {
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 });
-const spendToday = computed(() => {
+/** What one endpoint has been charged since midnight, this session's own requests included. */
+const spendSince = (rows: RequestRecord[]) => {
   let cost = 0;
   let unknown = 0;
-  for (const rows of Object.values(histories.value))
-    for (const r of rows) {
-      if ((r.finishedAt ?? r.queuedAt) < startOfToday.value) continue;
-      if (r.cost == null) unknown++;
-      else cost += r.cost;
-    }
-  return { cost, unknown };
-});
-const spendTodayFor = (u: UnifiedEndpoint) => {
-  let cost = 0;
-  let unknown = 0;
-  for (const r of histories.value[u.key] ?? []) {
+  for (const r of rows) {
     if ((r.finishedAt ?? r.queuedAt) < startOfToday.value) continue;
     if (r.cost == null) unknown++;
     else cost += r.cost;
   }
   return { cost, unknown };
 };
+const spendToday = computed(() =>
+  all.value.reduce(
+    (acc, u) => {
+      const one = spendSince(settledFor(u));
+      return { cost: acc.cost + one.cost, unknown: acc.unknown + one.unknown };
+    },
+    { cost: 0, unknown: 0 },
+  ),
+);
+const spendTodayFor = (u: UnifiedEndpoint) => spendSince(settledFor(u));
 const totals = computed(() => {
   let active = 0;
   let queued = 0;
@@ -306,13 +344,13 @@ async function runTest(u: UnifiedEndpoint) {
   }
 }
 
-function probeCost(u: UnifiedEndpoint): number | null {
-  if (u.profile) return (24 * u.profile.inPrice + 8 * u.profile.outPrice) / 1e6;
-  const b = billingOf(u.endpoint!);
-  if (b.rate == null) return null;
-  if (b.unit === "request") return b.rate;
-  if (b.unit === "minute") return 0;
-  return b.unit === "tokens" ? (3 / 1e6) * b.rate : (12 / 1e6) * b.rate;
+/**
+ * What pressing Test would cost, priced the same way the test itself prices it: through the shared
+ * engine, at the rates in force now. Working it out from the base rates here and from the engine
+ * there would disagree with itself the moment an off-peak window opened or a promotion started.
+ */
+function probeCostOf(u: UnifiedEndpoint): number | null {
+  return probeCost(describe(u), now.value);
 }
 
 function remove(u: UnifiedEndpoint) {
@@ -719,7 +757,7 @@ function pickBucket(b: MetricBucket | null) {
               :all="all"
               :busy="busyJobs.length"
               :testing="testing"
-              :probe-cost="probeCost(selected)"
+              :probe-cost="probeCostOf(selected)"
               @test="runTest(selected)"
               @remove="remove(selected)"
             />

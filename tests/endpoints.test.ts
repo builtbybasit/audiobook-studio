@@ -18,8 +18,17 @@ import {
   voicesFromFishModels,
 } from "@/lib/endpoints";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
-import { FixtureEndpointService, seriesFrom } from "@/services/endpoints";
-import type { Endpoint, MetricTotals, RequestRecord, TtsBilling } from "@/types";
+import { FixtureEndpointService, probeCost, probeUnits, seriesFrom } from "@/services/endpoints";
+import { noUnits, speechRates } from "@/lib/pricing";
+import type { BillableUnits } from "@/types";
+import type {
+  Endpoint,
+  MetricTotals,
+  PricingConfig,
+  RateSet,
+  RequestRecord,
+  TtsBilling,
+} from "@/types";
 
 const NOW = 1_700_000_000_000;
 
@@ -89,13 +98,30 @@ test("a rate that isn't known is never rendered as zero", () => {
   expect(pricingLabel(unifyEndpoint(ttsEndpoint({ billing: unknown })))).toBe("rate not known");
 });
 
+const units = (over: Partial<BillableUnits> = {}): BillableUnits => ({
+  ...noUnits(),
+  requests: 1,
+  ...over,
+});
+
 test("each billing unit prices a request by what it actually charges for", () => {
-  expect(ttsCost({ unit: "chars", rate: 15 }, 2_000_000, 0)).toBeCloseTo(30, 6);
-  expect(ttsCost({ unit: "tokens", rate: 4 }, 1_000_000, 0)).toBeCloseTo(1, 6);
-  expect(ttsCost({ unit: "minute", rate: 0.3 }, 0, 120)).toBeCloseTo(0.6, 6);
+  expect(ttsCost({ unit: "chars", rate: 15 }, units({ chars: 2_000_000 }))).toBeCloseTo(30, 6);
+  expect(ttsCost({ unit: "bytes", rate: 15 }, units({ bytes: 2_000_000 }))).toBeCloseTo(30, 6);
+  // `tokens` is per 1M **text tokens**, not a per-character rate wearing a different label
+  expect(ttsCost({ unit: "tokens", rate: 4 }, units({ textTokens: 1_000_000 }))).toBeCloseTo(4, 6);
+  expect(ttsCost({ unit: "minute", rate: 0.3 }, units({ audioSeconds: 120 }))).toBeCloseTo(0.6, 6);
   // a flat fee does not scale with the text
-  expect(ttsCost({ unit: "request", rate: 0.02 }, 10, 1)).toBe(0.02);
-  expect(ttsCost({ unit: "request", rate: 0.02 }, 100_000, 900)).toBe(0.02);
+  expect(ttsCost({ unit: "request", rate: 0.02 }, units({ chars: 10 }))).toBe(0.02);
+  expect(
+    ttsCost({ unit: "request", rate: 0.02 }, units({ chars: 100_000, audioSeconds: 900 })),
+  ).toBe(0.02);
+  // two rates, charged on two different quantities, added rather than substituted
+  expect(
+    ttsCost(
+      { unit: "audio-tokens", rate: 1, audioRate: 20 },
+      units({ textTokens: 1_000_000, audioTokens: 500_000 }),
+    ),
+  ).toBeCloseTo(1 + 10, 6);
 });
 
 test("per-request billing has no per-character equivalent for the run estimator", () => {
@@ -103,6 +129,10 @@ test("per-request billing has no per-character equivalent for the run estimator"
   expect(perMillionChars({ unit: "chars", rate: 12 })).toBe(12);
   expect(perMillionChars({ unit: "tokens", rate: 12 })).toBe(3);
   expect(perMillionChars({ unit: "minute", rate: 0.3 })!).toBeGreaterThan(0);
+  // a byte rate is a different quantity over non-ASCII text, not a different scale, so it has no
+  // honest per-character equivalent at all
+  expect(perMillionChars({ unit: "bytes", rate: 15 })).toBeNull();
+  expect(perMillionChars({ unit: "audio-tokens", rate: 1, audioRate: 20 })).toBeNull();
 });
 
 test("money keeps fractions of a cent visible", () => {
@@ -445,4 +475,135 @@ test("a voice with no title falls back to its reference_id", () => {
     label: "xyz",
     gender: "?",
   });
+});
+
+// ---------- the connection test and the estimate beside it agree ----------
+
+test("a probe is priced through the same engine the rest of the page uses", async () => {
+  const service = new FixtureEndpointService();
+  const config: PricingConfig = {
+    cachedInput: null,
+    cacheWrite: null,
+    timezone: "UTC",
+    windows: [],
+    promotions: [
+      { id: "p", label: "Half price", from: null, until: null, scope: ["model"], percent: 50 },
+    ],
+  };
+  const ep = {
+    key: "tts:a",
+    id: "a",
+    kind: "tts" as const,
+    name: "A",
+    model: "tts-1",
+    baseUrl: "https://example.test/v1",
+    concurrency: 1,
+    billing: { unit: "chars" as const, rate: 20 },
+    pricing: { base: speechRates({ unit: "chars", rate: 20 }), config },
+  };
+  // the probe line at $20/1M, halved by the promotion in force
+  const probeChars = probeUnits(ep.billing).chars;
+  const estimate = probeCost(ep);
+  expect(estimate).toBeCloseTo((probeChars / 1e6) * 10, 12);
+  const result = await service.testConnection(ep);
+  expect(result.cost).toBeCloseTo(estimate!, 12);
+
+  // a rate nobody knows stays unknown through the discount
+  const unknown = { ...ep, billing: { unit: "minute" as const, rate: null } };
+  expect(
+    probeCost({ ...unknown, pricing: { base: speechRates(unknown.billing), config } }),
+  ).toBeNull();
+});
+
+test("a scripting probe follows the schedule too", () => {
+  const base: RateSet = { input: 2, output: 8, cachedInput: null, cacheWrite: null, speech: null };
+  const config: PricingConfig = {
+    cachedInput: null,
+    cacheWrite: null,
+    timezone: "UTC",
+    windows: [{ id: "n", label: "Off-peak", days: [], from: 0, to: 1439, percent: 50 }],
+    promotions: [],
+  };
+  const full = probeCost({
+    key: "scripting:x",
+    id: "x",
+    kind: "scripting",
+    name: "X",
+    model: "m",
+    baseUrl: "https://example.test/v1",
+    concurrency: 1,
+    pricing: { base, config: { ...config, windows: [] } },
+  })!;
+  const discounted = probeCost({
+    key: "scripting:x",
+    id: "x",
+    kind: "scripting",
+    name: "X",
+    model: "m",
+    baseUrl: "https://example.test/v1",
+    concurrency: 1,
+    pricing: { base, config },
+  })!;
+  expect(full).toBeCloseTo((24 * 2 + 8 * 8) / 1e6, 15);
+  expect(discounted).toBeCloseTo(full / 2, 15);
+});
+
+test("the invented week is invented once and not re-priced on the next look", async () => {
+  const service = new FixtureEndpointService();
+  const ep = {
+    key: "scripting:openai",
+    id: "openai",
+    kind: "scripting" as const,
+    name: "OpenAI",
+    model: "gpt-4o-mini",
+    baseUrl: "https://api.openai.com/v1",
+    concurrency: 4,
+    inPrice: 0.15,
+    outPrice: 0.6,
+    pricing: {
+      base: {
+        input: 0.15,
+        output: 0.6,
+        cachedInput: null,
+        cacheWrite: null,
+        speech: null,
+      } as RateSet,
+      config: {
+        cachedInput: null,
+        cacheWrite: null,
+        timezone: "UTC",
+        windows: [],
+        promotions: [],
+      } as PricingConfig,
+    },
+  };
+  const first = await service.history(ep, "7d");
+  expect(first.length).toBeGreaterThan(0);
+  const before = first.map((r) => `${r.id}:${r.cost}`).join("|");
+
+  // the rate card is doubled, and the page is looked at again well over a minute later
+  ep.pricing.base = { ...ep.pricing.base, input: 999, output: 999 };
+  const again = await service.history(ep, "7d");
+  expect(again.map((r) => `${r.id}:${r.cost}`).join("|")).toBe(before);
+
+  // only an explicit reset — a demo reset, a scenario replacing the world — drops it
+  service.reset();
+  const after = await service.history(ep, "7d");
+  expect(after.map((r) => `${r.id}:${r.cost}`).join("|")).not.toBe(before);
+});
+
+test("a cache percentage divides by the input of the requests that reported one", () => {
+  const rows: RequestRecord[] = [
+    // reported: 4,000 of 10,000 cached
+    record({ usage: { inputTokens: 10_000, outputTokens: 0, cachedInput: 4000 } }),
+    // said nothing at all: its 90,000 input tokens are not evidence of a miss
+    record({ usage: { inputTokens: 90_000, outputTokens: 0 } }),
+  ];
+  const totals = seriesFrom(rows, "scripting", "1h", NOW).totals;
+  expect(totals.inputTokens).toBe(100_000);
+  expect(totals.cacheReported).toBe(1);
+  expect(totals.cachedInputTokens).toBe(4000);
+  // 40% of what was reported on, not 4% of everything that went out
+  expect(totals.cacheReportedInputTokens).toBe(10_000);
+  expect(Math.round((totals.cachedInputTokens / totals.cacheReportedInputTokens) * 100)).toBe(40);
 });

@@ -2,6 +2,7 @@
 // plus its own id; the store mutates these in place and nothing here is persisted.
 import type { SplitMode, VoiceRef } from "@/types/common";
 import type { ReqError } from "@/types/endpoint";
+import type { SpeechCharge } from "@/types/pricing";
 import type { ExpressionAnnotation } from "@/types/expression";
 
 export type SegmentType = "dialogue" | "narration" | "thought";
@@ -36,12 +37,16 @@ export interface Take {
   ms: number;
   duration: number;
   cost?: number;
+  /** what that cost was: the rate in force when this take landed, and why it was that rate */
+  charge?: SpeechCharge;
   endpoint: string | null;
   voiceRef?: VoiceRef;
   voice?: string;
   model?: string;
   direction?: string;
   style?: string;
+  /** the voice instructions submitted beside the line when this take was rendered */
+  instructions?: string;
   type?: SegmentType;
   /** the text this clip was rendered from — a later split/join/edit shows up as drift */
   text?: string;
@@ -79,9 +84,20 @@ export interface SegmentAudio {
   model?: string;
   direction?: string;
   style?: string;
+  /** the voice instructions actually submitted beside the line, composed from `style` and
+   *  `direction`. Kept because a provider that meters what it receives meters these too, so the
+   *  billable count and the audit trail have to be the same string. */
+  instructions?: string;
   type?: SegmentType;
   at?: number;
   cost?: number;
+  /**
+   * The receipt for this clip: the rate in force when it landed, what moved that rate off the card,
+   * and what it was charged on. Written once, when the render settles, and never recalculated —
+   * editing the endpoint's rate or letting a promotion expire leaves every clip already rendered at
+   * the price it was actually charged.
+   */
+  charge?: SpeechCharge;
   /** the exact text sent, so drift can tell "the script changed" from "the delivery changed" */
   text?: string;
   /** the text after the pronunciation dictionary, when it differed from `text` */

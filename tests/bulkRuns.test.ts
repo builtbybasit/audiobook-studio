@@ -8,6 +8,7 @@ import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
+import { speechWhy } from "@/lib/pricing";
 // Bulk re-scripting and bulk re-narration over chapters that are already finished.
 //
 // Four properties hold this feature together, and they are what is tested here.
@@ -39,7 +40,7 @@ import {
 } from "@/lib/runPlan";
 import { newProfile } from "@/lib/scripting";
 import { reapplyCorrections, SEEDED_KEYS } from "@/mock";
-import type { Segment } from "@/types";
+import type { PricingConfig, Segment } from "@/types";
 
 let timers = new Map<number, { fn: () => void; repeat: boolean }>();
 let clock = 1_000_000;
@@ -718,5 +719,134 @@ describe("the seeded situations", () => {
         .map((c) => `${c.scripting}:${c.narration}`)
         .join("|"),
     ).toBe(signature);
+  });
+});
+
+// ---------- speech pricing ----------
+//
+// A speech rate goes on discount the same way a token rate does, and the same two guarantees have
+// to hold: a clip is priced when it lands rather than when the run starts, and what it was charged
+// never moves afterwards.
+
+describe("what a rendered clip is charged", () => {
+  /** The speech endpoint every seeded voice routes to, with a rate card we control. */
+  function speechEndpoint(pricing: Partial<PricingConfig> = {}) {
+    const ep = endpointsStore.endpoints.find((e) => e.id === "openai")!;
+    ep.billing = { unit: "chars", rate: 12 };
+    ep.price = 12;
+    ep.pricing = {
+      cachedInput: null,
+      cacheWrite: null,
+      timezone: "UTC",
+      windows: [],
+      promotions: [],
+      ...pricing,
+    };
+    return ep;
+  }
+
+  /** Clips rendered by that endpoint. The seeded cast also routes speakers to the free local
+   *  server, and a free clip has nothing to say about a discount. */
+  const chargedByIt = (chId: number) =>
+    scriptsStore
+      .segmentsOf("cliche", chId)
+      .filter((s) => s.audio.endpoint === "openai" && s.audio.charge)
+      .map((s) => s.audio);
+
+  test("a clip keeps the rate it was charged at when the card changes afterwards", () => {
+    const ep = speechEndpoint({
+      promotions: [
+        { id: "p", label: "Half price", from: null, until: null, scope: ["model"], percent: 50 },
+      ],
+    });
+    narrationStore.runNarration("cliche", [1], { scope: "all" });
+    drain();
+    const clips = chargedByIt(1);
+    expect(clips.length).toBeGreaterThan(0);
+    const first = clips[0];
+    expect(first.charge!.lines[0].rate).toBe(6);
+    expect(first.charge!.lines[0].base).toBe(12);
+    expect(first.charge!.unit).toBe("chars");
+    expect(speechWhy(first.charge!).join(" ")).toContain("Half price");
+    expect(first.cost).toBeCloseTo(first.charge!.amount!, 12);
+    const spent = jobsStore.spent("cliche");
+
+    // the promotion ends and the card doubles, long after these clips landed
+    ep.pricing!.promotions = [];
+    ep.billing = { unit: "chars", rate: 24 };
+    expect(first.charge!.lines[0].rate).toBe(6);
+    expect(first.cost).toBeCloseTo(first.charge!.amount!, 12);
+    expect(jobsStore.spent("cliche")).toBeCloseTo(spent, 12);
+  });
+
+  test("a clip is charged at the rate in force when it lands, not when the run started", () => {
+    // Start five seconds before a whole minute, so the window closes a few clips into the run:
+    // `drain` advances the fake clock a second per round and one clip lands per round at
+    // concurrency 1, so the run demonstrably straddles the boundary rather than beating it.
+    clock = 1_015_000;
+    const to = (new Date(clock).getUTCMinutes() + 1) % 1440;
+    const ep = speechEndpoint({
+      windows: [
+        { id: "n", label: "Off-peak", days: [], from: (to - 300 + 1440) % 1440, to, percent: 50 },
+      ],
+    });
+    ep.concurrency = 1;
+    narrationStore.runNarration("cliche", [1], { scope: "all" });
+    drain();
+    const charges = chargedByIt(1).map((a) => a.charge!);
+    expect(charges.length).toBeGreaterThan(1);
+    // the run outlasts the boundary, so it is charged at two prices rather than one
+    expect(new Set(charges.map((c) => c.lines[0].rate)).size).toBe(2);
+    expect(charges.map((c) => c.lines[0].rate)).toContain(6);
+    expect(charges.map((c) => c.lines[0].rate)).toContain(12);
+    // and each clip was priced at its own landing instant, never at the run's starting price
+    for (const c of charges) expect(c.lines[0].rate).toBe(c.at < 1_020_000 ? 6 : 12);
+  });
+
+  test("an endpoint with no rate records an unknown cost, discount or no discount", () => {
+    const ep = speechEndpoint({
+      windows: [{ id: "n", label: "Night", days: [], from: 0, to: 1439, percent: 40 }],
+    });
+    ep.billing = { unit: "chars", rate: null };
+    narrationStore.runNarration("cliche", [1], { scope: "all" });
+    drain();
+    const charges = chargedByIt(1).map((a) => a.charge!);
+    expect(charges.length).toBeGreaterThan(0);
+    for (const c of charges) {
+      expect(c.lines[0].rate).toBeNull();
+      expect(c.amount).toBeNull();
+      expect(c.basis).toBe("unknown");
+      // the window applied to nothing, so it claims nothing
+      expect(speechWhy(c)).toEqual([]);
+    }
+    // an unknown cost is never counted as zero spend
+    expect(chargedByIt(1).every((a) => a.cost == null)).toBe(true);
+  });
+
+  test("the run estimate prices each endpoint on its own card and says what moved it", () => {
+    speechEndpoint({
+      promotions: [
+        { id: "p", label: "Half price", from: null, until: null, scope: ["model"], percent: 50 },
+      ],
+    });
+    const est = narrationStore.estimate("cliche", [1], "all");
+    const row = est.per.find((e) => e.endpoint.id === "openai");
+    if (row) {
+      expect(row.cost).not.toBeNull();
+      expect(row.why.join(" ")).toContain("Half price");
+      // the headline follows the discount; the budget figure does not
+      expect(row.withoutPromotions!).toBeCloseTo(row.cost! * 2, 8);
+    }
+    expect(est.withoutPromotions).toBeGreaterThan(est.cost);
+    expect(est.cautions.join(" ")).toContain("Budget checks use");
+  });
+
+  test("requests routed to an endpoint with no rate make the estimate a floor, not a price", () => {
+    const ep = speechEndpoint();
+    ep.billing = { unit: "chars", rate: null };
+    const est = narrationStore.estimate("cliche", [1], "all");
+    expect(est.unpriced).toBeGreaterThan(0);
+    expect(est.per.find((e) => e.endpoint.id === "openai")?.cost).toBeNull();
+    expect(est.cautions.join(" ")).toContain("floor");
   });
 });

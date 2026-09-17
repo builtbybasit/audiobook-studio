@@ -14,6 +14,11 @@ import { useUiStore } from "@/stores/ui";
 // cost figure came from — with the wait reason or the provider's error stacked above it. They stack
 // rather than replace each other, because the timings are most worth reading on the rows that failed.
 //
+// A scripting request also carries its receipt: the line-by-line breakdown of what each slice of
+// the usage was charged at, the instant those rates were read, and anything the provider left out.
+// The list itself stays a list — a row only wears a small "cache not reported" mark, and the
+// explanation is one click away rather than in the column.
+//
 // Error bodies are redacted before they are shown or copied.
 import { computed, ref } from "vue";
 
@@ -23,6 +28,7 @@ import {
   ChevronRight as ExpandIcon,
   Copy as CopyIcon,
   Hourglass as WaitIcon,
+  TriangleAlert as WarnIcon,
   X as ClearIcon,
 } from "@lucide/vue";
 import {
@@ -35,6 +41,14 @@ import {
   maybeMoney,
   sanitize,
 } from "@/lib/endpoints";
+import {
+  COST_BASIS_LABEL,
+  money,
+  speechChargeLines,
+  speechSentence,
+  tokenChargeLines,
+  uncachedInput,
+} from "@/lib/pricing";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import type { ActivityFilter } from "@/views/endpoints/state";
 import type { RequestRecord } from "@/types";
@@ -100,15 +114,50 @@ const bookTitle = (id: string | null) => (id ? (libraryStore.bookById(id)?.title
 /** hour and minute only — the seconds live in the row's detail strip, and the column is tight */
 const hhmm = (ts: number) =>
   new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+/** The instant a receipt read its rates at, shown to the second: it is the whole point of it. */
+const pricedAt = (ts: number) =>
+  new Date(ts).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+/** The usage column. Cached input is shown as a slice of the input it is part of, never beside it
+ *  as if it were extra — `12k in (8k cached)` cannot be misread as 20k tokens. */
 const usageOf = (r: RequestRecord): string => {
   const u = r.usage;
-  if (r.kind === "scripting")
-    return u.inputTokens
-      ? `${compact(u.inputTokens)} in / ${compact(u.outputTokens ?? 0)} out`
-      : "—";
+  if (r.kind === "scripting") {
+    if (!u.inputTokens) return "—";
+    const cached = u.cachedInput != null ? ` (${compact(u.cachedInput)} cached)` : "";
+    return `${compact(u.inputTokens)} in${cached} / ${compact(u.outputTokens ?? 0)} out`;
+  }
   if (!u.chars) return "—";
-  return `${compact(u.chars)} ch${u.audioSeconds ? ` → ${(u.audioSeconds / 60).toFixed(1)}m` : ""}`;
+  // The quantity this request was actually billed on leads, because that is the one the cost beside
+  // it follows. A byte-billed endpoint showing a character count invites exactly the arithmetic the
+  // billing models exist to prevent. The rest is one click away, on the receipt.
+  const sent =
+    r.speech?.unit === "bytes"
+      ? `${compact(u.bytes ?? u.chars)} B`
+      : r.speech?.unit === "tokens" || r.speech?.unit === "audio-tokens"
+        ? `${compact(u.textTokens ?? 0)} tok`
+        : `${compact(u.chars)} ch`;
+  const back =
+    r.speech?.unit === "audio-tokens" && u.audioTokens != null
+      ? ` → ${compact(u.audioTokens)} atok`
+      : u.audioSeconds
+        ? ` → ${(u.audioSeconds / 60).toFixed(1)}m`
+        : "";
+  return `${sent}${back}`;
 };
+
+/** A settled scripting request whose provider said nothing about cache use. Marked, not explained,
+ *  in the list — the list has to stay readable, and the explanation is one click away. */
+const cacheUnknown = (r: RequestRecord): boolean =>
+  r.kind === "scripting" &&
+  (r.status === "done" || r.status === "failed") &&
+  !!r.usage.inputTokens &&
+  r.usage.cachedInput == null;
 
 interface Fact {
   label: string;
@@ -175,16 +224,68 @@ function facts(r: RequestRecord): Fact[] {
   const u = r.usage;
   if (r.kind === "scripting") {
     if (u.inputTokens || u.outputTokens) {
-      out.push({ label: "tokens in", value: compact(u.inputTokens ?? 0), mono: true });
-      out.push({ label: "tokens out", value: compact(u.outputTokens ?? 0), mono: true });
+      out.push({
+        label: "input tokens",
+        value: compact(u.inputTokens ?? 0),
+        mono: true,
+        hint: "the total, cached tokens included",
+      });
+      out.push({
+        label: "of which cached",
+        value: u.cachedInput == null ? "not reported" : compact(u.cachedInput),
+        mono: u.cachedInput != null,
+        hint:
+          u.cachedInput == null
+            ? "this provider did not say — not a reported zero"
+            : u.cachedInput === 0
+              ? "reported: none of it was cached"
+              : "charged at the cached rate; the rest at the ordinary one",
+        tone: u.cachedInput == null ? "warn" : undefined,
+      });
+      if (u.cacheWrite)
+        out.push({
+          label: "written to cache",
+          value: compact(u.cacheWrite),
+          mono: true,
+          hint: "also part of the input total",
+        });
+      out.push({ label: "output tokens", value: compact(u.outputTokens ?? 0), mono: true });
     } else out.push({ label: "tokens", value: "not reported yet" });
   } else if (u.chars) {
+    // Four different readings of one request, never conversions of one another. All of them are
+    // shown whichever the endpoint bills on, because "12,400 characters" and "$1.86" only make
+    // sense together once you can see that the endpoint charged the 31,000 bytes instead.
     out.push({ label: "characters", value: compact(u.chars), mono: true });
+    if (u.bytes != null)
+      out.push({
+        label: "UTF-8 bytes",
+        value: compact(u.bytes),
+        mono: true,
+        hint:
+          u.bytes > u.chars
+            ? `${(u.bytes / u.chars).toFixed(2)}× the character count — this text is not all ASCII`
+            : "the same as the character count: this text is all ASCII",
+      });
+    if (u.textTokens != null)
+      out.push({
+        label: "text tokens",
+        value: compact(u.textTokens),
+        mono: true,
+        hint: "the submitted text, tokenised",
+      });
     if (u.audioSeconds)
       out.push({
         label: "audio",
         value: (u.audioSeconds / 60).toFixed(1) + " min",
         mono: true,
+        hint: "generated audio only — silence stitched between clips is not rendered or billed",
+      });
+    if (u.audioTokens != null)
+      out.push({
+        label: "audio tokens",
+        value: compact(u.audioTokens),
+        mono: true,
+        hint: "the audio that came back, metered in tokens — not a conversion of the text",
       });
   } else out.push({ label: "characters", value: "not reported yet" });
 
@@ -197,6 +298,50 @@ function facts(r: RequestRecord): Fact[] {
     tone: r.cost == null && !queued && r.status !== "running" ? "warn" : undefined,
   });
   return out;
+}
+
+/**
+ * The receipt for one settled request, whichever kind it is. Both kinds meet in `ChargeLine`, so
+ * there is one table rather than two — a speech request has one line and a token request has up to
+ * four, and the columns mean the same thing on both.
+ */
+const receipt = (r: RequestRecord) =>
+  r.priced
+    ? {
+        lines: tokenChargeLines(r.priced),
+        sentence: tokenSentence(r),
+        total: r.priced.total,
+        basis: r.priced.basis,
+        at: r.priced.at,
+        rule: r.priced.rule,
+        unknowns: r.priced.unknowns,
+        calculated: r.priced.calculated,
+        reported: r.priced.reported,
+      }
+    : r.speech
+      ? {
+          lines: speechChargeLines(r.speech),
+          sentence: speechSentence(r.speech),
+          total: r.speech.amount,
+          basis: r.speech.basis,
+          at: r.speech.at,
+          rule: r.speech.rule,
+          unknowns: r.speech.unknowns,
+          calculated: null,
+          reported: null,
+        }
+      : null;
+
+/** How the tokens divide, as a sentence that cannot be read as double counting. */
+function tokenSentence(r: RequestRecord): string {
+  const priced = r.priced;
+  if (!priced) return "";
+  const u = priced.usage;
+  const plain = uncachedInput(u).toLocaleString();
+  if (u.cachedInput == null)
+    return `${u.inputTokens.toLocaleString()} input tokens, all charged at the ordinary rate because the provider reported no cache detail, and ${u.outputTokens.toLocaleString()} output tokens.`;
+  const written = u.cacheWrite ? `, ${u.cacheWrite.toLocaleString()} written to the cache` : "";
+  return `${u.inputTokens.toLocaleString()} input tokens in total: ${u.cachedInput.toLocaleString()} served from cache${written}, ${plain} read in full. Output is charged separately: ${u.outputTokens.toLocaleString()} tokens.`;
 }
 
 async function copyDiagnostics(r: RequestRecord) {
@@ -219,6 +364,35 @@ async function copyDiagnostics(r: RequestRecord) {
       usage: r.usage,
       cost: r.cost,
       costBasis: r.costBasis,
+      // the receipt as it was written: usage, the rates in force at that instant, and the reasoning
+      pricing: r.priced
+        ? {
+            pricedAt: new Date(r.priced.at).toISOString(),
+            rule: r.priced.rule,
+            lines: r.priced.lines,
+            calculated: r.priced.calculated,
+            providerReported: r.priced.reported,
+            unknowns: r.priced.unknowns,
+            usageFormat: r.priced.usage.format,
+            rates: r.priced.rates,
+          }
+        : r.speech
+          ? {
+              pricedAt: new Date(r.speech.at).toISOString(),
+              rule: r.speech.rule,
+              billedBy: r.speech.unit,
+              ...(r.speech.audioTokensPerSecond != null
+                ? { audioTokensPerSecond: r.speech.audioTokensPerSecond }
+                : {}),
+              // every quantity that was counted, and the lines that were actually charged
+              measured: r.speech.units,
+              reportedUsage: r.speech.reported,
+              lines: r.speech.lines,
+              amount: r.speech.amount,
+              basis: r.speech.basis,
+              unknowns: r.speech.unknowns,
+            }
+          : null,
     },
     error: r.error
       ? { code: r.error.code, message: r.error.message, body: sanitize(r.error.body) }
@@ -378,6 +552,13 @@ function clearAll() {
                   :title="`${r.attempts} attempts — retried ${r.attempts - 1}×`"
                   >×{{ r.attempts }}</span
                 >
+                <!-- a mark, not a sentence: the list stays a list and the detail is one click away -->
+                <span
+                  v-if="cacheUnknown(r)"
+                  class="ml-1 rounded bg-zinc-200 px-1 text-[10px] text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300"
+                  title="This provider reported no cache detail, so the cost is an upper bound rather than a fact. Open the row for what is unknown."
+                  >cache ?</span
+                >
               </td>
               <td class="max-w-[140px] py-1.5 text-zinc-500">
                 <RouterLink
@@ -461,6 +642,90 @@ function clearAll() {
                       Redacted before display: anything key-shaped in the provider’s reply is
                       replaced with <code class="font-mono">[redacted]</code>.
                     </p>
+                  </div>
+
+                  <!-- The receipt: what each slice of what was sent was charged at, and at which
+                       rates. Kept above the timings because "why did this cost that" is the
+                       question a priced row is opened for. One table for both kinds of endpoint —
+                       tokens or characters, the columns mean the same thing. -->
+                  <div
+                    v-if="receipt(r)"
+                    class="mb-2 rounded border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950/60"
+                  >
+                    <p class="mb-1.5 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                      {{ receipt(r)!.sentence }}
+                    </p>
+                    <table class="w-full text-[11px]">
+                      <thead class="text-zinc-500">
+                        <tr>
+                          <th class="pb-1 text-left font-normal">Charged</th>
+                          <th class="pb-1 text-right font-normal">Quantity</th>
+                          <th class="pb-1 text-right font-normal">Rate</th>
+                          <th class="pb-1 text-right font-normal">Amount</th>
+                          <th class="pb-1 pl-3 text-left font-normal">At this rate because</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="l in receipt(r)!.lines"
+                          :key="l.label"
+                          class="border-t border-zinc-100 dark:border-zinc-800"
+                        >
+                          <td class="py-1">{{ l.label }}</td>
+                          <td class="py-1 text-right font-mono">{{ l.quantity }}</td>
+                          <td class="py-1 text-right font-mono text-zinc-500">{{ l.rate }}</td>
+                          <td class="py-1 text-right font-mono">{{ maybeMoney(l.amount) }}</td>
+                          <td class="py-1 pl-3 text-zinc-500">
+                            {{ l.why.join(" → ") || "the card rate" }}
+                            <span v-if="l.note" class="block text-zinc-400">{{ l.note }}</span>
+                          </td>
+                        </tr>
+                        <tr class="border-t border-zinc-200 font-medium dark:border-zinc-700">
+                          <td class="py-1" colspan="3">
+                            Total · {{ COST_BASIS_LABEL[receipt(r)!.basis] }}
+                          </td>
+                          <td class="py-1 text-right font-mono">
+                            {{ maybeMoney(receipt(r)!.total) }}
+                          </td>
+                          <td class="py-1 pl-3 text-[10px] font-normal text-zinc-500">
+                            {{ receipt(r)!.rule }} — {{ pricedAt(receipt(r)!.at) }}
+                          </td>
+                        </tr>
+                        <!-- the provider's own number, kept next to ours rather than instead of it -->
+                        <tr
+                          v-if="receipt(r)!.reported != null && receipt(r)!.calculated != null"
+                          class="border-t border-zinc-100 text-zinc-500 dark:border-zinc-800"
+                        >
+                          <td class="py-1" colspan="3">
+                            {{
+                              receipt(r)!.basis === "provider-reported"
+                                ? "Same request, calculated here from the configured rates"
+                                : "Same request, as the provider reported it"
+                            }}
+                          </td>
+                          <td class="py-1 text-right font-mono">
+                            {{
+                              money(
+                                (receipt(r)!.basis === "provider-reported"
+                                  ? receipt(r)!.calculated
+                                  : receipt(r)!.reported)!,
+                              )
+                            }}
+                          </td>
+                          <td class="py-1 pl-3 text-[10px]">
+                            the two differ — a provider’s tokeniser and rounding are not ours
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <ul
+                      v-if="receipt(r)!.unknowns.length"
+                      class="mt-1.5 space-y-0.5 rounded bg-amber-400/10 px-2 py-1 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300"
+                    >
+                      <li v-for="why in receipt(r)!.unknowns" :key="why">
+                        <WarnIcon class="icon-sm" /> {{ why }}
+                      </li>
+                    </ul>
                   </div>
 
                   <!-- what the request was sent as, and what each leg of it took -->

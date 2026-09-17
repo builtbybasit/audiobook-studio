@@ -2,6 +2,7 @@
 // observed from it, and the estimate and the diff are what the Scripting page shows before and
 // after a run.
 import type { SplitMode } from "@/types/common";
+import type { PricedRequest, PricingConfig, RateEstimate } from "@/types/pricing";
 import type { Segment, SegmentType } from "@/types/segment";
 
 /** Session-only observations from simulated scripting requests. */
@@ -29,10 +30,17 @@ export interface Profile {
   id: string;
   name: string;
   model: string;
-  /** USD per million input tokens */
+  /** USD per million input tokens — the base rate, before any schedule or promotion */
   inPrice: number;
-  /** USD per million output tokens */
+  /** USD per million output tokens — the base rate, before any schedule or promotion */
   outPrice: number;
+  /**
+   * Everything the two rates above cannot express: cached-input and cache-write rates, a
+   * peak/off-peak schedule with its timezone, and temporary promotions. Optional so a profile
+   * saved before it existed still loads; `ensurePricing` fills the defaults in on first use, and
+   * an endpoint with no advanced pricing has an empty schedule and no promotions.
+   */
+  pricing?: PricingConfig;
   baseUrl: string;
   enabled: boolean;
   concurrency: number;
@@ -101,6 +109,7 @@ export interface ScriptEstimate {
   chars: number;
   chunks: number;
   seconds: number;
+  /** the conservative total: no cache savings, at the rates in force right now */
   cost: number;
   profile: Profile | undefined;
   inputTokens: number;
@@ -108,4 +117,17 @@ export interface ScriptEstimate {
   inputCost: number;
   outputCost: number;
   blockers: string[];
+  /** the same numbers priced: the alternatives, and what could move the figure before the run ends */
+  rates: RateEstimate | null;
+}
+
+/** One completed scripting request, kept with the rates it was charged at. */
+export interface ScriptUsageRecord {
+  bookId: string;
+  profileId: string;
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** the receipt — usage, rates and reasoning, frozen when the request completed */
+  priced?: PricedRequest;
 }

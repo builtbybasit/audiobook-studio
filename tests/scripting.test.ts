@@ -8,6 +8,7 @@ import { useUiStore } from "@/stores/ui";
 import { test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 import { newProfile, profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
+import { newPricing, uncachedInput } from "@/lib/pricing";
 
 import { jobDiagnostics, logJob, MAX_JOB_EVENTS } from "@/lib/jobActivity";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
@@ -286,4 +287,131 @@ test("export jobs record milestones and the completed artifact", () => {
   expect(exportsStore.exports[0].filename).toBe("test-log.m4b");
   expect(exportsStore.exports[0].status).toBe("done");
   expect(job.activity!.at(-1)!.message).toBe("Job done");
+});
+
+// ---------- pricing a run ----------
+
+test("a completed request keeps the rates it was charged at when the card changes afterwards", () => {
+  const p = endpointsStore.profiles[0];
+  p.pricing = newPricing({ timezone: "UTC" });
+  scriptingStore.runScripting("cliche", [1]);
+  finish();
+  const usage = jobsStore.scriptUsage.filter((u) => u.bookId === "cliche");
+  expect(usage.length).toBeGreaterThan(0);
+  const spent = jobsStore.scriptSpent("cliche");
+  const receipt = usage[0].priced!;
+  expect(receipt.rates.input.rate).toBe(1);
+  expect(receipt.at).toBeGreaterThan(0);
+  expect(receipt.rule).toContain("completed");
+
+  // triple the rates and add a promotion long after the fact
+  p.inPrice = 3;
+  p.outPrice = 6;
+  p.pricing.promotions = [
+    { id: "x", label: "X", from: null, until: null, scope: ["model"], percent: 90 },
+  ];
+  expect(jobsStore.scriptSpent("cliche")).toBeCloseTo(spent, 12);
+  expect(usage[0].priced!.rates.input.rate).toBe(1);
+  expect(usage[0].priced!.total).toBeCloseTo(receipt.total!, 12);
+});
+
+test("usage is recorded as a total with the cached part inside it, never added on top", () => {
+  const p = endpointsStore.profiles[0];
+  p.pricing = newPricing({ timezone: "UTC", cachedInput: 0.25 });
+  scriptingStore.runScripting("cliche", [1]);
+  finish();
+  for (const u of jobsStore.scriptUsage) {
+    const usage = u.priced!.usage;
+    const lines = u.priced!.lines;
+    const inputLines = lines
+      .filter((l) => l.component !== "output")
+      .reduce((n, l) => n + l.tokens, 0);
+    expect(inputLines).toBe(usage.inputTokens);
+    expect(uncachedInput(usage)).toBeGreaterThanOrEqual(0);
+    // and the charge is the sum of its own lines
+    expect(u.priced!.calculated).toBeCloseTo(
+      lines.reduce((n, l) => n + (l.amount ?? 0), 0),
+      12,
+    );
+  }
+});
+
+test("each request of one run is priced at its own instant across a rate boundary", () => {
+  const p = endpointsStore.profiles[0];
+  // an off-peak window that ends a moment after the run starts, read in UTC from the fake clock
+  const start = new Date(clock);
+  const endsAt = (start.getUTCHours() * 60 + start.getUTCMinutes() + 1) % 1440;
+  p.pricing = newPricing({
+    timezone: "UTC",
+    windows: [
+      {
+        id: "n",
+        label: "Off-peak",
+        days: [],
+        from: (endsAt - 300 + 1440) % 1440,
+        to: endsAt,
+        percent: 50,
+      },
+    ],
+  });
+  p.concurrency = 1; // one at a time, so the run spans the boundary rather than beating it
+  p.maxChars = 400;
+  p.secPerChunk = 100; // 10s of simulated time each, so the run outlasts the minute
+  scriptingStore.runScripting("cliche", [1]);
+  finish();
+  const rates = jobsStore.scriptUsage.map((u) => u.priced!.rates.input.rate);
+  expect(rates.length).toBeGreaterThan(1);
+  // the batch's starting price was not applied to every request
+  expect(new Set(rates).size).toBeGreaterThan(1);
+  expect(rates).toContain(0.5);
+  expect(rates).toContain(1);
+});
+
+test("a run reconciles its estimate against what the reported usage actually cost", () => {
+  scriptingStore.runScripting("cliche", [1]);
+  finish();
+  const job = jobsStore.jobs.find((j) => j.scriptRun)!;
+  expect(job.scriptRun!.estimated).toBeGreaterThan(0);
+  const line = job.activity!.find((e) => e.message.startsWith("Estimate reconciled"))!;
+  expect(line).toBeDefined();
+  expect(line.detail!.estimatedUSD).toBe(job.scriptRun!.estimated!);
+  expect(line.detail!.chargedUSD).toBe(job.scriptRun!.cost);
+  expect(String(line.detail!.cacheShare)).toMatch(/%$/);
+  // the reconciliation is bookkeeping, not a second charge
+  expect(jobsStore.scriptSpent("cliche")).toBeCloseTo(job.scriptRun!.cost, 12);
+});
+
+test("a provider that reports no cache detail is recorded as unknown, not as a miss", () => {
+  const p = endpointsStore.profiles[0];
+  p.baseUrl = "http://localhost:8000/v1"; // a small server that reports totals only
+  p.pricing = newPricing({ timezone: "UTC", cachedInput: 0.25 });
+  scriptingStore.runScripting("cliche", [1]);
+  finish();
+  const receipts = jobsStore.scriptUsage.map((u) => u.priced!);
+  expect(receipts.length).toBeGreaterThan(0);
+  for (const r of receipts) {
+    expect(r.usage.cachedInput).toBeNull();
+    expect(r.basis).toBe("estimated");
+    expect(r.unknowns.join(" ")).toContain("not reported");
+    // the whole input is charged at the ordinary rate — the conservative reading
+    expect(r.lines.find((l) => l.component === "input")!.rate).toBe(1);
+    expect(r.lines.some((l) => l.component === "cachedInput")).toBe(false);
+  }
+  const job = jobsStore.jobs.find((j) => j.scriptRun)!;
+  expect(job.scriptRun!.cacheUnreported).toBe(job.scriptRun!.requests);
+  expect(job.scriptRun!.cachedInput).toBe(0);
+});
+
+test("a provider that reports its own charge is recorded as such, with ours kept beside it", () => {
+  const p = endpointsStore.profiles[0];
+  p.name = "DeepSeek";
+  p.pricing = newPricing({ timezone: "UTC", cachedInput: 0.1 });
+  scriptingStore.runScripting("cliche", [1]);
+  finish();
+  const r = jobsStore.scriptUsage[0].priced!;
+  expect(r.basis).toBe("provider-reported");
+  expect(r.reported).not.toBeNull();
+  expect(r.calculated).not.toBeNull();
+  expect(r.total).toBe(r.reported);
+  expect(r.total).not.toBeCloseTo(r.calculated!, 12);
 });

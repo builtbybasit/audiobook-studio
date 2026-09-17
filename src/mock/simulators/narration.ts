@@ -5,7 +5,18 @@
 // Latency, rate limits and failures are drawn from each endpoint's own configured numbers, so
 // pausing an endpoint, tightening its concurrency or raising its failure rate all show up here.
 import { keyring } from "@/lib/keyring";
+import { billingOf, billingUnitLabel } from "@/lib/endpoints";
 import { logJob, jobWaiting, startJob } from "@/lib/jobActivity";
+import {
+  PRICING_RULE,
+  ensurePricing,
+  measureSpeech,
+  money,
+  priceSpeechRequest,
+  speechWhy,
+} from "@/lib/pricing";
+import { speechInstructions } from "@/lib/speech";
+import { simulateSpeechUsage, speechUsageFormatFor } from "@/mock/simulators/usage";
 import { expressionParts } from "@/lib/expressions";
 import { requeue } from "@/lib/takes";
 import { rnd } from "@/mock/random";
@@ -20,8 +31,10 @@ import type {
   EffectiveVoice,
   Job,
   NarrationStatus,
+  ReqError,
   Segment,
   SegmentAudio,
+  SpeechCharge,
 } from "@/types";
 
 export interface NarrationSimContext extends SimulatorContext {
@@ -36,6 +49,36 @@ export interface NarrationSimContext extends SimulatorContext {
   /** what the chapter's narration reads as, from its clips as they now stand */
   chapterNarration(bookId: string, chId: number): NarrationStatus;
   retime(bookId: string, chId: number): void;
+  /**
+   * One settled speech request, appended to the ledger with the receipt it was charged at.
+   *
+   * Every request that reached the provider goes here — the ones that failed too, because a
+   * provider charges for what was sent whatever came back of it, and because the clip itself is a
+   * poor record: it is overwritten by the next take and pushed aside by the next run. What was
+   * spent is a fact about the request, not about whatever the line happens to be holding now.
+   */
+  recordSpeech(r: {
+    bookId: string;
+    chapterId: number;
+    endpointId: string;
+    label: string;
+    status: "done" | "failed";
+    queuedAt: number;
+    startedAt: number;
+    finishedAt: number;
+    charge: SpeechCharge;
+    error?: ReqError;
+  }): void;
+  /** A request the provider refused outright. Nobody bills a 429, but it happened. */
+  recordRefused(r: {
+    bookId: string;
+    chapterId: number;
+    endpointId: string;
+    label: string;
+    at: number;
+    startedAt: number;
+    error: ReqError;
+  }): void;
 }
 
 /** Render every queued clip of one chapter, then settle the job. */
@@ -51,6 +94,26 @@ export function dispatchNarration(
   startJob(job);
   const segs = ctx.segmentsOf(bookId, c.id);
   const attempts = new Map<string, number>();
+  /**
+   * What this chapter has actually been charged, as each request settles.
+   *
+   * Every **billable attempt** counts, not every successful clip: a render that failed still sent
+   * its text and is still charged for it by a per-character, per-byte or per-request provider, and
+   * a line that succeeded on its second try was paid for twice. Counting finished clips instead
+   * would quietly report a run as cheaper than the ledger says it was — which is the same mistake
+   * that made spending fall when a retake was accepted.
+   */
+  const charged = {
+    amount: 0,
+    inputAmount: 0,
+    audioAmount: 0,
+    requests: 0,
+    unpriced: 0,
+    failedRequests: 0,
+    /** generated audio only: the silence stitched between clips is never rendered or billed */
+    audioSeconds: 0,
+    estimatedLines: 0,
+  };
   // A run renders two kinds of clip: a segment's own audio, and the retake standing beside it.
   // `slot` says which one a target writes to, so a retake never lands on the book's clip.
   type Slot = "audio" | "candidate";
@@ -154,6 +217,10 @@ export function dispatchNarration(
       const sent = said.text;
       const cuts = expressionParts(said, ep);
       const parts = cuts.length;
+      // What else goes over the wire with the line. A provider that meters what it receives meters
+      // this too, so it is composed once, recorded on the clip, and counted by `measureSpeech`.
+      const who = ctx.charactersOf(bookId).find((x) => x.name === next.speaker);
+      const instructions = speechInstructions({ style: who?.style, direction: next.direction });
       const attemptKey = `${next.id}:${slot}`;
       const attempt = (attempts.get(attemptKey) ?? 0) + 1;
       attempts.set(attemptKey, attempt);
@@ -165,6 +232,7 @@ export function dispatchNarration(
         model: ep.model,
         parts,
         characters: sent.length,
+        ...(instructions ? { instructions } : {}),
         ...(said.tags.length ? { expressions: said.tags.join(" ") } : {}),
         ...(next.expressions?.some((a) => a.omitted)
           ? {
@@ -181,7 +249,6 @@ export function dispatchNarration(
         "info",
         diagnostic,
       );
-      const who = ctx.charactersOf(bookId).find((x) => x.name === next.speaker);
       next[slot] = {
         status: "generating",
         endpoint: ep.id,
@@ -204,6 +271,7 @@ export function dispatchNarration(
         model: ep.model,
         direction: next.direction,
         style: who?.style ?? "",
+        ...(instructions ? { instructions } : {}),
         type: next.type,
         text: next.text,
         pronounced: said.pronounced,
@@ -211,9 +279,15 @@ export function dispatchNarration(
         expressions: said.tags,
         ...(sent !== next.text ? { said: sent, lex: said.hits.length } : {}),
         at: Date.now(),
-        cost: (sent.length / 1e6) * ep.price,
+        // No cost yet. A clip is priced when it *lands*, not when it goes out: a per-minute
+        // endpoint cannot be charged before there is any audio, and a run long enough to cross an
+        // off-peak boundary or a promotion expiry has to charge the clips either side of it
+        // differently. `PRICING_RULE` is the same rule the scripting side records.
       };
       const dur = ep.latency * rnd(0.5, 1.1) * parts + sent.length * 6;
+      // when this request actually went out, for the row the ledger keeps of it
+      const dispatchedAt = Date.now();
+      const rowLabel = `${slot === "candidate" ? (queued.auto ? "Replacement" : "Retake") : "Line"} ${next.id} · ${next.speaker}`;
       // the wait is shortened by the demo speed; `dur` is what the clip records as its latency
       setTimeout(() => {
         // a request still in flight when the world was replaced: its result belongs to nothing
@@ -244,12 +318,50 @@ export function dispatchNarration(
             ...diagnostic,
             code: 429,
           });
+          // the attempt is over even though nothing was rendered and nothing was charged; it stays
+          // in the ledger because it is the reason the queue stopped moving
+          ctx.recordRefused({
+            bookId,
+            chapterId: c.id,
+            endpointId: ep.id,
+            label: rowLabel,
+            at: Date.now(),
+            startedAt: dispatchedAt,
+            error: { ...ep.lastError },
+          });
           next[slot] = requeue(clip);
           return;
         }
         const fail = Math.random() < ep.failRate;
         clip.ms = Math.round(dur);
         clip.duration = fail ? 0 : said.pronounced.split(" ").length / 2.6;
+        // Priced here, at the rates in force now, from what was actually sent and what came back.
+        // A clip that failed produced no audio, so a per-minute endpoint charges it nothing while a
+        // per-character or per-request one still charges for what it sent — which is what those
+        // providers do. The receipt is kept on the clip and never recalculated.
+        // What was actually submitted, counted every way a provider can bill it: the line after the
+        // dictionary and the expression tags, plus the voice instructions sent beside it. Not the
+        // source text, and not the split limit — those are different questions with different
+        // answers. `clip.duration` is generated audio only; the silence stitched between clips is
+        // never rendered and so is never billed.
+        const billing = billingOf(ep);
+        const units = measureSpeech(
+          { text: sent, instructions, requests: parts, audioSeconds: clip.duration },
+          billing,
+        );
+        // What the provider itself said about this request, in its own payload shape and read back
+        // through the normalizer exactly as a real response would be. A provider that reports
+        // nothing leaves every field null, and the charge falls back to what we counted.
+        const answer = fail
+          ? null
+          : simulateSpeechUsage({ units }, speechUsageFormatFor(ep.model, ep.baseUrl));
+        const charge = priceSpeechRequest(billing, ensurePricing(ep), units, {
+          at: Date.now(),
+          rule: PRICING_RULE,
+          reported: answer?.usage ?? null,
+        });
+        clip.charge = charge;
+        if (charge.amount != null) clip.cost = charge.amount;
         // the script can move while a request is in flight — a clip that no longer matches what
         // the line says now arrives stale, not done
         clip.status = fail ? "failed" : ctx.clipDrift(bookId, next, clip).length ? "stale" : "done";
@@ -268,6 +380,33 @@ export function dispatchNarration(
           { t: Date.now(), ms: Math.round(dur), ok: !fail },
         ].slice(-40);
         if (fail) ep.failures = (ep.failures ?? 0) + 1;
+        // The request is settled, so it goes into the ledger now — before anything is decided about
+        // which clip ends up in the book. What it cost is a fact about the request; the clip is
+        // only where the audio landed, and a retake, a replacement or a later run moves that.
+        charged.requests++;
+        if (fail) charged.failedRequests++;
+        charged.audioSeconds += charge.units.audioSeconds;
+        if (charge.amount == null) charged.unpriced++;
+        else charged.amount += charge.amount;
+        if (charge.basis === "estimated") charged.estimatedLines++;
+        for (const l of charge.lines) {
+          if (l.amount == null) continue;
+          if (l.component === "audioTokens" || charge.unit === "minute")
+            charged.audioAmount += l.amount;
+          else charged.inputAmount += l.amount;
+        }
+        ctx.recordSpeech({
+          bookId,
+          chapterId: c.id,
+          endpointId: ep.id,
+          label: rowLabel,
+          status: fail ? "failed" : "done",
+          queuedAt: dispatchedAt,
+          startedAt: dispatchedAt,
+          finishedAt: Date.now(),
+          charge,
+          ...(clip.error ? { error: { ...clip.error } } : {}),
+        });
         logJob(
           job,
           `Segment ${next.id} ${fail ? "failed" : clip.status === "stale" ? "completed with outdated audio" : "completed"}`,
@@ -276,6 +415,18 @@ export function dispatchNarration(
             ...diagnostic,
             responseMs: clip.ms,
             audioSeconds: clip.duration,
+            pricedAt: new Date(charge.at).toISOString(),
+            pricingRule: charge.rule,
+            billedBy: billingUnitLabel(charge.unit),
+            rates: charge.lines
+              .map(
+                (l) =>
+                  `${l.component}: ${l.rate == null ? "not known" : money(l.rate)} on ${Math.round(l.quantity).toLocaleString()} (${l.source})`,
+              )
+              .join(" + "),
+            ...(speechWhy(charge).length ? { why: speechWhy(charge).join(" · ") } : {}),
+            costUSD: charge.amount ?? "unknown",
+            costBasis: charge.basis,
             ...(clip.error ? { code: clip.error.code, error: clip.error.message } : {}),
           },
         );
@@ -342,6 +493,7 @@ export function dispatchNarration(
         segs.some((s) => s.candidate?.auto && s.candidate.status === "failed");
       c.narration = ctx.chapterNarration(bookId, c.id);
       ctx.retime(bookId, c.id);
+      reconcile(job, charged);
       ctx.finishJob(job, failed ? "failed" : "done");
       done();
       return;
@@ -349,4 +501,73 @@ export function dispatchNarration(
     setTimeout(tick, simMs(200));
   };
   tick();
+}
+
+/**
+ * Say how this chapter's estimate held up, once every request has settled.
+ *
+ * The estimate was worked out from the text that was going to be submitted and — where the endpoint
+ * bills on the audio — from this app's own reading-speed guess and the endpoint's configured
+ * audio-token conversion. Those are the two assumptions worth reporting against, so the two halves
+ * are reconciled separately rather than netted off against each other: an input side that lands on
+ * the nose and an audio side 30% out is a very different story from both being 15% out, and only
+ * one of them is fixed by changing a number on the Pricing tab.
+ *
+ * `charged` counts billable attempts, so a run that retried three lines reports what those retries
+ * cost rather than what the clips that survived did.
+ */
+function reconcile(
+  job: Job,
+  charged: {
+    amount: number;
+    inputAmount: number;
+    audioAmount: number;
+    requests: number;
+    unpriced: number;
+    failedRequests: number;
+    audioSeconds: number;
+    estimatedLines: number;
+  },
+): void {
+  const run = job.narrationRun;
+  if (!run || run.estimated == null || !charged.requests) return;
+  const delta = charged.amount - run.estimated;
+  const drift = (estimated: number | null | undefined, actual: number): string =>
+    estimated == null || estimated === 0
+      ? "—"
+      : `${actual >= estimated ? "+" : ""}${Math.round(((actual - estimated) / estimated) * 100)}%`;
+  logJob(job, "Estimate reconciled against what was charged", "info", {
+    estimatedUSD: run.estimated,
+    chargedUSD: charged.amount,
+    difference: `${delta >= 0 ? "+" : ""}${money(delta)}`,
+    billableAttempts: charged.requests,
+    ...(charged.failedRequests
+      ? {
+          failedButCharged: `${charged.failedRequests} request${charged.failedRequests === 1 ? "" : "s"} failed and were still charged for what they sent`,
+        }
+      : {}),
+    // the two halves, where this chapter had an audio-billed endpoint in it at all
+    ...(run.estimatedAudio != null
+      ? {
+          inputEstimatedUSD: run.estimatedInput ?? 0,
+          inputChargedUSD: charged.inputAmount,
+          inputDrift: drift(run.estimatedInput, charged.inputAmount),
+          audioEstimatedUSD: run.estimatedAudio,
+          audioChargedUSD: charged.audioAmount,
+          audioDrift: drift(run.estimatedAudio, charged.audioAmount),
+          audioSeconds: Number(charged.audioSeconds.toFixed(2)),
+          note: "generated audio only — silence stitched between clips is not rendered and is not billed",
+        }
+      : {}),
+    ...(charged.estimatedLines
+      ? {
+          estimatedUsage: `${charged.estimatedLines} of ${charged.requests} requests were priced from counts worked out here rather than reported by the provider`,
+        }
+      : {}),
+    ...(charged.unpriced
+      ? {
+          unpriced: `${charged.unpriced} request${charged.unpriced === 1 ? "" : "s"} went to an endpoint with no rate, so the charged figure is a floor`,
+        }
+      : {}),
+  });
 }

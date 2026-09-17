@@ -10,6 +10,7 @@ export type DemoGroup =
   | "blocked"
   | "review"
   | "bulk"
+  | "pricing"
   | "export";
 
 /** One seeded situation offered by the Demo tools: a plain-language name, a line saying what you

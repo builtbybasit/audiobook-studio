@@ -3,7 +3,15 @@ import { usable } from "@/lib/exports";
 import { logJob } from "@/lib/jobActivity";
 import { chapterNarration } from "@/lib/runPlan";
 import { makeJobHistory } from "@/mock";
-import type { EndpointLoad, Eta, Job, JobKind, JobStatus, ScriptEndpointTelemetry } from "@/types";
+import type {
+  EndpointLoad,
+  Eta,
+  Job,
+  JobKind,
+  JobStatus,
+  ScriptEndpointTelemetry,
+  ScriptUsageRecord,
+} from "@/types";
 import { defineStore } from "pinia";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useExportsStore } from "@/stores/exports";
@@ -11,17 +19,11 @@ import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
+import { useUsageStore } from "@/stores/usage";
 const AVG_JOB: Record<JobKind, number> = { scripting: 25, narration: 60, export: 120 };
 
 interface JobsState {
   jobs: Job[];
-  scriptUsage: {
-    bookId: string;
-    profileId: string;
-    cost: number;
-    inputTokens: number;
-    outputTokens: number;
-  }[];
   scriptTelemetry: Record<string, ScriptEndpointTelemetry>;
   _nextId: number;
   /** ids for bulk runs: every chapter asked for in one press shares one */
@@ -31,7 +33,7 @@ export const useJobsStore = defineStore("jobs", {
   state: (): JobsState => {
     let nextId = 100;
     const jobs = makeJobHistory(() => nextId++);
-    return { jobs, _nextId: nextId, _nextRun: 1, scriptUsage: [], scriptTelemetry: {} };
+    return { jobs, _nextId: nextId, _nextRun: 1, scriptTelemetry: {} };
   },
   getters: {
     activeJobs(s): Job[] {
@@ -67,9 +69,17 @@ export const useJobsStore = defineStore("jobs", {
     recentJobs(s): Job[] {
       return [...s.jobs].reverse().slice(0, 12);
     },
-    scriptSpent(s): (bookId: string) => number {
-      return (bookId: string): number =>
-        s.scriptUsage.filter((x) => x.bookId === bookId).reduce((sum, x) => sum + x.cost, 0);
+    /**
+     * Every scripting request this session settled, each with the receipt it was priced from.
+     * It lives in the usage ledger, which is append-only and never re-priced: that is what makes
+     * "editing a rate today does not move yesterday's spending" true rather than merely claimed.
+     */
+    scriptUsage(): ScriptUsageRecord[] {
+      return useUsageStore().scriptUsage;
+    },
+    scriptSpent(): (bookId: string) => number {
+      const usageStore = useUsageStore();
+      return (bookId: string): number => usageStore.scriptSpent(bookId);
     },
     scriptReserved(s): (bookId: string) => number {
       return (bookId: string): number =>
@@ -77,18 +87,47 @@ export const useJobsStore = defineStore("jobs", {
           .filter((j) => j.bookId === bookId && !j.finishedAt)
           .reduce((sum, j) => sum + (j.scriptRun?.reserved ?? 0), 0);
     },
-    spent(s): (bookId: string) => number {
-      const scriptsStore = useScriptsStore();
-      return (bookId: string): number => {
-        let t = s.scriptUsage
-          .filter((x) => x.bookId === bookId)
-          .reduce((sum, x) => sum + x.cost, 0);
-        for (const [k, segs] of Object.entries(scriptsStore.segments))
-          if (k.startsWith(bookId + ":"))
-            for (const x of segs)
-              if (x.audio.cost && x.audio.status !== "failed") t += x.audio.cost;
-        return t;
-      };
+    /**
+     * Everything held against this book's cap by work that has not landed yet, of either stage.
+     * Two runs that each fit on their own must not both be allowed to start and overshoot together,
+     * so a reservation is what stops the second one rather than the first one's spending.
+     */
+    reserved(s): (bookId: string) => number {
+      return (bookId: string): number =>
+        s.jobs
+          .filter((j) => j.bookId === bookId && !j.finishedAt)
+          .reduce(
+            (sum, j) => sum + (j.scriptRun?.reserved ?? 0) + (j.narrationRun?.reserved ?? 0),
+            0,
+          );
+    },
+    /**
+     * How much of the input recent requests on one endpoint actually had cached.
+     *
+     * Only requests whose provider *reported* cache detail count. A provider that says nothing is
+     * left out rather than counted as a run of misses, so an endpoint that never reports returns
+     * null and the estimate simply does not offer a cache-adjusted figure.
+     */
+    observedCache(): (profileId: string) => { hitRate: number; samples: number } | null {
+      const usageStore = useUsageStore();
+      return (profileId: string) => usageStore.observedCache(profileId);
+    },
+    /**
+     * What this book has cost, of both stages.
+     *
+     * Read out of the append-only ledger, not off the clips the book is holding now. Totalling the
+     * current clip of each line lost every request that had been paid for and then superseded — a
+     * failed render, a rejected take, the recording a retake displaced — so accepting a retake made
+     * recorded spending *fall* and handed the budget back capacity it had really used. The seeded
+     * world's own narration predates the ledger and is added from the clips that carry no receipt;
+     * those two sets never overlap. See `useUsageStore`.
+     */
+    spent(): (bookId: string) => number {
+      const usageStore = useUsageStore();
+      return (bookId: string): number =>
+        usageStore.scriptSpent(bookId) +
+        usageStore.speechSpent(bookId) +
+        usageStore.openingNarrationSpend(bookId);
     },
     eta(s): Eta | null {
       const hist: Partial<Record<JobKind, number[]>> = {};

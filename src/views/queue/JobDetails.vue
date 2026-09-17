@@ -411,11 +411,104 @@ async function copy() {
                   <dd>
                     {{ job.scriptRun.inputTokens.toLocaleString() }} /
                     {{ job.scriptRun.outputTokens.toLocaleString() }} tokens
+                    <span class="text-xs text-zinc-500"
+                      >— input is the total, cached tokens included</span
+                    >
                   </dd>
-                  <dt class="text-zinc-500">Simulated cost</dt>
-                  <dd>${{ job.scriptRun.cost.toFixed(6) }}</dd>
+                  <dt class="text-zinc-500">Cached input</dt>
+                  <dd>
+                    <template v-if="job.scriptRun.inputTokens">
+                      {{ (job.scriptRun.cachedInput ?? 0).toLocaleString() }} tokens ({{
+                        Math.round(
+                          ((job.scriptRun.cachedInput ?? 0) / job.scriptRun.inputTokens) * 100,
+                        )
+                      }}% of the input), charged at the cached rate
+                    </template>
+                    <template v-else>not reported yet</template>
+                    <span
+                      v-if="job.scriptRun.cacheUnreported"
+                      class="block text-xs text-amber-600 dark:text-amber-400"
+                      >{{ job.scriptRun.cacheUnreported }} of {{ job.scriptRun.requests }} requests
+                      reported no cache detail. Their cost is an upper bound, not a reported
+                      miss.</span
+                    >
+                  </dd>
+                  <dt class="text-zinc-500">Estimated</dt>
+                  <dd>
+                    <template v-if="job.scriptRun.estimated != null"
+                      >${{ job.scriptRun.estimated.toFixed(6) }}
+                      <span class="text-xs text-zinc-500"
+                        >— conservative: no cache savings, at the rates when this run was
+                        planned</span
+                      ></template
+                    >
+                    <template v-else>not recorded</template>
+                  </dd>
+                  <dt class="text-zinc-500">Charged</dt>
+                  <dd>
+                    ${{ job.scriptRun.cost.toFixed(6) }}
+                    <span
+                      v-if="job.scriptRun.estimated != null && job.scriptRun.completed"
+                      class="text-xs text-zinc-500"
+                      >— {{ job.scriptRun.cost <= job.scriptRun.estimated ? "under" : "over" }} the
+                      estimate by ${{
+                        Math.abs(job.scriptRun.cost - job.scriptRun.estimated).toFixed(6)
+                      }}</span
+                    >
+                  </dd>
                   <dt class="text-zinc-500">Reserved</dt>
-                  <dd>${{ job.scriptRun.reserved.toFixed(6) }}</dd></template
+                  <dd>
+                    ${{ job.scriptRun.reserved.toFixed(6) }}
+                    <span class="text-xs text-zinc-500"
+                      >— at undiscounted rates, so a promotion ending mid-run can’t overshoot a
+                      cap</span
+                    >
+                  </dd>
+                  <dt class="text-zinc-500">Pricing</dt>
+                  <dd>
+                    Each request is priced when it completes, from the rates in force at that
+                    moment. A run that crosses an off-peak boundary or a promotion expiry charges
+                    its requests differently either side of it, and the activity log records the
+                    rates each one used.
+                  </dd></template
+                >
+                <!-- narration: the same three figures, plus the input/audio split where anything
+                     in this chapter bills on the audio it returns -->
+                <template v-if="job.narrationRun"
+                  ><dt class="text-zinc-500">Clips queued</dt>
+                  <dd>{{ job.narrationRun.clips }}</dd>
+                  <dt class="text-zinc-500">Estimated</dt>
+                  <dd>
+                    <template v-if="job.narrationRun.estimated != null"
+                      >${{ job.narrationRun.estimated.toFixed(6) }}
+                      <span
+                        v-if="job.narrationRun.estimatedAudio != null"
+                        class="block text-xs text-zinc-500"
+                        >input text ${{ (job.narrationRun.estimatedInput ?? 0).toFixed(6) }} +
+                        output audio ${{ job.narrationRun.estimatedAudio.toFixed(6) }}. The audio
+                        half rests on this app’s reading-speed estimate and the endpoint’s
+                        audio-token setting, so it is the half most likely to move.</span
+                      ></template
+                    >
+                    <template v-else>not recorded</template>
+                  </dd>
+                  <dt class="text-zinc-500">Reserved</dt>
+                  <dd>
+                    ${{ job.narrationRun.reserved.toFixed(6) }}
+                    <span class="text-xs text-zinc-500"
+                      >— at undiscounted rates, so a promotion ending mid-run can’t overshoot a
+                      cap</span
+                    >
+                  </dd>
+                  <dt class="text-zinc-500">Pricing</dt>
+                  <dd>
+                    Every clip is priced when it <b>lands</b>, in whatever unit its endpoint bills
+                    in — characters, UTF-8 bytes, text and audio tokens, audio minutes or requests.
+                    A request that failed is still charged for what it sent by a provider that bills
+                    on the text, so the reconciliation below counts billable attempts rather than
+                    finished clips. Silence stitched between clips is not rendered and is never
+                    billed.
+                  </dd></template
                 >
               </dl>
               <p class="mt-5 text-xs leading-relaxed text-zinc-500">

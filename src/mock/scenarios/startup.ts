@@ -17,8 +17,19 @@ export const STARTUP_DELAY_MS = 1200;
  */
 export const SEEDED_KEYS: [string, string][] = [
   ["openai", "sk-prototype-demo-key-4f2a"],
+  ["fish", "fa-prototype-demo-7b31"],
+  ["gemini", "AIza-prototype-demo-2e9f"],
   ["profile:openai", "sk-prototype-demo-key-4f2a"],
   ["profile:deepseek", "ds-prototype-91cd"],
+  // The named credentials the seeded endpoints point at, under the `cred:<id>` slots the registry
+  // uses. Opening the Endpoints page binds every endpoint that names a credential, which *mirrors*
+  // that credential's secret into the endpoint's own slot — so a credential with no secret does not
+  // leave the endpoint's key alone, it wipes it. Seeding both halves is what keeps a seeded
+  // endpoint usable after the page that manages it has been looked at.
+  ["cred:openai-personal", "sk-prototype-demo-key-4f2a"],
+  ["cred:proxy-work", "gw-prototype-demo-5c08"],
+  ["cred:fish-personal", "fa-prototype-demo-7b31"],
+  ["cred:deepseek", "ds-prototype-91cd"],
 ];
 
 export const startupRuns = (): StartupRun[] => [

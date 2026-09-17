@@ -22,13 +22,20 @@ export const requeue = (a: SegmentAudio): SegmentAudio => ({
 export const nextTakeNumber = (a: SegmentAudio): number =>
   Math.max(a.n ?? 1, ...(a.takes ?? []).map((t) => t.n)) + 1;
 
-/** Freeze what `audio` currently holds so it survives the next render. */
+/**
+ * Freeze what `audio` currently holds so it survives the next render.
+ *
+ * The receipt comes with it. A take that was paid for was paid for whether or not the listener kept
+ * it, and dropping `charge` here left the clip's cost with nothing behind it — no rate, no instant,
+ * no reason — the moment a retake displaced it.
+ */
 export const snapshotTake = (a: SegmentAudio): Take => ({
   n: a.n ?? 1,
   at: a.at ?? Date.now(),
   ms: a.ms,
   duration: a.duration,
   cost: a.cost,
+  ...(a.charge ? { charge: a.charge } : {}),
   endpoint: a.endpoint,
   voiceRef: a.voiceRef,
   voice: a.voice,

@@ -8,6 +8,7 @@
 // Nothing here starts a timer or touches a store. A situation mutates the entities the context
 // hands it and reports what it did; the caller owns the state, the queue and the clock — exactly
 // the split the simulators use.
+import { clockLabel, localTimezone, money as rateMoney, promotionRunning } from "@/lib/pricing";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { snapshotScript } from "@/lib/scriptHistory";
 import { snapshotTake } from "@/lib/takes";
@@ -27,6 +28,7 @@ import type {
   JobKind,
   JobStatus,
   Profile,
+  RateWindow,
   ScriptEndpointTelemetry,
   ScriptVersion,
   Segment,
@@ -135,6 +137,20 @@ export function applySituation(ctx: ScenarioContext, id: string, bookId: string)
       return bulkRecovery(ctx, bookId);
     case "expressions":
       return expressionsPlaced(ctx, bookId);
+    case "cache-mix":
+      return cacheMix(ctx);
+    case "off-peak":
+      return offPeakNow(ctx);
+    case "promo-live":
+      return promotionsLive(ctx);
+    case "promo-expired":
+      return promotionsExpired(ctx);
+    case "rate-boundary":
+      return rateBoundary(ctx);
+    case "speech-discount":
+      return speechDiscount(ctx);
+    case "billing-models":
+      return billingModels(ctx, bookId);
     default:
       return exportSituation(ctx, id, bookId);
   }
@@ -622,6 +638,242 @@ function budgetSpent(ctx: ScenarioContext, bookId: string): DemoResult {
   book.budget = { cap, paused: false };
   return {
     note: `${money(spent)} of a ${money(cap)} cap is spent and the ${money(scripting)} scripting budget is used up — every estimate now reports a blocker.`,
+  };
+}
+
+// ---------- rates, cache and promotions ----------
+//
+// These rows change one endpoint's rate card and nothing else. They are cheap on purpose: the point
+// is what the pricing panel and the receipts *say* about a card, so the situation is the card.
+
+/** The endpoint the pricing rows work on: the one with cached pricing and a schedule. */
+const pricingEndpoint = (ctx: ScenarioContext): Profile | undefined =>
+  ctx.profiles().find((p) => p.id === "openai") ?? ctx.profiles()[0];
+
+/** A window covering right now, in the browser's own zone so "it is off-peak" is visibly true. */
+function windowAroundNow(ctx: ScenarioContext, label: string, percent: number): RateWindow {
+  const d = new Date(ctx.now());
+  const from = (d.getHours() * 60 + d.getMinutes() - 90 + 1440) % 1440;
+  const to = (from + 240) % 1440;
+  return { id: "demo-window", label, days: [], from, to, percent };
+}
+
+function offPeakNow(ctx: ScenarioContext): DemoResult {
+  const p = pricingEndpoint(ctx);
+  if (!p?.pricing) return { note: "" };
+  // the browser's own zone, so the window on screen really is the one covering this minute
+  p.pricing.timezone = localTimezone();
+  p.pricing.windows = [windowAroundNow(ctx, "Off-peak", 40)];
+  // nothing else may be moving the price, or the window is not what the page is demonstrating
+  p.pricing.promotions = p.pricing.promotions.filter((x) => !promotionRunning(x, ctx.now()));
+  const w = p.pricing.windows[0];
+  return {
+    note: `${p.name} is inside a 40% off-peak window (${clockLabel(w.from)}–${clockLabel(w.to)}, ${p.pricing.timezone}) that runs past midnight. Every rate is discounted and the page says when it ends.`,
+  };
+}
+
+function promotionsLive(ctx: ScenarioContext): DemoResult {
+  const p = pricingEndpoint(ctx);
+  if (!p?.pricing) return { note: "" };
+  const now = ctx.now();
+  // no schedule, so the promotion is unambiguously what moved the price
+  p.pricing.windows = [];
+  p.pricing.promotions = [
+    {
+      id: "half-model",
+      label: "50% off gpt-4o-mini",
+      from: now - 2 * 86400e3,
+      until: now + 2 * 86400e3,
+      scope: ["model"],
+      percent: 50,
+      note: "Covers every component this model prices.",
+    },
+    {
+      id: "input-third",
+      label: "Input −30%",
+      from: now - 86400e3,
+      until: now + 6 * 86400e3,
+      scope: ["input"],
+      percent: 30,
+      note: "Running, but outranked on input: 50% off the model is cheaper, and discounts do not stack.",
+    },
+    {
+      id: "output-half-later",
+      label: "Half-price output",
+      from: now + 2 * 86400e3,
+      until: now + 16 * 86400e3,
+      scope: ["output"],
+      percent: 50,
+      note: "Starts in two days. Nothing is charged at this rate until then.",
+    },
+    {
+      id: "cache-free-past",
+      label: "Free cache reads",
+      from: now - 21 * 86400e3,
+      until: now - 7 * 86400e3,
+      scope: ["cachedInput"],
+      rates: { cachedInput: 0 },
+      note: "Ended a week ago. Kept so the history is readable; it prices nothing now.",
+    },
+  ];
+  return {
+    note: `${p.name} has one promotion applying, one running but outranked, one starting in two days and one that ended a week ago and is kept as history.`,
+  };
+}
+
+function promotionsExpired(ctx: ScenarioContext): DemoResult {
+  const p = pricingEndpoint(ctx);
+  if (!p?.pricing) return { note: "" };
+  const now = ctx.now();
+  p.pricing.windows = [];
+  p.pricing.promotions = p.pricing.promotions.map((x) => ({
+    ...x,
+    from: now - 30 * 86400e3,
+    until: now - 86400e3,
+    note: "Ended yesterday. Requests charged while it ran keep the price they were charged at.",
+  }));
+  return {
+    note: `Every promotion on ${p.name} ended yesterday, so the base rates are back — and the spend recorded while they ran is unchanged.`,
+  };
+}
+
+/** Cache reported, partly reported, not reported and contradictory, all on one endpoint. */
+function cacheMix(ctx: ScenarioContext): DemoResult {
+  const p = pricingEndpoint(ctx);
+  if (!p?.pricing) return { note: "" };
+  p.pricing.cachedInput = Number((p.inPrice * 0.25).toFixed(4));
+  p.pricing.cacheWrite = null;
+  return {
+    note: `${p.name} charges ${rateMoney(p.pricing.cachedInput)} per 1M cached input tokens against ${rateMoney(p.inPrice)} ordinary. Its history has requests with no cache use, requests part cached, requests whose provider reported nothing, and a few whose counts contradict each other.`,
+  };
+}
+
+/**
+ * A run that will still be going when the rates change under it.
+ *
+ * The run has to outlast the boundary for the row to demonstrate anything, so the endpoint is
+ * re-tuned to make one: smaller chunks, so each chapter is several requests, and a slower request,
+ * so four chapters take minutes rather than seconds. The window then closes a minute in.
+ */
+function rateBoundary(ctx: ScenarioContext): DemoResult {
+  const p = pricingEndpoint(ctx);
+  if (!p?.pricing) return { note: "" };
+  p.maxChars = 800;
+  p.secPerChunk = 20;
+  p.concurrency = 2;
+  const d = new Date(ctx.now());
+  const to = (d.getHours() * 60 + d.getMinutes() + 1) % 1440;
+  p.pricing.timezone = localTimezone();
+  p.pricing.windows = [
+    { id: "closing", label: "Off-peak", days: [], from: (to - 300 + 1440) % 1440, to, percent: 40 },
+  ];
+  p.pricing.promotions = [];
+  return {
+    note: `${p.name} leaves its 40% off-peak window at ${clockLabel(to)}, about a minute from now. The four chapters queued behind it are priced request by request, so the ones that land after it are charged at the full rate.`,
+  };
+}
+
+/**
+ * A speech endpoint inside an off-peak window with a promotion on top, and one whose rate is
+ * unknown so neither does anything. The same engine as the LLM rows: what differs is that the rate
+ * is written in the endpoint's own billing unit, and there is one of it rather than four.
+ */
+function speechDiscount(ctx: ScenarioContext): DemoResult {
+  const zone = localTimezone();
+  const now = ctx.now();
+  const d = new Date(now);
+  const from = (d.getHours() * 60 + d.getMinutes() - 60 + 1440) % 1440;
+  const to = (from + 300) % 1440;
+
+  const main = ctx.world.endpoints.find((e) => e.id === "openai");
+  if (main?.pricing) {
+    main.pricing.timezone = zone;
+    main.pricing.windows = [
+      { id: "tts-off-peak", label: "Off-peak", days: [], from, to, percent: 40 },
+    ];
+    main.pricing.promotions = [
+      {
+        id: "tts-launch",
+        label: "20% off speech",
+        from: now - 2 * 86400e3,
+        until: now + 3 * 86400e3,
+        scope: ["model"],
+        percent: 20,
+        note: "Applies on top of the off-peak window rather than compounding with it.",
+      },
+    ];
+  }
+  const proxy = ctx.world.endpoints.find((e) => e.id === "proxy");
+  if (proxy?.pricing) {
+    proxy.pricing.timezone = zone;
+    proxy.pricing.windows = [
+      { id: "proxy-night", label: "Night rate", days: [], from, to, percent: 30 },
+    ];
+  }
+  return {
+    note: `${main?.name ?? "The speech endpoint"} is inside a 40% off-peak window (${clockLabel(from)}–${clockLabel(to)}, ${zone}) with a 20% promotion on top — and they do not stack. ${proxy?.name ?? "The proxy"} has the same window over a rate nobody knows, so its price stays unknown.`,
+  };
+}
+
+/** The chapter this scenario uses: the one where all five seeded speakers have lines. */
+export const BILLING_CHAPTER = 2;
+
+/**
+ * One chapter spread across every billing model at once.
+ *
+ * The point is the *comparison*: the same run produces requests billed on characters, on UTF-8
+ * bytes, on two kinds of token and on nothing at all, and the estimate has to add four different
+ * kinds of arithmetic into one figure without ever charging the same usage twice. The Narrator is
+ * left on the free local model so "free" and "unknown" are both visible beside real prices.
+ *
+ * The Mandarin is not decoration: the pronunciation dictionary rewrites "outer sect" into Hanzi on
+ * the way out, so the byte-billed speaker's bill is about three times what its character count
+ * suggests — which is the whole reason byte billing is a model of its own.
+ */
+function billingModels(ctx: ScenarioContext, bookId: string): DemoResult {
+  const by = (id: string) => ctx.world.endpoints.find((e) => e.id === id);
+  const cast = ctx.cast(bookId);
+  const route = (name: string, endpointId: string, voiceIndex = 0) => {
+    const who = cast.find((c) => c.name === name);
+    const ep = by(endpointId);
+    if (!who || !ep?.voices.length) return "";
+    who.voice = voiceRef(ep.id, ep.voices[Math.min(voiceIndex, ep.voices.length - 1)].id);
+    return ep.name;
+  };
+
+  for (const ep of ctx.world.endpoints) {
+    ep.enabled = true;
+    ep.backoffUntil = 0;
+  }
+  // One speaker per model, so a single chapter exercises all of them. The Narrator goes to the
+  // byte-billed endpoint on purpose: the narration is where "outer sect" appears, and that is the
+  // phrase the dictionary rewrites into Hanzi, so the divergence between characters and bytes
+  // lands on the endpoint that actually bills on bytes.
+  route("Narrator", "fish");
+  route("Ji Ning", "openai");
+  route("Xiao Lan", "gemini");
+  route("Bai Feng", "local");
+  route("Elder Mo", "proxy");
+
+  // the chapter is put back to unnarrated so the estimate is about work that has not happened
+  const chapter = ctx.chapters(bookId).find((c) => c.id === BILLING_CHAPTER);
+  if (chapter) {
+    chapter.narration = "none";
+    chapter.narrationProgress = 0;
+    for (const seg of ctx.segmentsOf(bookId, BILLING_CHAPTER)) {
+      seg.audio = { status: "none", endpoint: null, ms: 0, duration: 0 };
+      delete seg.candidate;
+    }
+  }
+  const fish = by("fish");
+  const gemini = by("gemini");
+  return {
+    note:
+      `Chapter ${BILLING_CHAPTER} now routes five speakers at five billing models: ${by("openai")?.name} per 1M characters, ` +
+      `${fish?.name} per 1M UTF-8 bytes (${rateMoney(fish?.billing?.rate ?? 0)}), ` +
+      `${gemini?.name} at ${rateMoney(gemini?.billing?.rate ?? 0)} per 1M input text tokens plus ` +
+      `${rateMoney(gemini?.billing?.audioRate ?? 0)} per 1M output audio tokens, the local model free, ` +
+      `and the paused proxy at a rate nobody typed in. Narrate it and compare the estimate with the receipts.`,
   };
 }
 

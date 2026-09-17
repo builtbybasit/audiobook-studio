@@ -15,6 +15,9 @@ import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
 import { isNarrated } from "@/lib/scriptReview";
 import { runActionLabel, runSummary, SCOPE_LABEL, skipSummary } from "@/lib/runPlan";
+// fractions of a cent stay visible: a short run really can cost less than a cent, and rounding
+// that to "$0.00" reads as free
+import { money } from "@/lib/endpoints";
 import type { NarrationScope } from "@/types";
 import EmptyState from "@/components/EmptyState.vue";
 import { UiToggleGroup } from "@/ui";
@@ -98,9 +101,23 @@ const blockers = computed(() => {
   if (!est.value.endpoints) b.push("Enable at least one endpoint.");
   const book = libraryStore.bookById(bookId);
   if (book?.budget?.paused) b.push("This book is paused (overview → resume).");
-  if (book?.budget?.cap && jobsStore.spent(bookId) + est.value.cost > book.budget.cap)
+  // A cap is checked against the **undiscounted** price, and against what is already spent *and*
+  // already held by work in flight. An off-peak window can close and a promotion can expire while a
+  // run over a book is still going, so a cap that only holds while a discount lasts is not a cap —
+  // the same rule the scripting estimate uses, and the same one the narration store enforces at
+  // every entry point, this panel included.
+  const worstCase = Math.max(est.value.cost, est.value.withoutPromotions);
+  const spent = jobsStore.spent(bookId);
+  const held = jobsStore.reserved(bookId);
+  if (book?.budget?.cap && spent + held + worstCase > book.budget.cap)
     b.push(
-      `Over the $${book.budget.cap} budget cap: $${jobsStore.spent(bookId).toFixed(2)} spent + $${est.value.cost.toFixed(2)} for this run.`,
+      `Over the $${book.budget.cap} budget cap: $${spent.toFixed(2)} spent` +
+        (held > 0 ? ` + $${held.toFixed(2)} held by work already running` : "") +
+        ` + $${worstCase.toFixed(2)} for this run${
+          worstCase > est.value.cost + 1e-9
+            ? " without today’s discounts, which can end mid-run"
+            : ""
+        }.`,
     );
   const byReason: Record<string, string[]> = {};
   for (const i of castStore.routingIssues(bookId)) (byReason[i.reason] ??= []).push(i.name);
@@ -249,7 +266,7 @@ const ready = computed(
                 >{{ est.segments }} clip{{ est.segments === 1 ? "" : "s" }}</span
               >
               <span class="text-zinc-300 dark:text-zinc-600">·</span>
-              <span class="font-mono font-semibold text-amber-600">${{ est.cost.toFixed(2) }}</span>
+              <span class="font-mono font-semibold text-amber-600">{{ money(est.cost) }}</span>
             </template>
             <PopoverRoot>
               <PopoverTrigger

@@ -6,15 +6,24 @@
 // a run can differ from the last one — an unverified chunk kept whole, and a genuinely different
 // pass over the same prose — are `collapseChunk` and `reseg` below.
 import { logJob, jobWaiting, startJob } from "@/lib/jobActivity";
+import { PRICING_RULE, money, priceRequest, pricingOf } from "@/lib/pricing";
 import { scriptParts, tokenEstimate } from "@/lib/scripting";
 import { clone } from "@/lib/utils";
 import { generateSegments } from "@/mock/world/script";
+import {
+  cacheShapeFor,
+  reportedChargeFor,
+  reportsOwnCost,
+  simulateUsage,
+  usageFormatFor,
+} from "@/mock/simulators/usage";
 import { clock, simMs } from "@/mock/simulators/clock";
 import type { SimulatorContext } from "@/mock/simulators/context";
 import type {
   Book,
   Chapter,
   Job,
+  PricedRequest,
   Profile,
   RescriptReport,
   ScriptEndpointTelemetry,
@@ -37,13 +46,23 @@ export interface ScriptSimContext extends SimulatorContext {
   absorbCast(bookId: string, chId: number): void;
   scriptSpent(bookId: string): number;
   scriptReserved(bookId: string): number;
+  /** held against the book's cap by unfinished work of either stage */
+  reserved(bookId: string): number;
   spent(bookId: string): number;
+  /** One completed request, appended to the ledger with the receipt it was priced from. Nothing
+   *  re-prices it and nothing removes it; it is the only record of what this run cost. */
   recordUsage(u: {
     bookId: string;
+    chapterId: number | null;
     profileId: string;
-    cost: number;
-    inputTokens: number;
-    outputTokens: number;
+    /** 1-based index within this chapter's run */
+    request: number;
+    attempts: number;
+    queuedAt: number;
+    startedAt: number;
+    finishedAt: number;
+    /** the receipt: usage, rates and reasoning, frozen when this request completed */
+    priced: PricedRequest;
   }): void;
   telemetryFor(profileId: string): ScriptEndpointTelemetry;
   cancelJob(id: number): void;
@@ -79,6 +98,16 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
   let checkedRateLimit = false;
   let retriedFirstRequest = false;
   const telemetry = ctx.telemetryFor(profile.id);
+  // The rate card this run is priced against. Taken from the profile *by reference to its id* each
+  // time a request settles would be wrong the other way — a rate edited mid-run must not re-price
+  // requests that already landed — so the card is captured here and each request reads the rates in
+  // force at its own completion instant from this captured card.
+  const pricing = pricingOf(profile);
+  const format = usageFormatFor(profile.model, profile.baseUrl);
+  /** whether this provider caches prompts at all: only one that reports cache detail can */
+  const cacheable = format !== "plain";
+  /** some providers bill and report a charge per request; that number beats our arithmetic */
+  const reportsCost = reportsOwnCost(profile.name, profile.baseUrl);
   const t = setInterval(() => {
     // the world this run was planned against is gone: stop without writing to the new one
     if (ctx.stale()) {
@@ -109,31 +138,75 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
     for (let i = active.length - 1; i >= 0; i--) {
       if (active[i].finish > Date.now()) continue;
       const { usage, started, request } = active.splice(i, 1)[0];
+      // Each request is priced at its own completion instant, from the rates in force *then* and
+      // from what the provider actually reported — never from the rates the run started at. A batch
+      // that straddles an off-peak boundary or a promotion expiry therefore charges its requests
+      // differently, which is the truth, and every receipt says which instant it used.
+      const at = Date.now();
+      const { raw, usage: reported } = simulateUsage(
+        {
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          ...cacheShapeFor(request, cacheable),
+        },
+        format,
+      );
+      // A provider that bills per request reports its own charge, and it will not match ours to the
+      // cent — its tokeniser and its rounding are not ours. The receipt keeps both figures, so the
+      // difference is visible rather than quietly resolved in our favour.
+      if (reportsCost)
+        reported.reportedCost = reportedChargeFor(
+          priceRequest(pricing.base, pricing.config, reported, { at }).calculated ?? 0,
+        );
+      const priced = priceRequest(pricing.base, pricing.config, reported, {
+        at,
+        rule: PRICING_RULE,
+        preferReported: reportsCost,
+      });
+      const charged = priced.total ?? 0;
       logJob(job, `Request ${request} completed`, "info", {
         request,
-        responseMs: Math.round((Date.now() - started) * clock.speed),
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        costUSD: usage.cost,
+        responseMs: Math.round((at - started) * clock.speed),
+        usageFormat: format,
+        providerUsage: JSON.stringify(raw),
+        inputTokens: reported.inputTokens,
+        cachedInput: reported.cachedInput ?? "not reported",
+        cacheWrite: reported.cacheWrite ?? "not reported",
+        outputTokens: reported.outputTokens,
+        pricedAt: new Date(at).toISOString(),
+        pricingRule: priced.rule,
+        inputRate: money(priced.rates.input.rate ?? 0) + " / 1M",
+        outputRate: money(priced.rates.output.rate ?? 0) + " / 1M",
+        ...(priced.rates.input.why.length ? { why: priced.rates.input.why.join(" · ") } : {}),
+        costUSD: charged,
+        costBasis: priced.basis,
+        ...(priced.unknowns.length ? { notKnown: priced.unknowns.join(" ") } : {}),
       });
       telemetry.completed++;
-      telemetry.lastSuccess = Date.now();
+      telemetry.lastSuccess = at;
       telemetry.history = [
         ...telemetry.history.slice(-29),
-        { at: Date.now(), ms: Math.round((Date.now() - started) * clock.speed), ok: true },
+        { at, ms: Math.round((at - started) * clock.speed), ok: true },
       ];
       run.active--;
       run.completed++;
       run.reserved = Math.max(0, run.reserved - usage.reserve);
-      run.cost += usage.cost;
-      run.inputTokens += usage.inputTokens;
-      run.outputTokens += usage.outputTokens;
+      run.cost += charged;
+      run.inputTokens += reported.inputTokens;
+      run.outputTokens += reported.outputTokens;
+      run.cachedInput = (run.cachedInput ?? 0) + (reported.cachedInput ?? 0);
+      if (reported.cachedInput == null) run.cacheUnreported = (run.cacheUnreported ?? 0) + 1;
       ctx.recordUsage({
         bookId,
+        chapterId: c.id,
         profileId: profile.id,
-        cost: usage.cost,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
+        request,
+        // the first request of a run that was refused once went out twice
+        attempts: request === 1 && retriedFirstRequest ? 2 : 1,
+        queuedAt: job.queuedAt,
+        startedAt: started,
+        finishedAt: at,
+        priced,
       });
     }
     if (ctx.paused(bookId)) {
@@ -172,9 +245,7 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
         ctx.scriptSpent(bookId) -
         ctx.scriptReserved(bookId);
       const overall =
-        (ctx.bookById(bookId)?.budget?.cap ?? Infinity) -
-        ctx.spent(bookId) -
-        ctx.scriptReserved(bookId);
+        (ctx.bookById(bookId)?.budget?.cap ?? Infinity) - ctx.spent(bookId) - ctx.reserved(bookId);
       if (usage.reserve > Math.min(remaining, overall)) {
         if (!active.length) {
           ctx.toast("Scripting stopped at the budget limit", {
@@ -250,6 +321,7 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
     job.progress = c.scriptingProgress;
     if (run.completed === run.requests) {
       clearInterval(t);
+      reconcile(job);
       const roll = Math.random();
       const outcome = roll < 0.06 ? "failed" : roll < 0.16 ? "fallback" : "done";
       if (outcome === "failed") {
@@ -334,6 +406,36 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
       done();
     }
   }, 220);
+}
+
+/**
+ * Say how the estimate held up, once every request has come back.
+ *
+ * The estimate was conservative on purpose — no cache savings, at the rates in force when the run
+ * was planned — so the real figure is usually lower and the difference is worth naming rather than
+ * leaving as a number nobody reconciles. The cached tokens that came back are what explains most of
+ * it; requests whose provider reported no cache detail are counted separately, because those are
+ * the ones whose cost is an upper bound rather than a fact.
+ */
+function reconcile(job: Job): void {
+  const run = job.scriptRun;
+  if (!run || run.estimated == null) return;
+  const cached = run.cachedInput ?? 0;
+  const unreported = run.cacheUnreported ?? 0;
+  const delta = run.cost - run.estimated;
+  logJob(job, "Estimate reconciled against reported usage", "info", {
+    estimatedUSD: run.estimated,
+    chargedUSD: run.cost,
+    difference: `${delta >= 0 ? "+" : ""}${money(delta)}`,
+    inputTokens: run.inputTokens,
+    cachedInputTokens: cached,
+    cacheShare: run.inputTokens ? `${Math.round((cached / run.inputTokens) * 100)}%` : "0%",
+    ...(unreported
+      ? {
+          unreportedCache: `${unreported} of ${run.requests} requests reported no cache detail; their cost is an upper bound`,
+        }
+      : {}),
+  });
 }
 
 /**

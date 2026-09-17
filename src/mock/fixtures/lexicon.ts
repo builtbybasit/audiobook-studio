@@ -17,6 +17,16 @@ export function makeLexicon(): Record<string, LexEntry[]> {
         matchCase: true,
         note: "off: the chapter titles read fine, and lower-case “qi” is rare",
       },
+      {
+        id: 4,
+        term: "outer sect",
+        say: "外门",
+        enabled: true,
+        note:
+          "the Hanzi is what a bilingual model reads correctly — and it is 2 characters but 6 " +
+          "UTF-8 bytes, which is the quantity Fish Audio actually bills on. The book keeps the " +
+          "English; only the request carries this.",
+      },
     ],
     starforge: [{ id: 1, term: "Ocho", say: "Oh-cho", enabled: true }],
     drowned: [{ id: 1, term: "Tobiah", say: "Toe-BYE-uh", enabled: true }],

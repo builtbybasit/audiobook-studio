@@ -1,8 +1,16 @@
 import type { Profile } from "@/types";
 import { splitText } from "@/lib/split";
+import {
+  baseRates,
+  dearestInput,
+  effectiveRates,
+  ensurePricing,
+  newPricing,
+  pricingProblems,
+} from "@/lib/pricing";
 
 export function newProfile(p: Partial<Profile> = {}): Profile {
-  return {
+  const profile: Profile = {
     id: crypto.randomUUID(),
     name: "Custom endpoint",
     baseUrl: "http://localhost:8000/v1",
@@ -11,6 +19,7 @@ export function newProfile(p: Partial<Profile> = {}): Profile {
     needsKey: true,
     inPrice: 0,
     outPrice: 0,
+    pricing: newPricing(),
     concurrency: 4,
     maxChars: 6000,
     splitAt: "sentence",
@@ -33,6 +42,7 @@ export function newProfile(p: Partial<Profile> = {}): Profile {
           "needsKey",
           "inPrice",
           "outPrice",
+          "pricing",
           "concurrency",
           "maxChars",
           "splitAt",
@@ -48,6 +58,9 @@ export function newProfile(p: Partial<Profile> = {}): Profile {
       ),
     ),
   };
+  // a profile handed a partial `pricing` (an imported settings file, a fixture) gets the rest
+  ensurePricing(profile);
+  return profile;
 }
 export function profileErrors(p: Profile): string[] {
   const errors: string[] = [];
@@ -88,6 +101,7 @@ export function profileErrors(p: Profile): string[] {
     errors.push("Invalid endpoint identity or enabled/key setting.");
   if (!Number.isFinite(p.secPerChunk) || p.secPerChunk <= 0)
     errors.push("Request duration must be greater than zero.");
+  if (p.pricing) errors.push(...pricingProblems(p.pricing));
   return errors;
 }
 // Keep original whitespace: the generic preview splitter trims its displayed pieces.
@@ -97,16 +111,40 @@ export function scriptParts(text: string, p: Profile): string[] {
     .map((cut) => cut.text)
     .filter(Boolean);
 }
-export function tokenEstimate(text: string, p: Profile) {
+/**
+ * How many tokens one chunk is expected to use, and what that costs at an explicit instant.
+ *
+ * Two figures matter and they are deliberately different. `cost` is what this chunk would cost at
+ * the rates in force *now*, including any off-peak window or promotion. `reserve` is what is held
+ * against the budget while it is in flight, and it is worked out at the **undiscounted** rates with
+ * the whole output ceiling: a budget must survive a promotion expiring or an off-peak window
+ * closing mid-run, so a reservation is never allowed to lean on a discount that may be gone by the
+ * time the request is actually sent. No cache saving is assumed either way — cache use is not
+ * knowable before the answer comes back.
+ *
+ * The input side of the reservation is taken at the **dearest** rate any input token could be
+ * charged at, not at the ordinary input rate. Cached and cache-write tokens are slices of the
+ * input, and a cache write commonly costs more than ordinary input — this app defaults a new one to
+ * 125% of it — so reserving the whole input at the ordinary rate lets the very first request cost
+ * more than it reserved and step past the cap.
+ */
+export function tokenEstimate(text: string, p: Profile, at: number = Date.now()) {
   const inputTokens = Math.ceil((text.length / 4) * 1.6) + 500;
   const outputTokens = Math.ceil((text.length / 4) * 1.15);
+  // a scripting profile always has both token rates; the shared card is nullable because a speech
+  // card leaves them empty, so they are read back through the profile's own numbers
+  const base = baseRates(p);
+  const now = effectiveRates(base, ensurePricing(p), at).components;
+  const inRate = now.input.rate ?? p.inPrice;
+  const outRate = now.output.rate ?? p.outPrice;
+  const reserveIn = dearestInput(base) ?? p.inPrice;
   return {
     inputTokens,
     outputTokens,
-    inputCost: (inputTokens * p.inPrice) / 1e6,
-    outputCost: (outputTokens * p.outPrice) / 1e6,
-    cost: (inputTokens * p.inPrice + outputTokens * p.outPrice) / 1e6,
-    reserve: (inputTokens * p.inPrice + p.maxOutputTokens * p.outPrice) / 1e6,
+    inputCost: (inputTokens * inRate) / 1e6,
+    outputCost: (outputTokens * outRate) / 1e6,
+    cost: (inputTokens * inRate + outputTokens * outRate) / 1e6,
+    reserve: (inputTokens * reserveIn + p.maxOutputTokens * p.outPrice) / 1e6,
   };
 }
 

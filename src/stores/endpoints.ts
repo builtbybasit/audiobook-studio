@@ -5,7 +5,7 @@ import { keyring } from "@/lib/keyring";
 import { newProfile, profileErrors } from "@/lib/scripting";
 import { GENDER } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
-import { discoverVoices, makeProfiles, voiceRef } from "@/mock";
+import { discoverVoices, voiceRef } from "@/mock";
 import type {
   Endpoint,
   ExpressionConfig,
@@ -29,7 +29,7 @@ interface EndpointsState {
   profiles: Profile[];
 }
 export const useEndpointsStore = defineStore("endpoints", {
-  state: (): EndpointsState => ({ ...seedState("endpoints"), profiles: makeProfiles() }),
+  state: (): EndpointsState => seedState("endpoints", "profiles"),
   getters: {
     enabledEndpoints(s): Endpoint[] {
       return s.endpoints.filter((e) => e.enabled);

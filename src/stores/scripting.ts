@@ -2,6 +2,7 @@
 import { jobWaiting, logJob } from "@/lib/jobActivity";
 import { keyring } from "@/lib/keyring";
 import { runActionLabel, scriptingPlan, skipNotes, skipSummary } from "@/lib/runPlan";
+import { PRICING_RULE, baseRates, ensurePricing, estimateRates } from "@/lib/pricing";
 import { profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
 import { key } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
@@ -17,6 +18,7 @@ import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
+import { useUsageStore } from "@/stores/usage";
 interface ScriptingState {
   scriptSettings: ScriptSettings;
 }
@@ -78,9 +80,23 @@ export const useScriptingStore = defineStore("scripting", {
         );
         const parts =
           p && !profileErrors(p).length ? texts.map((text) => scriptParts(text, p)) : [];
-        const tokens = parts.flat().map((text) => tokenEstimate(text, p!));
+        // one instant for the whole estimate, so the figures on screen agree with each other
+        const at = Date.now();
+        const tokens = parts.flat().map((text) => tokenEstimate(text, p!, at));
         const inputCost = tokens.reduce((n, t) => n + t.inputCost, 0);
         const outputCost = tokens.reduce((n, t) => n + t.outputCost, 0);
+        const rates = p
+          ? estimateRates(
+              baseRates(p),
+              ensurePricing(p),
+              {
+                inputTokens: tokens.reduce((n, t) => n + t.inputTokens, 0),
+                outputTokens: tokens.reduce((n, t) => n + t.outputTokens, 0),
+              },
+              at,
+              jobsStore.observedCache(p.id),
+            )
+          : null;
         const scriptingRemaining =
           (libraryStore.bookById(bookId)?.scriptBudget ?? Infinity) -
           jobsStore.scriptSpent(bookId) -
@@ -90,8 +106,16 @@ export const useScriptingStore = defineStore("scripting", {
           jobsStore.spent(bookId) -
           jobsStore.scriptReserved(bookId);
         const remaining = Math.min(scriptingRemaining, overallRemaining);
-        if (inputCost + outputCost > remaining)
-          blockers.push("Estimated cost exceeds the remaining book budget.");
+        // A budget is checked against the price with **no** discount and **no** cache saving. A
+        // promotion can expire and an off-peak window can close while a run is still going, so a
+        // cap that only holds while a discount lasts is not a cap. See `estimateRates`.
+        const worstCase = rates ? Math.max(rates.withoutPromotions, rates.cost) : 0;
+        if (worstCase > remaining)
+          blockers.push(
+            rates && rates.withoutPromotions > rates.cost + 1e-9
+              ? "Without the discounts in force, this run does not fit the remaining book budget — and a discount can expire mid-run."
+              : "Estimated cost exceeds the remaining book budget.",
+          );
         if (tokens.some((t) => t.outputTokens > p!.maxOutputTokens))
           blockers.push(
             "A chunk may exceed the output token limit. Reduce max characters or increase max output tokens.",
@@ -108,6 +132,7 @@ export const useScriptingStore = defineStore("scripting", {
           outputCost,
           cost: inputCost + outputCost,
           profile: p,
+          rates,
           blockers,
           seconds: parts.reduce(
             (n, xs) => n + Math.ceil(xs.length / p!.concurrency) * p!.secPerChunk,
@@ -172,6 +197,8 @@ export const useScriptingStore = defineStore("scripting", {
       );
       const runId = jobsStore._nextRunId();
       const op = retrySegmentId === null ? runActionLabel(plan) : "Re-split one chunk";
+      // one instant for the whole run, so the per-chapter estimates add up to the run's own figure
+      const plannedAt = Date.now();
       const jobs = chs.map((c, i) => {
         const replacing =
           retrySegmentId === null && !!scriptsStore.segments[key(bookId, c.id)]?.length;
@@ -200,22 +227,41 @@ export const useScriptingStore = defineStore("scripting", {
         // the run that is allowed to write this chapter's script: a later run, a restore or a
         // cancellation take the token away, so a callback from this one can no longer land
         c.rescript = { keepEdits, was, token: job.id };
+        const chunks = scriptParts(textOf(c.id), profile);
         job.scriptRun = {
+          // the rate card this chapter is priced against, taken now: a rate edited while the run is
+          // in flight applies to the next run, never to this one
           profile: clone(profile),
-          requests: scriptParts(textOf(c.id), profile).length,
+          requests: chunks.length,
           completed: 0,
           active: 0,
           reserved: 0,
           cost: 0,
           inputTokens: 0,
           outputTokens: 0,
+          cachedInput: 0,
+          cacheUnreported: 0,
+          // What this chapter was estimated at, so the queue can reconcile it afterwards — worked
+          // out from this chapter's own chunks. Dividing the run's total by the number of chapters
+          // charged a two-page chapter and a forty-page one the same estimate, and then reported
+          // the difference between them as an overrun and an underspend.
+          estimated: chunks.reduce(
+            (n, text) => n + tokenEstimate(text, profile, plannedAt).cost,
+            0,
+          ),
         };
         logJob(job, "Scripting plan prepared", "info", {
           endpoint: profile.name,
           model: profile.model,
-          requests: job.scriptRun.requests,
+          requests: chunks.length,
           characters: textOf(c.id).length,
           concurrency: profile.concurrency,
+          pricing: PRICING_RULE,
+          estimatedUSD: job.scriptRun.estimated ?? 0,
+          cacheAssumed: "none — cache use is only known once a request answers",
+          ...(estimate.rates?.cautions.length
+            ? { pricingCaution: estimate.rates.cautions.join(" ") }
+            : {}),
           operation: replacing ? "replace the existing script" : "script for the first time",
           manualCorrections: keepEdits ? "re-applied where the line still matches" : "discarded",
           ...(replacing
@@ -277,6 +323,7 @@ export const useScriptingStore = defineStore("scripting", {
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
+      const usageStore = useUsageStore();
 
       // the generation of the demo world this run belongs to, taken as it starts
       const epoch = demoStore._epoch;
@@ -302,10 +349,11 @@ export const useScriptingStore = defineStore("scripting", {
         absorbCast: (bookId, chId) => castStore._absorbCast(bookId, chId),
         scriptSpent: (bookId) => jobsStore.scriptSpent(bookId),
         scriptReserved: (bookId) => jobsStore.scriptReserved(bookId),
+        reserved: (bookId) => jobsStore.reserved(bookId),
         spent: (bookId) => jobsStore.spent(bookId),
-        recordUsage: (u) => {
-          jobsStore.scriptUsage.push(u);
-        },
+        // append-only: a completed request's cost is written once, with the receipt it was priced
+        // from, and nothing afterwards re-prices it
+        recordUsage: (u) => usageStore.recordScript(u),
         telemetryFor: (id) => jobsStore.scriptingTelemetry(id),
         cancelJob: (id) => jobsStore.cancelJob(id),
         finishJob: (job, status) => jobsStore._finish(job, status),

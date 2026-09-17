@@ -2,7 +2,9 @@
 // the voice, the model, the text as sent and what the dictionary did to it — because staleness,
 // drift and loudness are all decided from that trail rather than from a timestamp.
 import { splitText } from "@/lib/split";
-import { speak, silenceOf, DEFAULT_PACING } from "@/lib/speech";
+import { speak, silenceOf, speechInstructions, DEFAULT_PACING } from "@/lib/speech";
+import { billingOf } from "@/lib/endpoints";
+import { PRICING_RULE, measureSpeech, priceSpeechRequest, readPricing } from "@/lib/pricing";
 import { generateSegments } from "@/mock/world/script";
 import type { WorldDraft } from "@/mock/world/draft";
 import type { Endpoint, Segment, SegmentAudio, VoiceRef } from "@/types";
@@ -32,17 +34,40 @@ export const seedAudit = (w: ClipWorld, bookId: string, s: Segment, ep: Endpoint
   const c = cast.find((x) => x.name === s.speaker);
   const ref = (c?.voice || cast.find((x) => x.name === "Narrator")!.voice)!;
   const said = speak(s.text, w.lexicon[bookId] ?? []);
+  const instructions = speechInstructions({ style: c?.style, direction: s.direction });
+  const at = Date.now() - (3600 + i * 7) * 1000;
+  // Priced through the one engine every other request goes through, in this endpoint's own billing
+  // model. The seeded world used to multiply the character count by a per-1M-characters number,
+  // which silently priced a byte-billed or token-billed endpoint as though it billed characters —
+  // so the opening balance disagreed with every figure the app worked out afterwards.
+  const billing = billingOf(ep);
+  const charge = priceSpeechRequest(
+    billing,
+    readPricing(ep),
+    measureSpeech(
+      {
+        text: said.text,
+        instructions,
+        requests: Math.max(1, splitText(said.text, ep.maxChars, ep.splitAt).length),
+        audioSeconds: s.text.split(" ").length / 2.6,
+      },
+      billing,
+    ),
+    { at, rule: PRICING_RULE },
+  );
   return {
     voiceRef: ref,
     voice: ref.split("/")[1],
     model: ep.model,
     direction: s.direction,
     style: c?.style ?? "",
+    ...(instructions ? { instructions } : {}),
     type: s.type,
     text: s.text,
     ...(said.hits.length ? { said: said.text, lex: said.hits.length } : {}),
-    at: Date.now() - (3600 + i * 7) * 1000,
-    cost: (said.text.length / 1e6) * ep.price,
+    at,
+    charge,
+    ...(charge.amount != null ? { cost: charge.amount } : {}),
   };
 };
 

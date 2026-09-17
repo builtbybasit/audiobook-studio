@@ -20,6 +20,9 @@ import {
   RotateCcw as RetryIcon,
   X as CloseIcon,
 } from "@lucide/vue";
+// the pricing line reads the endpoint's billing model rather than the legacy per-1M-characters
+// number, which says nothing useful about a byte-billed or token-billed endpoint
+import { pricingLabel, unifyEndpoint } from "@/lib/endpoints";
 
 const endpointsStore = useEndpointsStore();
 const jobsStore = useJobsStore();
@@ -466,7 +469,7 @@ async function toggleNotify() {
             <div class="mt-1 text-[11px] text-zinc-500">
               {{ jobsStore.endpointLoad[e.id].done }} segments done ·
               {{ jobsStore.endpointLoad[e.id].failed }} failed ·
-              {{ e.price ? "$" + e.price + "/1M" : "free" }}
+              {{ pricingLabel(unifyEndpoint(e)) }}
             </div>
           </div>
           <!-- the pool is app-wide and so is the page that edits it; a book's Narration tab only

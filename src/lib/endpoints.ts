@@ -15,20 +15,22 @@ import type {
   Gender,
   MetricTotals,
   Profile,
-  RequestRecord,
   TtsBilling,
-  TtsBillingUnit,
   Voice,
   WaitReason,
 } from "@/types";
 import { profileErrors } from "@/lib/scripting";
 import { keyring } from "@/lib/keyring";
-
-/** The app's own text→audio model, used to convert between characters and audio minutes:
- *  a clip is `words / 2.6` seconds long and a word is ~5.5 characters. */
-export const AUDIO_CHARS_PER_SECOND = 5.5 * 2.6;
-/** Rough tokeniser ratio, the same one `tokenEstimate` uses. */
-export const CHARS_PER_TOKEN = 4;
+import {
+  baseRates,
+  billingProblems,
+  effectiveRates,
+  ensurePricing,
+  pricingOneLiner,
+  pricingProblems,
+  speechPricingOf,
+  speechRateKnown,
+} from "@/lib/pricing";
 
 export const OPS_DEFAULTS: Record<EndpointKind, EndpointOps> = {
   scripting: {
@@ -158,7 +160,7 @@ export const TTS_PRESETS: TtsPreset[] = [
       model: "s2.1-pro-free",
       needsKey: true,
       price: 0,
-      billing: { unit: "chars", rate: 0 },
+      billing: { unit: "bytes", rate: 0 },
       // no documented per-request cap; their own chunking tops out at 300 characters a chunk
       maxChars: 0,
       splitAt: "sentence",
@@ -172,16 +174,18 @@ export const TTS_PRESETS: TtsPreset[] = [
     label: "Fish Audio · S2.1 Pro",
     hint: "paid tier, same API",
     note:
-      "Same endpoint and request shape as the free tier with a different `model` header. Set the " +
-      "rate from your Fish Audio plan — it is left unknown rather than guessed, so the estimate " +
-      "says so instead of showing $0.",
+      "Same endpoint and request shape as the free tier with a different `model` header. Billed " +
+      "per million **UTF-8 bytes**: Fish's price list talks about characters, but the quantity it " +
+      "meters is bytes, so a chapter of Mandarin costs about three times what a character count " +
+      "suggests and an accented Latin name a little more than it looks. $15 per million is their " +
+      "published figure — check it against your own plan.",
     apply: {
       name: "Fish Audio",
       baseUrl: "https://api.fish.audio/v1",
       model: "s2.1-pro",
       needsKey: true,
       price: 0,
-      billing: { unit: "chars", rate: null },
+      billing: { unit: "bytes", rate: 15 },
       maxChars: 0,
       splitAt: "sentence",
       concurrency: 4,
@@ -205,6 +209,35 @@ export const TTS_PRESETS: TtsPreset[] = [
       concurrency: 3,
       latency: 1400,
       failRate: 0.01,
+    },
+  },
+  {
+    id: "gemini-tts",
+    label: "Gemini 3.1 Flash TTS Preview",
+    hint: "input text tokens + output audio tokens",
+    note:
+      "Two rates, priced separately: $1 per million input text tokens and $20 per million output " +
+      "audio tokens. The audio side is the one that dominates a bill, and it does not follow from " +
+      "the text — an estimate has to go through the audio's expected length and a tokens-per-second " +
+      "figure, which is editable on the Pricing tab because it is an assumption about the " +
+      "provider's tokeniser rather than something this app can measure.",
+    apply: {
+      name: "Gemini 3.1 Flash TTS",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      model: "gemini-3.1-flash-tts-preview",
+      needsKey: true,
+      price: 0,
+      billing: {
+        unit: "audio-tokens",
+        rate: 1,
+        audioRate: 20,
+        audioTokensPerSecond: 25,
+      },
+      maxChars: 5000,
+      splitAt: "sentence",
+      concurrency: 2,
+      latency: 1800,
+      failRate: 0.015,
     },
   },
   {
@@ -283,83 +316,53 @@ export function voicesFromFishModels(items: FishModel[]): Voice[] {
 }
 
 // ---------- billing ----------
+// The units, the conversion and the arithmetic live in `lib/pricing.ts` beside the schedules and
+// promotions that now move a speech rate too; re-exported here so every existing import still works.
 
-export const BILLING_UNITS: { value: TtsBillingUnit; label: string; hint: string }[] = [
-  { value: "chars", label: "per 1M characters", hint: "OpenAI-style character billing" },
-  { value: "tokens", label: "per 1M tokens", hint: "providers that tokenise the input text" },
-  { value: "minute", label: "per audio minute", hint: "billed on the length of what comes back" },
-  { value: "request", label: "per request", hint: "flat fee per call, regardless of length" },
-];
+export {
+  AUDIO_CHARS_PER_SECOND,
+  BILLING_SUFFIX,
+  BILLING_UNITS,
+  billableChars,
+  billingUnitLabel,
+  billsAudioTokens,
+  CHARS_PER_TOKEN,
+  DEFAULT_AUDIO_TOKENS_PER_SECOND,
+  measureSpeech,
+  perMillionChars,
+  speechComponents,
+  ttsCost,
+  utf8Bytes,
+} from "@/lib/pricing";
 
-export const billingUnitLabel = (unit: TtsBillingUnit): string =>
-  BILLING_UNITS.find((b) => b.value === unit)?.label ?? unit;
-
+/** This endpoint's billing model. An endpoint saved before billing models existed carried one
+ *  per-1M-characters number, which is exactly what `chars` means, so that is what it becomes. */
 export const billingOf = (e: Endpoint): TtsBilling => e.billing ?? { unit: "chars", rate: e.price };
 
-/** The per-1M-characters figure the run estimator works in. `null` when the endpoint's real unit
- *  can't be converted from a character count alone (per-request), or when the rate is unknown. */
-export function perMillionChars(billing: TtsBilling): number | null {
-  if (billing.rate == null) return null;
-  switch (billing.unit) {
-    case "chars":
-      return billing.rate;
-    case "tokens":
-      return billing.rate / CHARS_PER_TOKEN;
-    case "minute":
-      return (billing.rate * 1e6) / (AUDIO_CHARS_PER_SECOND * 60);
-    case "request":
-      return null;
-  }
-}
-
-/** What one TTS request costs, given what it actually sent and got back. `null` = unknown. */
-export function ttsCost(billing: TtsBilling, chars: number, audioSeconds: number): number | null {
-  if (billing.rate == null) return null;
-  switch (billing.unit) {
-    case "chars":
-      return (chars / 1e6) * billing.rate;
-    case "tokens":
-      return (chars / CHARS_PER_TOKEN / 1e6) * billing.rate;
-    case "minute":
-      return (audioSeconds / 60) * billing.rate;
-    case "request":
-      return billing.rate;
-  }
-}
+/** The whole speech rate card — the rate, its unit, and the schedule and promotions on it. */
+export const speechPricing = (e: Endpoint) => speechPricingOf({ ...e, billing: billingOf(e) });
 
 // ---------- money ----------
+// One definition, in `lib/pricing.ts` beside the rates it formats, re-exported here so everything
+// that already imports money from this module keeps working.
 
-/** Money to a sensible number of places: cents for real sums, more for fractions of a cent. */
-export function money(n: number): string {
-  const abs = Math.abs(n);
-  const digits = abs === 0 ? 2 : abs < 0.01 ? 5 : abs < 1 ? 4 : 2;
-  return (
-    "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: digits })
-  );
-}
+export { maybeMoney, money, rate } from "@/lib/pricing";
 
-/** An unknown cost is never $0. */
-export const maybeMoney = (n: number | null | undefined): string =>
-  n == null ? "unknown" : money(n);
-
-export const rate = (n: number | null): string => (n == null ? "unknown" : money(n));
-
-/** The one-line pricing shown on a card. */
-export function pricingLabel(u: UnifiedEndpoint): string {
+/** The one-line pricing shown on a card — at the rates in force now, not the base card. */
+export function pricingLabel(u: UnifiedEndpoint, now: number = Date.now()): string {
   if (u.profile) {
     const { inPrice, outPrice } = u.profile;
     if (!inPrice && !outPrice) return "no rates entered";
-    return `${money(inPrice)} in / ${money(outPrice)} out · 1M tokens`;
+    return pricingOneLiner(effectiveRates(baseRates(u.profile), ensurePricing(u.profile), now));
   }
-  const b = billingOf(u.endpoint!);
-  if (b.rate == null) return "rate not known";
-  if (b.rate === 0) return "no charge";
-  return `${money(b.rate)} ${billingUnitLabel(b.unit)}`;
+  const { base, config, unit } = speechPricing(u.endpoint!);
+  return pricingOneLiner(effectiveRates(base, config, now), unit);
 }
 
-/** True when we cannot price this endpoint's requests at all. */
+/** True when we cannot price this endpoint's requests at all — including a two-rate endpoint with
+ *  only one of its two rates filled in, which prices nothing rather than half of each request. */
 export const unpriced = (u: UnifiedEndpoint): boolean =>
-  u.endpoint ? billingOf(u.endpoint).rate == null : false;
+  u.endpoint ? !speechRateKnown(billingOf(u.endpoint)) : false;
 
 // ---------- health ----------
 
@@ -516,12 +519,9 @@ export const WAIT_DETAIL: Record<WaitReason, string> = {
 };
 
 /** Where a request's cost figure came from — shown wherever a cost is, so "unknown" reads as a
- *  missing rate rather than a free request. */
-export const COST_BASIS_DETAIL: Record<RequestRecord["costBasis"], string> = {
-  recorded: "billed amount reported by the provider",
-  estimated: "worked out from this endpoint's configured rate",
-  unknown: "no rate is set for this endpoint, so nothing can be worked out",
-};
+ *  missing rate rather than a free request, and a figure we worked out is never passed off as one
+ *  the provider billed. The wording lives with the pricing rules in `lib/pricing.ts`. */
+export { COST_BASIS_DETAIL, COST_BASIS_LABEL } from "@/lib/pricing";
 
 // ---------- formatting helpers shared by the page ----------
 
@@ -590,6 +590,11 @@ export function endpointErrors(u: UnifiedEndpoint): string[] {
   if (!Number.isSafeInteger(e.maxChars) || e.maxChars < 0)
     errors.push("Maximum characters must be zero or a positive whole number.");
   if (!e.voices.length) errors.push("No voices yet — fetch or add one before this can render.");
+  // The rate card is validated on both kinds. A scripting profile gets this through
+  // `profileErrors`; leaving it out here let an imported speech endpoint keep a malformed window, a
+  // duplicate promotion id or an end date before its start, and stay enabled with it.
+  errors.push(...pricingProblems(ensurePricing(e)));
+  errors.push(...billingProblems(billingOf(e)));
   return errors;
 }
 

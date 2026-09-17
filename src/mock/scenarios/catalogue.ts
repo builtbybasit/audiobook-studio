@@ -16,6 +16,7 @@ export const DEMO_GROUPS: { id: DemoGroup; label: string }[] = [
   { id: "blocked", label: "Blocked before a run" },
   { id: "review", label: "Review and retakes" },
   { id: "bulk", label: "Re-doing finished chapters" },
+  { id: "pricing", label: "Rates, cache and promotions" },
   { id: "export", label: "Export" },
 ];
 
@@ -104,6 +105,47 @@ const STEPS: Record<string, string[]> = {
     "Open the Queue: one run is 4 chapters, two done and two failed — Retry N failed runs only those.",
     "The third chapter's cancelled run left the chapters before it replaced and the ones after it untouched.",
     "On Narration ch 1, the failed replacements are marked on the lines whose clips still play; Retry failed renders only those.",
+  ],
+  "cache-mix": [
+    "Open Activity: rows show input with the cached slice inside it, so 12k in (8k cached) can’t be read as 20k.",
+    "Open a row with a cached slice — the receipt charges 8,000 at the cached rate and the rest at the ordinary one, and names each rate.",
+    "Open a row marked “cache ?”: its provider said nothing, so the whole input is charged at the ordinary rate and the total is labelled an estimate, not a reported miss.",
+    "The last two rows came back with contradictory counts; the receipt says so rather than quietly charging them.",
+  ],
+  "off-peak": [
+    "Pricing shows the off-peak window in force and the base rate struck through beside it.",
+    "The line under it says when it ends, in the endpoint’s own timezone.",
+    "Open the schedule: the window runs past midnight, and the day buttons say which day it starts on.",
+    "Start a run from Scripting and watch the requests either side of the boundary get charged differently.",
+  ],
+  "promo-live": [
+    "Pricing leads with “50% off gpt-4o-mini” applied and the date it ends.",
+    "Open Promotions: one running, one scheduled for later and one that ended last week, kept as history.",
+    "Add a second promotion covering the same rate — the panel marks one outranked, because discounts do not stack.",
+    "Activity rows recorded before it started are still at the full rate. Letting a promotion expire never re-prices them.",
+  ],
+  "promo-expired": [
+    "Every promotion on this endpoint has ended; Pricing says the base rates apply and lists them under Ended.",
+    "Spend from while they ran is unchanged — open Activity and read the rate on an older row.",
+    "Change the input rate now and read that row again: still the price it was charged at.",
+  ],
+  "rate-boundary": [
+    "A run is in flight across the moment the off-peak window closes.",
+    "Open the Queue and read the activity log: the rate changes part-way down, request by request.",
+    "Run details compare the estimate with what was actually charged, and say how much of it the cache explains.",
+  ],
+  "speech-discount": [
+    "Speech endpoints take the same schedule and the same promotions — open OpenAI (main) → Pricing.",
+    "The rate is written in the unit this endpoint bills in, and the off-peak window and the promotion are shown against it.",
+    "Open the Azure proxy: its rate is unknown, so the night window it has changes nothing and the page says so instead of inventing a number.",
+    "Narrate a chapter from the book and read the estimate: the by-endpoint rows name what moved each rate, and the cap is checked without the discounts.",
+  ],
+  "billing-models": [
+    "This run panel adds up four different billing models at once — read “Input text”, “Output audio” and the by-endpoint rows under it.",
+    "The UTF-8 bytes row appears because the dictionary rewrites “outer sect” into Hanzi on the way out: Fish Audio bills those bytes, not the characters the book shows.",
+    "Narrate the chapter, then open Queue → the chapter’s run details: the estimate is reconciled against what was charged, with the input and audio halves separately.",
+    "Open Endpoints → Gemini 3.1 Flash TTS → Pricing: the worked example shows input cost + audio cost = total, and the audio-tokens-per-second assumption is editable.",
+    "Change that endpoint’s billing model and switch back: the rates are parked rather than reinterpreted, and every request already recorded keeps the model and the price it was charged at.",
   ],
   "mis-attributed": [
     "Search is open on the alias: tick a chapter, or Select all matching results.",
@@ -271,6 +313,70 @@ export function demoScenarios(): DemoScenario[] {
         "A four-chapter re-script where two chapters kept nothing and a cancelled one stopped the rest, plus narration replacements that failed — every earlier script and every clip is still there and still usable.",
       bookId: "cliche",
       path: "/queue",
+    },
+    {
+      id: "cache-mix",
+      group: "pricing",
+      name: "Cache reported, partly reported, and not reported at all",
+      blurb:
+        "One endpoint's activity with every case side by side: requests with no cache use, requests part cached, requests whose provider never mentioned the cache, and two whose counts contradict each other. Opens the Activity tab.",
+      bookId: "cliche",
+      path: "/endpoints?endpoint=scripting:openai&tab=activity",
+    },
+    {
+      id: "off-peak",
+      group: "pricing",
+      name: "Off-peak rates in force",
+      blurb:
+        "The clock is inside the endpoint's off-peak window — a window that runs past midnight — so every rate is discounted, the page says why and when it ends, and the base rates are struck through beside them.",
+      bookId: "cliche",
+      path: "/endpoints?endpoint=scripting:openai&tab=pricing",
+    },
+    {
+      id: "promo-live",
+      group: "pricing",
+      name: "A promotion running, one scheduled, one ended",
+      blurb:
+        "“50% off gpt-4o-mini” applying now and ending on Friday, half-price output starting in two days, and free cache reads that ended last week and is kept as history rather than erased.",
+      bookId: "cliche",
+      path: "/endpoints?endpoint=scripting:openai&tab=pricing",
+    },
+    {
+      id: "promo-expired",
+      group: "pricing",
+      name: "A promotion that has expired",
+      blurb:
+        "The same endpoint a day after its promotions ended: the base rates are back, and every request charged while they ran keeps the price it was charged at. For checking that editing a rate does not move past spending.",
+      bookId: "cliche",
+      path: "/endpoints?endpoint=scripting:openai&tab=pricing",
+    },
+    {
+      id: "speech-discount",
+      group: "pricing",
+      name: "Speech rates on discount",
+      blurb:
+        "A speech endpoint inside its nightly off-peak window with a promotion on top, and beside it one whose rate is unknown — where the schedule it has changes nothing, because there is nothing to discount. Opens the speech endpoint's Pricing tab.",
+      bookId: "cliche",
+      path: "/endpoints?endpoint=tts:openai&tab=pricing",
+    },
+    {
+      id: "billing-models",
+      group: "pricing",
+      name: "Every billing model in one chapter",
+      blurb:
+        "One chapter routed at five different billing models at once — per character, per UTF-8 byte over text the dictionary rewrites into Hanzi, input text tokens plus output audio tokens, a free local model, and one whose rate nobody typed in. Narrate it and compare the estimate against the receipts.",
+      bookId: "cliche",
+      path: "/book/cliche/narration",
+    },
+    {
+      id: "rate-boundary",
+      group: "pricing",
+      name: "A run crossing a pricing boundary",
+      blurb:
+        "A four-chapter re-script in flight as the off-peak window closes, so its requests are charged at two different prices. The Queue's run details reconcile the estimate against what was actually charged.",
+      bookId: "cliche",
+      path: "/queue",
+      runs: [{ kind: "scripting", chapterIds: [13, 14, 15, 16] }],
     },
     // the Export rows keep their own wording, so the page's own Demo chip and this panel agree
     ...exportScenarios().map((s): DemoScenario => ({

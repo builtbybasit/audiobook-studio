@@ -134,8 +134,40 @@ const worldState = (): string =>
         e.failures,
         e.rateLimits,
         e.voices.length,
+        // the speech rate card too: a scenario can put a speech rate on discount, and a reset has
+        // to put the whole card back
+        e.billing?.unit ?? "",
+        e.billing?.rate ?? null,
+        e.pricing?.timezone ?? "",
+        (e.pricing?.windows ?? []).map((w) => [w.id, w.from, w.to, w.percent ?? null]),
+        (e.pricing?.promotions ?? []).map((x) => [x.id, x.from, x.until, x.percent ?? null]),
       ]),
-      profiles: endpointsStore.profiles.map((p) => [p.id, p.enabled, p.model]),
+      // the rate card too: a scenario can change what an endpoint charges, and a reset has to put
+      // the whole card back — the schedule, the promotions and the cached rates included
+      profiles: endpointsStore.profiles.map((p) => [
+        p.id,
+        p.enabled,
+        p.model,
+        p.inPrice,
+        p.outPrice,
+        p.pricing?.cachedInput ?? null,
+        p.pricing?.cacheWrite ?? null,
+        p.pricing?.timezone ?? "",
+        (p.pricing?.windows ?? []).map((w) => [
+          w.id,
+          w.from,
+          w.to,
+          w.days.join(""),
+          w.percent ?? null,
+        ]),
+        (p.pricing?.promotions ?? []).map((x) => [
+          x.id,
+          x.from,
+          x.until,
+          x.scope.join(""),
+          x.percent ?? null,
+        ]),
+      ]),
     }),
   );
 

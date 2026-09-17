@@ -11,6 +11,25 @@ import type { Character, Gender, VoiceRef } from "@/types";
 
 const oa = (v: string): VoiceRef => voiceRef("openai", v);
 const kk = (v: string): VoiceRef => voiceRef("local", v);
+const fish = (v: string): VoiceRef => voiceRef("fish", v);
+const gem = (v: string): VoiceRef => voiceRef("gemini", v);
+
+/**
+ * Speakers seeded onto a particular endpoint because of how that endpoint **bills**, not because of
+ * how it sounds.
+ *
+ * One book is deliberately spread across three billing models, so a single narration run produces
+ * character-billed, byte-billed and token-billed requests side by side and the estimate has to add
+ * three different kinds of arithmetic into one figure. Elder Mo's lines are the ones the
+ * pronunciation dictionary rewrites into Hanzi, which is what makes his UTF-8 byte count diverge
+ * from his character count — the whole reason byte billing is a separate model.
+ */
+const SEED_ROUTE: Record<string, Record<string, VoiceRef>> = {
+  cliche: {
+    "Elder Mo": fish("fish0000000000000000000000000003"),
+    "Xiao Lan": gem("Kore"),
+  },
+};
 
 const SEED_VOICE: Record<Gender, string[]> = {
   m: ["onyx", "echo", "ash", "ballad", "verse"],
@@ -34,7 +53,8 @@ export function makeCharacters(b: BookSeed): Character[] {
       voice:
         c.name === "Narrator"
           ? NARRATOR_VOICE[b.id]
-          : oa(SEED_VOICE[c.gender][i % SEED_VOICE[c.gender].length]),
+          : (SEED_ROUTE[b.id]?.[c.name] ??
+            oa(SEED_VOICE[c.gender][i % SEED_VOICE[c.gender].length])),
       style: "",
       color: PALETTE[i % PALETTE.length],
       major: true,

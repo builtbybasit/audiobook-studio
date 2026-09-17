@@ -119,6 +119,22 @@ const money = (n: number) =>
       <dd class="text-right font-mono">{{ money(est.outputCost) }}</dd>
       <dt class="font-medium">Estimated total</dt>
       <dd class="text-right font-mono font-semibold">{{ money(est.cost) }}</dd>
+      <!-- The conservative figure is the one with the weight. The cheaper ones sit under it,
+           labelled, and neither is what the budget is checked against. -->
+      <template v-if="est.rates && est.rates.withObservedCache">
+        <dt class="text-zinc-500">
+          If cache holds at {{ Math.round(est.rates.withObservedCache.hitRate * 100) }}%
+        </dt>
+        <dd class="text-right font-mono text-zinc-500">
+          {{ money(est.rates.withObservedCache.cost) }}
+        </dd>
+      </template>
+      <template v-if="est.rates && est.rates.withoutPromotions > est.rates.cost + 1e-9">
+        <dt class="text-zinc-500">Without today’s discounts</dt>
+        <dd class="text-right font-mono text-zinc-500">
+          {{ money(est.rates.withoutPromotions) }}
+        </dd>
+      </template>
       <dt class="text-zinc-500">Estimated time</dt>
       <dd class="text-right font-mono">
         {{
@@ -130,6 +146,26 @@ const money = (n: number) =>
         }}
       </dd>
     </dl>
+    <!-- what could move the figure between the first request and the last -->
+    <details
+      v-if="est.rates?.cautions.length"
+      class="rounded-lg bg-zinc-50 p-2.5 dark:bg-zinc-800/60"
+    >
+      <summary class="cursor-pointer select-none text-[11px] text-zinc-600 dark:text-zinc-300">
+        Why this is an estimate<span
+          v-if="est.rates.withObservedCache || est.rates.withoutPromotions > est.rates.cost"
+        >
+          and not a price</span
+        >
+      </summary>
+      <ul class="mt-1.5 space-y-1 text-[11px] leading-snug text-zinc-500">
+        <li v-for="why in est.rates.cautions" :key="why">{{ why }}</li>
+        <li>
+          Each request is priced when it comes back, not when the run starts, so a batch that
+          crosses one of these boundaries charges its requests differently either side of it.
+        </li>
+      </ul>
+    </details>
     <div class="border-t border-zinc-200 pt-3 dark:border-zinc-800">
       <div class="flex items-start justify-between gap-2">
         <div class="min-w-0">
@@ -198,6 +234,19 @@ const money = (n: number) =>
           "
         >
           · Endpoint paused</span
+        >
+      </p>
+      <!-- what the cache is actually doing, as the run goes -->
+      <p v-if="job.scriptRun!.inputTokens" class="text-[11px] text-zinc-500">
+        {{
+          job.scriptRun!.cachedInput
+            ? `${Math.round((job.scriptRun!.cachedInput / job.scriptRun!.inputTokens) * 100)}% of input cached so far`
+            : "no cached input reported so far"
+        }}<span v-if="job.scriptRun!.cacheUnreported">
+          · {{ job.scriptRun!.cacheUnreported }} request{{
+            job.scriptRun!.cacheUnreported === 1 ? "" : "s"
+          }}
+          reported no cache detail</span
         >
       </p>
     </div>

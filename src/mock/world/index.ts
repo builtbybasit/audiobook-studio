@@ -8,6 +8,7 @@ import { rng } from "@/mock/random";
 import { BOOK_SEEDS } from "@/mock/fixtures/books";
 import { makeEndpoints } from "@/mock/fixtures/endpoints";
 import { makeLexicon } from "@/mock/fixtures/lexicon";
+import { makeProfiles } from "@/mock/fixtures/profiles";
 import { makeVolumes, makeChapters } from "@/mock/world/chapters";
 import { makeCharacters } from "@/mock/world/cast";
 import { seedPipeline } from "@/mock/world/audio";
@@ -17,7 +18,7 @@ import { voiceRef } from "@/mock/fixtures/voices";
 import type { WorldDraft } from "@/mock/world/draft";
 import type { Book, Chapter, Character, SegmentMap, World } from "@/types";
 
-export function makeWorld(): World {
+export function makeWorld(now: number = Date.now()): World {
   const books: Book[] = [];
   const chapters: Record<string, Chapter[]> = {};
   const characters: Record<string, Character[]> = {};
@@ -42,7 +43,10 @@ export function makeWorld(): World {
     chapters,
     characters,
     segments,
-    endpoints: makeEndpoints(),
+    endpoints: makeEndpoints(now),
+    // one clock for the whole world: the seeded promotions are dated from it, so every copy of
+    // this world — and every `$reset()` back to it — agrees on when they start and end
+    profiles: makeProfiles(now),
     lexicon: makeLexicon(),
   };
 

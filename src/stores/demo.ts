@@ -41,6 +41,7 @@ import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
+import { useUsageStore } from "@/stores/usage";
 interface DemoState {
   _kicked: boolean;
   /** the scenario the world currently holds, or null for the world as it is seeded */
@@ -121,6 +122,7 @@ export const useDemoStore = defineStore("demo", {
       const scriptingStore = useScriptingStore();
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
+      const usageStore = useUsageStore();
 
       this.abandonRuns();
       // an editing session groups the edits of a world that is about to be replaced; its timer must
@@ -136,6 +138,8 @@ export const useDemoStore = defineStore("demo", {
         narrationStore,
         scriptingStore,
         scriptsStore,
+        // the ledger records requests made against the world being replaced, so it goes with it
+        usageStore,
       ])
         store.$reset();
       // the undo stack points at objects from the world that has just been replaced
@@ -268,9 +272,10 @@ export const useDemoStore = defineStore("demo", {
               .map((c) => c.id),
           ),
         spent: (bookId) => jobsStore.spent(bookId),
-        addScriptUsage: (bookId, profileId, cost) => {
-          jobsStore.scriptUsage.push({ bookId, profileId, cost, inputTokens: 0, outputTokens: 0 });
-        },
+        // an opening balance a scenario declares, not a request anybody made — it counts against
+        // the cap without pretending to be a row in the Activity list
+        addScriptUsage: (bookId, profileId, cost) =>
+          useUsageStore().recordOpeningScriptSpend(bookId, profileId, cost, Date.now()),
         retime: (bookId, chId) => castStore._retime(bookId, chId),
         importSample: (sampleId, bookId) => libraryStore.importBook(sampleId, { id: bookId }),
         shelveBook: (spec) => {

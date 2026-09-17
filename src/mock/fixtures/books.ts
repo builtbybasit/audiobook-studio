@@ -142,6 +142,9 @@ export const BOOK_SEEDS: BookSeed[] = [
         "The path of cultivation is not a path of shortcuts, child.",
         "Three days. Not an hour more.",
         "You remind me of someone I once buried.",
+        // the dictionary rewrites "outer sect" into Hanzi on the way to the endpoint, so this
+        // speaker's requests are measurably more UTF-8 bytes than characters
+        "The outer sect has kept worse than you, and buried better.",
       ],
       "Xiao Lan": [
         "You promised you would come back before the festival.",

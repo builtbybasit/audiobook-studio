@@ -1,11 +1,16 @@
-// What this endpoint is doing *right now*, read out of the running job simulator rather than the
-// fixture service. Two different things end up in the same Activity list:
+// What this endpoint is doing *right now*, read out of the running job simulator. Only in-flight
+// and waiting requests come from here: the moment one settles it is written to the usage ledger
+// (`src/stores/usage.ts`) and the page reads it from there, so a request does not vanish at the one
+// point where it finally has a receipt worth opening.
 //
+// Three things end up in the same Activity list:
+//
+//   in flight          — from here, `simulated: false`, no cost yet
+//   settled this session — from the usage ledger, `simulated: false`, with its receipt
 //   `simulated: true`  — sample history invented by the fixture service (the backstory)
-//   `simulated: false` — work this session actually put through the job simulator
 //
-// Both are make-believe in the sense that no provider is called; the flag separates "made up
-// before you got here" from "you started this a minute ago", and the list labels each.
+// All of it is make-believe in the sense that no provider is called; the flag separates "made up
+// before you got here" from "you did this", and the list labels each.
 import { keyring } from "@/lib/keyring";
 import type { Job, RequestRecord, WaitReason } from "@/types";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
@@ -70,11 +75,14 @@ export function useEndpointActivity() {
     if (bookId) {
       const book = libraryStore.bookById(bookId);
       const cap = book?.budget?.cap;
-      if (cap != null && jobsStore.spent(bookId) >= cap) return "budget";
+      // what is spent *and* what work already in flight has reserved: a queued request is waiting
+      // on the budget as soon as the cap is committed, not only once it has been charged
+      if (cap != null && jobsStore.spent(bookId) + jobsStore.reserved(bookId) >= cap)
+        return "budget";
       if (
         u.kind === "scripting" &&
         book?.scriptBudget != null &&
-        jobsStore.scriptSpent(bookId) >= book.scriptBudget
+        jobsStore.scriptSpent(bookId) + jobsStore.scriptReserved(bookId) >= book.scriptBudget
       )
         return "budget";
     }

@@ -5,9 +5,20 @@
 // attributed script, and a speech model that renders a line. They are configured, paused, rate
 // limited and billed the same way, so the Endpoints page treats them as one list of two kinds.
 import type { SplitMode } from "@/types/common";
+// `TtsBilling` lives with the pricing vocabulary now that a speech rate goes through the same
+// schedule and promotions as a token rate; re-exported here so nothing that imports it has moved.
+import type {
+  CostBasis,
+  PricedRequest,
+  PricingConfig,
+  SpeechCharge,
+  TtsBilling,
+} from "@/types/pricing";
 import type { Voice } from "@/types/voice";
 import type { ExpressionConfig } from "@/types/expression";
 import type { Profile, ScriptSettings } from "@/types/scripting";
+
+export type { TtsBilling, TtsBillingUnit } from "@/types/pricing";
 
 /** One recorded request, for the endpoint's latency sparkline. */
 export interface HistoryPoint {
@@ -53,6 +64,14 @@ export interface Endpoint {
   /** what the provider actually charges for. `price` stays the per-1M-chars figure the run
    *  estimator has always used; this says whether that figure is a conversion or the real unit. */
   billing?: TtsBilling;
+  /**
+   * The peak/off-peak schedule and the temporary promotions on this endpoint's rate, with the
+   * timezone its windows are read in. The same shape the scripting endpoints use — a speech rate
+   * goes on discount the same way a token rate does — minus the cached-input fields, which mean
+   * nothing here and are never offered. Optional so an endpoint saved before it existed still
+   * loads; `ensurePricing` fills the defaults in on first use.
+   */
+  pricing?: PricingConfig;
   // operational settings — see EndpointOps; optional so older saved endpoints still load
   timeoutSec?: number;
   maxRetries?: number;
@@ -71,16 +90,6 @@ export interface EndpointLoad {
 }
 
 export type EndpointKind = "scripting" | "tts";
-
-/** How a TTS provider bills. Not every provider bills per character. */
-export type TtsBillingUnit = "chars" | "tokens" | "minute" | "request";
-
-export interface TtsBilling {
-  unit: TtsBillingUnit;
-  /** USD per 1M chars / per 1M tokens / per audio minute / per request. `null` = not known — and
-   *  an unknown rate is never rendered as $0. */
-  rate: number | null;
-}
 
 /** Operational settings shared by both kinds. Optional on the endpoint types so anything saved
  *  before they existed still loads; `ensureOps` fills the defaults in on first use. */
@@ -104,12 +113,32 @@ export type RequestStatus = "done" | "failed" | "running" | "queued" | "cancelle
 /** Why a queued request has not been dispatched yet. */
 export type WaitReason = "paused" | "concurrency" | "cooldown" | "nokey" | "budget" | "ordered";
 
+/**
+ * What one request used. For a scripting request `inputTokens` is the **total** input — the cached
+ * and cache-write parts below are slices of it, never additions — so the three never double-count.
+ * `cachedInput` absent means the provider did not report it, which is not the same as zero.
+ */
 export interface RequestUsage {
   inputTokens?: number;
   outputTokens?: number;
+  /** of `inputTokens`, served from the provider's cache; absent = not reported */
+  cachedInput?: number;
+  /** of `inputTokens`, written into the provider's cache; absent = not reported */
+  cacheWrite?: number;
+  /**
+   * The speech side. Four different quantities, never conversions of one another: a request is so
+   * many characters *and* so many UTF-8 bytes *and* so many text tokens, and only the one its
+   * endpoint bills in is charged. Absent means nobody counted it, which is not zero.
+   */
   chars?: number;
-  /** rendered audio, seconds */
+  /** UTF-8 bytes of the same submitted content */
+  bytes?: number;
+  /** input text tokens of the same submitted content */
+  textTokens?: number;
+  /** rendered audio, seconds. Silence stitched in locally is not generated audio and is not here. */
   audioSeconds?: number;
+  /** output audio tokens, where the endpoint bills on them */
+  audioTokens?: number;
 }
 
 /** One request against one endpoint — the row behind the Activity list and every chart. */
@@ -134,7 +163,15 @@ export interface RequestRecord {
   usage: RequestUsage;
   /** null when the endpoint's rate is unknown */
   cost: number | null;
-  costBasis: "recorded" | "estimated" | "unknown";
+  costBasis: CostBasis;
+  /**
+   * The receipt, frozen when the request completed: the usage as normalized, the rates in force at
+   * that instant and the reasoning behind them. Editing a rate or letting a promotion expire never
+   * touches one. A scripting request gets `priced` (tokens, with the cache split); a speech request
+   * gets `speech` (characters, audio minutes or requests, in the unit its endpoint bills by).
+   */
+  priced?: PricedRequest;
+  speech?: SpeechCharge;
   rateLimited?: boolean;
   error?: ReqError;
   /** false only for rows this session actually produced */
@@ -180,6 +217,18 @@ export interface MetricTotals {
   unknownCost: number;
   inputTokens: number;
   outputTokens: number;
+  /** of `inputTokens`, reported as served from cache — only from requests that reported it */
+  cachedInputTokens: number;
+  /** input tokens from those same requests, so a cache percentage divides like by like. Dividing
+   *  reported cached tokens by *every* request's input understates the hit rate by however much
+   *  traffic said nothing about its cache use. */
+  cacheReportedInputTokens: number;
+  /** requests whose provider reported cache detail at all; the rest say nothing either way */
+  cacheReported: number;
+  /** requests priced from a charge the provider reported rather than from configured rates */
+  providerReported: number;
+  /** requests whose cost is an estimate because part of the usage was missing or inconsistent */
+  estimatedCost: number;
   chars: number;
   audioSeconds: number;
 }

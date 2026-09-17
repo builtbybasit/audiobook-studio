@@ -49,10 +49,43 @@ export interface Job {
     requests: number;
     completed: number;
     active: number;
+    /** held against the budget at undiscounted rates while requests are in flight */
     reserved: number;
     cost: number;
+    /** total input tokens, the cached slice included */
     inputTokens: number;
     outputTokens: number;
+    /** of `inputTokens`, reported as served from cache — only from requests that reported it */
+    cachedInput?: number;
+    /** requests whose provider said nothing about cache use, so their cost is an estimate */
+    cacheUnreported?: number;
+    /** what this run was estimated to cost when it was planned, for the reconciliation afterwards */
+    estimated?: number;
+  };
+  /**
+   * What a narration job is holding against the book's cap while it runs.
+   *
+   * Narration is charged per clip as each one lands, so without this two runs that each fit the
+   * remaining budget on their own could start together and land past the cap between them. The
+   * figure is the **undiscounted** price of everything the job queued — the same rule the scripting
+   * side reserves by — and it is released when the job finishes rather than clip by clip, so the
+   * reservation only ever errs towards holding too much back.
+   */
+  narrationRun?: {
+    reserved: number;
+    /** clips this job put in the queue, for the reconciliation the queue shows afterwards */
+    clips: number;
+    /** what this chapter was estimated at when it was dispatched, at the rates in force then */
+    estimated?: number;
+    /**
+     * The estimate's two halves, where anything in this chapter bills on the audio it returns.
+     * They reconcile separately because they are wrong for different reasons: the input side only
+     * if the text changed under the run, the audio side whenever a line reads longer or shorter
+     * than this app's estimate — or whenever the provider's audio tokeniser is not the one
+     * `audioTokensPerSecond` assumes.
+     */
+    estimatedInput?: number;
+    estimatedAudio?: number | null;
   };
   /** Live detail of a build, and everything a retry needs to run it again. */
   exportRun?: {

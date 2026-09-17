@@ -124,3 +124,19 @@ export function silenceOf(segments: Segment[], pacing: Pacing): number {
 
 /** seconds, exact but never noisy: 1s, 1.75s, 0.35s */
 export const secs = (n: number): string => `${Number(n.toFixed(2))}s`;
+
+// ---------- voice instructions ----------
+
+/**
+ * The voice instructions submitted beside a line.
+ *
+ * A character's standing style and a line's own direction are not part of the prose — the reader
+ * never sees them — but they go over the wire with the request, and a provider that meters what it
+ * receives meters them too. Composed in one place so the count that is billed and the audit trail
+ * on the clip can never be two different strings.
+ *
+ * Empty when there is nothing to say, so an endpoint sending no instructions is charged for none.
+ */
+export function speechInstructions(parts: { style?: string; direction?: string }): string {
+  return [parts.style?.trim(), parts.direction?.trim()].filter(Boolean).join(". ");
+}

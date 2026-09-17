@@ -9,17 +9,86 @@
 // Everything it returns is marked `simulated: true`, and the page says so wherever it is shown.
 // No request in here reaches a provider, and nothing is charged.
 import type {
+  BillableUnits,
   ConnectionTest,
+  CostBasis,
   EndpointKind,
   MetricBucket,
   MetricSeries,
   MetricTotals,
+  PricingConfig,
   RangeKey,
+  RateSet,
   RequestRecord,
   RequestStatus,
+  RequestUsage,
   TtsBilling,
+  UsageFormat,
 } from "@/types";
 import { AUDIO_CHARS_PER_SECOND, ttsCost } from "@/lib/endpoints";
+import { onDemoReset } from "@/lib/pageState";
+import {
+  PRICING_RULE,
+  billableChars,
+  measureSpeech,
+  noUnits,
+  normalizeUsage,
+  priceRequest,
+  priceSpeechRequest,
+} from "@/lib/pricing";
+import {
+  cacheShapeFor,
+  reportedChargeFor,
+  reportsOwnCost,
+  simulateSpeechUsage,
+  simulateUsage,
+  speechUsageFormatFor,
+} from "@/mock/simulators/usage";
+
+/**
+ * A sample line of the right size for one invented request, in the endpoint's own script.
+ *
+ * The byte-billed endpoints get non-ASCII text, because that is the whole point of byte billing: a
+ * week of Fish Audio history whose bytes equalled its characters would demonstrate nothing, and the
+ * Activity list is where the difference is meant to be visible.
+ */
+const SAMPLE_ASCII = "The quick brown fox jumps over the lazy dog. ";
+const SAMPLE_CJK = "他抬起头，望向远处的山峦，轻声说道：“时候到了。” ";
+
+function sampleText(ep: EndpointDescriptor, chars: number): string {
+  const unit = ep.billing?.unit;
+  const seed = unit === "bytes" ? SAMPLE_CJK : SAMPLE_ASCII;
+  return seed.repeat(Math.max(1, Math.ceil(chars / [...seed].length))).slice(0, chars);
+}
+
+/** What one invented speech request submitted, counted the way its endpoint bills. */
+function measuredUnits(
+  ep: EndpointDescriptor,
+  chars: number,
+  status: RequestStatus,
+): BillableUnits {
+  const text = sampleText(ep, chars);
+  return measureSpeech(
+    {
+      text,
+      requests: ep.maxChars ? Math.max(1, Math.ceil(chars / ep.maxChars)) : 1,
+      audioSeconds: status === "done" ? billableChars(text) / AUDIO_CHARS_PER_SECOND : 0,
+    },
+    ep.billing ?? { unit: "chars", rate: null },
+  );
+}
+
+/** The same thing as the row's `usage`: every quantity counted, none of them conversions. */
+function speechUnits(ep: EndpointDescriptor, chars: number, status: RequestStatus): RequestUsage {
+  const u = measuredUnits(ep, chars, status);
+  return {
+    chars: u.chars,
+    bytes: u.bytes,
+    ...(u.textTokens != null ? { textTokens: u.textTokens } : {}),
+    audioSeconds: u.audioSeconds,
+    ...(u.audioTokens != null ? { audioTokens: u.audioTokens } : {}),
+  };
+}
 
 /** What the service needs to know about an endpoint. A real backend would use `key` alone; the
  *  fixture implementation also prices its rows from the rates configured on the page. */
@@ -34,14 +103,69 @@ export interface EndpointDescriptor {
   /** scripting: USD per 1M tokens */
   inPrice?: number;
   outPrice?: number;
-  /** tts */
+  /**
+   * scripting: the full rate card — base rates, cached-input and cache-write rates, the
+   * peak/off-peak schedule and the promotions. A real backend would price server side and send the
+   * receipt back; the fixture prices each invented request at the instant it finished, which is
+   * what makes a week of seeded history show off-peak and promotion periods at the right prices.
+   */
+  pricing?: { base: RateSet; config: PricingConfig };
+  /** which payload shape this provider reports usage in */
+  usageFormat?: UsageFormat;
+  /** tts: the rate's unit, and the per-request character cap a long line is split against —
+   *  a provider that charges per call charges for every piece a split line became */
   billing?: TtsBilling;
+  maxChars?: number;
   hasKey?: boolean;
+}
+
+/**
+ * The one deliberate request a connection test sends.
+ *
+ * Both the estimate the page shows before the button is pressed and the figure the test reports
+ * afterwards are priced from this, through the same engine every other request goes through — at
+ * the rates in force *now*, schedule and promotions included. Pricing a probe off the base rates
+ * instead told an operator sitting inside a 40% off-peak window the wrong number twice over.
+ */
+export const PROBE = {
+  scripting: { inputTokens: 24, outputTokens: 8 },
+  tts: { text: "The quick brown fox." },
+} as const;
+
+/** The probe's sample line, counted the way the endpoint's own billing model counts it. */
+export const probeUnits = (billing: TtsBilling): BillableUnits =>
+  measureSpeech(
+    {
+      text: PROBE.tts.text,
+      requests: 1,
+      audioSeconds: billableChars(PROBE.tts.text) / AUDIO_CHARS_PER_SECOND,
+    },
+    billing,
+  );
+
+/** What one probe would cost at the rates in force at `at`. `null` = this endpoint's rate is not
+ *  known, which is never the same as free. */
+export function probeCost(ep: EndpointDescriptor, at: number = Date.now()): number | null {
+  if (!ep.pricing) return null;
+  if (ep.kind === "scripting")
+    return priceRequest(
+      ep.pricing.base,
+      ep.pricing.config,
+      normalizeUsage({ ...PROBE.scripting, cachedInput: 0, cacheWrite: 0 }, "internal"),
+      { at, rule: PRICING_RULE },
+    ).total;
+  if (!ep.billing) return null;
+  return priceSpeechRequest(ep.billing, ep.pricing.config, probeUnits(ep.billing), {
+    at,
+    rule: PRICING_RULE,
+  }).amount;
 }
 
 export interface EndpointService {
   /** false only when these numbers come from somewhere real */
   readonly simulated: boolean;
+  /** Drop anything cached about a world that has been replaced. A real backend has nothing to do. */
+  reset?(): void;
   /** Every request this endpoint has handled inside `range`, newest first. */
   history(ep: EndpointDescriptor, range: RangeKey): Promise<RequestRecord[]>;
   /** One deliberate probe. The caller shows its scope and cost before this is called. */
@@ -74,6 +198,11 @@ const emptyTotals = (): MetricTotals => ({
   unknownCost: 0,
   inputTokens: 0,
   outputTokens: 0,
+  cachedInputTokens: 0,
+  cacheReportedInputTokens: 0,
+  cacheReported: 0,
+  providerReported: 0,
+  estimatedCost: 0,
   chars: 0,
   audioSeconds: 0,
 });
@@ -164,9 +293,18 @@ export function seriesFrom(
       totals.queueMs += r.queueMs;
       totals.responseMs += r.responseMs;
     }
+    if (r.costBasis === "provider-reported") totals.providerReported++;
+    if (r.costBasis === "estimated") totals.estimatedCost++;
     const u = r.usage;
     totals.inputTokens += u.inputTokens ?? 0;
     totals.outputTokens += u.outputTokens ?? 0;
+    // a provider that said nothing about cache use is left out of both counts rather than counted
+    // as a miss — "nothing cached" and "nobody said" are different facts
+    if (u.cachedInput != null) {
+      totals.cachedInputTokens += u.cachedInput;
+      totals.cacheReportedInputTokens += u.inputTokens ?? 0;
+      totals.cacheReported++;
+    }
     totals.chars += u.chars ?? 0;
     totals.audioSeconds += u.audioSeconds ?? 0;
     // throughput is measured on what the endpoint produced, in the unit that kind is judged by
@@ -237,6 +375,14 @@ const BEHAVIOUR: Record<string, Behaviour> = {
     failRate: 0.05,
     rateLimitRate: 0.1,
     quietFor: 1.5,
+  },
+  "scripting:anthropic": {
+    rate: 18,
+    latency: 11000,
+    spread: 0.45,
+    failRate: 0.015,
+    rateLimitRate: 0.02,
+    quietFor: 0.6,
   },
   "scripting:antigravity": {
     rate: 0,
@@ -311,6 +457,19 @@ export class FixtureEndpointService implements EndpointService {
   /** generated once per endpoint per session, so the page doesn't rewrite history as you click */
   private cache = new Map<string, { at: number; rows: RequestRecord[] }>();
 
+  /**
+   * Forget the invented week.
+   *
+   * This history is priced from the rate cards the seeded world holds, so a demo reset or a
+   * scenario that changes a rate card has to be able to drop it — otherwise the page would show a
+   * week of traffic priced at rates the world no longer has. That is the one case where dropping a
+   * recorded cost is right: these rows belong to a world that has been replaced, not to a run
+   * anybody made. Nothing this session actually produced lives here.
+   */
+  reset(): void {
+    this.cache.clear();
+  }
+
   private generate(ep: EndpointDescriptor, now: number): RequestRecord[] {
     // An endpoint this build didn't seed was added in this session: it has no past, and inventing
     // one would be a lie the page then reports as health.
@@ -357,17 +516,88 @@ export class FixtureEndpointService implements EndpointService {
         const finishedAt = startedAt + responseMs;
         const status: RequestStatus = failed ? "failed" : r() < 0.01 ? "cancelled" : "done";
         const chars = 400 + Math.floor(r() * 2600);
-        const usage =
-          ep.kind === "scripting"
-            ? {
+        // A scripting request's usage comes back in the provider's own payload shape and is read
+        // through the same normalizer a real client would use, so the fixture exercises the
+        // "cached tokens are a slice of the input" rule rather than asserting it.
+        const scripted = ep.kind === "scripting";
+        const reports = (ep.usageFormat ?? "openai") !== "plain";
+        // A provider that normally reports cache detail sometimes does not — a proxy strips the
+        // field, an older model does not carry it. Those rows must read as "unknown", never as a
+        // confident miss, so a few of them are seeded deliberately. And a smaller few come back
+        // with counts that contradict each other, which is the case the arithmetic has to survive.
+        const roll = r();
+        const drops = reports && roll < 0.12;
+        const contradicts = reports && roll >= 0.12 && roll < 0.15;
+        const answer = scripted
+          ? simulateUsage(
+              {
                 inputTokens: Math.round((chars / 4) * 1.6) + 500,
                 outputTokens: status === "done" ? Math.round((chars / 4) * 1.15) : 0,
-              }
-            : {
-                chars,
-                audioSeconds: status === "done" ? chars / AUDIO_CHARS_PER_SECOND : 0,
-              };
-        const cost = this.priceOf(ep, usage, status);
+                ...cacheShapeFor(i + 1, reports),
+                ...(contradicts ? { corrupt: "cache-exceeds-input" as const } : {}),
+              },
+              drops ? "plain" : (ep.usageFormat ?? "openai"),
+            )
+          : null;
+        const usage = answer
+          ? {
+              inputTokens: answer.usage.inputTokens,
+              outputTokens: answer.usage.outputTokens,
+              ...(answer.usage.cachedInput != null
+                ? { cachedInput: answer.usage.cachedInput }
+                : {}),
+              ...(answer.usage.cacheWrite ? { cacheWrite: answer.usage.cacheWrite } : {}),
+            }
+          : {
+              ...speechUnits(ep, chars, status),
+            };
+        // priced at the instant it finished, from the rate card as it stood then
+        const billsItself = scripted && reportsOwnCost(ep.name, ep.baseUrl);
+        if (answer && billsItself && ep.pricing)
+          answer.usage.reportedCost = reportedChargeFor(
+            priceRequest(ep.pricing.base, ep.pricing.config, answer.usage, { at: finishedAt })
+              .calculated ?? 0,
+          );
+        const priced =
+          answer && ep.pricing
+            ? priceRequest(ep.pricing.base, ep.pricing.config, answer.usage, {
+                at: finishedAt,
+                rule: PRICING_RULE,
+                preferReported: billsItself,
+              })
+            : null;
+        // A speech row is priced the same way and for the same reason: at the instant it landed,
+        // from the schedule and promotions that were in force *then*, so a week of history shows
+        // its off-peak nights and its promotion periods at the prices they were actually charged.
+        const charged =
+          !scripted && ep.pricing && ep.billing
+            ? priceSpeechRequest(
+                ep.billing,
+                ep.pricing.config,
+                measuredUnits(ep, chars, status),
+                // The invented week carries the same mix a real one does: some providers report
+                // usage for a completed request and some report nothing at all, and the receipts
+                // have to read differently for the two. A failed request reported nothing either.
+                {
+                  at: finishedAt,
+                  rule: PRICING_RULE,
+                  reported:
+                    status === "done"
+                      ? simulateSpeechUsage(
+                          { units: measuredUnits(ep, chars, status) },
+                          speechUsageFormatFor(ep.model, ep.baseUrl),
+                        ).usage
+                      : null,
+                },
+              )
+            : null;
+        // a failed request still sent its input and is charged for it; its output count is zero,
+        // so the receipt already says the right thing without a second rule here
+        const cost = priced
+          ? { cost: priced.total, basis: priced.basis }
+          : charged
+            ? { cost: charged.amount, basis: charged.basis }
+            : this.priceOf(ep, usage, status);
         rows.push({
           id: `${ep.key}-${n++}`,
           endpointId: ep.id,
@@ -388,6 +618,8 @@ export class FixtureEndpointService implements EndpointService {
           usage,
           cost: cost.cost,
           costBasis: cost.basis,
+          ...(priced ? { priced } : {}),
+          ...(charged ? { speech: charged } : {}),
           rateLimited: rateLimited || undefined,
           error: failed
             ? { ...FAILURES[Math.floor(r() * FAILURES.length)], at: finishedAt }
@@ -404,32 +636,43 @@ export class FixtureEndpointService implements EndpointService {
 
   private priceOf(
     ep: EndpointDescriptor,
-    usage: { inputTokens?: number; outputTokens?: number; chars?: number; audioSeconds?: number },
+    usage: RequestUsage,
     status: RequestStatus,
-  ): { cost: number | null; basis: RequestRecord["costBasis"] } {
+  ): { cost: number | null; basis: CostBasis } {
     if (ep.kind === "scripting") {
       const inPrice = ep.inPrice ?? 0;
       const outPrice = ep.outPrice ?? 0;
-      if (!inPrice && !outPrice) return { cost: 0, basis: "recorded" };
+      if (!inPrice && !outPrice) return { cost: 0, basis: "calculated" };
       return {
         cost: ((usage.inputTokens ?? 0) * inPrice + (usage.outputTokens ?? 0) * outPrice) / 1e6,
-        basis: "recorded",
+        basis: "calculated",
       };
     }
-    const billing = ep.billing ?? { unit: "chars" as const, rate: null };
-    // a cancelled or failed request still sent its input; per-request billing still applies
-    const c = ttsCost(billing, usage.chars ?? 0, usage.audioSeconds ?? 0);
+    const billing: TtsBilling = ep.billing ?? { unit: "chars", rate: null };
+    // a cancelled or failed request still sent its input; per-request billing still applies, and
+    // the audio-side components charge nothing because no audio came back
+    const c = ttsCost(billing, {
+      ...noUnits(),
+      chars: usage.chars ?? 0,
+      bytes: usage.bytes ?? usage.chars ?? 0,
+      textTokens: usage.textTokens ?? 0,
+      audioSeconds: status === "done" ? (usage.audioSeconds ?? 0) : 0,
+      audioTokens: usage.audioTokens ?? null,
+      requests: 1,
+    });
     if (c == null) return { cost: null, basis: "unknown" };
-    return { cost: status === "done" ? c : billing.unit === "minute" ? 0 : c, basis: "recorded" };
+    return { cost: c, basis: "calculated" };
   }
 
   async history(ep: EndpointDescriptor, range: RangeKey): Promise<RequestRecord[]> {
     await new Promise((r) => setTimeout(r, 120 + Math.random() * 180));
     const now = Date.now();
     const hit = this.cache.get(ep.key);
-    // regenerate at most once a minute, so the clock advancing doesn't invent a new past
-    const rows = hit && now - hit.at < 60_000 ? hit.rows : this.generate(ep, now);
-    if (!hit || now - hit.at >= 60_000) this.cache.set(ep.key, { at: now, rows });
+    // Generated once and then kept until `reset()`. Regenerating on a timer rewrote the past every
+    // time the page was revisited — the same week of receipts re-priced against whatever the rate
+    // card says now, which is the one thing a receipt is supposed to make impossible.
+    const rows = hit ? hit.rows : this.generate(ep, now);
+    if (!hit) this.cache.set(ep.key, { at: now, rows });
     const from = now - rangeMs(range);
     return rows.filter((r) => recordAt(r) >= from);
   }
@@ -437,11 +680,13 @@ export class FixtureEndpointService implements EndpointService {
   async testConnection(ep: EndpointDescriptor): Promise<ConnectionTest> {
     const ms = 250 + Math.round(Math.random() * 700);
     await new Promise((r) => setTimeout(r, ms));
-    const probe =
+    const units = probeUnits(ep.billing ?? { unit: "chars", rate: null });
+    const probe: RequestUsage =
       ep.kind === "scripting"
-        ? { inputTokens: 24, outputTokens: 8 }
-        : { chars: 12, audioSeconds: 12 / AUDIO_CHARS_PER_SECOND };
-    const { cost } = this.priceOf(ep, probe, "done");
+        ? PROBE.scripting
+        : { chars: units.chars, bytes: units.bytes, audioSeconds: units.audioSeconds };
+    // priced through the shared engine at the rates in force now, schedule and promotions included
+    const cost = ep.pricing ? probeCost(ep) : this.priceOf(ep, probe, "done").cost;
     const reachable = !/localhost|127\.0\.0\.1/.test(ep.baseUrl) || Math.random() > 0.35;
     if (!reachable)
       return {
@@ -460,8 +705,8 @@ export class FixtureEndpointService implements EndpointService {
       message: `${ep.model || "model"} answered in ${ms} ms`,
       detail:
         ep.kind === "scripting"
-          ? `POST ${ep.baseUrl.replace(/\/$/, "")}/chat/completions — 1 request, ${probe.inputTokens} input and ${probe.outputTokens} output tokens.`
-          : `POST ${ep.baseUrl.replace(/\/$/, "")}/audio/speech — 1 request, ${probe.chars} characters of sample text.`,
+          ? `POST ${ep.baseUrl.replace(/\/$/, "")}/chat/completions — 1 request, ${PROBE.scripting.inputTokens} input and ${PROBE.scripting.outputTokens} output tokens.`
+          : `POST ${ep.baseUrl.replace(/\/$/, "")}/audio/speech — 1 request, ${units.chars} characters (${units.bytes} UTF-8 bytes) of sample text.`,
       cost,
       simulated: true,
     };
@@ -470,3 +715,7 @@ export class FixtureEndpointService implements EndpointService {
 
 /** Swap this for an HTTP-backed implementation when there is a backend to talk to. */
 export const endpointService: EndpointService = new FixtureEndpointService();
+
+// The invented week is priced from the seeded rate cards, so it belongs to the world that produced
+// it: restoring that world drops it and the next look regenerates it against the cards now in play.
+onDemoReset(() => endpointService.reset?.());

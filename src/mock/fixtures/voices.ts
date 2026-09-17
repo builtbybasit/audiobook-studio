@@ -113,6 +113,26 @@ export const FISH_MODELS: FishModel[] = [
   },
 ];
 
+/** Fish Audio voices as this endpoint already holds them — a voice *is* a `reference_id`, so the
+ *  ids are the same 32-character model ids `FISH_MODELS` lists. */
+export const FISH_VOICES: Voice[] = [
+  g("fish0000000000000000000000000001", "m", "Narrator · warm baritone"),
+  g("fish0000000000000000000000000002", "m", "Young swordsman"),
+  g("fish0000000000000000000000000003", "m", "Sect elder"),
+  g("fish0000000000000000000000000004", "f", "Lan’er"),
+  g("fish0000000000000000000000000005", "?", "Steward"),
+];
+
+/** Gemini's TTS voices are named rather than cloned. */
+export const GEMINI_VOICES: Voice[] = [
+  g("Zephyr", "f", "Zephyr"),
+  g("Puck", "m", "Puck"),
+  g("Charon", "m", "Charon"),
+  g("Kore", "f", "Kore"),
+  g("Fenrir", "m", "Fenrir"),
+  g("Aoede", "f", "Aoede"),
+];
+
 // what a "Fetch voices from server" call would return for a fresh OpenAI-compatible endpoint (e.g. Kokoro-FastAPI, Orpheus, Piper bridges)
 export const DISCOVERABLE_VOICES: Voice[] = [
   g("tara", "f", "Tara"),

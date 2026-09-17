@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
+import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
@@ -16,6 +17,9 @@ import { isNarrated } from "@/lib/scriptReview";
 import { runActionLabel, runSummary, SCOPE_LABEL, skipSummary } from "@/lib/runPlan";
 import type { NarrationScope } from "@/types";
 import EmptyState from "@/components/EmptyState.vue";
+import { UiToggleGroup } from "@/ui";
+import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
+import { ChevronUp as DetailsIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
 import { AudioLines as NarrationIcon } from "@lucide/vue";
 import { ChevronDown as ChevronDownIcon, ChevronUp as ChevronUpIcon } from "@lucide/vue";
 import ChapterPicker from "@/components/ChapterPicker.vue";
@@ -28,6 +32,7 @@ import JobLedger from "@/views/narration/JobLedger.vue";
 import { useBookId } from "@/composables/useBookId";
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
+const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
 const scriptsStore = useScriptsStore();
@@ -78,6 +83,40 @@ const keepPending = ref(true);
 const plan = computed(() =>
   narrationStore.narrationRunPlan(bookId, selected.value, scope.value, keepPending.value),
 );
+const est = computed(() =>
+  narrationStore.estimate(bookId, selected.value, scope.value, keepPending.value),
+);
+/**
+ * What stops this run starting, in the order worth fixing. It lives here rather than in the
+ * estimate panel because the strip has to say how many there are while the panel is closed.
+ */
+const blockers = computed(() => {
+  const b: string[] = [];
+  const cast = castStore.charactersOf(bookId);
+  if (!cast.find((c) => c.name === "Narrator")?.voice)
+    b.push("Assign the Narrator’s voice to start.");
+  if (!est.value.endpoints) b.push("Enable at least one endpoint.");
+  const book = libraryStore.bookById(bookId);
+  if (book?.budget?.paused) b.push("This book is paused (overview → resume).");
+  if (book?.budget?.cap && jobsStore.spent(bookId) + est.value.cost > book.budget.cap)
+    b.push(
+      `Over the $${book.budget.cap} budget cap: $${jobsStore.spent(bookId).toFixed(2)} spent + $${est.value.cost.toFixed(2)} for this run.`,
+    );
+  const byReason: Record<string, string[]> = {};
+  for (const i of castStore.routingIssues(bookId)) (byReason[i.reason] ??= []).push(i.name);
+  for (const [reason, names] of Object.entries(byReason))
+    b.push(
+      `${names.slice(0, 3).join(", ")}${names.length > 3 ? ` +${names.length - 3}` : ""}: ${reason}.`,
+    );
+  return b;
+});
+const scopes = (["fill", "failed", "all"] as NarrationScope[]).map((value) => ({
+  value,
+  // the strip is 300px wide: the scope's full name is in the panel, and in the run's own label
+  label: SCOPE_LABEL[value]
+    .replace("Missing & changed", "Missing")
+    .replace("Failed only", "Failed"),
+}));
 const runNote = computed(() =>
   plan.value.chapters.length
     ? `${SCOPE_LABEL[scope.value]} · ${runSummary(plan.value).join(" · ")}` +
@@ -125,7 +164,9 @@ const ready = computed(
 </script>
 
 <template>
-  <div class="flex flex-col gap-4 p-4">
+  <!-- the workspace takes whatever the window has: its two panels are the page, and a fixed height
+       either leaves a band of nothing under them or spills them off the bottom -->
+  <div class="flex flex-col gap-4 p-4 lg:h-full">
     <TabsRoot v-model="tab" class="card shrink-0" @update:model-value="collapsed = false">
       <TabsList class="flex items-center gap-1 border-b border-zinc-200 px-2 dark:border-zinc-800">
         <TabsTrigger
@@ -167,8 +208,10 @@ const ready = computed(
       </div>
     </TabsRoot>
 
-    <div class="grid min-h-0 gap-4 lg:h-[680px] lg:grid-cols-[300px_1fr]">
-      <div class="flex min-h-0 flex-col gap-3">
+    <div
+      class="grid min-h-0 gap-4 lg:min-h-[26rem] lg:flex-1 lg:grid-cols-[300px_1fr] lg:grid-rows-1"
+    >
+      <div class="flex min-h-0 flex-col gap-2">
         <div class="h-[50vh] min-h-0 lg:h-auto lg:flex-1">
           <ChapterPicker
             :book-id="bookId"
@@ -190,13 +233,51 @@ const ready = computed(
             "
           />
         </div>
-        <div class="card shrink-0 p-3">
-          <RunEstimate
-            :book-id="bookId"
-            :selected="selected"
-            v-model:scope="scope"
-            v-model:keep-pending="keepPending"
-          />
+        <!-- Scope is a choice and stays on screen; the estimate is a consequence of it and only
+             has to be reachable. Fixed height whatever the run turns out to be, so the chapter
+             list above never gives up rows to a longer answer. -->
+        <div class="card shrink-0 p-2">
+          <UiToggleGroup v-model="scope" :options="scopes" block size="xs" />
+          <div class="mt-1.5 flex items-center gap-2 text-xs">
+            <template v-if="blockers.length">
+              <span class="min-w-0 flex-1 truncate text-amber-600" :title="blockers.join(' ')"
+                ><WarnIcon class="icon-sm" /> {{ blockers[0] }}</span
+              >
+            </template>
+            <template v-else>
+              <span class="text-zinc-500"
+                >{{ est.segments }} clip{{ est.segments === 1 ? "" : "s" }}</span
+              >
+              <span class="text-zinc-300 dark:text-zinc-600">·</span>
+              <span class="font-mono font-semibold text-amber-600">${{ est.cost.toFixed(2) }}</span>
+            </template>
+            <PopoverRoot>
+              <PopoverTrigger
+                class="ml-auto inline-flex shrink-0 items-center gap-0.5 text-zinc-500 hover:text-violet-500"
+              >
+                <span v-if="blockers.length > 1" class="text-amber-600"
+                  >+{{ blockers.length - 1 }}</span
+                >
+                Details <DetailsIcon class="icon-sm" />
+              </PopoverTrigger>
+              <PopoverPortal>
+                <PopoverContent
+                  side="top"
+                  align="end"
+                  :side-offset="6"
+                  class="card z-50 max-h-[70vh] w-80 overflow-y-auto p-3 shadow-xl"
+                >
+                  <RunEstimate
+                    :book-id="bookId"
+                    :selected="selected"
+                    :blockers="blockers"
+                    v-model:scope="scope"
+                    v-model:keep-pending="keepPending"
+                  />
+                </PopoverContent>
+              </PopoverPortal>
+            </PopoverRoot>
+          </div>
         </div>
       </div>
       <div class="min-h-0 min-w-0 max-lg:h-[70vh]">

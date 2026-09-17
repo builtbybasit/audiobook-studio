@@ -350,7 +350,8 @@ const peek = (c: Chapter) => {
         <span v-if="q" class="ml-auto text-[10px] text-zinc-400">whole book, not the filter</span>
       </div>
       <p
-        class="mt-1 text-[11px] leading-snug"
+        class="mt-1 truncate text-[11px]"
+        :title="summary.text"
         :class="
           summary.counts.done || summary.counts.stale
             ? 'text-amber-700 dark:text-amber-400'
@@ -379,7 +380,9 @@ const peek = (c: Chapter) => {
       />
     </div>
 
-    <div class="min-h-0 flex-1 overflow-auto py-1" data-list>
+    <!-- the list is the part that flexes, and the part that must never be squeezed to nothing:
+         every line above and below it is bounded, so a long note cannot eat the chapters -->
+    <div class="min-h-24 flex-1 overflow-auto py-1" data-list>
       <div v-if="!visible.length" class="px-3 py-4 text-center text-xs text-zinc-500">
         No chapter matches “{{ q }}”.
       </div>
@@ -529,8 +532,15 @@ const peek = (c: Chapter) => {
     </div>
 
     <div class="border-t border-zinc-200 p-2 dark:border-zinc-800">
-      <p v-if="runNote" class="mb-1 text-[11px] leading-snug text-zinc-500">{{ runNote }}</p>
-      <p v-if="runSkipped" class="mb-1 text-[11px] leading-snug text-amber-700 dark:text-amber-400">
+      <!-- one line each: the long form of both is said in full in the run panel beside this -->
+      <p v-if="runNote" class="mb-1 truncate text-[11px] text-zinc-500" :title="runNote">
+        {{ runNote }}
+      </p>
+      <p
+        v-if="runSkipped"
+        class="mb-1 truncate text-[11px] text-amber-700 dark:text-amber-400"
+        :title="runSkipped"
+      >
         {{ runSkipped }}
       </p>
       <div v-if="!runNote" class="mb-1 text-center text-[10px] text-zinc-400">

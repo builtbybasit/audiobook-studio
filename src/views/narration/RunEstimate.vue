@@ -1,24 +1,21 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
-import { useJobsStore } from "@/stores/jobs";
-import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 
 // "This run" panel: what the current chapter selection will cost before pressing Narrate. Cost and
 // request counts are per endpoint, because each speaker's voice pins its lines to one endpoint and
 // long segments split against that endpoint's per-request limit.
 import { computed } from "vue";
-import { keyring } from "@/lib/keyring";
 import { runSummary, SCOPE_HELP, SCOPE_LABEL, skipSummary } from "@/lib/runPlan";
 import { UiSwitch, UiToggleGroup } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
 import type { NarrationScope } from "@/types";
-const props = defineProps<{ bookId: string; selected: number[] }>();
+// `blockers` is worked out by the view, not here: the run strip says how many there are and this
+// panel lists them, and one calculation is how those two stay in agreement.
+const props = defineProps<{ bookId: string; selected: number[]; blockers: string[] }>();
 const scope = defineModel<NarrationScope>("scope", { default: "fill" });
 const keepPending = defineModel<boolean>("keepPending", { default: true });
 const castStore = useCastStore();
-const jobsStore = useJobsStore();
-const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
 const est = computed(() =>
   narrationStore.estimate(props.bookId, props.selected, scope.value, keepPending.value),
@@ -31,38 +28,18 @@ const scopes: { value: NarrationScope; label: string }[] = (
 ).map((value) => ({ value, label: SCOPE_LABEL[value] }));
 const cast = computed(() => castStore.charactersOf(props.bookId));
 const voiced = computed(() => cast.value.filter((c) => c.voice).length);
-const narratorOk = computed(() => !!cast.value.find((c) => c.name === "Narrator")?.voice);
-const issues = computed(() => castStore.routingIssues(props.bookId));
 const expressions = computed(() =>
   narrationStore.expressionIssues(
     props.bookId,
     plan.value.chapters.map((c) => c.id),
   ),
 );
-const blockers = computed(() => {
-  const b = [];
-  if (!narratorOk.value) b.push("Assign the Narrator’s voice to start.");
-  if (!est.value.endpoints) b.push("Enable at least one endpoint.");
-  const book = libraryStore.bookById(props.bookId);
-  if (book?.budget?.paused) b.push("This book is paused (overview → resume).");
-  if (book?.budget?.cap && jobsStore.spent(props.bookId) + est.value.cost > book.budget.cap)
-    b.push(
-      `Over the $${book.budget.cap} budget cap: $${jobsStore.spent(props.bookId).toFixed(2)} spent + $${est.value.cost.toFixed(2)} for this run.`,
-    );
-  const byReason: Record<string, string[]> = {};
-  for (const i of issues.value) (byReason[i.reason] ??= []).push(i.name);
-  for (const [reason, names] of Object.entries(byReason))
-    b.push(
-      `${names.slice(0, 3).join(", ")}${names.length > 3 ? ` +${names.length - 3}` : ""}: ${reason}.`,
-    );
-  return b;
-});
 const fmt = (s: number) =>
   s >= 3600
     ? `~${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`
     : `~${Math.round(s / 60)}m`;
 const k = (n: number) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n));
-defineExpose({ blockers, scope, keepPending, plan });
+defineExpose({ scope, keepPending, plan });
 </script>
 <template>
   <div class="text-xs">

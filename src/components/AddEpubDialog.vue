@@ -1,8 +1,11 @@
 <script setup lang="ts">
 // Adding an EPUB: a new novel, or the next volume of one already here. Confirming reads the file
 // into a book (or volume) that waits in the contents review; nothing is on the shelf until that
-// review is done. The prototype parses no file, so the dialog also asks what the file turns out
-// to contain — the one place that is said.
+// review is done.
+//
+// With a server answering, the file is read for real and the dialog says nothing about samples.
+// The seeded world parses nothing, so there it asks what the file turns out to contain — the one
+// place that is said.
 import { useLibraryStore } from "@/stores/library";
 
 import { computed, ref, watch } from "vue";
@@ -39,20 +42,30 @@ const sampleOptions = IMPORT_SAMPLES.map((s) => ({
   hint: `${s.volumes.reduce((a, v) => a + v.chapters.length, 0)} ch`,
 }));
 const sampleHint = computed(() => importSample(draft.value?.sample ?? "")?.hint ?? "");
+/** The seeded world has to be told what the file contains; a server reads it. */
+const picksSample = computed(() => !libraryStore._service());
+const reading = ref(false);
 
 /** Read the file and go straight to its contents review. */
-function confirm() {
+async function confirm() {
   const p = draft.value;
-  if (!p) return;
-  const bookId =
-    p.mode === "new"
-      ? libraryStore.importBook(p.sample, { file: p.file, title: p.title })
-      : p.bookId;
-  if (p.mode === "volume") {
-    if (libraryStore.importVolume(p.bookId, p.sample, p.file, p.volName) == null) return;
+  if (!p || reading.value) return;
+  reading.value = true;
+  try {
+    const spec = { source: p.source, sample: p.sample, file: p.file };
+    const bookId =
+      p.mode === "new"
+        ? await libraryStore.importBook({ ...spec, title: p.title })
+        : (await libraryStore.importVolume(p.bookId, { ...spec, name: p.volName })) == null
+          ? null
+          : p.bookId;
+    // The store has already said what went wrong; the dialog stays open on the file that failed.
+    if (bookId == null) return;
+    emit("close");
+    void router.push(`/book/${bookId}/contents`);
+  } finally {
+    reading.value = false;
   }
-  emit("close");
-  void router.push(`/book/${bookId}/contents`);
 }
 </script>
 
@@ -134,6 +147,7 @@ function confirm() {
           </template>
 
           <div
+            v-if="picksSample"
             class="mt-4 rounded-lg border border-dashed border-zinc-300 p-3 dark:border-zinc-700"
           >
             <label class="block text-xs"
@@ -146,8 +160,10 @@ function confirm() {
 
           <div class="mt-4 flex items-center justify-end gap-2">
             <span class="mr-auto text-[11px] text-zinc-500">Next: review the contents</span>
-            <button class="btn-ghost" @click="emit('close')">Cancel</button
-            ><button class="btn-primary" @click="confirm">Read the file</button>
+            <button class="btn-ghost" :disabled="reading" @click="emit('close')">Cancel</button
+            ><button class="btn-primary" :disabled="reading" @click="confirm">
+              {{ reading ? "Reading…" : "Read the file" }}
+            </button>
           </div>
         </template>
       </DialogContent>

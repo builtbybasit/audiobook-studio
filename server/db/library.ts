@@ -206,6 +206,58 @@ export function setKept(db: Db, bookId: string, ids: readonly number[]): number 
   return changed;
 }
 
+/** One chapter's review decisions, stated outright: skipped or not, looked at or not. */
+export interface ReviewDecision {
+  id: number;
+  excluded?: boolean;
+  kept?: boolean;
+}
+
+/**
+ * Put chapters' review decisions to exactly these, whatever they are now.
+ *
+ * The undo primitive. `setSkipped` and `setKept` each apply a rule — including a noted chapter
+ * counts as having looked at it — and a rule cannot be run backwards: an undone skip would come
+ * back as `kept` rather than as the undecided chapter it was. So an Undo records what the chapters
+ * were and puts that back, exactly, through this. A chapter not in the book is left out of the
+ * count rather than refused, because an undo of a batch is a person's intent for the rest.
+ */
+export function setDecisions(db: Db, bookId: string, decisions: readonly ReviewDecision[]): number {
+  if (!decisions.length) return 0;
+  let changed = 0;
+  db.transaction((tx) => {
+    for (const part of chunked(decisions)) {
+      const rows = tx
+        .select()
+        .from(chapters)
+        .where(
+          and(
+            eq(chapters.bookId, bookId),
+            inArray(
+              chapters.id,
+              part.map((d) => d.id),
+            ),
+          ),
+        )
+        .all();
+      for (const d of part) {
+        const row = rows.find((r) => r.id === d.id);
+        if (!row) continue;
+        const excluded = d.excluded ? true : null;
+        // `kept` means nothing on a chapter with no note, and is never written to one
+        const kept = d.kept && row.note ? true : null;
+        if (!!row.excluded === !!excluded && !!row.kept === !!kept) continue;
+        tx.update(chapters)
+          .set({ excluded, kept })
+          .where(and(eq(chapters.bookId, bookId), eq(chapters.id, d.id)))
+          .run();
+        changed++;
+      }
+    }
+  });
+  return changed;
+}
+
 /** The review is done: the book, or its new volume, is in the library. */
 export function confirmImport(db: Db, bookId: string): void {
   db.transaction((tx) => {

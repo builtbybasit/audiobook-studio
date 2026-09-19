@@ -146,6 +146,15 @@ const openedChapter = computed(() =>
 const openedParts = computed(() =>
   openedChapter.value ? scriptsStore.partsOf(bookId, openedChapter.value.id) : [],
 );
+// With a server answering, a chapter's prose is fetched the first time it is opened. The seeded
+// world generates its own and this does nothing. Either way the preview reads one getter.
+watch(
+  openedChapter,
+  (c) => {
+    if (c) void libraryStore.loadText(bookId, c.id);
+  },
+  { immediate: true },
+);
 const undecidedAfter = computed(
   () => chapters.value.filter((c) => isUndecided(c) && c.id !== opened.value).length,
 );
@@ -266,13 +275,14 @@ const newTotal = computed(() =>
 const actionLabel = computed(() =>
   importLabel(importing.value === "volume" ? "volume" : "book", included.value),
 );
-function confirm() {
-  libraryStore.confirmImport(bookId);
+async function confirm() {
+  if (!(await libraryStore.confirmImport(bookId))) return;
   uiStore.currentBookId = bookId;
   void router.push(`/book/${bookId}`);
 }
-function discard() {
-  const what = libraryStore.discardImport(bookId);
+async function discard() {
+  const what = await libraryStore.discardImport(bookId);
+  if (!what) return;
   cancelling.value = false;
   uiStore.toast(what === "book" ? "Import cancelled" : "Volume not added", {
     kind: "info",

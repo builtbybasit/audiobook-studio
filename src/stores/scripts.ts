@@ -19,6 +19,7 @@ import type {
   SegmentFlag,
   SegmentMap,
 } from "@/types";
+import { activeLibraryService } from "@/services/library";
 import { defineStore } from "pinia";
 import { useCastStore } from "@/stores/cast";
 import { useHistoryStore } from "@/stores/history";
@@ -31,27 +32,69 @@ interface ScriptsState {
   _previous: SegmentMap;
   /** what a re-script did with the manual corrections it was asked to preserve, keyed like `segments` */
   _corrections: Record<string, RescriptReport>;
+  /** Backend mode: the chapters whose script has been read from the server, keyed like `segments`. */
+  _loaded: Record<string, true>;
 }
 export const useScriptsStore = defineStore("scripts", {
-  state: (): ScriptsState => ({ ...seedState("segments"), _previous: {}, _corrections: {} }),
+  // With a server answering, no script is here until it has been read from it. The seeded scripts
+  // belong to seeded books, and a real library has none of those.
+  state: (): ScriptsState => ({
+    ...(activeLibraryService() ? { segments: {} as SegmentMap } : seedState("segments")),
+    _previous: {},
+    _corrections: {},
+    _loaded: {},
+  }),
   getters: {
     segmentsOf(s): (bookId: string, chId: number) => Segment[] {
       return (bookId: string, chId: number): Segment[] => s.segments[key(bookId, chId)] ?? [];
     },
-    /** A chapter's source text in the order it is read, with any author note marked. */
+    /**
+     * A chapter's source text in the order it is read, with any author note marked.
+     *
+     * With a server answering, this is the stored Markdown it returned, in one part: the import
+     * recorded what it thought of a chapter as a note on the chapter itself, not as a range inside
+     * the prose. Text that has not been read yet is no parts at all rather than seeded prose — a
+     * real book must never be reviewed against a fixture.
+     */
     partsOf(): (bookId: string, chId: number) => ContentPart[] {
       const libraryStore = useLibraryStore();
 
-      return (bookId: string, chId: number): ContentPart[] =>
-        chapterParts(
+      return (bookId: string, chId: number): ContentPart[] => {
+        if (libraryStore._service()) {
+          const text = libraryStore.textOf(bookId, chId, "markdown");
+          return text == null ? [] : [{ text }];
+        }
+        return chapterParts(
           bookId,
           chId,
           libraryStore.chapter(bookId, chId),
           libraryStore.bookById(bookId)?.sample,
         );
+      };
     },
+    /**
+     * The chapter as anything that counts, bills or speaks it must read it.
+     *
+     * With a server answering that is the `plain` reading, never the stored Markdown: the stored
+     * form would have a heading's `##` narrated, a link's address read out, and both charged for.
+     */
     rawText(): (bookId: string, chId: number) => string {
-      return (bookId: string, chId: number): string => partsText(this.partsOf(bookId, chId));
+      const libraryStore = useLibraryStore();
+
+      return (bookId: string, chId: number): string => {
+        if (libraryStore._service()) return libraryStore.textOf(bookId, chId, "plain") ?? "";
+        return partsText(this.partsOf(bookId, chId));
+      };
+    },
+    /**
+     * Whether a chapter's script has been read from the server yet.
+     *
+     * Backend mode only. `segmentsOf` answers `[]` both for a chapter with no script and for one
+     * whose script has not been asked for, and the Scripting page has to tell the two apart before
+     * it offers to script a chapter the server already has a script for.
+     */
+    scriptLoaded(s): (bookId: string, chId: number) => boolean {
+      return (bookId: string, chId: number): boolean => key(bookId, chId) in s._loaded;
     },
     /** What the last re-script did with this chapter's manual corrections, while the diff is up. */
     correctionsOf(s): (bookId: string, chId: number) => RescriptReport | null {
@@ -546,6 +589,36 @@ export const useScriptsStore = defineStore("scripts", {
         undo: revert,
       });
       return true;
+    },
+    /**
+     * Read a chapter's script from the server into `segments`. Demo mode is already holding one.
+     *
+     * Read once and kept, unless `force`: the queue forces it when a scripting job finishes, which
+     * is the one time the server's script is known to have changed. A script that was here before
+     * the read is kept as `_previous`, so the reader can show what a re-script changed.
+     */
+    async loadScript(bookId: string, chId: number, { force = false } = {}): Promise<void> {
+      const svc = activeLibraryService();
+      const k = key(bookId, chId);
+      if (!svc || (this._loaded[k] && !force)) return;
+      try {
+        const { segments } = await svc.chapterScript(bookId, chId);
+        const had = this.segments[k];
+        if (force && had?.length && segments.length) this._previous[k] = clone(had);
+        this.segments[k] = segments;
+        this._loaded[k] = true;
+      } catch (cause) {
+        const uiStore = useUiStore();
+        uiStore.toast("Could not read this chapter's script", {
+          kind: "error",
+          description: cause instanceof Error ? cause.message : undefined,
+        });
+      }
+    },
+    /** Forget what was read for a book that is going, or whose chapter numbers have moved. */
+    _forgetLoaded(bookId: string): void {
+      for (const k of Object.keys(this._loaded))
+        if (k.startsWith(bookId + ":")) delete this._loaded[k];
     },
     /** A finished re-script says what it could and could not re-apply; the reader shows both. */
     _noteCorrections(bookId: string, chId: number, report: RescriptReport): void {

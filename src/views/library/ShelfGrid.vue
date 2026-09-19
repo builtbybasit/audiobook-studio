@@ -2,10 +2,11 @@
 // The shelf as a grid of covers; everything a book has to say sits under its cover. Best when
 // the shelf is short and books are told apart by sight.
 import type { Book } from "@/types";
+import type { PickedFile } from "@/components/addEpub";
 import BookCard from "@/views/library/BookCard.vue";
 
 defineProps<{ books: Book[] }>();
-const emit = defineEmits<{ open: [book: Book]; addVolume: [book: Book, file: string] }>();
+const emit = defineEmits<{ open: [book: Book]; addVolume: [book: Book, picked: PickedFile] }>();
 
 // arrows move between covers, like the lists elsewhere
 function onGridKey(e: KeyboardEvent) {
@@ -32,7 +33,7 @@ function onGridKey(e: KeyboardEvent) {
       :key="b.id"
       :book="b"
       @open="emit('open', b)"
-      @add-volume="(file) => emit('addVolume', b, file)"
+      @add-volume="(picked) => emit('addVolume', b, picked)"
     />
   </div>
 </template>

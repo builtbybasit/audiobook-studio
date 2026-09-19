@@ -16,6 +16,7 @@ import {
   real,
   sqliteTable,
   text,
+  uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
 import type { Job, JobKind, JobStatus } from "@/types";
@@ -79,8 +80,20 @@ export const jobs = sqliteTable(
 
     /** events this session's simulator observed but could not keep */
     droppedEvents: integer("dropped_events").notNull().default(0),
+
+    /**
+     * `kind:book:chapter` while the job is queued or running, null once it has finished.
+     *
+     * The unique index below is the duplicate-request rule: the same work cannot be queued twice,
+     * and it is the database that says so rather than a check a second request could slip past.
+     * NULLs are distinct to SQLite, so finished jobs never collide.
+     */
+    activeKey: text("active_key"),
+    /** how many times this job has been started; a restart that finds it running starts it again */
+    attempts: integer("attempts").notNull().default(0),
   },
   (t) => [
+    uniqueIndex("jobs_active_key").on(t.activeKey),
     // `chapter_id` is nullable, and a foreign key with a null in it is satisfied by definition —
     // which is exactly what a whole-book job needs.
     foreignKey({

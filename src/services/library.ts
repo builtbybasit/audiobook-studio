@@ -8,8 +8,11 @@
 // Only the HTTP implementation lives here. In demo mode the library's state *is* the mock world
 // the store holds, so asking for this service is a mistake worth failing on rather than answering
 // with seeded books that would look like a working backend.
-import type { Book, Chapter } from "@/types";
+import type { Book, Chapter, Segment } from "@/types";
+import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { isBackend, mode } from "@/services/mode";
+
+export { ApiError, type FetchLike } from "@/services/http";
 
 export interface ImportedBook {
   book: Book;
@@ -18,6 +21,19 @@ export interface ImportedBook {
 
 /** The two forms a chapter's prose comes in. See `LibraryService.chapterText`. */
 export type TextFormat = "markdown" | "plain";
+
+/** One chapter's review decisions, stated outright. Absent means "not". */
+export interface ReviewDecision {
+  id: number;
+  excluded?: boolean;
+  kept?: boolean;
+}
+
+/** A chapter's script as the server holds it, and the revision a later write has to name. */
+export interface ChapterScript {
+  segments: Segment[];
+  revision: number;
+}
 
 export interface LibraryService {
   /** false only when these books come from somewhere real */
@@ -34,6 +50,8 @@ export interface LibraryService {
    * form would have a link's address and a table's pipes read aloud and charged for.
    */
   chapterText(bookId: string, chapterId: number, format?: TextFormat): Promise<string>;
+  /** The chapter's script as it stands on the server: empty until a scripting job has written one. */
+  chapterScript(bookId: string, chapterId: number): Promise<ChapterScript>;
   /** Read an EPUB into a new book waiting for its contents review. */
   importBook(file: File, options?: { title?: string }): Promise<ImportedBook>;
   /** Read an EPUB into one more volume of a book already in the library. */
@@ -46,113 +64,31 @@ export interface LibraryService {
   skipChapters(bookId: string, ids: number[], skip: boolean): Promise<Chapter[]>;
   /** Keep a noted chapter as it is, and stop the suggestion asking. */
   keepChapters(bookId: string, ids: number[]): Promise<Chapter[]>;
+  /**
+   * Put chapters' review decisions to exactly these, whatever they are now.
+   *
+   * What an Undo sends: skip and keep each apply a rule that only runs forwards — including a
+   * noted chapter counts as having looked at it — so an undo records what the chapters were and
+   * puts that back rather than asking the inverse rule to guess.
+   */
+  setDecisions(bookId: string, decisions: ReviewDecision[]): Promise<Chapter[]>;
   removeBook(bookId: string): Promise<void>;
   removeVolume(bookId: string, volumeId: number): Promise<"book" | "volume">;
 }
 
-/** A failure the API described. `detail` is the longer explanation a panel can expand to. */
-export class ApiError extends Error {
-  override readonly name = "ApiError";
-  constructor(
-    message: string,
-    readonly status: number,
-    readonly detail?: string,
-  ) {
-    super(message);
-  }
-}
-
-/**
- * Just the part of `fetch` this client calls.
- *
- * Narrower than `typeof fetch` on purpose: the global carries extras that differ between runtimes,
- * and requiring them would mean a test could not hand over a plain function.
- */
-export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
-
-/** What the API returns when something goes wrong; see `server/lib/http.ts`. */
-interface ErrorBody {
-  error?: { message?: string; detail?: string };
-}
-
-/** Enough of an unexpected response to recognise it by, without pasting a page into a toast. */
-function excerpt(text: string, max = 200): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length <= max ? flat : flat.slice(0, max) + "…";
-}
-
 export class HttpLibraryService implements LibraryService {
   readonly simulated = false;
-  constructor(
-    private readonly base = "/api",
-    private readonly fetch: FetchLike = (input, init) => globalThis.fetch(input, init),
-  ) {}
-
-  private async send<T>(path: string, init?: RequestInit): Promise<T> {
-    let res: Response;
-    try {
-      res = await this.fetch(`${this.base}${path}`, init);
-    } catch (cause) {
-      // The server is not answering. Saying so is the whole point: the alternative is a UI that
-      // looks like an empty library rather than one that cannot be reached.
-      throw new ApiError(
-        "Could not reach the server",
-        0,
-        cause instanceof Error ? cause.message : undefined,
-      );
-    }
-    const text = await res.text();
-    // Not everything that answers this URL is the API. A proxy, a dev server or a gateway in front
-    // of it answers with HTML, and parsing that would throw a `SyntaxError` out of a method whose
-    // whole contract is that it throws `ApiError` — so the page would report a JavaScript fault
-    // where it should be saying the server is unreachable.
-    let body: unknown = null;
-    let parsed = true;
-    try {
-      body = text ? JSON.parse(text) : null;
-    } catch {
-      parsed = false;
-    }
-
-    if (!res.ok) {
-      const { error } = (parsed ? (body ?? {}) : {}) as ErrorBody;
-      throw new ApiError(
-        error?.message ?? `Request failed (${res.status})`,
-        res.status,
-        error?.detail ?? (parsed ? undefined : excerpt(text)),
-      );
-    }
-    if (!parsed)
-      throw new ApiError(
-        "The server did not answer with JSON",
-        res.status,
-        excerpt(text) || "The response was empty.",
-      );
-    return body as T;
-  }
-
-  private form(file: File, fields: Record<string, string | undefined>): RequestInit {
-    const form = new FormData();
-    form.set("file", file);
-    for (const [k, v] of Object.entries(fields)) if (v?.trim()) form.set(k, v.trim());
-    return { method: "POST", body: form };
-  }
-
-  private post(body?: unknown): RequestInit {
-    return {
-      method: "POST",
-      ...(body === undefined
-        ? {}
-        : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
-    };
+  private readonly http: HttpClient;
+  constructor(base = "/api", fetch?: FetchLike) {
+    this.http = new HttpClient(base, fetch);
   }
 
   async books(): Promise<Book[]> {
-    return (await this.send<{ books: Book[] }>("/books")).books;
+    return (await this.http.get<{ books: Book[] }>("/books")).books;
   }
 
   book(id: string): Promise<ImportedBook> {
-    return this.send<ImportedBook>(`/books/${encodeURIComponent(id)}`);
+    return this.http.get<ImportedBook>(`/books/${seg(id)}`);
   }
 
   async chapterText(
@@ -160,69 +96,83 @@ export class HttpLibraryService implements LibraryService {
     chapterId: number,
     format: TextFormat = "markdown",
   ): Promise<string> {
-    const { text } = await this.send<{ text: string }>(
-      `/books/${encodeURIComponent(bookId)}/chapters/${chapterId}/text?format=${format}`,
+    const { text } = await this.http.get<{ text: string }>(
+      `/books/${seg(bookId)}/chapters/${chapterId}/text?format=${format}`,
     );
     return text;
   }
 
+  chapterScript(bookId: string, chapterId: number): Promise<ChapterScript> {
+    return this.http.get<ChapterScript>(`/books/${seg(bookId)}/chapters/${chapterId}/script`);
+  }
+
   importBook(file: File, { title }: { title?: string } = {}): Promise<ImportedBook> {
-    return this.send<ImportedBook>("/books/import", this.form(file, { title }));
+    return this.http.postForm<ImportedBook>("/books/import", file, { title });
   }
 
   importVolume(bookId: string, file: File, name?: string): Promise<ImportedBook> {
-    return this.send<ImportedBook>("/books/import", this.form(file, { bookId, name }));
+    return this.http.postForm<ImportedBook>("/books/import", file, { bookId, name });
   }
 
   async confirmImport(bookId: string): Promise<Book> {
-    return (
-      await this.send<{ book: Book }>(`/books/${encodeURIComponent(bookId)}/confirm`, this.post())
-    ).book;
+    return (await this.http.post<{ book: Book }>(`/books/${seg(bookId)}/confirm`)).book;
   }
 
   async discardImport(bookId: string): Promise<"book" | "volume"> {
-    return (
-      await this.send<{ discarded: "book" | "volume" }>(
-        `/books/${encodeURIComponent(bookId)}/discard`,
-        this.post(),
-      )
-    ).discarded;
+    return (await this.http.post<{ discarded: "book" | "volume" }>(`/books/${seg(bookId)}/discard`))
+      .discarded;
   }
 
   async skipChapters(bookId: string, ids: number[], skip: boolean): Promise<Chapter[]> {
     const where = skip ? "skip" : "include";
     return (
-      await this.send<{ chapters: Chapter[] }>(
-        `/books/${encodeURIComponent(bookId)}/chapters/${where}`,
-        this.post({ ids }),
-      )
+      await this.http.post<{ chapters: Chapter[] }>(`/books/${seg(bookId)}/chapters/${where}`, {
+        ids,
+      })
     ).chapters;
   }
 
   async keepChapters(bookId: string, ids: number[]): Promise<Chapter[]> {
     return (
-      await this.send<{ chapters: Chapter[] }>(
-        `/books/${encodeURIComponent(bookId)}/chapters/keep`,
-        this.post({ ids }),
-      )
+      await this.http.post<{ chapters: Chapter[] }>(`/books/${seg(bookId)}/chapters/keep`, { ids })
+    ).chapters;
+  }
+
+  async setDecisions(bookId: string, decisions: ReviewDecision[]): Promise<Chapter[]> {
+    return (
+      await this.http.post<{ chapters: Chapter[] }>(`/books/${seg(bookId)}/chapters/decisions`, {
+        decisions,
+      })
     ).chapters;
   }
 
   async removeBook(bookId: string): Promise<void> {
-    await this.send(`/books/${encodeURIComponent(bookId)}`, { method: "DELETE" });
+    await this.http.delete(`/books/${seg(bookId)}`);
   }
 
   async removeVolume(bookId: string, volumeId: number): Promise<"book" | "volume"> {
     return (
-      await this.send<{ removed: "book" | "volume" }>(
-        `/books/${encodeURIComponent(bookId)}/volumes/${volumeId}`,
-        { method: "DELETE" },
+      await this.http.delete<{ removed: "book" | "volume" }>(
+        `/books/${seg(bookId)}/volumes/${volumeId}`,
       )
     ).removed;
   }
 }
 
 let service: LibraryService | null = null;
+
+/**
+ * The library service, or `null` when there is nobody to ask.
+ *
+ * This is the question the store asks, and the answer decides which half of every library action
+ * runs: with a service the library is the server's and every change is a request; without one it
+ * is the seeded world the store holds. `null` is a mode, not a failure — what the demo rules
+ * forbid is a *service* that quietly answers with fixtures, not a store that knows it has none.
+ */
+export function activeLibraryService(): LibraryService | null {
+  if (service) return service;
+  return isBackend ? (service = new HttpLibraryService()) : null;
+}
 
 /**
  * The library service for the mode the app started in.
@@ -232,15 +182,21 @@ let service: LibraryService | null = null;
  * like a backend is exactly the silent fallback the demo rules forbid.
  */
 export function libraryService(): LibraryService {
-  if (!isBackend)
+  const found = activeLibraryService();
+  if (!found)
     throw new Error(
       `The library service is not available in ${mode} mode. ` +
         `The seeded library lives in the store; start the app with VITE_MODE=backend to talk to a server.`,
     );
-  return (service ??= new HttpLibraryService());
+  return found;
 }
 
-/** Point the app at a different implementation. For tests and for wiring at startup. */
+/**
+ * Point the app at a different implementation. For tests and for wiring at startup.
+ *
+ * A store reads the service when its state is first built, so a test that wants the backend half
+ * of the library must set this *before* it creates the store.
+ */
 export function setLibraryService(next: LibraryService | null): void {
   service = next;
 }

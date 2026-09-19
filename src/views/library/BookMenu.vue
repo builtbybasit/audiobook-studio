@@ -5,27 +5,34 @@
 // Removing acts at once and offers the usual Undo toast — the app's one rule for danger, see
 // `src/stores/README.md`. It used to ask first as well, which said nothing Undo did not already
 // cover; what that step explained now hangs off the item itself, where it can be read before the
-// click rather than after it.
+// click rather than after it. With a server answering there is no Undo — nothing puts a book back
+// in the database — so the same rule sends the item down its other branch: it asks, with a second
+// click on the item itself, and says it cannot be undone.
 import { useLibraryStore } from "@/stores/library";
 
 import { computed, nextTick, ref } from "vue";
 import { useRouter } from "vue-router";
 import { plural } from "@/views/library/shared";
 import type { Book } from "@/types";
+import { pickedFrom, type PickedFile } from "@/components/addEpub";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { Ellipsis as MenuIcon, Plus as AddIcon, Trash2 as RemoveIcon } from "@lucide/vue";
 
 const props = defineProps<{ book: Book; triggerClass?: string; align?: "start" | "end" }>();
-const emit = defineEmits<{ addVolume: [file: string] }>();
+const emit = defineEmits<{ addVolume: [picked: PickedFile] }>();
 const libraryStore = useLibraryStore();
 const router = useRouter();
 const contents = computed(() => libraryStore.contentsOf(props.book.id));
 
 const menu = ref(false);
+/** Backend mode: a removal cannot be undone, so the item asks with a second click. */
+const asksFirst = computed(() => !!libraryStore._service());
+const confirming = ref(false);
 /** What the item is about to take, in the menu's own words. */
 const removeWarning = computed(
   () =>
-    `Removes “${props.book.title}”, its ${plural(contents.value.total, "chapter")}, script, cast and audiobooks. Undo is offered afterwards.`,
+    `Removes “${props.book.title}”, its ${plural(contents.value.total, "chapter")}, script, cast and audiobooks. ` +
+    (asksFirst.value ? "This cannot be undone." : "Undo is offered afterwards."),
 );
 function go(to: string) {
   menu.value = false;
@@ -33,21 +40,26 @@ function go(to: string) {
 }
 function addVolume(e: Event) {
   const input = e.target as HTMLInputElement;
-  const file = input.files?.[0]?.name ?? "volume.epub";
+  const picked = pickedFrom(input.files);
   input.value = "";
   menu.value = false;
-  emit("addVolume", file);
+  if (picked) emit("addVolume", picked);
 }
 async function remove() {
+  if (asksFirst.value && !confirming.value) {
+    confirming.value = true;
+    return;
+  }
   menu.value = false;
+  confirming.value = false;
   // let the menu unmount before the card does (see the template)
   await nextTick();
-  libraryStore.removeBook(props.book.id);
+  await libraryStore.removeBook(props.book.id);
 }
 </script>
 
 <template>
-  <PopoverRoot v-model:open="menu">
+  <PopoverRoot v-model:open="menu" @update:open="(open) => open || (confirming = false)">
     <PopoverTrigger :class="triggerClass" :aria-label="`More actions for ${book.title}`">
       <MenuIcon class="icon" />
     </PopoverTrigger>
@@ -87,11 +99,17 @@ async function remove() {
           @click="remove"
         >
           <RemoveIcon class="mr-1 mt-0.5 icon-sm" />
-          <span class="text-left leading-snug"
+          <span v-if="confirming" class="text-left leading-snug"
+            >Remove for good?
+            <span class="block text-[10px] font-normal text-zinc-500"
+              >This cannot be undone · click again to remove</span
+            ></span
+          >
+          <span v-else class="text-left leading-snug"
             >Remove from library
             <span class="block text-[10px] font-normal text-zinc-500"
-              >{{ plural(contents.total, "chapter") }}, script, cast and audiobooks · Undo
-              offered</span
+              >{{ plural(contents.total, "chapter") }}, script, cast and audiobooks ·
+              {{ asksFirst ? "asks first" : "Undo offered" }}</span
             ></span
           >
         </button>

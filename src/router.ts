@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 import LibraryView from "@/views/LibraryView.vue";
+import { useLibraryStore } from "@/stores/library";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -19,4 +20,20 @@ export const router = createRouter({
     { path: "/book/:bookId/narration", component: () => import("@/views/NarrationView.vue") },
     { path: "/book/:bookId/export", component: () => import("@/views/ExportView.vue") },
   ],
+});
+
+/**
+ * With a server answering, have the library before the page that reads it.
+ *
+ * This is the one place a book is fetched, so a link pasted into a new tab and a reload land on
+ * the same page as a click does. The seeded world is already in the store and never comes here.
+ * A book the server does not have sends the person to the library rather than to an empty review.
+ */
+router.beforeEach(async (to) => {
+  const libraryStore = useLibraryStore();
+  if (!libraryStore._service()) return true;
+  await libraryStore.load();
+  const bookId = typeof to.params.bookId === "string" ? to.params.bookId : null;
+  if (!bookId || libraryStore.chaptersOf(bookId).length) return true;
+  return (await libraryStore.loadBook(bookId)) ? true : "/library";
 });

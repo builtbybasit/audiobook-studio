@@ -4,6 +4,7 @@
 // is per stage, the way the overview shows it, so the two pages agree. A column header that can
 // order the shelf is a button; the order itself belongs to the page, which keeps it in the URL.
 import type { Book } from "@/types";
+import type { PickedFile } from "@/components/addEpub";
 import type { ShelfSort } from "@/views/library/shelf";
 import ShelfRow from "@/views/library/ShelfRow.vue";
 import { ArrowDown as SortIcon } from "@lucide/vue";
@@ -11,7 +12,7 @@ import { ArrowDown as SortIcon } from "@lucide/vue";
 defineProps<{ books: Book[]; sort: ShelfSort }>();
 const emit = defineEmits<{
   open: [book: Book];
-  addVolume: [book: Book, file: string];
+  addVolume: [book: Book, picked: PickedFile];
   sort: [sort: ShelfSort];
 }>();
 
@@ -61,7 +62,7 @@ const COLUMNS: { label: string; sort?: ShelfSort; cls?: string; w: string }[] = 
           :key="b.id"
           :book="b"
           @open="emit('open', b)"
-          @add-volume="(file) => emit('addVolume', b, file)"
+          @add-volume="(picked) => emit('addVolume', b, picked)"
         />
       </tbody>
     </table>

@@ -14,8 +14,8 @@ const libraryStore = useLibraryStore();
 const uiStore = useUiStore();
 const s = computed(() => libraryStore.contentsOf(props.book.id));
 const pending = computed(() => s.value.suggested + s.value.review);
-function discard() {
-  libraryStore.discardImport(props.book.id);
+async function discard() {
+  if (!(await libraryStore.discardImport(props.book.id))) return;
   uiStore.toast("Import cancelled", {
     kind: "info",
     description: "Nothing was added to the library.",

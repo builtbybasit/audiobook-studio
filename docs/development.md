@@ -48,14 +48,14 @@ Run an individual test file directly with Bun, for example `bun test tests/histo
 | [src/services/endpoints.ts](../src/services/endpoints.ts)         | Endpoint service contract and fixture implementation                                                        |
 | [src/types](../src/types)                                         | Feature types, imported through `@/types`                                                                   |
 | [tests](../tests)                                                 | Bun tests for domain rules and workflows                                                                    |
-| [server](../server)                                               | The backend: EPUB import and the stored library. Its own guide is [backend](backend.md)                     |
-| [src/services](../src/services)                                   | The seams a backend plugs into: the endpoint service, the library service and the demo/backend mode switch  |
+| [server](../server)                                               | The backend: EPUB import, the stored library and the job queue. Its own guide is [backend](backend.md)      |
+| [src/services](../src/services)                                   | The seams a backend plugs into: the endpoint, library and jobs services, and the demo/backend mode switch   |
 
 The scenario catalogue and shared store rules remain in their existing locations; this documentation does not introduce another state or service layer.
 
 ## State that survives a reload
 
-In demo mode — which is the default — books, scripts, history, jobs, usage, endpoint settings and credentials are in memory, and reloading reconstructs the seeded world. In backend mode the library is stored in SQLite and survives; everything else is still in memory. See [backend](backend.md).
+In demo mode — which is the default — books, scripts, history, jobs, usage, endpoint settings and credentials are in memory, and reloading reconstructs the seeded world. In backend mode the library, each chapter's script and the job queue are stored in SQLite and survive — a job the server was running when it stopped is picked up again when it starts; everything else is still in memory. See [backend](backend.md).
 
 Browser localStorage retains reader typography and cast-rail preferences, the Library grid/list choice, and whether Narration’s setup panel is open. Searches, filters and some navigation state are also represented in the URL. These preferences are not persistence for library data.
 

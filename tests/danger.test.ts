@@ -64,8 +64,8 @@ function startJob(bookId: string, chapterId: number | null): Job {
 }
 
 describe("everything that can be undone acts at once", () => {
-  test("each removal takes effect immediately and hands back the undo that reverses it", () => {
-    const removals: { what: string; run: () => void; gone: () => boolean }[] = [
+  test("each removal takes effect immediately and hands back the undo that reverses it", async () => {
+    const removals: { what: string; run: () => void | Promise<unknown>; gone: () => boolean }[] = [
       {
         what: "a speaker",
         run: () => castStore.deleteCharacter("cliche", castStore.charactersOf("cliche")[1].name),
@@ -110,7 +110,7 @@ describe("everything that can be undone acts at once", () => {
 
     for (const r of removals) {
       toasts = [];
-      r.run();
+      await r.run();
       // it happened — nothing was staged behind a second click
       expect(r.gone(), `${r.what} is gone at once`).toBe(true);
       // and it is undoable, which is what lets it skip the question
@@ -120,11 +120,15 @@ describe("everything that can be undone acts at once", () => {
     }
   });
 
-  test("discarding an import carries no undo, which is what earns it a question", () => {
-    const id = libraryStore.importBook("clean", { id: "import-test", file: "x.epub" });
+  test("discarding an import carries no undo, which is what earns it a question", async () => {
+    const id = (await libraryStore.importBook({
+      sample: "clean",
+      id: "import-test",
+      file: "x.epub",
+    }))!;
     expect(libraryStore.bookById(id)?.importing).toBe(true);
     toasts = [];
-    expect(libraryStore.discardImport(id)).toBe("book");
+    expect(await libraryStore.discardImport(id)).toBe("book");
     expect(libraryStore.bookById(id)).toBeUndefined();
     // nothing raised an undoable toast: the page asks first instead, and that is the whole rule
     expect(toasts.every((t) => !t.options.undo)).toBe(true);

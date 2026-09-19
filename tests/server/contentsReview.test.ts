@@ -107,6 +107,37 @@ describe("the contents review", () => {
     expect(body.chapters[0].kept).toBeUndefined();
   });
 
+  test("decisions can be put back exactly, which is what an undo needs", async () => {
+    const { api, book } = await imported();
+    // skip the notice, undo: it must come back undecided, not "looked at"
+    await api.request(`/api/books/${book.id}/chapters/skip`, jsonBody({ ids: [2] }));
+    const undone = await api.request<ChapterResult>(
+      `/api/books/${book.id}/chapters/decisions`,
+      jsonBody({ decisions: [{ id: 2 }] }),
+    );
+    expect(undone.body.changed).toBe(1);
+    expect(undone.body.chapters[1].excluded).toBeUndefined();
+    expect(undone.body.chapters[1].kept).toBeUndefined();
+    // keep it, undo: the same, through the same route
+    await api.request(`/api/books/${book.id}/chapters/keep`, jsonBody({ ids: [2] }));
+    const unkept = await api.request<ChapterResult>(
+      `/api/books/${book.id}/chapters/decisions`,
+      jsonBody({ decisions: [{ id: 2 }] }),
+    );
+    expect(unkept.body.chapters[1].kept).toBeUndefined();
+    // and a decision can be stated outright, both halves at once
+    const stated = await api.request<ChapterResult>(
+      `/api/books/${book.id}/chapters/decisions`,
+      jsonBody({
+        decisions: [{ id: 2, excluded: true, kept: true }, { id: 1, kept: true }, { id: 99 }],
+      }),
+    );
+    expect(stated.body.chapters[1]).toMatchObject({ excluded: true, kept: true });
+    // `kept` means nothing on a chapter with no note, and an unknown chapter is left out, not refused
+    expect(stated.body.chapters[0].kept).toBeUndefined();
+    expect(stated.body.changed).toBe(1);
+  });
+
   test("confirming the review puts the book on the shelf", async () => {
     const { api, book } = await imported();
     const { body } = await api.request<{ book: Book }>(`/api/books/${book.id}/confirm`, {

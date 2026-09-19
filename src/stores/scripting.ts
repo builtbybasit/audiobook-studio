@@ -1,7 +1,10 @@
 // Scripting settings and run coordination. Execution stays in the mock simulator.
 import { jobWaiting, logJob } from "@/lib/jobActivity";
 import { keyring } from "@/lib/keyring";
+import { plural } from "@/lib/contents";
 import { runActionLabel, scriptingPlan, skipNotes, skipSummary } from "@/lib/runPlan";
+import { ApiError } from "@/services/http";
+import { activeJobsService } from "@/services/jobs";
 import { PRICING_RULE, baseRates, ensurePricing, estimateRates } from "@/lib/pricing";
 import { profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
 import { key } from "@/lib/scriptReview";
@@ -171,6 +174,13 @@ export const useScriptingStore = defineStore("scripting", {
       const uiStore = useUiStore();
 
       if (libraryStore._blocked(bookId, "script")) return;
+      // With a server answering, the run is the server's: it is queued there, the queue is polled
+      // and what comes back is what the chapter holds. The estimate and the budget gates are the
+      // seeded endpoints' and do not apply — see `docs/backend.md`.
+      if (activeJobsService()) {
+        void this._runRemote(bookId, ids, { quiet });
+        return;
+      }
       const estimate = this.scriptEstimate(bookId, ids, retrySegmentId);
       if (estimate.blockers.length) {
         uiStore.toast("Scripting needs attention", {
@@ -296,6 +306,62 @@ export const useScriptingStore = defineStore("scripting", {
           done,
         }),
       );
+    },
+    /**
+     * The backend half of `runScripting`: queue the chapters on the server, as one run.
+     *
+     * Nothing about a chapter changes here. The server marks the chapters it queued, the response
+     * carries them as they now stand, and the queue's polling brings the script when it lands. A
+     * chapter the server left out — skipped for the audiobook, or already being scripted — is
+     * said so in the toast rather than waited for.
+     */
+    async _runRemote(bookId: string, ids: number[], { quiet = false } = {}): Promise<void> {
+      const jobsStore = useJobsStore();
+      const libraryStore = useLibraryStore();
+      const uiStore = useUiStore();
+      const svc = activeJobsService();
+      if (!svc) return;
+      try {
+        const { jobs, skipped, chapters } = await svc.scriptChapters(bookId, ids);
+        libraryStore.chapters[bookId] = chapters;
+        jobsStore._seen(jobs);
+        await jobsStore.refresh();
+        jobsStore.startPolling();
+        if (quiet) return;
+        const busy = skipped.filter((s) => s.why === "busy").length;
+        const excluded = skipped.filter((s) => s.why === "excluded").length;
+        const notes = [
+          busy ? `${plural(busy, "chapter")} already being scripted` : "",
+          excluded ? `${plural(excluded, "chapter")} skipped for the audiobook` : "",
+        ].filter(Boolean);
+        if (!jobs.length) {
+          uiStore.toast("Nothing to script", {
+            kind: "warn",
+            description:
+              notes.join("; ") || "The selection had no chapters the server could script.",
+          });
+          return;
+        }
+        const replacing = jobs.filter((j) => j.bulk?.op === "Re-script").length;
+        uiStore.toast(
+          `${replacing === jobs.length ? "Re-script" : "Script"} · ${plural(jobs.length, "chapter")}`,
+          {
+            kind: "info",
+            description:
+              "Queued on the server. Progress is in the Queue, and each script appears here when it lands." +
+              (replacing ? ` ${plural(replacing, "finished script")} will be replaced.` : "") +
+              (notes.length ? ` Left out: ${notes.join("; ")}.` : ""),
+            timeout: 8000,
+          },
+        );
+      } catch (cause) {
+        const api = cause instanceof ApiError ? cause : null;
+        uiStore.toast(api ? api.message : "Could not queue scripting", {
+          kind: "error",
+          description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
+          timeout: 8000,
+        });
+      }
     },
     // Re-run the LLM on just the chunk that fell back. Simulated: replaced by properly split segments.
     retryChunk(bookId: string, chId: number, segId: number): void {

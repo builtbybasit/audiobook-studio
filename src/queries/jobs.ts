@@ -20,6 +20,7 @@ import { keys } from "@/queries/keys";
 import { activeJobsService } from "@/services/jobs";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
 
 /** How often the server is asked again while something is queued or running. */
 export const POLL_MS = 1500;
@@ -69,11 +70,17 @@ const useJobsQuery = defineQuery(() => {
       books.add(j.bookId);
       if (j.kind === "scripting" && j.status === "done" && was?.status !== "done") {
         if (j.chapterId != null) {
+          useScriptsStore()._noteRescript(j.bookId, j.chapterId);
           void invalidate({ key: keys.chapterScript(j.bookId, j.chapterId) }, "all");
           void invalidate({ key: keys.chapterHistory(j.bookId, j.chapterId) }, "all");
         }
         void invalidate({ key: keys.cast(j.bookId) }, "all");
       }
+      // a narration job writes clips as they land, and every clip is on a line of the script: the
+      // chapter is read again on each move, so the Narration page shows them landing rather than
+      // waiting for the run to finish
+      if (j.kind === "narration" && j.chapterId != null)
+        void invalidate({ key: keys.chapterScript(j.bookId, j.chapterId) }, "all");
     }
     for (const id of books) void libraryStore.loadBook(id);
   });

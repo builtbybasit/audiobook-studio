@@ -9,6 +9,7 @@
 // answers with the history it added to, and the history store installs it.
 import { bulkInvalidates, bulkOutcome, scriptFingerprint, segmentFingerprint } from "@/lib/bulk";
 import { remapExpressions } from "@/lib/expressions";
+import { scriptSignature } from "@/lib/scriptHistory";
 import { afterOf, beforeOf, bulkLabel, key, SKIP_SUMMARY, SKIP_TEXT } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
 import type { ContentPart } from "@/mock";
@@ -55,6 +56,8 @@ interface ScriptsState {
   _corrections: Record<string, RescriptReport>;
   /** Backend mode: the revision each chapter's script was read at, which the next write names. */
   _revision: Record<string, number>;
+  /** Backend mode: chapters a scripting job just rewrote, whose next read is a re-script. */
+  _rescripted: Record<string, true>;
 }
 export const useScriptsStore = defineStore("scripts", {
   // With a server answering, no script is here until it has been read from it. The seeded scripts
@@ -64,6 +67,7 @@ export const useScriptsStore = defineStore("scripts", {
     _previous: {},
     _corrections: {},
     _revision: {},
+    _rescripted: {},
   }),
   getters: {
     segmentsOf(s): (bookId: string, chId: number) => Segment[] {
@@ -606,16 +610,32 @@ export const useScriptsStore = defineStore("scripts", {
      * What `useChapterScript` installs on every read. A script that was here before, at an
      * earlier revision, is a script something else replaced — a scripting job landed — and is kept
      * as `_previous` so the reader can show what changed. A re-read at the revision this store
-     * already holds is the same script again, and replaces nothing worth keeping.
+     * already holds is the same script again, and replaces nothing worth keeping; neither does a
+     * read whose lines say the same things and only carry different clips, which is what a
+     * narration job landing looks like — the revision moved, and there is no diff to show. The
+     * one read that keeps the diff regardless is the one after a scripting job (`_noteRescript`):
+     * a re-script that came back the same is worth saying so about.
      */
     _install(bookId: string, chId: number, { segments, revision }: ChapterScript): void {
       const k = key(bookId, chId);
       const had = this.segments[k];
       const known = this._revision[k];
-      if (had?.length && segments.length && known != null && revision > known)
+      const rescripted = this._rescripted[k] ?? false;
+      delete this._rescripted[k];
+      if (
+        had?.length &&
+        segments.length &&
+        known != null &&
+        revision > known &&
+        (rescripted || scriptSignature(had) !== scriptSignature(segments))
+      )
         this._previous[k] = clone(had);
       this.segments[k] = segments;
       this._revision[k] = revision;
+    },
+    /** A scripting job rewrote this chapter: the next read replaces a script, and keeps it for the diff. */
+    _noteRescript(bookId: string, chId: number): void {
+      this._rescripted[key(bookId, chId)] = true;
     },
     /** The scripts of a renumbered book follow their chapters; a chapter that is gone takes its own. */
     _remapBook(bookId: string, map: Record<number, number>): void {

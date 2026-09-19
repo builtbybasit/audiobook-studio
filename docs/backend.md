@@ -7,8 +7,9 @@ stores real books. **The first slice is the library: import, the contents review
 second is the queue: scripting a chapter is a job the server runs, and the Queue page shows it. The
 third is what a scripted chapter owns: its script can be edited over HTTP, its history and the
 book's cast are written by the run that made them, and the frontend reads all of it through
-queries.** Narration, endpoints, pricing and export are still the seeded demo and are untouched by
-all three.
+queries. The fourth is narration: rendering a chapter is a job the server runs against a fake
+speech model, the clips are files the server keeps and serves, and the player hears them.**
+Endpoints, pricing, retakes and export are still the seeded demo and are untouched by all four.
 
 Nothing in the server contacts a provider or spends money. The only scripting model it can be
 started with is the fake one ([the queue](#the-queue) says what it does), there are no credentials
@@ -514,6 +515,8 @@ service are both built on it, so that rule is written once.
 | `POST`   | `/api/books/:id/chapters/keep`                   | Keep a noted chapter and stop the suggestion asking      |
 | `POST`   | `/api/books/:id/chapters/decisions`              | Put decisions back exactly as stated; what an Undo sends |
 | `POST`   | `/api/books/:id/chapters/script`                 | Queue a scripting job per chapter, as one run (202)      |
+| `POST`   | `/api/books/:id/chapters/narrate`                | Queue a narration job per chapter, at a scope (202)      |
+| `GET`    | `/api/audio/:bookId/:file`                       | A rendered clip's audio                                  |
 | `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                     |
 | `DELETE` | `/api/books/:id/volumes/:volumeId`               | Remove a volume; the last one removes the book           |
 | `GET`    | `/api/jobs`                                      | Every job, oldest first; `?bookId=` narrows it           |
@@ -673,6 +676,55 @@ it is not in the schema (`credentials` is a registry of names), not in a respons
 [logger's redaction list](#logging) catches it if it is ever spread into a log record. The browser's
 keyring is the demo's; nothing in backend mode sends a key anywhere.
 
+### Narration
+
+A narration job is the same kind of thing as a scripting job — a row in `jobs`, claimed by the
+same runner, cancelled by the same abort, recovered by the same restart rule — and what it renders
+is decided by the same rules the demo decides it by. `POST /api/books/:id/chapters/narrate` takes
+chapter numbers and a scope, and the handler asks `narrationTargets` in
+[src/lib/runPlan.ts](../src/lib/runPlan.ts) which lines the scope covers: the lines with no usable
+clip and the ones whose clip the script has moved past (`fill`), only the ones whose last request
+failed (`failed`), or every line (`all`). A chapter with nothing in the scope is left out of the
+run and the route says so (`nothing`), beside the reasons scripting already has and one more for a
+chapter that has no script yet (`unscripted`). Each line goes to a
+[`SpeechProvider`](../server/providers/speech.ts) with its text, its speaker's voice from the cast
+(the Narrator's when the speaker has none, as `effectiveVoice` decides in the browser) and its
+direction, and comes back as audio with a duration.
+
+**Nothing usable is thrown away to make room.** A line that already has a playable clip renders
+its replacement beside it, in the `candidate` role, and the clip in the book keeps playing until
+the replacement lands, when it takes over and the displaced clip joins the take list. That is the
+demo's rule for a bulk run, kept because the reason for it — a re-narration of a finished chapter
+must not leave it silent for the duration of the run — holds just as well on a server. A
+replacement that fails leaves the clip it would have replaced alone, and the line reads as failed.
+A chapter's status is asked of its clips (`chapterNarration`, the same function the demo asks):
+`done` when every line is rendered, `stale` when one has been edited since, `failed` when any
+line has no usable clip after a run that should have given it one, and `none` when nothing has.
+
+**A clip is a row of the script, so writing one moves the script's revision.** `script_revision`
+counts every write of a chapter's script rows, whoever made it, and a clip landing is one: a
+client holding a copy read before it landed would otherwise write that copy back — its stale
+`queued` and `generating` statuses included — over the clip the server just rendered. Instead
+the edit is refused with the 409 the client already handles, and the chapter is read again. With
+the queue polled while a job runs, the client's copy is almost always the fresh one; an edit that
+does fall between a clip landing and the next poll is the one that has to be made again.
+
+**The audio is a file the server keeps.** `AUDIO_DIR` (default `./data/audio`, beside the
+database) holds one directory per book and one file per clip, named by a random token rather than
+by the chapter's number, because a renumbering must not move files; `clips.url` is the path the
+file is served at, `/api/audio/:bookId/:file`, and the player plays a clip that has one rather
+than timing it in silence. The route serves nothing whose name is not a token it could have
+made, so there is no path a request can build to a file that is not a clip. Removing a book
+removes its directory; removing a volume leaves the volume's files behind, which is listed under
+[what is not done yet](#what-is-not-done-yet).
+
+Only [the fake speech model](../server/providers/fakeSpeech.ts) exists, and `SPEECH_PROVIDER=fake`
+is the only value [env.ts](../server/env.ts) accepts, for the reason the scripting side gives.
+It writes a real WAV file — a short, quiet tone whose pitch depends on the speaker, long enough to
+say the line at a reading pace — so what the tests, the Narration page and the player exercise
+is a file being fetched and played, not a duration being counted down. It is deterministic, it
+honours a cancel, and a test can tell it which lines to fail.
+
 ### How the screens use it
 
 Reads are queries, through [Pinia Colada](https://pinia-colada.esm.dev): one composable per
@@ -712,6 +764,17 @@ the speakers the restore added off the cast, since a removal while the server's 
 them would move their lines and refuse the write.
 [tests/jobsBackend.test.ts](../tests/jobsBackend.test.ts) drives those stores against the real app,
 through the same composables the pages use.
+
+Narration takes the same shape. `runNarration` in [narration.ts](../src/stores/narration.ts)
+queues the chapters on the server at the scope asked for and marks nothing itself; the expression
+guard, the estimate and the budget gates are the seeded endpoints' and are bypassed as scripting's
+are. A narration job that moved — a clip landed, so its progress changed — has its chapter's script
+read again, which is how the Narration page shows clips arriving one by one rather than when the
+run ends; the read moves the store's revision on without showing a re-script diff, because the
+lines say the same things and only their clips differ. "Re-narrate what changed" and "retry what
+failed" are the same request at the `fill` and `failed` scopes, and a failed line retried by hand
+is retried with its chapter's other failed lines, the server's smallest unit of work. A retake —
+a comparison the listener judges — has no route yet and says so.
 
 One thing the seeded run does that the server's does not, yet: the estimate and the budget gates
 are the seeded endpoints' and are bypassed in backend mode — the fake costs nothing, and a real
@@ -766,21 +829,22 @@ What it can vary is what real EPUBs vary: where the navigation document sits rel
 chapters, whether it calls a chapter something other than the heading inside it, whether one file
 holds several chapters, and whether a file the package promises is in the archive at all.
 
-| File                                                             | Covers                                                                         |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| [epubImport.test.ts](../tests/server/epubImport.test.ts)         | Reading a file: metadata, titles, text, refusals                               |
-| [notices.test.ts](../tests/server/notices.test.ts)               | Which chapters are not story                                                   |
-| [contentsReview.test.ts](../tests/server/contentsReview.test.ts) | Import → review → add, volumes, removal, renumbering                           |
-| [markdown.test.ts](../tests/server/markdown.test.ts)             | The converter's DOM bracket, and reading Markdown back                         |
-| [jobs.test.ts](../tests/server/jobs.test.ts)                     | The queue: dedupe, cancel, restart, revision conflicts, HTTP                   |
-| [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)         | Editing against a revision, the history rule, what a run writes                |
-| [cast.test.ts](../tests/server/cast.test.ts)                     | The cast a run leaves, rename, merge, removal, exact undo                      |
-| [exports.test.ts](../tests/server/exports.test.ts)               | The finished audiobooks over HTTP                                              |
-| [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)     | What the fake scripting model attributes, and that it aborts                   |
-| [libraryClient.test.ts](../tests/server/libraryClient.test.ts)   | The client and the API against each other                                      |
-| [schema.test.ts](../tests/server/schema.test.ts)                 | The seeded world through the schema and back                                   |
-| [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)     | The library store, with a server answering                                     |
-| [../jobsBackend.test.ts](../tests/jobsBackend.test.ts)           | The jobs, scripting, scripts, cast and history stores, with a server answering |
+| File                                                             | Covers                                                                          |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| [epubImport.test.ts](../tests/server/epubImport.test.ts)         | Reading a file: metadata, titles, text, refusals                                |
+| [notices.test.ts](../tests/server/notices.test.ts)               | Which chapters are not story                                                    |
+| [contentsReview.test.ts](../tests/server/contentsReview.test.ts) | Import → review → add, volumes, removal, renumbering                            |
+| [markdown.test.ts](../tests/server/markdown.test.ts)             | The converter's DOM bracket, and reading Markdown back                          |
+| [jobs.test.ts](../tests/server/jobs.test.ts)                     | The queue: dedupe, cancel, restart, revision conflicts, HTTP                    |
+| [narration.test.ts](../tests/server/narration.test.ts)           | Narration: scopes, replacement, failure, cancel, restart, files                 |
+| [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)         | Editing against a revision, the history rule, what a run writes                 |
+| [cast.test.ts](../tests/server/cast.test.ts)                     | The cast a run leaves, rename, merge, removal, exact undo                       |
+| [exports.test.ts](../tests/server/exports.test.ts)               | The finished audiobooks over HTTP                                               |
+| [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)     | What the fake models produce — attributions, a valid WAV — and that they abort  |
+| [libraryClient.test.ts](../tests/server/libraryClient.test.ts)   | The client and the API against each other                                       |
+| [schema.test.ts](../tests/server/schema.test.ts)                 | The seeded world through the schema and back                                    |
+| [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)     | The library store, with a server answering                                      |
+| [../jobsBackend.test.ts](../tests/jobsBackend.test.ts)           | The jobs, scripting, narration, scripts, cast and history stores, with a server |
 
 The client tests matter more than they look. Both sides of the seam are in this repository, so "the
 API returns what the client reads" is something the suite can check rather than a comment two files
@@ -816,12 +880,25 @@ the library screens are the server's in backend mode. Two things about that wort
   way the demo's snapshot does. A session that comes back to where it began leaves no entry, which
   covers the common case; a bulk correction undone leaves its entry with an edit after it.
 
-The queue runs one kind of job. What the scripting slice does not do yet, each because a route or a
-table's writer is missing rather than by oversight:
+The queue runs two kinds of job. What the scripting and narration slices do not do yet, each
+because a route or a table's writer is missing rather than by oversight:
 
-- **Only scripting has a handler.** A `narration` or `export` job enqueued on this server fails at
-  once saying so. The runner, the dedupe rule, cancellation and recovery are the same for a kind
-  that does not exist yet; what it needs is a handler and a provider port of its own.
+- **Export has no handler.** An `export` job enqueued on this server fails at once saying so. The
+  runner, the dedupe rule, cancellation and recovery are the same for a kind that does not exist
+  yet; what it needs is a handler of its own.
+- **A retake has no verdict.** A bulk run accepts its own replacements, as the demo's does; a
+  retake asked for by hand, kept beside the clip until the listener chooses, needs a route for the
+  choice, and until then the Narration page says retakes are not available with a server.
+- **The line is spoken as written.** The pronunciation dictionary and expression tags are
+  applied in the browser's simulator and not by the server's handler, so a clip records the text
+  it was given and nothing it was rewritten to. The browser's drift rule reads that as the
+  dictionary having changed: in a book with a dictionary entry that matches a line, or a line
+  that carries expression tags, a freshly rendered clip reads as stale on the Narration page
+  until the handler applies both. The seeded endpoints' voices are names the fake accepts, not
+  endpoints the server knows, and a chapter's duration is its clips plus the book's pacing.
+- **Removing a volume leaves its clips' files behind.** Removing a book removes its directory;
+  a volume's chapters go with it in the database, and their files stay on disk until the book
+  does.
 - **No usage record is settled.** The seeded run also settles a usage record with a receipt; the
   server's writes the script, the speakers and the version, and the fake provider has nothing to
   bill. The ledger has no route.

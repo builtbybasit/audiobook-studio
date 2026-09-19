@@ -7,10 +7,12 @@
 // the number has not moved. See `writeScript`.
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
-import type { Segment } from "@/types";
+import type { Segment, SegmentAudio, Take } from "@/types";
+import { snapshotTake } from "@/lib/takes";
 import type { Db, Tx } from "~/db/client";
 import { chapters, clips, segments } from "~/db/schema";
-import { segmentClipValues, segmentValues, toSegment } from "~/db/rows";
+import { clipValues, segmentClipValues, segmentValues, toSegment, toSegmentAudio } from "~/db/rows";
+import { AppError } from "~/lib/errors";
 
 /** SQLite takes its parameters one variable at a time, and a chapter is hundreds of lines. */
 const CHUNK = 100;
@@ -107,6 +109,158 @@ export function writeScript(
   options: { ifRevision?: number } = {},
 ): { revision: number } {
   return db.transaction((tx) => replaceScript(tx, bookId, chapterId, segs, options));
+}
+
+// ---------- clips, one line at a time ----------
+//
+// A narration run writes clips as they land, one line at a time, and never the script around them:
+// a line's words are the person's and the job's, and its clip is the run's. These write one clip
+// row of one line and leave the segment row and the line's other clips where they are.
+
+/** The rows of one line's clip in one role: at most one, since the index only allows takes to repeat. */
+function roleWhere(
+  bookId: string,
+  chapterId: number,
+  segmentId: number,
+  role: "current" | "candidate",
+) {
+  return and(
+    eq(clips.bookId, bookId),
+    eq(clips.chapterId, chapterId),
+    eq(clips.segmentId, segmentId),
+    eq(clips.role, role),
+  );
+}
+
+/** A line that an edit removed while a clip was rendering for it. The chapter is still there. */
+export class LineGone extends AppError {
+  constructor(segmentId: number) {
+    super(404, `Line ${segmentId} is no longer in the script`);
+  }
+}
+
+function requireSegment(tx: Tx, bookId: string, chapterId: number, segmentId: number): void {
+  const found = tx
+    .select({ id: segments.id })
+    .from(segments)
+    .where(
+      and(
+        eq(segments.bookId, bookId),
+        eq(segments.chapterId, chapterId),
+        eq(segments.id, segmentId),
+      ),
+    )
+    .get();
+  if (!found) throw new LineGone(segmentId);
+}
+
+/**
+ * Put `clip` in one line's `current` or `candidate` slot, replacing whatever was there.
+ *
+ * The line's takes are untouched: a take is history, and a clip landing is not what changes it.
+ * A line that has gone from the script is refused, so a result for a line an edit removed while
+ * it rendered is never written against nothing.
+ */
+export function writeClip(
+  tx: Tx,
+  bookId: string,
+  chapterId: number,
+  segmentId: number,
+  role: "current" | "candidate",
+  clip: SegmentAudio,
+): void {
+  requireSegment(tx, bookId, chapterId, segmentId);
+  tx.delete(clips)
+    .where(roleWhere(bookId, chapterId, segmentId, role))
+    .run();
+  // `takes` on the clip are the line's take rows, not columns of this row
+  const { takes: _takes, ...own } = clip;
+  tx.insert(clips)
+    .values(clipValues(bookId, chapterId, segmentId, role, own))
+    .run();
+}
+
+/** Add one superseded clip to a line's take list. */
+export function addTake(tx: Tx, bookId: string, chapterId: number, segmentId: number, take: Take) {
+  requireSegment(tx, bookId, chapterId, segmentId);
+  tx.insert(clips)
+    .values(clipValues(bookId, chapterId, segmentId, "take", take))
+    .run();
+}
+
+/** Drop a line's retake, whatever state it is in. Says whether there was one. */
+export function dropCandidate(
+  tx: Tx,
+  bookId: string,
+  chapterId: number,
+  segmentId: number,
+): boolean {
+  return (
+    tx
+      .delete(clips)
+      .where(roleWhere(bookId, chapterId, segmentId, "candidate"))
+      .returning({ id: clips.id })
+      .all().length > 0
+  );
+}
+
+/**
+ * Freeze a clip as a take. `snapshotTake` is the store's rule for what a take keeps; the file is
+ * added back because the store never had one and a take that cannot be played is not a take.
+ */
+export function takeOf(a: SegmentAudio): Take {
+  return { ...snapshotTake(a), ...(a.url ? { url: a.url } : {}) };
+}
+
+/**
+ * A bulk replacement that succeeded takes over: the retake becomes the clip in the book and the one
+ * it displaces joins the take list, so the history is kept and nobody is asked for 300 verdicts.
+ * The store's `_acceptReplacement`, on rows: the candidate row becomes the current row with
+ * `auto` stripped, and the takes are left as they are, one more if the old clip had audio.
+ */
+export function acceptCandidate(
+  tx: Tx,
+  bookId: string,
+  chapterId: number,
+  segmentId: number,
+): void {
+  const rows = tx
+    .select()
+    .from(clips)
+    .where(
+      and(eq(clips.bookId, bookId), eq(clips.chapterId, chapterId), eq(clips.segmentId, segmentId)),
+    )
+    .all();
+  const candidate = rows.find((r) => r.role === "candidate");
+  if (!candidate || candidate.duration <= 0) return;
+  const current = rows.find((r) => r.role === "current");
+  if (current) {
+    tx.delete(clips).where(eq(clips.id, current.id)).run();
+    if (current.duration > 0)
+      addTake(tx, bookId, chapterId, segmentId, takeOf(toSegmentAudio(current)));
+  }
+  tx.update(clips).set({ role: "current", auto: null }).where(eq(clips.id, candidate.id)).run();
+}
+
+/**
+ * Move a chapter's script revision on by one, and say where it is now.
+ *
+ * The revision counts every write of a chapter's script rows, whoever made it — a scripting run,
+ * an edit, a rename that moved lines, and a clip that landed. A clip is part of the script a client
+ * reads and writes back whole, so a client editing from a copy read before a clip landed would
+ * write the clip's old state over the new one; moving the revision here means that edit is refused
+ * with the 409 it already handles, and the client reads the chapter again with the clip in it.
+ * Every transaction that writes clips for a chapter calls this once, whatever it wrote.
+ */
+export function bumpRevision(tx: Tx, bookId: string, chapterId: number): number {
+  const revision = tx
+    .update(chapters)
+    .set({ scriptRevision: sql`${chapters.scriptRevision} + 1` })
+    .where(and(eq(chapters.bookId, bookId), eq(chapters.id, chapterId)))
+    .returning({ revision: chapters.scriptRevision })
+    .get()?.revision;
+  if (revision == null) throw new ScriptConflict(0, null);
+  return revision;
 }
 
 // ---------- lines by speaker ----------

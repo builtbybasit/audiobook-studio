@@ -4,13 +4,16 @@
 // change is usable without a separate step. The queue starts after them and before the listener,
 // so a job the last process was holding is back in the queue before anything can ask about it.
 import { createApp } from "~/app";
+import { audioFiles } from "~/audio/files";
 import { openDb } from "~/db/client";
 import { migrate } from "~/db/migrate";
 import { env } from "~/env";
+import { narrationHandler } from "~/jobs/narration";
 import { createRunner } from "~/jobs/runner";
 import { scriptingHandler } from "~/jobs/scripting";
 import { log } from "~/log";
 import { fakeScriptingProvider } from "~/providers/fake";
+import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 
 const boot = log.child({ name: "boot" });
 
@@ -22,17 +25,23 @@ boot.debug(
   "migrations applied",
 );
 
-// The provider is chosen once, here, from the server's own configuration. A key for a real one
+// The providers are chosen once, here, from the server's own configuration. A key for a real one
 // would be read from `env` by its implementation and would never leave this process.
 const scripting = fakeScriptingProvider();
-const runner = createRunner(db, { scripting: scriptingHandler(scripting) }, { log });
+const speech = fakeSpeechProvider();
+const files = audioFiles(env.AUDIO_DIR);
+const runner = createRunner(
+  db,
+  { scripting: scriptingHandler(scripting), narration: narrationHandler(speech, files) },
+  { log },
+);
 runner.start();
 
 const server = Bun.serve({
   port: env.PORT,
   // A long web novel is a big upload, and Bun's default body limit is well under it.
   maxRequestBodySize: env.MAX_UPLOAD_MB * 1024 * 1024,
-  fetch: createApp(db, { runner }).fetch,
+  fetch: createApp(db, { runner, files }).fetch,
 });
 
 boot.info(
@@ -41,6 +50,8 @@ boot.info(
     database: env.DATABASE_URL,
     uploadMb: env.MAX_UPLOAD_MB,
     scripting: scripting.name,
+    speech: speech.name,
+    audio: files.dir,
   },
   "audiobook-studio api is listening",
 );

@@ -7,6 +7,7 @@
 // status code is. A rule that does not hold is thrown as an `AppError`, which `app.onError` turns
 // into the API's one error shape.
 import type { Book, Chapter } from "@/types";
+import type { AudioFiles } from "~/audio/files";
 import type { Db } from "~/db/client";
 import * as library from "~/db/library";
 import { diagnose } from "~/epub/diagnose";
@@ -229,10 +230,18 @@ export function setDecisions(
 
 // ---------- removal ----------
 
-/** Remove a book and everything it owns. */
-export function removeBook(db: Db, bookId: string): void {
+/**
+ * Remove a book and everything it owns.
+ *
+ * Its clips on disk go after the rows have: a directory that outlives its book is a leak, and a
+ * book whose rows outlive its files is a chapter that plays nothing, so the order is the one that
+ * can only ever leave the first. The removal is not waited for, because nothing that follows
+ * depends on it and a slow disk must not hold the response.
+ */
+export function removeBook(db: Db, bookId: string, files?: AudioFiles): void {
   requireBook(db, bookId);
   library.deleteBook(db, bookId);
+  void files?.removeBook(bookId);
 }
 
 export type Removed = { removed: "book" } | { removed: "volume"; chapters: number };

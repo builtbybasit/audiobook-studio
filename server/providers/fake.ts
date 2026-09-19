@@ -56,7 +56,8 @@ export function attributeParagraph(paragraph: string): ScriptedLine[] {
   return lines;
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
+/** A pause that ends early, rejecting with the signal's reason, when the job is cancelled. */
+export function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(signal.reason);
     const t = setTimeout(() => {

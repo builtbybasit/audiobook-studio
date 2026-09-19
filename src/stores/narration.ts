@@ -57,6 +57,9 @@ import {
 } from "@/lib/pricing";
 import { effectiveRates } from "@/lib/pricing";
 import { speechInstructions } from "@/lib/speech";
+import { plural } from "@/lib/contents";
+import { ApiError } from "@/services/http";
+import { activeJobsService } from "@/services/jobs";
 import type { BillableUnits, SpeechEstimate } from "@/types";
 import { useUiStore } from "@/stores/ui";
 import { useUsageStore } from "@/stores/usage";
@@ -705,7 +708,86 @@ export const useNarrationStore = defineStore("narration", {
     },
     // "changed" is both edited-after-narration lines and halves of a hand-split segment that were
     // never rendered at all — in a chapter that has audio, neither belongs in the finished book.
+    /**
+     * The backend half of `runNarration`: queue the chapters on the server, as one run.
+     *
+     * Nothing about a chapter changes here. The server marks the chapters it queued, the response
+     * carries them as they now stand, and the queue's poll (`useBookJobs`) reads the chapter's
+     * script again as clips land. A chapter the server left out — skipped for the audiobook, not
+     * scripted, already being narrated, or with nothing in the scope — is said so in the toast.
+     */
+    async _runRemote(
+      bookId: string,
+      ids: number[],
+      { scope = "all", quiet = false }: { scope?: NarrationScope; quiet?: boolean } = {},
+    ): Promise<void> {
+      const jobsStore = useJobsStore();
+      const libraryStore = useLibraryStore();
+      const uiStore = useUiStore();
+      const svc = activeJobsService();
+      if (!svc) return;
+      try {
+        const { jobs, skipped, chapters } = await svc.narrateChapters(bookId, ids, scope);
+        libraryStore.chapters[bookId] = chapters;
+        await jobsStore._changed();
+        if (quiet) return;
+        const count = (why: (typeof skipped)[number]["why"]) =>
+          skipped.filter((s) => s.why === why).length;
+        const notes = [
+          count("busy") ? `${plural(count("busy"), "chapter")} already being narrated` : "",
+          count("excluded")
+            ? `${plural(count("excluded"), "chapter")} skipped for the audiobook`
+            : "",
+          count("unscripted") ? `${plural(count("unscripted"), "chapter")} not scripted yet` : "",
+          count("nothing")
+            ? `${plural(count("nothing"), "chapter")} with no line ${SCOPE_LABEL[scope].toLowerCase()}`
+            : "",
+        ].filter(Boolean);
+        if (!jobs.length) {
+          uiStore.toast("Nothing to narrate in this selection", {
+            kind: "warn",
+            description:
+              notes.join("; ") || "The selection had no chapters the server could narrate.",
+          });
+          return;
+        }
+        const replacing = jobs.filter((j) => j.bulk?.op === "Re-narrate").length;
+        uiStore.toast(
+          `${replacing === jobs.length ? "Re-narrate" : "Narrate"} · ${plural(jobs.length, "chapter")}`,
+          {
+            kind: "info",
+            description:
+              "Queued on the server. Progress is in the Queue, and each clip appears here when it lands." +
+              (replacing ? ` ${plural(replacing, "narrated chapter")} will be replaced.` : "") +
+              (notes.length ? ` Left out: ${notes.join("; ")}.` : ""),
+            timeout: 8000,
+          },
+        );
+      } catch (cause) {
+        const api = cause instanceof ApiError ? cause : null;
+        uiStore.toast(api ? api.message : "Could not queue narration", {
+          kind: "error",
+          description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
+          timeout: 8000,
+        });
+      }
+    },
+    /** Say what the server cannot do yet, and change nothing. */
+    _notRemote(what: string): void {
+      const uiStore = useUiStore();
+      uiStore.toast(`${what} are not available with a server yet`, {
+        kind: "warn",
+        description:
+          "Re-narrate the chapter instead: “missing & changed” re-renders the lines whose clip no longer matches, and “failed only” the ones that failed.",
+        timeout: 8000,
+      });
+    },
     renarrateStale(bookId: string, chId: number): void {
+      // the server works out which lines the script has moved past from the clips it holds
+      if (activeJobsService()) {
+        this.runNarration(bookId, [chId], { scope: "fill" });
+        return;
+      }
       // one list, used for the guard, the budget check and the work: a guard that asked about a
       // different set from the one queued would check expressions on lines the run never touches, or
       // render lines whose expressions were never checked
@@ -755,6 +837,14 @@ export const useNarrationStore = defineStore("narration", {
       const uiStore = useUiStore();
 
       if (libraryStore._blocked(bookId, "narrate")) return;
+      // With a server answering, the run is the server's: it decides which lines the scope
+      // covers from the clips it holds, renders them and writes each as it lands. The expression
+      // guard, the estimate and the budget gates are the seeded endpoints' and do not apply —
+      // see `docs/backend.md`.
+      if (activeJobsService()) {
+        void this._runRemote(bookId, ids, { scope, quiet });
+        return;
+      }
       const plan = this.narrationRunPlan(bookId, ids, scope, keepPending);
       const chs = plan.chapters
         .map((p) => libraryStore.chapter(bookId, p.id))
@@ -940,6 +1030,14 @@ export const useNarrationStore = defineStore("narration", {
     retrySegment(bookId: string, chId: number, segId: number): void {
       const scriptsStore = useScriptsStore();
 
+      // The server's smallest unit of work is a chapter at a scope: a failed line is re-rendered
+      // with the chapter's other failed lines, and a line that did not fail has nothing to retry.
+      if (activeJobsService()) {
+        const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
+        if (s && segmentFailed(s)) this.runNarration(bookId, [chId], { scope: "failed" });
+        else this._notRemote("Re-renders of one line");
+        return;
+      }
       if (
         this._expressionGuard(bookId, [{ chId, segId }], () =>
           this.retrySegment(bookId, chId, segId),
@@ -957,6 +1055,10 @@ export const useNarrationStore = defineStore("narration", {
     retryFailed(bookId: string, chId: number): void {
       const scriptsStore = useScriptsStore();
 
+      if (activeJobsService()) {
+        this.runNarration(bookId, [chId], { scope: "failed" });
+        return;
+      }
       // one list, used for the guard and for the work: a guard that checked a different set from
       // the one queued would clear expressions on lines the run never touches, or render lines whose
       // expressions were never checked
@@ -1006,6 +1108,11 @@ export const useNarrationStore = defineStore("narration", {
     retakeSegment(bookId: string, chId: number, segId: number): void {
       const scriptsStore = useScriptsStore();
 
+      // a retake is a comparison the listener judges; the server has no route for the verdict yet
+      if (activeJobsService()) {
+        this._notRemote("Retakes");
+        return;
+      }
       if (
         this._expressionGuard(bookId, [{ chId, segId }], () =>
           this.retakeSegment(bookId, chId, segId),
@@ -1020,6 +1127,10 @@ export const useNarrationStore = defineStore("narration", {
     retakeFlagged(bookId: string, chId: number): number {
       const scriptsStore = useScriptsStore();
 
+      if (activeJobsService()) {
+        this._notRemote("Retakes");
+        return 0;
+      }
       // one list for the guard, the budget check and the work — see `renarrateStale`
       const flagged = scriptsStore.segmentsOf(bookId, chId).filter((s) => s.flag);
       if (

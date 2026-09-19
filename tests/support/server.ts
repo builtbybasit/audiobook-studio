@@ -1,19 +1,30 @@
 // A server to test against: the real routes, the real schema, the real queue, a database that
 // lives in memory and goes away with the test.
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { createApp } from "~/app";
+import { audioFiles, type AudioFiles } from "~/audio/files";
 import { openDb, type Db } from "~/db/client";
 import { migrate } from "~/db/migrate";
+import { narrationHandler } from "~/jobs/narration";
 import { createRunner, type JobHandlers, type Runner } from "~/jobs/runner";
 import { scriptingHandler } from "~/jobs/scripting";
 import { createLogger, type Logger } from "~/log";
 import { fakeScriptingProvider } from "~/providers/fake";
+import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
+import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 import type { FetchLike } from "@/services/http";
 
 export interface TestApi {
   db: Db;
   /** the queue the API enqueues into; `await runner.idle()` to let queued work finish */
   runner: Runner;
+  /** where this API's clips are written and served from */
+  files: AudioFiles;
+  audioDir: string;
   /** `fetch` for a client, answered by this app without a network */
   fetch: FetchLike;
   /** every line this API wrote, for the tests that are about the logging itself */
@@ -30,9 +41,16 @@ export interface TestApi {
 export interface TestApiOptions {
   /** the scripting model the queue sends chapters to; the deterministic fake by default */
   scripting?: ScriptingProvider;
-  /** handlers for other kinds, or an override for `scripting` */
+  /** the speech model the queue sends lines to; the tone-rendering fake by default */
+  speech?: SpeechProvider;
+  /** where clips are written; a fresh temporary directory by default */
+  audioDir?: string;
+  /** handlers for other kinds, or an override for `scripting` or `narration` */
   handlers?: JobHandlers;
 }
+
+/** A directory of its own for one test's clips, so no two suites can read each other's files. */
+export const tempAudioDir = (): string => mkdtempSync(join(tmpdir(), "audiobook-audio-"));
 
 /**
  * A logger that keeps its lines instead of printing them.
@@ -59,10 +77,12 @@ export function testDb(): Db {
 }
 
 export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): Runner {
+  const files = audioFiles(options.audioDir ?? tempAudioDir());
   return createRunner(
     db,
     {
       scripting: scriptingHandler(options.scripting ?? fakeScriptingProvider()),
+      narration: narrationHandler(options.speech ?? fakeSpeechProvider(), files),
       ...options.handlers,
     },
     { log, pollMs: 60_000 },
@@ -72,8 +92,10 @@ export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): R
 export function testApi(options: TestApiOptions = {}): TestApi {
   const db = testDb();
   const { log, lines } = collectingLogger();
-  const runner = testRunner(db, log, options);
-  const app = createApp(db, { log, runner });
+  const audioDir = options.audioDir ?? tempAudioDir();
+  const files = audioFiles(audioDir);
+  const runner = testRunner(db, log, { ...options, audioDir });
+  const app = createApp(db, { log, runner, files });
 
   const request = async <T>(path: string, init?: RequestInit) => {
     const res = await app.request(`http://api.test${path}`, init);
@@ -84,6 +106,8 @@ export function testApi(options: TestApiOptions = {}): TestApi {
   return {
     db,
     runner,
+    files,
+    audioDir,
     fetch: async (input, init) => app.request(new Request(`http://api.test${input}`, init)),
     logs: lines,
     request,
@@ -134,6 +158,50 @@ export function gatedProvider(
             resolve(answer);
           });
         });
+      },
+    },
+  };
+}
+
+/**
+ * A speech provider a test holds the door on: `gatedProvider` for lines.
+ *
+ * `started` resolves once the run is inside the provider with its first line, and nothing comes
+ * out until `release` is called — every line after the first answers at once, so a released run
+ * finishes. Cancelling while it waits rejects the way a real request would.
+ */
+export function gatedSpeechProvider(answer: Partial<RenderedClip> = {}): {
+  provider: SpeechProvider;
+  started: Promise<SpeechInput>;
+  release(): void;
+} {
+  const fake = fakeSpeechProvider();
+  let onStart!: (input: SpeechInput) => void;
+  let onRelease!: () => void;
+  let released = false;
+  const started = new Promise<SpeechInput>((r) => (onStart = r));
+  const gate = new Promise<void>((r) => (onRelease = r));
+  return {
+    started,
+    release: () => {
+      released = true;
+      onRelease();
+    },
+    provider: {
+      name: "Gated speech (test)",
+      async speak(input) {
+        onStart(input);
+        if (!released)
+          await new Promise<void>((resolve, reject) => {
+            const abort = () => reject(input.signal.reason);
+            if (input.signal.aborted) return abort();
+            input.signal.addEventListener("abort", abort, { once: true });
+            void gate.then(() => {
+              input.signal.removeEventListener("abort", abort);
+              resolve();
+            });
+          });
+        return { ...(await fake.speak(input)), ...answer };
       },
     },
   };

@@ -35,7 +35,7 @@ VITE_MODE=backend pnpm dev      # the frontend, proxying /api to it
 
 ## What is simulated
 
-In demo mode EPUB parsing, provider requests, generated audio, encoding, output files and loudness measurements are all simulated. (The backend parses EPUBs for real; the rest is simulated in both modes.) Configured rates drive simulated costs; provider names and prices in fixtures are examples, not current pricing guarantees. Seeded audio playback is timed rather than heard, and waveform previews are illustrative. Voice auditions may use the browser’s speech synthesis.
+In demo mode EPUB parsing, provider requests, generated audio, encoding, output files and loudness measurements are all simulated. (The backend parses EPUBs for real and writes real, if synthetic, audio files; the rest is simulated in both modes.) Configured rates drive simulated costs; provider names and prices in fixtures are examples, not current pricing guarantees. Seeded audio playback is timed rather than heard, and waveform previews are illustrative. Voice auditions may use the browser’s speech synthesis.
 
 Books, edits, history, jobs and credentials are in memory and reset on reload. A few UI preferences persist in localStorage; see [state that survives a reload](docs/development.md#state-that-survives-a-reload).
 
@@ -45,7 +45,7 @@ Open **Demo** in the header. The drawer offers repeatable scenarios, suggested s
 
 Start with a chapter with script history, a failed replacement, a book with missing voices, or an export that needs updating. The [demo guide](docs/demo.md) contains the scenario map and detailed walkthroughs.
 
-**Keep this demo when the backend is added.** The first three backend slices — reading EPUBs and storing the library, a job queue that scripts chapters with a fake model, and the script, history and cast a scripted chapter owns — are in [server/](server/); real-provider integration is still future work. The testing requirements are recorded in [future backend integration requirements](docs/demo.md#future-backend-integration-requirements).
+**Keep this demo when the backend is added.** The first four backend slices — reading EPUBs and storing the library, a job queue that scripts chapters with a fake model, the script, history and cast a scripted chapter owns, and narration that renders real audio files with a fake speech model — are in [server/](server/); real-provider integration is still future work. The testing requirements are recorded in [future backend integration requirements](docs/demo.md#future-backend-integration-requirements).
 
 ## Documentation
 

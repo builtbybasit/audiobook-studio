@@ -6,11 +6,14 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { pinoLogger, type Env as PinoEnv } from "hono-pino";
 
+import { audioFiles, type AudioFiles } from "~/audio/files";
 import type { Db } from "~/db/client";
+import { env } from "~/env";
 import { createRunner, type Runner } from "~/jobs/runner";
 import { AppError, type ApiError } from "~/lib/errors";
 import type { Logger } from "~/log";
 import { log as defaultLog } from "~/log";
+import { audioRoutes } from "~/routes/audio";
 import { bookRoutes } from "~/routes/books";
 import { castRoutes } from "~/routes/cast";
 import { exportRoutes } from "~/routes/exports";
@@ -26,11 +29,17 @@ export interface AppOptions {
    * impossible to mistake for one that ran.
    */
   runner?: Runner;
+  /** where rendered clips are read from and, when a book goes, removed; the configured directory by default */
+  files?: AudioFiles;
 }
 
 export function createApp(
   db: Db,
-  { log = defaultLog, runner = createRunner(db, {}, { log }) }: AppOptions = {},
+  {
+    log = defaultLog,
+    runner = createRunner(db, {}, { log }),
+    files = audioFiles(env.AUDIO_DIR),
+  }: AppOptions = {},
 ): Hono<PinoEnv> {
   // Typed with the logger the middleware puts on the context, so a route reaching for
   // `c.var.logger` is checked rather than trusted.
@@ -64,11 +73,14 @@ export function createApp(
   // Everything a book owns is addressed under it. The library's own routes come first; the cast,
   // the scripts and the audiobooks each have a file of their own so that a route reads as one call
   // on the operations of the part of the app that owns the table.
-  app.route("/api/books", bookRoutes(db, runner));
+  app.route("/api/books", bookRoutes(db, runner, files));
   app.route("/api/books", castRoutes(db));
   app.route("/api/books", scriptRoutes(db));
   app.route("/api/books", exportRoutes(db));
   app.route("/api/jobs", jobRoutes(db, runner));
+  // A clip's url is served from disk, and the files it names belong to the same book routes above
+  // remove — see `server/audio/files.ts` for why the path is a book and a token.
+  app.route("/api/audio", audioRoutes(files));
 
   app.notFound((c) =>
     c.json(

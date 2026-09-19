@@ -8,8 +8,10 @@ import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
+import type { AudioFiles } from "~/audio/files";
 import type { Db } from "~/db/client";
 import { env } from "~/env";
+import { enqueueNarration } from "~/jobs/narration";
 import type { Runner } from "~/jobs/runner";
 import { enqueueScripting } from "~/jobs/scripting";
 import { fail } from "~/lib/errors";
@@ -19,6 +21,12 @@ import * as ops from "~/library/ops";
 
 const Ids = v.object({
   ids: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
+});
+
+/** Chapters to narrate, and which of their lines: `all` when the request does not say. */
+const Narrate = v.object({
+  ...Ids.entries,
+  scope: v.optional(v.picklist(["fill", "failed", "all"]), "all"),
 });
 
 /** Review decisions stated outright; see `library.setDecisions`. */
@@ -62,7 +70,7 @@ const ImportForm = v.object({
   name: v.optional(v.string()),
 });
 
-export function bookRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
+export function bookRoutes(db: Db, runner: Runner, files?: AudioFiles): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
   // ---------- reading ----------
@@ -160,16 +168,44 @@ export function bookRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     );
   });
 
+  // ---------- narration ----------
+  /**
+   * Narrate these chapters at one scope: one job each, as one run. The same answer as scripting —
+   * the jobs, and the chapters left out and why — with the reasons narration adds: a chapter with
+   * no script yet, and one the scope finds nothing to do in.
+   */
+  app.post(
+    "/:id/chapters/narrate",
+    validate("param", BookParam),
+    validate("json", Narrate),
+    (c) => {
+      const { ids, scope } = c.req.valid("json");
+      const result = enqueueNarration(db, runner, c.req.valid("param").id, ids, { scope });
+      c.var.logger.info(
+        { run: result.runId, scope, jobs: result.jobs.length, skipped: result.skipped.length },
+        "narration queued",
+      );
+      return c.json(
+        { ...result, chapters: ops.bookWithChapters(db, c.req.valid("param").id).chapters },
+        202,
+      );
+    },
+  );
+
   // ---------- removal ----------
   app.delete("/:id", validate("param", BookParam), (c) => {
     const { id } = c.req.valid("param");
-    ops.removeBook(db, id);
+    ops.removeBook(db, id, files);
     return c.json({ removed: id });
   });
 
   app.delete("/:id/volumes/:volumeId", validate("param", VolumeParam), (c) => {
     const { id, volumeId } = c.req.valid("param");
-    return c.json(ops.removeVolume(db, id, volumeId));
+    const result = ops.removeVolume(db, id, volumeId);
+    // the last volume going takes the book with it, and the book's clips go the way they do above;
+    // a volume removed from a book that stays leaves its chapters' files behind, for now
+    if (result.removed === "book") void files?.removeBook(id);
+    return c.json(result);
   });
 
   return app;

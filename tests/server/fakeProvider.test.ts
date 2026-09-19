@@ -1,7 +1,10 @@
-// The fake scripting model: deterministic, honest about what it is, and abortable.
+// The fake providers: deterministic, honest about what they are, and abortable. The scripting
+// fake attributes lines from punctuation; the speech fake renders a tone into a real WAV file.
 import { describe, expect, test } from "bun:test";
 
 import { attributeParagraph, fakeScriptingProvider, UNKNOWN_SPEAKER } from "~/providers/fake";
+import { fakeDuration, fakeSpeechProvider, SAMPLE_RATE, toneOf } from "~/providers/fakeSpeech";
+import type { SpeechInput } from "~/providers/speech";
 
 describe("attributing a paragraph", () => {
   test("narration stays with the narrator and a quote becomes dialogue", () => {
@@ -70,5 +73,90 @@ describe("the provider", () => {
     await expect(
       provider.script({ title: "t", text: "x", signal: new AbortController().signal }),
     ).rejects.toThrow("no");
+  });
+});
+
+const line = (text: string, speaker = "Mara", extra: Partial<SpeechInput> = {}): SpeechInput => ({
+  text,
+  speaker,
+  type: "dialogue",
+  direction: "",
+  voiceRef: null,
+  signal: new AbortController().signal,
+  ...extra,
+});
+
+describe("the fake speech model", () => {
+  test("writes a WAV file whose header describes the bytes that follow it", async () => {
+    const clip = await fakeSpeechProvider().speak(
+      line("We are short again, and the rain has not stopped."),
+    );
+    const { bytes } = clip;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const ascii = (at: number) => new TextDecoder().decode(bytes.slice(at, at + 4));
+    expect(ascii(0)).toBe("RIFF");
+    expect(ascii(8)).toBe("WAVE");
+    expect(ascii(12)).toBe("fmt ");
+    expect(ascii(36)).toBe("data");
+    const data = view.getUint32(40, true);
+    expect(data).toBe(bytes.length - 44);
+    expect(view.getUint32(4, true)).toBe(36 + data);
+    expect(view.getUint16(20, true)).toBe(1); // PCM
+    expect(view.getUint16(22, true)).toBe(1); // mono
+    expect(view.getUint32(24, true)).toBe(SAMPLE_RATE);
+    expect(view.getUint16(34, true)).toBe(8); // bits per sample
+    // exactly as many samples as the duration says, at the rate the header says
+    expect(data).toBe(Math.round(clip.duration * SAMPLE_RATE));
+    expect(clip.mime).toBe("audio/wav");
+    expect(clip.model).toBe("fake-tts-1");
+    // a quiet tone: every sample near silence, and not all of them silence
+    expect(bytes.slice(44).every((b) => b >= 100 && b <= 156)).toBe(true);
+    expect(new Set(bytes.slice(44)).size).toBeGreaterThan(2);
+  });
+
+  test("times a line by its words, and never shorter than a breath", async () => {
+    expect(
+      fakeDuration("one two three four five six seven eight nine ten eleven twelve thirteen"),
+    ).toBeCloseTo(13 / 2.6);
+    expect(fakeDuration("Yes.")).toBe(0.4);
+    // whitespace is not words
+    expect(fakeDuration("  spaced   out  ")).toBe(fakeDuration("spaced out"));
+    const clip = await fakeSpeechProvider().speak(line("Yes."));
+    expect(clip.duration).toBe(0.4);
+    expect(clip.ms).toBe(100 + 4);
+  });
+
+  test("answers the same bytes for the same line, and a different tone for another speaker", async () => {
+    const provider = fakeSpeechProvider();
+    const a = await provider.speak(line("Count it twice."));
+    const b = await provider.speak(line("Count it twice."));
+    expect(b.bytes).toEqual(a.bytes);
+    expect(toneOf("Mara")).not.toBe(toneOf("Tobin"));
+    const c = await provider.speak(line("Count it twice.", "Tobin"));
+    expect(c.bytes).not.toEqual(a.bytes);
+    expect(c.bytes.length).toBe(a.bytes.length);
+  });
+
+  test("names the voice it was asked for, from the voice half of the ref", async () => {
+    const provider = fakeSpeechProvider();
+    expect((await provider.speak(line("x", "Mara", { voiceRef: "ep-1/alloy" }))).voice).toBe(
+      "alloy",
+    );
+    expect((await provider.speak(line("x"))).voice).toBeNull();
+  });
+
+  test("stops when the signal is aborted while it waits", async () => {
+    const provider = fakeSpeechProvider({ delayMs: 50 });
+    const controller = new AbortController();
+    const run = provider.speak(line("Slow.", "Mara", { signal: controller.signal }));
+    controller.abort(new DOMException("stop", "AbortError"));
+    await expect(run).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  test("can be told to fail, for every line or for the lines that match", async () => {
+    await expect(fakeSpeechProvider({ failWith: "no" }).speak(line("x"))).rejects.toThrow("no");
+    const picky = fakeSpeechProvider({ failLines: (t) => t.includes("twice") });
+    await expect(picky.speak(line("Count it twice."))).rejects.toThrow("could not render");
+    expect((await picky.speak(line("Count it once."))).duration).toBeGreaterThan(0);
   });
 });

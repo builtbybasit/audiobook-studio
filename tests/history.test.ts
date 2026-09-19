@@ -387,11 +387,32 @@ describe("comparing two scripts", () => {
     expect(c.lines).toBe(2);
     const rewritten = c.changes.find((x) => x.kind === "changed")!;
     expect(rewritten.fromIds).toEqual([2]);
+    // the full stop ends both versions, so it is not part of what moved
     expect(rewritten.runs.filter((r) => r.kind === "remove").map((r) => r.text.trim())).toEqual([
-      "first written.",
+      "first written",
     ]);
     expect(rewritten.runs.filter((r) => r.kind === "add").map((r) => r.text.trim())).toEqual([
-      "rewritten by hand.",
+      "rewritten by hand",
+    ]);
+  });
+
+  test("a word keeps its place when only the punctuation after it changes", () => {
+    // "shut," and "shut;" are the same word differently punctuated; marking the whole clause as
+    // rewritten would hide that, so the word and its punctuation are compared separately
+    const runs = wordDiff(
+      "The gate was shut, and the road beyond it empty.",
+      "The gate stood shut; the road beyond lay empty.",
+    );
+    expect(runs.filter((r) => r.kind === "same").map((r) => r.text.trim())).toContain("shut");
+    expect(runs.filter((r) => r.kind === "remove").map((r) => r.text.trim())).toEqual([
+      "was",
+      ", and",
+      "it",
+    ]);
+    expect(runs.filter((r) => r.kind === "add").map((r) => r.text.trim())).toEqual([
+      "stood",
+      ";",
+      "lay",
     ]);
   });
 

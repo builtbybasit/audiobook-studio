@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "types": ["bun", "vite/client"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "composite": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "~/*": ["./server/*"]
+    }
+  },
+  "include": [
+    "server/**/*.ts",
+    "drizzle.config.ts",
+    "tests/server/**/*.ts",
+    "tests/support/epub.ts",
+    "tests/support/server.ts",
+    "tests/support/persist.ts",
+    "src/types/**/*.ts",
+    "src/lib/**/*.ts",
+    "src/ui/types.ts",
+    "src/mock/**/*.ts",
+    "src/services/library.ts",
+    "src/services/mode.ts"
+  ]
+}

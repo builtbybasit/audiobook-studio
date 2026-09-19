@@ -1,6 +1,6 @@
 # Development and verification
 
-[Back to README](../README.md) · [Store ownership](../src/stores/README.md) · [Demo workflows](demo.md)
+[Back to README](../README.md) · [Store ownership](../src/stores/README.md) · [Backend](backend.md) · [Demo workflows](demo.md)
 
 ## Setup and commands
 
@@ -15,17 +15,21 @@ Vite prints the local URL, normally `http://localhost:5173`. If that port is occ
 
 The scripts are defined in [package.json](../package.json):
 
-| Command          | Purpose                                      |
-| ---------------- | -------------------------------------------- |
-| `pnpm dev`       | Start the development server                 |
-| `pnpm typecheck` | Run `vue-tsc --build`                        |
-| `pnpm lint`      | Check with Oxlint                            |
-| `pnpm lint:fix`  | Apply lint fixes; review the resulting diff  |
-| `pnpm fmt:check` | Check formatting with Oxfmt                  |
-| `pnpm fmt`       | Format files; review the resulting diff      |
-| `pnpm test`      | Run the existing suite with `bun test tests` |
-| `pnpm build`     | Typecheck and build with Vite                |
-| `pnpm preview`   | Serve the production build locally           |
+| Command            | Purpose                                      |
+| ------------------ | -------------------------------------------- |
+| `pnpm dev`         | Start the development server                 |
+| `pnpm dev:server`  | Start the backend API on :8787               |
+| `pnpm typecheck`   | Run `vue-tsc --build`                        |
+| `pnpm lint`        | Check with Oxlint                            |
+| `pnpm lint:fix`    | Apply lint fixes; review the resulting diff  |
+| `pnpm fmt:check`   | Check formatting with Oxfmt                  |
+| `pnpm fmt`         | Format files; review the resulting diff      |
+| `pnpm test`        | Run the existing suite with `bun test tests` |
+| `pnpm build`       | Typecheck and build with Vite                |
+| `pnpm preview`     | Serve the production build locally           |
+| `pnpm db:generate` | Generate SQL after editing the server schema |
+| `pnpm db:migrate`  | Apply migrations without starting the server |
+| `pnpm db:studio`   | Browse the database with Drizzle Studio      |
 
 Run an individual test file directly with Bun, for example `bun test tests/history.test.ts`. Installing dependencies does not install the Bun executable used by the test script.
 
@@ -44,12 +48,14 @@ Run an individual test file directly with Bun, for example `bun test tests/histo
 | [src/services/endpoints.ts](../src/services/endpoints.ts)         | Endpoint service contract and fixture implementation                                                        |
 | [src/types](../src/types)                                         | Feature types, imported through `@/types`                                                                   |
 | [tests](../tests)                                                 | Bun tests for domain rules and workflows                                                                    |
+| [server](../server)                                               | The backend: EPUB import and the stored library. Its own guide is [backend](backend.md)                     |
+| [src/services](../src/services)                                   | The seams a backend plugs into: the endpoint service, the library service and the demo/backend mode switch  |
 
 The scenario catalogue and shared store rules remain in their existing locations; this documentation does not introduce another state or service layer.
 
 ## State that survives a reload
 
-Books, scripts, history, jobs, usage, endpoint settings and credentials are in memory. Reloading reconstructs the seeded world.
+In demo mode — which is the default — books, scripts, history, jobs, usage, endpoint settings and credentials are in memory, and reloading reconstructs the seeded world. In backend mode the library is stored in SQLite and survives; everything else is still in memory. See [backend](backend.md).
 
 Browser localStorage retains reader typography and cast-rail preferences, the Library grid/list choice, and whether Narration’s setup panel is open. Searches, filters and some navigation state are also represented in the URL. These preferences are not persistence for library data.
 

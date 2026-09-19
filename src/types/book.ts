@@ -30,7 +30,14 @@ export interface Pacing {
 
 export type ScriptingStatus = "none" | "queued" | "running" | "done" | "failed" | "fallback";
 
-/** What a non-story chapter turned out to be. `mixed` and `title` are the two that need a person. */
+/**
+ * What a non-story chapter turned out to be.
+ *
+ * `mixed`, `title` and `unreadable` are the three that need a person. The last of those is not a
+ * notice at all — it is the import saying the file listed a chapter it could not read — but it
+ * reaches the reader through the same review, and giving it a channel of its own would mean a
+ * second place to look before trusting a book's contents.
+ */
 export type NoticeKind =
   | "hiatus"
   | "health"
@@ -45,7 +52,16 @@ export type NoticeKind =
   | "afterword"
   | "translator"
   | "mixed"
-  | "title";
+  | "title"
+  | "unreadable";
+
+/**
+ * The kinds the seeded demo has wording for: every notice, which is all of them but `unreadable`.
+ *
+ * Nothing in the demo reads a file, so nothing in it can fail to. Writing a fixture body for one
+ * would be inventing a failure the demo cannot actually produce.
+ */
+export type DemoNoticeKind = Exclude<NoticeKind, "unreadable">;
 
 /**
  * A suggestion attached to a chapter when the EPUB was read: this looks like a notice rather than

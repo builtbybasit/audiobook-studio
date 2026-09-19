@@ -7,6 +7,7 @@ import { stateOf } from "@/lib/contents";
 import { STATE_CHIP, words } from "@/views/contents/shared";
 import type { Chapter, Volume } from "@/types";
 import type { ContentPart } from "@/mock";
+import MarkdownText from "@/components/MarkdownText.vue";
 import {
   ChevronLeft as PrevIcon,
   ChevronRight as NextIcon,
@@ -136,7 +137,7 @@ const noticeWords = computed(() =>
       <div
         v-for="(p, i) in parts"
         :key="i"
-        class="whitespace-pre-line font-serif text-[14px] leading-relaxed text-zinc-800 dark:text-zinc-200"
+        class="font-serif text-[14px] leading-relaxed text-zinc-800 dark:text-zinc-200"
         :class="[
           i > 0 && 'mt-4',
           p.notice && 'rounded-md border-l-2 border-amber-400 bg-amber-400/10 px-3 py-2',
@@ -145,7 +146,10 @@ const noticeWords = computed(() =>
         <div v-if="p.notice" class="label mb-1 text-amber-700 dark:text-amber-300">
           {{ note?.kind === "mixed" ? "Author note" : "Notice" }}
         </div>
-        {{ p.text }}
+        <!-- The import stores a chapter as Markdown, so the review shows what the file laid out:
+             headings, emphasis, and the table a character list or a timetable was built in. The
+             seeded demo's prose has no Markdown in it and parses to itself. -->
+        <MarkdownText :text="p.text" />
       </div>
     </div>
 

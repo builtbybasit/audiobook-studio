@@ -4,7 +4,7 @@
 // These are predetermined fixtures. Nothing here classifies text — the import samples say which
 // chapter carries which note, and this file supplies the words. The reasons are written the way
 // the review shows them, short enough to read beside a title.
-import type { ChapterNote, NoticeKind } from "@/types";
+import type { ChapterNote, DemoNoticeKind } from "@/types";
 
 export interface NoticeSpec {
   verdict: "skip" | "review";
@@ -18,7 +18,7 @@ export interface NoticeSpec {
   bodies: string[];
 }
 
-export const NOTICES: Record<NoticeKind, NoticeSpec> = {
+export const NOTICES: Record<DemoNoticeKind, NoticeSpec> = {
   hiatus: {
     verdict: "skip",
     reason: "Possible hiatus announcement",
@@ -201,7 +201,7 @@ export const NOTICES: Record<NoticeKind, NoticeSpec> = {
 };
 
 /** A note as a chapter carries it, from the fixture for its kind. */
-export function noteOf(kind: NoticeKind, at?: "start" | "end", variant?: number): ChapterNote {
+export function noteOf(kind: DemoNoticeKind, at?: "start" | "end", variant?: number): ChapterNote {
   const spec = NOTICES[kind];
   const reason =
     kind === "mixed"
@@ -220,13 +220,13 @@ export function noteOf(kind: NoticeKind, at?: "start" | "end", variant?: number)
 }
 
 /** The body a notice reads with — `n` picks among the variants so repeats do not all read alike. */
-export function noticeBody(kind: NoticeKind, n = 0): string {
+export function noticeBody(kind: DemoNoticeKind, n = 0): string {
   const bodies = NOTICES[kind].bodies;
   return bodies.length ? bodies[Math.abs(n) % bodies.length] : "";
 }
 
 /** A title for a notice chapter, from the fixture's list. */
-export function noticeTitle(kind: NoticeKind, n = 0): string {
+export function noticeTitle(kind: DemoNoticeKind, n = 0): string {
   const titles = NOTICES[kind].titles;
   return titles.length ? titles[Math.abs(n) % titles.length] : NOTICES[kind].reason;
 }

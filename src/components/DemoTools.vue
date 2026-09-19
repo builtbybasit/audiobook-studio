@@ -24,7 +24,7 @@ function close() {
 <template>
   <button
     ref="chip"
-    class="chip max-w-[16rem]"
+    class="chip h-7 max-w-[16rem] px-2.5 text-xs"
     :class="(open || active) && 'chip-on'"
     :aria-expanded="open"
     aria-controls="demo-drawer"
@@ -36,9 +36,8 @@ function close() {
     aria-label="Demo tools"
     @click="open = !open"
   >
-    <DemoIcon class="icon-sm" /> Demo<span v-if="active" class="hidden min-w-0 truncate md:inline"
-      >&nbsp;· {{ active.name }}</span
-    >
+    <DemoIcon class="icon-sm" /><span class="hidden sm:inline">Demo</span
+    ><span v-if="active" class="hidden min-w-0 truncate md:inline">&nbsp;· {{ active.name }}</span>
   </button>
   <DemoDrawer :open="open" @close="close" />
 </template>

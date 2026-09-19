@@ -7,6 +7,8 @@ interface UiState {
   _undo: UndoEntry[];
   notify: boolean;
   dark: boolean;
+  /** the desktop sidebar widened to show labels; icons only otherwise */
+  railExpanded: boolean;
   currentBookId: string | null;
   /** the chapter each book is open on — see `openChapter` */
   currentChapter: Record<string, number>;
@@ -16,6 +18,7 @@ export const useUiStore = defineStore("ui", {
     _undo: [],
     notify: false,
     dark: window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true,
+    railExpanded: false,
     currentBookId: null,
     currentChapter: {},
   }),

@@ -4,9 +4,10 @@
 
 ## Pages
 
+- **The shell** ([src/App.vue](../src/App.vue)): a narrow icon rail on the left for the three places that are not a book — Library, Queue (running count as a badge), Endpoints (a dot when one needs fixing); the chevron at its foot widens it to labels ([src/components/AppRail.vue](../src/components/AppRail.vue)). The open book lives in the header: its cover and title in the top row are a **book selector** ([src/components/BookSelector.vue](../src/components/BookSelector.vue)) that lists the other books with their next step and lands on the page you are already on, with a search from six books up; under it, on the book's own pages, a **tab row** ([src/components/BookTabs.vue](../src/components/BookTabs.vue)) with Overview, Contents, Cast, Review (decisions waiting), Search, then Scripting, Narration and Export with their counts, and the one next thing to do as a pill at the end. On Library, Queue and Endpoints the selector stays, dimmed, and the tab row does not show. Under `lg` the rail is a drawer, and the book's pages are rows in it in place of the tab row. What the three surfaces say about a book comes from one place, [src/composables/useShell.ts](../src/composables/useShell.ts), over `bookFacts`, so the shelf, the overview and the shell agree.
 - **Library** → **Add EPUB** → **Contents** (what goes in the audiobook) → **Book overview** (volumes, per-stage progress, cast summary, "what next", and what else is waiting) → stages **Scripting / Narration / Export**.
 - **Contents** (per book): every chapter in reading order, grouped by volume, with the notices the import found beside the titles; skip or restore chapters, singly, in ranges, by volume or by kind of notice. Reached from the import and again from the overview.
-- **Review** (per book): every decision the book is waiting on, in one list — retakes waiting for a verdict, flagged clips, speakers a re-script brought in, merge suggestions, expressions the text moved under, chunks that didn't verify, chapters the import wasn't sure about, and runs that failed. Grouped by where each is settled, with a link that lands on the row itself rather than the top of its page; a batch of chapters carrying the same notice is one row, because one verdict settles them all. It decides nothing itself, and a decision settled anywhere leaves the list. Reached from the overview strip under "what next", from the sidebar, from the palette, and from Export's unfinished-review block.
+- **Review** (per book): every decision the book is waiting on, in one list — retakes waiting for a verdict, flagged clips, speakers a re-script brought in, merge suggestions, expressions the text moved under, chunks that didn't verify, chapters the import wasn't sure about, and runs that failed. Grouped by where each is settled, with a link that lands on the row itself rather than the top of its page; a batch of chapters carrying the same notice is one row, because one verdict settles them all. It decides nothing itself, and a decision settled anywhere leaves the list. Reached from the overview strip under "what next", from the Review tab, from the palette, and from Export's unfinished-review block.
 - **Cast** (per book): every speaker across all chapters, line counts, first appearance, merge suggestions for near-duplicate names, bulk merge.
 - **Queue**: all jobs across books with cancel / retry / remove, endpoint pool utilisation. Click a job to open its activity log and run details.
 - **Endpoints**: every scripting and speech endpoint in one place — health, throughput, spend, request history, connection, limits and budgets.
@@ -41,8 +42,8 @@ A novel may span several EPUB files: each file is a **volume**, chapters number 
 - **Audit trail**: each rendered clip records voice, model, direction, style, type, time, cost. Clicking a ledger row (or `i`) shows it and spells out what differs from the script now (why a row is stale). Failures carry HTTP status + body and a "copy request".
 - **Voice picker** popover (search, gender filter, grouped by endpoint, "N using", inline demo) replaces the flat select on Voices and Cast.
 - **Direction** is a combobox: presets + directions already used in the book, free text allowed, and "→ all <speaker>" applies it to every line of that speaker in the chapter.
-- **Stale nudge** in the reader header and the sidebar count; endpoint pool is now a master/detail list; queue shows an ETA and can notify when a book's run finishes; keyboard on picker / ledger / cast (`?` lists everything).
-- **Responsive**: sidebar becomes a drawer under `lg`, stage layouts stack, tables scroll inside their cards.
+- **Stale nudge** in the reader header and the Narration tab's count; endpoint pool is now a master/detail list; queue shows an ETA and can notify when a book's run finishes; keyboard on picker / ledger / cast (`?` lists everything).
+- **Responsive**: the rail becomes a drawer under `lg` and carries the open book's pages, since the tab row does not fit a phone; the header chips shrink to icons and counts under `sm`; stage layouts stack, tables scroll inside their cards.
 - **Backend-shaped**: API keys live in [src/lib/keyring.ts](../src/lib/keyring.ts) (reactive, in-memory, never in the store or the settings file); settings export/import as JSON; per-book budget cap + "pause everything on this book"; `spent()` from the append-only usage ledger ([src/stores/usage.ts](../src/stores/usage.ts)), not from whatever clip each line is holding now. Persistence and resume are left to the real backend on purpose.
 
 ## Import, contents and the library shelf
@@ -56,7 +57,7 @@ buried in a peek popover, one chapter at a time. Now the file is **read, reviewe
 same dialog as before, and _Read the file_ lands on `/book/:id/contents` with the book marked
 `importing`: off the shelf, not the open book, nothing running on it. **Add to library · 202
 chapters** is the only way on, and it says what it adds; _Cancel import_ leaves no trace. The same
-page is the book's **Contents** afterwards — overview card, sidebar chip, the picker's "skipped"
+page is the book's **Contents** afterwards — overview card, the drawer's Contents row, the picker's "skipped"
 count — so a chapter skipped on import is restored in the same place with the same words, and every
 change there applies at once to scripting, narration and export.
 

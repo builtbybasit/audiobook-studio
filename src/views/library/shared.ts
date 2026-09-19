@@ -156,6 +156,21 @@ export const TONE: Record<NextStep["tone"], string> = {
   red: "border-red-300 bg-red-500/10 text-red-800 hover:bg-red-500/20 dark:border-red-500/40 dark:text-red-200",
 };
 
+/** The tone as text only, for a status line that is not a button (the book selector's rows). */
+export const TONE_TEXT: Record<NextStep["tone"], string> = {
+  amber: "text-amber-600 dark:text-amber-400",
+  sky: "text-sky-600 dark:text-sky-400",
+  violet: "text-violet-600 dark:text-violet-400",
+  emerald: "text-emerald-600 dark:text-emerald-400",
+  zinc: "text-zinc-500",
+  red: "text-red-600 dark:text-red-400",
+};
+
+/** The generated cover, as an inline style. */
+export const coverStyle = (cover: [string, string]) => ({
+  background: `linear-gradient(160deg, ${cover[0]}, ${cover[1]})`,
+});
+
 /**
  * Why a finished audiobook no longer matches the book, in one short phrase a card can carry:
  * the most consequential reason first, and the count with it. "" when it still matches.

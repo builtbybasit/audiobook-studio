@@ -15,16 +15,18 @@
 // An undo of a skip or a keep, by contrast, is exact on both sides: the store records what the
 // chapters were and puts that back — in memory, or through `setDecisions` on the server — rather
 // than running the inverse rule and letting an undone skip come back as "looked at".
+import { narrator } from "@/lib/cast";
 import { noticeGroups, plural, summarize } from "@/lib/contents";
 import { isNarrated, isScripted, key } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
-import { importedBook, importedVolume, PALETTE, sampleForFile } from "@/mock";
+import { importedBook, importedVolume, sampleForFile } from "@/mock";
+import { invalidate } from "@/queries/invalidate";
+import { keys } from "@/queries/keys";
 import {
   activeLibraryService,
   ApiError,
   type LibraryService,
   type ReviewDecision,
-  type TextFormat,
 } from "@/services/library";
 import type { Book, Chapter, ContentsSummary, NoticeGroup, SegmentMap, Volume } from "@/types";
 import { defineStore } from "pinia";
@@ -50,23 +52,14 @@ export interface ImportSpec {
   title?: string;
 }
 
-/** A chapter's prose in the two forms the seam serves it in. See `LibraryService.chapterText`. */
-interface ChapterText {
-  markdown?: string;
-  plain?: string;
-}
-
 interface LibraryState {
   books: Book[];
-  chapters: Record<string, Chapter[]>;
   /**
-   * Chapter prose read from the server, keyed `bookId:chapterId`.
-   *
-   * Backend mode only: in demo the text is generated from the seeded world on demand and there is
-   * nothing to cache. Empty here means "not read yet", never "no text" — a reader that finds
-   * nothing asks for it rather than falling back to a fixture.
+   * Each book's chapters, once read. With a server answering a book's chapters arrive when it is
+   * opened; until then the book carries counts of them (`Book.chapters`), which is what the shelf
+   * reads. Prose is not here at all: `useChapterText` in `@/queries` holds it.
    */
-  texts: Record<string, ChapterText>;
+  chapters: Record<string, Chapter[]>;
   /** Backend mode: whether the shelf has been read from the server yet. */
   loaded: boolean;
 }
@@ -78,7 +71,6 @@ export const useLibraryStore = defineStore("library", {
     ...(activeLibraryService()
       ? { books: [] as Book[], chapters: {} as Record<string, Chapter[]> }
       : seedState("books", "chapters")),
-    texts: {},
     loaded: false,
   }),
   getters: {
@@ -106,9 +98,27 @@ export const useLibraryStore = defineStore("library", {
       };
     },
     // ---------- contents ----------
-    /** The counts the contents review keeps on screen: what goes in, what is skipped, what is undecided. */
+    /**
+     * The counts the contents review keeps on screen: what goes in, what is skipped, what is
+     * undecided. A book whose chapters have not been read yet answers from the counts it was
+     * listed with, so the shelf never says "0 chapters" about a book it has not opened.
+     */
     contentsOf(s): (id: string) => ContentsSummary {
-      return (id: string): ContentsSummary => summarize(s.chapters[id] ?? []);
+      return (id: string): ContentsSummary => {
+        const chapters = s.chapters[id];
+        if (chapters) return summarize(chapters);
+        const counts = s.books.find((b) => b.id === id)?.chapters;
+        if (!counts) return summarize([]);
+        return {
+          total: counts.total,
+          included: counts.included,
+          skipped: counts.total - counts.included,
+          suggested: 0,
+          review: 0,
+          kept: 0,
+          noted: 0,
+        };
+      };
     },
     /** Chapters with the same kind of note, so one decision can cover them all. */
     noticeGroupsOf(s): (id: string) => NoticeGroup[] {
@@ -123,18 +133,6 @@ export const useLibraryStore = defineStore("library", {
     shelved(s): Book[] {
       return s.books.filter((b) => !b.importing);
     },
-    // ---------- chapter prose ----------
-    /**
-     * A chapter's prose as the server holds it, or `null` when it has not been read yet.
-     *
-     * `null` is the honest answer while the request is in flight: the caller waits or shows
-     * nothing, and never reaches for a fixture to fill the gap. Demo mode does not come here at
-     * all — its text is generated from the seeded world.
-     */
-    textOf(s): (bookId: string, chId: number, format?: TextFormat) => string | null {
-      return (bookId: string, chId: number, format: TextFormat = "markdown"): string | null =>
-        s.texts[key(bookId, chId)]?.[format] ?? null;
-    },
     progress(s): (id: string) => {
       total: number;
       excluded: number;
@@ -147,17 +145,32 @@ export const useLibraryStore = defineStore("library", {
     } {
       const exportsStore = useExportsStore();
       return (id: string) => {
-        const all = s.chapters[id] ?? [];
-        const ch = all.filter((c) => !c.excluded);
+        const exported = exportsStore.exports.filter(
+          (e) => e.bookId === id && e.status === "done",
+        ).length;
+        const all = s.chapters[id];
+        // a book not opened yet: the counts it was listed with, and nothing it cannot know
+        const counts = all ? null : s.books.find((b) => b.id === id)?.chapters;
+        if (counts)
+          return {
+            total: counts.included,
+            excluded: counts.total - counts.included,
+            scripted: counts.scripted,
+            fallback: 0,
+            narrated: counts.narrated,
+            stale: 0,
+            exported,
+            running: false,
+          };
+        const ch = (all ?? []).filter((c) => !c.excluded);
         return {
           total: ch.length,
-          excluded: all.length - ch.length,
+          excluded: (all ?? []).length - ch.length,
           scripted: ch.filter(isScripted).length,
           fallback: ch.filter((c) => c.scripting === "fallback").length,
           narrated: ch.filter(isNarrated).length,
           stale: ch.filter((c) => c.narration === "stale").length,
-          exported: exportsStore.exports.filter((e) => e.bookId === id && e.status === "done")
-            .length,
+          exported,
           running: ch.some((c) => c.scripting === "running" || c.narration === "running"),
         };
       };
@@ -225,24 +238,15 @@ export const useLibraryStore = defineStore("library", {
       }
     },
     /**
-     * Read a chapter's prose into the cache, in the form the caller needs.
+     * Everything read about a book is out of date: its chapters were renumbered, or it is gone.
      *
-     * `plain` is what anything that counts, bills or speaks a chapter must ask for — the stored
-     * form would have a link's address and a table's pipes read out and charged for.
+     * Prose, scripts, histories, the cast and the exports are all filed under the book in the
+     * query cache, so one invalidation covers them; what is still on screen is read again and what
+     * is not is read when it next is. Demo mode holds no queries worth the trouble, but the call
+     * is harmless there.
      */
-    async loadText(bookId: string, chId: number, format: TextFormat = "markdown"): Promise<void> {
-      const svc = this._service();
-      if (!svc || this.textOf(bookId, chId, format) != null) return;
-      try {
-        const text = await svc.chapterText(bookId, chId, format);
-        this.texts[key(bookId, chId)] = { ...this.texts[key(bookId, chId)], [format]: text };
-      } catch (cause) {
-        this._failed("read this chapter", cause);
-      }
-    },
-    /** Forget cached prose for a book that is going, or whose chapters have been renumbered. */
-    _forgetText(bookId: string): void {
-      for (const k of Object.keys(this.texts)) if (k.startsWith(bookId + ":")) delete this.texts[k];
+    _forgetBook(bookId: string): void {
+      void invalidate({ key: keys.book(bookId) }, "all");
     },
     _bookSnapshot(bookId: string): () => void {
       const castStore = useCastStore();
@@ -541,16 +545,7 @@ export const useLibraryStore = defineStore("library", {
       this.books.push(book);
       this.chapters[bookId] = chapters;
       castStore.characters[bookId] = [
-        {
-          name: "Narrator",
-          aliases: [],
-          gender: "n",
-          description: "Narration, thoughts, and every speaker without a voice of their own.",
-          voice: endpointsStore.voiceOptions.find((o) => !o.disabled)?.value ?? null,
-          style: "",
-          color: PALETTE[0],
-          major: true,
-        },
+        narrator(endpointsStore.voiceOptions.find((o) => !o.disabled)?.value ?? null),
       ];
       return bookId;
     },
@@ -828,12 +823,12 @@ export const useLibraryStore = defineStore("library", {
         if (map[old]) segs[key(bookId, map[old])] = v;
       }
       scriptsStore.segments = segs;
-      // cached prose is keyed by the chapter number as well, and these are about to move. It is a
-      // cache of the server's answer, so the cheap correct thing is to drop it and ask again.
-      this._forgetText(bookId);
-      scriptsStore._forgetLoaded(bookId);
+      scriptsStore._remapBook(bookId, map);
       // a chapter's script history is keyed by its number too, so it moves with the script
       historyStore.remapBook(bookId, map);
+      // everything read from the server about this book was keyed by numbers that have moved: it
+      // is a cache of the server's answers, so the cheap correct thing is to ask again
+      this._forgetBook(bookId);
       ordered.forEach((c) => {
         c.id = map[c.id];
         c.index = c.id;
@@ -912,7 +907,6 @@ export const useLibraryStore = defineStore("library", {
       jobsStore.jobs = jobsStore.jobs.filter((j) => j.bookId !== bookId);
       this.books = this.books.filter((b) => b.id !== bookId);
       delete this.chapters[bookId];
-      this._forgetText(bookId);
       delete castStore.characters[bookId];
       delete castStore.lexicon[bookId];
       scriptsStore._previous = Object.fromEntries(
@@ -921,9 +915,10 @@ export const useLibraryStore = defineStore("library", {
       scriptsStore.segments = Object.fromEntries(
         Object.entries(scriptsStore.segments).filter(([k]) => !k.startsWith(bookId + ":")),
       );
-      scriptsStore._forgetLoaded(bookId);
+      scriptsStore._remapBook(bookId, {});
       exportsStore.exports = exportsStore.exports.filter((e) => e.bookId !== bookId);
       historyStore.clearBook(bookId);
+      this._forgetBook(bookId);
       if (uiStore.currentBookId === bookId) uiStore.currentBookId = null;
     },
   },

@@ -102,6 +102,14 @@ export class HttpClient {
     });
   }
 
+  put<T>(path: string, body: unknown): Promise<T> {
+    return this.send<T>(path, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
   /** `multipart/form-data`: the file under `file`, and only the fields that have something in them. */
   postForm<T>(path: string, file: File, fields: Record<string, string | undefined>): Promise<T> {
     const form = new FormData();

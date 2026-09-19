@@ -44,6 +44,24 @@ const items = computed(() =>
     .slice()
     .sort((a, b) => (b.status === "building" ? 1 : 0) - (a.status === "building" ? 1 : 0)),
 );
+/**
+ * Deleting an audiobook: undoable in the demo, so it acts at once; with a server answering nothing
+ * puts one back, so the button asks with a second click — the rule in `src/stores/README.md`.
+ */
+const confirming = ref<number | null>(null);
+const deleteTitle = computed(() =>
+  exportsStore.asksFirst
+    ? "Delete this audiobook. This cannot be undone."
+    : "Delete this audiobook",
+);
+function remove(id: number) {
+  if (exportsStore.asksFirst && confirming.value !== id) {
+    confirming.value = id;
+    return;
+  }
+  confirming.value = null;
+  void exportsStore.deleteExport(id);
+}
 const expanded = ref(new Set<number>());
 function toggle(id: number) {
   const next = new Set(expanded.value);
@@ -228,9 +246,10 @@ const summary = (u: ExportUpdate) => {
                 <RouterLink to="/queue" class="btn-ghost btn-xs">See the activity log</RouterLink>
                 <button
                   class="btn-ghost btn-xs text-red-500"
-                  @click="exportsStore.deleteExport(e.id)"
+                  :title="deleteTitle"
+                  @click="remove(e.id)"
                 >
-                  Discard
+                  {{ confirming === e.id ? "Discard for good?" : "Discard" }}
                 </button>
               </div>
             </div>
@@ -334,9 +353,11 @@ const summary = (u: ExportUpdate) => {
             <button
               class="btn-ghost btn-xs ml-auto text-red-500"
               :aria-label="`Delete ${e.filename}`"
-              @click="exportsStore.deleteExport(e.id)"
+              :title="deleteTitle"
+              @click="remove(e.id)"
             >
-              <CloseIcon class="icon-sm" />
+              <span v-if="confirming === e.id" class="text-xs">Delete for good?</span>
+              <CloseIcon v-else class="icon-sm" />
             </button>
           </div>
 
@@ -386,8 +407,9 @@ const summary = (u: ExportUpdate) => {
                 >{{ o.chapters }} ch · {{ mb(o.size) }} · {{ o.createdAt }}</span
               >
               <span>{{ o.status }}</span>
-              <button class="hover:text-red-500" @click="exportsStore.deleteExport(o.id)">
-                <CloseIcon class="icon-sm" />
+              <button class="hover:text-red-500" :title="deleteTitle" @click="remove(o.id)">
+                <span v-if="confirming === o.id" class="text-xs">Delete for good?</span>
+                <CloseIcon v-else class="icon-sm" />
               </button>
             </li>
           </ul>

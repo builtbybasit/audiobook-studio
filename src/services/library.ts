@@ -8,7 +8,17 @@
 // Only the HTTP implementation lives here. In demo mode the library's state *is* the mock world
 // the store holds, so asking for this service is a mistake worth failing on rather than answering
 // with seeded books that would look like a working backend.
-import type { Book, Chapter, Segment } from "@/types";
+import type {
+  Book,
+  Chapter,
+  ChapterHistory,
+  Character,
+  ExportItem,
+  LexEntry,
+  ScriptVersion,
+  Segment,
+  VersionOrigin,
+} from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { isBackend, mode } from "@/services/mode";
 
@@ -33,6 +43,40 @@ export interface ReviewDecision {
 export interface ChapterScript {
   segments: Segment[];
   revision: number;
+}
+
+/** What an edit sends: the script as it now stands, the revision it read, and what produced it. */
+export interface ScriptEdit {
+  segments: Segment[];
+  ifRevision: number;
+  /** an ordinary edit when left out */
+  origin?: VersionOrigin;
+}
+
+/** What an edit comes back with: the script, its new revision, and the history it added to. */
+export interface EditedScript extends ChapterScript {
+  history: ChapterHistory;
+}
+
+/** A book's cast and its pronunciation dictionary. */
+export interface Cast {
+  characters: Character[];
+  lexicon: LexEntry[];
+}
+
+/** Lines of one chapter, named by number. */
+export interface ChapterLines {
+  chapterId: number;
+  ids: number[];
+}
+
+/**
+ * Lines that changed hands when a speaker was renamed, merged or removed, with the revision each
+ * chapter's script is at now that they have, and the cast after it.
+ */
+export interface MovedLines {
+  characters: Character[];
+  moved: (ChapterLines & { revision: number })[];
 }
 
 export interface LibraryService {
@@ -74,6 +118,42 @@ export interface LibraryService {
   setDecisions(bookId: string, decisions: ReviewDecision[]): Promise<Chapter[]>;
   removeBook(bookId: string): Promise<void>;
   removeVolume(bookId: string, volumeId: number): Promise<"book" | "volume">;
+
+  // ---------- a chapter's script, edited by a person ----------
+  /**
+   * Replace a chapter's script with what a person made of it. `ifRevision` names the revision the
+   * caller read; an edit against a script that has moved since is refused with a conflict, the
+   * way a stale job result is, and nothing is written.
+   */
+  editScript(bookId: string, chapterId: number, edit: ScriptEdit): Promise<EditedScript>;
+  chapterHistory(bookId: string, chapterId: number): Promise<ChapterHistory>;
+  /** Name the script as it stands and keep a copy. The script itself is untouched. */
+  saveCheckpoint(
+    bookId: string,
+    chapterId: number,
+    name: string,
+  ): Promise<{ version: ScriptVersion; history: ChapterHistory }>;
+  /** Forget one version. What an Undo of a checkpoint sends. */
+  dropVersion(bookId: string, chapterId: number, versionId: number): Promise<ChapterHistory>;
+
+  // ---------- the cast ----------
+  cast(bookId: string): Promise<Cast>;
+  /** One speaker, written as stated: new or replaced. Returns the cast as it now stands. */
+  putCharacter(bookId: string, character: Character): Promise<Character[]>;
+  /** Change a speaker's name; every line that names them moves with it. */
+  renameCharacter(bookId: string, from: string, to: string): Promise<MovedLines>;
+  /** Fold one speaker into another; the lines move and the name becomes an alias. */
+  mergeCharacter(bookId: string, from: string, into: string): Promise<MovedLines>;
+  /** Take a speaker off the cast; their lines go to the Narrator. */
+  deleteCharacter(bookId: string, name: string): Promise<MovedLines>;
+  /** Put a speaker back on exactly these lines, and back in the cast: what an Undo sends. */
+  attribute(bookId: string, character: Character, lines: ChapterLines[]): Promise<MovedLines>;
+  /** The pronunciation dictionary, replaced whole. */
+  putLexicon(bookId: string, entries: LexEntry[]): Promise<LexEntry[]>;
+
+  // ---------- finished audiobooks ----------
+  exports(bookId: string): Promise<ExportItem[]>;
+  removeExport(bookId: string, exportId: number): Promise<void>;
 }
 
 export class HttpLibraryService implements LibraryService {
@@ -156,6 +236,87 @@ export class HttpLibraryService implements LibraryService {
         `/books/${seg(bookId)}/volumes/${volumeId}`,
       )
     ).removed;
+  }
+
+  editScript(bookId: string, chapterId: number, edit: ScriptEdit): Promise<EditedScript> {
+    return this.http.put<EditedScript>(`/books/${seg(bookId)}/chapters/${chapterId}/script`, edit);
+  }
+
+  async chapterHistory(bookId: string, chapterId: number): Promise<ChapterHistory> {
+    return (
+      await this.http.get<{ history: ChapterHistory }>(
+        `/books/${seg(bookId)}/chapters/${chapterId}/history`,
+      )
+    ).history;
+  }
+
+  saveCheckpoint(
+    bookId: string,
+    chapterId: number,
+    name: string,
+  ): Promise<{ version: ScriptVersion; history: ChapterHistory }> {
+    return this.http.post(`/books/${seg(bookId)}/chapters/${chapterId}/history/checkpoints`, {
+      name,
+    });
+  }
+
+  async dropVersion(bookId: string, chapterId: number, versionId: number): Promise<ChapterHistory> {
+    return (
+      await this.http.delete<{ history: ChapterHistory }>(
+        `/books/${seg(bookId)}/chapters/${chapterId}/history/versions/${versionId}`,
+      )
+    ).history;
+  }
+
+  cast(bookId: string): Promise<Cast> {
+    return this.http.get<Cast>(`/books/${seg(bookId)}/cast`);
+  }
+
+  async putCharacter(bookId: string, character: Character): Promise<Character[]> {
+    return (
+      await this.http.put<{ characters: Character[] }>(
+        `/books/${seg(bookId)}/characters/${seg(character.name)}`,
+        character,
+      )
+    ).characters;
+  }
+
+  renameCharacter(bookId: string, from: string, to: string): Promise<MovedLines> {
+    return this.http.post<MovedLines>(`/books/${seg(bookId)}/characters/${seg(from)}/rename`, {
+      to,
+    });
+  }
+
+  mergeCharacter(bookId: string, from: string, into: string): Promise<MovedLines> {
+    return this.http.post<MovedLines>(`/books/${seg(bookId)}/characters/${seg(from)}/merge`, {
+      into,
+    });
+  }
+
+  deleteCharacter(bookId: string, name: string): Promise<MovedLines> {
+    return this.http.delete<MovedLines>(`/books/${seg(bookId)}/characters/${seg(name)}`);
+  }
+
+  attribute(bookId: string, character: Character, lines: ChapterLines[]): Promise<MovedLines> {
+    return this.http.post<MovedLines>(`/books/${seg(bookId)}/characters/attribute`, {
+      character,
+      lines: lines.map(({ chapterId, ids }) => ({ chapterId, ids })),
+    });
+  }
+
+  async putLexicon(bookId: string, entries: LexEntry[]): Promise<LexEntry[]> {
+    return (
+      await this.http.put<{ entries: LexEntry[] }>(`/books/${seg(bookId)}/lexicon`, { entries })
+    ).entries;
+  }
+
+  async exports(bookId: string): Promise<ExportItem[]> {
+    return (await this.http.get<{ exports: ExportItem[] }>(`/books/${seg(bookId)}/exports`))
+      .exports;
+  }
+
+  async removeExport(bookId: string, exportId: number): Promise<void> {
+    await this.http.delete(`/books/${seg(bookId)}/exports/${exportId}`);
   }
 }
 

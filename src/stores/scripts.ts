@@ -1,9 +1,20 @@
 // Canonical script segments and editing. Every edit reaches the same audio freshness rules.
+//
+// With a server answering, this store is the working copy of each chapter's script: it is filled
+// by `useChapterScript` in `@/queries`, every edit acts on it as it does in the demo, and each
+// edit is then written back through `_commit` — the script as it now stands, with the revision
+// it was read at. A write against a script that moved in the meantime (a job landed, another tab
+// wrote) is refused by the server, the way a stale job result is, and the server's script is read
+// back over the local one with a toast saying so. History is the server's there too: a write
+// answers with the history it added to, and the history store installs it.
 import { bulkInvalidates, bulkOutcome, scriptFingerprint, segmentFingerprint } from "@/lib/bulk";
 import { remapExpressions } from "@/lib/expressions";
 import { afterOf, beforeOf, bulkLabel, key, SKIP_SUMMARY, SKIP_TEXT } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
-import { chapterParts, partsText, type ContentPart } from "@/mock";
+import type { ContentPart } from "@/mock";
+import { chapterPartsNow, chapterTextNow } from "@/queries/chapterText";
+import { invalidate } from "@/queries/invalidate";
+import { keys } from "@/queries/keys";
 import type {
   AudioStatus,
   BulkAction,
@@ -18,8 +29,9 @@ import type {
   Segment,
   SegmentFlag,
   SegmentMap,
+  VersionOrigin,
 } from "@/types";
-import { activeLibraryService } from "@/services/library";
+import { activeLibraryService, ApiError, type ChapterScript } from "@/services/library";
 import { defineStore } from "pinia";
 import { useCastStore } from "@/stores/cast";
 import { useHistoryStore } from "@/stores/history";
@@ -27,13 +39,24 @@ import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { seedState } from "@/stores/seed";
 import { useUiStore } from "@/stores/ui";
+/** A write in progress for one chapter, and whether another is owed once it lands. */
+interface PendingWrite {
+  inFlight: boolean;
+  dirty: boolean;
+  /** what the next write says produced the script; an ordinary edit when unset */
+  origin?: VersionOrigin;
+}
+
+/** Writes in flight, per store instance, kept out of the reactive state. */
+const pending = new WeakMap<object, Map<string, PendingWrite>>();
+
 interface ScriptsState {
   segments: SegmentMap;
   _previous: SegmentMap;
   /** what a re-script did with the manual corrections it was asked to preserve, keyed like `segments` */
   _corrections: Record<string, RescriptReport>;
-  /** Backend mode: the chapters whose script has been read from the server, keyed like `segments`. */
-  _loaded: Record<string, true>;
+  /** Backend mode: the revision each chapter's script was read at, which the next write names. */
+  _revision: Record<string, number>;
 }
 export const useScriptsStore = defineStore("scripts", {
   // With a server answering, no script is here until it has been read from it. The seeded scripts
@@ -42,7 +65,7 @@ export const useScriptsStore = defineStore("scripts", {
     ...(activeLibraryService() ? { segments: {} as SegmentMap } : seedState("segments")),
     _previous: {},
     _corrections: {},
-    _loaded: {},
+    _revision: {},
   }),
   getters: {
     segmentsOf(s): (bookId: string, chId: number) => Segment[] {
@@ -51,26 +74,13 @@ export const useScriptsStore = defineStore("scripts", {
     /**
      * A chapter's source text in the order it is read, with any author note marked.
      *
-     * With a server answering, this is the stored Markdown it returned, in one part: the import
-     * recorded what it thought of a chapter as a note on the chapter itself, not as a range inside
-     * the prose. Text that has not been read yet is no parts at all rather than seeded prose — a
-     * real book must never be reviewed against a fixture.
+     * The page that shows a chapter reads `useChapterText` in `@/queries`; this is for the callers
+     * that need the prose synchronously — the seeded world's, or whatever the query cache already
+     * holds. Text that has not been read yet is no parts at all rather than seeded prose: a real
+     * book must never be reviewed against a fixture.
      */
     partsOf(): (bookId: string, chId: number) => ContentPart[] {
-      const libraryStore = useLibraryStore();
-
-      return (bookId: string, chId: number): ContentPart[] => {
-        if (libraryStore._service()) {
-          const text = libraryStore.textOf(bookId, chId, "markdown");
-          return text == null ? [] : [{ text }];
-        }
-        return chapterParts(
-          bookId,
-          chId,
-          libraryStore.chapter(bookId, chId),
-          libraryStore.bookById(bookId)?.sample,
-        );
-      };
+      return (bookId: string, chId: number): ContentPart[] => chapterPartsNow(bookId, chId);
     },
     /**
      * The chapter as anything that counts, bills or speaks it must read it.
@@ -79,22 +89,7 @@ export const useScriptsStore = defineStore("scripts", {
      * form would have a heading's `##` narrated, a link's address read out, and both charged for.
      */
     rawText(): (bookId: string, chId: number) => string {
-      const libraryStore = useLibraryStore();
-
-      return (bookId: string, chId: number): string => {
-        if (libraryStore._service()) return libraryStore.textOf(bookId, chId, "plain") ?? "";
-        return partsText(this.partsOf(bookId, chId));
-      };
-    },
-    /**
-     * Whether a chapter's script has been read from the server yet.
-     *
-     * Backend mode only. `segmentsOf` answers `[]` both for a chapter with no script and for one
-     * whose script has not been asked for, and the Scripting page has to tell the two apart before
-     * it offers to script a chapter the server already has a script for.
-     */
-    scriptLoaded(s): (bookId: string, chId: number) => boolean {
-      return (bookId: string, chId: number): boolean => key(bookId, chId) in s._loaded;
+      return (bookId: string, chId: number): string => chapterTextNow(bookId, chId, "plain");
     },
     /** What the last re-script did with this chapter's manual corrections, while the diff is up. */
     correctionsOf(s): (bookId: string, chId: number) => RescriptReport | null {
@@ -228,6 +223,7 @@ export const useScriptsStore = defineStore("scripts", {
         this._markStale(bookId, chId, s);
         n++;
       }
+      if (n) this._commit(bookId, chId);
       if (n)
         uiStore.toast(`Direction applied to ${n} ${speaker} line${n === 1 ? "" : "s"}`, {
           kind: "success",
@@ -245,6 +241,7 @@ export const useScriptsStore = defineStore("scripts", {
         s.speaker = speaker;
         s.edited = true;
         this._markStale(bookId, chId, s);
+        this._commit(bookId, chId);
       }
     },
     updateSegment(bookId: string, chId: number, segId: number, patch: Partial<Segment>): void {
@@ -260,6 +257,7 @@ export const useScriptsStore = defineStore("scripts", {
       if (changed) {
         s.edited = true;
         this._markStale(bookId, chId, s);
+        this._commit(bookId, chId);
       }
     },
     // ---------- bulk script corrections (Search) ----------
@@ -349,6 +347,9 @@ export const useScriptsStore = defineStore("scripts", {
         for (const undo of historyUndo) undo();
         return empty;
       }
+      // one write per chapter for the whole batch, under the batch's own name
+      for (const [chId, lines] of perChapter)
+        this._commit(bookId, chId, { kind: "bulk", label: preview.label, lines });
       const revert = () => {
         const clean = new Set(chapters);
         let conflicts = 0;
@@ -373,6 +374,7 @@ export const useScriptsStore = defineStore("scripts", {
             const was = narration.get(chId);
             if (c && was) c.narration = was;
           }
+        for (const chId of chapters) this._commit(bookId, chId);
         if (conflicts)
           uiStore.toast(
             `${conflicts} line${conflicts === 1 ? " was" : "s were"} edited after this batch`,
@@ -426,6 +428,7 @@ export const useScriptsStore = defineStore("scripts", {
           ch.narration = narration;
           ch.duration = duration ?? ch.duration;
         }
+        this._commit(bookId, chId);
       };
     },
     /**
@@ -500,6 +503,7 @@ export const useScriptsStore = defineStore("scripts", {
       if (c && c.narration === "done") c.narration = "stale";
       segs.splice(i + 1, 0, second);
       castStore._retime(bookId, chId);
+      this._commit(bookId, chId);
       uiStore.toast("Segment split in two", {
         description: `#${s.id} keeps “${head.slice(0, 40)}…”, #${id} starts “${tail.slice(0, 40)}…”`,
         undo: revert,
@@ -547,6 +551,7 @@ export const useScriptsStore = defineStore("scripts", {
       if (c && c.narration === "done" && b.audio.status !== "none") c.narration = "stale";
       segs.splice(i + 1, 1);
       castStore._retime(bookId, chId);
+      this._commit(bookId, chId);
       uiStore.toast(`#${b.id} joined into #${a.id}`, {
         description:
           a.speaker === b.speaker
@@ -582,6 +587,7 @@ export const useScriptsStore = defineStore("scripts", {
       const c = libraryStore.chapter(bookId, chId);
       if (c && c.narration === "done" && gone.audio.status !== "none") c.narration = "stale";
       castStore._retime(bookId, chId);
+      this._commit(bookId, chId);
       uiStore.toast(`#${gone.id} deleted`, {
         description: `${gone.speaker}: “${
           gone.text.length > 70 ? gone.text.slice(0, 70).trimEnd() + "…" : gone.text
@@ -590,35 +596,119 @@ export const useScriptsStore = defineStore("scripts", {
       });
       return true;
     },
+    // ---------- the seam ----------
     /**
-     * Read a chapter's script from the server into `segments`. Demo mode is already holding one.
+     * A chapter's script as the server holds it, in place of what was here.
      *
-     * Read once and kept, unless `force`: the queue forces it when a scripting job finishes, which
-     * is the one time the server's script is known to have changed. A script that was here before
-     * the read is kept as `_previous`, so the reader can show what a re-script changed.
+     * What `useChapterScript` installs on every read. A script that was here before, at an
+     * earlier revision, is a script something else replaced — a scripting job landed — and is kept
+     * as `_previous` so the reader can show what changed. A re-read at the revision this store
+     * already holds is the same script again, and replaces nothing worth keeping.
      */
-    async loadScript(bookId: string, chId: number, { force = false } = {}): Promise<void> {
+    _install(bookId: string, chId: number, { segments, revision }: ChapterScript): void {
+      const k = key(bookId, chId);
+      const had = this.segments[k];
+      const known = this._revision[k];
+      if (had?.length && segments.length && known != null && revision > known)
+        this._previous[k] = clone(had);
+      this.segments[k] = segments;
+      this._revision[k] = revision;
+    },
+    /** The scripts of a renumbered book follow their chapters; a chapter that is gone takes its own. */
+    _remapBook(bookId: string, map: Record<number, number>): void {
+      const prefix = bookId + ":";
+      const next: Record<string, number> = {};
+      for (const [k, revision] of Object.entries(this._revision)) {
+        if (!k.startsWith(prefix)) {
+          next[k] = revision;
+          continue;
+        }
+        const to = map[Number(k.slice(prefix.length))];
+        if (to) next[key(bookId, to)] = revision;
+      }
+      this._revision = next;
+      pending.get(this)?.clear();
+    },
+    /**
+     * Write a chapter's script to the server as it now stands. Demo mode holds its own and does
+     * nothing here.
+     *
+     * Every edit ends with this. Writes for one chapter are serialised: a second edit while one is
+     * in flight marks the chapter dirty, and the write that follows sends the script as it then
+     * is, so a burst of edits is a few writes rather than one per keystroke. `origin` names what
+     * produced the script when it was not an ordinary edit — a bulk correction, a restore — and
+     * travels with the next write. Nothing is written while a batch is driving the per-line
+     * actions: the batch commits once, under its own name.
+     */
+    _commit(bookId: string, chId: number, origin?: VersionOrigin): void {
+      const historyStore = useHistoryStore();
+
+      if (!activeLibraryService() || historyStore._silent) return;
+      let mine = pending.get(this);
+      if (!mine) pending.set(this, (mine = new Map()));
+      const k = key(bookId, chId);
+      const p = mine.get(k) ?? { inFlight: false, dirty: false };
+      mine.set(k, p);
+      if (origin) p.origin = origin;
+      p.dirty = true;
+      if (!p.inFlight) void this._flush(bookId, chId, p);
+    },
+    async _flush(bookId: string, chId: number, p: PendingWrite): Promise<void> {
+      const historyStore = useHistoryStore();
+      const uiStore = useUiStore();
       const svc = activeLibraryService();
       const k = key(bookId, chId);
-      if (!svc || (this._loaded[k] && !force)) return;
+      if (!svc) return;
+      p.inFlight = true;
       try {
-        const { segments } = await svc.chapterScript(bookId, chId);
-        const had = this.segments[k];
-        if (force && had?.length && segments.length) this._previous[k] = clone(had);
-        this.segments[k] = segments;
-        this._loaded[k] = true;
-      } catch (cause) {
-        const uiStore = useUiStore();
-        uiStore.toast("Could not read this chapter's script", {
-          kind: "error",
-          description: cause instanceof Error ? cause.message : undefined,
-        });
+        while (p.dirty) {
+          p.dirty = false;
+          const origin = p.origin;
+          p.origin = undefined;
+          const segments = clone(this.segments[k] ?? []);
+          // the reader refuses to delete the last line; a chapter with none is not an edit
+          if (!segments.length) continue;
+          try {
+            const { revision, history } = await svc.editScript(bookId, chId, {
+              segments,
+              ifRevision: this._revision[k] ?? 0,
+              ...(origin ? { origin } : {}),
+            });
+            this._revision[k] = revision;
+            historyStore._install(bookId, chId, history);
+          } catch (cause) {
+            // The server's script wins: what is here is read again over the edit, and the toast
+            // says so. Anything still dirty is dropped with it — it was an edit of a script that
+            // is no longer there.
+            p.dirty = false;
+            const api = cause instanceof ApiError ? cause : null;
+            uiStore.toast(
+              api?.status === 409
+                ? "The script changed on the server"
+                : "Could not save the script",
+              {
+                kind: "error",
+                description:
+                  api?.status === 409
+                    ? "Your last change was not saved; the chapter has been read again."
+                    : (api?.detail ?? (cause instanceof Error ? cause.message : undefined)),
+                timeout: 8000,
+              },
+            );
+            await Promise.all([
+              invalidate({ key: keys.chapterScript(bookId, chId) }, "all"),
+              invalidate({ key: keys.chapterHistory(bookId, chId) }, "all"),
+            ]);
+          }
+        }
+      } finally {
+        p.inFlight = false;
       }
     },
-    /** Forget what was read for a book that is going, or whose chapter numbers have moved. */
-    _forgetLoaded(bookId: string): void {
-      for (const k of Object.keys(this._loaded))
-        if (k.startsWith(bookId + ":")) delete this._loaded[k];
+    /** Resolves once nothing is being written for this chapter. For tests. */
+    async _settled(bookId: string, chId: number): Promise<void> {
+      const p = pending.get(this)?.get(key(bookId, chId));
+      while (p && (p.inFlight || p.dirty)) await new Promise((r) => setTimeout(r, 0));
     },
     /** A finished re-script says what it could and could not re-apply; the reader shows both. */
     _noteCorrections(bookId: string, chId: number, report: RescriptReport): void {

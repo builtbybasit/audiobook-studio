@@ -17,6 +17,7 @@ import ScriptReader from "@/views/scripting/ScriptReader.vue";
 import ScriptSettings from "@/views/scripting/ScriptSettings.vue";
 import ScriptEndpoints from "@/views/scripting/ScriptEndpoints.vue";
 import { useBookId } from "@/composables/useBookId";
+import { useChapterScript } from "@/queries";
 
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
@@ -68,9 +69,10 @@ function remember(id: number) {
 }
 watch(opened, remember);
 onMounted(() => remember(opened.value));
-// With a server answering, the opened chapter's script is read when it is opened; the seeded
-// world is already holding every script, and the store does nothing there.
-watch(opened, (id) => void scriptsStore.loadScript(bookId, id), { immediate: true });
+// The opened chapter's script: with a server answering it is read when the chapter is opened and
+// again when the queue says a run landed on it; the seeded world is already holding every one.
+// The reader itself reads the scripts store, which is where the read lands.
+useChapterScript(bookId, opened);
 // One plan behind the button's label, the line under it and the work the run queues.
 const plan = computed(() => scriptingStore.scriptPlan(bookId, selected.value));
 const runNote = computed(() => {

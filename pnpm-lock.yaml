@@ -23,6 +23,12 @@ importers:
       '@lucide/vue':
         specifier: ^1.45.0
         version: 1.45.0(vue@3.5.42(typescript@6.0.3))
+      '@pinia/colada':
+        specifier: ^1.4.5
+        version: 1.4.5(pinia@2.3.1(typescript@6.0.3)(vue@3.5.42(typescript@6.0.3)))(vue@3.5.42(typescript@6.0.3))
+      '@pinia/colada-plugin-auto-refetch':
+        specifier: ^0.2.6
+        version: 0.2.6(@pinia/colada@1.4.5(pinia@2.3.1(typescript@6.0.3)(vue@3.5.42(typescript@6.0.3)))(vue@3.5.42(typescript@6.0.3)))
       '@unovis/ts':
         specifier: ^1.7.0
         version: 1.7.0
@@ -1007,6 +1013,17 @@ packages:
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [x64]
     os: [win32]
+
+  '@pinia/colada-plugin-auto-refetch@0.2.6':
+    resolution: {integrity: sha512-u/W8orRnOEHKWqatQ1yaHr9R1UPKJseHKjShW23oqq4TrOZvR6RU8Nc7flBtTbauU2KCydpgDQE68tWAZ4sNsg==}
+    peerDependencies:
+      '@pinia/colada': '>=1.0.0'
+
+  '@pinia/colada@1.4.5':
+    resolution: {integrity: sha512-V+Xy6+MiMMA69Lo4MzvyerAbtu4o1hk6+7XBhN7Y5i4oQ2mFSvmtx2V4Rcx2bGlgznjlezCKrsKqhXlPpNavgA==}
+    peerDependencies:
+      pinia: ^2.2.6 || ^3.0.0 || ^4.0.2
+      vue: ^3.5.41
 
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
@@ -2188,6 +2205,9 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
+  nostics@1.2.0:
+    resolution: {integrity: sha512-FGqEfhQjrvo1lL8KFifdTQiNwwQHJxC1jtYE1Rc54qF/jxONUNL+kC9gS1krX8Q65PgrQ5fCqH/I4NhWBvdSqg==}
+
   nth-check@3.0.1:
     resolution: {integrity: sha512-GX0gsdbGVCgnRgbeGaubfjpBXyYRWOOCVeYh08bSQvDZqxz5ndXs1OTfAt/h36G1xvI94YIspsI0sVFqAV9+RQ==}
     engines: {node: '>=20.19.0'}
@@ -3126,6 +3146,16 @@ snapshots:
 
   '@oxlint/binding-win32-x64-msvc@1.82.0':
     optional: true
+
+  '@pinia/colada-plugin-auto-refetch@0.2.6(@pinia/colada@1.4.5(pinia@2.3.1(typescript@6.0.3)(vue@3.5.42(typescript@6.0.3)))(vue@3.5.42(typescript@6.0.3)))':
+    dependencies:
+      '@pinia/colada': 1.4.5(pinia@2.3.1(typescript@6.0.3)(vue@3.5.42(typescript@6.0.3)))(vue@3.5.42(typescript@6.0.3))
+
+  '@pinia/colada@1.4.5(pinia@2.3.1(typescript@6.0.3)(vue@3.5.42(typescript@6.0.3)))(vue@3.5.42(typescript@6.0.3))':
+    dependencies:
+      nostics: 1.2.0
+      pinia: 2.3.1(typescript@6.0.3)(vue@3.5.42(typescript@6.0.3))
+      vue: 3.5.42(typescript@6.0.3)
 
   '@pinojs/redact@0.4.0': {}
 
@@ -4284,6 +4314,8 @@ snapshots:
   murmurhash-js@1.0.0: {}
 
   nanoid@3.3.19: {}
+
+  nostics@1.2.0: {}
 
   nth-check@3.0.1:
     dependencies:

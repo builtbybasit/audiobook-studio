@@ -1,13 +1,16 @@
 // Shared queue and accounting across books and stages. IDs are scoped to this Pinia instance.
 //
 // This store is the queue's side of the seam in `@/services/jobs`. With a service answering, the
-// jobs are the server's: the list is read from it, a cancel is a request, and the store polls
-// while anything is live so the Queue page moves. Without one, the seeded queue in the store is
-// the queue, and the simulators drive it. The halves are here rather than in the views.
+// jobs are the server's: `useBookJobs` in `@/queries` reads them from it, polls while anything is
+// live and installs each read here, and a cancel, a remove or a clear is a request that then
+// invalidates that read. Without one, the seeded queue in the store is the queue, and the
+// simulators drive it. The halves are here rather than in the views.
 import { usable } from "@/lib/exports";
 import { logJob } from "@/lib/jobActivity";
 import { chapterNarration, segmentFailed } from "@/lib/runPlan";
 import { makeJobHistory } from "@/mock";
+import { invalidate } from "@/queries/invalidate";
+import { keys } from "@/queries/keys";
 import { ApiError } from "@/services/http";
 import { activeJobsService, type JobsService } from "@/services/jobs";
 import type {
@@ -30,22 +33,12 @@ import { useUiStore } from "@/stores/ui";
 import { useUsageStore } from "@/stores/usage";
 const AVG_JOB: Record<JobKind, number> = { scripting: 25, narration: 60, export: 120 };
 
-/** How often the server is asked again while something is queued or running. */
-export const POLL_MS = 1500;
-
-/** The timers behind `startPolling`, one per store instance, kept out of the reactive state. */
-const pollTimers = new WeakMap<object, ReturnType<typeof setTimeout>>();
-
 interface JobsState {
   jobs: Job[];
   scriptTelemetry: Record<string, ScriptEndpointTelemetry>;
   _nextId: number;
   /** ids for bulk runs: every chapter asked for in one press shares one */
   _nextRun: number;
-  /** Backend mode: whether the queue has been read from the server yet. */
-  loaded: boolean;
-  /** Backend mode: whether `startPolling` is keeping the list fresh. */
-  polling: boolean;
 }
 export const useJobsStore = defineStore("jobs", {
   // With a service answering, the queue starts empty and is read from the server. The seeded
@@ -58,8 +51,6 @@ export const useJobsStore = defineStore("jobs", {
       _nextId: nextId,
       _nextRun: 1,
       scriptTelemetry: {},
-      loaded: false,
-      polling: false,
     };
   },
   getters: {
@@ -194,105 +185,16 @@ export const useJobsStore = defineStore("jobs", {
         timeout: 8000,
       });
     },
-    /** Read the queue from the server. Demo mode is already holding one. */
-    async load(): Promise<void> {
-      const svc = this._service();
-      if (!svc || this.loaded) return;
-      await this.refresh();
+    /** The queue as the server holds it, in place of what was here. What `useBookJobs` installs. */
+    _install(jobs: Job[]): void {
+      this.jobs = jobs;
     },
     /**
-     * Ask the server again, and bring the rest of the app up to date with what changed.
-     *
-     * A job that moved is a chapter that moved: its status and progress are the server's, so the
-     * book is read again, and a scripting job that finished is a script to read. Both are asked
-     * for here rather than left for a view to notice, so the Scripting page and the picker follow
-     * the queue without either of them polling.
+     * The queue changed on the server — something was queued, cancelled or cleared — so whoever
+     * is reading it reads it again. The poll notices from there what else has to follow.
      */
-    async refresh({ quiet = false } = {}): Promise<void> {
-      const svc = this._service();
-      if (!svc) return;
-      const libraryStore = useLibraryStore();
-      const scriptsStore = useScriptsStore();
-      const before = new Map(this.jobs.map((j) => [j.id, j]));
-      // On the first read a job the store has never heard of is history, not change: reading
-      // every book and every finished script the server mentions would be a startup fan-out that
-      // grows with the history. A job the store *has* heard of — one it queued a moment ago, through
-      // `_seen` — is compared like any other, so a run that finished before the first list arrived
-      // still brings its script.
-      const first = !this.loaded;
-      let next: Job[];
-      try {
-        next = await svc.list();
-      } catch (cause) {
-        // a poll that finds the server down says so once, not every tick until it is back
-        if (!quiet) this._failed("read the queue", cause);
-        return;
-      }
-      this.jobs = next;
-      this.loaded = true;
-
-      const books = new Set<string>();
-      const scripts: [string, number][] = [];
-      for (const j of next) {
-        const was = before.get(j.id);
-        const moved = was ? was.status !== j.status || was.progress !== j.progress : !first;
-        if (!moved || !libraryStore.bookById(j.bookId)) continue;
-        books.add(j.bookId);
-        // a script is read again only when this job *finished* now — not when a job that was
-        // already done is merely seen again, which would replace a script with a copy of itself
-        if (
-          j.kind === "scripting" &&
-          j.status === "done" &&
-          was?.status !== "done" &&
-          j.chapterId != null
-        )
-          scripts.push([j.bookId, j.chapterId]);
-      }
-      await Promise.all([
-        ...[...books].map((id) => libraryStore.loadBook(id)),
-        ...scripts.map(([b, c]) => scriptsStore.loadScript(b, c, { force: true })),
-      ]);
-    },
-    /**
-     * Jobs the server just made for this store, before the next read.
-     *
-     * What an enqueue answers with is the job as it was at that instant, and the next `refresh`
-     * compares against it — which is how a job that finished before that read comes back as a
-     * change rather than as history.
-     */
-    _seen(jobs: Job[]): void {
-      const byId = new Map(this.jobs.map((j) => [j.id, j]));
-      for (const j of jobs) byId.set(j.id, j);
-      this.jobs = [...byId.values()].sort((a, b) => a.id - b.id);
-    },
-    /**
-     * Keep the list fresh while anything is live.
-     *
-     * Started once at startup in backend mode and after anything is queued; it stops itself when
-     * the queue goes quiet and is started again by the next enqueue, so an idle app makes no
-     * requests. Demo mode never comes here.
-     */
-    startPolling(): void {
-      if (!this._service() || this.polling) return;
-      this.polling = true;
-      const tick = async () => {
-        pollTimers.delete(this);
-        if (!this.polling) return;
-        await this.refresh({ quiet: true });
-        if (!this.activeJobs.length) {
-          this.polling = false;
-          return;
-        }
-        // a chain restarted while this tick was waiting on the server already has a timer
-        if (!pollTimers.has(this)) pollTimers.set(this, setTimeout(tick, POLL_MS));
-      };
-      pollTimers.set(this, setTimeout(tick, POLL_MS));
-    },
-    stopPolling(): void {
-      this.polling = false;
-      const t = pollTimers.get(this);
-      if (t) clearTimeout(t);
-      pollTimers.delete(this);
+    _changed(): Promise<void> {
+      return invalidate({ key: keys.jobs });
     },
     // ---------- shared ----------
     addJob(kind: JobKind, bookId: string, label: string, chapterId: number | null = null): Job {
@@ -358,7 +260,7 @@ export const useJobsStore = defineStore("jobs", {
           .then(() => svc.remove(id))
           .catch((cause: unknown) => this._failed("remove this job", cause))
           // the cancel may have gone through even when the remove did not
-          .finally(() => this.refresh({ quiet: true }));
+          .finally(() => this._changed());
         return;
       }
       if (j.status === "queued") this.cancelJob(id);
@@ -395,8 +297,7 @@ export const useJobsStore = defineStore("jobs", {
         // cancel that failed to reach the server must not look like one that worked.
         void svc
           .cancel(id)
-          .then(() => this.refresh())
-          .then(() => this.startPolling())
+          .then(() => this._changed())
           .catch((cause: unknown) => this._failed("cancel this job", cause));
         return;
       }
@@ -487,7 +388,7 @@ export const useJobsStore = defineStore("jobs", {
       if (svc) {
         void svc
           .clear()
-          .then(() => this.refresh())
+          .then(() => this._changed())
           .catch((cause: unknown) => this._failed("clear the history", cause));
         return;
       }

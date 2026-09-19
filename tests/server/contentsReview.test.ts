@@ -166,6 +166,19 @@ describe("the contents review", () => {
     expect(body.chapters[1].excluded).toBe(true);
     expect(body.chapters[1].note?.kind).toBe("hiatus");
   });
+
+  test("the shelf carries each book's chapter counts, so a card can say so before the book is opened", async () => {
+    const { api, book } = await imported();
+    await api.request(`/api/books/${book.id}/chapters/skip`, jsonBody({ ids: [2] }));
+    await api.request(`/api/books/${book.id}/confirm`, { method: "POST" });
+    await api.request(`/api/books/${book.id}/chapters/script`, jsonBody({ ids: [1] }));
+    await api.runner.idle();
+    const { body } = await api.request<{ books: Book[] }>("/api/books");
+    expect(body.books[0].chapters).toEqual({ total: 4, included: 3, scripted: 1, narrated: 0 });
+    // and the same counts on the book itself, so the two never disagree
+    const one = await api.request<ImportResult>(`/api/books/${book.id}`);
+    expect(one.body.book.chapters).toEqual(body.books[0].chapters);
+  });
 });
 
 describe("a novel split across several EPUBs", () => {

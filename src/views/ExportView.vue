@@ -23,6 +23,7 @@ import { computed, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { useBookId } from "@/composables/useBookId";
+import { useBookExports } from "@/queries";
 import { DEFAULT_EXPORT_SETTINGS, usable } from "@/lib/exports";
 import { queryIds } from "@/lib/query";
 import { plural } from "@/views/export/shared";
@@ -46,6 +47,8 @@ const bookId = useBookId();
 // the router only reaches this view with a real book id
 const book = computed(() => libraryStore.bookById(bookId)!);
 const tab = ref(route.query.tab === "library" ? "library" : "build");
+// the finished audiobooks: read from the server when the page opens, or the seeded world's
+useBookExports(bookId);
 
 const anyNarrated = computed(() => libraryStore.chaptersOf(bookId).some(isNarrated));
 const selected = ref<number[]>([]);

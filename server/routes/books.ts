@@ -9,11 +9,10 @@ import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
 import type { Db } from "~/db/client";
-import { readScript, scriptRevision } from "~/db/script";
 import { env } from "~/env";
 import type { Runner } from "~/jobs/runner";
 import { enqueueScripting } from "~/jobs/scripting";
-import { fail, notFound } from "~/lib/errors";
+import { fail } from "~/lib/errors";
 import { IdParam } from "~/lib/http";
 import { validate } from "~/lib/validate";
 import * as ops from "~/library/ops";
@@ -140,15 +139,9 @@ export function bookRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     (c) => c.json(ops.setDecisions(db, c.req.valid("param").id, c.req.valid("json").decisions)),
   );
 
-  // ---------- the script ----------
-  /** A chapter's script as it stands, and the revision a later write has to name. */
-  app.get("/:id/chapters/:chapterId/script", validate("param", ChapterParam), (c) => {
-    const { id, chapterId } = c.req.valid("param");
-    const revision = scriptRevision(db, id, chapterId);
-    if (revision == null) throw notFound("No such chapter");
-    return c.json({ segments: readScript(db, id, chapterId), revision });
-  });
-
+  // ---------- scripting ----------
+  // Reading and editing a script are in `server/routes/script.ts`; queueing the work is here,
+  // because a run is something the library does to its chapters.
   /**
    * Script these chapters: one job each, as one run. Answers with the jobs, and with the chapters
    * it left out and why, so the client can say so instead of waiting for work that is not coming.

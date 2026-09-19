@@ -26,6 +26,7 @@ import AddEpubDialog from "@/components/AddEpubDialog.vue";
 import { pendingFor, pickedFrom, type PendingAdd } from "@/components/addEpub";
 import type { Volume } from "@/types";
 import { useBookId } from "@/composables/useBookId";
+import { useBookExports, useCast } from "@/queries";
 import { nextStepOf } from "@/views/library/shared";
 import { countOf, useReviewInbox } from "@/views/review/inbox";
 
@@ -41,7 +42,9 @@ const router = useRouter();
 const book = computed(() => libraryStore.bookById(bookId)!);
 const chapters = computed(() => libraryStore.chaptersOf(bookId));
 const p = computed(() => libraryStore.progress(bookId));
-const cast = computed(() => castStore.charactersOf(bookId));
+// the cast and the audiobooks: read from the server when the overview opens, or the seeded world's
+const { characters: cast } = useCast(bookId);
+useBookExports(bookId);
 const unreviewed = computed(() => cast.value.filter((c) => c.isNew).length);
 const unvoiced = computed(() => cast.value.filter((c) => !c.voice && c.major).length);
 const suggestions = computed(() => castStore.mergeSuggestions(bookId).length);

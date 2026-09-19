@@ -17,6 +17,7 @@ import { useReader } from "@/stores/reader";
 import ExpressionText from "@/components/ExpressionText.vue";
 import ScriptHistoryDiff from "@/views/scripting/ScriptHistoryDiff.vue";
 import { useScript } from "@/views/scripting/shared";
+import { useChapterHistory } from "@/queries";
 import { secs } from "@/lib/speech";
 import {
   ArrowLeft as BackIcon,
@@ -50,8 +51,11 @@ let clock: ReturnType<typeof setInterval>;
 onMounted(() => (clock = setInterval(() => (now.value = Date.now()), 15000)));
 onUnmounted(() => clearInterval(clock));
 
-const versions = computed(() => historyStore.versionsOf(props.bookId, props.chapterId));
-const head = computed(() => historyStore.headOf(props.bookId, props.chapterId));
+// the chapter's history: read from the server when the panel opens, or the store's own
+const { versions, head } = useChapterHistory(
+  () => props.bookId,
+  () => props.chapterId,
+);
 const current = computed(() => scriptsStore.segmentsOf(props.bookId, props.chapterId));
 const selected = computed(() => versions.value.find((v) => v.id === selectedId.value) ?? null);
 const comparison = computed(() =>
@@ -108,8 +112,8 @@ function doRestore() {
     emit("close"); // the point of restoring is to be looking at the restored script
   }
 }
-function save() {
-  if (historyStore.saveCheckpoint(props.bookId, props.chapterId, checkpoint.value))
+async function save() {
+  if (await historyStore.saveCheckpoint(props.bookId, props.chapterId, checkpoint.value))
     checkpoint.value = "";
 }
 function jump(segId: number) {

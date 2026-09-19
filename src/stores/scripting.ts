@@ -311,9 +311,9 @@ export const useScriptingStore = defineStore("scripting", {
      * The backend half of `runScripting`: queue the chapters on the server, as one run.
      *
      * Nothing about a chapter changes here. The server marks the chapters it queued, the response
-     * carries them as they now stand, and the queue's polling brings the script when it lands. A
-     * chapter the server left out — skipped for the audiobook, or already being scripted — is
-     * said so in the toast rather than waited for.
+     * carries them as they now stand, and the queue's poll (`useBookJobs`) brings the script, the
+     * cast and the history when a run lands. A chapter the server left out — skipped for the
+     * audiobook, or already being scripted — is said so in the toast rather than waited for.
      */
     async _runRemote(bookId: string, ids: number[], { quiet = false } = {}): Promise<void> {
       const jobsStore = useJobsStore();
@@ -324,9 +324,8 @@ export const useScriptingStore = defineStore("scripting", {
       try {
         const { jobs, skipped, chapters } = await svc.scriptChapters(bookId, ids);
         libraryStore.chapters[bookId] = chapters;
-        jobsStore._seen(jobs);
-        await jobsStore.refresh();
-        jobsStore.startPolling();
+        // the queue moved: whoever reads it reads it again, and the poll takes it from there
+        await jobsStore._changed();
         if (quiet) return;
         const busy = skipped.filter((s) => s.why === "busy").length;
         const excluded = skipped.filter((s) => s.why === "excluded").length;

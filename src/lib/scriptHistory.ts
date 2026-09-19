@@ -9,17 +9,24 @@ import { diffArrays, diffWords } from "diff";
 import type {
   ChangeGroup,
   ChangeKind,
+  ChapterHistory,
   ComparisonCounts,
   DiffRun,
   FieldChange,
+  HistoryHead,
   LineChange,
   RestorePlan,
   ScriptComparison,
+  ScriptVersion,
   Segment,
   SegmentAudio,
   VersionOrigin,
 } from "@/types";
 import { chapterNarration } from "@/lib/runPlan";
+import { clone } from "@/lib/utils";
+
+/** Edits less than this apart are the same editing session. */
+export const SESSION_IDLE_MS = 10_000;
 
 // ---------- what a version preserves ----------
 
@@ -78,6 +85,56 @@ export function scriptOnly(s: Segment): Segment {
 
 /** A version's own copy of a script: script content only, and nothing shared with the live one. */
 export const snapshotScript = (segments: Segment[]): Segment[] => segments.map(scriptOnly);
+
+// ---------- preserving a script before it is replaced ----------
+
+/** What preserving the working script comes to: the entry added, if any, and the head after it. */
+export interface Capture {
+  added: ScriptVersion | null;
+  head: HistoryHead;
+  nextId: number;
+}
+
+/**
+ * The one rule behind every entry in a chapter's history: the working script is preserved
+ * **before** `origin` replaces it, labelled by whatever produced it, and never twice.
+ *
+ * Pure, so the history store and the server apply the same rule to the same inputs. No entry is
+ * added for an empty script, for an operation that leaves the script exactly as it found it (`next`
+ * is what is about to be written, when it is known), or for a script that is already the newest
+ * entry. The head afterwards says how the script now came to be; an edit opens a session that later
+ * edits join.
+ */
+export function planCapture(
+  h: ChapterHistory,
+  current: Segment[],
+  origin: VersionOrigin,
+  next: Segment[] | undefined,
+  now: number,
+): Capture {
+  const signature = scriptSignature(current);
+  const last = h.versions.at(-1);
+  const changesNothing = next ? scriptSignature(next) === signature : false;
+  let added: ScriptVersion | null = null;
+  let nextId = h.nextId;
+  if (current.length && !changesNothing && (!last || scriptSignature(last.segments) !== signature))
+    added = {
+      id: nextId++,
+      at: h.head.at,
+      origin: clone(h.head.origin),
+      segments: snapshotScript(current),
+    };
+  return { added, head: { at: now, origin, open: origin.kind === "edited" }, nextId };
+}
+
+/**
+ * Whether an edit made now joins the editing session the head describes rather than opening one.
+ *
+ * The store closes a session with a timer; the server has no timer and asks the clock instead.
+ * Both say the same thing: a session is open while its last edit is less than `SESSION_IDLE_MS` old.
+ */
+export const sessionOpen = (head: HistoryHead, now: number): boolean =>
+  !!head.open && head.origin.kind === "edited" && now - head.at < SESSION_IDLE_MS;
 
 // ---------- what an entry is called ----------
 

@@ -13,21 +13,25 @@
 // That project is compiled without the DOM on purpose — it is what stops server code reaching for
 // a `window` — and a Pinia store brings one in.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
 
 import { HttpLibraryService, setLibraryService } from "@/services/library";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
+import { useChapterText, chapterTextNow } from "@/queries";
 import { createApp } from "~/app";
 import { openDb } from "~/db/client";
 import { migrate } from "~/db/migrate";
 import { epubFile, story } from "./support/epub";
+import { flush, testPinia, type TestPinia } from "./support/pinia";
 import { collectingLogger } from "./support/server";
 
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
 let toasts: { msg: string; undo: (() => void) | null }[];
+let pinia: TestPinia;
+/** every path the store asked the server for, in order */
+let asked: string[];
 
 const volume = (titles: string[]) =>
   epubFile({ chapters: titles.map((title) => ({ title, paragraphs: story() })) });
@@ -55,12 +59,14 @@ beforeEach(() => {
   const app = createApp(db, { log: collectingLogger().log });
   // The service goes in before the store is created: the store reads it while building its state,
   // which is how it knows not to seed itself from the demo world.
+  asked = [];
   setLibraryService(
-    new HttpLibraryService("/api", async (input, init) =>
-      app.request(new Request(`http://api.test${input}`, init)),
-    ),
+    new HttpLibraryService("/api", async (input, init) => {
+      asked.push(input);
+      return app.request(new Request(`http://api.test${input}`, init));
+    }),
   );
-  setActivePinia(createPinia());
+  pinia = testPinia();
   libraryStore = useLibraryStore();
   scriptsStore = useScriptsStore();
   toasts = [];
@@ -73,7 +79,10 @@ beforeEach(() => {
 
 // The service is module state, and every other suite in this repository is the seeded world. Left
 // set, it would quietly put the demo tests in backend mode against a database that has gone.
-afterEach(() => setLibraryService(null));
+afterEach(() => {
+  pinia.stop();
+  setLibraryService(null);
+});
 
 describe("the library store with a server answering", () => {
   test("starts empty rather than on the seeded shelf", async () => {
@@ -177,6 +186,29 @@ describe("the library store with a server answering", () => {
     expect(libraryStore.books.map((b) => b.id)).toEqual([id]);
   });
 
+  test("the shelf knows how many chapters a book has before the book is opened", async () => {
+    const id = (await libraryStore.importBook({ source: await noted() }))!;
+    await libraryStore.skipChapters(id, [2], true, { quiet: true });
+    await libraryStore.confirmImport(id);
+    // a reload: the shelf is listed, and no book has been opened
+    pinia = testPinia();
+    libraryStore = useLibraryStore();
+    await libraryStore.load();
+    expect(libraryStore.chaptersOf(id)).toEqual([]);
+    expect(libraryStore.bookById(id)?.chapters).toEqual({
+      total: 3,
+      included: 2,
+      scripted: 0,
+      narrated: 0,
+    });
+    // what the shelf card reads: never "0 chapters" for a book that has three
+    expect(libraryStore.contentsOf(id)).toMatchObject({ total: 3, included: 2, skipped: 1 });
+    expect(libraryStore.progress(id)).toMatchObject({ total: 2, excluded: 1, scripted: 0 });
+    // and once the book is opened, its chapters are what is counted
+    await libraryStore.loadBook(id);
+    expect(libraryStore.contentsOf(id)).toMatchObject({ total: 3, included: 2, suggested: 0 });
+  });
+
   test("discarding an import takes it off the server too", async () => {
     const id = (await libraryStore.importBook({ source: await volume(["One"]) }))!;
     expect(await libraryStore.discardImport(id)).toBe("book");
@@ -223,34 +255,52 @@ describe("chapter prose with a server answering", () => {
     const id = (await libraryStore.importBook({ source: await volume(["One"]) }))!;
 
     // before it is read, there is nothing — not seeded prose standing in for it
-    expect(libraryStore.textOf(id, 1)).toBeNull();
     expect(scriptsStore.partsOf(id, 1)).toEqual([]);
     expect(scriptsStore.rawText(id, 1)).toBe("");
 
-    await libraryStore.loadText(id, 1);
-    const markdown = libraryStore.textOf(id, 1);
-    expect(markdown).toBeTruthy();
-    expect(scriptsStore.partsOf(id, 1)).toEqual([{ text: markdown! }]);
+    const markdown = pinia.run(() => useChapterText(id, 1));
+    await flush();
+    expect(markdown.status.value).toBe("success");
+    expect(markdown.text.value).toBeTruthy();
+    expect(markdown.parts.value).toEqual([{ text: markdown.text.value }]);
+    // the store's own readings now find it: the same text, from the same read
+    expect(scriptsStore.partsOf(id, 1)).toEqual(markdown.parts.value);
 
     // anything that counts, bills or speaks a chapter reads the plain form, which is a separate ask
-    expect(libraryStore.textOf(id, 1, "plain")).toBeNull();
-    await libraryStore.loadText(id, 1, "plain");
-    expect(scriptsStore.rawText(id, 1)).toBe(libraryStore.textOf(id, 1, "plain")!);
+    expect(scriptsStore.rawText(id, 1)).toBe("");
+    const plain = pinia.run(() => useChapterText(id, 1, "plain"));
+    await flush();
+    expect(scriptsStore.rawText(id, 1)).toBe(plain.text.value);
+    expect(chapterTextNow(id, 1, "plain")).toBe(plain.text.value);
     expect(scriptsStore.rawText(id, 1)).not.toContain("#");
   });
 
-  test("is forgotten when the chapter numbers it was keyed by move", async () => {
+  test("is read once, and again only when the chapter numbers it was keyed by move", async () => {
     const id = (await libraryStore.importBook({ source: await volume(["One", "Two"]) }))!;
     await libraryStore.confirmImport(id);
     await libraryStore.importVolume(id, { source: await volume(["Three"]), name: "Vol. 2" });
     await libraryStore.confirmImport(id);
-    await libraryStore.loadText(id, 3);
-    expect(libraryStore.textOf(id, 3)).toBeTruthy();
+    const text = `/api/books/${id}/chapters/3/text?format=markdown`;
+    const third = pinia.run(() => useChapterText(id, 3));
+    await flush();
+    expect(third.text.value).toBeTruthy();
+    expect(asked.filter((p) => p === text)).toHaveLength(1);
+    // a second page asking for the same chapter is answered from the cache
+    const again = pinia.run(() => useChapterText(id, 3));
+    await flush();
+    expect(again.text.value).toBe(third.text.value);
+    expect(asked.filter((p) => p === text)).toHaveLength(1);
 
     // removing the first volume renumbers what is left; chapter 3 is now chapter 1, and the text
-    // cached against the old number would be the wrong chapter's prose
+    // read against the old number would be the wrong chapter's prose — so everything read about
+    // the book is asked for again, and the old number is not a chapter any more
     await libraryStore.removeVolume(id, 1);
-    expect(libraryStore.textOf(id, 3)).toBeNull();
-    expect(libraryStore.textOf(id, 1)).toBeNull();
+    await flush();
+    await flush();
+    expect(asked.filter((p) => p === text)).toHaveLength(2);
+    expect(third.status.value).toBe("error");
+    const first = pinia.run(() => useChapterText(id, 1));
+    await flush();
+    expect(first.text.value).toBe(third.text.value);
   });
 });

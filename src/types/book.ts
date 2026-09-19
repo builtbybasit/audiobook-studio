@@ -121,6 +121,21 @@ export interface Volume {
   importing?: boolean;
 }
 
+/**
+ * How a book's chapters stand, counted.
+ *
+ * A book listed by the server carries these so the shelf can say "12 chapters" and how far along
+ * they are before the book has been opened and its chapters read. They are counts of the chapters
+ * as stored; once the chapters themselves are here, they are what is counted.
+ */
+export interface ChapterCounts {
+  total: number;
+  /** not skipped for the audiobook */
+  included: number;
+  scripted: number;
+  narrated: number;
+}
+
 export interface Book {
   id: string;
   title: string;
@@ -129,6 +144,8 @@ export interface Book {
   cover: [string, string];
   addedAt: string;
   volumes: Volume[];
+  /** how the chapters stand, counted; present on a book the server listed */
+  chapters?: ChapterCounts;
   /** imported in this session and not yet added to the library */
   importing?: boolean;
   /** prototype: the import sample this book's text is read from; a seeded book reads as itself */

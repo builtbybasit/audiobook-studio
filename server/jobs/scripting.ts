@@ -15,11 +15,13 @@
 import { and, count, eq } from "drizzle-orm";
 
 import type { Job, Segment } from "@/types";
+import { ensureSpeakers } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
+import { capture } from "~/db/history";
 import { activeJob, getJob, nextRunId } from "~/db/jobs";
 import * as library from "~/db/library";
 import { chapters, segments } from "~/db/schema";
-import { ScriptConflict, replaceScript } from "~/db/script";
+import { ScriptConflict, readScript, replaceScript } from "~/db/script";
 import { plainText } from "~/epub/markdown";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
@@ -119,19 +121,38 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
       }));
 
-      // The write: by uid, against the revision the job started from, all in one transaction.
+      // The write: by uid, against the revision the job started from, all in one transaction —
+      // the script, the version it replaces, and the speakers it brought into the cast. A run
+      // that fails, is cancelled or is refused for landing on newer work never gets here, so a
+      // good script is never pushed into the history by an attempt that produced nothing.
       try {
         db.transaction((tx) => {
           const at = locate(tx, chapter.uid);
           if (!at) throw notFound("The chapter was removed while it was being scripted");
+          const previous = readScript(tx, at.bookId, at.id);
           const { revision } = replaceScript(tx, at.bookId, at.id, segs, {
             ifRevision: chapter.revision,
           });
+          const version = capture(
+            tx,
+            at.bookId,
+            at.id,
+            { kind: "scripted", profile: provider.name, again: previous.length > 0 },
+            previous,
+            segs,
+          );
+          const added = ensureSpeakers(
+            tx,
+            at.bookId,
+            segs.map((s) => s.speaker),
+          );
           setChapterScripting(tx, at.bookId, at.id, "done", 100);
           ctx.note("Script written", "info", {
             lines: segs.length,
             speakers: new Set(segs.map((s) => s.speaker)).size,
             revision,
+            ...(added.length ? { speakersAdded: added.join(", ") } : {}),
+            ...(version != null ? { preserved: `v${version}` } : {}),
             ...(at.id !== job.chapterId ? { chapterNow: at.id } : {}),
           });
         });

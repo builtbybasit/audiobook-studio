@@ -12,7 +12,10 @@ import { AppError, type ApiError } from "~/lib/errors";
 import type { Logger } from "~/log";
 import { log as defaultLog } from "~/log";
 import { bookRoutes } from "~/routes/books";
+import { castRoutes } from "~/routes/cast";
+import { exportRoutes } from "~/routes/exports";
 import { jobRoutes } from "~/routes/jobs";
+import { scriptRoutes } from "~/routes/script";
 
 export interface AppOptions {
   /** the logger requests are recorded against; a test hands over a silent one */
@@ -58,7 +61,13 @@ export function createApp(
   );
 
   app.get("/api/health", (c) => c.json({ ok: true }));
+  // Everything a book owns is addressed under it. The library's own routes come first; the cast,
+  // the scripts and the audiobooks each have a file of their own so that a route reads as one call
+  // on the operations of the part of the app that owns the table.
   app.route("/api/books", bookRoutes(db, runner));
+  app.route("/api/books", castRoutes(db));
+  app.route("/api/books", scriptRoutes(db));
+  app.route("/api/books", exportRoutes(db));
   app.route("/api/jobs", jobRoutes(db, runner));
 
   app.notFound((c) =>

@@ -3,6 +3,7 @@ import { useDemoStore } from "@/stores/demo";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
+import { useChapterText } from "@/queries";
 
 // Contents review: what goes in the audiobook. Reached twice — straight after an EPUB is read, when
 // confirming is what adds the book to the library, and any time later from the overview, when every
@@ -143,17 +144,11 @@ const textOf = (c: Chapter) => scriptsStore.rawText(bookId, c.id);
 const openedChapter = computed(() =>
   opened.value == null ? undefined : libraryStore.chapter(bookId, opened.value),
 );
-const openedParts = computed(() =>
-  openedChapter.value ? scriptsStore.partsOf(bookId, openedChapter.value.id) : [],
-);
-// With a server answering, a chapter's prose is fetched the first time it is opened. The seeded
-// world generates its own and this does nothing. Either way the preview reads one getter.
-watch(
-  openedChapter,
-  (c) => {
-    if (c) void libraryStore.loadText(bookId, c.id);
-  },
-  { immediate: true },
+// The opened chapter's prose: read from the server the first time it is opened, or generated from
+// the seeded world. The preview reads `parts` either way and never knows which answered.
+const { parts: openedParts, isLoading: textLoading } = useChapterText(
+  bookId,
+  () => openedChapter.value?.id,
 );
 const undecidedAfter = computed(
   () => chapters.value.filter((c) => isUndecided(c) && c.id !== opened.value).length,

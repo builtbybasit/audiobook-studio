@@ -2,6 +2,7 @@
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useHistoryStore } from "@/stores/history";
+import { useChapterHistory } from "@/queries";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
@@ -345,7 +346,12 @@ function jumpTo(id: number) {
 // and `?history=1` opens it, which is how the seeded scenario lands on it.
 const history = ref(route.query.history === "1");
 const historyPanel = ref<{ back: () => boolean } | null>(null);
-const versionCount = computed(() => historyStore.versionsOf(props.bookId, props.chapterId).length);
+// read through the query so the count is right before the panel has been opened
+const { versions: knownVersions } = useChapterHistory(
+  () => props.bookId,
+  () => props.chapterId,
+);
+const versionCount = computed(() => knownVersions.value.length);
 watch(history, (on) => {
   if (!!route.query.history === on) return;
   void router.replace({ query: { ...route.query, history: on ? "1" : undefined } });

@@ -1,18 +1,8 @@
 // Presentation fixtures: the colours a cast is assigned from and the delivery notes the script
 // generator and the direction picker both draw on.
 
-export const PALETTE: string[] = [
-  "#a78bfa",
-  "#f472b6",
-  "#34d399",
-  "#fbbf24",
-  "#60a5fa",
-  "#fb923c",
-  "#2dd4bf",
-  "#f87171",
-  "#c084fc",
-  "#4ade80",
-];
+// The palette itself is in `@/lib/cast`, where the server's scripting job can reach it too.
+export { PALETTE } from "@/lib/cast";
 
 export const DIRECTIONS: string[] = [
   "calm, measured",

@@ -15,6 +15,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import { useBookId } from "@/composables/useBookId";
+import { useCast } from "@/queries";
 import { UiSelect, UiCombobox, UiCheckbox, UiSwitch, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
 import {
@@ -38,7 +39,8 @@ const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const voiceOpts = computed(() => endpointsStore.voiceOptions);
 const bookId = useBookId();
-const cast = computed(() => castStore.charactersOf(bookId));
+// the cast: read from the server when the page opens, or the seeded world's
+const { characters: cast } = useCast(bookId);
 const stats = computed(() => castStore.castStats(bookId));
 const suggestions = computed(() => castStore.mergeSuggestions(bookId));
 const q = ref("");
@@ -113,10 +115,7 @@ function startRename(c: Character) {
 }
 /** Dismiss a merge suggestion: the name stays as its own character. */
 function keepSuggestion(name: string) {
-  const c = castStore.characters[bookId]?.find((x) => x.name === name);
-  if (!c) return;
-  c.isNew = false;
-  c.keep = true;
+  void castStore.keepCharacter(bookId, name);
 }
 function commit() {
   if (editing.value) castStore.renameCharacter(bookId, editing.value, draft.value);

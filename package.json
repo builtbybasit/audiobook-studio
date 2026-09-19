@@ -24,6 +24,8 @@
     "@likecoin/epub-ts": "^0.7.2",
     "@likecoin/epubcheck-ts": "^0.7.0",
     "@lucide/vue": "^1.45.0",
+    "@pinia/colada": "^1.4.5",
+    "@pinia/colada-plugin-auto-refetch": "^0.2.6",
     "@unovis/ts": "^1.7.0",
     "@unovis/vue": "^1.7.0",
     "@vitejs/plugin-vue": "^6.0.8",

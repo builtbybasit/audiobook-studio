@@ -5,6 +5,7 @@
 // what two of them disagree on (`compareScripts`), and what restoring one would do to the clips
 // already rendered (`planRestore`). The panel renders these and the store applies exactly what the
 // plan counted, so what is promised and what happens are the same calculation.
+import { diffArrays, diffWords } from "diff";
 import type {
   ChangeGroup,
   ChangeKind,
@@ -155,73 +156,43 @@ function similarity(a: string, b: string): number {
 /** Below this two lines are different lines rather than one line rewritten. */
 const SAME_LINE = 0.35;
 
-/** Index pairs of a longest common subsequence of two key arrays. */
-function align(a: string[], b: string[]): [number, number][] {
-  // A chapter is tens of lines; the guard is for a book that keeps one enormous one. Past it the
-  // alignment is greedy — still in order, still correct, just not provably longest.
-  if (a.length * b.length > 1_000_000) return greedyAlign(a, b);
-  const w = b.length + 1;
-  const dp = new Uint32Array((a.length + 1) * w);
-  for (let i = a.length - 1; i >= 0; i--)
-    for (let j = b.length - 1; j >= 0; j--)
-      dp[i * w + j] =
-        a[i] === b[j]
-          ? dp[(i + 1) * w + j + 1] + 1
-          : Math.max(dp[(i + 1) * w + j], dp[i * w + j + 1]);
+/** Index pairs of a common subsequence of two key arrays.
+ *
+ * `diffArrays` reports the alignment as runs of added, removed and common tokens; what both callers
+ * want is the *positions* those common runs sit at, because the key is never the thing being
+ * aligned — it is the segment, or the untrimmed word, that the key was derived from. So the runs are
+ * counted back into index pairs and their values discarded.
+ *
+ * Myers costs what the edit distance costs rather than what the two lengths multiply to, and it
+ * allocates nothing of the order of the old dynamic-programming table, so the million-cell guard
+ * that table needed — and the greedy alignment it fell back to — went with it. */
+function alignPairs(a: string[], b: string[]): [number, number][] {
   const out: [number, number][] = [];
   let i = 0;
   let j = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      out.push([i, j]);
-      i++;
-      j++;
-    } else if (dp[(i + 1) * w + j] >= dp[i * w + j + 1]) i++;
-    else j++;
+  for (const run of diffArrays(a, b)) {
+    if (run.added) j += run.count;
+    else if (run.removed) i += run.count;
+    else {
+      for (let k = 0; k < run.count; k++) out.push([i + k, j + k]);
+      i += run.count;
+      j += run.count;
+    }
   }
   return out;
 }
 
-function greedyAlign(a: string[], b: string[]): [number, number][] {
-  const at = new Map<string, number[]>();
-  b.forEach((k, j) => (at.get(k) ?? at.set(k, []).get(k)!).push(j));
-  const out: [number, number][] = [];
-  let j = 0;
-  for (let i = 0; i < a.length; i++) {
-    const spots = at.get(a[i]);
-    const next = spots?.find((x) => x >= j);
-    if (next == null) continue;
-    out.push([i, next]);
-    j = next + 1;
-  }
-  return out;
-}
-
-/** A word-level comparison of two lines, as runs to be rendered in order. */
+/** A word-level comparison of two lines, as runs to be rendered in order.
+ *
+ * `diffWords` ignores whitespace when it matches words but keeps it in what it returns, which is
+ * what the runs want: a line rewrapped around the same words reads as unchanged, and the spacing
+ * drawn is the newer line's. A change that is *only* spacing never reaches here — `lineChange`
+ * leaves `runs` empty and `fieldChanges` names it instead — so matching that way loses nothing. */
 export function wordDiff(from: string, to: string): DiffRun[] {
-  const a = wordsOf(from);
-  const b = wordsOf(to);
-  const pairs = align(
-    a.map((w) => w.trim()),
-    b.map((w) => w.trim()),
-  );
-  const runs: DiffRun[] = [];
-  const push = (kind: DiffRun["kind"], text: string) => {
-    if (!text) return;
-    const last = runs.at(-1);
-    if (last?.kind === kind) last.text += text;
-    else runs.push({ kind, text });
-  };
-  let i = 0;
-  let j = 0;
-  for (const [pi, pj] of [...pairs, [a.length, b.length] as [number, number]]) {
-    push("remove", a.slice(i, pi).join(""));
-    push("add", b.slice(j, pj).join(""));
-    if (pi < a.length) push("same", b[pj]);
-    i = pi + 1;
-    j = pj + 1;
-  }
-  return runs;
+  return diffWords(from, to).map((run): DiffRun => ({
+    kind: run.added ? "add" : run.removed ? "remove" : "same",
+    text: run.value,
+  }));
 }
 
 const PAUSE = (s: Segment): string =>
@@ -394,7 +365,7 @@ export function compareScripts(from: Segment[], to: Segment[]): ScriptComparison
     }
   };
 
-  const pairs = align(
+  const pairs = alignPairs(
     from.map((s) => norm(s.text)),
     to.map((s) => norm(s.text)),
   );

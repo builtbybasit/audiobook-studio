@@ -22,6 +22,7 @@
     "@vueuse/core": "^14.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "diff": "^9.0.0",
     "pinia": "^2.2.6",
     "reka-ui": "^2.10.4",
     "tailwind-merge": "^3.7.0",

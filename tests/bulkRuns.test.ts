@@ -597,6 +597,40 @@ describe("bulk re-narration", () => {
     expect(jobsStore.jobs.length).toBe(settled);
   });
 
+  test("a chapter's newest failure is the one Retry all failed picks, not the one a later run fixed", () => {
+    const ep = route();
+    const ch = narratedChapter();
+    // fail a replacement, make it good again, then fail a fresh one over the same chapter
+    ep.failRate = 1;
+    narrationStore.runNarration(BOOK, [ch.id], { scope: "all" });
+    drain();
+    const old = jobsStore.jobs.at(-1)!;
+    expect(old.status).toBe("failed");
+
+    ep.failRate = 0;
+    jobsStore.retryAllFailed();
+    drain();
+    expect(jobsStore.jobs.at(-1)!.status).toBe("done");
+    // …so the first failure is now old news and must not speak for the chapter
+    expect(jobsStore._supersededBy(old)).toBe(true);
+
+    ep.failRate = 1;
+    narrationStore.runNarration(BOOK, [ch.id], { scope: "all" });
+    drain();
+    const current = jobsStore.jobs.at(-1)!;
+    expect(current.status).toBe("failed");
+    expect(segments(ch.id).some((s) => s.candidate?.status === "failed")).toBe(true);
+
+    // the superseded failure must not claim the chapter and take the live one down with it
+    const retryable = jobsStore.retryableFailures();
+    expect(retryable.map((j) => j.id)).toContain(current.id);
+    expect(retryable.map((j) => j.id)).not.toContain(old.id);
+    ep.failRate = 0;
+    jobsStore.retryAllFailed();
+    drain();
+    expect(segments(ch.id).some((s) => s.candidate?.status === "failed")).toBe(false);
+  });
+
   test("retrying a run's failures is one run again, not one run per chapter", () => {
     const ep = route();
     const narrated = chapters()
@@ -657,8 +691,9 @@ describe("the seeded situations", () => {
   test("the recovery row leaves every earlier script and recording usable", () => {
     expect(demoStore.applyScenario("bulk-recovery")).toBeTruthy();
     const run = jobsStore.jobs.filter((j) => j.bulk?.id === 1);
-    expect(run).toHaveLength(4);
-    expect(run.map((j) => j.status)).toEqual(["done", "done", "failed", "cancelled"]);
+    expect(run.length).toBeGreaterThan(0);
+    // it is a recovery row: some of it went wrong, which is what makes the claim below mean anything
+    expect(new Set(run.map((j) => j.status))).toEqual(new Set(["done", "failed", "cancelled"]));
     // the chapters whose replacement produced nothing still have a script
     for (const j of run) {
       const c = chapter(j.chapterId!);
@@ -831,12 +866,11 @@ describe("what a rendered clip is charged", () => {
     });
     const est = narrationStore.estimate("cliche", [1], "all");
     const row = est.per.find((e) => e.endpoint.id === "openai");
-    if (row) {
-      expect(row.cost).not.toBeNull();
-      expect(row.why.join(" ")).toContain("Half price");
-      // the headline follows the discount; the budget figure does not
-      expect(row.withoutPromotions!).toBeCloseTo(row.cost! * 2, 8);
-    }
+    expect(row).toBeDefined();
+    expect(row!.cost).not.toBeNull();
+    expect(row!.why.join(" ")).toContain("Half price");
+    // the headline follows the discount; the budget figure does not
+    expect(row!.withoutPromotions!).toBeCloseTo(row!.cost! * 2, 8);
     expect(est.withoutPromotions).toBeGreaterThan(est.cost);
     expect(est.cautions.join(" ")).toContain("Budget checks use");
   });

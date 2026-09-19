@@ -33,7 +33,7 @@ This is a frontend prototype. Keep fixtures, scenarios and simulated endpoint wo
 - The fixture endpoint service caches the week of traffic it invents, and prices it from the seeded rate cards. That cache belongs to the world that produced it: [services/endpoints.ts](../../src/services/endpoints.ts) registers `reset()` with `onDemoReset`, and the Endpoints page reloads when `demo._epoch` changes. Dropping those rows is right only because nothing this session produced lives in them.
 - Applying a demo scenario restores every owned store from `seed.ts` first and then seeds the situation, so scenarios are repeatable and never compose. Keep the mutations in [src/mock/scenarios/](../../src/mock/scenarios/), reached through `ScenarioContext`; `demo.ts` supplies that context and owns nothing a store already owns.
 - Simulated runs are abandoned rather than cancelled when the world is replaced: `demo.ts` holds `_epoch`, each simulator context captures it when the run starts, and `SimulatorContext.stale()` is checked before any write. A new timer-driven fake must check it too, or a late callback will write into the next scenario.
-- A timer must also drop itself when its job is settled from outside it — a reset finishes running jobs, and a loop that only stops from inside its own step would tick forever against work nobody is watching.
+- A timer must also drop itself when its job is settled from outside it — a reset finishes running jobs, and a loop that only stops from inside its own step would tick forever against work nobody is watching. Both halves are one question, asked through `abandoned(ctx, job)` in [simulators/context.ts](../../src/mock/simulators/context.ts): every timer loop and every per-request callback checks it, because a result that lands once its job is settled belongs to no run and would put a row in the append-only usage ledger that no job accounts for.
 - A reset covers more than the stores: page state outside them registers with `onDemoReset` in [src/lib/pageState.ts](../../src/lib/pageState.ts), demo credentials are re-seeded from `SEEDED_KEYS`, an open editing session's timer is dropped (`history.abandonSessions`), and anything pointed at a book the seeded world does not have (`survivesReset`) is cleared. A view open on such a book must navigate away _before_ the reset, not after.
 - A snapshot restore puts a list back in the order it had. The Audiobooks shelf is read in list order, so a restore that regroups it is not the same state.
 - Removing or renumbering book content must account for related script, cast, job and export state. Undo should restore the same affected data.
@@ -63,9 +63,23 @@ This is a frontend prototype. Keep fixtures, scenarios and simulated endpoint wo
   `_queueRender` can never leave a line with neither its clip nor its retake. Take numbers come from
   `nextTakeNumber`, which reads the take list and not only the clip in the book.
 - One definition per question, shared by every caller: `narrationTargets` decides which lines a scope
-  runs (the estimate, the plan and the run all call it), and `chapterNarration` decides what a chapter's
-  narration reads as once nothing is in flight (a finished run, a cancelled one, and a cancelled queued
-  job all call it). A second copy of either is how a panel starts quoting numbers the run does not honour.
+  runs, `segmentFailed` decides whether a line still carries a failed request, and `chapterNarration`
+  decides what a chapter's narration reads as once nothing is in flight — a finished run, a cancelled
+  one, a cancelled queued job and a **restore** all call it, because a restore that answered it
+  differently would simply be overwritten by the next thing that happened to the chapter. A chapter
+  that is only part rendered reads as `failed`, which is what turns into the export's "Partly
+  narrated" blocker (`readinessOf`): a line with no clip is a gap in the audiobook, and reading it as
+  `stale` instead would demote that hard blocker to a warning the build can be told to ignore.
+  A second copy of any of these is how a panel starts quoting numbers the run does not honour.
+- **The plan is the account of the run, including the estimate.** `narrationRunPlan` decides which
+  chapters are in and which are left out; `narration.estimate` and `scriptEstimate` price exactly
+  what it chose rather than re-deriving the excluded/unscripted/running cascade. `plan.pending`
+  counts the retakes a selection is waiting on across _every_ eligible chapter, including one that is
+  skipped precisely because everything in it is waiting on a retake — otherwise the panel and the
+  run's toast quote two different numbers for one press. For scripting, "is there a script to
+  replace" is asked of the script (`scriptingPlan`'s `hasScript`) and not of the chapter's label, so
+  the button's wording, the queue row's wording and the decision to snapshot `_previous` are one
+  reading.
 - Jobs of one bulk run share `Job.bulk.id`, which is what makes "cancel the rest of this run" and "retry
   this run's failures" possible without the queue guessing. Cancelling keeps what finished; a retry uses
   the narrowest scope that covers the failure, so it never re-renders work that succeeded, and it is
@@ -73,14 +87,25 @@ This is a frontend prototype. Keep fixtures, scenarios and simulated endpoint wo
   pushes `jobs._nextRun` past anything a scenario laid down, or a run started by hand would be filed
   under history it has nothing to do with. **Whether a chapter still needs the work is asked of the work,
   not of the chapter's label**: a failed replacement leaves the chapter reading as narrated and a failed
-  re-script puts its status back, so retry eligibility comes from the clips (`candidate.status`) and from
-  the queue (`_supersededBy`) instead.
+  re-script puts its status back, so retry eligibility comes from the clips (`segmentFailed`) and from
+  the queue (`_supersededBy`) instead. Both stages ask those same two questions: `retryableFailures`
+  is the one list, `retryAllFailed` iterates it, and the queue's "Retry failed (N)" button reads it
+  too, so the count it offers and the work it does cannot disagree.
 
 ## Pricing and usage invariants
 
 - **A cost is worked out once and then it is a receipt.** [lib/pricing.ts](../../src/lib/pricing.ts) is the only place that
   decides what a request of either kind costs, and it is pure: a rate card plus an instant always give the same
-  answer. Every completed scripting request stores the `PricedRequest` it was charged from — the
+  answer. It is also the only place those symbols are imported from: [lib/endpoints.ts](../../src/lib/endpoints.ts)
+  adapts an `Endpoint` onto them (`billingOf`, `speechPricing`, `pricingLabel`) and does no pricing
+  arithmetic of its own. It used to re-export a shelf of pricing symbols so older imports kept
+  working, which left two answers to "which module defines `money`" and one file importing the pair
+  from both. What a rate card costs and what time it is in Tokyo are also two subjects, not one:
+  a schedule is written in the endpoint's own timezone, so [lib/wallClock.ts](../../src/lib/wallClock.ts)
+  owns zones, offsets, day boundaries and the phrases that say when something changes, and knows
+  nothing about rates. The pricing rules read the clock; the clock never reads a rate card.
+  `crossesMidnight`, `windowCovers` and `windowLabel` stay with pricing, because a window's
+  past-midnight rule is a pricing rule rather than a fact about time. Every completed scripting request stores the `PricedRequest` it was charged from — the
   normalized usage, the rates in force at that instant, and the reasoning that produced them — and
   the ledger it lives in is append-only, so editing a rate or letting a promotion expire cannot move
   spending that has already happened. A view that re-derives a past cost from the endpoint's current
@@ -149,11 +174,22 @@ This is a frontend prototype. Keep fixtures, scenarios and simulated endpoint wo
   ordinary input rate: cached and cache-write tokens are slices of the input and a cache write
   usually costs more than it, so reserving at the ordinary rate lets the first request exceed its own
   reservation. Narration does the same, and enforces it in the store rather than in whichever panel
-  happens to have an estimate: `NarrationEstimate.withoutPromotions` is what the cap is compared
-  against, `_budgetBlocked` gates every entry point — a bulk run, "re-narrate stale", a retry, a
-  retake, "retake everything flagged" — and `_reserveQueued` holds each job's undiscounted price
-  (`Job.narrationRun.reserved`) until it lands, so two runs that each fit cannot both start and
-  overshoot together. `jobs.reserved` is what unfinished work of either stage is holding.
+  happens to have an estimate: `_budgetBlocked` gates every entry point — a bulk run, "re-narrate
+  stale", a retry, a retake, "retake everything flagged" — and `_reserveQueued` holds each job's
+  undiscounted price (`Job.narrationRun.reserved`) until it lands, so two runs that each fit cannot
+  both start and overshoot together. `jobs.reserved` is what unfinished work of either stage is
+  holding. The sentence a run strip shows comes from `narration.blockers`, built on the same
+  `_worstCase` the gate uses, because a panel that worked the figure out a second way is a panel that
+  green-lights a run the store then refuses. `_worstCase` is a **per-endpoint sum** of undiscounted
+  prices and never one maximum over the aggregate: two endpoints on different discounts do not add up
+  the same way, and `Σ max(aᵢ,bᵢ) ≥ max(Σa, Σb)`.
+- **One grouping, three readings.** `_pricedByEndpoint` is the only place that splits a run's lines
+  by the endpoint that owns each speaker's voice and prices each share on its own card. The estimate
+  panel keeps every column, `_worstCase` keeps the undiscounted figure, and `_plannedCost` keeps the
+  two halves recorded on the job — three reductions over one calculation, so a chapter cannot be
+  dispatched against a figure the panel never showed. Likewise `changedSegments` is the one
+  definition of "lines the script has moved past" (stale clips, plus unrendered ones once the chapter
+  has been narrated at all), shared by `renarrateStale` and every panel that counts them.
 
 ## Undo and irreversible actions
 
@@ -161,7 +197,7 @@ This is a frontend prototype. Keep fixtures, scenarios and simulated endpoint wo
 
 ## Verification
 
-For store behavior changes, run `bun test tests`, the existing lint command and the production build. See the [verification guidance](../../docs/development.md#verification-and-test-maintenance) for other changes. [tests/stores.test.ts](../../tests/stores.test.ts) covers initialization order, instance isolation, async callbacks, job IDs and removal/undo; feature tests cover the user workflows, [tests/bulkRuns.test.ts](../../tests/bulkRuns.test.ts) covers running a stage again over chapters that are already finished, and [tests/pricing.test.ts](../../tests/pricing.test.ts) covers token accounting, discount precedence, schedule boundaries, promotion expiry and contradictory usage counts — with the end-to-end half (per-request pricing across a boundary, budget reconciliation, preserved historical costs) in [tests/scripting.test.ts](../../tests/scripting.test.ts), and [tests/usageLedger.test.ts](../../tests/usageLedger.test.ts) covers the ledger itself: spending that only ever goes up, settled requests keeping their place in an endpoint's activity, and the book's cap holding whichever way narration is started.
+For store behavior changes, run `bun test tests`, the existing lint command and the production build. See the [verification guidance](../../docs/development.md#verification-and-test-maintenance) for other changes. [tests/stores.test.ts](../../tests/stores.test.ts) covers initialization order, instance isolation, async callbacks, job IDs and removal/undo; feature tests cover the user workflows, [tests/bulkRuns.test.ts](../../tests/bulkRuns.test.ts) covers running a stage again over chapters that are already finished, and pricing is covered three ways: [tests/pricing.rates.test.ts](../../tests/pricing.rates.test.ts) for what rate is in force at a given instant — schedule boundaries, discount precedence and promotion expiry — [tests/pricing.tokens.test.ts](../../tests/pricing.tokens.test.ts) for token accounting, contradictory usage counts and reservations against a budget, and [tests/pricing.speech.test.ts](../../tests/pricing.speech.test.ts) for speech rates, billing models and what each provider reports — with the end-to-end half (per-request pricing across a boundary, budget reconciliation, preserved historical costs) in [tests/scripting.test.ts](../../tests/scripting.test.ts), and [tests/usageLedger.test.ts](../../tests/usageLedger.test.ts) covers the ledger itself: spending that only ever goes up, settled requests keeping their place in an endpoint's activity, and the book's cap holding whichever way narration is started.
 
 ## Future backend integration
 

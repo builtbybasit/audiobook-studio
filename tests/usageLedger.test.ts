@@ -122,6 +122,24 @@ function route(rate: number | null = 12) {
   return ep;
 }
 
+/** Route scripting at one profile with a rate card we control. */
+function routeScripting() {
+  const p = newProfile({
+    id: "test",
+    name: "Test endpoint",
+    model: "test-model",
+    needsKey: false,
+    concurrency: 2,
+    maxChars: 4000,
+    inPrice: 1,
+    outPrice: 2,
+    maxOutputTokens: 4000,
+  });
+  endpointsStore.profiles = [p];
+  scriptingStore.scriptSettings.profile = p.id;
+  return p;
+}
+
 describe("spending is append-only", () => {
   test("accepting a retake does not take back what the clip it displaced cost", () => {
     route();
@@ -251,19 +269,7 @@ describe("a settled request keeps its place in the endpoint's activity", () => {
   });
 
   test("a scripting request lands in the same list, with its token receipt", () => {
-    const p = newProfile({
-      id: "test",
-      name: "Test endpoint",
-      model: "test-model",
-      needsKey: false,
-      concurrency: 2,
-      maxChars: 4000,
-      inPrice: 1,
-      outPrice: 2,
-      maxOutputTokens: 4000,
-    });
-    endpointsStore.profiles = [p];
-    scriptingStore.scriptSettings.profile = p.id;
+    routeScripting();
     scriptingStore.runScripting(BOOK, [13]);
     drain();
 
@@ -379,19 +385,7 @@ describe("the book's cap holds whichever way narration is started", () => {
 
 describe("a run's per-chapter reconciliation", () => {
   test("each chapter is estimated from its own chunks, not from the batch average", () => {
-    const p = newProfile({
-      id: "test",
-      name: "Test endpoint",
-      model: "test-model",
-      needsKey: false,
-      concurrency: 2,
-      maxChars: 4000,
-      inPrice: 1,
-      outPrice: 2,
-      maxOutputTokens: 4000,
-    });
-    endpointsStore.profiles = [p];
-    scriptingStore.scriptSettings.profile = p.id;
+    routeScripting();
 
     const ids = [13, 14, 15];
     const lengths = ids.map((id) => scriptsStore.rawText(BOOK, id).length);
@@ -470,9 +464,13 @@ describe("a run is charged in its endpoint's billing model", () => {
     const rewritten = ttsRows().filter((r) => r.speech!.units.bytes > r.speech!.units.chars);
     expect(rewritten.length).toBeGreaterThan(0);
     for (const r of rewritten) {
-      // the source text of the line is pure ASCII; the submitted text is not
-      const line = segments(1).find((s) => r.label.includes(`${s.id} ·`));
-      if (line) expect(line.text).toBe(line.text.normalize("NFC"));
+      // the row's label leads with the line it rendered: "Line 22 · Narrator"
+      const id = Number(/^\D+(\d+) ·/.exec(r.label)![1]);
+      const line = segments(1).find((s) => s.id === id);
+      expect(line).toBeDefined();
+      // the book keeps the English; only the request carries the Hanzi the dictionary swaps in
+      expect(line!.text).toContain("outer sect");
+      expect(line!.text).not.toMatch(/\p{Script=Han}/u);
     }
   });
 

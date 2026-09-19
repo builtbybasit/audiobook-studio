@@ -19,6 +19,7 @@ import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 
 import { compareScripts, scriptSignature, wordDiff } from "@/lib/scriptHistory";
+import { readinessOf } from "@/lib/exports";
 import { keyring } from "@/lib/keyring";
 import { newProfile } from "@/lib/scripting";
 import { SEEDED_KEYS } from "@/mock";
@@ -559,7 +560,11 @@ describe("restoring", () => {
       version.segments.length - 1,
     );
     expect(segments().find((s) => s.text === firstText)!.audio.duration).toBeGreaterThan(0);
-    expect(libraryStore.chapter("cliche", 1)!.narration).toBe("stale");
+    // one restored line has no clip of its own, so the chapter is part rendered — the same reading a
+    // cancelled run leaves, and the one the export turns into its "Partly narrated" blocker rather
+    // than a stale-audio warning somebody can wave through
+    expect(libraryStore.chapter("cliche", 1)!.narration).toBe("failed");
+    expect(readinessOf(libraryStore.chapter("cliche", 1)!)).toBe("partial");
   });
 
   test("restoring the same script again does nothing at all", () => {

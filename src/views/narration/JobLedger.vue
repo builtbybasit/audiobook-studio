@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
-import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
@@ -11,50 +10,47 @@ import { useUiStore } from "@/stores/ui";
 // `i`) for its audit trail. The row actions are one icon size in fixed slots: play stays visible, the
 // rest appear on hover or keyboard focus (and always on touch, which has no hover), so a raised flag is
 // the only standing mark on a row.
-// Sticky player at the bottom plays the stitched chapter:
-// a scrubber drawn from segment boundaries (colour = speaker), the current row highlighted and kept in
-// view. Stale rows (edited after narration) can be re-rendered on their own. Each rendered row expands
-// (i) to its audit trail — voice, model, direction and style it was rendered with, cost, cuts — and, for
-// failures, the HTTP status + body with a "copy request" for debugging.
+// The table, the filters and the flag popover are this file's subject; the three things a row can
+// *open* are their own components, because none of them is about the list: `RenderDetails` is one
+// clip's audit trail (i), `TakeCompare` is two takes of one line waiting for a verdict, and
+// `ChapterTransport` is the stitched chapter at the bottom. The current row is highlighted and kept
+// in view whichever of them is driving the player. Stale rows (edited after narration) can be
+// re-rendered on their own.
 // A clip can come back fine and still sound wrong, so any rendered row can be flagged (wrong
 // pronunciation / bad delivery / awkward pause) and retaken: the old clip is kept, the new one is
-// rendered beside it, and nothing is decided until the listener plays both and keeps one.
+// rendered beside it, and nothing is decided until the listener plays both and keeps one. The
+// verdict is taken here rather than in the comparison panel, because it moves to the next retake in
+// the book — which can be in another chapter.
 // Keyboard: j/k move, ↵/p play, r retry, t retake, a keep new, x keep previous, i details, e edit the line.
-import { computed, defineAsyncComponent, nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useJob, STATUS_BG, fmt } from "@/views/narration/shared";
 import { FLAG_LABEL } from "@/lib/scriptReview";
 import { queryIdSet } from "@/lib/query";
-import { pauseAfter, secs } from "@/lib/speech";
-import { usePlayer, type Queue } from "@/composables/usePlayer";
-import { chapterQueue, chapterQueueId } from "@/composables/useChapterQueue";
-import { speechPeaks } from "@/lib/peaks";
+import { defaultPause, secs, silenceOf } from "@/lib/speech";
+import { usePlayer } from "@/composables/usePlayer";
+import { segmentStart } from "@/composables/useChapterQueue";
+import ChapterTransport from "@/views/narration/ChapterTransport.vue";
 import ExpressionText from "@/components/ExpressionText.vue";
+import RenderDetails, { hasDetails } from "@/views/narration/RenderDetails.vue";
+import TakeCompare from "@/views/narration/TakeCompare.vue";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { UiToggleGroup } from "@/ui";
 import {
   BookA as DictionaryIcon,
   Flag as FlagIcon,
   Pause as PauseIcon,
-  PencilLine as EditIcon,
   Play as PlayIcon,
   SkipForward as PlayFromIcon,
-  ChevronFirst as PrevIcon,
-  ChevronLast as NextIcon,
-  Rewind as BackIcon,
-  FastForward as FwdIcon,
   RotateCcw as RetryIcon,
-  Scissors as CutIcon,
-  TriangleAlert as WarnIcon,
 } from "@lucide/vue";
-import type { FlagKind, Segment, SegmentAudio, Take } from "@/types";
+import type { FlagKind, Segment, SegmentAudio } from "@/types";
 
 const props = defineProps<{ bookId: string; chapterId: number }>();
 /** a word the listener wants respelled, handed up to the pronunciation dictionary */
 const emit = defineEmits<{ pronounce: [word: string] }>();
 const { segments, colorOf, voiceOf, epName, stats } = useJob(props);
 const castStore = useCastStore();
-const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
 const scriptsStore = useScriptsStore();
@@ -62,9 +58,7 @@ const uiStore = useUiStore();
 const route = useRoute();
 const router = useRouter();
 const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterId)!);
-const { p, play, playQueue, cue, seekTo, skip, next, prev, cycleRate, clipProgress } = usePlayer();
-// wavesurfer is only ever needed once a compare panel is open, so it stays out of the entry chunk
-const Waveform = defineAsyncComponent(() => import("@/components/Waveform.vue"));
+const { p, play } = usePlayer();
 const FILTERS = ["all", "done", "generating", "queued", "failed", "stale", "flagged", "review"];
 const filter = ref(
   FILTERS.includes(String(route.query.filter)) ? String(route.query.filter) : "all",
@@ -101,7 +95,6 @@ watch(
   },
   { immediate: true },
 );
-const AT = { sentence: "sentence", clause: "clause", word: "word", char: "hard cut" };
 const FILTER_LABEL: Record<string, string> = { done: "current audio", generating: "running" };
 const matches = (s: Segment, f: string) =>
   f === "all"
@@ -114,96 +107,52 @@ const matches = (s: Segment, f: string) =>
 const rows = computed(() => segments.value.filter((s) => matches(s, filter.value)));
 const count = (f: string) =>
   f === "all" ? stats.value.total : segments.value.filter((s) => matches(s, f)).length;
-// halves of a hand-split segment have no clip of their own yet; in a narrated chapter they are "changed" too
-const unrendered = computed(() => segments.value.filter((s) => s.audio.status === "none").length);
-const changed = computed(() => count("stale") + unrendered.value);
+// "Re-narrate changed (N)" queues `renarrateStale`, which renders `changedSegments` — so N is that
+// list and not a second count of it. The difference is real: a never-rendered line only counts once
+// the chapter has been narrated at all, and counting them in a chapter nobody has started offered a
+// button that queued nothing.
+const changedLines = computed(() => narrationStore.changedSegments(props.bookId, props.chapterId));
+const changed = computed(() => changedLines.value.length);
+const unrendered = computed(
+  () => changedLines.value.filter((s) => s.audio.status === "none").length,
+);
 
 const pacing = computed(() => castStore.pacingOf(props.bookId));
-// the stitched chapter is the clips *and* the silence between them, so the scrubber shows both
-const timeline = computed(() => {
-  const heard = segments.value.filter((s) => s.audio.duration > 0);
-  let t = 0;
-  return heard.map((s, i) => {
-    const start = t;
-    t += s.audio.duration;
-    const end = t;
-    const gap = pauseAfter(s, heard[i + 1], pacing.value);
-    t += gap;
-    return { s, start, end, gap };
-  });
-});
-const total = computed(() => {
-  const last = timeline.value.at(-1);
-  return last ? last.end + last.gap : 0;
-});
+// The chapter's own length, kept by `cast._retime` on every write path and rendered by the picker
+// beside this. Two figures for one chapter is how the picker and the ledger start disagreeing.
+const total = computed(() => chapter.value.duration);
 // rounded: the header says how much of the chapter is silence, not to the millisecond
-const silence = computed(() => Math.round(timeline.value.reduce((a, x) => a + x.gap, 0) * 10) / 10);
+const silence = computed(() => Math.round(silenceOf(segments.value, pacing.value) * 10) / 10);
 /** the gap this book would use after a line, when the line has no pause of its own */
-const bookGap = (s: Segment) =>
-  pacing.value[
-    segments.value[segments.value.indexOf(s) + 1]?.speaker === s.speaker ? "line" : "turn"
-  ];
-const queueId = (chId: number) => chapterQueueId(props.bookId, chId);
-const isChapter = computed(() => p.id === queueId(props.chapterId));
+const nextOf = computed(() => {
+  const at = new Map<number, Segment | undefined>();
+  segments.value.forEach((s, i) => at.set(s.id, segments.value[i + 1]));
+  return at;
+});
+const bookGap = (s: Segment) => defaultPause(s, nextOf.value.get(s.id), pacing.value);
 /** the clip under the playhead is this one — true whether it is playing alone or inside the chapter */
 const onClip = (id: string) => p.clipId === id && p.playing;
 
-/** This chapter's timeline, built the same way the reader builds it. */
-const buildQueue = (chId: number): Queue | null =>
-  chapterQueue(props.bookId, chId, {
-    href: (id) => `/book/${props.bookId}/narration?ch=${id}`,
-    // the ledger follows the player: ?ch= is what NarrationView already watches, and going through
-    // the router means this survives the remount that switching chapters causes
-    onChapter: (id) => void router.replace({ query: { ...route.query, ch: String(id) } }),
-  });
-function playChapter(at?: number) {
-  const q = buildQueue(props.chapterId);
-  if (q) playQueue(q, at);
-}
-
+const transport = ref<InstanceType<typeof ChapterTransport> | null>(null);
 const currentId = computed(() => (p.clipId?.startsWith("seg") ? Number(p.clipId.slice(3)) : null));
 watch(currentId, (id) => {
   if (id && p.playing)
     document.getElementById("row-" + id)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 });
+/** play the stitched chapter from this line — the transport owns the one queue this chapter has */
 function playFrom(s: Segment) {
-  const x = timeline.value.find((x) => x.s.id === s.id);
-  if (x) playChapter(x.start);
-}
-function scrub(e: MouseEvent) {
-  const at = (e.offsetX / (e.currentTarget as HTMLElement).clientWidth) * total.value;
-  if (isChapter.value) return seekTo(at);
-  const q = buildQueue(props.chapterId);
-  if (q) cue(q, at); // park the playhead without starting — scrubbing is not pressing play
+  const at = segmentStart(props.bookId, props.chapterId, s.id);
+  if (at != null) transport.value?.playChapter(at);
 }
 
 // what differs between the clip and the script now (the reason a row is stale, made explicit)
 const drift = (s: Segment, a?: SegmentAudio) => narrationStore.clipDrift(props.bookId, s, a);
-const clock = (ts: number) =>
-  new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-function requestOf(s: Segment) {
-  const ep = endpointsStore.endpoints.find((e) => e.id === s.audio.endpoint);
-  return JSON.stringify(
-    {
-      POST: (ep?.baseUrl ?? "") + "/audio/speech",
-      headers: { Authorization: "Bearer <key>" },
-      body: {
-        model: s.audio.model,
-        voice: s.audio.voice,
-        input: s.audio.said ?? s.text,
-        instructions: [s.audio.style, s.audio.direction].filter(Boolean).join("; ") || undefined,
-        response_format: "wav",
-      },
-      error: s.audio.error,
-    },
-    null,
-    2,
-  );
-}
-function copyReq(s: Segment) {
-  navigator.clipboard?.writeText(requestOf(s));
-  uiStore.toast("Request copied as JSON", { kind: "success", timeout: 2500 });
-}
+/** The line itself, in the reader — where a wrong speaker, direction or word is fixed before a
+ *  retake would read the same request again. The same deep link Search uses. */
+const lineLink = (s: Segment) => ({
+  path: `/book/${props.bookId}/scripting`,
+  query: { ch: String(props.chapterId), seg: String(s.id) },
+});
 // ---- flags and retakes
 const KINDS: FlagKind[] = ["pronunciation", "delivery", "pause", "other"];
 const KIND_SHORT: Record<FlagKind, string> = {
@@ -251,101 +200,8 @@ function retakeAll() {
       description: "The current clips are kept — you compare and keep one per segment.",
     });
 }
-const hasDetails = (s: Segment) => !!(s.audio.at || s.audio.error || s.audio.cuts);
-/** The line itself, in the reader — where a wrong speaker, direction or word is fixed before a
- *  retake would read the same request again. The same deep link Search uses. */
-const lineLink = (s: Segment) => ({
-  path: `/book/${props.bookId}/scripting`,
-  query: { ch: String(props.chapterId), seg: String(s.id) },
-});
-/** The audit trail as a strip of labelled facts — what this clip was actually rendered with. The
- *  free-text ones (style, direction) go last and take the rest of the line: they are whole phrases. */
-interface Fact {
-  label: string;
-  value: string;
-  mono?: boolean;
-  wide?: boolean;
-}
-function facts(s: Segment): Fact[] {
-  const a = s.audio;
-  if (!a.at) return [];
-  return [
-    { label: "voice", value: endpointsStore.voiceLabel(a.voiceRef) || a.voice || "—" },
-    { label: "endpoint", value: epName(a.endpoint) },
-    { label: "model", value: a.model ?? "—", mono: true },
-    { label: "read as", value: a.type ?? s.type },
-    { label: "rendered", value: clock(a.at) },
-    { label: "took", value: a.ms ? (a.ms / 1000).toFixed(1) + "s" : "—", mono: true },
-    ...(a.cost ? [{ label: "cost", value: "$" + a.cost.toFixed(4), mono: true }] : []),
-    ...(a.lex ? [{ label: "respelled", value: `${a.lex} word${a.lex === 1 ? "" : "s"}` }] : []),
-    ...(s.pause == null
-      ? []
-      : [{ label: "pause after", value: s.pause === 0 ? "none — runs on" : secs(s.pause) }]),
-    ...(a.style ? [{ label: "style", value: a.style, wide: true }] : []),
-    { label: "direction", value: a.direction || "—", wide: true },
-  ];
-}
-/** Every take of a segment, the current one included, oldest first. */
-function allTakes(s: Segment): (Take & { current?: boolean })[] {
-  const list: (Take & { current?: boolean })[] = [...(s.audio.takes ?? [])];
-  if (s.audio.duration)
-    list.push({
-      n: s.audio.n ?? 1,
-      at: s.audio.at ?? 0,
-      ms: s.audio.ms,
-      duration: s.audio.duration,
-      endpoint: s.audio.endpoint,
-      voiceRef: s.audio.voiceRef,
-      voice: s.audio.voice,
-      direction: s.audio.direction,
-      current: true,
-    });
-  return list.sort((a, b) => a.n - b.n);
-}
-const takeTitle = (t: Take) =>
-  `${endpointsStore.voiceLabel(t.voiceRef) || t.voice || "—"} · ${t.direction || "no direction"} · ${t.at ? clock(t.at) : ""}`;
-const takeId = (s: Segment, n: number) => `take${s.id}-${n}`;
-/** the clip the retake is judged against: whatever is in the book right now */
+/** the player's name for the retake waiting beside the clip in the book — `2` plays it */
 const candId = (s: Segment) => `cand${s.id}`;
-const candPlaying = (s: Segment) => onClip(candId(s));
-/** What differs between the clip in the book and the retake waiting beside it. */
-function takeDiff(s: Segment): string[] {
-  const a = s.audio;
-  const b = s.candidate;
-  if (!b) return [];
-  const out: string[] = [];
-  if ((a.direction || "") !== (b.direction || ""))
-    out.push(`direction “${a.direction || "—"}” → “${b.direction || "—"}”`);
-  if ((a.voiceRef || "") !== (b.voiceRef || ""))
-    out.push(
-      `voice ${endpointsStore.voiceLabel(a.voiceRef) || "—"} → ${endpointsStore.voiceLabel(b.voiceRef) || "—"}`,
-    );
-  if ((a.style || "") !== (b.style || ""))
-    out.push(`style “${a.style || "—"}” → “${b.style || "—"}”`);
-  if ((a.text || "") !== (b.text || "")) out.push("the line itself was edited");
-  if ((a.said || a.text || "") !== (b.said || b.text || "") && (a.text || "") === (b.text || ""))
-    out.push("the dictionary changed how a word is said");
-  if (!out.length) out.push("same voice, same direction — the same request, rendered again");
-  return out;
-}
-// A clip with no file has no shape to decode, so one is invented from its identity and the panel
-// says so. Two takes of the same line seed differently, which is the point of putting them together.
-const peaksOf = (seed: string, duration: number) => speechPeaks(seed, duration);
-/** zinc wave / violet played for the clip in the book, sky for the one waiting to be judged */
-const waveColors = (candidate: boolean) =>
-  candidate
-    ? { wave: uiStore.dark ? "#075985" : "#bae6fd", played: uiStore.dark ? "#38bdf8" : "#0284c7" }
-    : { wave: uiStore.dark ? "#3f3f46" : "#d4d4d8", played: uiStore.dark ? "#a78bfa" : "#7c3aed" };
-/** clicking a waveform plays that take from where you clicked */
-function seekTake(id: string, duration: number, url: string | undefined, frac: number) {
-  if (p.clipId !== id) play(id, duration, url);
-  seekTo(frac * duration);
-}
-
-function playTake(s: Segment, t: Take | undefined) {
-  if (t) play(takeId(s, t.n), t.duration, t.url);
-}
-const takePlaying = (s: Segment, t: Take | undefined) => !!t && onClip(takeId(s, t.n));
 const reviewable = computed(() =>
   segments.value.filter(
     (s) => s.candidate?.duration && !["queued", "generating"].includes(s.candidate.status),
@@ -788,324 +644,20 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                 </div>
               </td>
             </tr>
-            <!-- a retake waiting to be judged. The left card is the clip the book still uses; the
-                 right one only replaces it if the listener says so. -->
-            <tr v-if="s.candidate" class="bg-sky-50 dark:bg-sky-500/5">
-              <td></td>
-              <td colspan="5" class="px-2 py-2 pr-4 text-xs">
-                <div class="flex flex-wrap items-center gap-2">
-                  <b class="text-sky-700 dark:text-sky-300">Two takes of #{{ s.id }}</b>
-                  <span v-if="reviewPosition(s)" class="text-zinc-400">
-                    retake {{ reviewPosition(s) }} of {{ bookReviewable.length }}
-                  </span>
-                  <span v-if="s.flag" class="text-amber-600"
-                    ><FlagIcon class="icon-sm" /> {{ FLAG_LABEL[s.flag.kind]
-                    }}<span v-if="s.flag.note"> — {{ s.flag.note }}</span></span
-                  >
-                  <span
-                    v-if="['queued', 'generating'].includes(s.candidate!.status)"
-                    class="ml-auto text-violet-500"
-                    >rendering take {{ s.candidate!.n }}… the book still plays take
-                    {{ s.audio.n ?? 1 }}</span
-                  >
-                </div>
-                <div class="mt-2 grid gap-2 sm:grid-cols-2">
-                  <div
-                    class="rounded-md border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900"
-                  >
-                    <div class="flex items-center gap-2">
-                      <button
-                        class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-zinc-200 text-[10px] disabled:opacity-40 dark:bg-zinc-700"
-                        :aria-label="`${onClip('seg' + s.id) ? 'Pause' : 'Play'} A, take ${s.audio.n ?? 1}`"
-                        aria-keyshortcuts="1"
-                        :disabled="!s.audio.duration"
-                        @click="play('seg' + s.id, s.audio.duration, s.audio.url)"
-                      >
-                        <component
-                          :is="onClip('seg' + s.id) ? PauseIcon : PlayIcon"
-                          class="icon-sm icon-fill"
-                        />
-                      </button>
-                      <b>A · Take {{ s.audio.n ?? 1 }}</b>
-                      <span class="text-zinc-400">current book</span>
-                      <kbd class="ml-auto rounded border px-1 text-[10px] text-zinc-400">1</kbd>
-                      <span class="font-mono text-zinc-500"
-                        >{{ s.audio.duration.toFixed(1) }}s</span
-                      >
-                    </div>
-                    <Waveform
-                      v-if="s.audio.duration"
-                      class="mt-1.5"
-                      :url="s.audio.url"
-                      :peaks="peaksOf('seg' + s.id + '#' + (s.audio.n ?? 1), s.audio.duration)"
-                      :duration="s.audio.duration"
-                      :progress="clipProgress('seg' + s.id) ?? 0"
-                      v-bind="waveColors(false)"
-                      @seek="(f) => seekTake('seg' + s.id, s.audio.duration, s.audio.url, f)"
-                    />
-                    <div class="mt-1 pl-8 text-[11px] text-zinc-500">
-                      {{ endpointsStore.voiceLabel(s.audio.voiceRef) || s.audio.voice || "—" }} ·
-                      {{ s.audio.direction || "no direction"
-                      }}<span v-if="s.audio.at"> · {{ clock(s.audio.at) }}</span>
-                    </div>
-                  </div>
-                  <div
-                    class="rounded-md border p-2"
-                    :class="
-                      s.candidate!.duration
-                        ? 'border-sky-400 bg-white dark:bg-zinc-900'
-                        : 'border-dashed border-zinc-300 dark:border-zinc-700'
-                    "
-                  >
-                    <div class="flex items-center gap-2">
-                      <button
-                        class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-sky-500 text-[10px] text-white disabled:opacity-40"
-                        :aria-label="`${candPlaying(s) ? 'Pause' : 'Play'} B, take ${s.candidate!.n}`"
-                        aria-keyshortcuts="2"
-                        :disabled="!s.candidate!.duration"
-                        @click="play(candId(s), s.candidate!.duration, s.candidate!.url)"
-                      >
-                        <component
-                          :is="candPlaying(s) ? PauseIcon : PlayIcon"
-                          class="icon-sm icon-fill"
-                        />
-                      </button>
-                      <b>B · Take {{ s.candidate!.n }}</b>
-                      <span class="text-zinc-400">{{
-                        s.candidate!.auto ? "replacement" : "retake"
-                      }}</span>
-                      <kbd class="ml-auto rounded border px-1 text-[10px] text-sky-500">2</kbd>
-                      <span class="font-mono text-zinc-500">{{
-                        s.candidate!.duration ? s.candidate!.duration.toFixed(1) + "s" : "…"
-                      }}</span>
-                    </div>
-                    <Waveform
-                      v-if="s.candidate!.duration"
-                      class="mt-1.5"
-                      :url="s.candidate!.url"
-                      :peaks="peaksOf(candId(s) + '#' + s.candidate!.n, s.candidate!.duration)"
-                      :duration="s.candidate!.duration"
-                      :progress="clipProgress(candId(s)) ?? 0"
-                      v-bind="waveColors(true)"
-                      @seek="(f) => seekTake(candId(s), s.candidate!.duration, s.candidate!.url, f)"
-                    />
-                    <div class="mt-1 pl-8 text-[11px]">
-                      <span v-if="s.candidate!.error" class="text-red-500"
-                        >{{
-                          s.candidate!.error!.code
-                            ? "HTTP " + s.candidate!.error!.code + " · "
-                            : ""
-                        }}{{ s.candidate!.error!.message }}</span
-                      ><span v-else class="text-zinc-500"
-                        >{{
-                          endpointsStore.voiceLabel(s.candidate!.voiceRef) ||
-                          s.candidate!.voice ||
-                          "—"
-                        }}
-                        · {{ s.candidate!.direction || "no direction"
-                        }}<span v-if="s.candidate!.at"> · {{ clock(s.candidate!.at) }}</span></span
-                      >
-                    </div>
-                  </div>
-                </div>
-                <div class="mt-2 flex flex-wrap items-center gap-2">
-                  <span class="min-w-0 flex-1 text-zinc-500"
-                    >{{ takeDiff(s).join(" · ")
-                    }}<span
-                      v-if="!s.audio.url && !s.candidate!.url"
-                      class="ml-1 text-[10px] text-amber-600"
-                      title="the prototype renders no audio, so there is no file to decode — the shape is invented from the clip's identity, not measured"
-                      >· waveform illustrative</span
-                    ></span
-                  >
-                  <template v-if="!['queued', 'generating'].includes(s.candidate!.status)">
-                    <button
-                      class="btn-ghost btn-xs"
-                      :title="
-                        s.candidate!.duration
-                          ? 'keep the clip the book already uses (x)'
-                          : 'drop this retake (x)'
-                      "
-                      aria-keyshortcuts="x"
-                      @click="decideTake(s, 'current')"
-                    >
-                      {{
-                        s.candidate!.duration ? `Keep A · take ${s.audio.n ?? 1}` : "Discard retake"
-                      }}
-                      <kbd class="ml-1 rounded border px-1 text-[9px]">X</kbd>
-                    </button>
-                    <button
-                      v-if="s.candidate!.duration"
-                      class="btn-primary btn-xs"
-                      title="put the new clip in the book and clear the flag (a)"
-                      aria-keyshortcuts="a"
-                      @click="decideTake(s, 'new')"
-                    >
-                      Keep B · take {{ s.candidate!.n }}
-                      <kbd class="ml-1 rounded border border-white/40 px-1 text-[9px]">A</kbd>
-                    </button>
-                  </template>
-                </div>
-              </td>
-            </tr>
-            <tr v-if="expanded.has(s.id)" class="bg-zinc-50 dark:bg-zinc-900/60">
-              <td></td>
-              <td colspan="5" class="py-2 pr-4">
-                <div class="border-l-2 border-violet-400 pl-3 text-xs dark:border-violet-500">
-                  <!-- what this clip was rendered with -->
-                  <div v-if="facts(s).length" class="flex items-start gap-3">
-                    <div class="flex min-w-0 flex-1 flex-wrap gap-x-5 gap-y-1.5">
-                      <div
-                        v-for="f in facts(s)"
-                        :key="f.label"
-                        class="min-w-0"
-                        :class="f.wide ? 'min-w-[10rem] flex-1' : 'max-w-[220px]'"
-                      >
-                        <div class="text-[9px] uppercase tracking-wider text-zinc-400">
-                          {{ f.label }}
-                        </div>
-                        <div
-                          :class="[
-                            f.mono && 'font-mono text-[11px]',
-                            f.wide ? 'break-words' : 'truncate',
-                          ]"
-                        >
-                          {{ f.value }}
-                        </div>
-                      </div>
-                    </div>
-                    <span class="flex shrink-0 items-center gap-3 text-[11px]">
-                      <RouterLink
-                        :to="lineLink(s)"
-                        class="text-violet-500 hover:underline"
-                        title="open this line in the reader"
-                        @click.stop
-                      >
-                        <EditIcon class="icon-sm" /> edit line
-                      </RouterLink>
-                      <button
-                        class="text-violet-500 hover:underline"
-                        title="the exact request body, as JSON"
-                        @click.stop="copyReq(s)"
-                      >
-                        copy request
-                      </button>
-                    </span>
-                  </div>
-
-                  <!-- the dictionary rewrote something on the way out -->
-                  <div
-                    v-if="s.audio.said"
-                    class="mt-2 rounded bg-violet-500/5 px-2 py-1 text-[11px] leading-relaxed"
-                  >
-                    <span class="text-[9px] uppercase tracking-wider text-zinc-400">sent</span>
-                    <span class="ml-1.5 font-mono text-violet-700 dark:text-violet-300">{{
-                      s.audio.said
-                    }}</span>
-                  </div>
-
-                  <!-- the clip no longer matches the script -->
-                  <div
-                    v-if="drift(s).length || s.audio.status === 'stale'"
-                    class="mt-2 flex flex-wrap items-center gap-2 rounded bg-amber-400/10 px-2 py-1 text-amber-700 dark:text-amber-300"
-                  >
-                    <WarnIcon class="icon shrink-0" />
-                    <span class="min-w-0 flex-1">{{
-                      drift(s).length
-                        ? `the script changed after this clip · ${drift(s).join(" · ")}`
-                        : "edited after narration — this clip reads the old script"
-                    }}</span>
-                    <button
-                      v-if="chapter.narration !== 'running'"
-                      class="btn-ghost btn-xs shrink-0 border-amber-400"
-                      @click.stop="narrationStore.retrySegment(bookId, chapterId, s.id)"
-                    >
-                      Render it again
-                    </button>
-                  </div>
-
-                  <!-- the request failed -->
-                  <div
-                    v-if="s.audio.error"
-                    class="mt-2 rounded border border-red-300 bg-red-500/5 px-2 py-1.5 dark:border-red-500/40"
-                  >
-                    <div class="flex flex-wrap items-center gap-2">
-                      <b class="text-red-600">{{
-                        s.audio.error.code ? "HTTP " + s.audio.error.code : "not sent"
-                      }}</b
-                      ><span class="min-w-0 flex-1">{{ s.audio.error.message }}</span
-                      ><span v-if="s.audio.error.at" class="text-zinc-400">{{
-                        clock(s.audio.error.at)
-                      }}</span>
-                    </div>
-                    <pre
-                      v-if="s.audio.error.body"
-                      class="mt-1 max-h-16 overflow-auto whitespace-pre-wrap break-all rounded bg-white p-1.5 font-mono text-[10px] text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400"
-                      >{{ s.audio.error.body }}</pre>
-                  </div>
-
-                  <!-- every take, the one in the book marked -->
-                  <div
-                    v-if="s.audio.takes?.length"
-                    class="mt-2 flex flex-wrap items-center gap-1.5"
-                  >
-                    <span class="text-[9px] uppercase tracking-wider text-zinc-400">takes</span>
-                    <button
-                      v-for="t in allTakes(s)"
-                      :key="t.n"
-                      class="chip"
-                      :class="[t.current && 'chip-on', t.rejected && 'chip-off']"
-                      :title="takeTitle(t)"
-                      @click.stop="
-                        t.current
-                          ? play('seg' + s.id, s.audio.duration, s.audio.url)
-                          : playTake(s, t)
-                      "
-                    >
-                      <component
-                        :is="
-                          (t.current ? onClip('seg' + s.id) : takePlaying(s, t))
-                            ? PauseIcon
-                            : PlayIcon
-                        "
-                        class="icon-sm icon-fill"
-                      />
-                      take {{ t.n }} · {{ t.duration.toFixed(1) }}s
-                      <span v-if="t.current" class="text-[10px] opacity-70">in the book</span>
-                      <span v-else-if="t.rejected" class="text-[10px]">not kept</span>
-                    </button>
-                  </div>
-
-                  <!-- one segment, several requests -->
-                  <details v-if="s.audio.cuts" class="mt-2">
-                    <summary
-                      class="cursor-pointer text-[9px] uppercase tracking-wider text-zinc-400"
-                    >
-                      sent as {{ s.audio.cuts!.length }} requests · cut at
-                      {{ (s.audio.splitAt && AT[s.audio.splitAt]) ?? s.audio.splitAt }} · joined
-                      after
-                    </summary>
-                    <ol class="mt-1 max-h-28 space-y-1 overflow-auto pr-1">
-                      <li v-for="(c, i) in s.audio.cuts" :key="i" class="flex gap-3">
-                        <span
-                          class="w-14 shrink-0 whitespace-nowrap font-mono text-[10px] text-zinc-400"
-                          >{{ i + 1 }} · {{ c.to - c.from }} ch</span
-                        ><span class="min-w-0 flex-1 text-zinc-600 dark:text-zinc-300"
-                          >{{ (s.audio.said ?? s.text).slice(c.from, c.to)
-                          }}<span
-                            v-if="c.at"
-                            class="ml-2 font-mono text-[10px]"
-                            :class="c.fallback ? 'text-amber-600' : 'text-zinc-400'"
-                            ><CutIcon class="icon-sm" /> {{ AT[c.at]
-                            }}{{ c.fallback ? " (fallback)" : "" }}</span
-                          ></span
-                        >
-                      </li>
-                    </ol>
-                  </details>
-                </div>
-              </td>
-            </tr>
+            <TakeCompare
+              v-if="s.candidate"
+              :segment="s"
+              :position="reviewPosition(s)"
+              :total="bookReviewable.length"
+              @decide="(keep) => decideTake(s, keep)"
+            />
+            <RenderDetails
+              v-if="expanded.has(s.id)"
+              :book-id="bookId"
+              :chapter-id="chapterId"
+              :segment="s"
+              @retry="narrationStore.retrySegment(bookId, chapterId, s.id)"
+            />
           </template>
         </tbody>
       </table>
@@ -1114,105 +666,6 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
       </div>
     </div>
 
-    <div
-      class="border-t border-zinc-200 bg-zinc-50 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900/60"
-    >
-      <div class="flex items-center gap-3">
-        <div class="flex shrink-0 items-center gap-0.5">
-          <button class="icon-btn" :disabled="!isChapter" title="previous line" @click="prev()">
-            <PrevIcon class="icon-sm" />
-          </button>
-          <button
-            class="icon-btn"
-            :disabled="!isChapter"
-            title="back 10 seconds"
-            @click="skip(-10)"
-          >
-            <BackIcon class="icon-sm" />
-          </button>
-          <button
-            class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-violet-600 text-white disabled:opacity-40"
-            :disabled="!total"
-            title="play the stitched chapter (space)"
-            @click="playChapter()"
-          >
-            <component
-              :is="isChapter && p.playing ? PauseIcon : PlayIcon"
-              class="icon-lg icon-fill"
-            />
-          </button>
-          <button
-            class="icon-btn"
-            :disabled="!isChapter"
-            title="forward 10 seconds"
-            @click="skip(10)"
-          >
-            <FwdIcon class="icon-sm" />
-          </button>
-          <button class="icon-btn" :disabled="!isChapter" title="next line" @click="next()">
-            <NextIcon class="icon-sm" />
-          </button>
-        </div>
-        <div class="min-w-0 flex-1">
-          <div class="mb-1 flex items-center justify-between text-xs">
-            <span class="truncate"
-              ><b v-if="currentId"
-                >#{{ currentId }} {{ segments.find((s) => s.id === currentId)?.speaker }}</b
-              ><span v-else-if="isChapter && p.playing" class="text-zinc-500">silence</span
-              ><span v-else class="text-zinc-500">{{
-                total ? "Stitched chapter · click the bar to scrub" : "No audio yet"
-              }}</span>
-              <span v-if="total && !p.live" class="ml-1 text-[10px] text-amber-600"
-                >timed, not heard — no rendered files in the prototype</span
-              ></span
-            >
-            <span class="flex items-center gap-2">
-              <button
-                class="rounded border border-zinc-200 px-1 font-mono text-[10px] text-zinc-500 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
-                title="playback speed"
-                @click="cycleRate()"
-              >
-                {{ p.rate }}×
-              </button>
-              <span class="font-mono text-zinc-500"
-                >{{ fmt(isChapter ? p.pos : 0) }} / {{ fmt(total) }}</span
-              >
-            </span>
-          </div>
-          <div class="relative h-5 cursor-pointer overflow-hidden rounded" @click="scrub">
-            <div class="absolute inset-0 flex gap-px">
-              <template v-for="x in timeline" :key="x.s.id">
-                <div
-                  class="h-full"
-                  :style="{
-                    width: ((x.end - x.start) / total) * 100 + '%',
-                    background: colorOf(x.s.speaker),
-                    opacity: x.s.audio.status === 'stale' ? 0.35 : 0.75,
-                  }"
-                  :title="`#${x.s.id} ${x.s.speaker}`"
-                ></div>
-                <div
-                  v-if="x.gap"
-                  class="h-full bg-zinc-200 dark:bg-zinc-700"
-                  :style="{ width: (x.gap / total) * 100 + '%' }"
-                  :title="`${secs(x.gap)} of silence${x.s.pause != null ? ' — set on this line' : ''}`"
-                ></div>
-              </template>
-              <div v-if="!timeline.length" class="h-full w-full bg-zinc-200 dark:bg-zinc-800"></div>
-            </div>
-            <div
-              v-if="isChapter"
-              class="absolute inset-y-0 left-0 bg-black/25 dark:bg-white/25"
-              :style="{ width: (total ? (p.pos / total) * 100 : 0) + '%' }"
-            ></div>
-            <div
-              v-if="isChapter"
-              class="absolute inset-y-0 w-0.5 bg-black dark:bg-white"
-              :style="{ left: (total ? (p.pos / total) * 100 : 0) + '%' }"
-            ></div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <ChapterTransport ref="transport" :book-id="bookId" :chapter-id="chapterId" />
   </div>
 </template>

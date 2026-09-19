@@ -18,6 +18,7 @@ import {
   usageFormatFor,
 } from "@/mock/simulators/usage";
 import { clock, simMs } from "@/mock/simulators/clock";
+import { abandoned } from "@/mock/simulators/context";
 import type { SimulatorContext } from "@/mock/simulators/context";
 import type {
   Book,
@@ -109,8 +110,9 @@ export function simulateScriptRun(ctx: ScriptSimContext, plan: ScriptRun): void 
   /** some providers bill and report a charge per request; that number beats our arithmetic */
   const reportsCost = reportsOwnCost(profile.name, profile.baseUrl);
   const t = setInterval(() => {
-    // the world this run was planned against is gone: stop without writing to the new one
-    if (ctx.stale()) {
+    // the world this run was planned against is gone, or the job was settled from outside this
+    // loop: drop the timer rather than leave it ticking against work nobody is watching
+    if (abandoned(ctx, job)) {
       clearInterval(t);
       return;
     }

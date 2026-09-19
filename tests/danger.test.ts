@@ -161,6 +161,21 @@ describe("the toast says what the question used to say", () => {
     expect(last().options.description).not.toContain("in flight");
   });
 
+  test("removing a volume names the runs inside it, which Undo cannot bring back", () => {
+    const book = libraryStore.bookById("cliche")!;
+    const inside = libraryStore
+      .chaptersOf("cliche")
+      .find((c) => c.volumeId === book.volumes[0].id)!;
+    for (const j of jobsStore.jobs) if (!j.finishedAt) j.status = "done";
+    startJob("cliche", inside.id);
+    libraryStore.removeVolume("cliche", book.volumes[0].id);
+    expect(last().options.description).toContain("1 run in flight was cancelled");
+    expect(last().options.description).toContain("does not come back with Undo");
+    // and the undo really does leave it out, so the sentence is not decoration
+    last().options.undo!();
+    expect(jobsStore.jobs.some((j) => j.id === 9001)).toBe(false);
+  });
+
   test("only the volume's own runs are counted, not the rest of the book's", () => {
     const book = libraryStore.bookById("cliche")!;
     const elsewhere = libraryStore

@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
+// fractions of a cent stay visible: a short run really can cost less than a cent, and rounding
+// that to "$0.00" reads as free
+import { money } from "@/lib/pricing";
 import { useEndpointsStore } from "@/stores/endpoints";
-import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
@@ -15,9 +17,6 @@ import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
 import { isNarrated } from "@/lib/scriptReview";
 import { runActionLabel, runSummary, SCOPE_LABEL, skipSummary } from "@/lib/runPlan";
-// fractions of a cent stay visible: a short run really can cost less than a cent, and rounding
-// that to "$0.00" reads as free
-import { money } from "@/lib/endpoints";
 import type { NarrationScope } from "@/types";
 import EmptyState from "@/components/EmptyState.vue";
 import { UiToggleGroup } from "@/ui";
@@ -35,7 +34,6 @@ import JobLedger from "@/views/narration/JobLedger.vue";
 import { useBookId } from "@/composables/useBookId";
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
-const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
 const scriptsStore = useScriptsStore();
@@ -92,6 +90,11 @@ const est = computed(() =>
 /**
  * What stops this run starting, in the order worth fixing. It lives here rather than in the
  * estimate panel because the strip has to say how many there are while the panel is closed.
+ *
+ * What the *run* refuses is asked of the store: `narrationStore.blockers` is built on the same
+ * `_worstCase` `_budgetBlocked` gates every entry point with — a per-endpoint sum of undiscounted
+ * prices — so the strip cannot green-light a press the store then turns down with a toast. This
+ * view only adds the setup the page itself is about: the cast, the endpoints and the book's pause.
  */
 const blockers = computed(() => {
   const b: string[] = [];
@@ -101,24 +104,7 @@ const blockers = computed(() => {
   if (!est.value.endpoints) b.push("Enable at least one endpoint.");
   const book = libraryStore.bookById(bookId);
   if (book?.budget?.paused) b.push("This book is paused (overview → resume).");
-  // A cap is checked against the **undiscounted** price, and against what is already spent *and*
-  // already held by work in flight. An off-peak window can close and a promotion can expire while a
-  // run over a book is still going, so a cap that only holds while a discount lasts is not a cap —
-  // the same rule the scripting estimate uses, and the same one the narration store enforces at
-  // every entry point, this panel included.
-  const worstCase = Math.max(est.value.cost, est.value.withoutPromotions);
-  const spent = jobsStore.spent(bookId);
-  const held = jobsStore.reserved(bookId);
-  if (book?.budget?.cap && spent + held + worstCase > book.budget.cap)
-    b.push(
-      `Over the $${book.budget.cap} budget cap: $${spent.toFixed(2)} spent` +
-        (held > 0 ? ` + $${held.toFixed(2)} held by work already running` : "") +
-        ` + $${worstCase.toFixed(2)} for this run${
-          worstCase > est.value.cost + 1e-9
-            ? " without today’s discounts, which can end mid-run"
-            : ""
-        }.`,
-    );
+  b.push(...narrationStore.blockers(bookId, selected.value, scope.value, keepPending.value));
   const byReason: Record<string, string[]> = {};
   for (const i of castStore.routingIssues(bookId)) (byReason[i.reason] ??= []).push(i.name);
   for (const [reason, names] of Object.entries(byReason))

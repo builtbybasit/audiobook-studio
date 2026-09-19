@@ -53,7 +53,6 @@ import {
   endpointErrors,
   ensureOps,
   healthOf,
-  money,
   opsOf,
   speechPricing,
   unifyEndpoint,
@@ -61,7 +60,7 @@ import {
 } from "@/lib/endpoints";
 import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
 import { bindCredential } from "@/lib/credentials";
-import { ensurePricing, pricingOf } from "@/lib/pricing";
+import { ensurePricing, money, pricingOf } from "@/lib/pricing";
 import { usageFormatFor } from "@/mock/simulators/usage";
 import { useEndpointActivity } from "@/views/endpoints/live";
 const { jobsUsing, liveActivity, liveRequests } = useEndpointActivity();

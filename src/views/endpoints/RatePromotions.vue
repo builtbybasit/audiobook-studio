@@ -15,19 +15,22 @@ import {
   COMPONENT_LABEL,
   SCOPE_LABEL,
   scopeActive,
-  calendarDay,
-  endOfDay,
-  endOfDayAfter,
+  effectiveRates,
   money,
   promotionExpired,
   promotionPending,
   promotionRunning,
   rateSuffix,
   rateWithUnit,
+} from "@/lib/pricing";
+import {
+  calendarDay,
+  endOfDay,
+  endOfDayAfter,
   stamp,
   startOfDay,
   whenPhrase,
-} from "@/lib/pricing";
+} from "@/lib/wallClock";
 import type {
   PricingConfig,
   PricingSnapshot,
@@ -142,16 +145,33 @@ function toggleScope(p: Promotion, scope: PromotionScope) {
   p.scope = next.length ? next : ["model"];
 }
 
-/** What this promotion does to each component it covers, at today's rates. */
+/**
+ * What this promotion does to each component it covers, at today's rates.
+ *
+ * Priced through `effectiveRates` rather than re-derived: the owner's chain is base → scheduled →
+ * promoted, so inside an active window the "from" is what the schedule already made the rate and
+ * the percentage lands on *that* number. Working it off the card rate quoted a "from" this endpoint
+ * is not charging and a "to" nobody would be billed — while the panel above it, reading the same
+ * three steps, showed the right ones a few hundred pixels away.
+ *
+ * The promotion is resolved alone and with its dates dropped, so a scheduled or ended one still
+ * says what it would do, and a running neighbour that outranks it does not hide it.
+ */
 function preview(p: Promotion): string {
+  const alone = effectiveRates(
+    props.base,
+    { ...props.config, promotions: [{ ...p, from: null, until: null }] },
+    props.now,
+    props.unit,
+  );
   const parts: string[] = [];
   for (const c of props.components) {
-    if (!p.scope.includes("model") && !p.scope.includes(c)) continue;
-    const from = props.base[c];
-    if (from == null) continue;
-    const to =
-      p.rates?.[c] != null ? p.rates[c]! : p.percent != null ? from * (1 - p.percent / 100) : from;
-    parts.push(`${COMPONENT_LABEL[c]} ${money(from)} → ${rateWithUnit(to, c, props.unit)}`);
+    // `scopeActive`, not membership: a `speech`-scoped promotion reaches the two token rates of a
+    // token-billed endpoint, which is what the chip beside it already says it does
+    if (!scopeActive(p, c, props.components)) continue;
+    const { scheduled, rate } = alone.components[c];
+    if (scheduled == null) continue;
+    parts.push(`${COMPONENT_LABEL[c]} ${money(scheduled)} → ${rateWithUnit(rate, c, props.unit)}`);
   }
   return parts.length ? parts.join(" · ") : "nothing this endpoint prices";
 }
@@ -298,7 +318,7 @@ function preview(p: Promotion): string {
             <template v-else>
               <UiNumber
                 v-for="c in components.filter(
-                  (c) => (p.scope.includes('model') || p.scope.includes(c)) && base[c] != null,
+                  (c) => scopeActive(p, c, components) && base[c] != null,
                 )"
                 :key="c"
                 :model-value="p.rates![c] ?? base[c]"

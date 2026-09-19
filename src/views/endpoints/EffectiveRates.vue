@@ -19,9 +19,8 @@ import {
   money,
   rateSuffix,
   rateWithUnit,
-  stamp,
-  whenPhrase,
 } from "@/lib/pricing";
+import { stamp, whenPhrase } from "@/lib/wallClock";
 import type { PricingSnapshot, RateComponent, TtsBillingUnit } from "@/types";
 
 const props = defineProps<{

@@ -66,8 +66,15 @@ export interface NarrationEstimate {
   audioCost: number | null;
   /** requests routed to an endpoint whose rate is not known, so they are missing from `cost` */
   unpriced: number;
-  /** the same run with every discount gone — what the budget is checked against */
+  /** the same run with every discount gone */
   withoutPromotions: number;
+  /**
+   * What the book's cap is actually checked against: the **per-endpoint** sum of each share's
+   * dearer figure, `Σ max(cost, withoutPromotions)`. Not `max(cost, withoutPromotions)` over the
+   * totals above — two endpoints on different discounts do not add up the same way, and the
+   * aggregate reading can sit under the figure `_budgetBlocked` refuses the run on.
+   */
+  worstCase: number;
   /** what could move the figure before the last clip lands, in sentences */
   cautions: string[];
   stale: number;

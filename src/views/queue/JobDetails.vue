@@ -45,7 +45,10 @@ const events = computed(() => props.job?.activity ?? []);
 /** The other chapters of the same bulk run, so the panel can act on the run rather than one row. */
 const siblings = computed(() => (props.job?.bulk ? jobsStore.runJobs(props.job.bulk.id) : []));
 const runDone = computed(() => siblings.value.filter((j) => j.status === "done").length);
-const runFailed = computed(() => siblings.value.filter((j) => j.status === "failed").length);
+// the same clause `retryRunFailures` applies, so "Retry N failed" offers exactly what it re-runs
+const runFailed = computed(
+  () => siblings.value.filter((j) => j.status === "failed" && j.chapterId !== null).length,
+);
 const runLeft = computed(() => siblings.value.filter((j) => !j.finishedAt).length);
 const runRunning = computed(() => siblings.value.filter((j) => j.status === "running").length);
 // stopping the rest of a run cannot be undone, so it is the one control here that asks first. The

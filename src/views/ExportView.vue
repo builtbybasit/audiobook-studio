@@ -21,9 +21,9 @@ import { useUiStore } from "@/stores/ui";
 // ticks arrive filled in, and the same review asks the same questions before anything is built.
 import { computed, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { isNarrated } from "@/lib/scriptReview";
+import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { useBookId } from "@/composables/useBookId";
-import { DEFAULT_EXPORT_SETTINGS, readinessOf } from "@/lib/exports";
+import { DEFAULT_EXPORT_SETTINGS, usable } from "@/lib/exports";
 import { queryIds } from "@/lib/query";
 import { plural } from "@/views/export/shared";
 import EmptyState from "@/components/EmptyState.vue";
@@ -65,11 +65,14 @@ function reset() {
     filename: b.title,
     grouping: b.volumes.length > 1 ? "volume" : "single",
   });
-  // everything that has audio, stale included: a stale chapter left out on your behalf is exactly
-  // the omission this page is meant not to make. It opens as a decision, not as a silent gap.
+  // everything that has audio, stale and partly narrated included: a chapter left out on your
+  // behalf is exactly the omission this page is meant not to make. It opens as a decision — the
+  // review names it as a blocker — not as a silent gap. `usable` is the one definition of "carries
+  // audio a build can use", and the exports store reads the same one to decide whether a build
+  // covers the whole book, so ticking a narrower set quietly filed the build as a chosen subset.
   selected.value = libraryStore
     .chaptersOf(bookId)
-    .filter((c) => ["ready", "stale"].includes(readinessOf(c)))
+    .filter(usable)
     .map((c) => c.id);
   updates.value = null;
 }
@@ -145,7 +148,7 @@ function drop(ids: number[]) {
 }
 function narrate(ids: number[]) {
   const chapters = libraryStore.chaptersOf(bookId).filter((c) => ids.includes(c.id));
-  const scripted = chapters.filter((c) => c.scripting === "done" || c.scripting === "fallback");
+  const scripted = chapters.filter(isScripted);
   const unscripted = chapters.filter((c) => !scripted.includes(c));
   if (!scripted.length) {
     uiStore.toast(
@@ -158,15 +161,15 @@ function narrate(ids: number[]) {
     );
     return;
   }
-  // a chapter that failed part-way only needs the lines that failed; the rest is already rendered
-  const partial = scripted.filter((c) => c.narration === "failed" && c.duration > 0);
-  for (const c of partial) narrationStore.retryFailed(bookId, c.id);
-  const whole = scripted.filter((c) => !partial.includes(c));
-  if (whole.length)
-    narrationStore.runNarration(
-      bookId,
-      whole.map((c) => c.id),
-    );
+  // One run, and the plan decides what each chapter contributes. Splitting it on the chapter's
+  // *label* sent a chapter whose clips are fine but whose retake failed down the "everything" path,
+  // re-rendering lines that had already succeeded and displacing good clips; "missing & changed" is
+  // what this button is for — the lines with no usable clip and the ones the script has moved past.
+  narrationStore.runNarration(
+    bookId,
+    scripted.map((c) => c.id),
+    { scope: "fill" },
+  );
   // say what was queued *and* what was not: a chapter left behind here is one the build still wants
   uiStore.toast(`Narrating ${plural(scripted.length, "chapter")}`, {
     kind: "info",

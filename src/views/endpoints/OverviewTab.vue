@@ -16,10 +16,10 @@ import {
   compact,
   duration,
   metricValue,
-  money,
   throughputLabel,
   throughputUnit,
 } from "@/lib/endpoints";
+import { money } from "@/lib/pricing";
 import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
 import type { MetricBucket, MetricSeries, RangeKey } from "@/types";
 

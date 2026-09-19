@@ -19,17 +19,13 @@ import {
 } from "@lucide/vue";
 import {
   COMPONENT_LABEL,
-  DAY_SHORT,
-  clockLabel,
   crossesMidnight,
-  localClock,
   money,
-  parseClock,
   rateSuffix,
   rateWithUnit,
-  timezoneValid,
   windowCovers,
 } from "@/lib/pricing";
+import { clockLabel, DAY_SHORT, localClock, parseClock, timezoneValid } from "@/lib/wallClock";
 import type { PricingConfig, RateComponent, RateSet, RateWindow, TtsBillingUnit } from "@/types";
 
 const props = defineProps<{

@@ -3,6 +3,7 @@
 // build like any other job.
 import { jobWaiting, logJob } from "@/lib/jobActivity";
 import { clock } from "@/mock/simulators/clock";
+import { abandoned } from "@/mock/simulators/context";
 import type { SimulatorContext } from "@/mock/simulators/context";
 import type { ExportItem, Job } from "@/types";
 
@@ -132,7 +133,7 @@ export function runBuild(
     // `step` clears this interval when the build lands, but a job settled from outside — a demo
     // reset abandoning it, a cancellation elsewhere — never reaches `step` at all, so the timer is
     // dropped here rather than left ticking against a build nothing is watching
-    if (ctx.stale() || job.finishedAt) {
+    if (abandoned(ctx, job)) {
       clearInterval(t);
       return;
     }

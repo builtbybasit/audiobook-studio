@@ -61,12 +61,11 @@ const counts = computed(() => ({
   failed: jobsStore.jobs.filter((j) => j.status === "failed").length,
 }));
 const filter = ref("all");
-const retryable = computed(
-  () =>
-    history.value.filter(
-      (j) => j.status === "failed" && j.kind !== "export" && chapter(j)?.[j.kind] === "failed",
-    ).length,
-);
+// What "retry failed" would actually re-run, asked of the store rather than re-derived here. A
+// chapter's *label* cannot answer it — a failed re-script puts the status back and a failed
+// narration replacement leaves the chapter reading as narrated — so counting labels both hid this
+// button in the two cases it exists for and quoted the wrong number when it did show.
+const retryable = computed(() => jobsStore.retryableFailures().length);
 const shown = computed(() =>
   filter.value === "all" ? history.value : history.value.filter((j) => j.status === filter.value),
 );
@@ -88,6 +87,13 @@ function segStats(j: Job) {
     failed: segs.filter((s) => s.audio.status === "failed").length,
   };
 }
+// One scan per running row, not one per number on it: the four figures below a narration row are
+// the same scan, and the row re-renders twice a second while the clock ticks.
+const segStatsOf = computed(() => {
+  const by: Record<number, ReturnType<typeof segStats>> = {};
+  for (const j of running.value) by[j.id] = segStats(j);
+  return by;
+});
 const stageLink = (j: Job) => ({
   path: `/book/${j.bookId}/${j.kind === "export" ? "export" : j.kind}`,
   query:
@@ -98,9 +104,12 @@ const stageLink = (j: Job) => ({
           ...(j.kind === "narration" && j.status === "failed" ? { filter: "failed" } : {}),
         },
 });
+// The estimate counts down, so it is re-read as the clock advances. The tick is used in the
+// expression rather than parked in a spare const: a `const _tick = now.value` nobody reads is the
+// first thing a "remove unused variable" pass deletes, and deleting it silently freezes the ETA.
 const eta = computed(() => {
-  const _tick = now.value; // re-read the estimate as the clock advances
-  return jobsStore.eta;
+  const e = jobsStore.eta;
+  return e && { ...e, at: now.value + e.seconds * 1000 };
 });
 const finishAt = computed(() =>
   eta.value
@@ -264,16 +273,18 @@ async function toggleNotify() {
                 class="mt-2 flex gap-3 pl-11 text-xs text-zinc-500"
               >
                 <span
-                  ><b class="text-emerald-500">{{ segStats(j).done }}</b> done</span
+                  ><b class="text-emerald-500">{{ segStatsOf[j.id].done }}</b> done</span
                 >
                 <span
-                  ><b class="text-violet-500">{{ segStats(j).gen }}</b> generating</span
+                  ><b class="text-violet-500">{{ segStatsOf[j.id].gen }}</b> generating</span
                 >
                 <span
-                  ><b :class="segStats(j).failed ? 'text-red-500' : ''">{{ segStats(j).failed }}</b>
+                  ><b :class="segStatsOf[j.id].failed ? 'text-red-500' : ''">{{
+                    segStatsOf[j.id].failed
+                  }}</b>
                   failed</span
                 >
-                <span>of {{ segStats(j).total }} segments</span>
+                <span>of {{ segStatsOf[j.id].total }} segments</span>
               </div>
             </div>
           </div>
@@ -413,7 +424,10 @@ async function toggleNotify() {
                   </td>
                   <td class="w-28 pr-4 text-right">
                     <button
-                      v-if="j.status !== 'done' && (j.kind !== 'export' || j.exportRun)"
+                      v-if="
+                        j.status !== 'done' &&
+                        (j.kind === 'export' ? !!j.exportRun : j.chapterId != null)
+                      "
                       class="btn-ghost btn-xs"
                       @click="jobsStore.retryJob(j.id)"
                     >

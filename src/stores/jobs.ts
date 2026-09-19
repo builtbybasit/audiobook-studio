@@ -1,7 +1,7 @@
 // Shared queue and accounting across books and stages. IDs are scoped to this Pinia instance.
 import { usable } from "@/lib/exports";
 import { logJob } from "@/lib/jobActivity";
-import { chapterNarration } from "@/lib/runPlan";
+import { chapterNarration, segmentFailed } from "@/lib/runPlan";
 import { makeJobHistory } from "@/mock";
 import type {
   EndpointLoad,
@@ -300,9 +300,7 @@ export const useJobsStore = defineStore("jobs", {
         // A retry renders what failed, never what already worked. A replacement that failed counts
         // as a failure even though the chapter still reads as narrated — its own clip was never
         // touched — so the failures are looked for on the clips, not on the chapter's status.
-        const failed = scriptsStore
-          .segmentsOf(job.bookId, c.id)
-          .some((x) => x.audio.status === "failed" || x.candidate?.status === "failed");
+        const failed = scriptsStore.segmentsOf(job.bookId, c.id).some(segmentFailed);
         narrationStore.runNarration(job.bookId, [c.id], {
           scope: failed ? "failed" : "fill",
           quiet: true,
@@ -328,36 +326,52 @@ export const useJobsStore = defineStore("jobs", {
       for (const j of this.jobs.filter((j) => j.status === "queued")) this.cancelJob(j.id);
       for (const j of this.jobs.filter((j) => j.status === "running")) this.cancelJob(j.id);
     },
-    retryAllFailed(): void {
+    /**
+     * The failed jobs "Retry all failed" would actually re-run — one per chapter, newest kept.
+     *
+     * Asked of the work and the queue, never of the chapter's label: a re-script that failed puts
+     * the chapter's status back to what it was, and a chapter whose *replacements* failed still
+     * reads as narrated because the book's own clips were never touched, so in both cases
+     * "did this chapter end up failed" cannot say whether this job's work is still missing. What can
+     * is the queue — the chapter must not already be busy, and a later run that already did the work
+     * makes this failure old news, so retrying past it would re-send requests the ledger has been
+     * charged for once already.
+     *
+     * The queue's "Retry failed (N)" button reads this list, so the count it offers and the work the
+     * button does are the same answer.
+     */
+    retryableFailures(): Job[] {
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
 
-      // one retry per chapter, grouped by book so each book's chapters queue in order
+      // One retry per chapter, and it must be the chapter's **most recent** failure: jobs are
+      // appended, so walking them oldest-first would let a stale failure that a later run already
+      // made good claim the chapter, be discarded by `_supersededBy`, and take the current failure
+      // with it — leaving a chapter with failed clips out of both the count and the retry.
       const seen = new Set<string>();
-      for (const j of this.jobs.filter((j) => j.status === "failed" && j.kind !== "export")) {
+      const out: Job[] = [];
+      for (const j of this.jobs
+        .filter((j) => j.status === "failed" && j.kind !== "export")
+        .reverse()) {
         const key = `${j.kind}:${j.bookId}:${j.chapterId}`;
         if (seen.has(key)) continue;
         seen.add(key);
         const c = j.chapterId == null ? undefined : libraryStore.chapter(j.bookId, j.chapterId);
-        if (!c) continue;
-        // A re-script that failed puts the chapter's status back to what it was, so "did this
-        // chapter end up failed" cannot say whether this job's work is still missing. What can is
-        // the queue itself: retry unless the chapter is busy or a later run already did the work.
-        if (
-          j.kind === "scripting" &&
-          !["queued", "running"].includes(c.scripting) &&
-          !this._supersededBy(j)
-        )
-          this.retryJob(j.id);
-        // a chapter whose replacements failed still reads as narrated — the book's own clips are
-        // fine — so the failed requests are looked for on the clips, not only on the chapter
+        if (!c || this._supersededBy(j)) continue;
+        if (j.kind === "scripting" && !["queued", "running"].includes(c.scripting)) out.push(j);
         if (
           j.kind === "narration" &&
-          (c.narration === "failed" ||
-            scriptsStore.segmentsOf(j.bookId, c.id).some((s) => s.candidate?.status === "failed"))
+          scriptsStore.segmentsOf(j.bookId, c.id).some(segmentFailed) &&
+          !["queued", "running"].includes(c.narration)
         )
-          this.retryJob(j.id);
+          out.push(j);
       }
+      // scanned newest-first to pick the right job per chapter; handed back in queue order, so a
+      // retry of several chapters submits them the way they were originally run
+      return out.reverse();
+    },
+    retryAllFailed(): void {
+      for (const j of this.retryableFailures()) this.retryJob(j.id);
     },
     // ---------- scripting ----------
     scriptingTelemetry(id: string): ScriptEndpointTelemetry {

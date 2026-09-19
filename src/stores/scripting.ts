@@ -41,6 +41,7 @@ export const useScriptingStore = defineStore("scripting", {
         return scriptingPlan(
           libraryStore.chaptersOf(bookId).filter((c) => ids.includes(c.id)),
           (c) => (usable ? scriptParts(scriptsStore.rawText(bookId, c.id), p!).length : 0),
+          (c) => scriptsStore.segmentsOf(bookId, c.id).length > 0,
         );
       };
     },
@@ -59,12 +60,10 @@ export const useScriptingStore = defineStore("scripting", {
         ids: number[],
         retrySegmentId: number | null = null,
       ): ScriptEstimate => {
-        const chs = libraryStore
-          .chaptersOf(bookId)
-          .filter(
-            (c) =>
-              ids.includes(c.id) && !c.excluded && !["running", "queued"].includes(c.scripting),
-          );
+        // the plan decides which chapters a run would touch; the estimate prices exactly those
+        const chs = this.scriptPlan(bookId, ids).chapters.map((row) =>
+          libraryStore.chapter(bookId, row.id)!,
+        );
         const p = endpointsStore.profiles.find((p) => p.id === this.scriptSettings.profile);
         const blockers = p ? profileErrors(p) : ["Select a scripting endpoint."];
         if (p && !p.enabled) blockers.push("This endpoint is paused. Enable it or select another.");
@@ -188,20 +187,16 @@ export const useScriptingStore = defineStore("scripting", {
           ? scriptsStore.rawText(bookId, chId)
           : (scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === retrySegmentId)?.text ??
             "");
-      const chs = libraryStore.chapters[bookId].filter(
-        (c) =>
-          ids.includes(c.id) &&
-          !c.excluded &&
-          c.scripting !== "running" &&
-          c.scripting !== "queued",
-      );
+      // the run queues exactly what the plan counted, in the plan's order, and reads "is there a
+      // script to replace" off the same row the button's label was built from
+      const rows = plan.chapters;
+      const chs = rows.map((row) => libraryStore.chapter(bookId, row.id)!);
       const runId = jobsStore._nextRunId();
       const op = retrySegmentId === null ? runActionLabel(plan) : "Re-split one chunk";
       // one instant for the whole run, so the per-chapter estimates add up to the run's own figure
       const plannedAt = Date.now();
       const jobs = chs.map((c, i) => {
-        const replacing =
-          retrySegmentId === null && !!scriptsStore.segments[key(bookId, c.id)]?.length;
+        const replacing = retrySegmentId === null && rows[i].contribution === "replace";
         // re-scripting: remember what we had so the reader can show what changed (and re-apply
         // manual corrections), and what status to go back to if this attempt produces nothing
         const was = c.scripting;

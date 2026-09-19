@@ -33,7 +33,8 @@ import {
   ChartTooltipContent,
   componentToString,
 } from "@/components/ui/chart";
-import { metricValue, money, throughputUnit } from "@/lib/endpoints";
+import { metricValue, throughputUnit } from "@/lib/endpoints";
+import { money } from "@/lib/pricing";
 import { UiToggleGroup } from "@/ui";
 
 const props = defineProps<{

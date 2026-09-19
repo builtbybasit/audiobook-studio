@@ -8,7 +8,8 @@
 // Nothing here starts a timer or touches a store. A situation mutates the entities the context
 // hands it and reports what it did; the caller owns the state, the queue and the clock — exactly
 // the split the simulators use.
-import { clockLabel, localTimezone, money as rateMoney, promotionRunning } from "@/lib/pricing";
+import { money as rateMoney, promotionRunning } from "@/lib/pricing";
+import { clockLabel, localTimezone } from "@/lib/wallClock";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { snapshotScript } from "@/lib/scriptHistory";
 import { snapshotTake } from "@/lib/takes";

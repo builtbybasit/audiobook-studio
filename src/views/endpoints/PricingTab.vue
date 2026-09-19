@@ -18,15 +18,17 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import { UiNumber, UiSwitch, UiTooltip } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
-import { billingOf, money, opsOf, perMillionChars, speechPricing } from "@/lib/endpoints";
+import { billingOf, opsOf, speechPricing } from "@/lib/endpoints";
 import {
-  TOKEN_COMPONENTS,
   baseRates,
   effectiveRates,
   ensurePricing,
+  money,
+  perMillionChars,
   pricingWarnings,
   speechComponents,
   speechRateKnown,
+  TOKEN_COMPONENTS,
 } from "@/lib/pricing";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import BillingModel from "@/views/endpoints/BillingModel.vue";
@@ -79,7 +81,11 @@ const card = computed(() =>
 );
 const config = computed(() => card.value.config);
 const base = computed(() => card.value.base);
-const snapshot = computed(() => effectiveRates(base.value, config.value, now.value));
+// the unit travels with the rates: without it every reason string falls back to the per-character
+// suffix, and a per-audio-minute or per-request endpoint reads "Night rate: $0.30 / 1M chars"
+const snapshot = computed(() =>
+  effectiveRates(base.value, config.value, now.value, card.value.unit),
+);
 const warnings = computed(() => pricingWarnings(base.value, config.value, now.value));
 /** Whether the advanced sections start open: an endpoint that already uses them. */
 const hasSchedule = computed(() => !!config.value?.windows.length);
@@ -354,19 +360,27 @@ const limitUsed = computed(() =>
         </div>
         <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
           <dt class="text-xs font-medium">Reserved</dt>
+          <!-- A reservation is held against a *book's* cap and records no endpoint, so there is no
+               honest per-endpoint figure to show here. The number says what it is instead of
+               implying it belongs to the endpoint whose tab it is on. -->
           <dd class="mt-1 font-mono text-sm">
             {{
               u.kind === "scripting"
                 ? money(libraryStore.books.reduce((n, b) => n + jobsStore.scriptReserved(b.id), 0))
                 : "—"
             }}
+            <span v-if="u.kind === 'scripting'" class="font-sans text-[11px] text-zinc-500"
+              >· every book, every scripting endpoint</span
+            >
           </dd>
           <dd class="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
             <template v-if="u.kind === 'scripting'"
               >Held against the budget while requests are in flight — input cost plus the
               <b>whole</b> output ceiling, at the <b>undiscounted</b> rates, so neither a long
               answer nor a promotion ending mid-run can push a run past its cap. Released and
-              replaced by the real figure when each request settles.</template
+              replaced by the real figure when each request settles. A reservation is held against a
+              <b>book’s</b> cap and does not record which endpoint will serve it, so this is the
+              whole queue’s scripting reservation rather than this endpoint’s share of it.</template
             >
             <template v-else
               >Speech requests aren’t reserved: their cost is known from the text before they are

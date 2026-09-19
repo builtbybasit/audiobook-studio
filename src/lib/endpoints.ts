@@ -316,24 +316,9 @@ export function voicesFromFishModels(items: FishModel[]): Voice[] {
 }
 
 // ---------- billing ----------
-// The units, the conversion and the arithmetic live in `lib/pricing.ts` beside the schedules and
-// promotions that now move a speech rate too; re-exported here so every existing import still works.
-
-export {
-  AUDIO_CHARS_PER_SECOND,
-  BILLING_SUFFIX,
-  BILLING_UNITS,
-  billableChars,
-  billingUnitLabel,
-  billsAudioTokens,
-  CHARS_PER_TOKEN,
-  DEFAULT_AUDIO_TOKENS_PER_SECOND,
-  measureSpeech,
-  perMillionChars,
-  speechComponents,
-  ttsCost,
-  utf8Bytes,
-} from "@/lib/pricing";
+// The units, the conversion and the arithmetic live in `lib/pricing.ts`, beside the schedules and
+// promotions that move a speech rate too. Import them from there; this file adapts an `Endpoint`
+// onto them and does no pricing arithmetic of its own.
 
 /** This endpoint's billing model. An endpoint saved before billing models existed carried one
  *  per-1M-characters number, which is exactly what `chars` means, so that is what it becomes. */
@@ -343,10 +328,6 @@ export const billingOf = (e: Endpoint): TtsBilling => e.billing ?? { unit: "char
 export const speechPricing = (e: Endpoint) => speechPricingOf({ ...e, billing: billingOf(e) });
 
 // ---------- money ----------
-// One definition, in `lib/pricing.ts` beside the rates it formats, re-exported here so everything
-// that already imports money from this module keeps working.
-
-export { maybeMoney, money, rate } from "@/lib/pricing";
 
 /** The one-line pricing shown on a card — at the rates in force now, not the base card. */
 export function pricingLabel(u: UnifiedEndpoint, now: number = Date.now()): string {
@@ -517,11 +498,6 @@ export const WAIT_DETAIL: Record<WaitReason, string> = {
   ordered:
     "Chapters of one book run in order — an earlier chapter is still going through this endpoint.",
 };
-
-/** Where a request's cost figure came from — shown wherever a cost is, so "unknown" reads as a
- *  missing rate rather than a free request, and a figure we worked out is never passed off as one
- *  the provider billed. The wording lives with the pricing rules in `lib/pricing.ts`. */
-export { COST_BASIS_DETAIL, COST_BASIS_LABEL } from "@/lib/pricing";
 
 // ---------- formatting helpers shared by the page ----------
 

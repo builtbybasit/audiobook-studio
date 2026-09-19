@@ -2,7 +2,6 @@
 import { useCastStore } from "@/stores/cast";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
-import { useScriptsStore } from "@/stores/scripts";
 
 // How this book is *said*: the pronunciation dictionary on the left, the pacing defaults on the right.
 // Neither one edits the book — a term is swapped on its way to the endpoint and silence is stitched
@@ -23,7 +22,6 @@ const props = defineProps<{ bookId: string }>();
 const castStore = useCastStore();
 const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
-const scriptsStore = useScriptsStore();
 const list = computed(() => castStore.lexiconOf(props.bookId));
 const uses = computed(() => castStore.lexUses(props.bookId));
 const pacing = computed(() => castStore.pacingOf(props.bookId));
@@ -72,14 +70,20 @@ const said = (e: LexEntry) => speak(sample(e), [{ ...e, enabled: true }]).text;
 const staleChapters = computed(() =>
   libraryStore.chaptersOf(props.bookId).filter((c) => c.narration === "stale"),
 );
+// The count is the store's own list, not a second copy of it: `renarrateStale` queues
+// `changedSegments` — the stale clips *and*, in a chapter that has been narrated, the lines that
+// were never rendered — so counting only the stale ones here promised N and rendered more.
 const staleLines = computed(() =>
   staleChapters.value.reduce(
-    (a, c) =>
-      a +
-      scriptsStore.segmentsOf(props.bookId, c.id).filter((s) => s.audio.status === "stale").length,
+    (a, c) => a + narrationStore.changedSegments(props.bookId, c.id).length,
     0,
   ),
 );
+// One `renarrateStale` per chapter rather than one `runNarration` over all of them: the `fill`
+// scope is not the same set of lines. It also takes the failed ones, it takes never-rendered lines
+// in a chapter nobody has started, and it leaves out a line whose retake is still waiting for a
+// verdict — so a single run would queue work this button never counted. The loop is safe because
+// `_expressionGuard` merges a second block into the review already open rather than replacing it.
 function renarrate() {
   for (const c of staleChapters.value) narrationStore.renarrateStale(props.bookId, c.id);
 }
@@ -243,9 +247,10 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
       >
         <WarnIcon class="icon shrink-0" />
         <span class="min-w-0 flex-1"
-          >{{ staleLines }} rendered line{{ staleLines === 1 ? "" : "s" }} across
-          {{ staleChapters.length }} chapter{{ staleChapters.length === 1 ? "" : "s" }} still read
-          an older script or spelling.</span
+          >{{ staleLines }} line{{ staleLines === 1 ? "" : "s" }} across
+          {{ staleChapters.length }} chapter{{ staleChapters.length === 1 ? "" : "s" }} need
+          narrating again: their audio reads an older script or spelling, or was never
+          rendered.</span
         >
         <button class="btn-ghost btn-xs shrink-0 border-amber-400" @click="renarrate">
           <RetryIcon class="icon-sm" /> Re-narrate them

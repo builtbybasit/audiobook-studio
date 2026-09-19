@@ -87,10 +87,21 @@ export function selectionSummary(
 
 // ---------- which clips a narration scope actually runs ----------
 
+/**
+ * Does this line still carry a failed request? Asked of the work and never of the chapter's label:
+ * a replacement that failed leaves the chapter reading as narrated, because the clip in the book was
+ * never touched, so the failure is only visible on the line. Every retry path asks this one function
+ * — the scope filter below, the plan's `retrying` count, `retryJob`, `retryFailed` and
+ * `retryAllFailed` — because a second spelling is how one of them starts retrying a different set
+ * from the one the button counted.
+ */
+export const segmentFailed = (s: Segment): boolean =>
+  s.audio.status === "failed" || s.candidate?.status === "failed";
+
 /** One definition of "is this line in scope", shared by the estimate, the plan and the run. */
 function inScope(s: Segment, scope: NarrationScope): boolean {
   if (scope === "all") return true;
-  if (scope === "failed") return s.audio.status === "failed" || s.candidate?.status === "failed";
+  if (scope === "failed") return segmentFailed(s);
   return ["none", "stale", "failed"].includes(s.audio.status);
 }
 
@@ -148,6 +159,11 @@ export function narrationTargets(
  */
 export function chapterNarration(segs: Segment[]): NarrationStatus {
   if (!segs.length || segs.every((s) => s.audio.status === "none")) return "none";
+  // A chapter that is *part* rendered reads as `failed`, and deliberately so: a line with no clip is
+  // a gap in the audiobook, and `readinessOf` turns this exact reading into the export's "Partly
+  // narrated" blocker — "building now would leave gaps where those lines should be". Calling it
+  // `stale` instead would demote that hard blocker to a soft warning the build can be told to
+  // ignore, and ship a file with holes in it.
   if (segs.some((s) => !["done", "stale"].includes(s.audio.status))) return "failed";
   return segs.some((s) => s.audio.status === "stale") ? "stale" : "done";
 }
@@ -189,9 +205,19 @@ const skip = (c: Chapter, reason: RunSkipReason): RunSkip => ({
 
 /**
  * What re-scripting this selection would do. A chapter that already has a script is a replacement,
- * one that failed is a retry, and one that has never been scripted is new work.
+ * one that failed without leaving one is a retry, and one that has never been scripted is new work.
+ *
+ * Whether there is a script to replace is asked of the script (`hasScript`), not of the chapter's
+ * label, for the reason the store guide gives: a re-script that failed puts the chapter's status
+ * back and leaves the old script exactly where it was, so the label cannot say what is there. The
+ * run reads the same answer off this plan, which is what keeps the button's wording, the queue row's
+ * wording and the decision to snapshot `_previous` from being three separate readings.
  */
-export function scriptingPlan(chapters: Chapter[], requestsOf: (c: Chapter) => number): RunPlan {
+export function scriptingPlan(
+  chapters: Chapter[],
+  requestsOf: (c: Chapter) => number,
+  hasScript: (c: Chapter) => boolean,
+): RunPlan {
   const plan = emptyPlan("scripting", null);
   for (const c of chapters) {
     if (c.excluded) {
@@ -202,8 +228,11 @@ export function scriptingPlan(chapters: Chapter[], requestsOf: (c: Chapter) => n
       plan.skipped.push(skip(c, "running"));
       continue;
     }
-    const contribution: RunContribution =
-      c.scripting === "failed" ? "retry" : isScripted(c) ? "replace" : "new";
+    const contribution: RunContribution = hasScript(c)
+      ? "replace"
+      : c.scripting === "failed"
+        ? "retry"
+        : "new";
     plan.chapters.push({
       id: c.id,
       title: c.title,
@@ -248,15 +277,16 @@ export function narrationPlan(
     }
     const segs = opts.segmentsOf(c.id);
     const { run, pending } = narrationTargets(segs, scope, opts.keepPending);
-    // nothing to run and something waiting to be judged: the retakes are the reason, so say so
+    // nothing to run and something waiting to be judged: the retakes are the reason, so say so —
+    // and they are still retakes this selection is waiting on, so they count towards the total the
+    // estimate panel and the run's toast both quote. `tally` adds the surviving chapters' own.
     if (!run.length) {
+      plan.pending += pending.length;
       plan.skipped.push(skip(c, pending.length ? "pending" : "nothing"));
       continue;
     }
     const replacing = run.filter((s) => s.audio.duration > 0).length;
-    const retrying = run.filter(
-      (s) => s.audio.status === "failed" || s.candidate?.status === "failed",
-    ).length;
+    const retrying = run.filter(segmentFailed).length;
     plan.chapters.push({
       id: c.id,
       title: c.title,

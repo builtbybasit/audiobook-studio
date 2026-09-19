@@ -23,3 +23,17 @@ export interface SimulatorContext {
   /** A book-level hold stops new simulated requests while preserving the job and its queue. */
   paused(bookId: string): boolean;
 }
+
+/**
+ * Has this run stopped being anybody's business — either because its world was replaced, or because
+ * its job was settled by something other than the loop itself?
+ *
+ * The second half is the one that is easy to forget. A timer that only stops from inside its own
+ * step keeps ticking when the job is finished from outside it — a demo reset finishing running jobs,
+ * a cancellation elsewhere — and goes on mutating a chapter and a job nothing is watching. Every
+ * timer-driven fake checks this before it continues, and so does every callback that lands after a
+ * request: a result that arrives once its job is settled belongs to no run, and writing it would put
+ * a row in the append-only usage ledger that no job accounts for.
+ */
+export const abandoned = (ctx: SimulatorContext, job: Job): boolean =>
+  ctx.stale() || !!job.finishedAt;

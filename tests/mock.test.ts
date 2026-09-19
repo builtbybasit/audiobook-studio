@@ -199,9 +199,18 @@ describe("demo scenarios", () => {
       // `mixed` and `update` are the book as it already stands — they only explain what you see
       if (prep.freshen || prep.clearExports || prep.buildHistory)
         expect(bookState(s.bookId), `${s.id} changed nothing`).not.toBe(before);
+      // `freshen` is the promise that every chapter is narrated and the book is ready to build —
+      // the substance of the scenario, not just that seeding it is reversible
+      if (prep.freshen)
+        expect(
+          libraryStore.chaptersOf(s.bookId).every((c) => c.excluded || c.narration === "done"),
+          `${s.id} left a chapter unnarrated`,
+        ).toBe(true);
       demoStore.resetExportDemo();
       drain(); // a cancelled build only notices on its next tick
       expect(bookState(s.bookId), `${s.id} did not reset cleanly`).toBe(before);
+      // and the store stops claiming a scenario is seeded
+      expect(demoStore._exportDemo, s.id).toBeNull();
     }
   });
 

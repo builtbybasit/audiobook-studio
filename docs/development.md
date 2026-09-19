@@ -31,19 +31,19 @@ Run an individual test file directly with Bun, for example `bun test tests/histo
 
 ## Code map
 
-| Location                                                          | Responsibility                                                                             |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| [src/views](../src/views) and [src/components](../src/components) | Pages and interactions                                                                     |
-| [src/ui](../src/ui)                                               | Styled, reusable UI controls                                                               |
-| [src/stores](../src/stores)                                       | Feature state and application actions; ownership is documented in the store guide          |
-| [src/lib](../src/lib)                                             | Shared calculations and helpers: run plans, script comparison, pricing and export planning |
-| [src/mock/fixtures](../src/mock/fixtures)                         | Hand-authored sample content and configurations                                            |
-| [src/mock/world](../src/mock/world)                               | Expands fixtures into a coherent book library                                              |
-| [src/mock/scenarios](../src/mock/scenarios)                       | Repeatable demo situations                                                                 |
-| [src/mock/simulators](../src/mock/simulators)                     | Timer-driven fake requests and jobs                                                        |
-| [src/services/endpoints.ts](../src/services/endpoints.ts)         | Endpoint service contract and fixture implementation                                       |
-| [src/types](../src/types)                                         | Feature types, imported through `@/types`                                                  |
-| [tests](../tests)                                                 | Bun tests for domain rules and workflows                                                   |
+| Location                                                          | Responsibility                                                                                              |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| [src/views](../src/views) and [src/components](../src/components) | Pages and interactions                                                                                      |
+| [src/ui](../src/ui)                                               | Styled, reusable UI controls                                                                                |
+| [src/stores](../src/stores)                                       | Feature state and application actions; ownership is documented in the store guide                           |
+| [src/lib](../src/lib)                                             | Shared calculations and helpers: run plans, script comparison, pricing, wall-clock time and export planning |
+| [src/mock/fixtures](../src/mock/fixtures)                         | Hand-authored sample content and configurations                                                             |
+| [src/mock/world](../src/mock/world)                               | Expands fixtures into a coherent book library                                                               |
+| [src/mock/scenarios](../src/mock/scenarios)                       | Repeatable demo situations                                                                                  |
+| [src/mock/simulators](../src/mock/simulators)                     | Timer-driven fake requests and jobs                                                                         |
+| [src/services/endpoints.ts](../src/services/endpoints.ts)         | Endpoint service contract and fixture implementation                                                        |
+| [src/types](../src/types)                                         | Feature types, imported through `@/types`                                                                   |
+| [tests](../tests)                                                 | Bun tests for domain rules and workflows                                                                    |
 
 The scenario catalogue and shared store rules remain in their existing locations; this documentation does not introduce another state or service layer.
 
@@ -62,9 +62,27 @@ Use checks appropriate to the change:
 - Refactoring: establish the existing baseline and check that covered behavior still holds. Inspect existing coverage before adding another test.
 - Documentation: check local links, source references, command definitions and changed implementation claims. Documentation changes alone do not require new unit tests.
 
-Consolidate repeated setup or equivalent cases when it improves clarity. Split large test files by coherent behavior when navigation becomes difficult; no file-length or test-count target is imposed. Keep fixtures readable, avoid assertions tied only to arbitrary sample counts, and preserve coverage of distinct failures.
+### Before adding a test
 
-The topic guides name the relevant tests beside the behavior they explain. Cross-feature coverage includes [tests/stores.test.ts](../tests/stores.test.ts), [tests/demo.test.ts](../tests/demo.test.ts), [tests/history.test.ts](../tests/history.test.ts), [tests/bulkRuns.test.ts](../tests/bulkRuns.test.ts), [tests/pricing.test.ts](../tests/pricing.test.ts) and [tests/usageLedger.test.ts](../tests/usageLedger.test.ts). The [demo walkthroughs](demo.md#things-to-try) are the manual testing entry point.
+Read what already covers the behavior first — the topic guide names the file, and the store method is
+worth a `grep`. Extend the nearest existing test when the new case shares its setup and its subject;
+add a new one only for a behavior or a regression the suite cannot already fail on. If you cannot
+name the assertion that would break, there is no new test to write.
+
+Never guard an assertion behind an `if`: a condition the test needs in order to mean anything is
+itself an assertion, and a test that skips its own point reports green while checking nothing. Assert
+the rule rather than the fixture — an exact seeded count, an exact toast string or an array order the
+code does not promise is a test that breaks when the sample data is edited, and points at itself
+rather than at the change.
+
+Shared setup lives in [tests/support](../tests/support); express a per-file difference as an option
+there rather than as a local copy. Split a file when navigating it is hard, along a seam the store
+guide already names — no file-length or test-count target is imposed, in either direction.
+
+Layout, wording and visual changes get browser verification plus lint and typecheck, not another unit
+test.
+
+The topic guides name the relevant tests beside the behavior they explain. Cross-feature coverage includes [tests/stores.test.ts](../tests/stores.test.ts), [tests/demo.test.ts](../tests/demo.test.ts), [tests/history.test.ts](../tests/history.test.ts), [tests/bulkRuns.test.ts](../tests/bulkRuns.test.ts), the three pricing files — [tests/pricing.rates.test.ts](../tests/pricing.rates.test.ts) for the rate in force at a given instant, [tests/pricing.tokens.test.ts](../tests/pricing.tokens.test.ts) for the scripting side and [tests/pricing.speech.test.ts](../tests/pricing.speech.test.ts) for the speech side — and [tests/usageLedger.test.ts](../tests/usageLedger.test.ts). The [demo walkthroughs](demo.md#things-to-try) are the manual testing entry point.
 
 ## Keeping documentation useful
 

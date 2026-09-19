@@ -5,14 +5,15 @@
 // Latency, rate limits and failures are drawn from each endpoint's own configured numbers, so
 // pausing an endpoint, tightening its concurrency or raising its failure rate all show up here.
 import { keyring } from "@/lib/keyring";
-import { billingOf, billingUnitLabel } from "@/lib/endpoints";
+import { billingOf } from "@/lib/endpoints";
 import { logJob, jobWaiting, startJob } from "@/lib/jobActivity";
 import {
-  PRICING_RULE,
+  billingUnitLabel,
   ensurePricing,
   measureSpeech,
   money,
   priceSpeechRequest,
+  PRICING_RULE,
   speechWhy,
 } from "@/lib/pricing";
 import { speechInstructions } from "@/lib/speech";
@@ -22,6 +23,7 @@ import { requeue } from "@/lib/takes";
 import { rnd } from "@/mock/random";
 import { REQUEST_ERRORS } from "@/mock/fixtures/errors";
 import { simMs } from "@/mock/simulators/clock";
+import { abandoned } from "@/mock/simulators/context";
 import type { SimulatorContext } from "@/mock/simulators/context";
 import type { ExpressionPlan } from "@/lib/expressions";
 import type {
@@ -134,8 +136,9 @@ export function dispatchNarration(
     segments: segs.length,
   });
   const tick = () => {
-    // the world this run was dispatched against is gone: stop without writing to the new one
-    if (ctx.stale()) return;
+    // the world this run was dispatched against is gone, or the job was settled from outside this
+    // loop: either way stop, and write nothing
+    if (abandoned(ctx, job)) return;
     if (job.cancelled) {
       // Everything already rendered stays rendered — a cancelled run keeps what it finished. A clip
       // that never started goes back to having no audio, and a replacement that never started is
@@ -290,8 +293,9 @@ export function dispatchNarration(
       const rowLabel = `${slot === "candidate" ? (queued.auto ? "Replacement" : "Retake") : "Line"} ${next.id} · ${next.speaker}`;
       // the wait is shortened by the demo speed; `dur` is what the clip records as its latency
       setTimeout(() => {
-        // a request still in flight when the world was replaced: its result belongs to nothing
-        if (ctx.stale()) return;
+        // a request still in flight when the world was replaced, or when its job was settled from
+        // outside this run: its result belongs to nothing and is not recorded
+        if (abandoned(ctx, job)) return;
         const clip = next[slot];
         if (!clip) {
           logJob(

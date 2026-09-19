@@ -12,13 +12,13 @@ import type {
   DiffRun,
   FieldChange,
   LineChange,
-  NarrationStatus,
   RestorePlan,
   ScriptComparison,
   Segment,
   SegmentAudio,
   VersionOrigin,
 } from "@/types";
+import { chapterNarration } from "@/lib/runPlan";
 
 // ---------- what a version preserves ----------
 
@@ -523,14 +523,10 @@ export function planRestore(
   }
 
   const dropped = pool.filter((s) => !claimed.has(s) && s.audio.duration > 0).length;
-  const clips = segments.filter((s) => s.audio.duration > 0).length;
-  const narration: NarrationStatus = !clips
-    ? "none"
-    : segments.some((s) => s.audio.status === "failed")
-      ? "failed"
-      : segments.every((s) => s.audio.status === "done")
-        ? "done"
-        : "stale";
+  // What the restored chapter's narration reads as is the run's question, not a second opinion:
+  // `chapterNarration` is what a finished run, a cancelled one and a cancelled queued job all write,
+  // so a restore that answered it differently would be overwritten by the next thing that happened.
+  const narration = chapterNarration(segments);
 
   const missing = new Map<string, number>();
   for (const s of segments)

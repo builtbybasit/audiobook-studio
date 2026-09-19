@@ -330,3 +330,30 @@ test("a deleted tag does not fall back to sending the old syntax", () => {
   expect(plan.issues).toHaveLength(1);
   expect(plan.tags).toHaveLength(0);
 });
+
+test("a second chapter blocked while a review is open joins it instead of replacing it", () => {
+  // Two chapters, each with an annotation no endpoint supports. A caller that guards chapter by
+  // chapter — the lexicon panel's "re-narrate every stale chapter" — reaches the guard twice, and
+  // the second call used to overwrite the first: chapter 1's review vanished and its resume never
+  // ran, so it queued nothing and said nothing.
+  insert();
+  scriptsStore.segments["cliche:2"] = JSON.parse(JSON.stringify(scriptsStore.segments["cliche:1"]));
+  endpoint().expressions!.status = "unsupported";
+
+  const resumed: number[] = [];
+  expect(
+    narrationStore._expressionGuard("cliche", [{ chId: 1, segId: 1 }], () => resumed.push(1)),
+  ).toBe(true);
+  expect(
+    narrationStore._expressionGuard("cliche", [{ chId: 2, segId: 1 }], () => resumed.push(2)),
+  ).toBe(true);
+
+  // one review, holding both chapters' lines
+  expect(narrationStore.expressionReview!.targets).toEqual([
+    { chId: 1, segId: 1 },
+    { chId: 2, segId: 1 },
+  ]);
+  narrationStore.continueExpressionReview();
+  // …and neither chapter's work was dropped on the floor
+  expect(resumed).toEqual([1, 2]);
+});

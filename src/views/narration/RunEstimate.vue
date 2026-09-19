@@ -11,7 +11,8 @@ import { UiSwitch, UiToggleGroup } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
 // `money` keeps fractions of a cent visible: a two-clip run really does cost $0.000002, and
 // rounding that to "$0.00" is the same lie as showing an unknown rate as free.
-import { billingOf, billingUnitLabel, money } from "@/lib/endpoints";
+import { billingOf } from "@/lib/endpoints";
+import { billingUnitLabel, money } from "@/lib/pricing";
 import type { EndpointEstimate, NarrationScope } from "@/types";
 // `blockers` is worked out by the view, not here: the run strip says how many there are and this
 // panel lists them, and one calculation is how those two stay in agreement.
@@ -142,7 +143,8 @@ defineExpose({ scope, keepPending, plan });
       ><span class="text-right font-mono font-semibold text-amber-600"
         >{{ money(est.cost) }}<span v-if="est.unpriced" class="font-normal">+</span></span
       >
-      <!-- the conservative figure sits under the headline, labelled, and is what the cap uses -->
+      <!-- the conservative figure, labelled and used for nothing here: what the cap is actually
+           checked against is `est.worstCase`, the per-endpoint sum, which the store owns -->
       <template v-if="est.withoutPromotions > est.cost + 1e-9">
         <span class="text-zinc-500">Without today’s discounts</span
         ><span class="text-right font-mono text-zinc-500">{{ money(est.withoutPromotions) }}</span>

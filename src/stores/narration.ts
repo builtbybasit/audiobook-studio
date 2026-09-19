@@ -13,9 +13,9 @@ import {
   narrationTargets,
   runActionLabel,
   SCOPE_LABEL,
+  segmentFailed,
   skipSummary,
 } from "@/lib/runPlan";
-import { isScripted } from "@/lib/scriptReview";
 import { partsFor } from "@/lib/split";
 import { nextTakeNumber, requeue, snapshotTake } from "@/lib/takes";
 import { clone } from "@/lib/utils";
@@ -44,19 +44,20 @@ import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
-import { AUDIO_CHARS_PER_SECOND, billingOf, speechPricing } from "@/lib/endpoints";
+import { billingOf, speechPricing } from "@/lib/endpoints";
 import {
   addUnits,
+  AUDIO_CHARS_PER_SECOND,
   estimateSpeech,
-  money,
   measureSpeech,
+  money,
   noUnits,
   speechComponents,
   speechRates,
 } from "@/lib/pricing";
 import { effectiveRates } from "@/lib/pricing";
 import { speechInstructions } from "@/lib/speech";
-import type { BillableUnits } from "@/types";
+import type { BillableUnits, SpeechEstimate } from "@/types";
 import { useUiStore } from "@/stores/ui";
 import { useUsageStore } from "@/stores/usage";
 interface NarrationState {
@@ -140,6 +141,97 @@ export const useNarrationStore = defineStore("narration", {
         return out;
       };
     },
+    /**
+     * The lines of one chapter the script has moved past: stale clips, plus — once the chapter has
+     * been narrated at all — the lines that were never rendered, because in a started chapter a gap
+     * is work left to do rather than a chapter nobody has begun.
+     *
+     * One definition, so "Re-narrate changed (N)" in the ledger, the reader's banner, the lexicon
+     * panel's re-narrate button and `renarrateStale` itself all count and queue the same lines. A
+     * panel with its own copy is one that promises N and renders something else.
+     */
+    changedSegments(): (bookId: string, chId: number) => Segment[] {
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+
+      return (bookId, chId) => {
+        const started = libraryStore.chapter(bookId, chId)?.narration !== "none";
+        return scriptsStore
+          .segmentsOf(bookId, chId)
+          .filter((s) => s.audio.status === "stale" || (started && s.audio.status === "none"));
+      };
+    },
+    /**
+     * What rendering these lines would cost at the **undiscounted** price, per endpoint.
+     *
+     * The budget figure, never the headline one: a run over a book takes long enough for an
+     * off-peak window to close or a promotion to expire inside it, so a cap that only holds while a
+     * discount lasts is not a cap. Requests to an endpoint whose rate is not known are counted in
+     * `unpriced` and add nothing, which makes the figure a floor — the same reading the estimate
+     * panel gives them.
+     */
+    _worstCase(): (
+      bookId: string,
+      segs: Segment[],
+      at?: number,
+    ) => { cost: number; unpriced: number } {
+      return (bookId, segs, at = Date.now()) => {
+        let cost = 0;
+        let unpriced = 0;
+        for (const { row, priced } of this._pricedByEndpoint(bookId, segs, at).rows) {
+          // both halves unknown is a rate nobody can reserve against; a known undiscounted figure is
+          // still a cap to check, even when the discounted one is missing
+          if (priced.cost == null && priced.withoutPromotions == null) unpriced += row.requests;
+          cost += Math.max(priced.cost ?? 0, priced.withoutPromotions ?? 0);
+        }
+        return { cost, unpriced };
+      };
+    },
+    /**
+     * Why this run cannot start, in the sentences the run strip shows — or empty when it can.
+     *
+     * In the store rather than in whichever panel has an estimate, and built on the same
+     * `_worstCase` the cap is actually enforced against (`_budgetBlocked`), because a budget figure
+     * worked out a second way is how a strip green-lights a run the store then refuses. Note the
+     * cap is compared against a per-endpoint sum of undiscounted prices, never a single max over
+     * the aggregate: two endpoints on different discounts do not add up the same way.
+     */
+    blockers(): (
+      bookId: string,
+      ids: number[],
+      scope?: NarrationScope,
+      keepPending?: boolean,
+    ) => string[] {
+      const jobsStore = useJobsStore();
+      const libraryStore = useLibraryStore();
+
+      return (bookId, ids, scope = "all", keepPending = true) => {
+        // one estimate pass: it already grouped and priced this run's lines per endpoint, and
+        // carries the cap's own figure on `worstCase`. This strip re-renders on every progress tick
+        // while a run is in flight, so a second grouping here would cost two `expressionRender`
+        // calls per line, several times a second, for a number already in hand.
+        const est = this.estimate(bookId, ids, scope, keepPending);
+        const out: string[] = [];
+        if (!est.segments) return out;
+        if (est.unrouted)
+          out.push(
+            `${est.unrouted} line${est.unrouted === 1 ? "" : "s"} have no voice to render with. Assign one on Cast first.`,
+          );
+        const cap = libraryStore.bookById(bookId)?.budget?.cap;
+        if (cap != null) {
+          const cost = est.worstCase;
+          const spent = jobsStore.spent(bookId);
+          const held = jobsStore.reserved(bookId);
+          if (spent + held + cost > cap)
+            out.push(
+              `Over the book's $${cap.toFixed(2)} cap: $${spent.toFixed(2)} spent` +
+                (held > 0 ? `, $${held.toFixed(2)} held by work already running` : "") +
+                `, ${money(cost)} for this — priced without today's discounts, because they can end mid-run.`,
+            );
+        }
+        return out;
+      };
+    },
     /** How many endpoint requests one line becomes, after expressions and the endpoint's limit. */
     requestsFor(): (bookId: string, seg: Segment) => number {
       const castStore = useCastStore();
@@ -208,6 +300,66 @@ export const useNarrationStore = defineStore("narration", {
           },
         );
     },
+    /**
+     * What these lines would submit to each endpoint, and what that would cost at `at`.
+     *
+     * Every line goes to the endpoint that owns its speaker's voice, and a line past that endpoint's
+     * limit becomes several requests — so cost and load are per endpoint, and each card is priced in
+     * whatever unit it bills in. Lines with no route are counted in `unrouted` and priced by nobody.
+     *
+     * One grouping and one call into the pricing engine, reduced three different ways: the estimate
+     * panel keeps every column, `_worstCase` keeps the undiscounted figure the cap is checked
+     * against, and `_plannedCost` keeps the two halves recorded on the job. They used to be three
+     * copies of this loop, which is how a panel starts quoting a figure the cap does not honour.
+     */
+    _pricedByEndpoint(): (
+      bookId: string,
+      segs: Segment[],
+      at: number,
+    ) => { rows: { row: EndpointEstimate; priced: SpeechEstimate }[]; unrouted: number } {
+      const castStore = useCastStore();
+
+      return (bookId, segs, at) => {
+        const per: Record<string, EndpointEstimate> = {};
+        let unrouted = 0;
+        for (const seg of segs) {
+          const ep = castStore.effectiveVoice(bookId, seg.speaker).endpoint;
+          if (!ep) {
+            unrouted++;
+            continue;
+          }
+          const e = (per[ep.id] ??= {
+            endpoint: ep,
+            units: noUnits(),
+            chars: 0,
+            segments: 0,
+            requests: 0,
+            split: 0,
+            cost: 0,
+            inputCost: 0,
+            audioCost: null,
+            withoutPromotions: 0,
+            why: [],
+          });
+          e.units = addUnits(e.units, this._plannedUnits(bookId, seg, ep));
+          e.segments++;
+          const parts = this.requestsFor(bookId, seg);
+          e.requests += parts;
+          e.chars = e.units.chars;
+          if (parts > 1) e.split++;
+        }
+        const rows = Object.values(per).map((row) => {
+          const billing = billingOf(row.endpoint);
+          const priced = estimateSpeech(billing, speechPricing(row.endpoint).config, row.units, at);
+          row.cost = priced.cost;
+          row.inputCost = priced.inputCost;
+          row.audioCost = priced.audioCost;
+          row.withoutPromotions = priced.withoutPromotions;
+          return { row, priced };
+        });
+        return { rows, unrouted };
+      };
+    },
     // Cost and load are per endpoint: each segment goes to the endpoint that owns its speaker's voice,
     // and a segment longer than that endpoint's limit becomes several requests.
     //
@@ -220,61 +372,27 @@ export const useNarrationStore = defineStore("narration", {
       scope?: NarrationScope,
       keepPending?: boolean,
     ) => NarrationEstimate {
-      const castStore = useCastStore();
       const endpointsStore = useEndpointsStore();
-      const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
 
       return (bookId, ids, scope = "all", keepPending = true) => {
-        const per: Record<string, EndpointEstimate> = {};
+        // The plan decides which chapters are in the run and which are left out; the estimate prices
+        // what it chose. Re-deriving the eligibility cascade here is how the panel and the button
+        // start disagreeing about the same press.
+        const plan = this.narrationRunPlan(bookId, ids, scope, keepPending);
+        const lines: Segment[] = [];
         let chars = 0;
-        let segments = 0;
-        let unrouted = 0;
         let stale = 0;
-        let replacing = 0;
-        let pending = 0;
-        let chapters = 0;
-        for (const id of ids) {
-          const c = libraryStore.chapter(bookId, id);
-          if (!c || c.excluded || !isScripted(c) || ["running", "queued"].includes(c.narration))
-            continue;
-          const targets = narrationTargets(
-            scriptsStore.segments[`${bookId}:${id}`] ?? [],
+        for (const row of plan.chapters) {
+          const { run } = narrationTargets(
+            scriptsStore.segmentsOf(bookId, row.id),
             scope,
             keepPending,
           );
-          pending += targets.pending.length;
-          if (!targets.run.length) continue;
-          chapters++;
-          for (const seg of targets.run) {
+          for (const seg of run) {
             chars += seg.text.length;
-            segments++;
             if (seg.audio.status === "stale") stale++;
-            if (seg.audio.duration > 0) replacing++;
-            const ep = castStore.effectiveVoice(bookId, seg.speaker).endpoint;
-            if (!ep) {
-              unrouted++;
-              continue;
-            }
-            const e = (per[ep.id] ??= {
-              endpoint: ep,
-              units: noUnits(),
-              chars: 0,
-              segments: 0,
-              requests: 0,
-              split: 0,
-              cost: 0,
-              inputCost: 0,
-              audioCost: null,
-              withoutPromotions: 0,
-              why: [],
-            });
-            e.units = addUnits(e.units, this._plannedUnits(bookId, seg, ep));
-            e.segments++;
-            const parts = this.requestsFor(bookId, seg);
-            e.requests += parts;
-            e.chars = e.units.chars;
-            if (parts > 1) e.split++;
+            lines.push(seg);
           }
         }
         // Each endpoint is priced on its own card, at the rates in force right now, in whatever
@@ -282,35 +400,35 @@ export const useNarrationStore = defineStore("narration", {
         // audio this run would produce. One instant for the whole estimate, so the rows agree with
         // each other and with the total.
         const at = Date.now();
-        const rows = Object.values(per);
+        const { rows: priceRows, unrouted } = this._pricedByEndpoint(bookId, lines, at);
+        const rows = priceRows.map(({ row }) => row);
         const cautions = new Set<string>();
         let cost = 0;
         let withoutPromotions = 0;
         let unpriced = 0;
         let inputCost = 0;
+        let worstCase = 0;
         let audioCost: number | null = null;
-        for (const e of rows) {
-          const { config } = speechPricing(e.endpoint);
+        for (const { row: e, priced } of priceRows) {
           const billing = billingOf(e.endpoint);
-          const priced = estimateSpeech(billing, config, e.units, at);
-          e.cost = priced.cost;
-          e.inputCost = priced.inputCost;
-          e.audioCost = priced.audioCost;
-          e.withoutPromotions = priced.withoutPromotions;
-          // every step that moved any of this endpoint's rates off its card, in order
+          // every step that moved any of this endpoint's rates off its card, in order — resolved
+          // once for the endpoint rather than once per component
+          const resolved = effectiveRates(
+            speechRates(billing),
+            speechPricing(e.endpoint).config,
+            at,
+            billing.unit,
+          );
           e.why = [
-            ...new Set(
-              speechComponents(billing.unit).flatMap(
-                (c) =>
-                  effectiveRates(speechRates(billing), config, at, billing.unit).components[c].why,
-              ),
-            ),
+            ...new Set(speechComponents(billing.unit).flatMap((c) => resolved.components[c].why)),
           ];
           if (priced.cost == null) unpriced += e.requests;
           else cost += priced.cost;
           inputCost += priced.inputCost ?? 0;
           if (priced.audioCost != null) audioCost = (audioCost ?? 0) + priced.audioCost;
           withoutPromotions += priced.withoutPromotions ?? 0;
+          // the cap's own figure, taken here so the panel and `_budgetBlocked` cannot disagree
+          worstCase += Math.max(priced.cost ?? 0, priced.withoutPromotions ?? 0);
           for (const why of priced.cautions) cautions.add(why);
         }
         if (unpriced)
@@ -318,9 +436,9 @@ export const useNarrationStore = defineStore("narration", {
             `${unpriced} request${unpriced === 1 ? "" : "s"} go to an endpoint with no rate set. They are counted but never priced, so this total is a floor rather than the bill.`,
           );
         return {
-          chapters,
+          chapters: plan.chapters.length,
           chars,
-          segments,
+          segments: lines.length,
           seconds: chars / 15.5,
           units: rows.reduce((a, e) => addUnits(a, e.units), noUnits()),
           cost,
@@ -328,10 +446,11 @@ export const useNarrationStore = defineStore("narration", {
           audioCost,
           unpriced,
           withoutPromotions,
+          worstCase,
           cautions: [...cautions],
           stale,
-          replacing,
-          pending,
+          replacing: plan.replacing,
+          pending: plan.pending,
           scope,
           unrouted,
           requests: rows.reduce((a, e) => a + e.requests, 0),
@@ -350,40 +469,6 @@ export const useNarrationStore = defineStore("narration", {
     // "retake everything flagged" — and a check that lives in one of them is not a cap, it is a
     // warning on one screen. Nothing queues a clip without coming through `_budgetBlocked` first,
     // and nothing dispatches one without `_reserveQueued` holding its price against the cap.
-    /**
-     * What rendering these lines would cost at the **undiscounted** price, per endpoint.
-     *
-     * The budget figure, never the headline one: a run over a book takes long enough for an
-     * off-peak window to close or a promotion to expire inside it, so a cap that only holds while a
-     * discount lasts is not a cap. Requests to an endpoint whose rate is not known are counted in
-     * `unpriced` and add nothing, which makes the figure a floor — the same reading the estimate
-     * panel gives them.
-     */
-    _worstCase(
-      bookId: string,
-      segs: Segment[],
-      at: number = Date.now(),
-    ): { cost: number; unpriced: number } {
-      const castStore = useCastStore();
-
-      const per: Record<string, { ep: Endpoint; units: BillableUnits; requests: number }> = {};
-      for (const seg of segs) {
-        const ep = castStore.effectiveVoice(bookId, seg.speaker).endpoint;
-        if (!ep) continue;
-        const e = (per[ep.id] ??= { ep, units: noUnits(), requests: 0 });
-        e.units = addUnits(e.units, this._plannedUnits(bookId, seg, ep));
-        e.requests += this.requestsFor(bookId, seg);
-      }
-      let cost = 0;
-      let unpriced = 0;
-      for (const e of Object.values(per)) {
-        const { config } = speechPricing(e.ep);
-        const priced = estimateSpeech(billingOf(e.ep), config, e.units, at);
-        if (priced.cost == null && priced.withoutPromotions == null) unpriced += e.requests;
-        cost += Math.max(priced.cost ?? 0, priced.withoutPromotions ?? 0);
-      }
-      return { cost, unpriced };
-    },
     /**
      * Would rendering these lines take the book past its cap?
      *
@@ -454,20 +539,10 @@ export const useNarrationStore = defineStore("narration", {
       segs: Segment[],
       at: number = Date.now(),
     ): { cost: number; inputCost: number; audioCost: number | null } {
-      const castStore = useCastStore();
-
-      const per: Record<string, { ep: Endpoint; units: BillableUnits }> = {};
-      for (const seg of segs) {
-        const ep = castStore.effectiveVoice(bookId, seg.speaker).endpoint;
-        if (!ep) continue;
-        const e = (per[ep.id] ??= { ep, units: noUnits() });
-        e.units = addUnits(e.units, this._plannedUnits(bookId, seg, ep));
-      }
       let cost = 0;
       let inputCost = 0;
       let audioCost: number | null = null;
-      for (const e of Object.values(per)) {
-        const priced = estimateSpeech(billingOf(e.ep), speechPricing(e.ep).config, e.units, at);
+      for (const { priced } of this._pricedByEndpoint(bookId, segs, at).rows) {
         cost += priced.cost ?? 0;
         inputCost += priced.inputCost ?? 0;
         if (priced.audioCost != null) audioCost = (audioCost ?? 0) + priced.audioCost;
@@ -568,8 +643,25 @@ export const useNarrationStore = defineStore("narration", {
         const s = scriptsStore.segmentsOf(bookId, t.chId).find((s) => s.id === t.segId);
         return s && this.expressionRender(bookId, s).issues.length;
       });
-      if (blocked) this.expressionReview = { bookId, targets, resume };
-      return blocked;
+      if (!blocked) return false;
+      // There is one review slot, and a caller that loops chapter by chapter reaches this once per
+      // chapter. Replacing the pending review would drop every chapter but the last on the floor —
+      // silently, because each blocked call also returns early without queueing. So a second block
+      // while one is still open *joins* it: the targets are merged and both resumes run, which is
+      // what makes "re-narrate every stale chapter" safe to write as a loop.
+      const open = this.expressionReview;
+      if (open && open.bookId === bookId) {
+        const seen = new Set(open.targets.map((t) => `${t.chId}:${t.segId}`));
+        open.targets.push(...targets.filter((t) => !seen.has(`${t.chId}:${t.segId}`)));
+        const first = open.resume;
+        open.resume = () => {
+          first();
+          resume();
+        };
+      } else {
+        this.expressionReview = { bookId, targets: [...targets], resume };
+      }
+      return true;
     },
     continueExpressionReview(): void {
       const pending = this.expressionReview;
@@ -611,24 +703,18 @@ export const useNarrationStore = defineStore("narration", {
     // "changed" is both edited-after-narration lines and halves of a hand-split segment that were
     // never rendered at all — in a chapter that has audio, neither belongs in the finished book.
     renarrateStale(bookId: string, chId: number): void {
-      const libraryStore = useLibraryStore();
-      const scriptsStore = useScriptsStore();
-
-      const started = libraryStore.chapter(bookId, chId)?.narration !== "none";
+      // one list, used for the guard, the budget check and the work: a guard that asked about a
+      // different set from the one queued would check expressions on lines the run never touches, or
+      // render lines whose expressions were never checked
+      const stale = this.changedSegments(bookId, chId);
       if (
         this._expressionGuard(
           bookId,
-          scriptsStore
-            .segmentsOf(bookId, chId)
-            .filter((s) => s.audio.status === "stale" || (started && s.audio.status === "none"))
-            .map((s) => ({ chId, segId: s.id })),
+          stale.map((s) => ({ chId, segId: s.id })),
           () => this.renarrateStale(bookId, chId),
         )
       )
         return;
-      const stale = scriptsStore
-        .segmentsOf(bookId, chId)
-        .filter((s) => s.audio.status === "stale" || (started && s.audio.status === "none"));
       if (this._budgetBlocked(bookId, stale)) return;
       // a stale clip is still playable; its replacement renders beside it and takes over only when
       // it lands, so the chapter never loses audio it had
@@ -868,20 +954,18 @@ export const useNarrationStore = defineStore("narration", {
     retryFailed(bookId: string, chId: number): void {
       const scriptsStore = useScriptsStore();
 
-      const failed = (s: Segment): boolean =>
-        s.audio.status === "failed" || s.candidate?.status === "failed";
+      // one list, used for the guard and for the work: a guard that checked a different set from
+      // the one queued would clear expressions on lines the run never touches, or render lines whose
+      // expressions were never checked
+      const broken = scriptsStore.segmentsOf(bookId, chId).filter(segmentFailed);
       if (
         this._expressionGuard(
           bookId,
-          scriptsStore
-            .segmentsOf(bookId, chId)
-            .filter(failed)
-            .map((s) => ({ chId, segId: s.id })),
+          broken.map((s) => ({ chId, segId: s.id })),
           () => this.retryFailed(bookId, chId),
         )
       )
         return;
-      const broken = scriptsStore.segmentsOf(bookId, chId).filter(failed);
       if (this._budgetBlocked(bookId, broken)) return;
       for (const s of broken) this._queueRender(s);
       this._resume(bookId, chId);
@@ -928,18 +1012,16 @@ export const useNarrationStore = defineStore("narration", {
     retakeFlagged(bookId: string, chId: number): number {
       const scriptsStore = useScriptsStore();
 
+      // one list for the guard, the budget check and the work — see `renarrateStale`
+      const flagged = scriptsStore.segmentsOf(bookId, chId).filter((s) => s.flag);
       if (
         this._expressionGuard(
           bookId,
-          scriptsStore
-            .segmentsOf(bookId, chId)
-            .filter((s) => s.flag)
-            .map((s) => ({ chId, segId: s.id })),
+          flagged.map((s) => ({ chId, segId: s.id })),
           () => this.retakeFlagged(bookId, chId),
         )
       )
         return 0;
-      const flagged = scriptsStore.segmentsOf(bookId, chId).filter((s) => s.flag);
       if (this._budgetBlocked(bookId, flagged)) return 0;
       let n = 0;
       for (const s of flagged) if (this._queueRetake(s)) n++;

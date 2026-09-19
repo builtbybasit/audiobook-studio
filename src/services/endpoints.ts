@@ -25,16 +25,18 @@ import type {
   TtsBilling,
   UsageFormat,
 } from "@/types";
-import { AUDIO_CHARS_PER_SECOND, ttsCost } from "@/lib/endpoints";
+
 import { onDemoReset } from "@/lib/pageState";
 import {
-  PRICING_RULE,
+  AUDIO_CHARS_PER_SECOND,
   billableChars,
   measureSpeech,
-  noUnits,
   normalizeUsage,
+  noUnits,
   priceRequest,
   priceSpeechRequest,
+  PRICING_RULE,
+  ttsCost,
 } from "@/lib/pricing";
 import {
   cacheShapeFor,

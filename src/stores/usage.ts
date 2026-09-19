@@ -31,6 +31,7 @@ import type {
   TokenUsage,
 } from "@/types";
 import { seedRead } from "@/stores/seed";
+import { observedCacheRate } from "@/lib/pricing";
 
 interface UsageState {
   /** append-only; the order is the order they settled in */
@@ -129,11 +130,9 @@ export const useUsageStore = defineStore("usage", {
           .filter((r) => r.kind === "scripting" && r.endpointId === profileId && r.priced)
           .slice(-40)
           .map((r) => r.priced!.usage);
-        const reported = usages.filter((u) => u.cachedInput != null && u.inputTokens > 0);
-        if (!reported.length) return null;
-        const input = reported.reduce((n, u) => n + u.inputTokens, 0);
-        const cached = reported.reduce((n, u) => n + (u.cachedInput ?? 0), 0);
-        return input > 0 ? { hitRate: cached / input, samples: reported.length } : null;
+        // the rule itself lives beside the pricing it feeds; this getter only decides *which*
+        // requests to ask it about
+        return observedCacheRate(usages);
       };
     },
   },

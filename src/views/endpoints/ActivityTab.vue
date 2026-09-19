@@ -31,18 +31,11 @@ import {
   TriangleAlert as WarnIcon,
   X as ClearIcon,
 } from "@lucide/vue";
+import { WAIT_DETAIL, WAIT_LABEL, compact, duration, clockOf, sanitize } from "@/lib/endpoints";
 import {
   COST_BASIS_DETAIL,
-  WAIT_DETAIL,
-  WAIT_LABEL,
-  compact,
-  duration,
-  clockOf,
-  maybeMoney,
-  sanitize,
-} from "@/lib/endpoints";
-import {
   COST_BASIS_LABEL,
+  maybeMoney,
   money,
   speechChargeLines,
   speechSentence,

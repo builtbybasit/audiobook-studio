@@ -19,14 +19,12 @@ mock.module("vue-toastflow", () => ({
   },
 }));
 
-const { useDemoStore } = await import("@/stores/demo");
 const { useJobsStore } = await import("@/stores/jobs");
 const { useLibraryStore } = await import("@/stores/library");
 const { useNarrationStore } = await import("@/stores/narration");
 const { useScriptsStore } = await import("@/stores/scripts");
 const { useUiStore } = await import("@/stores/ui");
 
-let demoStore: ReturnType<typeof useDemoStore>;
 let jobsStore: ReturnType<typeof useJobsStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let narrationStore: ReturnType<typeof useNarrationStore>;
@@ -37,7 +35,6 @@ let restore: (() => void)[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   setActivePinia(createPinia());
-  demoStore = useDemoStore();
   jobsStore = useJobsStore();
   libraryStore = useLibraryStore();
   narrationStore = useNarrationStore();
@@ -270,31 +267,6 @@ test("direction options list the book's own directions first, once each", () => 
   const fresh = directionOptions(scriptsStore.segments, "nothing-here");
   expect(fresh.every((o) => o.group === "Presets")).toBe(true);
   expect(fresh.length).toBeGreaterThan(0);
-});
-
-test("the search demo seeds a book and resets it exactly", () => {
-  const before = libraryStore
-    .chaptersOf("cliche")
-    .map((c) => snapshot(c.id))
-    .join("#");
-  const info = demoStore.searchDemo("cliche")!;
-  expect(info.alias).toBe("Ning");
-
-  demoStore.seedSearchDemo("cliche");
-  const after = libraryStore
-    .chaptersOf("cliche")
-    .map((c) => snapshot(c.id))
-    .join("#");
-  expect(after).not.toBe(before);
-  expect(demoStore.searchScenarios("cliche")).toHaveLength(3);
-
-  demoStore.resetSearchDemo();
-  expect(
-    libraryStore
-      .chaptersOf("cliche")
-      .map((c) => snapshot(c.id))
-      .join("#"),
-  ).toBe(before);
 });
 
 test("a clip finishing in the background does not invalidate an open preview, but an edit does", () => {

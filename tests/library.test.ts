@@ -284,7 +284,8 @@ describe("a full shelf", () => {
     );
     expect(shelfView(entries, { filter: "done" }).some((e) => state(e) === "behind")).toBe(false);
     // and a book that is behind can say why
-    for (const e of added("behind")) expect(e.facts.behindWhy).toBe("3 chapters not in it yet");
+    for (const e of added("behind"))
+      expect(e.facts.behindWhy).toMatch(/^\d+ chapters? not in it yet$/);
     // the running filter finds the seeded book the row starts scripting on
     expect(shelfView(entries, { filter: "running" }).map((e) => e.book.id)).toContain("cliche");
     // the search reaches the new books

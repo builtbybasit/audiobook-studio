@@ -281,7 +281,9 @@ export const useCastStore = defineStore("cast", {
               scriptsStore._markStale(bookId, chapterId, s);
             }
         }
-        scriptsStore._revision[key(bookId, chapterId)] = revision;
+        // never backwards: an edit's answer for this chapter may have landed in between
+        const k = key(bookId, chapterId);
+        scriptsStore._revision[k] = Math.max(scriptsStore._revision[k] ?? 0, revision);
       }
     },
     // snapshots used by undo: the cast + every segment of a book (speakers live in both)

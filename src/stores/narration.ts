@@ -595,6 +595,7 @@ export const useNarrationStore = defineStore("narration", {
       );
       s.edited = true;
       scriptsStore._markStale(bookId, chId, s);
+      scriptsStore._commit(bookId, chId);
       uiStore.toast(`${definition.label} added`, {
         description: "The source text is unchanged. Re-render this line to hear the expression.",
         undo,
@@ -627,6 +628,7 @@ export const useNarrationStore = defineStore("narration", {
       else s.expressions = s.expressions!.filter((a) => a.annotationId !== annotationId);
       s.edited = true;
       scriptsStore._markStale(bookId, chId, s);
+      scriptsStore._commit(bookId, chId);
       uiStore.toast(patch ? "Expression updated" : "Expression removed", { undo });
     },
     _expressionGuard(
@@ -695,6 +697,7 @@ export const useNarrationStore = defineStore("narration", {
         w.segment.edited = true;
         scriptsStore._markStale(pending.bookId, w.chId, w.segment);
       }
+      for (const chId of chapters) scriptsStore._commit(pending.bookId, chId);
       uiStore.toast(`${count} expressions omitted from narration`, {
         description: "Annotations stay in the script until you enable them again.",
         undo: count ? () => undos.forEach((undo) => undo()) : undefined,
@@ -986,13 +989,18 @@ export const useNarrationStore = defineStore("narration", {
       const scriptsStore = useScriptsStore();
 
       const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
-      if (s) s.flag = { kind, note: note.trim(), at: Date.now() } satisfies SegmentFlag;
+      if (!s) return;
+      s.flag = { kind, note: note.trim(), at: Date.now() } satisfies SegmentFlag;
+      // a flag is written with the script it is on; it changes nothing a version keeps
+      scriptsStore._commit(bookId, chId);
     },
     clearFlag(bookId: string, chId: number, segId: number): void {
       const scriptsStore = useScriptsStore();
 
       const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
-      if (s?.flag) delete s.flag;
+      if (!s?.flag) return;
+      delete s.flag;
+      scriptsStore._commit(bookId, chId);
     },
     /** Queue another render of one segment, keeping the current clip to compare against. */
     retakeSegment(bookId: string, chId: number, segId: number): void {

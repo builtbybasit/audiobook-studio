@@ -11,6 +11,7 @@
 //     preserved before the new one replaces it, labelled by what produced it, so a version and the
 //     script it preceded cannot disagree about which came first.
 import type { ChapterHistory, ScriptVersion, Segment, VersionOrigin } from "@/types";
+import { scriptSignature } from "@/lib/scriptHistory";
 import { and, eq } from "drizzle-orm";
 
 import type { Db } from "~/db/client";
@@ -61,6 +62,11 @@ export interface EditInput {
  * reads as scripted — its status is asked of its script, never remembered — and an edit that would
  * leave it with no lines is refused, because a chapter with nothing in it cannot be narrated and
  * would have nothing left to undo from.
+ *
+ * A write that changes nothing a version keeps — a line flagged, a clip that finished, anything
+ * about the audio — is still written, and moves the revision on, but leaves the history alone:
+ * `scriptSignature` is what a version is, and a script with the same signature is the same script,
+ * so there is no edit to count and no session to open.
  */
 export function editScript(db: Db, bookId: string, chapterId: number, input: EditInput): Edited {
   requireRevision(db, bookId, chapterId);
@@ -74,7 +80,10 @@ export function editScript(db: Db, bookId: string, chapterId: number, input: Edi
   try {
     return db.transaction((tx) => {
       const current = readScript(tx, bookId, chapterId);
-      if (origin.kind === "edited")
+      const changesScript = scriptSignature(current) !== scriptSignature(input.segments);
+      if (!changesScript) {
+        // nothing for the history to say
+      } else if (origin.kind === "edited")
         history.noteEdit(tx, bookId, chapterId, current, input.segments);
       else history.capture(tx, bookId, chapterId, origin, current, input.segments);
       const { revision } = replaceScript(tx, bookId, chapterId, input.segments, {

@@ -428,10 +428,21 @@ export const useHistoryStore = defineStore("history", {
           scriptsStore.segments[k] = beforeScript;
           historyUndo();
           if (chapter && was) Object.assign(chapter, was);
-          // only the speakers this restore added, and only while nothing else has started using them
-          castStore._dropSpeakers(bookId, absorbed);
           castStore._retime(bookId, chId);
+          // only the speakers this restore added, and only while nothing else has started using them
+          if (!activeLibraryService()) {
+            castStore._dropSpeakers(bookId, absorbed);
+            scriptsStore._commit(bookId, chId);
+            return;
+          }
+          // With a server answering the two are requests, and they must not race: a speaker
+          // removed while the server's script still names them hands their lines to the Narrator
+          // and moves the revision, and the write that was to take their lines away is refused.
+          // The script goes first; the removal then moves nothing.
           scriptsStore._commit(bookId, chId);
+          return scriptsStore
+            ._settled(bookId, chId)
+            .then(() => castStore._dropSpeakers(bookId, absorbed));
         },
       });
       return true;

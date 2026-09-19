@@ -181,6 +181,30 @@ describe("renaming and merging", () => {
     expect(narrator.status).toBe(409);
   });
 
+  test("the Narrator is neither renamed nor merged away, though anyone can be merged into them", async () => {
+    const { api, id } = await scripted();
+    const renamed = await api.request<Failure>(
+      `/api/books/${id}/characters/Narrator/rename`,
+      jsonBody({ to: "Storyteller" }),
+    );
+    expect(renamed.status).toBe(409);
+    expect(renamed.body.error.message).toContain("Narrator");
+    const merged = await api.request<Failure>(
+      `/api/books/${id}/characters/Narrator/merge`,
+      jsonBody({ into: "Mara" }),
+    );
+    expect(merged.status).toBe(409);
+    expect(merged.body.error.detail).toContain("into the Narrator");
+    expect(names((await castOf(api, id)).characters)).toEqual(["Narrator", "Mara", "Tobin"]);
+    expect(speakersOf(readScript(api.db, id, 1))).toEqual(["Narrator", "Mara", "Tobin"]);
+    const into = await api.request<Moved>(
+      `/api/books/${id}/characters/Tobin/merge`,
+      jsonBody({ into: "Narrator" }),
+    );
+    expect(into.status).toBe(200);
+    expect(names(into.body.characters)).toEqual(["Narrator", "Mara"]);
+  });
+
   test("an undo puts exactly the lines that moved back, and the speaker with them", async () => {
     const { api, id } = await scripted();
     const tobin = (await castOf(api, id)).characters[2];

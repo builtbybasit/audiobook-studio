@@ -110,6 +110,7 @@ function onRowKey(e: KeyboardEvent, c: Character) {
   }
 }
 function startRename(c: Character) {
+  if (c.name === "Narrator") return; // the server refuses it, as it refuses removing them
   editing.value = c.name;
   draft.value = c.name;
 }
@@ -458,7 +459,11 @@ const duplicate = computed(
                 />
               </td>
               <td class="pr-3 text-right">
-                <button class="text-xs text-zinc-400 hover:text-violet-500" @click="startRename(c)">
+                <button
+                  v-if="c.name !== 'Narrator'"
+                  class="text-xs text-zinc-400 hover:text-violet-500"
+                  @click="startRename(c)"
+                >
                   rename
                 </button>
                 <button

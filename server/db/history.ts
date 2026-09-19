@@ -15,29 +15,47 @@ import { scriptVersionValues, toChapterHistory } from "~/db/rows";
 
 const emptyHead = (): HistoryHead => ({ at: 0, origin: { kind: "scripted" } });
 
-/** A chapter's history, or an empty one for a chapter nothing has happened to yet. */
-export function readHistory(db: Db | Tx, bookId: string, chapterId: number): ChapterHistory {
+/**
+ * A chapter's history as the client reads it, plus the one thing the server keeps for itself:
+ * which version the open editing session preserved when it began, if it added one.
+ */
+interface StoredHistory extends ChapterHistory {
+  sessionVersion: number | null;
+}
+
+function readStored(db: Db | Tx, bookId: string, chapterId: number): StoredHistory {
   const head = db
     .select()
     .from(scriptHeads)
     .where(and(eq(scriptHeads.bookId, bookId), eq(scriptHeads.chapterId, chapterId)))
     .get();
-  if (!head) return { versions: [], head: emptyHead(), nextId: 1 };
+  if (!head) return { versions: [], head: emptyHead(), nextId: 1, sessionVersion: null };
   const versions = db
     .select()
     .from(scriptVersions)
     .where(and(eq(scriptVersions.bookId, bookId), eq(scriptVersions.chapterId, chapterId)))
     .orderBy(asc(scriptVersions.id))
     .all();
-  return toChapterHistory(head, versions);
+  return { ...toChapterHistory(head, versions), sessionVersion: head.sessionVersion ?? null };
 }
 
+/** A chapter's history, or an empty one for a chapter nothing has happened to yet. */
+export function readHistory(db: Db | Tx, bookId: string, chapterId: number): ChapterHistory {
+  const { sessionVersion: _, ...history } = readStored(db, bookId, chapterId);
+  return history;
+}
+
+/**
+ * Where the working script now stands. `sessionVersion` is the version the open session's first
+ * edit preserved, and null for every head that is not an open session with a version of its own.
+ */
 function writeHead(
   tx: Tx,
   bookId: string,
   chapterId: number,
   head: HistoryHead,
   nextId: number,
+  sessionVersion: number | null,
 ): void {
   const values = {
     bookId,
@@ -45,6 +63,7 @@ function writeHead(
     at: head.at,
     origin: head.origin,
     open: head.open ?? null,
+    sessionVersion,
     nextId,
   };
   tx.insert(scriptHeads)
@@ -87,7 +106,16 @@ export function capture(
   const h = readHistory(tx, bookId, chapterId);
   const { added, head, nextId } = planCapture(h, current, origin, next, now);
   if (added) insertVersion(tx, bookId, chapterId, added);
-  writeHead(tx, bookId, chapterId, head, nextId);
+  // an edit that preserved a version opens a session that version belongs to; anything else
+  // closes whatever session there was
+  writeHead(
+    tx,
+    bookId,
+    chapterId,
+    head,
+    nextId,
+    origin.kind === "edited" ? (added?.id ?? null) : null,
+  );
   return added?.id ?? null;
 }
 
@@ -100,6 +128,12 @@ export function capture(
  * the version its first edit added is dropped again and the head goes back to what it said before,
  * which is what that version recorded. The list must never claim an edit happened that no longer
  * exists.
+ *
+ * Only that version is the session's to drop. The head remembers which one it was
+ * (`session_version`), because the newest version is not always it: a checkpoint saved after the
+ * session opened is newer, and a session that then comes back to the checkpoint's script leaves
+ * the checkpoint where it is. A session whose first edit preserved nothing — the script it
+ * replaced was already the newest entry — has nothing to drop either.
  */
 export function noteEdit(
   tx: Tx,
@@ -109,20 +143,22 @@ export function noteEdit(
   next: Segment[],
   now = Date.now(),
 ): void {
-  const h = readHistory(tx, bookId, chapterId);
+  const h = readStored(tx, bookId, chapterId);
   if (!sessionOpen(h.head, now) || h.head.origin.kind !== "edited") {
     capture(tx, bookId, chapterId, { kind: "edited", edits: 1 }, current, next, now);
     return;
   }
-  const last = h.versions.at(-1);
-  if (last && scriptSignature(last.segments) === scriptSignature(next)) {
-    deleteVersionRow(tx, bookId, chapterId, last.id);
+  const preserved =
+    h.sessionVersion == null ? undefined : h.versions.find((v) => v.id === h.sessionVersion);
+  if (preserved && scriptSignature(preserved.segments) === scriptSignature(next)) {
+    deleteVersionRow(tx, bookId, chapterId, preserved.id);
     writeHead(
       tx,
       bookId,
       chapterId,
-      { at: last.at, origin: last.origin },
-      h.nextId === last.id + 1 ? last.id : h.nextId,
+      { at: preserved.at, origin: preserved.origin },
+      h.nextId === preserved.id + 1 ? preserved.id : h.nextId,
+      null,
     );
     return;
   }
@@ -132,6 +168,7 @@ export function noteEdit(
     chapterId,
     { at: now, origin: { kind: "edited", edits: h.head.origin.edits + 1 }, open: true },
     h.nextId,
+    h.sessionVersion,
   );
 }
 
@@ -161,14 +198,17 @@ export function checkpoint(
     segments: snapshotScript(current),
   };
   insertVersion(tx, bookId, chapterId, version);
-  writeHead(tx, bookId, chapterId, { at: now, origin }, h.nextId + 1);
+  writeHead(tx, bookId, chapterId, { at: now, origin }, h.nextId + 1, null);
   return version;
 }
 
 /**
  * Forget one version. Version numbers are never reused, so the ones after it keep theirs. When the
  * version was the checkpoint the head still names, the head goes back to how the script came to be
- * before it was named — what an Undo of a checkpoint asks for.
+ * before it was named — what an Undo of a checkpoint asks for. A checkpoint saved over a checkpoint
+ * does not record what it was saved over (`was`), because the answer is the earlier checkpoint
+ * itself: the head goes back to the newest checkpoint still in the list, or to "scripted" when
+ * there is none left.
  */
 export function dropVersion(
   tx: Tx,
@@ -176,7 +216,7 @@ export function dropVersion(
   chapterId: number,
   id: number,
 ): ScriptVersion | null {
-  const h = readHistory(tx, bookId, chapterId);
+  const h = readStored(tx, bookId, chapterId);
   const version = h.versions.find((v) => v.id === id);
   if (!version) return null;
   deleteVersionRow(tx, bookId, chapterId, id);
@@ -188,12 +228,23 @@ export function dropVersion(
     head.at === version.at
       ? version.origin
       : null;
+  const before = (): HistoryHead => {
+    if (named?.was) return { at: version.at, origin: named.was };
+    const earlier = [...h.versions]
+      .reverse()
+      .find((v) => v.id !== id && v.origin.kind === "checkpoint");
+    return earlier
+      ? { at: earlier.at, origin: earlier.origin }
+      : { at: version.at, origin: { kind: "scripted" } };
+  };
   writeHead(
     tx,
     bookId,
     chapterId,
-    named ? { at: version.at, origin: named.was ?? { kind: "scripted" } } : head,
+    named ? before() : head,
     h.nextId === id + 1 ? id : h.nextId,
+    // the session's version is gone with it, or the session it belonged to is
+    named || h.sessionVersion === id ? null : h.sessionVersion,
   );
   return version;
 }

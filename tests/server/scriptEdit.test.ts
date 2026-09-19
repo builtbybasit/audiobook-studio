@@ -179,6 +179,90 @@ describe("the history an edit writes", () => {
     expect(b.body.revision).toBe(revision + 2);
   });
 
+  test("a session that returns leaves a checkpoint saved after it opened where it is", async () => {
+    const { api, id, segments, revision } = await scripted();
+    const a = await edit(api, id, { segments: rewrite(segments, "One."), ifRevision: revision });
+    expect(a.body.history.versions.map((v) => v.id)).toEqual([1]);
+    // the session's version is the one the head remembers
+    const sessionVersion = () =>
+      api.db.all<{ session_version: number | null }>(
+        `select session_version from script_heads where book_id = '${id}' and chapter_id = 1`,
+      )[0].session_version;
+    expect(sessionVersion()).toBe(1);
+    const saved = await api.request<{ version: ScriptVersion; history: ChapterHistory }>(
+      `/api/books/${id}/chapters/1/history/checkpoints`,
+      jsonBody({ name: "Keep this" }),
+    );
+    expect(saved.body.version.id).toBe(2);
+    expect(sessionVersion()).toBeNull();
+    // an edit after the checkpoint opens a session whose first edit preserves nothing: the script
+    // it replaces is already the newest entry
+    const b = await edit(api, id, {
+      segments: rewrite(segments, "Two."),
+      ifRevision: a.body.revision,
+    });
+    expect(b.body.history.versions.map((v) => v.id)).toEqual([1, 2]);
+    expect(sessionVersion()).toBeNull();
+    // undone: the script is the checkpoint's again, and the checkpoint is not the session's to drop
+    const c = await edit(api, id, {
+      segments: rewrite(segments, "One."),
+      ifRevision: b.body.revision,
+    });
+    expect(c.body.history.versions.map((v) => [v.id, v.origin.kind])).toEqual([
+      [1, "scripted"],
+      [2, "checkpoint"],
+    ]);
+    expect(c.body.history.head.origin).toEqual({ kind: "edited", edits: 2 });
+  });
+
+  test("a session drops only the version its first edit preserved, not the newest one", async () => {
+    const { api, id, segments, revision } = await scripted();
+    const a = await edit(api, id, { segments: rewrite(segments, "One."), ifRevision: revision });
+    // a quiet spell, then a session of its own that preserves the edited script as v2
+    api.db.run(
+      `update script_heads set at = at - ${SESSION_IDLE_MS + 1} where book_id = '${id}' and chapter_id = 1`,
+    );
+    const b = await edit(api, id, {
+      segments: rewrite(segments, "Two."),
+      ifRevision: a.body.revision,
+    });
+    expect(b.body.history.versions.map((v) => v.id)).toEqual([1, 2]);
+    const c = await edit(api, id, {
+      segments: rewrite(segments, "One."),
+      ifRevision: b.body.revision,
+    });
+    // v2 is gone, v1 is untouched, and the head is what v2 recorded
+    expect(c.body.history.versions.map((v) => v.id)).toEqual([1]);
+    expect(c.body.history.head.origin).toEqual({ kind: "edited", edits: 1 });
+    expect(c.body.history.nextId).toBe(2);
+  });
+
+  test("a write that changes nothing about the script leaves the history alone", async () => {
+    const { api, id, segments, revision } = await scripted();
+    const before = await historyOf(api, id);
+    const flagged: Segment[] = segments.map((s, i) =>
+      i === 0 ? { ...s, flag: { kind: "delivery", note: "", at: 1 } } : s,
+    );
+    const a = await edit(api, id, { segments: flagged, ifRevision: revision });
+    expect(a.status).toBe(200);
+    // the flag was written, and the revision moved with it
+    expect(a.body.segments[0].flag).toMatchObject({ kind: "delivery" });
+    expect(a.body.revision).toBe(revision + 1);
+    expect(a.body.history).toEqual(before);
+    // and a session already open is neither joined nor closed by it
+    const b = await edit(api, id, {
+      segments: rewrite(flagged, "Edited."),
+      ifRevision: a.body.revision,
+    });
+    const c = await edit(api, id, {
+      segments: rewrite(segments, "Edited."),
+      ifRevision: b.body.revision,
+      origin: { kind: "bulk", label: "Flag cleared", lines: 1 },
+    });
+    expect(c.body.history.head).toEqual(b.body.history.head);
+    expect(c.body.history.versions).toEqual(b.body.history.versions);
+  });
+
   test("an edit after a quiet spell opens a session of its own", async () => {
     const { api, id, segments, revision } = await scripted();
     const a = await edit(api, id, { segments: rewrite(segments, "One."), ifRevision: revision });
@@ -230,6 +314,38 @@ describe("the history an edit writes", () => {
       { method: "DELETE" },
     );
     expect(again.status).toBe(404);
+  });
+
+  test("forgetting a checkpoint saved over a checkpoint puts the head back to the earlier one", async () => {
+    const { api, id } = await scripted();
+    const save = (name: string) =>
+      api.request<{ version: ScriptVersion; history: ChapterHistory }>(
+        `/api/books/${id}/chapters/1/history/checkpoints`,
+        jsonBody({ name }),
+      );
+    const first = await save("First");
+    const second = await save("Second");
+    // the second was saved over a checkpoint, so it records nothing it was saved over
+    expect(second.body.version.origin).toEqual({ kind: "checkpoint", name: "Second" });
+    const dropped = await api.request<{ history: ChapterHistory }>(
+      `/api/books/${id}/chapters/1/history/versions/${second.body.version.id}`,
+      { method: "DELETE" },
+    );
+    expect(dropped.body.history.versions.map((v) => v.id)).toEqual([first.body.version.id]);
+    expect(dropped.body.history.head).toEqual({
+      at: first.body.version.at,
+      origin: first.body.version.origin,
+    });
+    // and forgetting the first as well goes back to how the script came to be
+    const again = await api.request<{ history: ChapterHistory }>(
+      `/api/books/${id}/chapters/1/history/versions/${first.body.version.id}`,
+      { method: "DELETE" },
+    );
+    expect(again.body.history.head.origin).toEqual({
+      kind: "scripted",
+      profile: FAKE,
+      again: false,
+    });
   });
 
   test("a checkpoint of a chapter with no script is refused, and a blank name is a bad request", async () => {

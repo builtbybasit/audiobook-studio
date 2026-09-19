@@ -13,8 +13,6 @@ import { afterOf, beforeOf, bulkLabel, key, SKIP_SUMMARY, SKIP_TEXT } from "@/li
 import { clone } from "@/lib/utils";
 import type { ContentPart } from "@/mock";
 import { chapterPartsNow, chapterTextNow } from "@/queries/chapterText";
-import { invalidate } from "@/queries/invalidate";
-import { keys } from "@/queries/keys";
 import type {
   AudioStatus,
   BulkAction,
@@ -347,9 +345,14 @@ export const useScriptsStore = defineStore("scripts", {
         for (const undo of historyUndo) undo();
         return empty;
       }
-      // one write per chapter for the whole batch, under the batch's own name
+      // one write per chapter for the whole batch — under the batch's own name when it changed
+      // the script, and as the plain write it is when it only flagged lines
       for (const [chId, lines] of perChapter)
-        this._commit(bookId, chId, { kind: "bulk", label: preview.label, lines });
+        this._commit(
+          bookId,
+          chId,
+          touchesAudio ? { kind: "bulk", label: preview.label, lines } : undefined,
+        );
       const revert = () => {
         const clean = new Set(chapters);
         let conflicts = 0;
@@ -627,7 +630,10 @@ export const useScriptsStore = defineStore("scripts", {
         if (to) next[key(bookId, to)] = revision;
       }
       this._revision = next;
-      pending.get(this)?.clear();
+      // a write owed for one of this book's chapters was for a number that has moved; every
+      // other book's writes are still owed
+      const mine = pending.get(this);
+      if (mine) for (const k of mine.keys()) if (k.startsWith(prefix)) mine.delete(k);
     },
     /**
      * Write a chapter's script to the server as it now stands. Demo mode holds its own and does
@@ -674,7 +680,8 @@ export const useScriptsStore = defineStore("scripts", {
               ifRevision: this._revision[k] ?? 0,
               ...(origin ? { origin } : {}),
             });
-            this._revision[k] = revision;
+            // never backwards: a rename's answer for this chapter may have landed in between
+            this._revision[k] = Math.max(this._revision[k] ?? 0, revision);
             historyStore._install(bookId, chId, history);
           } catch (cause) {
             // The server's script wins: what is here is read again over the edit, and the toast
@@ -695,10 +702,21 @@ export const useScriptsStore = defineStore("scripts", {
                 timeout: 8000,
               },
             );
-            await Promise.all([
-              invalidate({ key: keys.chapterScript(bookId, chId) }, "all"),
-              invalidate({ key: keys.chapterHistory(bookId, chId) }, "all"),
-            ]);
+            // Read directly rather than through the query cache: invalidating refetches the
+            // entries it finds, and a chapter whose page has closed has none to find. The read
+            // installs the server's script over the local one; it is not a re-script, so what it
+            // replaced is not kept for the diff.
+            try {
+              const [script, history] = await Promise.all([
+                svc.chapterScript(bookId, chId),
+                svc.chapterHistory(bookId, chId),
+              ]);
+              this._install(bookId, chId, script);
+              delete this._previous[k];
+              historyStore._install(bookId, chId, history);
+            } catch {
+              // the toast has said the server could not be reached
+            }
           }
         }
       } finally {

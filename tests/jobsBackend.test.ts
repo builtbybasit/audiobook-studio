@@ -16,12 +16,13 @@ import type { Segment } from "@/types";
 import { key } from "@/lib/scriptReview";
 import { useBookJobs, useCast, useChapterHistory, useChapterScript } from "@/queries";
 import { HttpJobsService, setJobsService } from "@/services/jobs";
-import { HttpLibraryService, setLibraryService } from "@/services/library";
+import { activeLibraryService, HttpLibraryService, setLibraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 import { useExportsStore } from "@/stores/exports";
 import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
@@ -42,6 +43,10 @@ let queue: ReturnType<typeof useBookJobs>;
 let toasts: { msg: string; kind?: string; undo?: (() => unknown) | null }[];
 /** every path a store asked the server for, in order */
 let asked: string[];
+/** every request's body, by path, for the tests that check what a write said */
+let sent: { path: string; body: unknown }[];
+/** Holds a response on its way back to the store, so something else can land in between. */
+let hold: ((path: string, init?: RequestInit) => Promise<void>) | null;
 
 const volume = (titles: string[]) =>
   epubFile({
@@ -77,7 +82,15 @@ function wireStores() {
   // the seeded world reaches for `matchMedia` as it is built; the stores must not build one at all
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   asked = [];
-  const fetch: TestApi["fetch"] = (input, init) => (asked.push(input), api.fetch(input, init));
+  sent = [];
+  hold = null;
+  const fetch: TestApi["fetch"] = async (input, init) => {
+    asked.push(input);
+    if (typeof init?.body === "string") sent.push({ path: input, body: JSON.parse(init.body) });
+    const response = await api.fetch(input, init);
+    if (hold) await hold(input, init);
+    return response;
+  };
   // The services go in before the stores are created: a store reads its service while building
   // its state, which is how it knows not to seed itself from the demo world.
   setLibraryService(new HttpLibraryService("/api", fetch));
@@ -354,6 +367,154 @@ describe("editing a script with a server answering", () => {
     expect(scriptsStore.segmentsOf(id, 1).map((s) => s.text)).toEqual(["Written elsewhere."]);
     expect(scriptsStore._revision[key(id, 1)]).toBe(2);
     expect(readScript(api.db, id, 1)[0].text).toBe("Written elsewhere.");
+    // the refused edit is not a script something replaced: there is no diff to show
+    expect(scriptsStore._previous[key(id, 1)]).toBeUndefined();
+  });
+
+  test("a refused edit reads the server's script back even when no page has the chapter open", async () => {
+    const id = await shelved();
+    await scriptingStore._runRemote(id, [1], { quiet: true });
+    await api.runner.idle();
+    // the script was read once, by a page since closed: the store keeps the copy, the query
+    // cache has nothing left to refetch
+    scriptsStore._install(id, 1, await activeLibraryService()!.chapterScript(id, 1));
+    const elsewhere: Segment[] = [
+      {
+        id: 1,
+        type: "narration",
+        speaker: "Narrator",
+        text: "Written elsewhere.",
+        direction: "",
+        audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
+      },
+    ];
+    writeScript(api.db, id, 1, elsewhere);
+    scriptsStore.updateSegment(id, 1, 1, { text: "Written here." });
+    await scriptsStore._settled(id, 1);
+    expect(toasts.at(-1)?.msg).toBe("The script changed on the server");
+    expect(scriptsStore.segmentsOf(id, 1).map((s) => s.text)).toEqual(["Written elsewhere."]);
+    expect(scriptsStore._revision[key(id, 1)]).toBe(2);
+    expect(scriptsStore._previous[key(id, 1)]).toBeUndefined();
+    // and the history with it
+    expect(historyStore.historyOf(id, 1).head.origin.kind).toBe("scripted");
+  });
+
+  test("a renumbering forgets only the renumbered book's writes", async () => {
+    const { id: other } = await scriptedAndOpen();
+    const id = await shelved();
+    await scriptingStore._runRemote(id, [1], { quiet: true });
+    await api.runner.idle();
+    pinia.run(() => useChapterScript(id, 1));
+    await settle();
+    const [a, b] = scriptsStore.segmentsOf(id, 1);
+    // the first write's answer is held on its way back, and a second edit is made meanwhile
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    hold = (path, init) =>
+      init?.method === "PUT" && path === `/api/books/${id}/chapters/1/script`
+        ? held
+        : Promise.resolve();
+    scriptsStore.updateSegment(id, 1, a.id, { text: "One." });
+    await flush();
+    scriptsStore.updateSegment(id, 1, b.id, { text: "Two." });
+    // the other book is renumbered: its writes are forgotten, this book's are still owed
+    scriptsStore._remapBook(other, { 1: 1, 2: 2, 3: 3 });
+    hold = null;
+    release();
+    await scriptsStore._settled(id, 1);
+    expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
+    const server = readScript(api.db, id, 1);
+    expect(server[0].text).toBe("One.");
+    expect(server[1].text).toBe("Two.");
+  });
+
+  test("the revision never goes backwards, whichever answer lands last", async () => {
+    const { id } = await scriptedAndOpen();
+    const k = key(id, 1);
+    // an edit's answer is held on its way back, and a rename moves the chapter on meanwhile
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    hold = (path, init) =>
+      init?.method === "PUT" && path === `/api/books/${id}/chapters/1/script`
+        ? held
+        : Promise.resolve();
+    const line = scriptsStore.segmentsOf(id, 1)[0];
+    scriptsStore.updateSegment(id, 1, line.id, { text: "Edited first." });
+    await flush();
+    hold = null;
+    await castStore.renameCharacter(id, "Mara", "Mara Voss");
+    expect(scriptsStore._revision[k]).toBe(3);
+    release();
+    await scriptsStore._settled(id, 1);
+    expect(scriptsStore._revision[k]).toBe(3);
+    // so the next edit names the revision the chapter is really at
+    scriptsStore.updateSegment(id, 1, line.id, { text: "Edited again." });
+    await scriptsStore._settled(id, 1);
+    expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
+    expect(readScript(api.db, id, 1)[0].text).toBe("Edited again.");
+    // and a cast answer older than what the store knows changes nothing
+    castStore._moved(
+      id,
+      { characters: castStore.charactersOf(id), moved: [{ chapterId: 1, ids: [], revision: 2 }] },
+      "Mara Voss",
+    );
+    expect(scriptsStore._revision[k]).toBe(4);
+  });
+
+  test("a flag is written with its script, and adds nothing to the history", async () => {
+    const { id, history } = await scriptedAndOpen();
+    const narrationStore = useNarrationStore();
+    const line = scriptsStore.segmentsOf(id, 1)[0];
+    narrationStore.flagSegment(id, 1, line.id, "delivery", "softer");
+    await scriptsStore._settled(id, 1);
+    expect(readScript(api.db, id, 1)[0].flag).toMatchObject({ kind: "delivery", note: "softer" });
+    expect(scriptsStore._revision[key(id, 1)]).toBe(2);
+    expect(history.versions.value).toEqual([]);
+    expect(history.head.value.origin.kind).toBe("scripted");
+    narrationStore.clearFlag(id, 1, line.id);
+    await scriptsStore._settled(id, 1);
+    expect(readScript(api.db, id, 1)[0].flag).toBeUndefined();
+    expect(history.head.value.origin.kind).toBe("scripted");
+    // a flag batch is a plain write too: it does not name itself as a bulk correction
+    sent.length = 0;
+    scriptsStore.applyBulk(id, [{ chId: 1, segId: line.id }], {
+      kind: "flag",
+      flag: "pause",
+      note: "",
+      replace: true,
+    });
+    await scriptsStore._settled(id, 1);
+    const write = sent.find((r) => r.path.endsWith("/chapters/1/script"))!;
+    expect(write.body).not.toHaveProperty("origin");
+    expect(readScript(api.db, id, 1)[0].flag).toMatchObject({ kind: "pause" });
+    expect(history.head.value.origin.kind).toBe("scripted");
+  });
+
+  test("an expression moved or removed is written with its script", async () => {
+    const { id, history } = await scriptedAndOpen();
+    const narrationStore = useNarrationStore();
+    const line = scriptsStore.segmentsOf(id, 1)[0];
+    const tag = {
+      id: "laugh",
+      label: "Laugh",
+      token: "[laugh]",
+      kind: "sound" as const,
+      annotationId: 1,
+      at: 0,
+    };
+    scriptsStore.updateSegment(id, 1, line.id, { expressions: [tag] });
+    await scriptsStore._settled(id, 1);
+    expect(history.head.value.origin).toEqual({ kind: "edited", edits: 1 });
+    narrationStore.updateExpression(id, 1, line.id, 1, { at: 2 });
+    await scriptsStore._settled(id, 1);
+    expect(readScript(api.db, id, 1)[0].expressions).toEqual([{ ...tag, at: 2 }]);
+    expect(history.head.value.origin).toEqual({ kind: "edited", edits: 2 });
+    narrationStore.updateExpression(id, 1, line.id, 1, null);
+    await scriptsStore._settled(id, 1);
+    expect(readScript(api.db, id, 1)[0].expressions ?? []).toEqual([]);
+    // the session is back where it began, so it leaves no entry
+    expect(history.versions.value).toEqual([]);
+    expect(history.head.value.origin.kind).toBe("scripted");
   });
 
   test("an undo of an edit writes the script back, and a session that returns leaves no entry", async () => {
@@ -380,6 +541,33 @@ describe("editing a script with a server answering", () => {
     await toasts.at(-1)!.undo!();
     expect(history.versions.value).toEqual([]);
     expect(history.head.value.origin.kind).toBe("scripted");
+  });
+
+  test("undoing a restore writes the script back before it takes the speakers it added off the cast", async () => {
+    const { id, history } = await scriptedAndOpen();
+    const version = (await historyStore.saveCheckpoint(id, 1, "With Tobin"))!;
+    await castStore.deleteCharacter(id, "Tobin");
+    expect(scriptsStore.segmentsOf(id, 1).some((s) => s.speaker === "Tobin")).toBe(false);
+    // the restore brings Tobin's lines back, and Tobin with them
+    expect(historyStore.restore(id, 1, version.id)).toBe(true);
+    await scriptsStore._settled(id, 1);
+    await settle();
+    expect(readScript(api.db, id, 1).some((s) => s.speaker === "Tobin")).toBe(true);
+    expect(castStore.charactersOf(id).map((c) => c.name)).toContain("Tobin");
+    const castOf = async () =>
+      (
+        await api.request<{ characters: { name: string }[] }>(`/api/books/${id}/cast`)
+      ).body.characters.map((c) => c.name);
+    expect(await castOf()).toContain("Tobin");
+    // the undo: the script without Tobin's lines is written first, so removing Tobin from the
+    // cast moves nothing and refuses nothing
+    await toasts.find((t) => t.msg.startsWith("Chapter 1 restored"))!.undo!();
+    await settle();
+    expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
+    expect(readScript(api.db, id, 1).some((s) => s.speaker === "Tobin")).toBe(false);
+    expect(castStore.charactersOf(id).map((c) => c.name)).not.toContain("Tobin");
+    expect(await castOf()).not.toContain("Tobin");
+    expect(history.head.value.origin.kind).toBe("edited");
   });
 
   test("a restore writes the restored script under its own name", async () => {

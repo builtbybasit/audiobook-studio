@@ -48,11 +48,15 @@ export function putCharacter(db: Db, bookId: string, name: string, c: Character)
   return cast.readCast(db, bookId);
 }
 
-/** Change a speaker's name, and re-attribute every line that names them. */
+/**
+ * Change a speaker's name, and re-attribute every line that names them. Not the Narrator's: the
+ * Narrator is the speaker every book has and every removal hands lines to, by that name.
+ */
 export function renameCharacter(db: Db, bookId: string, from: string, to: string): Moved {
   requireBook(db, bookId);
   to = to.trim();
   if (!to) throw badRequest("A speaker needs a name");
+  if (from === NARRATOR) throw conflict("The Narrator cannot be renamed");
   requireCharacter(db, bookId, from);
   if (from === to) return { characters: cast.readCast(db, bookId), moved: [] };
   if (cast.getCharacter(db, bookId, to))
@@ -66,10 +70,16 @@ export function renameCharacter(db: Db, bookId: string, from: string, to: string
 
 /**
  * Fold one speaker into another: the lines move, the name and its aliases become aliases of the
- * speaker that stays, and the speaker that went comes off the cast.
+ * speaker that stays, and the speaker that went comes off the cast. Anyone can be folded into the
+ * Narrator; the Narrator is folded into no one, for the reason they cannot be removed.
  */
 export function mergeCharacter(db: Db, bookId: string, from: string, into: string): Moved {
   requireBook(db, bookId);
+  if (from === NARRATOR)
+    throw conflict(
+      "The Narrator cannot be merged into another speaker",
+      "Merge the other speaker into the Narrator instead.",
+    );
   const src = requireCharacter(db, bookId, from);
   const dst = requireCharacter(db, bookId, into);
   if (from === into) throw badRequest("A speaker cannot be merged into themselves");

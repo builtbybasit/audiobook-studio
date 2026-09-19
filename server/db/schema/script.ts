@@ -247,6 +247,12 @@ export const scriptHeads = sqliteTable(
     origin: text("origin", { mode: "json" }).$type<VersionOrigin>().notNull(),
     /** an editing session later edits still join, until it goes quiet */
     open: integer("open", { mode: "boolean" }),
+    /**
+     * The version the open session's first edit preserved, while the session is open and it
+     * added one. A session that comes back to exactly that script drops this version and no
+     * other — a checkpoint saved after it is not the session's to forget.
+     */
+    sessionVersion: integer("session_version"),
     nextId: integer("next_id").notNull().default(1),
   },
   (t) => [

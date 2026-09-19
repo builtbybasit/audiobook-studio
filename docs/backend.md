@@ -544,7 +544,10 @@ and both are the ones the scripting job already keeps:
   chapter's script, whoever made it. `ifRevision` is the revision the client last saw, and an edit
   against a script that has moved since — a job landed, another tab wrote, a rename moved lines —
   is a 409 and writes nothing, exactly as a job result that would land on newer work is refused.
-  The client reads the chapter again and says so; the server's script wins.
+  The client reads the chapter again and says so; the server's script wins. The rule runs one
+  way: an edit made while a job is still queued is not a conflict for the job, because the job
+  reads the revision when it starts, not when it was queued — the job's script replaces the edit,
+  and the edit is preserved in the history the way any script a run replaces is.
 - **History is written in the transaction that writes the script.** The working script is preserved
   before the new one replaces it, so a version and the script it preceded cannot disagree about
   which came first. `origin` says what produced the script — a bulk correction, a restore — and an
@@ -560,13 +563,26 @@ its last edit is less than `SESSION_IDLE_MS` old. One rule the server adds: **a 
 back to exactly where it began leaves no entry**. An undo over HTTP is an edit that writes the
 previous script back, and when that makes the script equal to the version the session's first edit
 preserved, the version is dropped again and the head goes back to what that version recorded — the
-list must never claim an edit happened that no longer exists.
+list must never claim an edit happened that no longer exists. Only that version is the session's
+to drop, and the head remembers which one it was (`script_heads.session_version`, set when an
+edit's capture adds a version and cleared by anything else): the newest version is not always it,
+because a checkpoint saved after the session opened is newer, and a session that comes back to the
+checkpoint's script leaves the checkpoint where it is.
+
+A write that changes nothing a version keeps — a line flagged, a clip that finished, anything about
+the audio — is written and moves the revision on, but leaves the history alone. `scriptSignature`
+is what a version is, and a script with the same signature is the same script, so there is no edit
+to count and no session to open or close; the store sends such a write with no origin, even from a
+flag batch.
 
 A chapter that now has a script reads as scripted (`chapters.scripting` is asked of the script),
 and an edit that would leave it with no lines is refused, because a chapter with nothing in it
 cannot be narrated and would have nothing left to undo from. A checkpoint names the script as it
 stands without changing it; forgetting the version the head still names puts the head back to how
-the script came to be before it was named, which is what an Undo of a checkpoint asks for.
+the script came to be before it was named, which is what an Undo of a checkpoint asks for. A
+checkpoint saved over a checkpoint records nothing it was saved over, because the answer is the
+earlier checkpoint itself: forgetting it puts the head back to the newest checkpoint still in the
+list, or to "scripted" when none is left.
 
 ## The cast
 
@@ -578,9 +594,11 @@ editing without a stale-revision refusal, and an Undo puts back exactly those li
 `attribute` rather than guessing at an inverse. A merge folds aliases in and cannot be told apart
 from ones that were already there, which is why the undo is recorded rather than inverted — the
 same reasoning as the review's `decisions` route. A line that changes hands has its rendered clip
-marked stale, as the cast store does. The Narrator cannot be removed, because a removal hands the
-lines to the Narrator. The dictionary is a short list a person edits one entry at a time, and the
-order it reads in is part of it, so it is written whole.
+marked stale, as the cast store does. The Narrator cannot be removed, renamed or merged into
+anyone (each a 409), because a removal hands the lines to the Narrator by that name; anyone can be
+merged into the Narrator, and the Cast page offers the Narrator row neither button. The dictionary
+is a short list a person edits one entry at a time, and the order it reads in is part of it, so it
+is written whole.
 
 The scripting job absorbs the speakers it turned up into the cast when it writes the script: a
 walk-on arrives unreviewed (`isNew`), so the Cast page can merge it; the Narrator, whom every book
@@ -681,10 +699,17 @@ Editing is write-behind. Every edit in [scripts.ts](../src/stores/scripts.ts) ac
 it does in the demo and ends with `_commit`, which writes the chapter's script as it now stands
 with the revision it was read at; writes for one chapter are serialised and coalesced, so a burst
 of edits is a few writes rather than one per keystroke, and a batch commits once under its own
-name. A refused write reads the server's script back over the local one with a toast saying so.
-History is the server's in that mode: the store captures nothing itself, an edit's answer carries
-the history it added to, and the panel follows. The cast store's changes are requests too, with
-an exact undo — a rename renames back, a merge or a removal puts back the lines that moved.
+name. A flag, an expression moved or omitted, and a clip's status all reach the server the same
+way, since they live on the script's lines. A refused write reads the server's script and history
+back over the local ones with a toast saying so — read directly through the service rather than by
+invalidating the query, because invalidation refetches the entries it finds and a chapter whose
+page has closed has none. The revision a write or a cast answer carries is never taken backwards,
+whichever answer lands last. History is the server's in that mode: the store captures nothing
+itself, an edit's answer carries the history it added to, and the panel follows. The cast store's
+changes are requests too, with an exact undo — a rename renames back, a merge or a removal puts
+back the lines that moved. An undo of a restore writes the script back first and only then takes
+the speakers the restore added off the cast, since a removal while the server's script still names
+them would move their lines and refuse the write.
 [tests/jobsBackend.test.ts](../tests/jobsBackend.test.ts) drives those stores against the real app,
 through the same composables the pages use.
 
@@ -819,4 +844,5 @@ backend is finished — see [the demo guide](demo.md).
 Changing the schema means regenerating: `pnpm db:generate` after editing anything in
 [server/db/schema/](../server/db/schema/), or the next boot migrates to the old shape and the tests
 fail somewhere that does not name the cause. Migrations are versioned in [drizzle/](../drizzle/)
-and applied in order at boot; `0001` added the script revision and the queue's dedupe key.
+and applied in order at boot; `0001` added the script revision and the queue's dedupe key, and
+`0002` the version an open editing session preserved.

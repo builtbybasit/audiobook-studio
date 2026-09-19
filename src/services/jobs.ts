@@ -3,7 +3,7 @@
 // The same arrangement as `@/services/library`: one HTTP implementation, chosen at startup, and
 // `null` in demo mode — where the queue is the simulated one the jobs store runs itself. The jobs
 // store asks `activeJobsService()` and takes one of two halves; no view knows which answered.
-import type { Chapter, Job } from "@/types";
+import type { Chapter, Job, NarrationScope } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { isBackend } from "@/services/mode";
 
@@ -13,6 +13,14 @@ export interface ScriptingQueued {
   skipped: { id: number; why: "excluded" | "busy" | "missing" }[];
   runId: number;
   /** the book's chapters as they now stand, with the queued ones marked */
+  chapters: Chapter[];
+}
+
+/** What queueing a narration run came to: the same shape, with the reasons narration adds. */
+export interface NarrationQueued {
+  jobs: Job[];
+  skipped: { id: number; why: "excluded" | "busy" | "missing" | "unscripted" | "nothing" }[];
+  runId: number;
   chapters: Chapter[];
 }
 
@@ -28,6 +36,8 @@ export interface JobsService {
   clear(): Promise<number>;
   /** Script these chapters of a book, as one run. */
   scriptChapters(bookId: string, ids: number[]): Promise<ScriptingQueued>;
+  /** Narrate these chapters of a book, as one run, at the scope named. */
+  narrateChapters(bookId: string, ids: number[], scope: NarrationScope): Promise<NarrationQueued>;
 }
 
 export class HttpJobsService implements JobsService {
@@ -55,6 +65,13 @@ export class HttpJobsService implements JobsService {
 
   scriptChapters(bookId: string, ids: number[]): Promise<ScriptingQueued> {
     return this.http.post<ScriptingQueued>(`/books/${seg(bookId)}/chapters/script`, { ids });
+  }
+
+  narrateChapters(bookId: string, ids: number[], scope: NarrationScope): Promise<NarrationQueued> {
+    return this.http.post<NarrationQueued>(`/books/${seg(bookId)}/chapters/narrate`, {
+      ids,
+      scope,
+    });
   }
 }
 

@@ -45,6 +45,18 @@ const Env = v.object({
    * and a key read from this environment by that implementation — never from the browser.
    */
   SCRIPTING_PROVIDER: v.optional(v.picklist(["fake"]), "fake"),
+  /**
+   * Which speech model the queue sends lines to. The same arrangement as scripting: only `fake`
+   * exists, it renders a tone and never reaches the network, and a real provider is a value here
+   * and an implementation under `server/providers/` that reads its own key from this environment.
+   */
+  SPEECH_PROVIDER: v.optional(v.picklist(["fake"]), "fake"),
+  /**
+   * Where rendered clips are kept: one directory per book under this one, and a file per render.
+   * A clip's url points here and nowhere else, so moving the directory means moving the files
+   * with it.
+   */
+  AUDIO_DIR: v.optional(v.string(), "./data/audio"),
 });
 
 export type Env = v.InferOutput<typeof Env>;

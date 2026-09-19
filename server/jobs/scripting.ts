@@ -72,8 +72,8 @@ function readChapter(db: Db, bookId: string, chapterId: number) {
   return { ...row, text: plainText(body) };
 }
 
-/** Where a chapter is now, by the identity that does not move. */
-function locate(db: Db | Tx, uid: string): { bookId: string; id: number } | undefined {
+/** Where a chapter is now, by the identity that does not move. The narration job asks this too. */
+export function locate(db: Db | Tx, uid: string): { bookId: string; id: number } | undefined {
   return db
     .select({ bookId: chapters.bookId, id: chapters.id })
     .from(chapters)

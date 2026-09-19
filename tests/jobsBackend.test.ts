@@ -27,6 +27,8 @@ import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 import { readScript, writeScript } from "~/db/script";
+import { fakeSpeechProvider } from "~/providers/fakeSpeech";
+import type { SpeechProvider } from "~/providers/speech";
 import { epubFile, story } from "./support/epub";
 import { flush, testPinia, type TestPinia } from "./support/pinia";
 import { gatedProvider, testApi, type TestApi } from "./support/server";
@@ -661,6 +663,114 @@ describe("the cast with a server answering", () => {
     const again = pinia.run(() => useCast(id));
     await settle();
     expect(again.lexicon.value).toEqual([{ id: 1, term: "Voss", say: "Vohss", enabled: true }]);
+  });
+});
+
+describe("narration with a server answering", () => {
+  test("a run is queued on the server, and the clips arrive with files to play", async () => {
+    const { id } = await scriptedAndOpen();
+    const narrationStore = useNarrationStore();
+    narrationStore.runNarration(id, [1]);
+    await settle();
+    expect(toasts.at(-1)?.msg).toBe("Narrate · 1 chapter");
+    expect(jobsStore.jobs.map((j) => j.kind)).toContain("narration");
+    expect(["queued", "running"]).toContain(libraryStore.chapter(id, 1)?.narration);
+    await api.runner.idle();
+    await poll();
+    const segs = scriptsStore.segmentsOf(id, 1);
+    expect(segs.length).toBeGreaterThan(1);
+    for (const s of segs) {
+      expect(s.audio.status).toBe("done");
+      expect(s.audio.duration).toBeGreaterThan(0);
+      expect(s.audio.url).toStartWith(`/api/audio/${id}/`);
+    }
+    expect(libraryStore.chapter(id, 1)?.narration).toBe("done");
+    expect(libraryStore.chapter(id, 1)?.duration).toBeGreaterThan(0);
+    expect(jobsStore.jobs.find((j) => j.kind === "narration")?.status).toBe("done");
+    // the file behind the url is served, so the player hears it rather than timing it
+    const res = await api.fetch(segs[0].audio.url!, {});
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("audio/wav");
+    // the revision moved with every clip that landed; that is not a re-script, so there is no diff
+    expect(scriptsStore._revision[key(id, 1)]).toBeGreaterThan(1);
+    expect(scriptsStore._previous[key(id, 1)]).toBeUndefined();
+    // and the store read the revision the clips moved it to, so the next edit still writes
+    scriptsStore.updateSegment(id, 1, segs[0].id, { text: "Edited after narration." });
+    await scriptsStore._settled(id, 1);
+    expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
+    expect(readScript(api.db, id, 1)[0].text).toBe("Edited after narration.");
+  });
+
+  test("re-narrating what changed renders only those lines, and keeps the rest", async () => {
+    const { id } = await scriptedAndOpen();
+    const narrationStore = useNarrationStore();
+    await narrationStore._runRemote(id, [1], { quiet: true });
+    await api.runner.idle();
+    await poll();
+    const before = scriptsStore.segmentsOf(id, 1).map((s) => s.audio.url);
+    const [a] = scriptsStore.segmentsOf(id, 1);
+    scriptsStore.updateSegment(id, 1, a.id, { text: "Changed since it was rendered." });
+    await scriptsStore._settled(id, 1);
+    expect(scriptsStore.segmentsOf(id, 1)[0].audio.status).toBe("stale");
+    narrationStore.renarrateStale(id, 1);
+    await settle();
+    await api.runner.idle();
+    await poll();
+    const segs = scriptsStore.segmentsOf(id, 1);
+    expect(segs[0].audio.status).toBe("done");
+    expect(segs[0].audio.url).not.toBe(before[0]);
+    // the stale clip stayed playable while its replacement rendered, and is a take now
+    expect(segs[0].audio.takes?.map((t) => t.url)).toEqual([before[0]]);
+    expect(segs.slice(1).map((s) => s.audio.url)).toEqual(before.slice(1));
+    expect(libraryStore.chapter(id, 1)?.narration).toBe("done");
+    // nothing left in the scope: the server says so rather than queueing an empty run
+    narrationStore.runNarration(id, [1], { scope: "fill" });
+    await settle();
+    expect(toasts.at(-1)?.msg).toBe("Nothing to narrate in this selection");
+    expect(toasts.at(-1)?.kind).toBe("warn");
+  });
+
+  test("a failed line is retried at the failed scope, and a retake is said to be unavailable", async () => {
+    // a provider that fails one line once, so the retry has something to succeed at
+    const inner = fakeSpeechProvider();
+    let failedOnce = false;
+    const speech: SpeechProvider = {
+      name: inner.name,
+      speak(input) {
+        if (!failedOnce && input.text.includes("count it twice")) {
+          failedOnce = true;
+          throw new Error("The voice service dropped the connection");
+        }
+        return inner.speak(input);
+      },
+    };
+    wire({ speech });
+    const { id } = await scriptedAndOpen();
+    const narrationStore = useNarrationStore();
+    await narrationStore._runRemote(id, [1], { quiet: true });
+    await api.runner.idle();
+    await poll();
+    const broken = scriptsStore.segmentsOf(id, 1).find((s) => s.text.includes("count it twice"))!;
+    expect(broken.audio.status).toBe("failed");
+    expect(broken.audio.error?.message).toContain("dropped");
+    expect(scriptsStore.segmentsOf(id, 1).filter((s) => s.audio.status === "done").length).toBe(
+      scriptsStore.segmentsOf(id, 1).length - 1,
+    );
+    expect(libraryStore.chapter(id, 1)?.narration).toBe("failed");
+    expect(jobsStore.jobs.find((j) => j.kind === "narration")?.status).toBe("failed");
+    // one line, retried by hand: the server re-renders the chapter's failed lines
+    narrationStore.retrySegment(id, 1, broken.id);
+    await settle();
+    await api.runner.idle();
+    await poll();
+    expect(scriptsStore.segmentsOf(id, 1).every((s) => s.audio.status === "done")).toBe(true);
+    expect(libraryStore.chapter(id, 1)?.narration).toBe("done");
+    // a retake is a verdict the server has no route for yet
+    narrationStore.retakeSegment(id, 1, broken.id);
+    expect(toasts.at(-1)?.msg).toBe("Retakes are not available with a server yet");
+    expect(
+      scriptsStore.segmentsOf(id, 1).find((s) => s.id === broken.id)?.candidate,
+    ).toBeUndefined();
   });
 });
 

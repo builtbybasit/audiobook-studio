@@ -277,9 +277,14 @@ export const useDemoStore = defineStore("demo", {
         addScriptUsage: (bookId, profileId, cost) =>
           useUsageStore().recordOpeningScriptSpend(bookId, profileId, cost, Date.now()),
         retime: (bookId, chId) => castStore._retime(bookId, chId),
-        importSample: (sampleId, bookId) => libraryStore.importBook(sampleId, { id: bookId }),
+        // A scenario builds its situation in one pass and reads the book id straight back, so it
+        // takes the seeded world's synchronous path rather than the action that may be a request.
+        importSample: (sampleId, bookId) => libraryStore._importedLocally(sampleId, { id: bookId }),
         shelveBook: (spec) => {
-          const id = libraryStore.importBook(spec.sample, { id: spec.id, title: spec.title });
+          const id = libraryStore._importedLocally(spec.sample, {
+            id: spec.id,
+            title: spec.title,
+          });
           const book = libraryStore.bookById(id)!;
           book.author = spec.author;
           book.cover = spec.cover;

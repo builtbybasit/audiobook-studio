@@ -3,6 +3,7 @@ import { useDemoStore } from "@/stores/demo";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
+import { useChapterText } from "@/queries";
 
 // Contents review: what goes in the audiobook. Reached twice — straight after an EPUB is read, when
 // confirming is what adds the book to the library, and any time later from the overview, when every
@@ -143,8 +144,11 @@ const textOf = (c: Chapter) => scriptsStore.rawText(bookId, c.id);
 const openedChapter = computed(() =>
   opened.value == null ? undefined : libraryStore.chapter(bookId, opened.value),
 );
-const openedParts = computed(() =>
-  openedChapter.value ? scriptsStore.partsOf(bookId, openedChapter.value.id) : [],
+// The opened chapter's prose: read from the server the first time it is opened, or generated from
+// the seeded world. The preview reads `parts` either way and never knows which answered.
+const { parts: openedParts, isLoading: textLoading } = useChapterText(
+  bookId,
+  () => openedChapter.value?.id,
 );
 const undecidedAfter = computed(
   () => chapters.value.filter((c) => isUndecided(c) && c.id !== opened.value).length,
@@ -266,13 +270,14 @@ const newTotal = computed(() =>
 const actionLabel = computed(() =>
   importLabel(importing.value === "volume" ? "volume" : "book", included.value),
 );
-function confirm() {
-  libraryStore.confirmImport(bookId);
+async function confirm() {
+  if (!(await libraryStore.confirmImport(bookId))) return;
   uiStore.currentBookId = bookId;
   void router.push(`/book/${bookId}`);
 }
-function discard() {
-  const what = libraryStore.discardImport(bookId);
+async function discard() {
+  const what = await libraryStore.discardImport(bookId);
+  if (!what) return;
   cancelling.value = false;
   uiStore.toast(what === "book" ? "Import cancelled" : "Volume not added", {
     kind: "info",

@@ -1,6 +1,6 @@
 # Audiobook Studio
 
-A personal audiobook app for turning books into reviewed, multi-voice narration. This checkout is a **Vue 3 frontend prototype with a permanent seeded demo**: use it to test the workflow without paid AI requests. A backend has been started in [server/](server/) and reads real EPUBs; everything else is still simulated.
+A personal audiobook app for turning books into reviewed, multi-voice narration. This checkout is a **Vue 3 frontend prototype with a permanent seeded demo**: use it to test the workflow without paid AI requests. A backend has been started in [server/](server/): it reads real EPUBs, stores the library, runs scripting as queued jobs against a fake model, and holds each chapter's script, its history and the book's cast; narration, export and pricing are still simulated.
 
 Import → review contents → script → assign voices → narrate and review → export.
 
@@ -22,7 +22,7 @@ pnpm dev:server                 # the API on :8787
 VITE_MODE=backend pnpm dev      # the frontend, proxying /api to it
 ```
 
-**The screens do not use it yet.** `VITE_MODE=backend` selects the real service at the seam in [src/services/](src/services/), and nothing above that seam calls it: every page still reads the seeded world, and wiring them up is the next slice. What the server itself does — importing real EPUBs, and storing a library you can drive over HTTP — is in [backend](docs/backend.md). Demo is the default and needs none of this.
+**The library, Scripting, Cast and Queue screens use it.** `VITE_MODE=backend` selects the real services at the seam in [src/services/](src/services/), and the stores read and write through them: the shelf, the import, the contents review and removal are the server's; a chapter's prose is the one the EPUB contained; scripting a chapter queues a job the server runs, which writes the script, the speakers it found and a version in the chapter's history; editing a line, renaming a speaker or saving a checkpoint is a request; and the Queue page shows the server's jobs. Reads go through queries ([src/queries/](src/queries/), on Pinia Colada), which ask the server in that mode and the seeded world in the demo. In backend mode the library, the queue and the cast start empty rather than on the seeded shelf, because a real library is not something the demo can stand in for. Narration, export and pricing are still the seeded world in both modes, and the only scripting model the server can be started with is a fake that reads the prose and never the network. What the server itself does is in [backend](docs/backend.md). Demo is the default and needs none of this.
 
 ## What works in this prototype
 
@@ -45,7 +45,7 @@ Open **Demo** in the header. The drawer offers repeatable scenarios, suggested s
 
 Start with a chapter with script history, a failed replacement, a book with missing voices, or an export that needs updating. The [demo guide](docs/demo.md) contains the scenario map and detailed walkthroughs.
 
-**Keep this demo when the backend is added.** The first backend slice — reading EPUBs and storing the library — is in [server/](server/); real-provider integration is still future work. The testing requirements for both are recorded in [future backend integration requirements](docs/demo.md#future-backend-integration-requirements).
+**Keep this demo when the backend is added.** The first three backend slices — reading EPUBs and storing the library, a job queue that scripts chapters with a fake model, and the script, history and cast a scripted chapter owns — are in [server/](server/); real-provider integration is still future work. The testing requirements are recorded in [future backend integration requirements](docs/demo.md#future-backend-integration-requirements).
 
 ## Documentation
 

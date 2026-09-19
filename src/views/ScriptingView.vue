@@ -2,6 +2,7 @@
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
+import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 
 // Scripting stage: chapter picker + run settings on the left, script reader on the right.
@@ -16,10 +17,12 @@ import ScriptReader from "@/views/scripting/ScriptReader.vue";
 import ScriptSettings from "@/views/scripting/ScriptSettings.vue";
 import ScriptEndpoints from "@/views/scripting/ScriptEndpoints.vue";
 import { useBookId } from "@/composables/useBookId";
+import { useChapterScript } from "@/queries";
 
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
+const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
 const route = useRoute();
 const router = useRouter();
@@ -66,6 +69,10 @@ function remember(id: number) {
 }
 watch(opened, remember);
 onMounted(() => remember(opened.value));
+// The opened chapter's script: with a server answering it is read when the chapter is opened and
+// again when the queue says a run landed on it; the seeded world is already holding every one.
+// The reader itself reads the scripts store, which is where the read lands.
+useChapterScript(bookId, opened);
 // One plan behind the button's label, the line under it and the work the run queues.
 const plan = computed(() => scriptingStore.scriptPlan(bookId, selected.value));
 const runNote = computed(() => {

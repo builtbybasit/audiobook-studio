@@ -20,7 +20,7 @@ import { useRoute, useRouter } from "vue-router";
 import type { Book } from "@/types";
 import EmptyState from "@/components/EmptyState.vue";
 import AddEpubDialog from "@/components/AddEpubDialog.vue";
-import { pendingFor, type PendingAdd } from "@/components/addEpub";
+import { pendingFor, pickedFrom, type PendingAdd, type PickedFile } from "@/components/addEpub";
 import ImportingCard from "@/views/library/ImportingCard.vue";
 import SampleMenu from "@/views/library/SampleMenu.vue";
 import ShelfGrid from "@/views/library/ShelfGrid.vue";
@@ -161,13 +161,14 @@ function open(b: Book) {
   router.push(`/book/${b.id}`);
 }
 /** A chosen file opens the Add dialog; the review comes after. */
-function addFile(name: string, bookId: string | null = null) {
-  pending.value = pendingFor(name, bookId);
+function addFile(picked: PickedFile, bookId: string | null = null) {
+  pending.value = pendingFor(picked, bookId);
 }
 function onPick(e: Event) {
   const input = e.target as HTMLInputElement;
-  addFile(input.files?.[0]?.name ?? "Untitled Upload.epub");
+  const picked = pickedFrom(input.files);
   input.value = "";
+  if (picked) addFile(picked);
 }
 /** One of the sample EPUBs: the same dialog, with the file and its contents already chosen. */
 function addSample(id: string) {
@@ -200,7 +201,8 @@ function onDrop(e: DragEvent) {
   e.preventDefault();
   depth = 0;
   dragging.value = false;
-  addFile(e.dataTransfer?.files?.[0]?.name ?? "Untitled Upload.epub");
+  const picked = pickedFrom(e.dataTransfer?.files);
+  if (picked) addFile(picked);
 }
 onMounted(() => {
   window.addEventListener("dragenter", onEnter);
@@ -365,14 +367,14 @@ onUnmounted(() => {
         v-else-if="view === 'grid'"
         :books="visibleBooks"
         @open="open"
-        @add-volume="(b, file) => addFile(file, b.id)"
+        @add-volume="(b, picked) => addFile(picked, b.id)"
       />
       <ShelfTable
         v-else
         :books="visibleBooks"
         :sort="sort"
         @open="open"
-        @add-volume="(b, file) => addFile(file, b.id)"
+        @add-volume="(b, picked) => addFile(picked, b.id)"
         @sort="(s) => (sort = s)"
       />
     </template>

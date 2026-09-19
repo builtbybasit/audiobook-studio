@@ -90,6 +90,14 @@ export const chapters = sqliteTable(
     kept: integer("kept", { mode: "boolean" }),
     /** the import's note, as JSON; null when the chapter read as story */
     note: text("note", { mode: "json" }).$type<unknown>(),
+    /**
+     * How many times this chapter's script has been written.
+     *
+     * A scripting job reads it when it starts and writes only if it has not moved, so a slow run
+     * can never overwrite a script that was edited or replaced while it was working. Moved by
+     * `writeScript` in `server/db/script.ts` and nothing else.
+     */
+    scriptRevision: integer("script_revision").notNull().default(0),
   },
   (t) => [
     primaryKey({ columns: [t.bookId, t.id] }),

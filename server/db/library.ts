@@ -4,9 +4,9 @@
 // served over HTTP. An import writes a book, its volume, its chapters and their text in one
 // transaction, so a crash halfway through a nine-hundred-chapter file leaves no half-imported book
 // behind for the review to choke on.
-import { and, asc, eq, inArray, max, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, max, sql } from "drizzle-orm";
 
-import type { Book, Chapter, Volume } from "@/types";
+import type { Book, Chapter, ChapterCounts, Volume } from "@/types";
 import type { Db, Tx } from "~/db/client";
 import type { ChapterBody } from "~/import/assemble";
 import { books, chapters, chapterTexts, volumes } from "~/db/schema";
@@ -20,18 +20,55 @@ const chunked = <T>(xs: readonly T[]): T[][] => {
   return out;
 };
 
+/**
+ * How each book's chapters stand, counted in one pass.
+ *
+ * The shelf lists books without their chapters — a review's worth of rows per book is not a cheap
+ * listing — and these are what let a card say "12 chapters, 3 scripted" before the book has been
+ * opened. One query over the table, grouped, rather than one per book.
+ */
+export function chapterCounts(db: Db | Tx, bookId?: string): Map<string, ChapterCounts> {
+  const rows = db
+    .select({
+      bookId: chapters.bookId,
+      total: count(),
+      included: sql<number>`sum(case when ${chapters.excluded} then 0 else 1 end)`,
+      scripted: sql<number>`sum(case when ${chapters.scripting} in ('done', 'fallback') then 1 else 0 end)`,
+      narrated: sql<number>`sum(case when ${chapters.narration} in ('done', 'stale') then 1 else 0 end)`,
+    })
+    .from(chapters)
+    .where(bookId ? eq(chapters.bookId, bookId) : undefined)
+    .groupBy(chapters.bookId)
+    .all();
+  return new Map(
+    rows.map((r) => [
+      r.bookId,
+      {
+        total: r.total,
+        included: Number(r.included),
+        scripted: Number(r.scripted),
+        narrated: Number(r.narrated),
+      },
+    ]),
+  );
+}
+
+const NO_CHAPTERS: ChapterCounts = { total: 0, included: 0, scripted: 0, narrated: 0 };
+
 export function listBooks(db: Db): Book[] {
   const rows = db.select().from(books).orderBy(asc(books.addedAt), asc(books.id)).all();
   const vols = db.select().from(volumes).orderBy(asc(volumes.position)).all();
+  const counts = chapterCounts(db);
   return rows.map((b) =>
     toBook(
       b,
       vols.filter((v) => v.bookId === b.id),
+      counts.get(b.id) ?? NO_CHAPTERS,
     ),
   );
 }
 
-export function getBook(db: Db, id: string): Book | undefined {
+export function getBook(db: Db | Tx, id: string): Book | undefined {
   const row = db.select().from(books).where(eq(books.id, id)).get();
   if (!row) return undefined;
   const vols = db
@@ -40,7 +77,7 @@ export function getBook(db: Db, id: string): Book | undefined {
     .where(eq(volumes.bookId, id))
     .orderBy(asc(volumes.position))
     .all();
-  return toBook(row, vols);
+  return toBook(row, vols, chapterCounts(db, id).get(id) ?? NO_CHAPTERS);
 }
 
 export function listChapters(db: Db, bookId: string): Chapter[] {
@@ -198,6 +235,58 @@ export function setKept(db: Db, bookId: string, ids: readonly number[]): number 
         tx.update(chapters)
           .set({ excluded: null, kept: true })
           .where(and(eq(chapters.bookId, bookId), eq(chapters.id, row.id)))
+          .run();
+        changed++;
+      }
+    }
+  });
+  return changed;
+}
+
+/** One chapter's review decisions, stated outright: skipped or not, looked at or not. */
+export interface ReviewDecision {
+  id: number;
+  excluded?: boolean;
+  kept?: boolean;
+}
+
+/**
+ * Put chapters' review decisions to exactly these, whatever they are now.
+ *
+ * The undo primitive. `setSkipped` and `setKept` each apply a rule — including a noted chapter
+ * counts as having looked at it — and a rule cannot be run backwards: an undone skip would come
+ * back as `kept` rather than as the undecided chapter it was. So an Undo records what the chapters
+ * were and puts that back, exactly, through this. A chapter not in the book is left out of the
+ * count rather than refused, because an undo of a batch is a person's intent for the rest.
+ */
+export function setDecisions(db: Db, bookId: string, decisions: readonly ReviewDecision[]): number {
+  if (!decisions.length) return 0;
+  let changed = 0;
+  db.transaction((tx) => {
+    for (const part of chunked(decisions)) {
+      const rows = tx
+        .select()
+        .from(chapters)
+        .where(
+          and(
+            eq(chapters.bookId, bookId),
+            inArray(
+              chapters.id,
+              part.map((d) => d.id),
+            ),
+          ),
+        )
+        .all();
+      for (const d of part) {
+        const row = rows.find((r) => r.id === d.id);
+        if (!row) continue;
+        const excluded = d.excluded ? true : null;
+        // `kept` means nothing on a chapter with no note, and is never written to one
+        const kept = d.kept && row.note ? true : null;
+        if (!!row.excluded === !!excluded && !!row.kept === !!kept) continue;
+        tx.update(chapters)
+          .set({ excluded, kept })
+          .where(and(eq(chapters.bookId, bookId), eq(chapters.id, d.id)))
           .run();
         changed++;
       }

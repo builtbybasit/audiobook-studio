@@ -107,6 +107,37 @@ describe("the contents review", () => {
     expect(body.chapters[0].kept).toBeUndefined();
   });
 
+  test("decisions can be put back exactly, which is what an undo needs", async () => {
+    const { api, book } = await imported();
+    // skip the notice, undo: it must come back undecided, not "looked at"
+    await api.request(`/api/books/${book.id}/chapters/skip`, jsonBody({ ids: [2] }));
+    const undone = await api.request<ChapterResult>(
+      `/api/books/${book.id}/chapters/decisions`,
+      jsonBody({ decisions: [{ id: 2 }] }),
+    );
+    expect(undone.body.changed).toBe(1);
+    expect(undone.body.chapters[1].excluded).toBeUndefined();
+    expect(undone.body.chapters[1].kept).toBeUndefined();
+    // keep it, undo: the same, through the same route
+    await api.request(`/api/books/${book.id}/chapters/keep`, jsonBody({ ids: [2] }));
+    const unkept = await api.request<ChapterResult>(
+      `/api/books/${book.id}/chapters/decisions`,
+      jsonBody({ decisions: [{ id: 2 }] }),
+    );
+    expect(unkept.body.chapters[1].kept).toBeUndefined();
+    // and a decision can be stated outright, both halves at once
+    const stated = await api.request<ChapterResult>(
+      `/api/books/${book.id}/chapters/decisions`,
+      jsonBody({
+        decisions: [{ id: 2, excluded: true, kept: true }, { id: 1, kept: true }, { id: 99 }],
+      }),
+    );
+    expect(stated.body.chapters[1]).toMatchObject({ excluded: true, kept: true });
+    // `kept` means nothing on a chapter with no note, and an unknown chapter is left out, not refused
+    expect(stated.body.chapters[0].kept).toBeUndefined();
+    expect(stated.body.changed).toBe(1);
+  });
+
   test("confirming the review puts the book on the shelf", async () => {
     const { api, book } = await imported();
     const { body } = await api.request<{ book: Book }>(`/api/books/${book.id}/confirm`, {
@@ -134,6 +165,19 @@ describe("the contents review", () => {
     expect(body.book.importing).toBeUndefined();
     expect(body.chapters[1].excluded).toBe(true);
     expect(body.chapters[1].note?.kind).toBe("hiatus");
+  });
+
+  test("the shelf carries each book's chapter counts, so a card can say so before the book is opened", async () => {
+    const { api, book } = await imported();
+    await api.request(`/api/books/${book.id}/chapters/skip`, jsonBody({ ids: [2] }));
+    await api.request(`/api/books/${book.id}/confirm`, { method: "POST" });
+    await api.request(`/api/books/${book.id}/chapters/script`, jsonBody({ ids: [1] }));
+    await api.runner.idle();
+    const { body } = await api.request<{ books: Book[] }>("/api/books");
+    expect(body.books[0].chapters).toEqual({ total: 4, included: 3, scripted: 1, narrated: 0 });
+    // and the same counts on the book itself, so the two never disagree
+    const one = await api.request<ImportResult>(`/api/books/${book.id}`);
+    expect(one.body.book.chapters).toEqual(body.books[0].chapters);
   });
 });
 

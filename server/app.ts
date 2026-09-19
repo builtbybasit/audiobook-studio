@@ -7,17 +7,31 @@ import { HTTPException } from "hono/http-exception";
 import { pinoLogger, type Env as PinoEnv } from "hono-pino";
 
 import type { Db } from "~/db/client";
-import { bookRoutes } from "~/routes/books";
-import type { ApiError } from "~/lib/http";
+import { createRunner, type Runner } from "~/jobs/runner";
+import { AppError, type ApiError } from "~/lib/errors";
 import type { Logger } from "~/log";
 import { log as defaultLog } from "~/log";
+import { bookRoutes } from "~/routes/books";
+import { castRoutes } from "~/routes/cast";
+import { exportRoutes } from "~/routes/exports";
+import { jobRoutes } from "~/routes/jobs";
+import { scriptRoutes } from "~/routes/script";
 
 export interface AppOptions {
   /** the logger requests are recorded against; a test hands over a silent one */
   log?: Logger;
+  /**
+   * The queue the routes enqueue into and cancel through. The default has no handlers, so a job
+   * enqueued into it fails at once saying so — right for a test that is not about jobs, and
+   * impossible to mistake for one that ran.
+   */
+  runner?: Runner;
 }
 
-export function createApp(db: Db, { log = defaultLog }: AppOptions = {}): Hono<PinoEnv> {
+export function createApp(
+  db: Db,
+  { log = defaultLog, runner = createRunner(db, {}, { log }) }: AppOptions = {},
+): Hono<PinoEnv> {
   // Typed with the logger the middleware puts on the context, so a route reaching for
   // `c.var.logger` is checked rather than trusted.
   const app = new Hono<PinoEnv>();
@@ -47,22 +61,35 @@ export function createApp(db: Db, { log = defaultLog }: AppOptions = {}): Hono<P
   );
 
   app.get("/api/health", (c) => c.json({ ok: true }));
-  app.route("/api/books", bookRoutes(db));
+  // Everything a book owns is addressed under it. The library's own routes come first; the cast,
+  // the scripts and the audiobooks each have a file of their own so that a route reads as one call
+  // on the operations of the part of the app that owns the table.
+  app.route("/api/books", bookRoutes(db, runner));
+  app.route("/api/books", castRoutes(db));
+  app.route("/api/books", scriptRoutes(db));
+  app.route("/api/books", exportRoutes(db));
+  app.route("/api/jobs", jobRoutes(db, runner));
 
   app.notFound((c) =>
     c.json(
-      { error: { message: `No route for ${c.req.method} ${c.req.path}` } } satisfies ApiError,
+      {
+        error: { code: "not_found", message: `No route for ${c.req.method} ${c.req.path}` },
+      } satisfies ApiError,
       404,
     ),
   );
 
-  // An unhandled error is a bug, not a message for the user. The client gets one sentence it can
-  // show; the stack goes to the log, where it is of use to somebody.
+  // A refusal a rule raised is an answer, and it is answered in the one error shape. Anything
+  // else is a bug, not a message for the user: the client gets one sentence it can show, and the
+  // stack goes to the log, where it is of use to somebody.
   app.onError((err, c) => {
+    if (err instanceof AppError) return c.json(err.body(), err.status);
     if (err instanceof HTTPException) return err.getResponse();
     (c.var.logger ?? log).error({ err }, "unhandled request error");
     return c.json(
-      { error: { message: "Something went wrong on the server" } } satisfies ApiError,
+      {
+        error: { code: "internal", message: "Something went wrong on the server" },
+      } satisfies ApiError,
       500,
     );
   });

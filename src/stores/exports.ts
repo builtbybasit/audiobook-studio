@@ -1,4 +1,9 @@
 // Export drafts, results and update decisions. The mock build receives a focused context.
+//
+// With a server answering, the finished audiobooks are the server's: `useBookExports` in
+// `@/queries` reads a book's in, and forgetting one is a request. Nothing on the server builds one
+// yet, so there `buildExport` is refused with a toast rather than simulated — a build that ran in
+// the browser would show an audiobook the server does not have.
 import {
   chapterSignature,
   DEFAULT_EXPORT_SETTINGS,
@@ -27,6 +32,7 @@ import type {
   VoiceRef,
 } from "@/types";
 import { defineStore } from "pinia";
+import { activeLibraryService, ApiError } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 import { useDemoStore } from "@/stores/demo";
 import { useEndpointsStore } from "@/stores/endpoints";
@@ -46,9 +52,31 @@ interface ExportsState {
   } | null;
 }
 export const useExportsStore = defineStore("exports", {
-  state: (): ExportsState => ({ ...seedState("exports"), _exportDraft: null }),
-  getters: {},
+  // With a server answering, no export is here until it has been read from it: the seeded ones
+  // belong to seeded books.
+  state: (): ExportsState => ({
+    ...(activeLibraryService() ? { exports: [] as ExportItem[] } : seedState("exports")),
+    _exportDraft: null,
+  }),
+  getters: {
+    /** Backend mode: nothing puts a deleted export back, so a deletion asks first. */
+    asksFirst: (): boolean => !!activeLibraryService(),
+  },
   actions: {
+    // ---------- the seam ----------
+    /** A book's exports as the server holds them, in place of what was here for that book. */
+    _install(bookId: string, list: ExportItem[]): void {
+      this.exports = [...this.exports.filter((e) => e.bookId !== bookId), ...list];
+    },
+    _failed(what: string, cause: unknown): void {
+      const uiStore = useUiStore();
+      const api = cause instanceof ApiError ? cause : null;
+      uiStore.toast(api ? api.message : `Could not ${what}`, {
+        kind: "error",
+        description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
+        timeout: 8000,
+      });
+    },
     _buildSim(): BuildSimContext {
       const demoStore = useDemoStore();
       const jobsStore = useJobsStore();
@@ -276,6 +304,16 @@ export const useExportsStore = defineStore("exports", {
       if (libraryStore._blocked(bookId, "build")) return null;
       const book = libraryStore.bookById(bookId);
       if (!book) return null;
+      if (activeLibraryService()) {
+        // The seeded build is the demo's; the server has no build job yet, and an audiobook built
+        // in the browser would be one the server does not have.
+        uiStore.toast("Building an audiobook is not available yet", {
+          kind: "warn",
+          description:
+            "The server runs scripting only so far. Narration and export are still the seeded demo's.",
+        });
+        return null;
+      }
       const key = exportKey(settings);
       // One audiobook, one build at a time. Two runs against the same finished export would both
       // call themselves the next version, and the second to land would quietly win.
@@ -569,12 +607,27 @@ export const useExportsStore = defineStore("exports", {
       }
       return this.buildExport(e.bookId, ids, settings, { updates: e.id });
     },
-    deleteExport(id: number): void {
+    async deleteExport(id: number): Promise<void> {
       const uiStore = useUiStore();
 
       const i = this.exports.findIndex((e) => e.id === id);
       if (i < 0) return;
       const e = this.exports[i];
+      const svc = activeLibraryService();
+      if (svc) {
+        // nothing puts one back on the server, so the control asked first and the toast says so
+        try {
+          await svc.removeExport(e.bookId, e.id);
+        } catch (cause) {
+          this._failed("delete this audiobook", cause);
+          return;
+        }
+        this.exports = this.exports.filter((x) => x.id !== id);
+        uiStore.toast(`Deleted ${e.filename} v${e.version}`, {
+          description: "This cannot be undone.",
+        });
+        return;
+      }
       this.exports.splice(i, 1);
       uiStore.toast(`Deleted ${e.filename} v${e.version}`, {
         undo: () => this.exports.splice(Math.min(i, this.exports.length), 0, e),

@@ -4,15 +4,28 @@
 // things by leaving them out — a chapter with no note has no `note` key, not a null one — and a
 // mapper that hands back `{ note: null }` produces an object that compares unequal to the one that
 // went in, and a UI that renders "null" where it should render nothing.
-import type { Book, Chapter, ChapterNote, NarrationStatus, ScriptingStatus, Volume } from "@/types";
+import type {
+  Book,
+  Chapter,
+  ChapterCounts,
+  ChapterNote,
+  NarrationStatus,
+  ScriptingStatus,
+  Volume,
+} from "@/types";
 import type { books, chapters, volumes } from "~/db/schema";
 
 type BookRow = typeof books.$inferSelect;
 type VolumeRow = typeof volumes.$inferSelect;
 type ChapterRow = typeof chapters.$inferSelect;
 
-/** Rebuild a book from its row and the volumes that belong to it, already in reading order. */
-export function toBook(row: BookRow, vols: readonly VolumeRow[]): Book {
+/**
+ * Rebuild a book from its row and the volumes that belong to it, already in reading order.
+ *
+ * `counts` is how its chapters stand, for a shelf that has not read them; the round-trip test
+ * leaves it out because the seeded world's books carry none.
+ */
+export function toBook(row: BookRow, vols: readonly VolumeRow[], counts?: ChapterCounts): Book {
   const book: Book = {
     id: row.id,
     title: row.title,
@@ -21,6 +34,7 @@ export function toBook(row: BookRow, vols: readonly VolumeRow[]): Book {
     addedAt: new Date(row.addedAt).toISOString().slice(0, 10),
     volumes: vols.map(toVolume),
   };
+  if (counts) book.chapters = counts;
   if (row.importing) book.importing = true;
   // A budget exists once either half of it has been set; absent is not the same as "no cap, not
   // paused", and the overview reads the difference.

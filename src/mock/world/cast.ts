@@ -72,15 +72,6 @@ export function makeCharacters(b: BookSeed): Character[] {
   ];
 }
 
-/** A walk-on speaker the LLM turned up that the cast has no entry for yet. */
-export const newSpeaker = (name: string, castSize: number): Character => ({
-  name,
-  aliases: [],
-  gender: "?",
-  description: "",
-  voice: null,
-  style: "",
-  color: PALETTE[castSize % PALETTE.length],
-  major: false,
-  isNew: true,
-});
+// A walk-on speaker is defined once, in `@/lib/cast`, so the server's scripting job and this
+// world bring one in the same way.
+export { newSpeaker } from "@/lib/cast";

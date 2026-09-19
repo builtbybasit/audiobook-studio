@@ -19,16 +19,18 @@ import type {
   Promotion,
   RateWindow,
   RequestRecord,
-  Segment,
 } from "@/types";
 import type { Credential } from "@/lib/credentials";
 import type { Db } from "~/db/client";
 import * as rows from "~/db/rows";
+
+// A chapter's script is read and written by the server's own module; the round-trip test drives
+// the same code the scripting job does rather than a copy of it.
+export { readScript, writeScript } from "~/db/script";
 import {
   books,
   chapters,
   characters,
-  clips,
   credentials,
   endpoints,
   exportChapters,
@@ -43,7 +45,6 @@ import {
   requests,
   scriptHeads,
   scriptVersions,
-  segments,
   voices,
   volumes,
 } from "~/db/schema";
@@ -83,21 +84,6 @@ export function writeLexicon(db: Db, bookId: string, entries: readonly LexEntry[
     (part) => db.insert(lexiconEntries).values(part).run(),
     entries.map((e, i) => rows.lexiconValues(bookId, e, i)),
   );
-}
-
-export function writeScript(
-  db: Db,
-  bookId: string,
-  chapterId: number,
-  segs: readonly Segment[],
-): void {
-  if (!segs.length) return;
-  insertAll(
-    (part) => db.insert(segments).values(part).run(),
-    segs.map((s, i) => rows.segmentValues(bookId, chapterId, s, i)),
-  );
-  const clipRows = segs.flatMap((s) => rows.segmentClipValues(bookId, chapterId, s));
-  insertAll((part) => db.insert(clips).values(part).run(), clipRows);
 }
 
 export function writeHistory(
@@ -238,25 +224,6 @@ export function readLexicon(db: Db, bookId: string): LexEntry[] {
     .orderBy(asc(lexiconEntries.position))
     .all()
     .map(rows.toLexEntry);
-}
-
-export function readScript(db: Db, bookId: string, chapterId: number): Segment[] {
-  const where = (t: typeof segments | typeof clips) =>
-    and(eq(t.bookId, bookId), eq(t.chapterId, chapterId));
-  const segRows = db
-    .select()
-    .from(segments)
-    .where(where(segments))
-    .orderBy(asc(segments.position))
-    .all();
-  const clipRows = db.select().from(clips).where(where(clips)).all();
-  const bySegment = new Map<number, (typeof clipRows)[number][]>();
-  for (const c of clipRows) {
-    const list = bySegment.get(c.segmentId) ?? [];
-    list.push(c);
-    bySegment.set(c.segmentId, list);
-  }
-  return segRows.map((s) => rows.toSegment(s, bySegment.get(s.id) ?? []));
 }
 
 export function readHistory(db: Db, bookId: string, chapterId: number): ChapterHistory | null {

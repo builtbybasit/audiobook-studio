@@ -195,43 +195,51 @@ describe("the import samples", () => {
 });
 
 describe("import → review → add", () => {
-  test("a read file waits off the shelf until it is confirmed, and confirming starts nothing", () => {
-    const id = libraryStore.importBook("serial");
+  test("a read file waits off the shelf until it is confirmed, and confirming starts nothing", async () => {
+    const id = (await libraryStore.importBook({ sample: "serial" }))!;
     expect(libraryStore.bookById(id)?.importing).toBe(true);
     expect(libraryStore.shelved.some((b) => b.id === id)).toBe(false);
     const s = libraryStore.contentsOf(id);
     expect(s.suggested).toBeGreaterThan(5);
     expect(s.included).toBe(s.total); // suggestions have removed nothing
-    libraryStore.confirmImport(id);
+    await libraryStore.confirmImport(id);
     expect(libraryStore.bookById(id)?.importing).toBeUndefined();
     expect(libraryStore.shelved.some((b) => b.id === id)).toBe(true);
     expect(libraryStore.chaptersOf(id).every((c) => c.scripting === "none")).toBe(true);
     expect(toasts.at(-1)?.msg).toContain("Added");
   });
 
-  test("cancelling an import leaves no trace; cancelling a volume leaves the book as it was", () => {
-    const id = libraryStore.importBook("clean");
-    expect(libraryStore.discardImport(id)).toBe("book");
+  test("cancelling an import leaves no trace; cancelling a volume leaves the book as it was", async () => {
+    const id = (await libraryStore.importBook({ sample: "clean" }))!;
+    expect(await libraryStore.discardImport(id)).toBe("book");
     expect(libraryStore.bookById(id)).toBeUndefined();
     expect(libraryStore.chaptersOf(id)).toEqual([]);
 
     const before = libraryStore.chaptersOf("cliche").length;
-    const volId = libraryStore.importVolume("cliche", "volumes", "Vol 4.epub", "Vol. 4");
+    const volId = await libraryStore.importVolume("cliche", {
+      sample: "volumes",
+      file: "Vol 4.epub",
+      name: "Vol. 4",
+    });
     expect(libraryStore.importingVolume("cliche")?.id).toBe(volId);
     expect(libraryStore.chaptersOf("cliche").length).toBeGreaterThan(before);
     expect(libraryStore.bookById("cliche")?.importing).toBeUndefined();
-    expect(libraryStore.discardImport("cliche")).toBe("volume");
+    expect(await libraryStore.discardImport("cliche")).toBe("volume");
     expect(libraryStore.chaptersOf("cliche").length).toBe(before);
     expect(libraryStore.importingVolume("cliche")).toBeUndefined();
   });
 
-  test("a new volume numbers on from the book and confirms into it", () => {
+  test("a new volume numbers on from the book and confirms into it", async () => {
     const before = libraryStore.chaptersOf("cliche").length;
-    libraryStore.importVolume("cliche", "volumes", "Vol 4.epub", "Vol. 4");
+    await libraryStore.importVolume("cliche", {
+      sample: "volumes",
+      file: "Vol 4.epub",
+      name: "Vol. 4",
+    });
     const added = libraryStore.chaptersOf("cliche").slice(before);
     expect(added[0].id).toBe(before + 1);
     expect(added.some((c) => c.note)).toBe(true);
-    libraryStore.confirmImport("cliche");
+    await libraryStore.confirmImport("cliche");
     expect(libraryStore.bookById("cliche")?.volumes.some((v) => v.importing)).toBe(false);
     expect(toasts.at(-1)?.msg).toContain("Vol. 4");
   });
@@ -251,15 +259,15 @@ describe("import → review → add", () => {
 });
 
 describe("deciding", () => {
-  test("a batch skip toasts with an Undo that puts every chapter back exactly", () => {
-    const id = libraryStore.importBook("repeated");
+  test("a batch skip toasts with an Undo that puts every chapter back exactly", async () => {
+    const id = (await libraryStore.importBook({ sample: "repeated" }))!;
     const sponsor = libraryStore.noticeGroupsOf(id).find((g) => g.kind === "sponsor")!;
     // one of them already looked at and kept: the batch only covers what is pending
-    libraryStore.keepChapters(id, [sponsor.ids[0]], { quiet: true });
+    await libraryStore.keepChapters(id, [sponsor.ids[0]], { quiet: true });
     const pending = libraryStore.noticeGroupsOf(id).find((g) => g.kind === "sponsor")!.pending;
     expect(pending.length).toBeGreaterThan(1);
     const suggested0 = libraryStore.contentsOf(id).suggested;
-    expect(libraryStore.skipChapters(id, pending, true)).toBe(pending.length);
+    expect(await libraryStore.skipChapters(id, pending, true)).toBe(pending.length);
     // the toast names what the batch covered, whatever size the batch was
     expect(toasts.at(-1)?.msg).toBe(`Skipped ${pending.length} chapters`);
     expect(libraryStore.contentsOf(id)).toMatchObject({
@@ -277,27 +285,27 @@ describe("deciding", () => {
     expect(libraryStore.chapter(id, sponsor.ids[0])?.kept).toBe(true);
   });
 
-  test("including a flagged chapter again counts as having looked at it", () => {
-    const id = libraryStore.importBook("serial");
+  test("including a flagged chapter again counts as having looked at it", async () => {
+    const id = (await libraryStore.importBook({ sample: "serial" }))!;
     const c = libraryStore.chaptersOf(id).find((ch) => ch.note?.kind === "hiatus")!;
-    libraryStore.skipChapters(id, [c.id], true, { quiet: true });
+    await libraryStore.skipChapters(id, [c.id], true, { quiet: true });
     expect(stateOf(c)).toBe("skipped");
-    libraryStore.skipChapters(id, [c.id], false, { quiet: true });
+    await libraryStore.skipChapters(id, [c.id], false, { quiet: true });
     expect(stateOf(c)).toBe("kept");
     expect(isUndecided(c)).toBe(false);
     // a quiet single toggle does not toast; the click is its own undo
     expect(toasts.length).toBe(0);
   });
 
-  test("a skipped chapter leaves every stage and comes back when restored", () => {
-    const id = libraryStore.importBook("clean");
-    libraryStore.confirmImport(id);
+  test("a skipped chapter leaves every stage and comes back when restored", async () => {
+    const id = (await libraryStore.importBook({ sample: "clean" }))!;
+    await libraryStore.confirmImport(id);
     const [a, b] = libraryStore.chaptersOf(id);
-    libraryStore.skipChapters(id, [b.id], true, { quiet: true });
+    await libraryStore.skipChapters(id, [b.id], true, { quiet: true });
     expect(scriptingStore.scriptEstimate(id, [a.id, b.id]).chapters).toBe(1);
     expect(readinessOf(b)).toBe("skipped");
     expect(libraryStore.progress(id)).toMatchObject({ total: 17, excluded: 1 });
-    libraryStore.skipChapters(id, [b.id], false, { quiet: true });
+    await libraryStore.skipChapters(id, [b.id], false, { quiet: true });
     expect(scriptingStore.scriptEstimate(id, [a.id, b.id]).chapters).toBe(2);
     expect(readinessOf(b)).toBe("missing");
   });

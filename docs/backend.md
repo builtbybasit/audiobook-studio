@@ -3,12 +3,16 @@
 [Back to README](../README.md) · [Development](development.md) · [Seeded demo](demo.md)
 
 The server in [server/](../server/) is where the app stops pretending. It reads real EPUB files and
-stores real books. **The first slice is the library: import, the contents review, and removal.**
-Scripting, narration, endpoints, pricing and export are still the seeded demo and are untouched by
-it.
+stores real books. **The first slice is the library: import, the contents review, and removal. The
+second is the queue: scripting a chapter is a job the server runs, and the Queue page shows it. The
+third is what a scripted chapter owns: its script can be edited over HTTP, its history and the
+book's cast are written by the run that made them, and the frontend reads all of it through
+queries.** Narration, endpoints, pricing and export are still the seeded demo and are untouched by
+all three.
 
-Nothing in the server contacts a provider or spends money. There are no credentials in its
-configuration, and there is no code path from an import to a paid request.
+Nothing in the server contacts a provider or spends money. The only scripting model it can be
+started with is the fake one ([the queue](#the-queue) says what it does), there are no credentials
+in its configuration, and there is no code path from an import to a paid request.
 
 ## Run it
 
@@ -158,24 +162,47 @@ found.
 
 ## The shape of it
 
-| Location                                                  | Responsibility                                                           |
-| --------------------------------------------------------- | ------------------------------------------------------------------------ |
-| [server/index.ts](../server/index.ts)                     | Boot: open the database, migrate, listen                                 |
-| [server/app.ts](../server/app.ts)                         | The API as a value, built around a database handle so tests can drive it |
-| [server/env.ts](../server/env.ts)                         | Configuration, validated once at startup                                 |
-| [server/routes/](../server/routes/)                       | HTTP: what a request means, and what comes back                          |
-| [server/db/library.ts](../server/db/library.ts)           | Every read and write the library makes                                   |
-| [server/db/schema/](../server/db/schema/)                 | The tables, grouped by the part of the app that owns them                |
-| [server/db/rows/](../server/db/rows/)                     | The only files that know what the columns are called                     |
-| [server/epub/parse.ts](../server/epub/parse.ts)           | Reading an actual EPUB                                                   |
-| [server/epub/text.ts](../server/epub/text.ts)             | One section's markup to the prose a narrator would read                  |
-| [server/epub/notices.ts](../server/epub/notices.ts)       | Deciding which chapters are not story                                    |
-| [server/import/assemble.ts](../server/import/assemble.ts) | Parsed chapters to a book, numbered and marked `importing`               |
+| Location                                                  | Responsibility                                                                                           |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| [server/index.ts](../server/index.ts)                     | Boot: open the database, migrate, recover the queue, listen                                              |
+| [server/app.ts](../server/app.ts)                         | The API as a value, built around a database and a queue so tests can drive it                            |
+| [server/env.ts](../server/env.ts)                         | Configuration, validated once at startup                                                                 |
+| [server/routes/](../server/routes/)                       | HTTP: a request turned into one operation, and its result turned into JSON                               |
+| [server/library/ops.ts](../server/library/ops.ts)         | What the library does: import, review, confirm, discard, remove — the rules                              |
+| [server/cast/ops.ts](../server/cast/ops.ts)               | What a cast does: a speaker written, renamed, merged, removed, and put back                              |
+| [server/script/ops.ts](../server/script/ops.ts)           | What a person does to a script: edit against a revision, checkpoint, forget                              |
+| [server/exports/ops.ts](../server/exports/ops.ts)         | The finished audiobooks: listed and forgotten; nothing builds one yet                                    |
+| [server/lib/errors.ts](../server/lib/errors.ts)           | What a refusal is before it is a response; `app.onError` makes it one                                    |
+| [server/lib/schemas.ts](../server/lib/schemas.ts)         | The domain shapes as request bodies: a speaker, an entry, a line, an origin                              |
+| [server/db/library.ts](../server/db/library.ts)           | Every read and write the library makes, and the chapter counts a shelf reads                             |
+| [server/db/script.ts](../server/db/script.ts)             | Every read and write a chapter's script makes, the revision that guards it, and the lines a rename moves |
+| [server/db/history.ts](../server/db/history.ts)           | Every read and write a chapter's history makes; the capture rule applied to rows                         |
+| [server/db/cast.ts](../server/db/cast.ts)                 | Every read and write a cast and its dictionary make                                                      |
+| [server/db/exports.ts](../server/db/exports.ts)           | Every read and write the finished audiobooks make                                                        |
+| [server/db/jobs.ts](../server/db/jobs.ts)                 | Every read and write the queue makes                                                                     |
+| [server/db/schema/](../server/db/schema/)                 | The tables, grouped by the part of the app that owns them                                                |
+| [server/db/rows/](../server/db/rows/)                     | The only files that know what the columns are called                                                     |
+| [server/jobs/runner.ts](../server/jobs/runner.ts)         | The worker: claim, run, cancel, recover                                                                  |
+| [server/jobs/scripting.ts](../server/jobs/scripting.ts)   | The scripting job, and queueing one per chapter as a run                                                 |
+| [server/providers/](../server/providers/)                 | The port a scripting model is reached through, and the fake behind it                                    |
+| [server/epub/parse.ts](../server/epub/parse.ts)           | Reading an actual EPUB                                                                                   |
+| [server/epub/text.ts](../server/epub/text.ts)             | One section's markup to the prose a narrator would read                                                  |
+| [server/epub/notices.ts](../server/epub/notices.ts)       | Deciding which chapters are not story                                                                    |
+| [server/import/assemble.ts](../server/import/assemble.ts) | Parsed chapters to a book, numbered and marked `importing`                                               |
 
-Routes call `server/db/library.ts` and nothing else: no route builds a query, and no query knows it
-is being served over HTTP. Above `rows.ts` everything works in the shapes [`@/types`](../src/types)
-defines — the same domain model the frontend uses — so the contents review does not know or care
-whether the demo or the server produced what it is showing.
+Three layers, each ignorant of the one above it. A route validates the request, calls one
+operation in `server/*/ops.ts` or `server/jobs/scripting.ts`, and returns what it got: no route
+builds a query, no route holds a rule. An operation states a rule — a volume goes onto a book with
+nothing waiting in its review, removing the last volume removes the book, a rename moves every
+line that names the speaker — and throws an `AppError` when it does not hold, without knowing what
+a status code is; a job or a test calls the same operation and gets the same refusal.
+`server/db/*.ts` is the only place a query is written. The routes of one book are split by the
+part of the app that owns the table — [books.ts](../server/routes/books.ts),
+[cast.ts](../server/routes/cast.ts), [script.ts](../server/routes/script.ts),
+[exports.ts](../server/routes/exports.ts) — and all mount under `/api/books`.
+Above `rows/` everything works in the shapes [`@/types`](../src/types) defines — the same domain
+model the frontend uses — so the contents review does not know or care whether the demo or the
+server produced what it is showing.
 
 Chapter text is a table of its own. The review lists a few hundred chapters at a time and needs none
 of their prose, so keeping it out of `chapters` means that listing stays a cheap read however long
@@ -323,9 +350,9 @@ uses one of them rather than a regex of its own:
   walk pads the text with the blank line it ends every block on, and tidying that away afterwards
   moves the ranges with it rather than leaving them pointing a word to the left.
 
-Scripting and narration have no backend slice yet, so **nothing calls `?format=plain` in anger**.
-It exists now because the alternative is a scripting slice that reaches for the column directly and
-nobody notices until a bill arrives.
+The scripting job reads `plainText` before it sends a chapter to the provider, and nothing in the
+server sends the column anywhere. `?format=plain` is what the frontend's estimate reads for the
+same reason.
 
 Both run `marked` over the stored text rather than stripping punctuation somebody remembered. A
 table becomes `Day, Chapter` a row at a time; a horizontal rule becomes a paragraph break; `\*`
@@ -435,39 +462,261 @@ written — and on what was not, which is how the redaction rule is checked.
 ## Endpoints
 
 `/api` on the same origin, so there is no CORS to configure and no base URL to set. Errors all have
-one shape — `{ error: { message, detail? } }` — where `message` is meant to be shown as it stands and
-`detail` is the longer explanation a panel can expand to.
+one shape — `{ error: { code, message, detail? } }` — where `code` is a stable name a client can
+switch on (`not_found`, `conflict`, `bad_request`, `too_large`, `unsupported_media`, `internal`),
+`message` is meant to be shown as it stands and `detail` is the longer explanation a panel can
+expand to. `ApiErrorCode` in [src/types/common.ts](../src/types/common.ts) is the one list, and
+the server imports it, so the two sides agree by construction rather than by luck.
 
 **All** of them, including the ones the validator raises. `sValidator` answers a bad request with
 its own `{ success, error, data }` unless it is told not to, which is a second error contract nobody
 agreed to: a client reading `error.message` finds nothing in it and can only say "Request failed
 (400)" — a worse message than the server already had, with the part naming the field thrown away.
 [validate.ts](../server/lib/validate.ts) is the same middleware with that hole closed, and routes
-use it in place of `sValidator` so the contract cannot be opted out of by forgetting a hook.
+use it in place of `sValidator` so the contract cannot be opted out of by forgetting a hook. Path
+parameters go through it too: a chapter number or a job id that is not a whole number is a 400
+naming the parameter, rather than `Number("latest")` looking up nothing and answering 404 for a
+request that was never well formed.
 
 The client holds up the other end. Not everything that answers `/api` is the API — a proxy, a dev
-server or a gateway in front of it answers with HTML — so `HttpLibraryService` does not assume the
-body parses. Letting `JSON.parse` throw would raise a `SyntaxError` out of a method whose whole
-contract is that it raises `ApiError`, and the page would report a JavaScript fault where it should
-be saying the server is unreachable.
+server or a gateway in front of it answers with HTML — so [`HttpClient`](../src/services/http.ts)
+does not assume the body parses. Letting `JSON.parse` throw would raise a `SyntaxError` out of a
+method whose whole contract is that it raises `ApiError`, and the page would report a JavaScript
+fault where it should be saying the server is unreachable. The library service and the jobs
+service are both built on it, so that rule is written once.
 
-| Method   | Path                               | Does                                                 |
-| -------- | ---------------------------------- | ---------------------------------------------------- |
-| `GET`    | `/api/health`                      | Is it up                                             |
-| `GET`    | `/api/books`                       | Every book, importing ones included                  |
-| `GET`    | `/api/books/:id`                   | A book and its chapters                              |
-| `GET`    | `/api/books/:id/chapters/:n/text`  | A chapter's prose                                    |
-| `POST`   | `/api/books/import`                | An uploaded EPUB → a book, or one more volume of one |
-| `POST`   | `/api/books/:id/confirm`           | The review is done; it joins the library             |
-| `POST`   | `/api/books/:id/discard`           | Cancel: an unconfirmed book goes, or its new volume  |
-| `POST`   | `/api/books/:id/chapters/skip`     | Skip chapters for the audiobook                      |
-| `POST`   | `/api/books/:id/chapters/include`  | Put them back                                        |
-| `POST`   | `/api/books/:id/chapters/keep`     | Keep a noted chapter and stop the suggestion asking  |
-| `DELETE` | `/api/books/:id`                   | Remove a book and everything it owns                 |
-| `DELETE` | `/api/books/:id/volumes/:volumeId` | Remove a volume; the last one removes the book       |
+| Method   | Path                                             | Does                                                     |
+| -------- | ------------------------------------------------ | -------------------------------------------------------- |
+| `GET`    | `/api/health`                                    | Is it up                                                 |
+| `GET`    | `/api/books`                                     | Every book, importing ones included, with chapter counts |
+| `GET`    | `/api/books/:id`                                 | A book and its chapters                                  |
+| `GET`    | `/api/books/:id/chapters/:n/text`                | A chapter's prose                                        |
+| `GET`    | `/api/books/:id/chapters/:n/script`              | A chapter's script, and its revision                     |
+| `PUT`    | `/api/books/:id/chapters/:n/script`              | Replace the script, naming the revision that was read    |
+| `GET`    | `/api/books/:id/chapters/:n/history`             | The chapter's versions and how the script came to be     |
+| `POST`   | `/api/books/:id/chapters/:n/history/checkpoints` | Name the script as it stands and keep a copy (201)       |
+| `DELETE` | `/api/books/:id/chapters/:n/history/versions/:v` | Forget one version; what an Undo of a checkpoint sends   |
+| `GET`    | `/api/books/:id/cast`                            | The cast and the pronunciation dictionary                |
+| `PUT`    | `/api/books/:id/characters/:name`                | One speaker, written as stated: new or replaced          |
+| `POST`   | `/api/books/:id/characters/:name/rename`         | Rename; every line that names them moves                 |
+| `POST`   | `/api/books/:id/characters/:name/merge`          | Fold one speaker into another                            |
+| `DELETE` | `/api/books/:id/characters/:name`                | Remove a speaker; their lines go to the Narrator         |
+| `POST`   | `/api/books/:id/characters/attribute`            | Put a speaker back on exactly these lines; an Undo       |
+| `PUT`    | `/api/books/:id/lexicon`                         | The pronunciation dictionary, replaced whole             |
+| `GET`    | `/api/books/:id/exports`                         | The finished audiobooks                                  |
+| `GET`    | `/api/books/:id/exports/:e`                      | One of them                                              |
+| `DELETE` | `/api/books/:id/exports/:e`                      | Forget one                                               |
+| `POST`   | `/api/books/import`                              | An uploaded EPUB → a book, or one more volume of one     |
+| `POST`   | `/api/books/:id/confirm`                         | The review is done; it joins the library                 |
+| `POST`   | `/api/books/:id/discard`                         | Cancel: an unconfirmed book goes, or its new volume      |
+| `POST`   | `/api/books/:id/chapters/skip`                   | Skip chapters for the audiobook                          |
+| `POST`   | `/api/books/:id/chapters/include`                | Put them back                                            |
+| `POST`   | `/api/books/:id/chapters/keep`                   | Keep a noted chapter and stop the suggestion asking      |
+| `POST`   | `/api/books/:id/chapters/decisions`              | Put decisions back exactly as stated; what an Undo sends |
+| `POST`   | `/api/books/:id/chapters/script`                 | Queue a scripting job per chapter, as one run (202)      |
+| `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                     |
+| `DELETE` | `/api/books/:id/volumes/:volumeId`               | Remove a volume; the last one removes the book           |
+| `GET`    | `/api/jobs`                                      | Every job, oldest first; `?bookId=` narrows it           |
+| `GET`    | `/api/jobs/:id`                                  | One job, with its activity                               |
+| `POST`   | `/api/jobs/:id/cancel`                           | Stop it: a queued job never starts, a running one stops  |
+| `DELETE` | `/api/jobs/:id`                                  | Take a finished job out of the history                   |
+| `POST`   | `/api/jobs/clear`                                | Clear the history; live jobs stay                        |
 
 `POST /api/books/import` is `multipart/form-data`: `file` is the EPUB, `title` optionally overrides
 the one in the file, and `bookId` with `name` adds the file to an existing book as one more volume.
+
+`POST /api/books/:id/chapters/script` answers with the jobs it made, the chapters it left out and
+why (`excluded`, `busy`, `missing`), and the book's chapters as they now stand — so the client can
+say "2 already being scripted" instead of waiting for work that is not coming.
+
+`GET /api/books` carries each book's chapter counts (`chapters: { total, included, scripted,
+narrated }`), read in one grouped query rather than one per book. The shelf lists books without
+their chapters — a review's worth of rows per book is not a cheap listing — and the counts are
+what let a card say "12 chapters, 3 scripted" before the book has been opened. The library store
+answers `contentsOf` and `progress` from them until the chapters themselves are here.
+
+## A script edited by a person
+
+`PUT /api/books/:id/chapters/:n/script` takes `{ segments, ifRevision, origin? }`. Two rules hold,
+and both are the ones the scripting job already keeps:
+
+- **An edit names the revision it read.** `chapters.script_revision` counts every write of a
+  chapter's script, whoever made it. `ifRevision` is the revision the client last saw, and an edit
+  against a script that has moved since — a job landed, another tab wrote, a rename moved lines —
+  is a 409 and writes nothing, exactly as a job result that would land on newer work is refused.
+  The client reads the chapter again and says so; the server's script wins. The rule runs one
+  way: an edit made while a job is still queued is not a conflict for the job, because the job
+  reads the revision when it starts, not when it was queued — the job's script replaces the edit,
+  and the edit is preserved in the history the way any script a run replaces is.
+- **History is written in the transaction that writes the script.** The working script is preserved
+  before the new one replaces it, so a version and the script it preceded cannot disagree about
+  which came first. `origin` says what produced the script — a bulk correction, a restore — and an
+  ordinary edit needs none.
+
+The rule behind every entry is one function, `planCapture` in
+[src/lib/scriptHistory.ts](../src/lib/scriptHistory.ts), shared by the history store and
+[server/db/history.ts](../server/db/history.ts): no entry for an empty script, none for an
+operation that leaves the script exactly as it found it, none for a script that is already the
+newest entry, and an edit opens a session that later edits join. The store closes a session with a
+timer; the server has no timer and asks the clock instead (`sessionOpen`): a session is open while
+its last edit is less than `SESSION_IDLE_MS` old. One rule the server adds: **a session that comes
+back to exactly where it began leaves no entry**. An undo over HTTP is an edit that writes the
+previous script back, and when that makes the script equal to the version the session's first edit
+preserved, the version is dropped again and the head goes back to what that version recorded — the
+list must never claim an edit happened that no longer exists. Only that version is the session's
+to drop, and the head remembers which one it was (`script_heads.session_version`, set when an
+edit's capture adds a version and cleared by anything else): the newest version is not always it,
+because a checkpoint saved after the session opened is newer, and a session that comes back to the
+checkpoint's script leaves the checkpoint where it is.
+
+A write that changes nothing a version keeps — a line flagged, a clip that finished, anything about
+the audio — is written and moves the revision on, but leaves the history alone. `scriptSignature`
+is what a version is, and a script with the same signature is the same script, so there is no edit
+to count and no session to open or close; the store sends such a write with no origin, even from a
+flag batch.
+
+A chapter that now has a script reads as scripted (`chapters.scripting` is asked of the script),
+and an edit that would leave it with no lines is refused, because a chapter with nothing in it
+cannot be narrated and would have nothing left to undo from. A checkpoint names the script as it
+stands without changing it; forgetting the version the head still names puts the head back to how
+the script came to be before it was named, which is what an Undo of a checkpoint asks for. A
+checkpoint saved over a checkpoint records nothing it was saved over, because the answer is the
+earlier checkpoint itself: forgetting it puts the head back to the newest checkpoint still in the
+list, or to "scripted" when none is left.
+
+## The cast
+
+A speaker is keyed by name because the script names speakers by name and nothing else, so anything
+that changes a name moves lines in every chapter of the book — and does so in the same transaction
+as the cast row. A rename, a merge and a removal each answer with the lines that changed hands,
+by chapter, and with each chapter's script revision now that they have (`moved`): the client keeps
+editing without a stale-revision refusal, and an Undo puts back exactly those lines through
+`attribute` rather than guessing at an inverse. A merge folds aliases in and cannot be told apart
+from ones that were already there, which is why the undo is recorded rather than inverted — the
+same reasoning as the review's `decisions` route. A line that changes hands has its rendered clip
+marked stale, as the cast store does. The Narrator cannot be removed, renamed or merged into
+anyone (each a 409), because a removal hands the lines to the Narrator by that name; anyone can be
+merged into the Narrator, and the Cast page offers the Narrator row neither button. The dictionary
+is a short list a person edits one entry at a time, and the order it reads in is part of it, so it
+is written whole.
+
+The scripting job absorbs the speakers it turned up into the cast when it writes the script: a
+walk-on arrives unreviewed (`isNew`), so the Cast page can merge it; the Narrator, whom every book
+has, arrives as the main cast. Nothing writes voices, styles or aliases but a person.
+
+## The queue
+
+A job is a row in `jobs`, the table laid out to hold the frontend's `Job`, so the Queue page reads a
+server job exactly as it reads a simulated one. What the server adds is discipline the browser
+never needed, and each rule below has a test in
+[tests/server/jobs.test.ts](../tests/server/jobs.test.ts) that drives it through the real routes,
+the real runner and a scripting model that reads the prose and never the network.
+
+- **The same work is never queued twice, and the database says so.** While a job is queued or
+  running, `jobs.active_key` is `kind:book:chapter`; the moment it finishes the key is cleared. A
+  unique index over that column means a double click, a retried request or two tabs asking for the
+  same chapter get the same job back rather than a second one — whatever order the requests
+  arrive in, because it is the index that refuses, not a check a second request could slip past.
+  SQLite treats NULLs as distinct, so finished jobs never collide. The route says which chapters it
+  left out for being `busy`.
+- **One job at a time.** [runner.ts](../server/jobs/runner.ts) claims the oldest queued job,
+  moving it to `running` in the same transaction that reads it, and runs its handler to the end
+  before claiming the next. The queue's own rule — one book's chapters run sequentially so roster
+  and recap carry forward — is a property of the runner rather than something each handler has to
+  re-derive. An enqueue wakes it; a slow interval is only a safety net.
+- **A cancel is an abort.** A running job has an `AbortController`; cancelling aborts it, the
+  handler's provider sees `signal` and stops, and whatever comes back afterwards is recorded as
+  `cancelled` rather than as a failure. A queued job is finished as cancelled without ever starting.
+  Either way the handler gets the last word (`onSettled`), which is how a chapter marked `queued`
+  goes back to `none` — and the same hook runs when a recovery gives up on a job, so there is no
+  path that settles a row without it.
+- **A restart loses no work.** A row still `running` when nothing is running is a job the last
+  process died holding. `start` puts it back in the queue with an event saying so, and it starts
+  again — twice in all, because a job that takes the process down every time must not be allowed
+  to forever; the third time it fails with the reason recorded. `stop` (a `SIGINT` from
+  `pnpm dev:server`) aborts the running job and leaves its row `running` on purpose, so a stop and a
+  crash are the same case to the recovery and there is one recovery path rather than two.
+- **A result never lands on newer work.** `chapters.script_revision` counts how many times a
+  chapter's script has been written. The scripting job reads it when it starts and writes only if
+  it has not moved, inside one transaction with the write, so a script edited or replaced while a
+  slow run was working is kept and the job fails saying why. The chapter is also found again by its
+  **uid** at the moment of writing, not by the number the job started with: removing an earlier
+  volume renumbers the book mid-run, and the script still lands on the chapter it was read from.
+  `GET …/script` returns the revision so that a script-editing route, when there is one, can name
+  the version it edited.
+- **A chapter's status is asked of its script, not remembered.** `queued` when the job is (written
+  in the same transaction as the row, so it cannot land after the worker has moved on), `running`
+  with a percentage while it runs, and afterwards whatever the chapter holds: `done` if it has a
+  script — including after a re-script that failed, because the old script is intact and a
+  chapter with a usable script must not read as failed — `none` if it never had one, and `failed`
+  only when a run that was meant to give it one could not.
+- **The job log is bounded** the same way the frontend's is: the newest thousand events, with
+  `dropped_events` counting what is no longer there.
+
+### The provider, and where a key would live
+
+A scripting job hands a [`ScriptingProvider`](../server/providers/scripting.ts) a chapter's prose —
+the `plain` reading, never the stored Markdown — and gets back lines with speakers. That is the
+whole contract. What model, what prompt, what key and what it cost are the provider's business.
+
+Only [the fake](../server/providers/fake.ts) exists, and `SCRIPTING_PROVIDER=fake` is the only value
+[env.ts](../server/env.ts) accepts, so a server cannot be started in a configuration that spends
+money. The fake is deterministic and honest about what it is: a paragraph is narration, a quoted
+span is dialogue, and the speaker is whoever the paragraph names beside a speech verb — "…," said
+Mara — or `Unknown`. That is enough to give the Scripting page a cast to route, a script to correct
+and clips to render, which is what the screens need to be tested against, and it is the "fake AI
+provider" the [demo requirements](demo.md#future-backend-integration-requirements) ask for.
+
+A real provider is a value for `SCRIPTING_PROVIDER`, an implementation next to the fake, and a key
+read from the server's environment by that implementation. **The key never leaves the process**:
+it is not in the schema (`credentials` is a registry of names), not in a response, and the
+[logger's redaction list](#logging) catches it if it is ever spread into a log record. The browser's
+keyring is the demo's; nothing in backend mode sends a key anywhere.
+
+### How the screens use it
+
+Reads are queries, through [Pinia Colada](https://pinia-colada.esm.dev): one composable per
+resource in [src/queries/](../src/queries/) — a chapter's text, its script, its history, a book's
+cast, its exports, and the queue — each asking the service with a server answering and the seeded
+store without one, so the mode choice is made once, there, and no page grows a demo-versus-real
+branch. What a query reads it installs into the store that owns it: the stores stay the working
+copy every page reads and every edit acts on, and a query is how that copy is filled and kept
+fresh. The query cache is a Pinia store of its own; `main.ts` installs the plugin with re-reads on
+focus and reconnect off, because what changes a script or a cast in this app is a request this app
+made, and each one invalidates what it changed by key.
+
+The queue is the one thing that moves on its own. `useBookJobs` is one shared query (`defineQuery`)
+that the shell keeps open for as long as the app is, polling through the auto-refetch plugin while
+a job is queued or running and going quiet when the queue does. A job that moved is a chapter that
+moved, so its book is read again; a scripting job that just finished has its chapter's script and
+history and the book's cast invalidated, since the run wrote all three. `runScripting` in
+[scripting.ts](../src/stores/scripting.ts) queues the chapters on the server, marks nothing itself
+and invalidates the queue; cancel, remove and clear are requests that do the same, and nothing is
+marked locally first — a cancel that failed to reach the server must not look like one that
+worked.
+
+Editing is write-behind. Every edit in [scripts.ts](../src/stores/scripts.ts) acts on the store as
+it does in the demo and ends with `_commit`, which writes the chapter's script as it now stands
+with the revision it was read at; writes for one chapter are serialised and coalesced, so a burst
+of edits is a few writes rather than one per keystroke, and a batch commits once under its own
+name. A flag, an expression moved or omitted, and a clip's status all reach the server the same
+way, since they live on the script's lines. A refused write reads the server's script and history
+back over the local ones with a toast saying so — read directly through the service rather than by
+invalidating the query, because invalidation refetches the entries it finds and a chapter whose
+page has closed has none. The revision a write or a cast answer carries is never taken backwards,
+whichever answer lands last. History is the server's in that mode: the store captures nothing
+itself, an edit's answer carries the history it added to, and the panel follows. The cast store's
+changes are requests too, with an exact undo — a rename renames back, a merge or a removal puts
+back the lines that moved. An undo of a restore writes the script back first and only then takes
+the speakers the restore added off the cast, since a removal while the server's script still names
+them would move their lines and refuse the write.
+[tests/jobsBackend.test.ts](../tests/jobsBackend.test.ts) drives those stores against the real app,
+through the same composables the pages use.
+
+One thing the seeded run does that the server's does not, yet: the estimate and the budget gates
+are the seeded endpoints' and are bypassed in backend mode — the fake costs nothing, and a real
+provider's spending is the server's to meter. It is listed under
+[what is not done yet](#what-is-not-done-yet).
 
 ## Three things the EPUB library does on import
 
@@ -517,34 +766,83 @@ What it can vary is what real EPUBs vary: where the navigation document sits rel
 chapters, whether it calls a chapter something other than the heading inside it, whether one file
 holds several chapters, and whether a file the package promises is in the archive at all.
 
-| File                                                             | Covers                                                 |
-| ---------------------------------------------------------------- | ------------------------------------------------------ |
-| [epubImport.test.ts](../tests/server/epubImport.test.ts)         | Reading a file: metadata, titles, text, refusals       |
-| [notices.test.ts](../tests/server/notices.test.ts)               | Which chapters are not story                           |
-| [contentsReview.test.ts](../tests/server/contentsReview.test.ts) | Import → review → add, volumes, removal, renumbering   |
-| [markdown.test.ts](../tests/server/markdown.test.ts)             | The converter's DOM bracket, and reading Markdown back |
-| [libraryClient.test.ts](../tests/server/libraryClient.test.ts)   | The client and the API against each other              |
-| [schema.test.ts](../tests/server/schema.test.ts)                 | The seeded world through the schema and back           |
+| File                                                             | Covers                                                                         |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| [epubImport.test.ts](../tests/server/epubImport.test.ts)         | Reading a file: metadata, titles, text, refusals                               |
+| [notices.test.ts](../tests/server/notices.test.ts)               | Which chapters are not story                                                   |
+| [contentsReview.test.ts](../tests/server/contentsReview.test.ts) | Import → review → add, volumes, removal, renumbering                           |
+| [markdown.test.ts](../tests/server/markdown.test.ts)             | The converter's DOM bracket, and reading Markdown back                         |
+| [jobs.test.ts](../tests/server/jobs.test.ts)                     | The queue: dedupe, cancel, restart, revision conflicts, HTTP                   |
+| [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)         | Editing against a revision, the history rule, what a run writes                |
+| [cast.test.ts](../tests/server/cast.test.ts)                     | The cast a run leaves, rename, merge, removal, exact undo                      |
+| [exports.test.ts](../tests/server/exports.test.ts)               | The finished audiobooks over HTTP                                              |
+| [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)     | What the fake scripting model attributes, and that it aborts                   |
+| [libraryClient.test.ts](../tests/server/libraryClient.test.ts)   | The client and the API against each other                                      |
+| [schema.test.ts](../tests/server/schema.test.ts)                 | The seeded world through the schema and back                                   |
+| [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)     | The library store, with a server answering                                     |
+| [../jobsBackend.test.ts](../tests/jobsBackend.test.ts)           | The jobs, scripting, scripts, cast and history stores, with a server answering |
 
-The last one matters more than it looks. Both sides of the seam are in this repository, so "the API
-returns what the client reads" is something the suite can check rather than a comment two files
-apart — it drives the real `HttpLibraryService` against the real app, and a route that renames a
-field fails there rather than in the browser.
+The client tests matter more than they look. Both sides of the seam are in this repository, so "the
+API returns what the client reads" is something the suite can check rather than a comment two files
+apart — they drive the real `HttpLibraryService` and `HttpJobsService` against the real app, and a
+route that renames a field fails there rather than in the browser.
+
+Where a run has to be genuinely in flight — to be cancelled, edited under or renumbered — the
+provider is `gatedProvider` from [tests/support/server.ts](../tests/support/server.ts), which holds
+the door until the test says so. Nothing in the queue's tests waits on a timer.
 
 ## What is not done yet
 
-The server stores books; the Pinia stores still run entirely on the seeded world.
-[src/services/library.ts](../src/services/library.ts) is the declared seam and a working HTTP client
-for it, and `libraryStore` does not call it yet — wiring the store to a service it has to await is a
-change across every view that reads the library, and it is deliberately not mixed into the slice
-that introduced the server.
+`libraryStore` reads and writes through [src/services/library.ts](../src/services/library.ts), so
+the library screens are the server's in backend mode. Two things about that worth knowing:
 
-The tables for the rest of the domain exist and are proven against the seeded world, but **only the
-library ones have routes**. Reading and writing a cast, a script, a queue or an export over HTTP is
-the next slice, and so are the job queue itself, credential storage and any provider integration at
-all. The seeded demo remains the way to exercise all of it, and stays that way after the backend is
-finished — see [the demo guide](demo.md).
+- **A removal cannot be undone, so it asks first.** `_bookSnapshot` puts a book back in the store;
+  nothing puts one back in the database. The danger rule in
+  [store ownership](../src/stores/README.md) has two halves — act at once with Undo, or ask first —
+  and with a server answering a removal takes the second: the menu item and the volume row ask
+  with a second click, and the toast says it cannot be undone rather than offering a button that
+  would lie. Demo mode keeps the first half, because its snapshot really does put the book back.
+- **An undo of a skip or a keep is exact.** Skip, include and keep are rules that only run
+  forwards — including a noted chapter records that it was looked at — so an Undo does not run the
+  inverse rule: the store records what the chapters were and sends that to
+  `POST /api/books/:id/chapters/decisions`, which puts it back as stated. A skip that is undone
+  comes back undecided, and keeping a chapter offers Undo, on both sides of the seam.
+- **A budget cap, a pause, the pacing, a volume rename and a volume reorder stay in the browser.**
+  The columns are in the schema and nothing writes them, so those survive a navigation and not a
+  reload.
+- **An undo over HTTP is an edit.** A rename is renamed back and a merge or a removal puts back the
+  lines that moved, exactly; but undoing an edit, a bulk correction or a restore writes the previous
+  script back as an edit, so the history says an edit happened rather than forgetting the entry the
+  way the demo's snapshot does. A session that comes back to where it began leaves no entry, which
+  covers the common case; a bulk correction undone leaves its entry with an edit after it.
+
+The queue runs one kind of job. What the scripting slice does not do yet, each because a route or a
+table's writer is missing rather than by oversight:
+
+- **Only scripting has a handler.** A `narration` or `export` job enqueued on this server fails at
+  once saying so. The runner, the dedupe rule, cancellation and recovery are the same for a kind
+  that does not exist yet; what it needs is a handler and a provider port of its own.
+- **No usage record is settled.** The seeded run also settles a usage record with a receipt; the
+  server's writes the script, the speakers and the version, and the fake provider has nothing to
+  bill. The ledger has no route.
+- **Budgets and estimates are not enforced on the server.** The fake provider costs nothing to
+  meter. A real one needs the pricing engine in `src/lib/pricing.ts` on the server side and a
+  reservation against the book's cap before dispatch, the way `_reserveQueued` does it in the demo.
+- **Retrying a failed job re-queues it through the same route**, which is right for scripting and
+  meaningless for the kinds that have no handler.
+- **Building an audiobook is refused in backend mode.** The exports routes read and forget; nothing
+  writes an export until there is a build job, and a build simulated in the browser would show an
+  audiobook the server does not have.
+- **A change made in another tab is noticed on the next write, not before.** Nothing pushes
+  events; a script edited elsewhere is found when an edit here is refused for its stale revision.
+
+The tables for the rest of the domain exist and are proven against the seeded world. The usage
+ledger, narration and endpoints have no routes, and neither do credential storage or any real
+provider. The seeded demo remains the way to exercise all of it, and stays that way after the
+backend is finished — see [the demo guide](demo.md).
 
 Changing the schema means regenerating: `pnpm db:generate` after editing anything in
 [server/db/schema/](../server/db/schema/), or the next boot migrates to the old shape and the tests
-fail somewhere that does not name the cause.
+fail somewhere that does not name the cause. Migrations are versioned in [drizzle/](../drizzle/)
+and applied in order at boot; `0001` added the script revision and the queue's dedupe key, and
+`0002` the version an open editing session preserved.

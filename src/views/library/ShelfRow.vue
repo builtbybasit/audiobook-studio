@@ -2,13 +2,14 @@
 // One row of the shelf table.
 import { computed } from "vue";
 import type { Book } from "@/types";
+import type { PickedFile } from "@/components/addEpub";
 import { useBookFacts } from "@/views/library/bookFacts";
 import { hours, plural, TONE } from "@/views/library/shared";
 import BookMenu from "@/views/library/BookMenu.vue";
 import { ArrowRight as GoIcon } from "@lucide/vue";
 
 const props = defineProps<{ book: Book }>();
-const emit = defineEmits<{ open: []; addVolume: [file: string] }>();
+const emit = defineEmits<{ open: []; addVolume: [picked: PickedFile] }>();
 const f = useBookFacts(() => props.book.id);
 const p = computed(() => f.value.progress);
 const pct = (n: number) => `${p.value.total ? (n / p.value.total) * 100 : 0}%`;
@@ -108,7 +109,7 @@ const pct = (n: number) => `${p.value.total ? (n / p.value.total) * 100 : 0}%`;
         :book="book"
         align="end"
         trigger-class="grid h-7 w-7 place-items-center rounded-full text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-        @add-volume="(file) => emit('addVolume', file)"
+        @add-volume="(picked) => emit('addVolume', picked)"
       />
     </td>
   </tr>

@@ -8,10 +8,11 @@ import { hours, plural, TONE } from "@/views/library/shared";
 import { useBookFacts } from "@/views/library/bookFacts";
 import BookMenu from "@/views/library/BookMenu.vue";
 import type { Book } from "@/types";
+import type { PickedFile } from "@/components/addEpub";
 import { ArrowRight as GoIcon } from "@lucide/vue";
 
 const props = defineProps<{ book: Book }>();
-const emit = defineEmits<{ open: []; addVolume: [file: string] }>();
+const emit = defineEmits<{ open: []; addVolume: [picked: PickedFile] }>();
 
 const id = computed(() => props.book.id);
 const f = useBookFacts(id);
@@ -159,7 +160,7 @@ const audiobook = computed(() => {
     <BookMenu
       :book="book"
       trigger-class="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/25 text-white opacity-0 backdrop-blur transition-opacity hover:bg-black/40 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white group-hover:opacity-100 data-[state=open]:opacity-100"
-      @add-volume="(file) => emit('addVolume', file)"
+      @add-volume="(picked) => emit('addVolume', picked)"
     />
 
     <div class="flex flex-1 flex-col gap-2 p-2.5 text-xs">

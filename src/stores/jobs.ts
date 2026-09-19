@@ -1,8 +1,18 @@
 // Shared queue and accounting across books and stages. IDs are scoped to this Pinia instance.
+//
+// This store is the queue's side of the seam in `@/services/jobs`. With a service answering, the
+// jobs are the server's: `useBookJobs` in `@/queries` reads them from it, polls while anything is
+// live and installs each read here, and a cancel, a remove or a clear is a request that then
+// invalidates that read. Without one, the seeded queue in the store is the queue, and the
+// simulators drive it. The halves are here rather than in the views.
 import { usable } from "@/lib/exports";
 import { logJob } from "@/lib/jobActivity";
 import { chapterNarration, segmentFailed } from "@/lib/runPlan";
 import { makeJobHistory } from "@/mock";
+import { invalidate } from "@/queries/invalidate";
+import { keys } from "@/queries/keys";
+import { ApiError } from "@/services/http";
+import { activeJobsService, type JobsService } from "@/services/jobs";
 import type {
   EndpointLoad,
   Eta,
@@ -19,6 +29,7 @@ import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 import { useUsageStore } from "@/stores/usage";
 const AVG_JOB: Record<JobKind, number> = { scripting: 25, narration: 60, export: 120 };
 
@@ -30,10 +41,17 @@ interface JobsState {
   _nextRun: number;
 }
 export const useJobsStore = defineStore("jobs", {
+  // With a service answering, the queue starts empty and is read from the server. The seeded
+  // history is not a starting point for a real queue — it is the other mode.
   state: (): JobsState => {
     let nextId = 100;
-    const jobs = makeJobHistory(() => nextId++);
-    return { jobs, _nextId: nextId, _nextRun: 1, scriptTelemetry: {} };
+    const jobs = activeJobsService() ? [] : makeJobHistory(() => nextId++);
+    return {
+      jobs,
+      _nextId: nextId,
+      _nextRun: 1,
+      scriptTelemetry: {},
+    };
   },
   getters: {
     activeJobs(s): Job[] {
@@ -152,6 +170,32 @@ export const useJobsStore = defineStore("jobs", {
     },
   },
   actions: {
+    // ---------- the seam ----------
+    /** The service answering for the queue, or null when this is the seeded demo. */
+    _service(): JobsService | null {
+      return activeJobsService();
+    },
+    /** Say a request failed, and change nothing. The list stays what the server last said it was. */
+    _failed(what: string, cause: unknown): void {
+      const uiStore = useUiStore();
+      const api = cause instanceof ApiError ? cause : null;
+      uiStore.toast(api ? api.message : `Could not ${what}`, {
+        kind: "error",
+        description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
+        timeout: 8000,
+      });
+    },
+    /** The queue as the server holds it, in place of what was here. What `useBookJobs` installs. */
+    _install(jobs: Job[]): void {
+      this.jobs = jobs;
+    },
+    /**
+     * The queue changed on the server — something was queued, cancelled or cleared — so whoever
+     * is reading it reads it again. The poll notices from there what else has to follow.
+     */
+    _changed(): Promise<void> {
+      return invalidate({ key: keys.jobs });
+    },
     // ---------- shared ----------
     addJob(kind: JobKind, bookId: string, label: string, chapterId: number | null = null): Job {
       this.jobs.push({
@@ -208,10 +252,19 @@ export const useJobsStore = defineStore("jobs", {
     },
     removeJob(id: number): void {
       const j = this.jobs.find((j) => j.id === id);
-      if (j && (j.finishedAt || j.status === "queued")) {
-        if (j.status === "queued") this.cancelJob(id);
-        this.jobs = this.jobs.filter((x) => x.id !== id);
+      if (!j || !(j.finishedAt || j.status === "queued")) return;
+      const svc = this._service();
+      if (svc) {
+        // a queued job is cancelled first, which settles it, and then it can go
+        void (j.status === "queued" ? svc.cancel(id) : Promise.resolve())
+          .then(() => svc.remove(id))
+          .catch((cause: unknown) => this._failed("remove this job", cause))
+          // the cancel may have gone through even when the remove did not
+          .finally(() => this._changed());
+        return;
       }
+      if (j.status === "queued") this.cancelJob(id);
+      this.jobs = this.jobs.filter((x) => x.id !== id);
     },
     _sequential(jobs: Job[], start: (job: Job, next: () => void) => void): void {
       const next = () => {
@@ -237,6 +290,17 @@ export const useJobsStore = defineStore("jobs", {
 
       const job = this.jobs.find((j) => j.id === id);
       if (!job || job.finishedAt || job.cancelled) return;
+      const svc = this._service();
+      if (svc) {
+        // The server's job, so the server stops it: what comes back is the job as it now stands,
+        // and the chapter it was for is read again with it. Nothing is marked locally first — a
+        // cancel that failed to reach the server must not look like one that worked.
+        void svc
+          .cancel(id)
+          .then(() => this._changed())
+          .catch((cause: unknown) => this._failed("cancel this job", cause));
+        return;
+      }
       job.cancelled = true;
       logJob(job, "Cancellation requested", "warning", {
         behavior:
@@ -320,6 +384,14 @@ export const useJobsStore = defineStore("jobs", {
       );
     },
     clearFinished(): void {
+      const svc = this._service();
+      if (svc) {
+        void svc
+          .clear()
+          .then(() => this._changed())
+          .catch((cause: unknown) => this._failed("clear the history", cause));
+        return;
+      }
       this.jobs = this.jobs.filter((j) => !j.finishedAt);
     },
     cancelAll(): void {

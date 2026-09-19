@@ -30,6 +30,7 @@
     "src/lib/**/*.ts",
     "src/ui/types.ts",
     "src/mock/**/*.ts",
+    "src/services/http.ts",
     "src/services/library.ts",
     "src/services/mode.ts"
   ]

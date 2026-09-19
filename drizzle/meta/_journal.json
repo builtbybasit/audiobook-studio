@@ -8,6 +8,20 @@
       "when": 1789815993269,
       "tag": "0000_jazzy_doctor_octopus",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789829507925,
+      "tag": "0001_absent_quicksilver",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789836170382,
+      "tag": "0002_harsh_rocket_racer",
+      "breakpoints": true
     }
   ]
 }

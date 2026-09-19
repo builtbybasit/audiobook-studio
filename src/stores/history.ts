@@ -9,16 +9,25 @@
 // Versions are independent copies of script content (`snapshotScript`), never references into the
 // live script and never the audio: a clip finishing in the background cannot change what an older
 // version says, and restoring one carries the clips across rather than throwing them away.
+//
+// With a server answering, the history is the server's. The same rule is applied there
+// (`planCapture` in `@/lib/scriptHistory` is shared), in the transaction that writes the script:
+// an edit carries what produced it and answers with the history it added to, which `_install`
+// puts here, and `useChapterHistory` in `@/queries` reads it on opening a chapter. Nothing in this
+// store captures a version itself in that mode — `noteEdit`, `noteBulk` and `_capture` do nothing
+// — so the list can never claim something the server did not record.
 import { key } from "@/lib/scriptReview";
 import {
+  compareScripts,
   originLabel,
+  planCapture,
   planRestore,
   restoreConsequences,
-  scriptSignature,
+  SESSION_IDLE_MS,
   snapshotScript,
-  compareScripts,
 } from "@/lib/scriptHistory";
 import { clone } from "@/lib/utils";
+import { activeLibraryService, ApiError } from "@/services/library";
 import type {
   ChapterHistory,
   HistoryHead,
@@ -39,8 +48,7 @@ import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 
-/** Edits less than this apart are the same editing session. */
-export const SESSION_IDLE_MS = 10_000;
+export { SESSION_IDLE_MS };
 
 const emptyHead = (): HistoryHead => ({ at: 0, origin: { kind: "scripted" } });
 const emptyHistory = (): ChapterHistory => ({ versions: [], head: emptyHead(), nextId: 1 });
@@ -119,6 +127,23 @@ export const useHistoryStore = defineStore("history", {
     },
   },
   actions: {
+    // ---------- the seam ----------
+    /** A chapter's history as the server holds it, in place of what was here. */
+    _install(bookId: string, chId: number, history: ChapterHistory): void {
+      const k = key(bookId, chId);
+      this._closeSession(k);
+      this.chapters[k] = history;
+    },
+    /** Say a request failed, and change nothing. */
+    _failed(what: string, cause: unknown): void {
+      const uiStore = useUiStore();
+      const api = cause instanceof ApiError ? cause : null;
+      uiStore.toast(api ? api.message : `Could not ${what}`, {
+        kind: "error",
+        description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
+        timeout: 8000,
+      });
+    },
     _ensure(bookId: string, chId: number): ChapterHistory {
       const k = key(bookId, chId);
       if (!this.chapters[k]) this.chapters[k] = emptyHistory();
@@ -135,29 +160,18 @@ export const useHistoryStore = defineStore("history", {
     _capture(bookId: string, chId: number, origin: VersionOrigin, next?: Segment[]): () => void {
       const scriptsStore = useScriptsStore();
 
+      // the server preserves the script in the transaction that writes it; nothing to do here
+      if (activeLibraryService()) return () => {};
       const k = key(bookId, chId);
       const h = this._ensure(bookId, chId);
       const before: HistoryHead = { ...h.head, origin: clone(h.head.origin) };
       this._closeSession(k);
       const current = scriptsStore.segments[k] ?? [];
-      const signature = scriptSignature(current);
-      const last = h.versions.at(-1);
-      const changesNothing = next ? scriptSignature(next) === signature : false;
-      let added: number | null = null;
-      if (
-        current.length &&
-        !changesNothing &&
-        (!last || scriptSignature(last.segments) !== signature)
-      ) {
-        added = h.nextId++;
-        h.versions.push({
-          id: added,
-          at: h.head.at,
-          origin: clone(h.head.origin),
-          segments: snapshotScript(current),
-        });
-      }
-      h.head = { at: Date.now(), origin, open: origin.kind === "edited" };
+      const plan = planCapture(h, current, origin, next, Date.now());
+      const added = plan.added?.id ?? null;
+      if (plan.added) h.versions.push(plan.added);
+      h.nextId = plan.nextId;
+      h.head = plan.head;
       return () => {
         const live = this.chapters[k];
         if (!live) return;
@@ -175,6 +189,8 @@ export const useHistoryStore = defineStore("history", {
      * list saying what the script now is, not that a manual edit happened which no longer exists.
      */
     _chapterSnapshot(bookId: string, chId: number): () => void {
+      // the server's history follows the script an undo writes back; there is no copy to put back
+      if (activeLibraryService()) return () => {};
       const k = key(bookId, chId);
       const h = this.chapters[k];
       const before = h ? copyHistory(h) : null;
@@ -196,7 +212,7 @@ export const useHistoryStore = defineStore("history", {
      * session; every edit after it joins that session and is counted into the same entry.
      */
     noteEdit(bookId: string, chId: number): void {
-      if (this._silent) return;
+      if (this._silent || activeLibraryService()) return;
       const h = this._ensure(bookId, chId);
       if (h.head.open && h.head.origin.kind === "edited") {
         h.head.origin.edits++;
@@ -261,13 +277,18 @@ export const useHistoryStore = defineStore("history", {
      * Name the script as it stands and keep a copy of it. Nothing about the working script changes:
      * a checkpoint is a place to come back to, not an edit.
      */
-    saveCheckpoint(bookId: string, chId: number, name: string): ScriptVersion | null {
+    saveCheckpoint(
+      bookId: string,
+      chId: number,
+      name: string,
+    ): ScriptVersion | null | Promise<ScriptVersion | null> {
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
       const title = name.trim();
       const current = scriptsStore.segmentsOf(bookId, chId);
       if (!title || !current.length) return null;
+      if (activeLibraryService()) return this._remoteCheckpoint(bookId, chId, title);
       const h = this._ensure(bookId, chId);
       const was: HistoryHead = { ...h.head, origin: clone(h.head.origin) };
       // the name goes *on* the state the script is in, so the entry still says how it got there
@@ -298,11 +319,50 @@ export const useHistoryStore = defineStore("history", {
       });
       return version;
     },
+    /**
+     * A checkpoint on the server: the copy is the server's, and so is the history that comes back.
+     * Its undo forgets the version there, which puts the head back too.
+     */
+    async _remoteCheckpoint(
+      bookId: string,
+      chId: number,
+      title: string,
+    ): Promise<ScriptVersion | null> {
+      const uiStore = useUiStore();
+      const svc = activeLibraryService();
+      if (!svc) return null;
+      let version: ScriptVersion;
+      try {
+        const saved = await svc.saveCheckpoint(bookId, chId, title);
+        version = saved.version;
+        this._install(bookId, chId, saved.history);
+      } catch (cause) {
+        this._failed("save this checkpoint", cause);
+        return null;
+      }
+      uiStore.toast(`Checkpoint saved: “${title}”`, {
+        kind: "success",
+        description: `v${version.id} · ${version.segments.length} lines of chapter ${chId}. The script itself is untouched.`,
+        undo: async () => {
+          try {
+            this._install(bookId, chId, await svc.dropVersion(bookId, chId, version.id));
+          } catch (cause) {
+            this._failed("forget this checkpoint", cause);
+          }
+        },
+      });
+      return version;
+    },
     // ---------- restoring ----------
     /**
      * Put this chapter's script back to one of its versions. The versions after it are kept — a
      * restore is one more entry, never a rewriting of what came before it — and the audio is
      * carried across clip by clip rather than thrown away.
+     *
+     * With a server answering, the restored script is written back through the scripts store
+     * under a `restored` origin, and the server preserves what it replaced; the undo writes the
+     * script that was here back as an edit. The speakers a restore brings back into the cast are
+     * written to it as well.
      */
     restore(bookId: string, chId: number, versionId: number): boolean {
       const castStore = useCastStore();
@@ -345,11 +405,8 @@ export const useHistoryStore = defineStore("history", {
       // to the cast. Work done elsewhere in the book while the toast was up is not a restore's to
       // take back.
       const beforeScript = clone(scriptsStore.segments[k] ?? []);
-      const historyUndo = this._capture(bookId, chId, {
-        kind: "restored",
-        from: version.id,
-        fromAt: version.at,
-      });
+      const origin: VersionOrigin = { kind: "restored", from: version.id, fromAt: version.at };
+      const historyUndo = this._capture(bookId, chId, origin);
       scriptsStore.segments[k] = plan.segments;
       if (chapter) {
         if (chapter.scripting === "done" || chapter.scripting === "fallback")
@@ -359,7 +416,9 @@ export const useHistoryStore = defineStore("history", {
       }
       // a speaker the book's cast lost comes back unreviewed, where the Cast page can merge it
       const absorbed = castStore._absorbCast(bookId, chId);
+      for (const name of absorbed) void castStore._push(bookId, name);
       castStore._retime(bookId, chId);
+      scriptsStore._commit(bookId, chId, origin);
       const facts = restoreConsequences(plan);
       uiStore.toast(`Chapter ${chId} restored to v${version.id}`, {
         kind: "success",
@@ -369,9 +428,21 @@ export const useHistoryStore = defineStore("history", {
           scriptsStore.segments[k] = beforeScript;
           historyUndo();
           if (chapter && was) Object.assign(chapter, was);
-          // only the speakers this restore added, and only while nothing else has started using them
-          castStore._dropSpeakers(bookId, absorbed);
           castStore._retime(bookId, chId);
+          // only the speakers this restore added, and only while nothing else has started using them
+          if (!activeLibraryService()) {
+            castStore._dropSpeakers(bookId, absorbed);
+            scriptsStore._commit(bookId, chId);
+            return;
+          }
+          // With a server answering the two are requests, and they must not race: a speaker
+          // removed while the server's script still names them hands their lines to the Narrator
+          // and moves the revision, and the write that was to take their lines away is refused.
+          // The script goes first; the removal then moves nothing.
+          scriptsStore._commit(bookId, chId);
+          return scriptsStore
+            ._settled(bookId, chId)
+            .then(() => castStore._dropSpeakers(bookId, absorbed));
         },
       });
       return true;

@@ -1,12 +1,16 @@
 // The server, started.
 //
 // Migrations run before the first request is served, so a checkout that has just pulled a schema
-// change is usable without a separate step.
+// change is usable without a separate step. The queue starts after them and before the listener,
+// so a job the last process was holding is back in the queue before anything can ask about it.
 import { createApp } from "~/app";
 import { openDb } from "~/db/client";
 import { migrate } from "~/db/migrate";
 import { env } from "~/env";
+import { createRunner } from "~/jobs/runner";
+import { scriptingHandler } from "~/jobs/scripting";
 import { log } from "~/log";
+import { fakeScriptingProvider } from "~/providers/fake";
 
 const boot = log.child({ name: "boot" });
 
@@ -18,11 +22,17 @@ boot.debug(
   "migrations applied",
 );
 
+// The provider is chosen once, here, from the server's own configuration. A key for a real one
+// would be read from `env` by its implementation and would never leave this process.
+const scripting = fakeScriptingProvider();
+const runner = createRunner(db, { scripting: scriptingHandler(scripting) }, { log });
+runner.start();
+
 const server = Bun.serve({
   port: env.PORT,
   // A long web novel is a big upload, and Bun's default body limit is well under it.
   maxRequestBodySize: env.MAX_UPLOAD_MB * 1024 * 1024,
-  fetch: createApp(db).fetch,
+  fetch: createApp(db, { runner }).fetch,
 });
 
 boot.info(
@@ -30,6 +40,18 @@ boot.info(
     url: `http://localhost:${server.port}`,
     database: env.DATABASE_URL,
     uploadMb: env.MAX_UPLOAD_MB,
+    scripting: scripting.name,
   },
   "audiobook-studio api is listening",
 );
+
+// A running job is handed back to the queue rather than abandoned mid-write, and the listener
+// closes after it, so a `pnpm dev:server` restart loses nothing.
+for (const signal of ["SIGINT", "SIGTERM"] as const)
+  process.once(signal, () => {
+    boot.info({ signal }, "stopping");
+    void runner.stop().then(() => {
+      server.stop(true);
+      process.exit(0);
+    });
+  });

@@ -37,6 +37,14 @@ const Env = v.object({
     v.number(),
     v.minValue(1),
   ),
+  /**
+   * Which scripting model the queue sends chapters to.
+   *
+   * Only `fake` exists: it reads the prose and never the network, so nothing this server does can
+   * spend money. A real provider is a value here, an implementation under `server/providers/`,
+   * and a key read from this environment by that implementation — never from the browser.
+   */
+  SCRIPTING_PROVIDER: v.optional(v.picklist(["fake"]), "fake"),
 });
 
 export type Env = v.InferOutput<typeof Env>;

@@ -23,9 +23,10 @@ import {
 } from "@lucide/vue";
 import { UiNumber } from "@/ui";
 import AddEpubDialog from "@/components/AddEpubDialog.vue";
-import { pendingFor, type PendingAdd } from "@/components/addEpub";
+import { pendingFor, pickedFrom, type PendingAdd } from "@/components/addEpub";
 import type { Volume } from "@/types";
 import { useBookId } from "@/composables/useBookId";
+import { useBookExports, useCast } from "@/queries";
 import { nextStepOf } from "@/views/library/shared";
 import { countOf, useReviewInbox } from "@/views/review/inbox";
 
@@ -41,7 +42,9 @@ const router = useRouter();
 const book = computed(() => libraryStore.bookById(bookId)!);
 const chapters = computed(() => libraryStore.chaptersOf(bookId));
 const p = computed(() => libraryStore.progress(bookId));
-const cast = computed(() => castStore.charactersOf(bookId));
+// the cast and the audiobooks: read from the server when the overview opens, or the seeded world's
+const { characters: cast } = useCast(bookId);
+useBookExports(bookId);
 const unreviewed = computed(() => cast.value.filter((c) => c.isNew).length);
 const unvoiced = computed(() => cast.value.filter((c) => !c.voice && c.major).length);
 const suggestions = computed(() => castStore.mergeSuggestions(bookId).length);
@@ -59,8 +62,9 @@ const contents = computed(() => libraryStore.contentsOf(bookId));
 const pendingAdd = ref<PendingAdd | null>(null);
 function addVolume(e: Event) {
   const input = e.target as HTMLInputElement;
-  pendingAdd.value = pendingFor(input.files?.[0]?.name ?? "volume.epub", bookId);
+  const picked = pickedFrom(input.files);
   input.value = "";
+  if (picked) pendingAdd.value = pendingFor(picked, bookId);
 }
 const editing = ref<number | null>(null);
 const draft = ref("");
@@ -75,8 +79,16 @@ function saveName(v: Volume) {
   libraryStore.renameVolume(bookId, v.id, draft.value);
   editing.value = null;
 }
-function remove(v: Volume) {
-  const r = libraryStore.removeVolume(bookId, v.id);
+/** Backend mode: a removal cannot be undone, so the row asks first. */
+const asksFirst = computed(() => !!libraryStore._service());
+const confirming = ref<number | null>(null);
+async function remove(v: Volume) {
+  if (asksFirst.value && confirming.value !== v.id) {
+    confirming.value = v.id;
+    return;
+  }
+  confirming.value = null;
+  const r = await libraryStore.removeVolume(bookId, v.id);
   if (r === "book") router.push("/library");
 }
 /** What the row is about to take, read before the click rather than in a step after it. */
@@ -85,9 +97,10 @@ function removeWarning(v: Volume): string {
   const work = [scripted && `${scripted} scripted`, narrated && `${narrated} narrated`]
     .filter(Boolean)
     .join(", ");
+  const after = asksFirst.value ? "This cannot be undone." : "Undo is offered afterwards.";
   return book.value.volumes.length === 1
-    ? `${v.name} is the only volume, so this removes the whole novel: its ${n} chapters${work ? ` (${work})` : ""}, script, cast and audiobooks. Undo is offered afterwards.`
-    : `Removes ${v.name} (${v.file}) and its ${n} chapters${work ? ` (${work})` : ""}, and renumbers the rest. Undo is offered afterwards.`;
+    ? `${v.name} is the only volume, so this removes the whole novel: its ${n} chapters${work ? ` (${work})` : ""}, script, cast and audiobooks. ${after}`
+    : `Removes ${v.name} (${v.file}) and its ${n} chapters${work ? ` (${work})` : ""}, and renumbers the rest. ${after}`;
 }
 const budget = computed(() => book.value.budget ?? { cap: null, paused: false });
 const spent = computed(() => jobsStore.spent(bookId));
@@ -352,8 +365,20 @@ const next = computed(() =>
             </div>
             <!-- Acts at once and offers Undo, like every other removal: the button says what it
                  will do — including the escalation to the whole novel when it is the last volume —
-                 and the title says what goes with it. -->
+                 and the title says what goes with it. With a server answering there is no Undo,
+                 so the same rule makes the row ask first instead. -->
+            <template v-if="confirming === v.id">
+              <span class="text-[11px] text-zinc-500">Remove for good? This cannot be undone.</span>
+              <button class="btn-ghost btn-xs" @click="confirming = null">Keep it</button>
+              <button
+                class="rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-red-500"
+                @click="remove(v)"
+              >
+                {{ book.volumes.length === 1 ? "Remove the novel" : "Remove volume" }}
+              </button>
+            </template>
             <button
+              v-else
               class="text-[11px] text-zinc-400 hover:text-red-500"
               :title="removeWarning(v)"
               @click="remove(v)"

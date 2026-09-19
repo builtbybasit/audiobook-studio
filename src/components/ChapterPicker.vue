@@ -271,7 +271,7 @@ function onListKey(e: KeyboardEvent) {
   }
 }
 function skip(c: Chapter, v: boolean) {
-  libraryStore.setExcluded(props.bookId, c.id, v);
+  void libraryStore.setExcluded(props.bookId, c.id, v);
   if (v && props.modelValue.includes(c.id))
     emit(
       "update:modelValue",

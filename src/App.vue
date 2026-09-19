@@ -14,6 +14,7 @@ import { useUiStore } from "@/stores/ui";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { usePlayer } from "@/composables/usePlayer";
+import { useBookJobs } from "@/queries";
 import JobIndicator from "@/components/JobIndicator.vue";
 import CommandPalette from "@/components/CommandPalette.vue";
 import DemoTools from "@/components/DemoTools.vue";
@@ -44,6 +45,9 @@ const player = usePlayer();
 const route = useRoute();
 const drawer = ref(false);
 const shortcuts = ref(false);
+// The shell reads the queue for as long as the app is open, which with a server answering is what
+// keeps it polling while a job is live: the indicator, the title and the notifications all follow.
+useBookJobs();
 watch(
   () =>
     endpointsStore.endpoints.map((e) => JSON.stringify([e.id, e.model, e.baseUrl, e.expressions])),

@@ -6,13 +6,13 @@
 // scattered through it, notices between volumes, one announcement repeated a dozen times, titles
 // that only look like notices, chapters that mix a note with story, and a file of nothing but
 // notices with titles too long for a row.
-import type { NoticeKind } from "@/types";
+import type { DemoNoticeKind } from "@/types";
 import { noticeTitle } from "@/mock/fixtures/notices";
 
 /** One chapter as the sample describes it. A `kind` makes it a notice (or a chapter to review). */
 export interface ChapterSpec {
   title: string;
-  kind?: NoticeKind;
+  kind?: DemoNoticeKind;
   /** for `mixed`: where the note sits */
   at?: "start" | "end";
   /** picks the notice's title and body variant, so repeats read as related, not identical */
@@ -68,7 +68,7 @@ const story = (i: number, pool = STORY_TITLES): ChapterSpec => ({
   title: `${pool[i % pool.length]}${i >= pool.length ? ` (${["II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI"][Math.floor(i / pool.length) - 1] ?? Math.floor(i / pool.length) + 1})` : ""}`,
 });
 
-const notice = (kind: NoticeKind, variant = 0, title?: string): ChapterSpec => ({
+const notice = (kind: DemoNoticeKind, variant = 0, title?: string): ChapterSpec => ({
   title: title ?? noticeTitle(kind, variant),
   kind,
   variant,

@@ -51,7 +51,11 @@ Switching scenarios or resetting **abandons simulated work in flight**. Each run
 
 ## Future backend integration requirements
 
-The seeded demo is a permanent UI testing tool, even after the application gets a real backend. Preserve [src/mock/](../src/mock/) fixtures, scenarios and simulators, along with the demo controls. The frontend currently runs entirely in this mode; backend mode is not implemented yet.
+The seeded demo is a permanent UI testing tool, even after the application gets a real backend. Preserve [src/mock/](../src/mock/) fixtures, scenarios and simulators, along with the demo controls.
+
+The first backend slice exists: the server in [server/](../server/) reads real EPUBs and stores the library, and the mode switch and library seam are in [src/services/](../src/services/). See [backend](backend.md) for what it covers and what it does not. The stores still run entirely on the seeded world, so the requirements below are still requirements rather than a description.
+
+One place the two differ in shape: the backend stores a chapter as Markdown — the headings, emphasis and tables the EPUB laid out — while everything the seeded world produces is plain prose. [MarkdownText.vue](../src/components/MarkdownText.vue) draws both through one path, because plain prose _is_ Markdown: paragraphs split on the blank line, and nothing the seeded prose contains means anything else. Where it would mean something, the Markdown reading is the one you want — a `* * *` scene break becomes a rule the narration drops, rather than three asterisks handed to a speech provider.
 
 When integrating the backend:
 

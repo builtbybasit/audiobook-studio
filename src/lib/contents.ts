@@ -13,6 +13,7 @@ export const NOTICE_LABEL: Record<NoticeKind, string> = {
   promo: "Promotional links",
   donation: "Donation messages",
   duplicate: "Duplicate notices",
+  unreadable: "Could not be read",
   sponsor: "Sponsor thanks",
   vote: "Vote reminders",
   afterword: "Afterwords",

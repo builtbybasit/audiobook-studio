@@ -10,6 +10,7 @@
 // `Unknown` when it names nobody. That is enough to give the Scripting page a cast to route, a
 // script to correct and clips to render, which is what the screens need to be tested against.
 import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
+import { setTimeout as delay } from "node:timers/promises";
 
 export interface FakeScriptingOptions {
   /** a pause per paragraph, so a test can cancel a run that is genuinely in flight */
@@ -56,19 +57,16 @@ export function attributeParagraph(paragraph: string): ScriptedLine[] {
   return lines;
 }
 
-/** A pause that ends early, rejecting with the signal's reason, when the job is cancelled. */
+/**
+ * A pause that ends early, rejecting with the signal's reason, when the job is cancelled.
+ *
+ * `timers/promises` does the listening and the cleanup; what it rejects with is its own
+ * `AbortError` carrying the reason as `cause`, and the reason itself is what every other path in a
+ * provider throws, so it is unwrapped here to keep them alike.
+ */
 export function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(signal.reason);
-    const t = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(t);
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
+  return delay(ms, undefined, { signal }).catch(() => {
+    throw signal.reason;
   });
 }
 

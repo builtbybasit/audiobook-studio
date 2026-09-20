@@ -19,6 +19,7 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@date-fns/tz": "^1.5.0",
     "@hono/standard-validator": "^0.4.0",
     "@joplin/turndown-plugin-gfm": "^1.0.68",
     "@likecoin/epub-ts": "^0.7.2",

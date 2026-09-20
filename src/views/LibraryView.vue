@@ -14,6 +14,7 @@ import { useUiStore } from "@/stores/ui";
 // (`?view=list&q=harbour&filter=attention&sort=todo`) like the rest of the workspace state, so a
 // narrowed shelf can be linked to and survives a reload; the shape is remembered for the next
 // visit as well.
+import { useStorage } from "@vueuse/core";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
@@ -78,30 +79,22 @@ const VIEWS: { key: View; label: string; icon: typeof GridIcon }[] = [
   { key: "grid", label: "Covers", icon: GridIcon },
   { key: "list", label: "Table", icon: ListIcon },
 ];
-const remembered = (): View => {
-  try {
-    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "grid";
-  } catch {
-    return "grid";
-  }
-};
+// the last choice, remembered per browser; the URL carries it too, for a link and a private window
+const remembered = useStorage<View>(VIEW_KEY, "grid");
 const view = computed<View>(() => {
   const v = route.query.view;
-  return v === "list" || v === "grid" ? v : remembered();
+  if (v === "list" || v === "grid") return v;
+  return remembered.value === "list" ? "list" : "grid";
 });
 function setView(v: View) {
-  try {
-    localStorage.setItem(VIEW_KEY, v);
-  } catch {
-    // a private window: the URL still carries it
-  }
+  remembered.value = v;
   void router.replace({ query: { ...route.query, view: v } });
 }
 // a remembered choice shows in the URL too, so the link a person copies says what they saw
 watch(
   () => route.query.view,
   (v) => {
-    if (v !== "list" && v !== "grid" && route.path === "/library" && remembered() === "list")
+    if (v !== "list" && v !== "grid" && route.path === "/library" && remembered.value === "list")
       void router.replace({ query: { ...route.query, view: "list" } });
   },
   { immediate: true },

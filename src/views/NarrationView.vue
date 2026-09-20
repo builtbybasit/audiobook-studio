@@ -12,6 +12,7 @@ import { useUiStore } from "@/stores/ui";
 // Narration stage: voices + routing on top, chapter picker + run estimate + job ledger below.
 // Endpoints themselves are configured app-wide on /endpoints; the Routing tab only shows where
 // this book's lines land.
+import { useStorage } from "@vueuse/core";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
@@ -50,26 +51,15 @@ async function toDictionary(word: string) {
   await nextTick();
   lexicon.value?.prefill(word);
 }
-const setupKey = `audiobook-studio:narration-setup:${bookId}`;
-function savedCollapsed(): boolean | null {
-  try {
-    const value = localStorage.getItem(setupKey);
-    return value == null ? null : value === "closed";
-  } catch {
-    return null;
-  }
-}
-const collapsed = ref(
-  savedCollapsed() ??
-    (!!route.query.filter || libraryStore.chaptersOf(bookId).some((c) => c.narration !== "none")),
+// Whether the setup panel is folded away, remembered per book and per browser. First time round
+// it is open for a book nothing has narrated yet and closed otherwise; the saved word is
+// "open"/"closed" rather than a boolean's spelling, so what earlier visits saved still reads.
+const collapsed = useStorage<boolean>(
+  `audiobook-studio:narration-setup:${bookId}`,
+  !!route.query.filter || libraryStore.chaptersOf(bookId).some((c) => c.narration !== "none"),
+  undefined,
+  { serializer: { read: (v) => v === "closed", write: (v) => (v ? "closed" : "open") } },
 );
-watch(collapsed, (value) => {
-  try {
-    localStorage.setItem(setupKey, value ? "closed" : "open");
-  } catch {
-    // A blocked storage API should not stop the workspace from opening.
-  }
-});
 watch(
   () => route.query.filter,
   (value) => {

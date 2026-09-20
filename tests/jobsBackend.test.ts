@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { Segment } from "@/types";
 import { key } from "@/lib/scriptReview";
+import { clone } from "@/lib/utils";
 import { useBookJobs, useCast, useChapterHistory, useChapterScript } from "@/queries";
 import { HttpJobsService, setJobsService } from "@/services/jobs";
 import { activeLibraryService, HttpLibraryService, setLibraryService } from "@/services/library";
@@ -765,12 +766,100 @@ describe("narration with a server answering", () => {
     await poll();
     expect(scriptsStore.segmentsOf(id, 1).every((s) => s.audio.status === "done")).toBe(true);
     expect(libraryStore.chapter(id, 1)?.narration).toBe("done");
-    // a retake is a verdict the server has no route for yet
-    narrationStore.retakeSegment(id, 1, broken.id);
-    expect(toasts.at(-1)?.msg).toBe("Retakes are not available with a server yet");
+  });
+});
+
+describe("retakes with a server answering", () => {
+  /** Chapter 1 narrated on the server, with its script open the way the Narration page opens it. */
+  async function narrated() {
+    const { id, history } = await scriptedAndOpen();
+    const narrationStore = useNarrationStore();
+    await narrationStore._runRemote(id, [1], { quiet: true });
+    await api.runner.idle();
+    await poll();
+    return { id, history, narrationStore };
+  }
+
+  test("a retake renders beside the clip and waits for a verdict; keeping it swaps the two", async () => {
+    const { id, narrationStore } = await narrated();
+    const line = scriptsStore.segmentsOf(id, 1)[0];
+    const before = clone(line.audio);
+    narrationStore.flagSegment(id, 1, line.id, "delivery", "too flat");
+    await scriptsStore._settled(id, 1);
+    narrationStore.retakeSegment(id, 1, line.id);
+    await settle();
+    expect(toasts.at(-1)?.msg).toBe("Retake · 1 line");
+    expect(jobsStore.jobs.at(-1)?.label).toBe("Retake · ch 1");
+    await api.runner.idle();
+    await poll();
+    // the candidate landed with a file, and the clip in the book is untouched
+    const waiting = scriptsStore.segmentsOf(id, 1)[0];
+    expect(waiting.candidate).toMatchObject({ status: "done", n: 2 });
+    expect(waiting.candidate?.url).toStartWith(`/api/audio/${id}/`);
+    expect(waiting.candidate?.url).not.toBe(before.url);
+    expect(waiting.audio.url).toBe(before.url);
+    expect(waiting.flag?.kind).toBe("delivery");
+    expect(libraryStore.chapter(id, 1)?.narration).toBe("done");
+
+    narrationStore.acceptTake(id, 1, line.id);
+    await settle();
+    expect(toasts.at(-1)?.msg).toBe("Take 2 kept");
+    expect(toasts.at(-1)?.undo).toBeNull();
+    const kept = scriptsStore.segmentsOf(id, 1)[0];
+    expect(kept.audio.url).toBe(waiting.candidate!.url);
+    expect(kept.audio.n).toBe(2);
+    expect(kept.candidate).toBeUndefined();
+    expect(kept.flag).toBeUndefined();
+    // the displaced clip is a take, with its file, on both sides
+    expect(kept.audio.takes?.map((t) => t.url)).toEqual([before.url]);
+    const server = readScript(api.db, id, 1)[0];
+    expect(server.audio.url).toBe(kept.audio.url);
+    expect(server.audio.takes?.map((t) => t.url)).toEqual([before.url]);
+    expect(server.flag).toBeUndefined();
+    // the store read the revision the verdict moved it to, so the next edit still writes
+    scriptsStore.updateSegment(id, 1, line.id, { text: "Edited after the verdict." });
+    await scriptsStore._settled(id, 1);
+    expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
+  });
+
+  test("discarding a retake keeps the clip in the book and marks the take rejected", async () => {
+    const { id, narrationStore } = await narrated();
+    const line = scriptsStore.segmentsOf(id, 1)[1];
+    const before = clone(line.audio);
+    narrationStore.retakeSegment(id, 1, line.id);
+    await settle();
+    await api.runner.idle();
+    await poll();
+    expect(scriptsStore.segmentsOf(id, 1)[1].candidate?.status).toBe("done");
+    narrationStore.rejectTake(id, 1, line.id);
+    await settle();
+    expect(toasts.at(-1)?.msg).toBe("Take 1 kept");
+    const kept = scriptsStore.segmentsOf(id, 1)[1];
+    expect(kept.audio.url).toBe(before.url);
+    expect(kept.candidate).toBeUndefined();
+    expect(kept.audio.takes?.map((t) => [t.n, t.rejected])).toEqual([[2, true]]);
+    expect(readScript(api.db, id, 1)[1].audio.takes?.map((t) => t.rejected)).toEqual([true]);
+  });
+
+  test("retaking the flagged lines queues each once, and a line already waiting is left alone", async () => {
+    const { id, narrationStore } = await narrated();
+    const [a, b] = scriptsStore.segmentsOf(id, 1);
+    narrationStore.flagSegment(id, 1, a.id, "pause", "");
+    narrationStore.flagSegment(id, 1, b.id, "other", "hmm");
+    await scriptsStore._settled(id, 1);
+    expect(narrationStore.retakeFlagged(id, 1)).toBe(2);
+    await settle();
+    expect(toasts.at(-1)?.msg).toBe("Retake · 2 lines");
+    await api.runner.idle();
+    await poll();
     expect(
-      scriptsStore.segmentsOf(id, 1).find((s) => s.id === broken.id)?.candidate,
-    ).toBeUndefined();
+      scriptsStore.segmentsOf(id, 1).filter((s) => s.candidate?.status === "done"),
+    ).toHaveLength(2);
+    // asked again while both wait: nothing is queued, and the toast says why
+    expect(narrationStore.retakeFlagged(id, 1)).toBe(2);
+    await settle();
+    expect(toasts.at(-1)?.msg).toBe("Nothing to retake");
+    expect(jobsStore.jobs.filter((j) => j.label === "Retake · ch 1")).toHaveLength(1);
   });
 });
 

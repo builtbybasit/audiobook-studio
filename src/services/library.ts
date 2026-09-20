@@ -79,6 +79,13 @@ export interface MovedLines {
   moved: (ChapterLines & { revision: number })[];
 }
 
+/** A verdict on a retake: the line as it now stands, and the chapter whose clip changed. */
+export interface Judged {
+  segment: Segment;
+  revision: number;
+  chapter: Chapter;
+}
+
 export interface LibraryService {
   /** false only when these books come from somewhere real */
   readonly simulated: boolean;
@@ -150,6 +157,13 @@ export interface LibraryService {
   attribute(bookId: string, character: Character, lines: ChapterLines[]): Promise<MovedLines>;
   /** The pronunciation dictionary, replaced whole. */
   putLexicon(bookId: string, entries: LexEntry[]): Promise<LexEntry[]>;
+  /** Keep a retake as the clip in the book, or discard it; either way it is judged once. */
+  judgeTake(
+    bookId: string,
+    chapterId: number,
+    segmentId: number,
+    verdict: "accept" | "reject",
+  ): Promise<Judged>;
 
   // ---------- finished audiobooks ----------
   exports(bookId: string): Promise<ExportItem[]>;
@@ -308,6 +322,18 @@ export class HttpLibraryService implements LibraryService {
     return (
       await this.http.put<{ entries: LexEntry[] }>(`/books/${seg(bookId)}/lexicon`, { entries })
     ).entries;
+  }
+
+  judgeTake(
+    bookId: string,
+    chapterId: number,
+    segmentId: number,
+    verdict: "accept" | "reject",
+  ): Promise<Judged> {
+    return this.http.post<Judged>(
+      `/books/${seg(bookId)}/chapters/${chapterId}/lines/${segmentId}/verdict`,
+      { verdict },
+    );
   }
 
   async exports(bookId: string): Promise<ExportItem[]> {

@@ -15,6 +15,7 @@ import type { Book, Chapter, Job, Segment } from "@/types";
 import * as queue from "~/db/jobs";
 import { readScript } from "~/db/script";
 import { enqueueNarration } from "~/jobs/narration";
+import { retakeLines, type Judged, type RetakesQueued } from "~/narration/ops";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";
 import { epubFile, story } from "../support/epub";
@@ -98,6 +99,49 @@ function failingOnce(match: (text: string) => boolean): SpeechProvider {
       return inner.speak(input);
     },
   };
+}
+
+/**
+ * A provider whose second render of any line is ten seconds longer than its first, so a retake
+ * that is kept can be heard in the chapter's length and one that is dropped cannot; and which,
+ * when told to, fails that second render instead, so a retake can go wrong where the first take
+ * did not.
+ */
+function retaking({ failing }: { failing?: (text: string) => boolean } = {}): SpeechProvider {
+  const inner = fakeSpeechProvider();
+  const seen = new Set<string>();
+  return {
+    name: inner.name,
+    async speak(input) {
+      if (!seen.has(input.text)) {
+        seen.add(input.text);
+        return inner.speak(input);
+      }
+      if (failing?.(input.text)) throw new Error("The voice service dropped the connection");
+      const clip = await inner.speak(input);
+      return { ...clip, duration: clip.duration + 10 };
+    },
+  };
+}
+
+const retake = (api: TestApi, id: string, ids: number[], ch = 1) =>
+  api.request<RetakesQueued & { chapters: Chapter[] }>(
+    `/api/books/${id}/chapters/${ch}/retakes`,
+    jsonBody({ ids }),
+  );
+
+const judge = (api: TestApi, id: string, segId: number, verdict: string, ch = 1) =>
+  api.request<Judged>(
+    `/api/books/${id}/chapters/${ch}/lines/${segId}/verdict`,
+    jsonBody({ verdict }),
+  );
+
+/** Chapter 1 narrated, with the retaking provider unless another is given. */
+async function narrated(api = testApi({ speech: retaking() })) {
+  const { id } = await scripted(api);
+  await narrate(api, id, [1]);
+  await api.runner.idle();
+  return { api, id };
 }
 
 /** The removal of a book's files is not waited for by the route, so the test waits a little. */
@@ -526,6 +570,268 @@ describe("what is left out of a run", () => {
     expect(refused.status).toBe(409);
     expect(refused.body.error.code).toBe("conflict");
     expect((await narrate(api, "nobody", [1])).status).toBe(404);
+  });
+});
+
+describe("a retake", () => {
+  test("of a narrated line renders beside the clip in the book, and waits there for a verdict", async () => {
+    const { api, id } = await narrated();
+    const before = await scriptOf(api, id);
+    const line = before.segments[1];
+    const { status, body } = await retake(api, id, [line.id]);
+    expect(status).toBe(202);
+    expect(body.queued).toEqual([line.id]);
+    expect(body.skipped).toEqual([]);
+    expect(body.job?.label).toBe("Retake · ch 1");
+    expect(body.job?.bulk).toMatchObject({ op: "Retake", index: 1, total: 1, scope: "Retake" });
+    expect(body.job?.narrationRun?.clips).toBe(1);
+    expect(["queued", "running"]).toContain(body.chapters[0].narration);
+    await api.runner.idle();
+
+    const job = await jobById(api, body.job!.id);
+    expect(job.status).toBe("done");
+    expect(job.activity?.map((e) => e.message)).toContain(
+      `Line ${line.id} take 2 rendered, waiting for a verdict`,
+    );
+    expect(job.activity?.find((e) => e.message === "Narration finished")?.detail).toMatchObject({
+      rendered: 0,
+      failed: 0,
+      waiting: 1,
+    });
+    const { segments, revision } = await scriptOf(api, id);
+    const after = segments.find((s) => s.id === line.id)!;
+    expect(after.audio).toEqual(line.audio);
+    expect(after.candidate?.status).toBe("done");
+    expect(after.candidate?.n).toBe(2);
+    expect(after.candidate?.auto).toBeUndefined();
+    expect(after.candidate?.url).toStartWith(`/api/audio/${id}/`);
+    expect(after.candidate?.url).not.toBe(line.audio.url);
+    expect(revision).toBeGreaterThan(before.revision);
+    for (const s of segments) if (s.id !== line.id) expect(s.candidate).toBeUndefined();
+    const [c1] = await chaptersOf(api, id);
+    expect(c1.narration).toBe("done");
+    expect(c1.narrationProgress).toBe(100);
+  });
+
+  test("of a line whose clip failed renders in place, and the chapter reads as narrated", async () => {
+    const { api, id } = await scripted(
+      testApi({ speech: failingOnce((t) => t.includes("count it twice")) }),
+    );
+    await narrate(api, id, [1]);
+    await api.runner.idle();
+    const broken = (await scriptOf(api, id)).segments.find((s) => s.audio.status === "failed")!;
+    const { body } = await retake(api, id, [broken.id]);
+    expect(body.queued).toEqual([broken.id]);
+    await api.runner.idle();
+    expect((await jobById(api, body.job!.id)).status).toBe("done");
+    const after = (await scriptOf(api, id)).segments.find((s) => s.id === broken.id)!;
+    expect(after.audio.status).toBe("done");
+    expect(after.audio.url).toStartWith(`/api/audio/${id}/`);
+    expect(after.candidate).toBeUndefined();
+    expect(after.audio.takes).toBeUndefined();
+    expect((await chaptersOf(api, id))[0].narration).toBe("done");
+  });
+
+  test("leaves out a line already waiting for a verdict and a line that is not there, and queues nothing when nothing is left", async () => {
+    const { api, id } = await narrated();
+    const line = (await scriptOf(api, id)).segments[0];
+    await retake(api, id, [line.id]);
+    await api.runner.idle();
+    const before = await scriptOf(api, id);
+    const { status, body } = await retake(api, id, [line.id, 999]);
+    expect(status).toBe(202);
+    expect(body.job).toBeNull();
+    expect(body.queued).toEqual([]);
+    expect(body.skipped).toEqual([
+      { id: line.id, why: "pending" },
+      { id: 999, why: "missing" },
+    ]);
+    // nothing was written, so nothing moved
+    expect((await scriptOf(api, id)).revision).toBe(before.revision);
+    expect((await chaptersOf(api, id))[0].narration).toBe("done");
+  });
+
+  test("is refused while the chapter is being narrated", async () => {
+    const gate = gatedSpeechProvider();
+    const { api, id } = await scripted(testApi({ speech: gate.provider }));
+    const first = await narrate(api, id, [1]);
+    await gate.started;
+    const refused = await api.request<Failure>(
+      `/api/books/${id}/chapters/1/retakes`,
+      jsonBody({ ids: [1] }),
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.message).toBe("Chapter 1 is being narrated");
+    gate.release();
+    await api.runner.idle();
+    expect((await jobById(api, first.body.jobs[0].id)).status).toBe("done");
+  });
+
+  test("of a chapter with no script, or none at all, is refused", async () => {
+    const { api, id } = await scripted();
+    const unscripted = await api.request<Failure>(
+      `/api/books/${id}/chapters/3/retakes`,
+      jsonBody({ ids: [1] }),
+    );
+    expect(unscripted.status).toBe(404);
+    expect(unscripted.body.error.message).toBe("This chapter has no script to retake");
+    expect(
+      (await api.request(`/api/books/${id}/chapters/9/retakes`, jsonBody({ ids: [1] }))).status,
+    ).toBe(404);
+    expect(
+      (await api.request(`/api/books/nobody/chapters/1/retakes`, jsonBody({ ids: [1] }))).status,
+    ).toBe(404);
+    const empty = await api.request<Failure>(
+      `/api/books/${id}/chapters/1/retakes`,
+      jsonBody({ ids: [] }),
+    );
+    expect(empty.status).toBe(400);
+  });
+});
+
+describe("the verdict on a retake", () => {
+  test("keeping it makes it the clip in the book, keeps the old one as a take, clears the flag and retimes the chapter", async () => {
+    const { api, id } = await narrated();
+    const read = await scriptOf(api, id);
+    const line = read.segments[0];
+    // the listener complained about the line; the retake is the answer to the complaint
+    const flagged = await edit(api, id, {
+      segments: read.segments.map((s) =>
+        s.id === line.id ? { ...s, flag: { kind: "delivery", note: "too flat", at: 1 } } : s,
+      ),
+      ifRevision: read.revision,
+    });
+    expect(flagged.status).toBe(200);
+    await retake(api, id, [line.id]);
+    await api.runner.idle();
+    const before = await scriptOf(api, id);
+    const [chapterBefore] = await chaptersOf(api, id);
+    const candidate = before.segments.find((s) => s.id === line.id)!.candidate!;
+    expect(before.segments.find((s) => s.id === line.id)!.flag).toMatchObject({ note: "too flat" });
+
+    const { status, body } = await judge(api, id, line.id, "accept");
+    expect(status).toBe(200);
+    expect(body.segment.audio.status).toBe("done");
+    expect(body.segment.audio.url).toBe(candidate.url);
+    expect(body.segment.audio.n).toBe(2);
+    expect(body.segment.audio.auto).toBeUndefined();
+    expect(body.segment.audio.takes?.map((t) => [t.n, t.url, t.rejected])).toEqual([
+      [1, line.audio.url, undefined],
+    ]);
+    expect(body.segment.candidate).toBeUndefined();
+    expect(body.segment.flag).toBeUndefined();
+    expect(body.revision).toBeGreaterThan(before.revision);
+    // the retake is ten seconds longer than the clip it replaced, and the chapter says so
+    expect(body.chapter.narration).toBe("done");
+    expect(body.chapter.duration).toBeCloseTo(chapterBefore.duration + 10, 5);
+    expect((await scriptOf(api, id)).revision).toBe(body.revision);
+    expect((await chaptersOf(api, id))[0].duration).toBe(body.chapter.duration);
+
+    const again = await api.request<Failure>(
+      `/api/books/${id}/chapters/1/lines/${line.id}/verdict`,
+      jsonBody({ verdict: "accept" }),
+    );
+    expect(again.status).toBe(409);
+    expect(again.body.error.message).toBe("Nothing to judge: this line has no retake");
+  });
+
+  test("dropping it keeps it as a rejected take and leaves the clip in the book alone", async () => {
+    const { api, id } = await narrated();
+    const line = (await scriptOf(api, id)).segments[0];
+    await retake(api, id, [line.id]);
+    await api.runner.idle();
+    const before = await scriptOf(api, id);
+    const [chapterBefore] = await chaptersOf(api, id);
+    const candidate = before.segments.find((s) => s.id === line.id)!.candidate!;
+
+    const { status, body } = await judge(api, id, line.id, "reject");
+    expect(status).toBe(200);
+    const { takes, ...kept } = body.segment.audio;
+    expect(kept).toEqual(line.audio);
+    expect(takes).toHaveLength(1);
+    expect(takes?.[0]).toMatchObject({ n: 2, url: candidate.url, rejected: true });
+    expect(body.segment.candidate).toBeUndefined();
+    expect(body.revision).toBeGreaterThan(before.revision);
+    expect(body.chapter.narration).toBe("done");
+    expect(body.chapter.duration).toBe(chapterBefore.duration);
+    // the rejected take's number is never handed out again
+    await retake(api, id, [line.id]);
+    await api.runner.idle();
+    expect((await scriptOf(api, id)).segments.find((s) => s.id === line.id)!.candidate?.n).toBe(3);
+  });
+
+  test("a retake that failed leaves the job done, cannot be kept, and is dropped without a take", async () => {
+    const { api, id } = await narrated(
+      testApi({ speech: retaking({ failing: (t) => t.includes("count it twice") }) }),
+    );
+    const line = (await scriptOf(api, id)).segments.find((s) => s.text.includes("count it twice"))!;
+    const { body } = await retake(api, id, [line.id]);
+    await api.runner.idle();
+    const job = await jobById(api, body.job!.id);
+    expect(job.status).toBe("done");
+    expect(job.activity?.map((e) => e.message)).toContain(
+      `Line ${line.id} take 2 failed; the clip in the book is unchanged`,
+    );
+    expect(job.activity?.find((e) => e.message === "Narration finished")?.detail).toMatchObject({
+      failed: 0,
+    });
+    const during = (await scriptOf(api, id)).segments.find((s) => s.id === line.id)!;
+    expect(during.candidate?.status).toBe("failed");
+    expect(during.candidate?.error?.message).toContain("dropped");
+    expect(during.audio).toEqual(line.audio);
+    expect((await chaptersOf(api, id))[0].narration).toBe("done");
+
+    const kept = await api.request<Failure>(
+      `/api/books/${id}/chapters/1/lines/${line.id}/verdict`,
+      jsonBody({ verdict: "accept" }),
+    );
+    expect(kept.status).toBe(409);
+    expect(kept.body.error.message).toBe("The retake did not produce a clip; discard it instead");
+    const { body: dropped } = await judge(api, id, line.id, "reject");
+    expect(dropped.segment.candidate).toBeUndefined();
+    expect(dropped.segment.audio).toEqual(line.audio);
+    expect(dropped.segment.audio.takes).toBeUndefined();
+  });
+
+  test("is refused while the retake renders, on a line with no retake, and for a line that is not there", async () => {
+    const { api, id } = await narrated();
+    const line = (await scriptOf(api, id)).segments[0];
+    const gate = gatedSpeechProvider();
+    const slow = testRunner(api.db, collectingLogger().log, {
+      speech: gate.provider,
+      audioDir: api.audioDir,
+    });
+    const { job } = retakeLines(api.db, slow, id, 1, [line.id]);
+    await gate.started;
+    expect((await scriptOf(api, id)).segments[0].candidate?.status).toBe("generating");
+    const rendering = await api.request<Failure>(
+      `/api/books/${id}/chapters/1/lines/${line.id}/verdict`,
+      jsonBody({ verdict: "accept" }),
+    );
+    expect(rendering.status).toBe(409);
+    expect(rendering.body.error.message).toBe("The retake is still rendering");
+    gate.release();
+    await slow.idle();
+    expect(queue.getJob(api.db, job!.id)?.status).toBe("done");
+
+    const none = await api.request<Failure>(
+      `/api/books/${id}/chapters/1/lines/${line.id + 1}/verdict`,
+      jsonBody({ verdict: "reject" }),
+    );
+    expect(none.status).toBe(409);
+    expect(none.body.error.message).toBe("Nothing to judge: this line has no retake");
+    const missing = await api.request<Failure>(
+      `/api/books/${id}/chapters/1/lines/999/verdict`,
+      jsonBody({ verdict: "reject" }),
+    );
+    expect(missing.status).toBe(404);
+    const bad = await api.request<Failure>(
+      `/api/books/${id}/chapters/1/lines/${line.id}/verdict`,
+      jsonBody({ verdict: "maybe" }),
+    );
+    expect(bad.status).toBe(400);
+    // the retake that finished meanwhile is still there to judge
+    expect((await judge(api, id, line.id, "accept")).status).toBe(200);
   });
 });
 

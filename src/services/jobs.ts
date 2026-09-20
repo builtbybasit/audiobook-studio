@@ -24,6 +24,15 @@ export interface NarrationQueued {
   chapters: Chapter[];
 }
 
+/** What asking for retakes came to: the one job, the lines in it, and the lines left out and why. */
+export interface RetakesQueued {
+  /** null when nothing was queued */
+  job: Job | null;
+  queued: number[];
+  skipped: { id: number; why: "missing" | "pending" }[];
+  chapters: Chapter[];
+}
+
 export interface JobsService {
   readonly simulated: boolean;
   /** Every job the server holds, oldest first. */
@@ -38,6 +47,8 @@ export interface JobsService {
   scriptChapters(bookId: string, ids: number[]): Promise<ScriptingQueued>;
   /** Narrate these chapters of a book, as one run, at the scope named. */
   narrateChapters(bookId: string, ids: number[], scope: NarrationScope): Promise<NarrationQueued>;
+  /** Render these lines of a chapter again, each beside the clip it may replace, as one job. */
+  retakeLines(bookId: string, chapterId: number, ids: number[]): Promise<RetakesQueued>;
 }
 
 export class HttpJobsService implements JobsService {
@@ -71,6 +82,12 @@ export class HttpJobsService implements JobsService {
     return this.http.post<NarrationQueued>(`/books/${seg(bookId)}/chapters/narrate`, {
       ids,
       scope,
+    });
+  }
+
+  retakeLines(bookId: string, chapterId: number, ids: number[]): Promise<RetakesQueued> {
+    return this.http.post<RetakesQueued>(`/books/${seg(bookId)}/chapters/${chapterId}/retakes`, {
+      ids,
     });
   }
 }

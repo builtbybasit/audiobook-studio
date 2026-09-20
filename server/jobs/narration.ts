@@ -15,6 +15,12 @@
 // takes over and pushes the old clip into the take list, and one that fails leaves the old clip
 // exactly as it was. A cancelled run keeps what it finished and puts back what it did not start.
 //
+// A retake is the same render without the `auto`: the candidate a person asked for stays beside
+// the clip in the book when it lands, for them to judge (`server/narration/ops.ts`), and one that
+// fails is theirs to discard rather than a gap in the chapter, so it does not fail the job. The
+// retake's job puts its lines in the queue when it is created and runs at a scope that wants
+// nothing new, so the handler renders exactly what it finds in flight.
+//
 // The chapter's `narration` status is the job's to keep honest, and it is asked of the clips —
 // `chapterNarration` — rather than remembered: `queued` when the job is, `running` while it runs,
 // and afterwards whatever the lines say, which is `failed` for a chapter with a gap in it.
@@ -33,18 +39,27 @@ import * as library from "~/db/library";
 import { chapters } from "~/db/schema";
 import {
   acceptCandidate,
-  addTake,
   bumpRevision,
   dropCandidate,
   LineGone,
   readScript,
-  takeOf,
+  rejectCandidate,
   writeClip,
 } from "~/db/script";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { locate } from "~/jobs/scripting";
 import { conflict, notFound } from "~/lib/errors";
 import type { SpeechProvider } from "~/providers/speech";
+
+/** The label a retake job carries as its scope and its `bulk.op`; the Queue page shows it as it is. */
+export const RETAKE_LABEL = "Retake";
+
+/**
+ * What a run renders: one of the store's scopes, or `pending` — nothing new, only the clips
+ * already queued or generating when the run starts. A retake queues its lines when its job is
+ * created, so its job runs at `pending` and the handler's in-flight rule does the rest.
+ */
+export type RunScope = NarrationScope | "pending";
 
 /**
  * The scope a job was queued at, read back off its row.
@@ -53,19 +68,22 @@ import type { SpeechProvider } from "~/providers/speech";
  * frontend), and `SCOPE_LABEL` is one-to-one, so the label is enough to find the way back. A row
  * with no label — none should exist — is read as `all`, the scope that leaves nothing out.
  */
-const SCOPE_OF_LABEL = new Map(
+const SCOPE_OF_LABEL = new Map<string, RunScope>(
   (Object.entries(SCOPE_LABEL) as [NarrationScope, string][]).map(([scope, label]) => [
     label,
     scope,
   ]),
 );
-export const scopeOf = (label: string | undefined): NarrationScope =>
+SCOPE_OF_LABEL.set(RETAKE_LABEL, "pending");
+export const scopeOf = (label: string | undefined): RunScope =>
   SCOPE_OF_LABEL.get(label ?? "") ?? "all";
+const labelOf = (scope: RunScope): string =>
+  scope === "pending" ? RETAKE_LABEL : SCOPE_LABEL[scope];
 
-const inFlight = (status: SegmentAudio["status"]): boolean =>
+export const inFlight = (status: SegmentAudio["status"]): boolean =>
   status === "queued" || status === "generating";
 
-function setChapterNarration(
+export function setChapterNarration(
   db: Db | Tx,
   bookId: string,
   chapterId: number,
@@ -81,6 +99,26 @@ function setChapterNarration(
     })
     .where(and(eq(chapters.bookId, bookId), eq(chapters.id, chapterId)))
     .run();
+}
+
+/**
+ * Settle a chapter's status and its length from the clips as they now stand, and say what they
+ * came to. The status is `chapterNarration`, the same reading the demo makes. The silence between
+ * clips is the book's pacing, stitched rather than rendered, and is part of how long the chapter
+ * plays even though no provider produced it. A run's last write and a verdict on a retake both
+ * end here, so a chapter never has two ways of adding itself up.
+ */
+export function settleChapter(
+  tx: Tx,
+  bookId: string,
+  chapterId: number,
+): { narration: NarrationStatus; seconds: number } {
+  const segs = readScript(tx, bookId, chapterId);
+  const pacing = pacingOrDefault(library.getBook(tx, bookId)?.pacing);
+  const seconds = segs.reduce((n, s) => n + s.audio.duration, 0) + silenceOf(segs, pacing);
+  const narration = chapterNarration(segs);
+  setChapterNarration(tx, bookId, chapterId, narration, 100, seconds);
+  return { narration, seconds };
 }
 
 /** The chapter as the job needs it: where it is, and the identity to find it by again. */
@@ -112,12 +150,8 @@ interface Target {
 function queueRender(tx: Tx, at: { bookId: string; id: number }, s: Segment): Target {
   let audio = s.audio;
   if (s.candidate) {
-    dropCandidate(tx, at.bookId, at.id, s.id);
-    if (s.candidate.duration > 0) {
-      const take = { ...takeOf(s.candidate), rejected: true };
-      addTake(tx, at.bookId, at.id, s.id, take);
-      audio = { ...audio, takes: [...(audio.takes ?? []), take] };
-    }
+    const take = rejectCandidate(tx, at.bookId, at.id, s.id);
+    if (take) audio = { ...audio, takes: [...(audio.takes ?? []), take] };
   }
   if (audio.duration > 0)
     return {
@@ -181,7 +215,9 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
         if (!at) throw notFound("The chapter was removed before it was narrated");
         const segs = readScript(tx, at.bookId, at.id);
         lines = segs.length;
-        const wanted = new Set(narrationTargets(segs, scope, true).run.map((s) => s.id));
+        const wanted = new Set(
+          scope === "pending" ? [] : narrationTargets(segs, scope, true).run.map((s) => s.id),
+        );
         for (const s of segs) {
           let t: Target | null = null;
           if (inFlight(s.audio.status)) t = { s, slot: "current", queued: requeue(s.audio) };
@@ -201,14 +237,14 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
         bumpRevision(tx, at.bookId, at.id);
       });
       if (!targets.length) {
-        ctx.note("Nothing to narrate", "info", { scope: SCOPE_LABEL[scope] });
+        ctx.note("Nothing to narrate", "info", { scope: labelOf(scope) });
         return;
       }
       ctx.note("Narration started", "info", {
         provider: provider.name,
         lines: targets.length,
         replacing,
-        scope: SCOPE_LABEL[scope],
+        scope: labelOf(scope),
       });
 
       /** One write against the chapter wherever it is now, moving the revision with it. */
@@ -231,7 +267,11 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
         if (at) setChapterNarration(db, at.bookId, at.id, "running", pct);
       };
 
+      // What counts as the run failing is the demo's rule: a line rendered in place that has no
+      // clip, and a replacement the run itself chose to make. A retake a person asked for is theirs
+      // to judge, so one that fails is a failed candidate for them to discard, not a failed job.
       let rendered = 0;
+      let waiting = 0;
       let failed = 0;
       for (const t of targets) {
         if (signal.aborted) throw signal.reason;
@@ -309,11 +349,14 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
           };
         }
 
+        // A replacement the run made for itself takes over as it lands; a retake stays beside the
+        // clip in the book for the verdict.
+        const replacement = slot === "candidate" && !!clip.auto;
+        const retake = slot === "candidate" && !clip.auto;
         try {
           write((tx, at) => {
             writeClip(tx, at.bookId, at.id, s.id, slot, clip);
-            if (slot === "candidate" && clip.status === "done")
-              acceptCandidate(tx, at.bookId, at.id, s.id);
+            if (replacement && clip.status === "done") acceptCandidate(tx, at.bookId, at.id, s.id);
           });
         } catch (e) {
           if (!(e instanceof LineGone)) throw e;
@@ -321,49 +364,63 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
           continue;
         }
         landed++;
+        const detail = { line: s.id, speaker: s.speaker };
         if (clip.status === "done") {
-          rendered++;
-          ctx.note(
-            slot === "candidate"
-              ? `Line ${s.id} replaced take ${s.audio.n ?? 1}`
-              : `Line ${s.id} rendered`,
-            "info",
-            {
-              line: s.id,
-              speaker: s.speaker,
-              seconds: Number(clip.duration.toFixed(2)),
-              ms: clip.ms,
-              ...(slot === "candidate" ? { take: clip.n ?? 1 } : {}),
-            },
-          );
+          const arrived = {
+            ...detail,
+            seconds: Number(clip.duration.toFixed(2)),
+            ms: clip.ms,
+            ...(slot === "candidate" ? { take: clip.n ?? 1 } : {}),
+          };
+          if (retake) {
+            waiting++;
+            ctx.note(
+              `Line ${s.id} take ${clip.n ?? 1} rendered, waiting for a verdict`,
+              "info",
+              arrived,
+            );
+          } else {
+            rendered++;
+            ctx.note(
+              replacement
+                ? `Line ${s.id} replaced take ${s.audio.n ?? 1}`
+                : `Line ${s.id} rendered`,
+              "info",
+              arrived,
+            );
+          }
         } else {
-          failed++;
-          ctx.note(
-            slot === "candidate"
-              ? `Line ${s.id} replacement failed; the clip already in the book is unchanged`
-              : `Line ${s.id} failed`,
-            "error",
-            { line: s.id, speaker: s.speaker, error: clip.error?.message ?? "" },
-          );
+          const error = { ...detail, error: clip.error?.message ?? "" };
+          if (retake) {
+            ctx.note(
+              `Line ${s.id} take ${clip.n ?? 1} failed; the clip in the book is unchanged`,
+              "warning",
+              error,
+            );
+          } else {
+            failed++;
+            ctx.note(
+              replacement
+                ? `Line ${s.id} replacement failed; the clip already in the book is unchanged`
+                : `Line ${s.id} failed`,
+              "error",
+              error,
+            );
+          }
         }
         progress();
       }
 
-      // The chapter's status and its length, asked of the clips as they now stand. The silence
-      // between clips is the book's pacing, stitched rather than rendered, and is part of how long
-      // the chapter plays even though no provider produced it.
       let seconds = 0;
       db.transaction((tx) => {
         const at = locate(tx, chapter.uid);
         if (!at) throw notFound("The chapter was removed while it was being narrated");
-        const segs = readScript(tx, at.bookId, at.id);
-        const pacing = pacingOrDefault(library.getBook(tx, at.bookId)?.pacing);
-        seconds = segs.reduce((n, s) => n + s.audio.duration, 0) + silenceOf(segs, pacing);
-        setChapterNarration(tx, at.bookId, at.id, chapterNarration(segs), 100, seconds);
+        seconds = settleChapter(tx, at.bookId, at.id).seconds;
       });
       ctx.note("Narration finished", failed ? "warning" : "info", {
         rendered,
         failed,
+        ...(waiting ? { waiting } : {}),
         seconds: Number(seconds.toFixed(2)),
       });
       if (failed) throw new Error(`${failed} line${failed === 1 ? "" : "s"} could not be rendered`);

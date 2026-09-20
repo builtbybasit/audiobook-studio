@@ -75,7 +75,7 @@ export function createApp(
   // on the operations of the part of the app that owns the table.
   app.route("/api/books", bookRoutes(db, runner, files));
   app.route("/api/books", castRoutes(db));
-  app.route("/api/books", scriptRoutes(db));
+  app.route("/api/books", scriptRoutes(db, runner));
   app.route("/api/books", exportRoutes(db));
   app.route("/api/jobs", jobRoutes(db, runner));
   // A clip's url is served from disk, and the files it names belong to the same book routes above

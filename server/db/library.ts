@@ -90,6 +90,15 @@ export function listChapters(db: Db, bookId: string): Chapter[] {
     .map(toChapter);
 }
 
+export function getChapter(db: Db | Tx, bookId: string, id: number): Chapter | undefined {
+  const row = db
+    .select()
+    .from(chapters)
+    .where(and(eq(chapters.bookId, bookId), eq(chapters.id, id)))
+    .get();
+  return row ? toChapter(row) : undefined;
+}
+
 export function getChapterBody(db: Db, bookId: string, chapterId: number): string | undefined {
   return db
     .select({ body: chapterTexts.body })

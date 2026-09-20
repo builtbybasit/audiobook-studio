@@ -58,8 +58,10 @@ import {
 import { effectiveRates } from "@/lib/pricing";
 import { speechInstructions } from "@/lib/speech";
 import { plural } from "@/lib/contents";
+import { key } from "@/lib/scriptReview";
 import { ApiError } from "@/services/http";
 import { activeJobsService } from "@/services/jobs";
+import { activeLibraryService } from "@/services/library";
 import type { BillableUnits, SpeechEstimate } from "@/types";
 import { useUiStore } from "@/stores/ui";
 import { useUsageStore } from "@/stores/usage";
@@ -782,6 +784,111 @@ export const useNarrationStore = defineStore("narration", {
         timeout: 8000,
       });
     },
+    /** Say a request failed, and change nothing. */
+    _failed(what: string, cause: unknown): void {
+      const uiStore = useUiStore();
+      const api = cause instanceof ApiError ? cause : null;
+      uiStore.toast(api ? api.message : `Could not ${what}`, {
+        kind: "error",
+        description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
+        timeout: 8000,
+      });
+    },
+    /**
+     * The backend half of a retake: the lines are queued on the server as one job, each to render
+     * beside the clip it may replace, and the queue's poll brings each candidate here when it
+     * lands. A line already waiting on a verdict is left out and said so. Resolves to how many
+     * lines were queued.
+     */
+    async _remoteRetake(bookId: string, chId: number, ids: number[]): Promise<number> {
+      const jobsStore = useJobsStore();
+      const libraryStore = useLibraryStore();
+      const uiStore = useUiStore();
+      const svc = activeJobsService();
+      if (!svc || !ids.length) return 0;
+      try {
+        const { job, queued, skipped, chapters } = await svc.retakeLines(bookId, chId, ids);
+        libraryStore.chapters[bookId] = chapters;
+        if (job) await jobsStore._changed();
+        const pending = skipped.filter((s) => s.why === "pending").length;
+        if (!queued.length)
+          uiStore.toast("Nothing to retake", {
+            kind: "info",
+            description: pending
+              ? `${plural(pending, "line")} already ${pending === 1 ? "has" : "have"} a retake waiting for a verdict.`
+              : "The lines asked for are not in this chapter's script.",
+          });
+        else
+          uiStore.toast(`Retake · ${plural(queued.length, "line")}`, {
+            kind: "info",
+            description:
+              "Queued on the server. Each take appears beside its line when it lands, ready to compare." +
+              (pending
+                ? ` ${plural(pending, "line")} left alone: a retake is already waiting.`
+                : ""),
+            timeout: 8000,
+          });
+        return queued.length;
+      } catch (cause) {
+        this._failed("queue the retake", cause);
+        return 0;
+      }
+    },
+    /**
+     * The backend half of a verdict. The server swaps or discards the retake and answers with the
+     * line and the chapter as they now stand, which replace what is here. There is no Undo: the
+     * displaced clip is in the take list, where the comparison can be made again.
+     */
+    async _remoteVerdict(
+      bookId: string,
+      chId: number,
+      segId: number,
+      verdict: "accept" | "reject",
+    ): Promise<void> {
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+      const uiStore = useUiStore();
+      const svc = activeLibraryService();
+      if (!svc) return;
+      const k = key(bookId, chId);
+      try {
+        const { segment, revision, chapter } = await svc.judgeTake(bookId, chId, segId, verdict);
+        const segs = scriptsStore.segments[k];
+        const i = segs?.findIndex((x) => x.id === segId) ?? -1;
+        if (i >= 0) segs.splice(i, 1, segment);
+        scriptsStore._revision[k] = Math.max(scriptsStore._revision[k] ?? 0, revision);
+        const c = libraryStore.chapter(bookId, chId);
+        if (c) Object.assign(c, chapter);
+        if (verdict === "accept") {
+          uiStore.toast(`Take ${segment.audio.n ?? 1} kept`, {
+            kind: "success",
+            description: "It is the clip in the book now; the earlier take stays in the take list.",
+          });
+          return;
+        }
+        // the kept clip may have gone out of date while the retake rendered — say so rather than
+        // silently calling it current, and let the script carry the mark
+        const drift = i >= 0 ? this.clipDrift(bookId, segment) : [];
+        if (drift.length && ["done", "stale"].includes(segment.audio.status)) {
+          scriptsStore._markStale(bookId, chId, segment);
+          scriptsStore._commit(bookId, chId);
+        }
+        const rejected = segment.audio.takes?.at(-1);
+        uiStore.toast(
+          rejected?.rejected ? `Take ${segment.audio.n ?? 1} kept` : "Retake discarded",
+          {
+            kind: drift.length ? "warn" : "info",
+            description: drift.length
+              ? `The kept clip is out of date — ${drift[0]}.`
+              : rejected?.rejected
+                ? `Take ${rejected.n} is marked rejected — retake again or edit the line first.`
+                : "It never produced a clip.",
+          },
+        );
+      } catch (cause) {
+        this._failed(verdict === "accept" ? "keep this take" : "discard this take", cause);
+      }
+    },
     renarrateStale(bookId: string, chId: number): void {
       // the server works out which lines the script has moved past from the clips it holds
       if (activeJobsService()) {
@@ -1108,9 +1215,8 @@ export const useNarrationStore = defineStore("narration", {
     retakeSegment(bookId: string, chId: number, segId: number): void {
       const scriptsStore = useScriptsStore();
 
-      // a retake is a comparison the listener judges; the server has no route for the verdict yet
       if (activeJobsService()) {
-        this._notRemote("Retakes");
+        void this._remoteRetake(bookId, chId, [segId]);
         return;
       }
       if (
@@ -1127,12 +1233,16 @@ export const useNarrationStore = defineStore("narration", {
     retakeFlagged(bookId: string, chId: number): number {
       const scriptsStore = useScriptsStore();
 
-      if (activeJobsService()) {
-        this._notRemote("Retakes");
-        return 0;
-      }
       // one list for the guard, the budget check and the work — see `renarrateStale`
       const flagged = scriptsStore.segmentsOf(bookId, chId).filter((s) => s.flag);
+      if (activeJobsService()) {
+        void this._remoteRetake(
+          bookId,
+          chId,
+          flagged.map((s) => s.id),
+        );
+        return flagged.length;
+      }
       if (
         this._expressionGuard(
           bookId,
@@ -1172,6 +1282,10 @@ export const useNarrationStore = defineStore("narration", {
       const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
       const cand = s?.candidate;
       if (!s || !cand || cand.duration <= 0) return;
+      if (activeLibraryService()) {
+        void this._remoteVerdict(bookId, chId, segId, "accept");
+        return;
+      }
       const before = { audio: clone(s.audio), candidate: clone(cand), flag: s.flag };
       const takes = [...(s.audio.takes ?? [])];
       if (s.audio.duration > 0) takes.push(snapshotTake(s.audio));
@@ -1198,6 +1312,10 @@ export const useNarrationStore = defineStore("narration", {
       const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
       const cand = s?.candidate;
       if (!s || !cand) return;
+      if (activeLibraryService()) {
+        void this._remoteVerdict(bookId, chId, segId, "reject");
+        return;
+      }
       const before = { audio: clone(s.audio), candidate: clone(cand) };
       if (cand.duration > 0)
         s.audio.takes = [...(s.audio.takes ?? []), { ...snapshotTake(cand), rejected: true }];

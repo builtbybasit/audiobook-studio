@@ -213,10 +213,39 @@ export function takeOf(a: SegmentAudio): Take {
 }
 
 /**
- * A bulk replacement that succeeded takes over: the retake becomes the clip in the book and the one
- * it displaces joins the take list, so the history is kept and nobody is asked for 300 verdicts.
- * The store's `_acceptReplacement`, on rows: the candidate row becomes the current row with
- * `auto` stripped, and the takes are left as they are, one more if the old clip had audio.
+ * Turn a line's retake down, and say what became of it.
+ *
+ * A retake that rendered joins the take list marked rejected, so the comparison the listener made
+ * is still playable afterwards and its number is never handed out again; one that never produced
+ * a clip — failed, or dropped before it rendered — has nothing worth keeping and simply goes. The
+ * clip in the book is not touched: it was never displaced, so there is nothing to put back. The
+ * store's `rejectTake` on rows, and the same rule `_queueRender` applies to a retake in the way of
+ * a run.
+ */
+export function rejectCandidate(
+  tx: Tx,
+  bookId: string,
+  chapterId: number,
+  segmentId: number,
+): Take | null {
+  const row = tx
+    .select()
+    .from(clips)
+    .where(roleWhere(bookId, chapterId, segmentId, "candidate"))
+    .get();
+  if (!row) return null;
+  tx.delete(clips).where(eq(clips.id, row.id)).run();
+  if (row.duration <= 0) return null;
+  const take: Take = { ...takeOf(toSegmentAudio(row)), rejected: true };
+  addTake(tx, bookId, chapterId, segmentId, take);
+  return take;
+}
+
+/**
+ * A replacement that succeeded takes over: the retake becomes the clip in the book and the one it
+ * displaces joins the take list, so the history is kept and nobody is asked for 300 verdicts. The
+ * store's `_acceptReplacement` and `acceptTake`, on rows: the candidate row becomes the current
+ * row with `auto` stripped, and the takes are left as they are, one more if the old clip had audio.
  */
 export function acceptCandidate(
   tx: Tx,
@@ -240,6 +269,23 @@ export function acceptCandidate(
       addTake(tx, bookId, chapterId, segmentId, takeOf(toSegmentAudio(current)));
   }
   tx.update(clips).set({ role: "current", auto: null }).where(eq(clips.id, candidate.id)).run();
+}
+
+/**
+ * Take the listener's complaint off a line. A kept retake answers it; a line whose new take was
+ * chosen over the one that was flagged is no longer a line with a problem.
+ */
+export function clearFlag(tx: Tx, bookId: string, chapterId: number, segmentId: number): void {
+  tx.update(segments)
+    .set({ flag: null })
+    .where(
+      and(
+        eq(segments.bookId, bookId),
+        eq(segments.chapterId, chapterId),
+        eq(segments.id, segmentId),
+      ),
+    )
+    .run();
 }
 
 /**

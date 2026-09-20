@@ -4,7 +4,6 @@ import { PiniaColada } from "@pinia/colada";
 import { PiniaColadaAutoRefetch } from "@pinia/colada-plugin-auto-refetch";
 import App from "@/App.vue";
 import { router } from "@/router";
-import { useReader, saveReader } from "@/stores/reader";
 import { useDemoStore } from "@/stores/demo";
 import { keyring } from "@/lib/keyring";
 import { activeLibraryService } from "@/services/library";
@@ -48,7 +47,6 @@ createApp(App)
   .use(router)
   .use(toastflow)
   .mount("#app");
-useReader(pinia).$subscribe((_, state) => saveReader(state));
 // PROTOTYPE: the demo's own credentials live in the keyring, never in the store, and a demo reset
 // puts them back — nothing here is sent anywhere.
 for (const [id, value] of SEEDED_KEYS) keyring.set(id, value);

@@ -5,9 +5,12 @@
 // That is the whole subject of this file, and it knows nothing about rates: the pricing rules read
 // the clock, the clock never reads a rate card.
 //
-// `Intl.DateTimeFormat` is the only source of truth for a zone's offset, and constructing one is
-// expensive enough to cache. The offset is derived by formatting an instant *into* the zone and
-// reading the parts back, which is also why `zonedTime` takes two passes — see the note on it.
+// `TZDate` from `@date-fns/tz` is a `Date` whose getters answer in a named zone, and whose
+// constructor takes wall-clock components in that zone and finds the instant they name, daylight
+// saving included. It is silent about a zone it does not know — every getter comes back `NaN` —
+// so the one thing this file still asks `Intl` for is whether a zone name is real, and everything
+// below falls back to UTC when it is not.
+import { TZDate } from "@date-fns/tz";
 
 /** The browser's own timezone, and "UTC" where it cannot be asked. */
 export const localTimezone = (): string => {
@@ -18,7 +21,6 @@ export const localTimezone = (): string => {
   }
 };
 
-const FORMATTERS = new Map<string, Intl.DateTimeFormat | null>();
 export const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export const DAY_LABEL = [
@@ -32,25 +34,25 @@ export const DAY_LABEL = [
 ];
 export const DAY_SHORT = DAYS;
 
-function formatterFor(timezone: string): Intl.DateTimeFormat | null {
-  if (FORMATTERS.has(timezone)) return FORMATTERS.get(timezone)!;
-  let f: Intl.DateTimeFormat | null = null;
-  try {
-    f = new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone,
-      weekday: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    });
-  } catch {
-    f = null;
+const KNOWN = new Map<string, boolean>();
+
+export function timezoneValid(timezone: string): boolean {
+  let ok = KNOWN.get(timezone);
+  if (ok == null) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+      ok = true;
+    } catch {
+      ok = false;
+    }
+    KNOWN.set(timezone, ok);
   }
-  FORMATTERS.set(timezone, f);
-  return f;
+  return ok;
 }
 
-export const timezoneValid = (timezone: string): boolean => formatterFor(timezone) !== null;
+/** The instant `at`, read in `timezone` — or in UTC when the zone is not one the runtime knows. */
+const zoned = (at: number, timezone: string): TZDate =>
+  new TZDate(at, timezoneValid(timezone) ? timezone : "UTC");
 
 /** Day of week and minutes past midnight at `at`, read in `timezone`. Falls back to UTC. */
 export function localClock(
@@ -61,99 +63,23 @@ export function localClock(
   minutes: number;
   ok: boolean;
 } {
-  const f = formatterFor(timezone);
-  if (!f) {
-    const d = new Date(at);
-    return { day: d.getUTCDay(), minutes: d.getUTCHours() * 60 + d.getUTCMinutes(), ok: false };
-  }
-  let day = 0;
-  let hour = 0;
-  let minute = 0;
-  for (const part of f.formatToParts(at)) {
-    if (part.type === "weekday") day = Math.max(0, DAYS.indexOf(part.value));
-    else if (part.type === "hour") hour = Number(part.value) % 24;
-    else if (part.type === "minute") minute = Number(part.value);
-  }
-  return { day, minutes: hour * 60 + minute, ok: true };
+  const d = zoned(at, timezone);
+  return {
+    day: d.getDay(),
+    minutes: d.getHours() * 60 + d.getMinutes(),
+    ok: timezoneValid(timezone),
+  };
 }
 
 /**
- * Calendar dates, read and written in the endpoint's own timezone.
+ * The instant a wall-clock time in `timezone` corresponds to.
  *
  * A promotion's start and end are *dates*, not instants — "until Friday" means the end of Friday
  * where the endpoint is billed, not where the operator happens to be sitting. Reading them with the
  * browser's own timezone moves a New York promotion by a day when it is edited from Karachi, and
- * every other part of this page already displays them in `config.timezone`.
- *
- * There is no timezone library here, so the offset is found by formatting the instant in the target
- * zone and asking how far that is from UTC; one refinement pass settles the daylight-saving edge.
+ * every other part of this page already displays them in `config.timezone`. A day past the end of
+ * the month rolls over, as it does for `Date`.
  */
-const DATE_PARTS = new Map<string, Intl.DateTimeFormat | null>();
-
-function dateFormatterFor(timezone: string): Intl.DateTimeFormat | null {
-  if (DATE_PARTS.has(timezone)) return DATE_PARTS.get(timezone)!;
-  let f: Intl.DateTimeFormat | null = null;
-  try {
-    f = new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23",
-    });
-  } catch {
-    f = null;
-  }
-  DATE_PARTS.set(timezone, f);
-  return f;
-}
-
-interface ZonedParts {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-  second: number;
-}
-
-function zonedParts(at: number, timezone: string): ZonedParts {
-  const f = dateFormatterFor(timezone);
-  const d = new Date(at);
-  if (!f)
-    return {
-      year: d.getUTCFullYear(),
-      month: d.getUTCMonth() + 1,
-      day: d.getUTCDate(),
-      hour: d.getUTCHours(),
-      minute: d.getUTCMinutes(),
-      second: d.getUTCSeconds(),
-    };
-  const out: ZonedParts = { year: 0, month: 1, day: 1, hour: 0, minute: 0, second: 0 };
-  for (const part of f.formatToParts(at)) {
-    const n = Number(part.value);
-    if (part.type === "year") out.year = n;
-    else if (part.type === "month") out.month = n;
-    else if (part.type === "day") out.day = n;
-    else if (part.type === "hour") out.hour = n % 24;
-    else if (part.type === "minute") out.minute = n;
-    else if (part.type === "second") out.second = n;
-  }
-  return out;
-}
-
-/** How far ahead of UTC `timezone` is at this instant, in ms. */
-function zoneOffset(at: number, timezone: string): number {
-  const p = zonedParts(at, timezone);
-  return (
-    Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(at / 1000) * 1000
-  );
-}
-
-/** The instant a wall-clock time in `timezone` corresponds to. */
 export function zonedTime(
   timezone: string,
   y: number,
@@ -164,43 +90,53 @@ export function zonedTime(
   second = 0,
   ms = 0,
 ): number {
-  const wall = Date.UTC(y, m - 1, d, hour, minute, second, ms);
-  // two passes: the first offset is read at the wrong instant across a DST boundary, the second at
-  // one within an hour of the answer, which is close enough for a calendar date
-  const first = wall - zoneOffset(wall, timezone);
-  return wall - zoneOffset(first, timezone);
+  const zone = timezoneValid(timezone) ? timezone : "UTC";
+  return new TZDate(y, m - 1, d, hour, minute, second, ms, zone).getTime();
 }
+
+const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
 
 /** `1758067200000` → `2026-09-17`, as the date input wants it, in the endpoint's timezone. */
 export function calendarDay(at: number, timezone: string): string {
-  const p = zonedParts(at, timezone);
-  return `${String(p.year).padStart(4, "0")}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+  const d = zoned(at, timezone);
+  return `${pad(d.getFullYear(), 4)}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
+
+const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /** `2026-09-17` → the first instant of that day in `timezone`; null when it isn't a date. */
 export function startOfDay(text: string, timezone: string): number | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text.trim());
+  const m = DATE.exec(text.trim());
   if (!m) return null;
   return zonedTime(timezone, Number(m[1]), Number(m[2]), Number(m[3]), 0, 0, 0, 0);
 }
 
 /** `2026-09-17` → the last instant of that day in `timezone`; null when it isn't a date. */
 export function endOfDay(text: string, timezone: string): number | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text.trim());
+  const m = DATE.exec(text.trim());
   if (!m) return null;
   return zonedTime(timezone, Number(m[1]), Number(m[2]), Number(m[3]), 23, 59, 59, 999);
 }
 
 /** `n` days on from the calendar day `at` falls on, in `timezone`, at the end of that day. */
 export function endOfDayAfter(at: number, timezone: string, days: number): number {
-  const p = zonedParts(at, timezone);
-  return zonedTime(timezone, p.year, p.month, p.day + days, 23, 59, 59, 999);
+  const d = zoned(at, timezone);
+  return zonedTime(
+    timezone,
+    d.getFullYear(),
+    d.getMonth() + 1,
+    d.getDate() + days,
+    23,
+    59,
+    59,
+    999,
+  );
 }
 
 /** `510` → `08:30`. */
 export function clockLabel(minutes: number): string {
   const m = ((Math.round(minutes) % 1440) + 1440) % 1440;
-  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  return `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 }
 
 export const parseClock = (text: string): number | null => {

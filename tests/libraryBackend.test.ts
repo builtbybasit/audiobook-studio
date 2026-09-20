@@ -253,26 +253,32 @@ describe("the library store with a server answering", () => {
 describe("chapter prose with a server answering", () => {
   test("is the server's, in both readings, and never a fixture", async () => {
     const id = (await libraryStore.importBook({ source: await volume(["One"]) }))!;
+    // The store's synchronous readings resolve the query cache through the active pinia, which a
+    // leftover task from an earlier test can point back at that test's; read them where the app
+    // resolves it by injection, as a page would.
+    const partsNow = () => pinia.run(() => scriptsStore.partsOf(id, 1));
+    const rawNow = () => pinia.run(() => scriptsStore.rawText(id, 1));
 
     // before it is read, there is nothing — not seeded prose standing in for it
-    expect(scriptsStore.partsOf(id, 1)).toEqual([]);
-    expect(scriptsStore.rawText(id, 1)).toBe("");
+    expect(partsNow()).toEqual([]);
+    expect(rawNow()).toBe("");
 
     const markdown = pinia.run(() => useChapterText(id, 1));
-    await flush();
+    // the read is a request and a store install; one tick is not always both
+    for (let i = 0; i < 20 && markdown.status.value !== "success"; i++) await flush();
     expect(markdown.status.value).toBe("success");
     expect(markdown.text.value).toBeTruthy();
     expect(markdown.parts.value).toEqual([{ text: markdown.text.value }]);
     // the store's own readings now find it: the same text, from the same read
-    expect(scriptsStore.partsOf(id, 1)).toEqual(markdown.parts.value);
+    expect(partsNow()).toEqual(markdown.parts.value);
 
     // anything that counts, bills or speaks a chapter reads the plain form, which is a separate ask
-    expect(scriptsStore.rawText(id, 1)).toBe("");
+    expect(rawNow()).toBe("");
     const plain = pinia.run(() => useChapterText(id, 1, "plain"));
-    await flush();
-    expect(scriptsStore.rawText(id, 1)).toBe(plain.text.value);
-    expect(chapterTextNow(id, 1, "plain")).toBe(plain.text.value);
-    expect(scriptsStore.rawText(id, 1)).not.toContain("#");
+    for (let i = 0; i < 20 && plain.status.value !== "success"; i++) await flush();
+    expect(rawNow()).toBe(plain.text.value);
+    expect(pinia.run(() => chapterTextNow(id, 1, "plain"))).toBe(plain.text.value);
+    expect(rawNow()).not.toContain("#");
   });
 
   test("is read once, and again only when the chapter numbers it was keyed by move", async () => {

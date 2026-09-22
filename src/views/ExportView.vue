@@ -193,8 +193,9 @@ function narrate(ids: number[]) {
 function useStale() {
   settings.useStale = !settings.useStale;
 }
-function build() {
-  const item = exportsStore.buildExport(bookId, selected.value, settings, {
+async function build() {
+  // with a server answering the build is a request, so the tab only moves once it has started
+  const item = await exportsStore.buildExport(bookId, selected.value, settings, {
     updates: updates.value ?? undefined,
   });
   if (item) {

@@ -347,7 +347,7 @@ export const useJobsStore = defineStore("jobs", {
         const stale = ids.some(
           (cid) => libraryStore.chapter(job.bookId, cid)?.narration === "stale",
         );
-        exportsStore.buildExport(
+        void exportsStore.buildExport(
           job.bookId,
           ids,
           { ...run.settings, useStale: run.settings.useStale || stale },

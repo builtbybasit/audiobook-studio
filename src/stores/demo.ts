@@ -479,7 +479,13 @@ export const useDemoStore = defineStore("demo", {
       if (!this._exportDemo) return;
       this._restoreWorld();
     },
-    /** One build running, one that failed and is waiting for a retry, and one that finished. */
+    /**
+     * One build running, one that failed and is waiting for a retry, and one that finished.
+     *
+     * It goes to the demo's half of the build directly, as the import review does (`_importedLocally`
+     * in `library.ts`): a scenario builds its situation in one pass, and `buildExport` is a request
+     * with a server answering — which a scenario never has.
+     */
     _seedBuildHistory(bookId: string, ids: number[]): void {
       const exportsStore = useExportsStore();
       const jobsStore = useJobsStore();
@@ -493,10 +499,14 @@ export const useDemoStore = defineStore("demo", {
         filename: (libraryStore.bookById(bookId)?.title ?? "Audiobook") + " (sample)",
       };
       // one that failed and is waiting for a retry
-      const failed = exportsStore.buildExport(bookId, ids.slice(0, Math.max(1, ids.length - 2)), {
-        ...base,
-        filename: base.filename + " - earlier attempt",
-      });
+      const failed = exportsStore._simulatedBuild(
+        bookId,
+        ids.slice(0, Math.max(1, ids.length - 2)),
+        {
+          ...base,
+          filename: base.filename + " - earlier attempt",
+        },
+      );
       if (failed) {
         const job = jobsStore.jobs.find((j) => j.id === failed.jobId);
         if (job) {
@@ -505,7 +515,7 @@ export const useDemoStore = defineStore("demo", {
         }
       }
       // and one that is running now
-      exportsStore.buildExport(bookId, ids, {
+      exportsStore._simulatedBuild(bookId, ids, {
         ...base,
         filename: base.filename + " - in progress",
       });

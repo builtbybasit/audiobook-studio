@@ -57,6 +57,28 @@ const Env = v.object({
    * with it.
    */
   AUDIO_DIR: v.optional(v.string(), "./data/audio"),
+  /**
+   * Which encoder a build writes its audiobook with.
+   *
+   * `wav` is the default and needs nothing installed: it stitches the rendered clips into one
+   * real, playable file per output file, so a fresh clone and the test suite build an audiobook
+   * without a binary on the machine. It is not an M4B and writes no chapter marks, and the build
+   * says so in its log rather than naming the file as though it were one.
+   *
+   * `ffmpeg` writes what the settings actually asked for — AAC in an M4B with the chapter marks a
+   * player reads, or an MP3 — and corrects the loudness with EBU R128 when the build asks for it.
+   * It runs the ffmpeg already on this machine, so it is checked at boot and refuses to start
+   * when there is none rather than failing every build later.
+   */
+  EXPORT_ENCODER: v.optional(v.picklist(["wav", "ffmpeg"]), "wav"),
+  /** the ffmpeg to run, for a machine that keeps it somewhere off `PATH` */
+  FFMPEG_BIN: v.optional(v.string(), "ffmpeg"),
+  /**
+   * Where built audiobooks are kept: one directory per book, one file per output file. Apart from
+   * the clips on purpose — a clip is an input the next build reads again, an audiobook is the
+   * deliverable — so the two can be measured, backed up and cleared separately.
+   */
+  EXPORT_DIR: v.optional(v.string(), "./data/exports"),
 });
 
 export type Env = v.InferOutput<typeof Env>;

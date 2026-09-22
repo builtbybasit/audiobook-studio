@@ -9,10 +9,13 @@ import { pinoLogger, type Env as PinoEnv } from "hono-pino";
 import { audioFiles, type AudioFiles } from "~/audio/files";
 import type { Db } from "~/db/client";
 import { env } from "~/env";
+import { audiobookFiles } from "~/exports/files";
 import { createRunner, type Runner } from "~/jobs/runner";
 import { AppError, type ApiError } from "~/lib/errors";
 import type { Logger } from "~/log";
 import { log as defaultLog } from "~/log";
+import type { ExportPorts } from "~/providers/encoder";
+import { wavEncoders } from "~/providers/wavEncoder";
 import { audioRoutes } from "~/routes/audio";
 import { bookRoutes } from "~/routes/books";
 import { castRoutes } from "~/routes/cast";
@@ -31,6 +34,11 @@ export interface AppOptions {
   runner?: Runner;
   /** where rendered clips are read from and, when a book goes, removed; the configured directory by default */
   files?: AudioFiles;
+  /**
+   * What a build writes an audiobook with, and where it puts it. The default is the configured
+   * pair, so a download served by this app is the file the queue's handler wrote.
+   */
+  exports?: ExportPorts;
 }
 
 export function createApp(
@@ -39,6 +47,7 @@ export function createApp(
     log = defaultLog,
     runner = createRunner(db, {}, { log }),
     files = audioFiles(env.AUDIO_DIR),
+    exports = { encoders: wavEncoders(), files: audiobookFiles(env.EXPORT_DIR) },
   }: AppOptions = {},
 ): Hono<PinoEnv> {
   // Typed with the logger the middleware puts on the context, so a route reaching for
@@ -73,10 +82,10 @@ export function createApp(
   // Everything a book owns is addressed under it. The library's own routes come first; the cast,
   // the scripts and the audiobooks each have a file of their own so that a route reads as one call
   // on the operations of the part of the app that owns the table.
-  app.route("/api/books", bookRoutes(db, runner, files));
+  app.route("/api/books", bookRoutes(db, runner, files, exports.files));
   app.route("/api/books", castRoutes(db));
   app.route("/api/books", scriptRoutes(db, runner));
-  app.route("/api/books", exportRoutes(db));
+  app.route("/api/books", exportRoutes(db, runner, exports));
   app.route("/api/jobs", jobRoutes(db, runner));
   // A clip's url is served from disk, and the files it names belong to the same book routes above
   // remove — see `server/audio/files.ts` for why the path is a book and a token.

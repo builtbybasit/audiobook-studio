@@ -13,6 +13,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { Segment } from "@/types";
+import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { key } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
 import { useBookJobs, useCast, useChapterHistory, useChapterScript } from "@/queries";
@@ -864,7 +865,7 @@ describe("retakes with a server answering", () => {
 });
 
 describe("the audiobooks with a server answering", () => {
-  test("are the server's, which has none yet, and a deletion would ask first", async () => {
+  test("are the server's, which starts with none, and a deletion asks first", async () => {
     const id = await shelved();
     const exportsStore = useExportsStore();
     expect(exportsStore.exports).toEqual([]);
@@ -874,5 +875,54 @@ describe("the audiobooks with a server answering", () => {
     await settle();
     expect(exports.status.value).toBe("success");
     expect(exports.exports.value).toEqual([]);
+  });
+
+  test("a build is a job the server runs, and the page shows the version it is writing", async () => {
+    const { id } = await scriptedAndOpen();
+    const exportsStore = useExportsStore();
+    const narrationStore = useNarrationStore();
+    narrationStore.runNarration(id, [1]);
+    await settle();
+    await api.runner.idle();
+    await poll();
+
+    const { useBookExports } = await import("@/queries");
+    const exports = pinia.run(() => useBookExports(id));
+    await settle();
+
+    const settings = { ...DEFAULT_EXPORT_SETTINGS, title: "One", filename: "One" };
+    const entry = await exportsStore.buildExport(id, [1], settings);
+    // the version goes up as the server made it, before a byte of it has been written
+    expect(entry?.status).toBe("building");
+    expect(entry?.version).toBe(1);
+    expect(sent.at(-1)?.path).toBe(`/api/books/${id}/exports`);
+    expect(jobsStore.jobs.map((j) => j.kind)).toContain("export");
+
+    await api.runner.idle();
+    await poll();
+    // the poll noticed the job move and read the audiobooks again, so the tab is current without
+    // the page having asked for anything
+    const [done] = exports.exports.value;
+    expect(done.status).toBe("done");
+    expect(done.size).toBeGreaterThan(0);
+    expect(done.files[0].name).toEndWith(".wav");
+    // and the file behind it is served, so "Download" hands over something real
+    const file = await api.fetch(`/api/books/${id}/exports/${done.id}/files/0`, {});
+    expect(file.status).toBe(200);
+    expect(file.headers.get("content-disposition")).toContain(done.files[0].name);
+  });
+
+  test("a chapter with no audio is refused in the server's words, and nothing is marked", async () => {
+    const { id } = await scriptedAndOpen();
+    const exportsStore = useExportsStore();
+
+    const settings = { ...DEFAULT_EXPORT_SETTINGS, title: "One", filename: "One" };
+    // chapter 1 is scripted but never narrated, so there is nothing to put in the file
+    const entry = await exportsStore.buildExport(id, [1], settings);
+    expect(entry).toBeNull();
+    // the refusal is the review's own blocker, carried back rather than reworded here
+    expect(toasts.at(-1)?.msg).toContain("no audio");
+    expect(exportsStore.exports).toEqual([]);
+    expect(jobsStore.jobs.some((j) => j.kind === "export")).toBe(false);
   });
 });

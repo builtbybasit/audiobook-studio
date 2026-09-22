@@ -90,6 +90,15 @@ export const exportItems = sqliteTable(
     reused: integer("reused"),
     /** clips that were already stale when this was built, accepted on purpose */
     stale: integer("stale"),
+    /**
+     * What wrote it, by the encoder's own name.
+     *
+     * The next version only carries a chapter over from this one when the same encoder is writing
+     * it, because a span means different things to different encoders — bytes into a WAV, but
+     * milliseconds into an AAC stream, where a byte offset means nothing. Without this a server
+     * restarted with `EXPORT_ENCODER` changed would copy one as though it were the other.
+     */
+    encoder: text("encoder"),
   },
   (t) => [
     index("exports_book").on(t.bookId, t.id),
@@ -114,6 +123,14 @@ export const exportFiles = sqliteTable(
     markers: integer("markers").notNull().default(0),
     /** which volume this file covers, when a set is cut by volume */
     volume: text("volume", { mode: "json" }).$type<ExportVolume | null>(),
+    /**
+     * The file this was written to on disk, as `server/exports/files.ts` names it.
+     *
+     * Null when nothing was written — a seeded export, or one whose build is still running. It is
+     * a token rather than `name`, for the reason a clip's file is: `name` is what the listener
+     * asked the audiobook to be called, and two versions of an audiobook have the same one.
+     */
+    path: text("path"),
   },
   (t) => [primaryKey({ columns: [t.exportId, t.position] })],
 );
@@ -148,6 +165,16 @@ export const exportChapters = sqliteTable(
     duration: real("duration"),
     /** what this chapter's audio was when the export was built */
     signature: text("signature"),
+    /**
+     * Where this chapter's audio sits inside its output file, as a span of the file's samples.
+     *
+     * This is what makes "carried over rather than encoded again" a real thing the next build
+     * does rather than a number it reports: an update copies these bytes straight out of the
+     * version on disk for every chapter whose signature has not moved, and reads the clips again
+     * only for the ones that have. Null on an export nothing on this server built.
+     */
+    byteStart: integer("byte_start"),
+    byteLength: integer("byte_length"),
   },
   (t) => [
     primaryKey({ columns: [t.exportId, t.chapterId] }),

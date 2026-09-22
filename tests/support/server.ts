@@ -8,12 +8,16 @@ import { createApp } from "~/app";
 import { audioFiles, type AudioFiles } from "~/audio/files";
 import { openDb, type Db } from "~/db/client";
 import { migrate } from "~/db/migrate";
+import { audiobookFiles } from "~/exports/files";
+import { exportHandler } from "~/jobs/export";
 import { narrationHandler } from "~/jobs/narration";
 import { createRunner, type JobHandlers, type Runner } from "~/jobs/runner";
 import { scriptingHandler } from "~/jobs/scripting";
 import { createLogger, type Logger } from "~/log";
 import { fakeScriptingProvider } from "~/providers/fake";
+import type { AudiobookEncoder, EncoderChoice, ExportPorts } from "~/providers/encoder";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
+import { wavEncoders } from "~/providers/wavEncoder";
 import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 import type { FetchLike } from "@/services/http";
@@ -25,6 +29,9 @@ export interface TestApi {
   /** where this API's clips are written and served from */
   files: AudioFiles;
   audioDir: string;
+  /** what this API's builds write with, and where they put it */
+  exports: ExportPorts;
+  exportDir: string;
   /** `fetch` for a client, answered by this app without a network */
   fetch: FetchLike;
   /** every line this API wrote, for the tests that are about the logging itself */
@@ -45,12 +52,29 @@ export interface TestApiOptions {
   speech?: SpeechProvider;
   /** where clips are written; a fresh temporary directory by default */
   audioDir?: string;
+  /** where built audiobooks are written; a fresh temporary directory by default */
+  exportDir?: string;
+  /** what a build writes its files with; the WAV stitcher by default */
+  encoder?: AudiobookEncoder | EncoderChoice;
   /** handlers for other kinds, or an override for `scripting` or `narration` */
   handlers?: JobHandlers;
 }
 
 /** A directory of its own for one test's clips, so no two suites can read each other's files. */
 export const tempAudioDir = (): string => mkdtempSync(join(tmpdir(), "audiobook-audio-"));
+
+/** The same, for the audiobooks a build writes. */
+export const tempExportDir = (): string => mkdtempSync(join(tmpdir(), "audiobook-built-"));
+
+/** Both halves of building a file, wherever this test keeps them. */
+export const testExports = (options: TestApiOptions = {}): ExportPorts => ({
+  encoders: !options.encoder
+    ? wavEncoders()
+    : "for" in options.encoder
+      ? options.encoder
+      : { name: options.encoder.name, for: () => options.encoder as AudiobookEncoder },
+  files: audiobookFiles(options.exportDir ?? tempExportDir()),
+});
 
 /**
  * A logger that keeps its lines instead of printing them.
@@ -83,6 +107,7 @@ export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): R
     {
       scripting: scriptingHandler(options.scripting ?? fakeScriptingProvider()),
       narration: narrationHandler(options.speech ?? fakeSpeechProvider(), files),
+      export: exportHandler(testExports(options), files),
       ...options.handlers,
     },
     { log, pollMs: 60_000 },
@@ -94,8 +119,10 @@ export function testApi(options: TestApiOptions = {}): TestApi {
   const { log, lines } = collectingLogger();
   const audioDir = options.audioDir ?? tempAudioDir();
   const files = audioFiles(audioDir);
-  const runner = testRunner(db, log, { ...options, audioDir });
-  const app = createApp(db, { log, runner, files });
+  const exportDir = options.exportDir ?? tempExportDir();
+  const exports = testExports({ ...options, exportDir });
+  const runner = testRunner(db, log, { ...options, audioDir, exportDir });
+  const app = createApp(db, { log, runner, files, exports });
 
   const request = async <T>(path: string, init?: RequestInit) => {
     const res = await app.request(`http://api.test${path}`, init);
@@ -108,6 +135,8 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     runner,
     files,
     audioDir,
+    exports,
+    exportDir,
     fetch: async (input, init) => app.request(new Request(`http://api.test${input}`, init)),
     logs: lines,
     request,

@@ -532,3 +532,21 @@ export function sameOutput(prev: ExportItem, s: ExportSettings): boolean {
   const was = settingsOf(prev);
   return OUTPUT_KEYS.every((k) => was[k] === undefined || was[k] === s[k]);
 }
+
+/**
+ * The chapters a build would carry over from `prev` untouched rather than encode again.
+ *
+ * The page's estimate, the build itself and the server's build all come here, so what the plan
+ * panel promises and what is actually copied cannot drift apart. A setting that changes the bytes
+ * rules the whole thing out at once: a different bitrate or layout is a different file, and
+ * nothing in it can be carried over from the last one.
+ */
+export function reusedChapters(
+  prev: ExportItem | null | undefined,
+  ids: readonly number[],
+  settings: ExportSettings,
+  now: Record<number, string>,
+): number[] {
+  if (!prev || !sameOutput(prev, settings)) return [];
+  return ids.filter((id) => !!prev.state?.[id] && prev.state[id] === now[id]);
+}

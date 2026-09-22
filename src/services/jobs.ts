@@ -3,9 +3,12 @@
 // The same arrangement as `@/services/library`: one HTTP implementation, chosen at startup, and
 // `null` in demo mode — where the queue is the simulated one the jobs store runs itself. The jobs
 // store asks `activeJobsService()` and takes one of two halves; no view knows which answered.
-import type { Chapter, Job, NarrationScope } from "@/types";
+import type { Chapter, ExportItem, ExportSettings, Job, NarrationScope } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { isBackend } from "@/services/mode";
+
+/** Where the API answers. One spelling, because a download is a URL rather than a request. */
+const API_BASE = "/api";
 
 /** What queueing a scripting run came to: the jobs, and the chapters it left out and why. */
 export interface ScriptingQueued {
@@ -33,6 +36,13 @@ export interface RetakesQueued {
   chapters: Chapter[];
 }
 
+/** What starting a build came to: the job that will run it, and the audiobook it is writing. */
+export interface BuildQueued {
+  job: Job;
+  /** the entry as the server created it — building, with its files, version and what it replaces */
+  export: ExportItem;
+}
+
 export interface JobsService {
   readonly simulated: boolean;
   /** Every job the server holds, oldest first. */
@@ -49,12 +59,19 @@ export interface JobsService {
   narrateChapters(bookId: string, ids: number[], scope: NarrationScope): Promise<NarrationQueued>;
   /** Render these lines of a chapter again, each beside the clip it may replace, as one job. */
   retakeLines(bookId: string, chapterId: number, ids: number[]): Promise<RetakesQueued>;
+  /** Stitch these chapters of a book into one audiobook, as one job. */
+  buildExport(
+    bookId: string,
+    ids: number[],
+    settings: ExportSettings,
+    updates?: number | null,
+  ): Promise<BuildQueued>;
 }
 
 export class HttpJobsService implements JobsService {
   readonly simulated = false;
   private readonly http: HttpClient;
-  constructor(base = "/api", fetch?: FetchLike) {
+  constructor(base = API_BASE, fetch?: FetchLike) {
     this.http = new HttpClient(base, fetch);
   }
 
@@ -90,6 +107,27 @@ export class HttpJobsService implements JobsService {
       ids,
     });
   }
+
+  buildExport(
+    bookId: string,
+    ids: number[],
+    settings: ExportSettings,
+    updates?: number | null,
+  ): Promise<BuildQueued> {
+    return this.http.post<BuildQueued>(`/books/${seg(bookId)}/exports`, { ids, settings, updates });
+  }
+}
+
+/**
+ * Where one built file of an export is downloaded from. `position` is the file's place in
+ * `export.files`, which is what the route addresses: a name would have to survive a rename and
+ * whatever a filesystem does to it, and the order is the audiobook's own.
+ *
+ * It is here rather than in a view so nothing hand-builds an API path; the browser follows it, so
+ * it is a URL and not a request this client makes.
+ */
+export function exportFileUrl(bookId: string, exportId: number, position: number): string {
+  return `${API_BASE}/books/${seg(bookId)}/exports/${exportId}/files/${position}`;
 }
 
 let service: JobsService | null = null;

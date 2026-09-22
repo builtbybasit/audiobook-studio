@@ -271,8 +271,8 @@ test("retained diagnostics stay bounded and omit connection snapshots and creden
   expect(new Set(job.activity!.map((e) => e.id)).size).toBe(MAX_JOB_EVENTS);
 });
 
-test("export jobs record milestones and the completed artifact", () => {
-  exportsStore.buildExport("starforge", [2, 3, 4, 5, 6], {
+test("export jobs record milestones and the completed artifact", async () => {
+  await exportsStore.buildExport("starforge", [2, 3, 4, 5, 6], {
     ...DEFAULT_EXPORT_SETTINGS,
     title: "Test book",
     filename: "test-log",

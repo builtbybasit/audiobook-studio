@@ -7,10 +7,11 @@
 // store's own, driven by the simulators, and the query only answers with it.
 //
 // A job that moved is a chapter that moved. The server does not push events, so the poll is where
-// a change is noticed: a job whose status or progress changed has its book read again, and a
+// a change is noticed: a job whose status or progress changed has its book read again, a
 // scripting job that finished has its chapter's script, history and the book's cast invalidated —
-// the run wrote all three on the server. Nothing here decides what a chapter holds; it only says
-// what to ask for again.
+// the run wrote all three on the server — and an export job has its book's audiobooks read again,
+// because the row it is writing is one of them. Nothing here decides what a chapter holds; it only
+// says what to ask for again.
 import { computed, toValue, watch, type MaybeRefOrGetter } from "vue";
 import { defineQuery, useQuery } from "@pinia/colada";
 
@@ -81,6 +82,10 @@ const useJobsQuery = defineQuery(() => {
       // waiting for the run to finish
       if (j.kind === "narration" && j.chapterId != null)
         void invalidate({ key: keys.chapterScript(j.bookId, j.chapterId) }, "all");
+      // an export job is writing the export row it was started with — its progress, then the files
+      // and the size it finished with, or the failure, or nothing at all, since a cancelled build
+      // takes its row with it. Every move of one is therefore a change to the Audiobooks tab.
+      if (j.kind === "export") void invalidate({ key: keys.exports(j.bookId) }, "all");
     }
     for (const id of books) void libraryStore.loadBook(id);
   });

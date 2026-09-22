@@ -191,6 +191,20 @@ export function setProgress(db: Db | Tx, id: number, progress: number): void {
 }
 
 /**
+ * Replace the live detail the Queue page opens up.
+ *
+ * A scripting or narration job's `run` is settled when it is queued and never moves. A build's
+ * does: which file it is writing and how many chapters it has laid down are the only account of a
+ * run that can last minutes, and the Queue reads them by polling the row.
+ */
+export function setRun(db: Db | Tx, id: number, run: NonNullable<Job["exportRun"]>): void {
+  db.update(jobs)
+    .set({ run: { exportRun: run } })
+    .where(eq(jobs.id, id))
+    .run();
+}
+
+/**
  * Record one thing that happened, and keep the log bounded.
  *
  * The oldest events go first once a job has more than `MAX_JOB_EVENTS`, and `dropped_events`

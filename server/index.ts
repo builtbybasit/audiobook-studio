@@ -8,12 +8,16 @@ import { audioFiles } from "~/audio/files";
 import { openDb } from "~/db/client";
 import { migrate } from "~/db/migrate";
 import { env } from "~/env";
+import { audiobookFiles } from "~/exports/files";
+import { exportHandler } from "~/jobs/export";
 import { narrationHandler } from "~/jobs/narration";
 import { createRunner } from "~/jobs/runner";
 import { scriptingHandler } from "~/jobs/scripting";
 import { log } from "~/log";
 import { fakeScriptingProvider } from "~/providers/fake";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
+import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
+import { wavEncoders } from "~/providers/wavEncoder";
 
 const boot = log.child({ name: "boot" });
 
@@ -30,9 +34,29 @@ boot.debug(
 const scripting = fakeScriptingProvider();
 const speech = fakeSpeechProvider();
 const files = audioFiles(env.AUDIO_DIR);
+// An encoder that shells out is the one thing here that needs something outside this process, so
+// it is checked now rather than at the first build: a server that cannot write an audiobook says
+// so at boot, naming the binary, instead of queueing work that was always going to fail.
+if (env.EXPORT_ENCODER === "ffmpeg") {
+  const version = await ffmpegAvailable(env.FFMPEG_BIN);
+  if (!version)
+    throw new Error(
+      `EXPORT_ENCODER=ffmpeg, but ${env.FFMPEG_BIN} is not runnable. Install ffmpeg, point ` +
+        `FFMPEG_BIN at it, or set EXPORT_ENCODER=wav to stitch the clips with no binary at all.`,
+    );
+  boot.debug({ ffmpeg: version }, "encoder found");
+}
+const exports = {
+  encoders: env.EXPORT_ENCODER === "ffmpeg" ? ffmpegEncoders(env.FFMPEG_BIN) : wavEncoders(),
+  files: audiobookFiles(env.EXPORT_DIR),
+};
 const runner = createRunner(
   db,
-  { scripting: scriptingHandler(scripting), narration: narrationHandler(speech, files) },
+  {
+    scripting: scriptingHandler(scripting),
+    narration: narrationHandler(speech, files),
+    export: exportHandler(exports, files),
+  },
   { log },
 );
 runner.start();
@@ -41,7 +65,7 @@ const server = Bun.serve({
   port: env.PORT,
   // A long web novel is a big upload, and Bun's default body limit is well under it.
   maxRequestBodySize: env.MAX_UPLOAD_MB * 1024 * 1024,
-  fetch: createApp(db, { runner, files }).fetch,
+  fetch: createApp(db, { runner, files, exports }).fetch,
 });
 
 boot.info(
@@ -51,7 +75,9 @@ boot.info(
     uploadMb: env.MAX_UPLOAD_MB,
     scripting: scripting.name,
     speech: speech.name,
+    encoder: exports.encoders.name,
     audio: files.dir,
+    audiobooks: exports.files.dir,
   },
   "audiobook-studio api is listening",
 );

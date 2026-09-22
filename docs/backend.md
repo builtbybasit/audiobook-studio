@@ -8,8 +8,10 @@ second is the queue: scripting a chapter is a job the server runs, and the Queue
 third is what a scripted chapter owns: its script can be edited over HTTP, its history and the
 book's cast are written by the run that made them, and the frontend reads all of it through
 queries. The fourth is narration: rendering a chapter is a job the server runs against a fake
-speech model, the clips are files the server keeps and serves, and the player hears them.**
-Endpoints, pricing, retakes and export are still the seeded demo and are untouched by all four.
+speech model, the clips are files the server keeps and serves, the player hears them, and a
+retake is judged and kept or discarded. The fifth is export: building an audiobook is a job too,
+and what it writes is a file on disk that can be downloaded and played.** Endpoints and pricing
+are still the seeded demo and are untouched by all five.
 
 Nothing in the server contacts a provider or spends money. The only scripting model it can be
 started with is the fake one ([the queue](#the-queue) says what it does), there are no credentials
@@ -172,7 +174,7 @@ found.
 | [server/library/ops.ts](../server/library/ops.ts)         | What the library does: import, review, confirm, discard, remove — the rules                              |
 | [server/cast/ops.ts](../server/cast/ops.ts)               | What a cast does: a speaker written, renamed, merged, removed, and put back                              |
 | [server/script/ops.ts](../server/script/ops.ts)           | What a person does to a script: edit against a revision, checkpoint, forget                              |
-| [server/exports/ops.ts](../server/exports/ops.ts)         | The finished audiobooks: listed and forgotten; nothing builds one yet                                    |
+| [server/exports/ops.ts](../server/exports/ops.ts)         | The finished audiobooks: listed, handed over to be downloaded, and forgotten                             |
 | [server/lib/errors.ts](../server/lib/errors.ts)           | What a refusal is before it is a response; `app.onError` makes it one                                    |
 | [server/lib/schemas.ts](../server/lib/schemas.ts)         | The domain shapes as request bodies: a speaker, an entry, a line, an origin                              |
 | [server/db/library.ts](../server/db/library.ts)           | Every read and write the library makes, and the chapter counts a shelf reads                             |
@@ -185,14 +187,18 @@ found.
 | [server/db/rows/](../server/db/rows/)                     | The only files that know what the columns are called                                                     |
 | [server/jobs/runner.ts](../server/jobs/runner.ts)         | The worker: claim, run, cancel, recover                                                                  |
 | [server/jobs/scripting.ts](../server/jobs/scripting.ts)   | The scripting job, and queueing one per chapter as a run                                                 |
-| [server/providers/](../server/providers/)                 | The port a scripting model is reached through, and the fake behind it                                    |
+| [server/jobs/narration.ts](../server/jobs/narration.ts)   | The narration job: a clip per line, in the slot the store's rule says                                    |
+| [server/jobs/export.ts](../server/jobs/export.ts)         | The build job: the plan laid down as files, and what an update carries over                              |
+| [server/audio/files.ts](../server/audio/files.ts)         | Where a rendered clip lives, and how its url finds it again                                              |
+| [server/exports/files.ts](../server/exports/files.ts)     | Where a built audiobook lives, and how a download finds it again                                         |
+| [server/providers/](../server/providers/)                 | The ports a scripting model, a speech model and an encoder are reached through, and what is behind them  |
 | [server/epub/parse.ts](../server/epub/parse.ts)           | Reading an actual EPUB                                                                                   |
 | [server/epub/text.ts](../server/epub/text.ts)             | One section's markup to the prose a narrator would read                                                  |
 | [server/epub/notices.ts](../server/epub/notices.ts)       | Deciding which chapters are not story                                                                    |
 | [server/import/assemble.ts](../server/import/assemble.ts) | Parsed chapters to a book, numbered and marked `importing`                                               |
 
 Three layers, each ignorant of the one above it. A route validates the request, calls one
-operation in `server/*/ops.ts` or `server/jobs/scripting.ts`, and returns what it got: no route
+operation in `server/*/ops.ts` or the enqueue half of a job in `server/jobs/`, and returns what it got: no route
 builds a query, no route holds a rule. An operation states a rule — a volume goes onto a book with
 nothing waiting in its review, removing the last volume removes the book, a rename moves every
 line that names the speaker — and throws an `AppError` when it does not hold, without knowing what
@@ -505,8 +511,10 @@ service are both built on it, so that rule is written once.
 | `POST`   | `/api/books/:id/characters/attribute`            | Put a speaker back on exactly these lines; an Undo       |
 | `PUT`    | `/api/books/:id/lexicon`                         | The pronunciation dictionary, replaced whole             |
 | `GET`    | `/api/books/:id/exports`                         | The finished audiobooks                                  |
+| `POST`   | `/api/books/:id/exports`                         | Queue a build; the job and the version it makes (202)    |
 | `GET`    | `/api/books/:id/exports/:e`                      | One of them                                              |
-| `DELETE` | `/api/books/:id/exports/:e`                      | Forget one                                               |
+| `GET`    | `/api/books/:id/exports/:e/files/:n`             | One of its files, to save                                |
+| `DELETE` | `/api/books/:id/exports/:e`                      | Forget one, and take its files off the disk              |
 | `POST`   | `/api/books/import`                              | An uploaded EPUB → a book, or one more volume of one     |
 | `POST`   | `/api/books/:id/confirm`                         | The review is done; it joins the library                 |
 | `POST`   | `/api/books/:id/discard`                         | Cancel: an unconfirmed book goes, or its new volume      |
@@ -725,6 +733,85 @@ say the line at a reading pace — so what the tests, the Narration page and the
 is a file being fetched and played, not a duration being counted down. It is deterministic, it
 honours a cancel, and a test can tell it which lines to fail.
 
+### Export
+
+Building an audiobook is the third kind of job, and the first that is about a book rather than a
+chapter — its `chapterId` is null, so its dedupe key is `export:<book>:book` and a book builds one
+audiobook at a time. That is stricter than the browser's rule, which lets two audiobooks of one
+book build at once, and deliberately so: here a build reads every clip the other one might be
+replacing.
+
+**The plan the page drew is the plan that is written.** `planOf` in
+[src/lib/exports.ts](../src/lib/exports.ts) turns the selection, the volumes and the settings into
+the output files, their order, their chapters and their names, and the handler lays down exactly
+that. Nothing on the server re-derives which chapter belongs in which file, because the page has
+already shown someone the answer and a second copy of that rule is how a preview and a file stop
+agreeing. `reviewOf` is asked the same way: a chapter with no usable audio, one still being
+narrated, or a stale one the build was not told to accept is a **409 in the page's own words**,
+since the blocker's title and detail are what the error carries. A build refuses rather than
+trimming — unlike a bulk narration run, which leaves chapters out and says so — because a chapter
+quietly missing from an audiobook is the failure this page exists to avoid.
+
+**An update copies what has not moved.** A finished export records where each chapter's audio sits
+inside its file (`export_chapters.byte_start` and `byte_length`). When the next version is built
+with the same output settings, a chapter whose signature has not changed is copied straight out of
+the version on disk instead of having its clips read again; `reusedChapters` decides which, and it
+is the same function that drew "191 of its 196 chapters would be carried over" on the page. Each
+span is checked again as the build runs, so a chapter re-narrated since the build was queued, or a
+file removed behind the server's back, costs that one chapter its shortcut rather than putting
+stale audio in the file or failing the build. `exports.encoder` records what wrote a version and
+only the same encoder ever copies out of it, because a span is bytes into a WAV and milliseconds
+into an AAC stream — reading one as the other would splice noise into the middle of an audiobook.
+
+**The version on disk stays current until the new one lands.** The row goes up as `building`
+immediately; the export it supersedes is marked `replaced` by the write that finishes the new one
+and not before. A build that fails keeps its row and its reason, which is what Retry reads. A
+cancelled one leaves nothing behind at all — there is no half an audiobook — and in both cases the
+half-written files go and the audiobook already there is untouched. A build the process died
+holding is re-queued by the same recovery every kind gets, and it clears the files the dead run
+left before writing its own, so a book built three times after two crashes has one audiobook on
+disk rather than three.
+
+**The files are the server's, like the clips.** `EXPORT_DIR` (default `./data/exports`, beside the
+database) holds one directory per book and one file per output file, named by a token rather than
+by the audiobook's name — two versions of one audiobook have the same name, and a rebuild must not
+write over the version still playing. They are kept apart from the clips because a clip is an input
+the next build reads again and an audiobook is the deliverable. A download is addressed through the
+export that owns it (`…/exports/:e/files/:n`) rather than by the file's name on disk, so there is
+no path a request can build to a file this book did not produce; the name goes back on in the
+header that decides what the browser calls it. A version that has been superseded keeps its file
+until it is forgotten, so an older version can still be saved; removing a book removes both
+directories, and forgetting one audiobook removes its files and leaves the rest.
+
+#### The encoder, and what it will not pretend
+
+An [`AudiobookEncoder`](../server/providers/encoder.ts) is handed a list of parts — a clip, a run of
+silence, or a span of a file this export supersedes — and answers with the file it wrote, how long
+it really plays, and where each chapter landed. What container it lands in is its business, the way
+a line's audio is the speech provider's. It also declares what it can do, because the Export page
+makes three promises an encoder may not be able to keep: `markers`, `normalizes` and `carries`.
+
+`EXPORT_ENCODER=wav` is the default and needs nothing installed. The
+[stitcher](../server/providers/wavEncoder.ts) is the counterpart of the fake speech model: that one
+writes a real WAV per line, this one joins them into a real WAV per output file, with the book's
+pacing inside a chapter and the export's gap between two. So a fresh clone, a CI run and the test
+suite all build something that genuinely plays. It is not an M4B and writes no chapter marks, and
+rather than name a file `.m4b` that is not one, it writes `.wav`, records no markers, and the job's
+log says both in those words. It does not assume the fake's format either: every source file's RIFF
+header is read and checked, so a speech provider answering at 24 kHz or in 16-bit stitches
+correctly and one that changes format mid-chapter is an error naming the file.
+
+`EXPORT_ENCODER=ffmpeg` writes what the settings actually asked for — AAC in an M4B with the
+chapter marks a player reads, or an MP3 — and corrects loudness with EBU R128 in two passes when
+the build asks for it. It is the one thing in this server that depends on something outside the
+process, so it is checked at boot: a server configured for it with no `ffmpeg` on `PATH` refuses to
+start, naming the binary, rather than queueing work that was always going to fail. It reports
+`carries: false`, because splicing an already-encoded span beside audio encoded in this run needs
+both to have been encoded identically — the way to do that is a file per chapter joined with
+`-c copy`, which is a different arrangement on disk from the one this server keeps. So an update
+under ffmpeg re-encodes every chapter and the job says so, rather than reporting chapters it did
+not really reuse.
+
 ### How the screens use it
 
 Reads are queries, through [Pinia Colada](https://pinia-colada.esm.dev): one composable per
@@ -773,8 +860,15 @@ read again, which is how the Narration page shows clips arriving one by one rath
 run ends; the read moves the store's revision on without showing a re-script diff, because the
 lines say the same things and only their clips differ. "Re-narrate what changed" and "retry what
 failed" are the same request at the `fill` and `failed` scopes, and a failed line retried by hand
-is retried with its chapter's other failed lines, the server's smallest unit of work. A retake —
-a comparison the listener judges — has no route yet and says so.
+is retried with its chapter's other failed lines, the server's smallest unit of work. A retake is
+the same request without the `auto`: the candidate lands beside the clip in the book, and the
+verdict the listener gives replaces the line and the chapter with the server's answer.
+
+Export is the same shape one level up. `buildExport` queues a build and installs the version the
+server answers with, which goes up as `building` straight away so the Audiobooks tab shows it
+arriving rather than nothing; an export job that moved has the book's exports read again, which is
+how progress, a finish, a failure and a cancel that removed the row all reach the page. Cancel and
+Retry are the queue's, as they are for every other kind.
 
 One thing the seeded run does that the server's does not, yet: the estimate and the budget gates
 are the seeded endpoints' and are bypassed in backend mode — the fake costs nothing, and a real
@@ -839,7 +933,7 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [narration.test.ts](../tests/server/narration.test.ts)           | Narration: scopes, replacement, failure, cancel, restart, files                 |
 | [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)         | Editing against a revision, the history rule, what a run writes                 |
 | [cast.test.ts](../tests/server/cast.test.ts)                     | The cast a run leaves, rename, merge, removal, exact undo                       |
-| [exports.test.ts](../tests/server/exports.test.ts)               | The finished audiobooks over HTTP                                               |
+| [exports.test.ts](../tests/server/exports.test.ts)               | Building one: the file, the spans, refusals, cancel, failure, download          |
 | [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)     | What the fake models produce — attributions, a valid WAV — and that they abort  |
 | [libraryClient.test.ts](../tests/server/libraryClient.test.ts)   | The client and the API against each other                                       |
 | [schema.test.ts](../tests/server/schema.test.ts)                 | The seeded world through the schema and back                                    |
@@ -853,7 +947,15 @@ route that renames a field fails there rather than in the browser.
 
 Where a run has to be genuinely in flight — to be cancelled, edited under or renumbered — the
 provider is `gatedProvider` from [tests/support/server.ts](../tests/support/server.ts), which holds
-the door until the test says so. Nothing in the queue's tests waits on a timer.
+the door until the test says so; a build has `controlledEncoder`, which is the same door on the
+encoder. Nothing in the queue's tests waits on a timer.
+
+The build's tests assert the **file**, not the row's account of itself: how long it plays is read
+out of its RIFF header, and "this chapter was carried over" is checked by comparing the bytes of
+that chapter's span in the new file against the same span in the old one. A row that agrees with
+itself and not with the disk is the failure the Export page exists to catch, so it is not a thing
+the suite can be satisfied by. The two tests that need a real encoder are skipped where `ffmpeg`
+is not installed, and are the only ones in the suite that depend on anything outside the process.
 
 ## What is not done yet
 
@@ -880,15 +982,9 @@ the library screens are the server's in backend mode. Two things about that wort
   way the demo's snapshot does. A session that comes back to where it began leaves no entry, which
   covers the common case; a bulk correction undone leaves its entry with an edit after it.
 
-The queue runs two kinds of job. What the scripting and narration slices do not do yet, each
-because a route or a table's writer is missing rather than by oversight:
+The queue runs three kinds of job. What the scripting, narration and export slices do not do yet,
+each because a route or a table's writer is missing rather than by oversight:
 
-- **Export has no handler.** An `export` job enqueued on this server fails at once saying so. The
-  runner, the dedupe rule, cancellation and recovery are the same for a kind that does not exist
-  yet; what it needs is a handler of its own.
-- **A retake has no verdict.** A bulk run accepts its own replacements, as the demo's does; a
-  retake asked for by hand, kept beside the clip until the listener chooses, needs a route for the
-  choice, and until then the Narration page says retakes are not available with a server.
 - **The line is spoken as written.** The pronunciation dictionary and expression tags are
   applied in the browser's simulator and not by the server's handler, so a clip records the text
   it was given and nothing it was rewritten to. The browser's drift rule reads that as the
@@ -896,30 +992,35 @@ because a route or a table's writer is missing rather than by oversight:
   that carries expression tags, a freshly rendered clip reads as stale on the Narration page
   until the handler applies both. The seeded endpoints' voices are names the fake accepts, not
   endpoints the server knows, and a chapter's duration is its clips plus the book's pacing.
-- **Removing a volume leaves its clips' files behind.** Removing a book removes its directory;
-  a volume's chapters go with it in the database, and their files stay on disk until the book
-  does.
+- **Removing a volume leaves its clips' files behind.** Removing a book removes both its
+  directories; a volume's chapters go with it in the database, and their files stay on disk until
+  the book does.
+- **A cover image is not written into the audiobook.** `customCover` records that one was chosen
+  and the file carries none: the stitcher has nowhere to put it, and ffmpeg would want the image
+  itself, which the browser holds rather than the server.
+- **An update under ffmpeg re-encodes everything.** Carrying a chapter over is real under the
+  stitcher and refused under ffmpeg, for the reason [the encoder](#the-encoder-and-what-it-will-not-pretend)
+  gives. Making it real there means keeping an encoded file per chapter and joining those with
+  `-c copy`, which is a different arrangement on disk from the one this server has.
 - **No usage record is settled.** The seeded run also settles a usage record with a receipt; the
   server's writes the script, the speakers and the version, and the fake provider has nothing to
   bill. The ledger has no route.
 - **Budgets and estimates are not enforced on the server.** The fake provider costs nothing to
   meter. A real one needs the pricing engine in `src/lib/pricing.ts` on the server side and a
   reservation against the book's cap before dispatch, the way `_reserveQueued` does it in the demo.
-- **Retrying a failed job re-queues it through the same route**, which is right for scripting and
-  meaningless for the kinds that have no handler.
-- **Building an audiobook is refused in backend mode.** The exports routes read and forget; nothing
-  writes an export until there is a build job, and a build simulated in the browser would show an
-  audiobook the server does not have.
+- **Retrying a failed job re-queues it through the same route** it was asked for by, so a retry is
+  planned again against the book as it now stands rather than replayed as it was.
 - **A change made in another tab is noticed on the next write, not before.** Nothing pushes
   events; a script edited elsewhere is found when an edit here is refused for its stale revision.
 
 The tables for the rest of the domain exist and are proven against the seeded world. The usage
-ledger, narration and endpoints have no routes, and neither do credential storage or any real
-provider. The seeded demo remains the way to exercise all of it, and stays that way after the
-backend is finished — see [the demo guide](demo.md).
+ledger and the endpoints have no routes, and neither do credential storage or any real provider.
+The seeded demo remains the way to exercise all of it, and stays that way after the backend is
+finished — see [the demo guide](demo.md).
 
 Changing the schema means regenerating: `pnpm db:generate` after editing anything in
 [server/db/schema/](../server/db/schema/), or the next boot migrates to the old shape and the tests
 fail somewhere that does not name the cause. Migrations are versioned in [drizzle/](../drizzle/)
-and applied in order at boot; `0001` added the script revision and the queue's dedupe key, and
-`0002` the version an open editing session preserved.
+and applied in order at boot; `0001` added the script revision and the queue's dedupe key, `0002`
+the version an open editing session preserved, and `0003` what a build writes — the file each
+output landed in, the span each chapter occupies inside it, and which encoder wrote it.

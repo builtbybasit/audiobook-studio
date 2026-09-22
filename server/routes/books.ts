@@ -9,6 +9,7 @@ import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
 import type { AudioFiles } from "~/audio/files";
+import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
 import { env } from "~/env";
 import { enqueueNarration } from "~/jobs/narration";
@@ -70,7 +71,12 @@ const ImportForm = v.object({
   name: v.optional(v.string()),
 });
 
-export function bookRoutes(db: Db, runner: Runner, files?: AudioFiles): Hono<PinoEnv> {
+export function bookRoutes(
+  db: Db,
+  runner: Runner,
+  files?: AudioFiles,
+  built?: AudiobookFiles,
+): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
   // ---------- reading ----------
@@ -195,7 +201,7 @@ export function bookRoutes(db: Db, runner: Runner, files?: AudioFiles): Hono<Pin
   // ---------- removal ----------
   app.delete("/:id", validate("param", BookParam), (c) => {
     const { id } = c.req.valid("param");
-    ops.removeBook(db, id, files);
+    ops.removeBook(db, id, files, built);
     return c.json({ removed: id });
   });
 
@@ -204,7 +210,10 @@ export function bookRoutes(db: Db, runner: Runner, files?: AudioFiles): Hono<Pin
     const result = ops.removeVolume(db, id, volumeId);
     // the last volume going takes the book with it, and the book's clips go the way they do above;
     // a volume removed from a book that stays leaves its chapters' files behind, for now
-    if (result.removed === "book") void files?.removeBook(id);
+    if (result.removed === "book") {
+      void files?.removeBook(id);
+      void built?.removeBook(id);
+    }
     return c.json(result);
   });
 

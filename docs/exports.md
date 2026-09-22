@@ -2,7 +2,7 @@
 
 [Back to README](../README.md) · [Demo scenarios](demo.md) · [Pacing and playback](audio.md)
 
-Builds, files, paths, loudness measurements and downloads are simulated. References below to a version "on disk" describe the modeled workflow: this prototype does not encode or write an audiobook.
+In demo mode builds, files, paths, loudness measurements and downloads are simulated, and references below to a version "on disk" describe the modeled workflow rather than a file. **With a server answering they are not simulated** — see [with a server](#with-a-server) at the end.
 
 ## Building and maintaining an audiobook
 
@@ -91,3 +91,30 @@ the file totals equal the plan totals), the blockers (nothing dropped, stale acc
 partial ≠ failed), loudness (deterministic, gain closes to target), and the store: a build refuses
 what it cannot use, replaces the version it supersedes, keeps the finished version when the next one
 fails or is cancelled, and reuses exactly the chapters whose fingerprints have not moved.
+
+## With a server
+
+In backend mode a build is a job the server runs, and the file at the end of it is real: the
+rendered clips are stitched together with the book's pacing inside each chapter and the export's
+gap between two, written to disk, and handed back by a download. Everything above still describes
+the page — the plan, the blockers, the versions, "needs an update" — because the server is asked
+the same questions by the same functions. Three differences are worth knowing.
+
+**The build refuses rather than trims, and says so in these words.** `reviewOf` is what the server
+asks too, so a chapter with no usable audio, one still being narrated, or a stale one without
+_use stale audio_ comes back as the blocker panel's own title and detail. Nothing is queued and no
+version goes up for an audiobook that was never going to be built.
+
+**One build at a time per book.** The browser allows two audiobooks of one book to build at once;
+the server does not, because a build reads every clip the other one might be replacing. A second
+press while one is running is refused, naming the one that is going.
+
+**What it writes depends on the encoder it was started with.** `EXPORT_ENCODER=wav` is the default
+and needs nothing installed: it stitches the clips into one real, playable WAV per output file. It
+is not an M4B and it writes no chapter marks, so rather than name a file `.m4b` that is not one it
+writes `.wav`, reports no markers, and says both in the job's log. `EXPORT_ENCODER=ffmpeg` writes
+the format the settings actually asked for, with the chapter marks a player reads and loudness
+measured and corrected to the target rather than invented — and, because a span of AAC cannot be
+spliced beside audio encoded in the same run, it re-encodes every chapter on an update instead of
+carrying unchanged ones over. Under the stitcher carrying over is literal: the bytes of an
+unchanged chapter are copied out of the version on disk. [Backend](backend.md#export) has the rest.

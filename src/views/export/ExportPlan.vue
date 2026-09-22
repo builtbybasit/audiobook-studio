@@ -51,6 +51,9 @@ const review = computed(() =>
   exportsStore.exportReviewFor(props.bookId, props.selected, props.settings),
 );
 const blocked = computed(() => review.value.blockers.length > 0);
+// the store's backend-mode signal: with a server answering the build is a job it runs, and the
+// footer has to stop calling it simulated. The page cannot tell which encoder the server has.
+const onServer = computed(() => exportsStore.asksFirst);
 const chapters = computed(() =>
   libraryStore.chaptersOf(props.bookId).filter((c) => props.selected.includes(c.id)),
 );
@@ -443,7 +446,13 @@ const ACTION_LABEL: Record<string, string> = {
       >
         <BuildIcon class="icon" /> {{ buildLabel }}
       </button>
-      <p class="mt-2 text-center text-[11px] leading-relaxed text-zinc-400">
+      <p v-if="onServer" class="mt-2 text-center text-[11px] leading-relaxed text-zinc-400">
+        A real job: the server stitches the clips into a file on disk you can download and play.
+        Unless it was started with <code>EXPORT_ENCODER=ffmpeg</code> its encoder writes a
+        <code>.wav</code> with no chapter marks rather than the format above, and the job's log says
+        which it did.
+      </p>
+      <p v-else class="mt-2 text-center text-[11px] leading-relaxed text-zinc-400">
         Simulated build — the queue, the progress and the failures are real UI, the encoder is not,
         and no file is written to disk.
       </p>

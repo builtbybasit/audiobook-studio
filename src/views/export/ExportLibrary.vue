@@ -17,6 +17,7 @@ import { computed, ref } from "vue";
 
 import { usePlayer } from "@/composables/usePlayer";
 import { formatOf } from "@/lib/exports";
+import { exportFileUrl } from "@/services/jobs";
 import { diskPath, hms, mb, plural } from "@/views/export/shared";
 import {
   ChevronDown as ChevronDownIcon,
@@ -129,13 +130,38 @@ function copyPath(e: ExportItem) {
   navigator.clipboard?.writeText(diskPath(e.series || e.title, e.filename));
   uiStore.toast("Path copied", { kind: "success", timeout: 2500 });
 }
+/**
+ * Fetch what the build wrote. A set of several files is several downloads rather than one: the
+ * server serves a file at a time, and offering only the first would hand over part of an audiobook
+ * without saying so. The name is the response's and not this card's, because the encoder the
+ * server ran decides the extension and a `download` attribute here would rename a `.wav` after the
+ * format the settings asked for.
+ *
+ * In the demo there is nothing on disk to fetch, so it says that instead.
+ */
 function download(e: ExportItem) {
-  uiStore.toast(`${e.filename} is not a real file`, {
-    kind: "info",
-    description:
-      "This prototype simulates the build; nothing was encoded, so there is nothing to download yet.",
-    timeout: 5000,
-  });
+  if (!exportsStore.asksFirst) {
+    uiStore.toast(`${e.filename} is not a real file`, {
+      kind: "info",
+      description:
+        "This prototype simulates the build; nothing was encoded, so there is nothing to download yet.",
+      timeout: 5000,
+    });
+    return;
+  }
+  for (let i = 0; i < e.files.length; i++) {
+    const a = document.createElement("a");
+    a.href = exportFileUrl(props.bookId, e.id, i);
+    document.body.append(a);
+    a.click();
+    a.remove();
+  }
+  if (e.files.length > 1)
+    uiStore.toast(`Downloading ${plural(e.files.length, "file")}`, {
+      kind: "info",
+      description: `${e.filename} is ${e.files.length} files, so your browser is saving each of them.`,
+      timeout: 5000,
+    });
 }
 const summary = (u: ExportUpdate) => {
   const parts = [];

@@ -7,7 +7,7 @@
 // the fields every reader relies on and passed through otherwise.
 import * as v from "valibot";
 
-import type { Character, LexEntry, Segment, VersionOrigin } from "@/types";
+import type { Character, ExportSettings, LexEntry, Segment, VersionOrigin } from "@/types";
 
 const Gender = v.picklist(["m", "f", "n", "?"]);
 
@@ -112,3 +112,33 @@ export const ChapterLinesSchema = v.object({
   chapterId: v.pipe(v.number(), v.integer(), v.minValue(1)),
   ids: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
 });
+
+/**
+ * Everything a build runs with, checked here so a settings object that would make a nonsense of
+ * the plan is a 400 naming the field rather than an audiobook called `undefined.m4b`.
+ *
+ * `useStale` is a consent and not a preference: it is the listener saying, in the blocker panel,
+ * that they want clips the script has moved under in the file anyway. It arrives with the request
+ * because the build refuses without it, and it is stored with the export so the page can say later
+ * that this version was built that way.
+ */
+export const ExportSettingsSchema = v.object({
+  filename: v.string(),
+  title: v.string(),
+  series: v.string(),
+  author: v.string(),
+  narrator: v.string(),
+  year: v.pipe(v.number(), v.integer()),
+  description: v.string(),
+  cover: v.nullable(v.string()),
+  format: v.picklist(["m4b", "mp3"]),
+  grouping: v.picklist(["single", "volume", "chapter"]),
+  bitrate: v.pipe(v.number(), v.integer(), v.minValue(8), v.maxValue(320)),
+  markers: v.boolean(),
+  markerPattern: v.string(),
+  volPrefix: v.boolean(),
+  chapterGap: v.pipe(v.number(), v.minValue(0), v.maxValue(60)),
+  normalize: v.boolean(),
+  loudness: v.picklist([-23, -18, -16]),
+  useStale: v.boolean(),
+}) satisfies v.GenericSchema<unknown, ExportSettings>;

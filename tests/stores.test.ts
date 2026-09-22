@@ -78,7 +78,7 @@ test("a saved expression renderer keeps reading its own stores after another Pin
   expect(render("cliche", segment)).toEqual(before);
 });
 
-test("an asynchronous export settles only the stores that started it", () => {
+test("an asynchronous export settles only the stores that started it", async () => {
   let seq = 0;
   const callbacks = new Map<number, () => void>();
   const timer = spyOn(globalThis, "setInterval").mockImplementation(((fn: () => void) => {
@@ -99,11 +99,11 @@ test("an asynchronous export settles only the stores that started it", () => {
     .filter((c) => c.narration === "done")
     .slice(0, 2)
     .map((c) => c.id);
-  const item = exports.buildExport("starforge", ids, {
+  const item = (await exports.buildExport("starforge", ids, {
     ...DEFAULT_EXPORT_SETTINGS,
     filename: "isolated run",
     title: "Isolated run",
-  })!;
+  }))!;
   expect(item.status).toBe("building");
   const second = createPinia();
   const otherExports = useExportsStore(second);

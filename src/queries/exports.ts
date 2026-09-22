@@ -1,6 +1,7 @@
-// A book's finished audiobooks, read into the exports store. Nothing on the server builds one
-// yet, so with a server answering this is an empty list until there is a build job; it exists so
-// the Export page reads one path in both modes, and so forgetting one is a request.
+// A book's finished audiobooks, read into the exports store, and the one place the Export page
+// reads them from in either mode. With a server answering they are the server's: a build adds the
+// entry it started, the queue's poll invalidates this key as that job moves, and forgetting one is
+// a request.
 import { computed, toValue, type MaybeRefOrGetter } from "vue";
 import { useQuery } from "@pinia/colada";
 

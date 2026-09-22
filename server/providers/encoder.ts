@@ -1,0 +1,112 @@
+// What building an audiobook needs from an encoder, and nothing else.
+//
+// The build job decides *what* goes into each output file — which chapters, in what order, with
+// which silence between them, and which of them can be copied out of the version already on disk
+// — and hands that down as a list of parts. What container it lands in, what it costs and what it
+// sounds like are the encoder's business, the way a line's audio is the speech provider's.
+//
+// Two things come back that the job cannot work out for itself. `seconds` is how long the file
+// actually plays, which is the encoder's answer and not the estimate the plan drew. `chapters`
+// says where each chapter landed inside the file, and that is what makes an update cheap: the
+// next build copies those spans straight across for every chapter whose audio has not moved,
+// instead of reading its clips again.
+import type { ExportSettings } from "@/types";
+import type { AudiobookFiles } from "~/exports/files";
+
+/** One piece of an output file, in the order it is laid down. */
+export type EncodePart =
+  /** a rendered clip, by the path its file is kept at */
+  | { kind: "clip"; path: string }
+  /** silence: the book's pacing inside a chapter, or the export's gap between two */
+  | { kind: "silence"; seconds: number }
+  /** a span of a file this export supersedes, copied rather than encoded again */
+  | { kind: "carry"; path: string; start: number; length: number };
+
+export interface EncodeChapter {
+  id: number;
+  title: string;
+  parts: EncodePart[];
+}
+
+export interface EncodeInput {
+  /** the chapters of one output file, in reading order */
+  chapters: EncodeChapter[];
+  /** seconds of silence between two chapters; there is none after the last */
+  gap: number;
+  /** where to write it */
+  out: string;
+  /** aborted when the build is cancelled or the server is stopping; check it between parts */
+  signal: AbortSignal;
+  /**
+   * Called as each chapter lands, so the Queue can count a long file down rather than showing
+   * nothing between "writing" and "written".
+   */
+  onChapter?(chapter: EncodedChapter, index: number): void;
+}
+
+/** Where one chapter ended up, so the next version of this audiobook can copy it. */
+export interface EncodedChapter {
+  id: number;
+  start: number;
+  length: number;
+  seconds: number;
+}
+
+export interface EncodedFile {
+  /** the size on disk */
+  bytes: number;
+  /** how long it plays, as written rather than as estimated */
+  seconds: number;
+  chapters: EncodedChapter[];
+}
+
+export interface AudiobookEncoder {
+  readonly name: string;
+  /** the extension the files it writes carry */
+  readonly ext: string;
+  /** what the download is served as */
+  readonly mime: string;
+  /** whether it writes chapter marks a player can read */
+  readonly markers: boolean;
+  /**
+   * Whether it measures and corrects loudness when the build asks for it.
+   *
+   * The page offers a target in LUFS; an encoder that only stitches cannot honour it, and the
+   * build says which of the two happened rather than leaving the panel's promise standing.
+   */
+  readonly normalizes: boolean;
+  /**
+   * Whether a span of a file it wrote can be copied into the next version of it.
+   *
+   * True of the stitcher, whose output is raw samples: a chapter that has not moved is the same
+   * bytes in the same order, and copying them is exactly what "carried over rather than encoded
+   * again" says. False of a lossy encoder, where splicing an already-encoded span beside freshly
+   * encoded audio needs both to have been encoded identically — the way to do it is to keep a
+   * file per chapter and join those, which is a different arrangement on disk from the one this
+   * server has. An encoder that says no is handed no `carry` parts and re-encodes every chapter,
+   * and the build says so rather than reporting chapters it did not really reuse.
+   */
+  readonly carries: boolean;
+  encode(input: EncodeInput): Promise<EncodedFile>;
+}
+
+/**
+ * What this server can write audiobooks with.
+ *
+ * The encoder is chosen per build rather than once at boot, because the format is the listener's
+ * choice and lives in the settings: an M4B and an MP3 of the same book are two different
+ * encoders' work. A server whose encoder cannot honour the format asked for answers with the one
+ * it has, and the build says so in its log rather than writing a `.m4b` that is not one.
+ */
+export interface EncoderChoice {
+  /** what this server can write, for the boot log */
+  readonly name: string;
+  /** The encoder for one build's settings. */
+  for(settings: ExportSettings): AudiobookEncoder;
+}
+
+/** Both halves of building a file: somewhere to put it, and something to write it. */
+export interface ExportPorts {
+  encoders: EncoderChoice;
+  files: AudiobookFiles;
+}

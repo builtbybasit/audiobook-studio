@@ -377,13 +377,11 @@ describe("failure", () => {
   test("a kind this server cannot run fails at once and says so", async () => {
     const api = testApi();
     const { id } = await shelved(api);
-    const { job } = api.runner.enqueue({
-      kind: "export",
-      bookId: id,
-      chapterId: null,
-      label: "Build",
-    });
-    await api.runner.idle();
+    // Every kind this server ships has a handler, so the rule is shown by taking one away: it
+    // belongs to the runner, and a build is what a server built without an encoder would be.
+    const bare = testRunner(api.db, collectingLogger().log, { handlers: { export: undefined } });
+    const { job } = bare.enqueue({ kind: "export", bookId: id, chapterId: null, label: "Build" });
+    await bare.idle();
     const settled = await jobById(api, job.id);
     expect(settled.status).toBe("failed");
     expect(settled.activity?.at(-1)?.detail?.error).toContain("no handler for export");

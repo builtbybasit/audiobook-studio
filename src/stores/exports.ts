@@ -1,9 +1,10 @@
 // Export drafts, results and update decisions. The mock build receives a focused context.
 //
 // With a server answering, the finished audiobooks are the server's: `useBookExports` in
-// `@/queries` reads a book's in, and forgetting one is a request. Nothing on the server builds one
-// yet, so there `buildExport` is refused with a toast rather than simulated — a build that ran in
-// the browser would show an audiobook the server does not have.
+// `@/queries` reads a book's in, forgetting one is a request, and building one is a job the server
+// runs — `buildExport` sends the selection and the settings and installs the entry that comes back,
+// rather than encoding anything here. Everything below the request is the demo's: the simulated
+// encoder, its progress and its failures never run with a server answering.
 import {
   chapterSignature,
   DEFAULT_EXPORT_SETTINGS,
@@ -11,8 +12,8 @@ import {
   loudnessReport,
   OUTPUT_KEYS,
   planOf,
+  reusedChapters,
   reviewOf,
-  sameOutput,
   SETTING_LABEL,
   settingsOf,
   usable,
@@ -32,6 +33,9 @@ import type {
   VoiceRef,
 } from "@/types";
 import { defineStore } from "pinia";
+import { invalidate } from "@/queries/invalidate";
+import { keys } from "@/queries/keys";
+import { activeJobsService } from "@/services/jobs";
 import { activeLibraryService, ApiError } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 import { useDemoStore } from "@/stores/demo";
@@ -108,9 +112,9 @@ export const useExportsStore = defineStore("exports", {
     // same audiobook again is a new version of it rather than a second entry, and the chapters whose
     // audio has not moved since the last version are carried over instead of encoded again.
     //
-    // Nothing here writes a file. Progress, timings, reuse and failure are simulated in the same
-    // shape the narration and scripting runs already use, so the Queue treats a build like any
-    // other job.
+    // With a server answering, the encoding is the server's and so is the file. In the demo nothing
+    // writes one: progress, timings, reuse and failure are simulated in the same shape the narration
+    // and scripting runs already use, so the Queue treats a build like any other job either way.
     /** Everything the page needs to describe a build, with no side effects. */
     exportPlanFor(bookId: string, ids: number[], settings: ExportSettings): ExportPlan {
       const libraryStore = useLibraryStore();
@@ -229,9 +233,8 @@ export const useExportsStore = defineStore("exports", {
       settings: ExportSettings,
       state?: Record<number, string>,
     ): number[] {
-      if (!prev || !sameOutput(prev, settings)) return [];
-      const now = state ?? this.exportStateFor(prev.bookId, ids);
-      return ids.filter((id) => prev.state?.[id] && prev.state[id] === now[id]);
+      if (!prev) return [];
+      return reusedChapters(prev, ids, settings, state ?? this.exportStateFor(prev.bookId, ids));
     },
     /**
      * Why a finished export no longer matches the book. `settings` is the form as it stands now,
@@ -289,7 +292,57 @@ export const useExportsStore = defineStore("exports", {
      * could not, so nothing is dropped here silently. Returns the export entry, which is live:
      * its progress and status are what the page and the queue both read.
      */
-    buildExport(
+    async buildExport(
+      bookId: string,
+      ids: number[],
+      settings: ExportSettings,
+      opts: {
+        updates?: number;
+      } = {},
+    ): Promise<ExportItem | null> {
+      const libraryStore = useLibraryStore();
+
+      if (libraryStore._blocked(bookId, "build")) return null;
+      const book = libraryStore.bookById(bookId);
+      if (!book) return null;
+      if (activeLibraryService())
+        return await this._remoteBuild(bookId, ids, settings, opts.updates ?? null);
+      return this._simulatedBuild(bookId, ids, settings, opts);
+    },
+    /**
+     * The backend half: the server decides whether this build can run and starts the job, and what
+     * comes back is the audiobook it is already writing. Nothing is marked here before it answers —
+     * a refusal that never reached the server must not look like one that did — and the refusals
+     * themselves are the server's, stated in the same words as the readiness review's blockers.
+     */
+    async _remoteBuild(
+      bookId: string,
+      ids: number[],
+      settings: ExportSettings,
+      updates: number | null,
+    ): Promise<ExportItem | null> {
+      const jobsStore = useJobsStore();
+      const svc = activeJobsService();
+      if (!svc) return null;
+      try {
+        const { export: entry } = await svc.buildExport(bookId, ids, settings, updates);
+        // added rather than installed: the book's other audiobooks are still the server's, and this
+        // one belongs at the top, where the demo's draft is unshifted
+        this.exports = [entry, ...this.exports.filter((e) => e.id !== entry.id)];
+        // the Queue page picks the job up from its own poll, and the audiobooks are read again
+        // because the server has just marked the version this build replaces
+        await Promise.all([jobsStore._changed(), invalidate({ key: keys.exports(bookId) })]);
+        return this.exports.find((e) => e.id === entry.id) ?? entry;
+      } catch (cause) {
+        this._failed("build this audiobook", cause);
+        return null;
+      }
+    },
+    /**
+     * The demo's build: planned, drafted and encoded here, by the simulator, on timers. Everything
+     * it refuses it refuses locally, because there is nobody else to ask.
+     */
+    _simulatedBuild(
       bookId: string,
       ids: number[],
       settings: ExportSettings,
@@ -301,19 +354,6 @@ export const useExportsStore = defineStore("exports", {
       const libraryStore = useLibraryStore();
       const uiStore = useUiStore();
 
-      if (libraryStore._blocked(bookId, "build")) return null;
-      const book = libraryStore.bookById(bookId);
-      if (!book) return null;
-      if (activeLibraryService()) {
-        // The seeded build is the demo's; the server has no build job yet, and an audiobook built
-        // in the browser would be one the server does not have.
-        uiStore.toast("Building an audiobook is not available yet", {
-          kind: "warn",
-          description:
-            "The server runs scripting only so far. Narration and export are still the seeded demo's.",
-        });
-        return null;
-      }
       const key = exportKey(settings);
       // One audiobook, one build at a time. Two runs against the same finished export would both
       // call themselves the next version, and the second to land would quietly win.
@@ -554,8 +594,13 @@ export const useExportsStore = defineStore("exports", {
         });
         return;
       }
-      this.exports = this.exports.filter((e) => e.id !== exportId);
-      this.buildExport(failed.bookId, ids, settings, { updates: failed.replaces ?? undefined });
+      // in the demo the retry takes the failed attempt's place, so it goes now; with a server
+      // answering that row is the server's, and the read after the build says what it kept
+      if (!activeLibraryService()) this.exports = this.exports.filter((e) => e.id !== exportId);
+      // the build says for itself whether it started: a retry has nothing left to decide here
+      void this.buildExport(failed.bookId, ids, settings, {
+        updates: failed.replaces ?? undefined,
+      });
     },
     /** Why a build was handed back instead of started. */
     _draftNote(blockers: number, dropped: number, verb: string): string {
@@ -581,7 +626,7 @@ export const useExportsStore = defineStore("exports", {
      * on your behalf: either sends the build to the Build tab, where the readiness review that
      * guards a first build asks the same questions about this one.
      */
-    updateExport(exportId: number, extra: number[] = []): ExportItem | null {
+    async updateExport(exportId: number, extra: number[] = []): Promise<ExportItem | null> {
       const libraryStore = useLibraryStore();
       const uiStore = useUiStore();
 
@@ -605,7 +650,7 @@ export const useExportsStore = defineStore("exports", {
         });
         return null;
       }
-      return this.buildExport(e.bookId, ids, settings, { updates: e.id });
+      return await this.buildExport(e.bookId, ids, settings, { updates: e.id });
     },
     async deleteExport(id: number): Promise<void> {
       const uiStore = useUiStore();

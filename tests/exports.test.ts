@@ -245,23 +245,25 @@ describe("a build", () => {
       .filter((c) => c.narration === "done" && !c.excluded)
       .map((c) => c.id);
 
-  test("refuses chapters it cannot use instead of dropping them", () => {
+  test("refuses chapters it cannot use instead of dropping them", async () => {
     const ids = [...ready("starforge"), 1]; // ch 1 of Starforge is stale
-    expect(exportsStore.buildExport("starforge", ids, settings())).toBeNull();
+    expect(await exportsStore.buildExport("starforge", ids, settings())).toBeNull();
     expect(exportsStore.exports.some((e) => e.status === "building")).toBe(false);
     // and goes ahead once the stale audio is accepted on purpose
-    expect(exportsStore.buildExport("starforge", ids, settings({ useStale: true }))).not.toBeNull();
+    expect(
+      await exportsStore.buildExport("starforge", ids, settings({ useStale: true })),
+    ).not.toBeNull();
   });
 
-  test("runs to a finished export and replaces the version it supersedes", () => {
+  test("runs to a finished export and replaces the version it supersedes", async () => {
     const ids = ready("starforge").slice(0, 5);
-    const first = exportsStore.buildExport("starforge", ids, settings())!;
+    const first = (await exportsStore.buildExport("starforge", ids, settings()))!;
     finish();
     expect(first.status).toBe("done");
     expect(first.size).toBeGreaterThan(0);
     expect(first.version).toBe(1);
 
-    const second = exportsStore.buildExport("starforge", ids, settings())!;
+    const second = (await exportsStore.buildExport("starforge", ids, settings()))!;
     finish();
     expect(second.version).toBe(2);
     expect(second.replaces).toBe(first.id);
@@ -273,14 +275,14 @@ describe("a build", () => {
     expect(exportsStore.exportVersionsOf(second).map((e) => e.id)).toContain(first.id);
   });
 
-  test("keeps the finished version when the next build fails, and retry starts over", () => {
+  test("keeps the finished version when the next build fails, and retry starts over", async () => {
     const ids = ready("starforge").slice(0, 6);
-    const good = exportsStore.buildExport("starforge", ids, settings())!;
+    const good = (await exportsStore.buildExport("starforge", ids, settings()))!;
     finish();
     expect(good.status).toBe("done");
 
     demoStore._exportFails = true;
-    const bad = exportsStore.buildExport("starforge", ids, settings())!;
+    const bad = (await exportsStore.buildExport("starforge", ids, settings()))!;
     finish();
     expect(bad.status).toBe("failed");
     expect(bad.error).toBeTruthy();
@@ -297,11 +299,11 @@ describe("a build", () => {
     expect(now.version).toBe(2);
   });
 
-  test("cancelling writes nothing and leaves the previous version alone", () => {
+  test("cancelling writes nothing and leaves the previous version alone", async () => {
     const ids = ready("starforge").slice(0, 8);
-    const good = exportsStore.buildExport("starforge", ids, settings())!;
+    const good = (await exportsStore.buildExport("starforge", ids, settings()))!;
     finish();
-    const next = exportsStore.buildExport("starforge", [...ids, 9], settings())!;
+    const next = (await exportsStore.buildExport("starforge", [...ids, 9], settings()))!;
     tick();
     const job = jobsStore.jobs.find((j) => j.id === next.jobId)!;
     jobsStore.cancelJob(job.id);
@@ -311,9 +313,13 @@ describe("a build", () => {
     expect(good.status).toBe("done");
   });
 
-  test("the job carries the build so the queue can describe it and retry it", () => {
+  test("the job carries the build so the queue can describe it and retry it", async () => {
     const ids = ready("starforge").slice(0, 4);
-    const item = exportsStore.buildExport("starforge", ids, settings({ grouping: "single" }))!;
+    const item = (await exportsStore.buildExport(
+      "starforge",
+      ids,
+      settings({ grouping: "single" }),
+    ))!;
     const job = jobsStore.jobs.find((j) => j.id === item.jobId)!;
     expect(job.kind).toBe("export");
     expect(job.exportRun?.chapterIds).toEqual(ids);
@@ -332,9 +338,9 @@ describe("staying up to date", () => {
       .filter((c) => ["done", "stale"].includes(c.narration) && !c.excluded)
       .map((c) => c.id);
 
-  test("a chapter that has not been touched is carried over; one that changed is not", () => {
+  test("a chapter that has not been touched is carried over; one that changed is not", async () => {
     const ids = usableIds();
-    const item = exportsStore.buildExport("starforge", ids, settings({ useStale: true }))!;
+    const item = (await exportsStore.buildExport("starforge", ids, settings({ useStale: true })))!;
     finish();
     // the whole book is in it and nothing has moved since
     expect(exportsStore.exportUpdateFor(item).needed).toBe(false);
@@ -349,18 +355,22 @@ describe("staying up to date", () => {
     expect(update.needed).toBe(true);
   });
 
-  test("a pause costs nothing and renders nothing, but it does change the file", () => {
+  test("a pause costs nothing and renders nothing, but it does change the file", async () => {
     const ids = usableIds().slice(0, 4);
-    const item = exportsStore.buildExport("starforge", ids, settings({ useStale: true }))!;
+    const item = (await exportsStore.buildExport("starforge", ids, settings({ useStale: true })))!;
     finish();
     expect(exportsStore.exportUpdateFor(item).changed).toHaveLength(0);
     castStore.setPacing("starforge", { turn: 1.4 });
     expect(exportsStore.exportUpdateFor(item).changed.length).toBeGreaterThan(0);
   });
 
-  test("an export of everything the book can give follows the book", () => {
+  test("an export of everything the book can give follows the book", async () => {
     // Cliché can export 1–3 today; the rest of it has never been narrated
-    const item = exportsStore.buildExport("cliche", [1, 2, 3], settings({ useStale: true }))!;
+    const item = (await exportsStore.buildExport(
+      "cliche",
+      [1, 2, 3],
+      settings({ useStale: true }),
+    ))!;
     finish();
     expect(item.scope).toBe("book");
     expect(exportsStore.exportUpdateFor(item).needed).toBe(false);
@@ -375,12 +385,12 @@ describe("staying up to date", () => {
     expect(update.needed).toBe(true);
   });
 
-  test("a per-volume export claims its own volumes and nothing beyond them", () => {
-    const item = exportsStore.buildExport(
+  test("a per-volume export claims its own volumes and nothing beyond them", async () => {
+    const item = (await exportsStore.buildExport(
       "cliche",
       [1, 2, 3],
       settings({ grouping: "volume", useStale: true }),
-    )!;
+    ))!;
     finish();
     expect(item.scope).toBe("volumes");
 
@@ -395,8 +405,8 @@ describe("staying up to date", () => {
     expect(update.outside).toEqual([9]);
   });
 
-  test("chapters chosen on purpose stay the chapters chosen: the rest is not missing", () => {
-    const item = exportsStore.buildExport("starforge", [2, 3], settings())!;
+  test("chapters chosen on purpose stay the chapters chosen: the rest is not missing", async () => {
+    const item = (await exportsStore.buildExport("starforge", [2, 3], settings()))!;
     finish();
     expect(item.scope).toBe("chosen");
     const update = exportsStore.exportUpdateFor(item);
@@ -412,19 +422,19 @@ describe("staying up to date", () => {
     expect(update.outside).toEqual(readyIds.filter((id) => id !== 2 && id !== 3));
   });
 
-  test("an update rebuilds what moved and reuses the rest", () => {
+  test("an update rebuilds what moved and reuses the rest", async () => {
     // every chapter ready, nothing to ask about: the update simply runs
     const ids = libraryStore
       .chaptersOf("starforge")
       .filter((c) => c.narration === "done")
       .map((c) => c.id);
-    const first = exportsStore.buildExport("starforge", ids, settings())!;
+    const first = (await exportsStore.buildExport("starforge", ids, settings()))!;
     finish();
     const seg = scriptsStore.segmentsOf("starforge", ids[3])[0];
     seg.audio.duration += 5;
     castStore._retime("starforge", ids[3]);
 
-    const next = exportsStore.updateExport(first.id)!;
+    const next = (await exportsStore.updateExport(first.id))!;
     finish();
     expect(next.version).toBe(2);
     expect(next.rebuilt).toBe(1);
@@ -433,9 +443,9 @@ describe("staying up to date", () => {
     expect(first.status).toBe("replaced");
   });
 
-  test("the reuse the plan promises is the reuse the build performs", () => {
+  test("the reuse the plan promises is the reuse the build performs", async () => {
     const ids = [2, 3, 4];
-    const first = exportsStore.buildExport("starforge", ids, settings({ bitrate: 64 }))!;
+    const first = (await exportsStore.buildExport("starforge", ids, settings({ bitrate: 64 })))!;
     finish();
     // the plan panel and the build ask the same question of the same answer
     expect(exportsStore.exportReuse(first, ids, settings({ bitrate: 64 }))).toEqual(ids);
@@ -445,14 +455,18 @@ describe("staying up to date", () => {
     );
     expect(sameOutput(first, settings({ cover: "art.jpg" }))).toBe(false);
 
-    const louder = exportsStore.buildExport("starforge", ids, settings({ bitrate: 128 }))!;
+    const louder = (await exportsStore.buildExport("starforge", ids, settings({ bitrate: 128 })))!;
     finish();
     expect(louder.reused).toBe(0);
     expect(louder.rebuilt).toBe(ids.length);
   });
 
-  test("a finished export keeps the timeline it played, so a later correction is a difference", () => {
-    const item = exportsStore.buildExport("starforge", [2, 3], settings({ chapterGap: 2 }))!;
+  test("a finished export keeps the timeline it played, so a later correction is a difference", async () => {
+    const item = (await exportsStore.buildExport(
+      "starforge",
+      [2, 3],
+      settings({ chapterGap: 2 }),
+    ))!;
     finish();
     expect(item.timeline!.map((t) => t.id)).toEqual([2, 3]);
     expect(item.timeline!.reduce((a, t) => a + t.duration, 0) + item.chapterGap).toBe(
@@ -479,15 +493,15 @@ describe("staying up to date", () => {
     expect(chapterSignature(c, segs, DEFAULT_PACING)).not.toBe(before);
   });
 
-  test("changing the output settings is a different file, so nothing is carried over", () => {
+  test("changing the output settings is a different file, so nothing is carried over", async () => {
     const ids = usableIds().slice(0, 5);
-    exportsStore.buildExport("starforge", ids, settings({ bitrate: 64, useStale: true }));
+    await exportsStore.buildExport("starforge", ids, settings({ bitrate: 64, useStale: true }));
     finish();
-    const louder = exportsStore.buildExport(
+    const louder = (await exportsStore.buildExport(
       "starforge",
       ids,
       settings({ bitrate: 128, useStale: true }),
-    )!;
+    ))!;
     finish();
     expect(louder.version).toBe(2);
     expect(louder.reused).toBe(0);
@@ -509,14 +523,14 @@ describe("update and retry ask before they decide", () => {
   // moved under on your behalf — when either would have to, the build goes to the Build tab and the
   // same readiness review that guards a first build guards this one.
 
-  test("a chapter that lost its audio sends the update to the review, not out of the file", () => {
-    const item = exportsStore.buildExport("starforge", [2, 3], settings())!;
+  test("a chapter that lost its audio sends the update to the review, not out of the file", async () => {
+    const item = (await exportsStore.buildExport("starforge", [2, 3], settings()))!;
     finish();
     const gone = libraryStore.chapter("starforge", 3)!;
     gone.narration = "none";
     gone.duration = 0;
 
-    expect(exportsStore.updateExport(item.id)).toBeNull();
+    expect(await exportsStore.updateExport(item.id)).toBeNull();
     // nothing was built, and the draft still asks for both chapters
     expect(exportsStore.exports.filter((e) => e.key === item.key)).toHaveLength(1);
     expect(exportsStore._exportDraft!.ids).toEqual([2, 3]);
@@ -527,22 +541,22 @@ describe("update and retry ask before they decide", () => {
     expect(review.blockers.map((b) => b.kind)).toContain("missing");
   });
 
-  test("an update never gives consent to stale clips that was never given", () => {
-    const item = exportsStore.buildExport("starforge", [2, 3], settings())!;
+  test("an update never gives consent to stale clips that was never given", async () => {
+    const item = (await exportsStore.buildExport("starforge", [2, 3], settings()))!;
     finish();
     libraryStore.chapter("starforge", 3)!.narration = "stale";
 
-    expect(exportsStore.updateExport(item.id)).toBeNull();
+    expect(await exportsStore.updateExport(item.id)).toBeNull();
     expect(exportsStore._exportDraft!.settings.useStale).toBe(false);
     expect(exportsStore.exports.filter((e) => e.key === item.key)).toHaveLength(1);
   });
 
-  test("an update starts from the settings its export was built with", () => {
-    const item = exportsStore.buildExport(
+  test("an update starts from the settings its export was built with", async () => {
+    const item = (await exportsStore.buildExport(
       "starforge",
       [2, 3],
       settings({ markerPattern: "{title}", cover: "art.jpg", volPrefix: false, bitrate: 96 }),
-    )!;
+    ))!;
     finish();
     const from = exportsStore.settingsFromExport(item);
     expect(from.markerPattern).toBe("{title}");
@@ -553,10 +567,14 @@ describe("update and retry ask before they decide", () => {
     expect(from.useStale).toBe(false);
   });
 
-  test("a retry keeps the consent the failed build was started with", () => {
+  test("a retry keeps the consent the failed build was started with", async () => {
     demoStore._exportFails = true;
     // ch 1 is stale, and this build accepted it on purpose
-    const bad = exportsStore.buildExport("starforge", [1, 2], settings({ useStale: true }))!;
+    const bad = (await exportsStore.buildExport(
+      "starforge",
+      [1, 2],
+      settings({ useStale: true }),
+    ))!;
     finish();
     expect(bad.status).toBe("failed");
 
@@ -566,9 +584,9 @@ describe("update and retry ask before they decide", () => {
     expect(exportsStore.exportsOf("starforge").find((e) => e.key === bad.key)!.status).toBe("done");
   });
 
-  test("a retry whose chapters moved since it failed goes to the review", () => {
+  test("a retry whose chapters moved since it failed goes to the review", async () => {
     demoStore._exportFails = true;
-    const bad = exportsStore.buildExport("starforge", [2, 3], settings())!;
+    const bad = (await exportsStore.buildExport("starforge", [2, 3], settings()))!;
     finish();
     libraryStore.chapter("starforge", 2)!.narration = "stale";
 
@@ -580,12 +598,12 @@ describe("update and retry ask before they decide", () => {
     expect(exportsStore.exports.some((e) => e.id === bad.id)).toBe(true);
   });
 
-  test("one audiobook builds once at a time", () => {
+  test("one audiobook builds once at a time", async () => {
     const ids = [2, 3, 4];
-    const first = exportsStore.buildExport("starforge", ids, settings())!;
+    const first = (await exportsStore.buildExport("starforge", ids, settings()))!;
     tick();
     expect(first.status).toBe("building");
-    expect(exportsStore.buildExport("starforge", ids, settings())).toBeNull();
+    expect(await exportsStore.buildExport("starforge", ids, settings())).toBeNull();
     finish();
     expect(exportsStore.exportsOf("starforge").filter((e) => e.key === first.key)).toHaveLength(1);
     expect(exportsStore.exports.filter((e) => e.key === first.key && e.version === 2)).toHaveLength(
@@ -593,18 +611,18 @@ describe("update and retry ask before they decide", () => {
     );
   });
 
-  test("an update only updates an export it would actually replace", () => {
-    const first = exportsStore.buildExport("starforge", [2, 3], settings())!;
+  test("an update only updates an export it would actually replace", async () => {
+    const first = (await exportsStore.buildExport("starforge", [2, 3], settings()))!;
     finish();
     // renamed on the way through: a different audiobook, built for the first time
-    const other = exportsStore.buildExport(
+    const other = (await exportsStore.buildExport(
       "starforge",
       [2, 3],
       settings({ filename: "Something Else" }),
       {
         updates: first.id,
       },
-    )!;
+    ))!;
     finish();
     expect(other.version).toBe(1);
     expect(other.replaces).toBeNull();

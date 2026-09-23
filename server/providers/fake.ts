@@ -88,5 +88,12 @@ export function fakeScriptingProvider(options: FakeScriptingOptions = {}): Scrip
       }
       return out;
     },
+    async probe() {
+      return {
+        ok: true,
+        message: "The fake answers without a request: SCRIPTING_PROVIDER=fake",
+        ms: 0,
+      };
+    },
   };
 }

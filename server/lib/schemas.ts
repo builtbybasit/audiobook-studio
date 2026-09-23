@@ -231,6 +231,10 @@ const Common = {
   enabled: v.boolean(),
   concurrency: v.pipe(v.number(), v.integer(), v.minValue(1)),
   needsKey: v.boolean(),
+  /** write-only: absent keeps the stored key, "" forgets it — see `replaceEndpoints` */
+  apiKey: v.optional(v.string()),
+  /** what a read said; accepted so a page can send back what it was given, and ignored */
+  hasKey: v.optional(v.boolean()),
   maxChars: Count,
   splitAt: SplitMode,
   pricing: v.optional(PricingSchema),

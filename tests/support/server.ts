@@ -122,7 +122,11 @@ export function testApi(options: TestApiOptions = {}): TestApi {
   const exportDir = options.exportDir ?? tempExportDir();
   const exports = testExports({ ...options, exportDir });
   const runner = testRunner(db, log, { ...options, audioDir, exportDir });
-  const app = createApp(db, { log, runner, files, exports });
+  const providers = {
+    scripting: options.scripting ?? fakeScriptingProvider(),
+    speech: options.speech ?? fakeSpeechProvider(),
+  };
+  const app = createApp(db, { log, runner, files, exports, providers });
 
   const request = async <T>(path: string, init?: RequestInit) => {
     const res = await app.request(`http://api.test${path}`, init);

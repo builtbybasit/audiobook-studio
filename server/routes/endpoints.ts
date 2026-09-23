@@ -8,6 +8,7 @@ import type { Db } from "~/db/client";
 import * as ops from "~/endpoints/ops";
 import { CredentialSchema, EndpointSchema, ProfileSchema } from "~/lib/schemas";
 import { validate } from "~/lib/validate";
+import type { Providers } from "~/providers/target";
 
 const Config = v.object({
   endpoints: v.array(EndpointSchema),
@@ -15,7 +16,12 @@ const Config = v.object({
   credentials: v.array(CredentialSchema),
 });
 
-export function endpointRoutes(db: Db): Hono<PinoEnv> {
+const Probe = v.object({
+  kind: v.picklist(["tts", "scripting"]),
+  id: v.pipe(v.string(), v.nonEmpty()),
+});
+
+export function endpointRoutes(db: Db, providers: Providers): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
   app.get("/", (c) => c.json(ops.endpointSettings(db)));
@@ -28,6 +34,14 @@ export function endpointRoutes(db: Db): Hono<PinoEnv> {
       "endpoints saved",
     );
     return c.json(saved);
+  });
+
+  /** One small real request to a saved endpoint, with its saved key: the Test button. */
+  app.post("/test", validate("json", Probe), async (c) => {
+    const { kind, id } = c.req.valid("json");
+    const answer = await ops.testEndpoint(db, providers, kind, id, c.req.raw.signal);
+    c.var.logger.info({ kind, id, ok: answer.ok, ms: answer.ms }, "endpoint tested");
+    return c.json(answer);
   });
 
   return app;

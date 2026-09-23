@@ -12,9 +12,10 @@
 // And an expired promotion is kept rather than deleted: it stops applying when its end date passes,
 // and the requests it priced keep the rates they were priced at.
 //
-// **No secret is in here.** `credentials` is a registry of names — which account a key belongs to —
-// and the key itself is not stored by this schema at all. Where secrets eventually live is a
-// decision this slice does not make; see `docs/backend.md`.
+// **One secret is in here: `endpoints.api_key`**, the key a real provider is called with. It is
+// write-only over HTTP — a save may set or clear it, a read only says whether there is one — and it
+// is read at the moment of a request, never copied onto a job. `credentials` is still a registry of
+// names, which account a key belongs to; see `docs/backend.md`.
 import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 import type {
@@ -56,6 +57,8 @@ export const endpoints = sqliteTable(
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     concurrency: integer("concurrency").notNull().default(1),
     needsKey: integer("needs_key", { mode: "boolean" }).notNull().default(false),
+    /** the key a real provider is called with; never sent back over HTTP, see the file comment */
+    apiKey: text("api_key"),
     /** per-request character cap; 0 = no limit */
     maxChars: integer("max_chars").notNull().default(0),
     splitAt: text("split_at").$type<SplitMode>().notNull().default("sentence"),

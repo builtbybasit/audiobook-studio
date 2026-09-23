@@ -21,7 +21,7 @@ import { useUsageStore } from "@/stores/usage";
 // Both are simulated. No provider is called, nothing is billed, and nothing persists.
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { keyring } from "@/lib/keyring";
+import { activeEndpointSettingsService, keyInPlace } from "@/services/endpointSettings";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import { UiToggleGroup, UiTooltip } from "@/ui";
 import {
@@ -146,7 +146,7 @@ const describe = (u: UnifiedEndpoint): EndpointDescriptor => ({
   usageFormat: u.profile ? usageFormatFor(u.profile.model, u.profile.baseUrl) : undefined,
   billing: u.endpoint ? billingOf(u.endpoint) : undefined,
   maxChars: u.endpoint?.maxChars,
-  hasKey: keyring.has(u.slot),
+  hasKey: keyInPlace(u.profile ?? u.endpoint, u.slot),
 });
 
 async function load() {
@@ -194,7 +194,7 @@ const liveFor = (u: UnifiedEndpoint) => liveActivity(u);
 function healthFor(u: UnifiedEndpoint): Health {
   const rows = histories.value[u.key] ?? [];
   return healthOf(u, {
-    hasKey: keyring.has(u.slot),
+    hasKey: keyInPlace(u.profile ?? u.endpoint, u.slot),
     errors: endpointErrors(u),
     now: now.value,
     totals: loading.value ? null : seriesFor(u).totals,
@@ -329,10 +329,15 @@ function cancelWork(u: UnifiedEndpoint) {
 }
 
 const testing = ref(false);
+
 async function runTest(u: UnifiedEndpoint) {
   testing.value = true;
   try {
-    const result = await endpointService.testConnection(describe(u));
+    // With a server answering, the server sends a real request to what it has saved; the demo's
+    // fixture answers locally. See `testSaved` for why a connection draft is not saved first.
+    const result = activeEndpointSettingsService()
+      ? await endpointsStore.testSaved(u.kind, u.id)
+      : await endpointService.testConnection(describe(u));
     ui.tests[u.key] = result;
     uiStore.toast(result.ok ? `${u.name} answered` : `${u.name} did not answer`, {
       kind: result.ok ? "success" : "error",

@@ -60,6 +60,7 @@ import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { locate } from "~/jobs/scripting";
 import { conflict, notFound } from "~/lib/errors";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
+import { speechTarget } from "~/providers/target";
 import { joinWav, readWavHeader } from "~/providers/wavEncoder";
 
 /** The label a retake job carries as its scope and its `bulk.op`; the Queue page shows it as it is. */
@@ -413,8 +414,11 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
               speaker: s.speaker,
               type: s.type,
               direction: s.direction,
+              instructions,
               voiceRef: who.voiceRef,
               sampleRate: ep?.sampleRate ?? null,
+              // the endpoint as saved now and its key read now, for the provider alone
+              target: ep ? speechTarget(db, ep) : null,
               signal,
             },
             cuts,

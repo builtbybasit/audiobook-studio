@@ -14,6 +14,7 @@
     "build": "vue-tsc --build && vite build",
     "preview": "vite preview",
     "test": "bun test tests",
+    "test:live": "LIVE=1 bun test tests/live",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun run server/db/cli.ts",
     "db:studio": "drizzle-kit studio"

@@ -50,6 +50,16 @@ export interface Endpoint {
   /** USD per million characters */
   price: number;
   needsKey: boolean;
+  /**
+   * Backend only, and only ever read: the server holds a key for this endpoint. The key itself
+   * never comes back from the server.
+   */
+  hasKey?: boolean;
+  /**
+   * Backend only, and only ever sent: a key for the server to keep for this endpoint. Left out, a
+   * save keeps the one already kept; `""` forgets it.
+   */
+  apiKey?: string;
   /** per-request character cap; 0 = no limit */
   maxChars: number;
   splitAt: SplitMode;

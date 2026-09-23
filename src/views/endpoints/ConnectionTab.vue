@@ -13,6 +13,8 @@ import { useUiStore } from "@/stores/ui";
 // Save button says what will and won't move.
 import { computed, ref } from "vue";
 import { keyring } from "@/lib/keyring";
+import { activeEndpointSettingsService, keyInPlace } from "@/services/endpointSettings";
+import ServerKeyField from "@/views/endpoints/ServerKeyField.vue";
 import { UiSelect, UiSwitch, UiTooltip } from "@/ui";
 import {
   Check as OkIcon,
@@ -71,13 +73,23 @@ const confirming = ref(false);
 const errors = computed(() => endpointErrors(props.u));
 const test = computed<ConnectionTest | undefined>(() => ui.tests[props.u.key]);
 const now = Date.now();
+/**
+ * A server answering keeps one key per endpoint and nothing per named credential, so there the
+ * key field is always this endpoint's own and goes to the server; a credential only names the
+ * account. The demo keeps keys in the in-memory keyring, credentials included.
+ */
+const onServer = !!activeEndpointSettingsService();
 
 const CRED_OPTIONS = computed(() => [
-  { value: "__own__", label: "This endpoint’s own key", hint: "typed here, not shared" },
+  {
+    value: "__own__",
+    label: "This endpoint’s own key",
+    hint: onServer ? "kept on the server" : "typed here, not shared",
+  },
   ...credentials.map((c) => ({
     value: c.id,
     label: c.label,
-    hint: credentialHasSecret(c.id) ? "set" : "empty",
+    hint: onServer ? "" : credentialHasSecret(c.id) ? "set" : "empty",
   })),
 ]);
 
@@ -104,7 +116,7 @@ const sameQuota = computed(() =>
     : [],
 );
 
-const keyInPlace = computed(() => keyring.has(props.u.slot));
+const keyHeld = computed(() => keyInPlace(props.u.profile ?? props.u.endpoint, props.u.slot));
 const usingCredential = computed(() => credentialById(opsOf(props.u).credentialId));
 
 function save() {
@@ -290,13 +302,25 @@ function newCredential() {
                 <AddIcon class="icon-sm" /> New
               </button>
             </div>
-            <p class="text-[11px] font-normal text-zinc-500">
+            <p v-if="onServer" class="text-[11px] font-normal text-zinc-500">
+              A named credential says which account this endpoint uses. The server keeps one key per
+              endpoint, so each endpoint on the account has its key saved below.
+            </p>
+            <p v-else class="text-[11px] font-normal text-zinc-500">
               A named credential can be shared by several endpoints; the key itself is kept in
               memory only and never written to a settings export.
             </p>
           </div>
 
-          <label v-if="draft.credentialId" class="block space-y-1 text-xs font-medium"
+          <ServerKeyField
+            v-if="onServer"
+            :kind="u.kind"
+            :id="u.id"
+            :name="u.name"
+            :has-key="keyHeld"
+            :needs-key="draft.needsKey"
+          />
+          <label v-else-if="draft.credentialId" class="block space-y-1 text-xs font-medium"
             ><span>{{ credentialById(draft.credentialId)?.label }} key</span
             ><input
               :value="credentialSecret(draft.credentialId)"
@@ -324,7 +348,7 @@ function newCredential() {
           /></label>
           <UiSwitch v-model="draft.needsKey" label="This endpoint requires a key" />
           <p
-            v-if="draft.needsKey && !keyInPlace"
+            v-if="!onServer && draft.needsKey && !keyHeld"
             class="rounded bg-amber-400/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
           >
             <WarnIcon class="icon-sm" /> No key set — requests routed here fail with a “no API key”
@@ -379,7 +403,8 @@ function newCredential() {
             Sends <b>one</b> request to
             <code class="font-mono">{{ (u.baseUrl || "…").replace(/\/$/, "") }}{{ path }}</code>
             using
-            <b>{{ usingCredential ? usingCredential.label : "this endpoint’s own key" }}</b
+            <b v-if="onServer">the key saved on the server</b>
+            <b v-else>{{ usingCredential ? usingCredential.label : "this endpoint’s own key" }}</b
             >. It touches no book, queues no job, and writes nothing to any chapter.
           </p>
           <p class="mt-1 text-[11px] text-zinc-500">
@@ -431,7 +456,7 @@ function newCredential() {
           <span v-if="test.simulated" class="chip chip-off">simulated</span>
         </div>
         <p class="mt-1 leading-relaxed text-zinc-600 dark:text-zinc-300">{{ test.detail }}</p>
-        <p class="mt-1 text-zinc-500">
+        <p v-if="!onServer" class="mt-1 text-zinc-500">
           Recorded cost of the probe: {{ maybeMoney(test.cost) }}
           <span v-if="test.cost == null">— no rate is set for this endpoint.</span>
         </p>
@@ -440,7 +465,25 @@ function newCredential() {
         Not tested yet. Until something has answered, this endpoint’s health reads
         <b>Not tested</b> rather than healthy.
       </p>
-      <p class="mt-2 border-t border-zinc-100 pt-2 text-[11px] text-zinc-500 dark:border-zinc-800">
+      <p
+        v-if="onServer && changes.length"
+        class="mt-2 rounded bg-violet-50 px-2 py-1 text-[11px] text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
+      >
+        This tests the saved settings. The unsaved changes above ({{ changes.join(", ") }}) are not
+        part of it — save them first to test them.
+      </p>
+      <p
+        v-if="onServer"
+        class="mt-2 border-t border-zinc-100 pt-2 text-[11px] text-zinc-500 dark:border-zinc-800"
+      >
+        The server sends this request itself, from the settings and key it has saved, and the
+        provider may bill it. A server running the fake provider answers without calling anyone and
+        says so.
+      </p>
+      <p
+        v-else
+        class="mt-2 border-t border-zinc-100 pt-2 text-[11px] text-zinc-500 dark:border-zinc-800"
+      >
         In this prototype the test is answered locally — no request leaves the browser and nothing
         is billed.
       </p>

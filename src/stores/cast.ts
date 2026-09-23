@@ -8,7 +8,7 @@ import type { Spoken } from "@/lib/speech";
 // removal records the lines that moved and puts exactly those back (`attribute`), rather than
 // restoring a snapshot the server never saw. The dictionary works the same way: a change reports
 // the clips it staled, and its Undo names exactly those, for the server to put back to done.
-import { keyring } from "@/lib/keyring";
+import { keyInPlace } from "@/services/endpointSettings";
 import { key, norm } from "@/lib/scriptReview";
 import { hitsIn, pacingOrDefault, silenceOf, speak } from "@/lib/speech";
 import { clone } from "@/lib/utils";
@@ -145,7 +145,7 @@ export const useCastStore = defineStore("cast", {
               kind: "paused" as const,
               endpoint: r.endpoint,
             });
-          else if (r.endpoint.needsKey && !keyring.has(r.endpoint.id))
+          else if (r.endpoint.needsKey && !keyInPlace(r.endpoint, r.endpoint.id))
             out.push({
               name: c.name,
               ref: c.voice,

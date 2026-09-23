@@ -22,12 +22,13 @@ import { capture } from "~/db/history";
 import { readProfiles } from "~/db/endpoints";
 import { activeJob, appendEvent, getJob, nextRunId, setScriptRun } from "~/db/jobs";
 import * as library from "~/db/library";
-import { chapters, segments } from "~/db/schema";
+import { chapters, characters, segments } from "~/db/schema";
 import { ScriptConflict, readScript, replaceScript } from "~/db/script";
 import { plainText } from "~/epub/markdown";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
 import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
+import { scriptTarget } from "~/providers/target";
 
 /** The status a chapter reads as when no job is running on it: asked of its script, not remembered. */
 export function settledScriptingStatus(
@@ -103,11 +104,24 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       // keeps the chunking it was previewed and started with.
       const queued = job.scriptRun;
       const chunks = chunksOf(chapter.text, queued?.profile);
+      // Where the requests go, with the profile's key read now rather than when it was queued, so a
+      // key saved after pressing Script is the one used. Null for a run that named no profile: the
+      // fake does not need one, and a real provider refuses the run with a message saying so.
+      const target = queued ? scriptTarget(db, queued.profile) : null;
+      // The names the book already has, so a chunk read on its own still calls Mara "Mara".
+      const cast = db
+        .select({ name: characters.name })
+        .from(characters)
+        .where(eq(characters.bookId, job.bookId))
+        .all()
+        .map((c) => c.name);
       setChapterScripting(db, job.bookId, job.chapterId, "running", 0);
       ctx.note("Scripting started", "info", {
         provider: provider.name,
         characters: chapter.text.length,
-        ...(queued ? { profile: queued.profile.name, requests: chunks.length } : {}),
+        ...(queued
+          ? { profile: queued.profile.name, model: queued.profile.model, requests: chunks.length }
+          : {}),
       });
 
       // Each chunk's share of the chapter's progress, so the bar counts across all of them and
@@ -150,6 +164,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
               title: chapter.title,
               text: chunks[i],
               signal: stop.signal,
+              target,
+              cast,
               progress: (done, total) => {
                 share[i] = total ? done / total : 1;
                 report();
@@ -216,7 +232,9 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             {
               kind: "scripted",
               profile: queued?.profile.name ?? provider.name,
-              ...(queued ? { model: provider.name } : {}),
+              ...(queued
+                ? { model: provider.callsProfile ? queued.profile.model : provider.name }
+                : {}),
               again: previous.length > 0,
             },
             previous,
@@ -307,6 +325,8 @@ export function enqueueScripting(
   // this server was never sent is not a refusal — a fresh server has no endpoints until the page
   // saves them — so its chapters go whole, and each job says why.
   const chosen = profile ? readProfiles(db).find((p) => p.id === profile) : undefined;
+  // a real run is named by the profile it goes to; the fake by what it is
+  const via = provider === "endpoints" && chosen ? chosen.name : provider;
   const run: Job["scriptRun"] = chosen && {
     profile: chosen,
     requests: 0,
@@ -327,7 +347,7 @@ export function enqueueScripting(
       kind: "scripting",
       bookId,
       chapterId: id,
-      label: `${replacing ? "Re-script" : "Script"} · ch ${id} · ${provider}`,
+      label: `${replacing ? "Re-script" : "Script"} · ch ${id} · ${via}`,
       bulk: {
         id: runId,
         op: replacing ? "Re-script" : "Script",

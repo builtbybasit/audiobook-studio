@@ -14,7 +14,7 @@ import { useLibraryStore } from "@/stores/library";
 // catalogue is per account and needs the key first), or type an id by hand for a server that has no
 // list endpoint at all.
 import { computed, reactive, ref } from "vue";
-import { keyring } from "@/lib/keyring";
+import { keyInPlace } from "@/services/endpointSettings";
 import { speak } from "@/composables/usePlayer";
 import type { Component } from "vue";
 import {
@@ -95,7 +95,9 @@ function add() {
 
 // ---------- fetching ----------
 const fish = computed(() => isFishAudio(props.endpoint));
-const needsKeyFirst = computed(() => props.endpoint.needsKey && !keyring.has(props.endpoint.id));
+const needsKeyFirst = computed(
+  () => props.endpoint.needsKey && !keyInPlace(props.endpoint, props.endpoint.id),
+);
 const fetchBlocked = computed(() => fish.value && needsKeyFirst.value);
 
 const SAMPLE = "The mountain mist thinned as dawn crept over the outer sect grounds.";

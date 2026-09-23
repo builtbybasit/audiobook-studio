@@ -23,6 +23,7 @@
     "server/**/*.ts",
     "drizzle.config.ts",
     "tests/server/**/*.ts",
+    "tests/live/**/*.ts",
     "tests/support/epub.ts",
     "tests/support/server.ts",
     "tests/support/persist.ts",

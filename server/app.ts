@@ -17,6 +17,9 @@ import { AppError, codeFor, type ApiError } from "~/lib/errors";
 import type { Logger } from "~/log";
 import { log as defaultLog } from "~/log";
 import type { ExportPorts } from "~/providers/encoder";
+import { fakeScriptingProvider } from "~/providers/fake";
+import { fakeSpeechProvider } from "~/providers/fakeSpeech";
+import type { Providers } from "~/providers/target";
 import { wavEncoders } from "~/providers/wavEncoder";
 import { audioRoutes } from "~/routes/audio";
 import { bookRoutes } from "~/routes/books";
@@ -47,6 +50,11 @@ export interface AppOptions {
    * pair, so a download served by this app is the file the queue's handler wrote.
    */
   exports?: ExportPorts;
+  /**
+   * The models a connection test asks — the same pair the runner's handlers send work to. The
+   * fakes by default, which answer a test without a request.
+   */
+  providers?: Providers;
 }
 
 export function createApp(
@@ -56,6 +64,7 @@ export function createApp(
     runner = createRunner(db, {}, { log }),
     files = audioFiles(env.AUDIO_DIR),
     exports = { encoders: wavEncoders(), files: audiobookFiles(env.EXPORT_DIR) },
+    providers = { scripting: fakeScriptingProvider(), speech: fakeSpeechProvider() },
   }: AppOptions = {},
 ): Hono<PinoEnv> {
   // Typed with the logger the middleware puts on the context, so a route reaching for
@@ -112,7 +121,7 @@ export function createApp(
   app.route("/api/books", exportRoutes(db, runner, exports));
   app.route("/api/jobs", jobRoutes(db, runner));
   // The endpoints belong to the installation rather than to a book.
-  app.route("/api/endpoints", endpointRoutes(db));
+  app.route("/api/endpoints", endpointRoutes(db, providers));
   // A clip's url is served from disk, and the files it names belong to the same book routes above
   // remove — see `server/audio/files.ts` for why the path is a book and a token.
   app.route("/api/audio", audioRoutes(files));

@@ -1,6 +1,6 @@
 // Scripting settings and run coordination. Execution stays in the mock simulator.
 import { jobWaiting, logJob } from "@/lib/jobActivity";
-import { keyring } from "@/lib/keyring";
+import { keyInPlace } from "@/services/endpointSettings";
 import { plural } from "@/lib/contents";
 import { runActionLabel, scriptingPlan, skipNotes, skipSummary } from "@/lib/runPlan";
 import { ApiError } from "@/services/http";
@@ -70,7 +70,7 @@ export const useScriptingStore = defineStore("scripting", {
         const p = endpointsStore.profiles.find((p) => p.id === this.scriptSettings.profile);
         const blockers = p ? profileErrors(p) : ["Select a scripting endpoint."];
         if (p && !p.enabled) blockers.push("This endpoint is paused. Enable it or select another.");
-        if (p?.needsKey && !keyring.has("profile:" + p.id))
+        if (p?.needsKey && !keyInPlace(p, "profile:" + p.id))
           blockers.push("Add an API key in endpoint settings.");
         if (libraryStore.bookById(bookId)?.budget?.paused)
           blockers.push("This book is paused. Resume it from the overview.");

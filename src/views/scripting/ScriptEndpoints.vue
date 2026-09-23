@@ -8,6 +8,8 @@ import { useUiStore } from "@/stores/ui";
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { keyring } from "@/lib/keyring";
+import { activeEndpointSettingsService, keyInPlace } from "@/services/endpointSettings";
+import ServerKeyField from "@/views/endpoints/ServerKeyField.vue";
 import { UiNumber, UiSelect, UiSwitch } from "@/ui";
 import NumberSlider from "@/components/NumberSlider.vue";
 import {
@@ -33,6 +35,8 @@ const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
+/** with a server answering, a profile's key is kept there, not in this browser's keyring */
+const onServer = !!activeEndpointSettingsService();
 const selectedId = ref(scriptingStore.scriptSettings.profile);
 const now = ref(Date.now());
 let clock: ReturnType<typeof setInterval>;
@@ -42,7 +46,12 @@ onMounted(() => {
 onUnmounted(() => clearInterval(clock));
 const endpointList = ref<HTMLElement | null>(null);
 const health = (ep: Profile) =>
-  scriptingHealth(ep, jobsStore.scriptTelemetry[ep.id], keyring.has("profile:" + ep.id), now.value);
+  scriptingHealth(
+    ep,
+    jobsStore.scriptTelemetry[ep.id],
+    keyInPlace(ep, "profile:" + ep.id),
+    now.value,
+  );
 const tone = (ep: Profile) =>
   ({ good: "bg-emerald-500", warn: "bg-amber-500", muted: "bg-zinc-400" })[health(ep).tone];
 watch(selectedId, async () => {
@@ -294,9 +303,16 @@ function remove() {
             ></label
           >
           <div class="space-y-2">
-            <UiSwitch v-model="p.needsKey" label="Requires an API key" /><label
-              v-if="p.needsKey"
-              class="block space-y-1 text-xs font-medium"
+            <UiSwitch v-model="p.needsKey" label="Requires an API key" />
+            <!-- with a server answering, the key is the server's: see ServerKeyField -->
+            <ServerKeyField
+              v-if="p.needsKey && onServer"
+              kind="scripting"
+              :id="p.id"
+              :name="p.name"
+              :has-key="!!p.hasKey"
+              :needs-key="p.needsKey"
+            /><label v-else-if="p.needsKey" class="block space-y-1 text-xs font-medium"
               ><span>API key</span
               ><input
                 :value="keyring.get('profile:' + p.id)"

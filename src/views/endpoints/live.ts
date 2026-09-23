@@ -11,7 +11,7 @@
 //
 // All of it is make-believe in the sense that no provider is called; the flag separates "made up
 // before you got here" from "you did this", and the list labels each.
-import { keyring } from "@/lib/keyring";
+import { keyInPlace } from "@/services/endpointSettings";
 import type { Job, RequestRecord, WaitReason } from "@/types";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 
@@ -69,7 +69,7 @@ export function useEndpointActivity() {
 
   function waitReasonFor(u: UnifiedEndpoint, active: number, bookId: string | null): WaitReason {
     if (!u.enabled) return "paused";
-    if (u.needsKey && !keyring.has(u.slot)) return "nokey";
+    if (u.needsKey && !keyInPlace(u.profile ?? u.endpoint, u.slot)) return "nokey";
     if (u.backoffUntil > Date.now()) return "cooldown";
     if (active >= u.concurrency) return "concurrency";
     if (bookId) {
@@ -94,7 +94,9 @@ export function useEndpointActivity() {
     const waiting = queued ? waitReasonFor(u, active, null) : null;
     // pausing or a cooldown drops the ceiling that is actually in force to zero
     const effectiveLimit =
-      !u.enabled || u.backoffUntil > Date.now() || (u.needsKey && !keyring.has(u.slot))
+      !u.enabled ||
+      u.backoffUntil > Date.now() ||
+      (u.needsKey && !keyInPlace(u.profile ?? u.endpoint, u.slot))
         ? 0
         : u.concurrency;
     return { active, queued, waiting, effectiveLimit };

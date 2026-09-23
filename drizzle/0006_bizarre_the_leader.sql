@@ -1,0 +1,1 @@
+ALTER TABLE `endpoints` ADD `api_key` text;

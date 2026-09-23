@@ -6,8 +6,11 @@
 // job records only what the provider says about itself. A key, when there is one, is read by the
 // provider from the server's own environment and never leaves the process — see `docs/backend.md`.
 //
-// Only the fake exists today, and it is selected explicitly. Nothing here can spend money.
+// Two implementations: the fake, which renders a tone and never the network, and the one that
+// calls the endpoint a line's voice belongs to (`SPEECH_PROVIDER=endpoints`) — Fish Audio when its
+// base URL is Fish's, OpenAI's `/audio/speech` shape otherwise.
 import type { SegmentType, VoiceRef } from "@/types";
+import type { ProbeResult, ProviderTarget } from "~/providers/target";
 
 export interface SpeechInput {
   /** the line as it will be spoken */
@@ -15,6 +18,11 @@ export interface SpeechInput {
   speaker: string;
   type: SegmentType;
   direction: string;
+  /**
+   * What a model that takes spoken-delivery instructions is told: the speaker's style and the
+   * line's direction together, as the clip records them. Empty when there is neither.
+   */
+  instructions: string;
   /** `<endpointId>/<voiceId>` from the cast, or null when the speaker has no voice */
   voiceRef: VoiceRef | null;
   /**
@@ -22,6 +30,12 @@ export interface SpeechInput {
    * answers at it or fails; the job reads the rate the file actually came back at either way.
    */
   sampleRate: number | null;
+  /**
+   * The endpoint the voice belongs to, and its key; null when the speaker has no voice or the
+   * voice names an endpoint that is no longer configured. The fake ignores it; a real provider
+   * fails the line, naming why, rather than sending it somewhere nobody chose.
+   */
+  target: ProviderTarget | null;
   /** aborted when the job is cancelled; a provider that is mid-request should stop */
   signal: AbortSignal;
 }
@@ -44,7 +58,9 @@ export interface SpeechProvider {
   /** what the Queue page names, and the log */
   readonly name: string;
   speak(input: SpeechInput): Promise<RenderedClip>;
+  /** one small request to see the endpoint answers — the Test button; absent, it cannot be tested */
+  probe?(target: ProviderTarget, signal: AbortSignal): Promise<ProbeResult>;
 }
 
-/** Which provider a server is started with. Only `fake` is implemented; see `env.ts`. */
-export type SpeechProviderName = "fake";
+/** Which provider a server is started with; see `env.ts`. */
+export type SpeechProviderName = "fake" | "endpoints";

@@ -25,6 +25,8 @@ import { keys } from "@/queries/keys";
 import {
   activeLibraryService,
   ApiError,
+  type BookSettings,
+  type ImportedBook,
   type LibraryService,
   type ReviewDecision,
 } from "@/services/library";
@@ -63,6 +65,12 @@ interface LibraryState {
   /** Backend mode: whether the shelf has been read from the server yet. */
   loaded: boolean;
 }
+
+/**
+ * How many settings writes each book has sent, so only the latest one's answer is installed. Not
+ * state: nothing renders it, and a reload starting it again from nothing is correct.
+ */
+const settingsWrites = new Map<string, number>();
 
 export const useLibraryStore = defineStore("library", {
   // With a service answering, the library starts empty and is read from the server. The seeded
@@ -455,8 +463,52 @@ export const useLibraryStore = defineStore("library", {
         else delete c.kept;
       }
     },
-    // ---------- budget & pause ----------
-    pauseBook(bookId: string): void {
+    // ---------- budget, pause & settings ----------
+    // These are inputs on a page — a number box, a toggle — so they change here at once and the
+    // write follows; waiting on the server would make a field lag behind the typing. What the
+    // server answers is then what the store holds, and a refused write reads the book back so the
+    // screen shows what the server has rather than what was typed. Demo mode just holds the value.
+    /**
+     * Write some of a book's settings to the server, and hold the book it answers with.
+     *
+     * Settings writes are last-one-wins: a number box sends one per keystroke, so only the answer
+     * to the latest write for a book is installed — an earlier answer arriving late would put back
+     * a value the person has already typed past. Returns the answer, or null when it was refused
+     * or has been overtaken; demo mode has nothing to write and answers null.
+     */
+    async _writeSettings(
+      bookId: string,
+      settings: BookSettings,
+      what: string,
+    ): Promise<ImportedBook | null> {
+      const svc = this._service();
+      if (!svc) return null;
+      const n = (settingsWrites.get(bookId) ?? 0) + 1;
+      settingsWrites.set(bookId, n);
+      try {
+        const answer = await svc.updateBook(bookId, settings);
+        if (settingsWrites.get(bookId) !== n) return null;
+        this._putBook(answer.book);
+        return answer;
+      } catch (cause) {
+        if (settingsWrites.get(bookId) !== n) return null;
+        this._failed(what, cause);
+        await this.loadBook(bookId);
+        return null;
+      }
+    },
+    /** The book as the server just described it, leaving its chapters as they are here. */
+    _putBook(book: Book): void {
+      const i = this.books.findIndex((b) => b.id === book.id);
+      if (i < 0) this.books.push(book);
+      else this.books[i] = book;
+    },
+    /** The budget as it now stands here, written whole: the server takes the cap and the pause together. */
+    _pushBudget(bookId: string, what: string): Promise<unknown> {
+      const b = this.bookById(bookId);
+      return this._writeSettings(bookId, { budget: b?.budget ?? null }, what);
+    },
+    async pauseBook(bookId: string): Promise<void> {
       const jobsStore = useJobsStore();
       const uiStore = useUiStore();
 
@@ -472,16 +524,27 @@ export const useLibraryStore = defineStore("library", {
           : "New scripting, narration and builds are held until you resume this book.",
         timeout: 5000,
       });
+      if (b) await this._pushBudget(bookId, "pause this book");
     },
-    resumeBook(bookId: string): void {
+    async resumeBook(bookId: string): Promise<void> {
       const uiStore = useUiStore();
       const b = this.bookById(bookId);
       if (b?.budget) b.budget.paused = false;
       if (b) uiStore.toast(`${b.title}: work resumed`, { kind: "success" });
+      if (b) await this._pushBudget(bookId, "resume this book");
     },
-    setBudgetCap(bookId: string, cap: number | null): void {
+    async setBudgetCap(bookId: string, cap: number | null): Promise<void> {
       const b = this.bookById(bookId);
-      if (b) (b.budget ??= { cap: null, paused: false }).cap = cap || null;
+      if (!b) return;
+      (b.budget ??= { cap: null, paused: false }).cap = cap || null;
+      await this._pushBudget(bookId, "save the budget");
+    },
+    /** The most the book's scripting may spend; null is no cap of its own. */
+    async setScriptBudget(bookId: string, v: number | null): Promise<void> {
+      const b = this.bookById(bookId);
+      if (!b) return;
+      b.scriptBudget = v;
+      await this._writeSettings(bookId, { scriptBudget: v }, "save the scripting budget");
     },
     _blocked(bookId: string, kind: string): boolean {
       const uiStore = useUiStore();
@@ -677,9 +740,23 @@ export const useLibraryStore = defineStore("library", {
       delete book.importing;
       return id;
     },
-    renameVolume(bookId: string, volId: number, name: string): void {
+    /**
+     * A new name for a volume. Like the settings above it is an input, so the name changes here at
+     * once and the server's answer follows; a refused rename reads the book back.
+     */
+    async renameVolume(bookId: string, volId: number, name: string): Promise<void> {
       const v = this.bookById(bookId)?.volumes.find((v) => v.id === volId);
-      if (v && name.trim()) v.name = name.trim();
+      name = name.trim();
+      if (!v || !name || v.name === name) return;
+      v.name = name;
+      const svc = this._service();
+      if (!svc) return;
+      try {
+        this._putBook(await svc.renameVolume(bookId, volId, name));
+      } catch (cause) {
+        this._failed("rename this volume", cause);
+        await this.loadBook(bookId);
+      }
     },
     /**
      * Runs of this book that a removal would cancel. A snapshot puts back finished work, not work
@@ -781,24 +858,51 @@ export const useLibraryStore = defineStore("library", {
       return gone.size;
     },
     // Volumes are sortable: chapters follow the volume order and are renumbered continuously.
-    moveVolume(bookId: string, volId: number, toIndex: number): void {
+    //
+    // With a server answering this asks first, the way `removeVolume` does, rather than moving at
+    // once: a renumbering moves every script, history, job and export filed under a chapter number,
+    // and putting all of that back after a refusal (the server refuses while an audiobook is being
+    // built, or while a volume is still in its review) would be a second renumbering. Once the
+    // server has moved its side, `_renumber` moves this side by the same rule — each chapter keeps
+    // its place within its volume — and the book and chapters the server answered with are installed
+    // over the result. Returns whether the volume moved.
+    async moveVolume(bookId: string, volId: number, toIndex: number): Promise<boolean> {
       const book = this.bookById(bookId);
-      if (!book) return;
+      if (!book) return false;
       const from = book.volumes.findIndex((v) => v.id === volId);
-      if (from < 0) return;
+      if (from < 0) return false;
       toIndex = Math.max(0, Math.min(book.volumes.length - 1, toIndex));
-      if (from === toIndex) return;
+      if (from === toIndex) return false;
       const vols = [...book.volumes];
       const [v] = vols.splice(from, 1);
       vols.splice(toIndex, 0, v);
-      book.volumes = vols;
+      const svc = this._service();
+      let answer: ImportedBook | null = null;
+      if (svc) {
+        try {
+          answer = await svc.reorderVolumes(
+            bookId,
+            vols.map((v) => v.id),
+          );
+        } catch (cause) {
+          this._failed("move this volume", cause);
+          return false;
+        }
+      }
+      // the book may have been re-read while the request was out; renumber what is here now
+      const here = this.bookById(bookId);
       const chs = this.chapters[bookId];
-      this._renumber(
-        bookId,
-        vols.flatMap((v) =>
-          chs.filter((c) => c.volumeId === v.id).sort((a, b) => a.volumeIndex - b.volumeIndex),
-        ),
-      );
+      if (here && chs) {
+        here.volumes = vols.map((v) => here.volumes.find((x) => x.id === v.id) ?? v);
+        this._renumber(
+          bookId,
+          here.volumes.flatMap((v) =>
+            chs.filter((c) => c.volumeId === v.id).sort((a, b) => a.volumeIndex - b.volumeIndex),
+          ),
+        );
+      } else this._forgetBook(bookId);
+      if (answer) this._put(answer.book, answer.chapters);
+      return true;
     },
     // give `ordered` chapters ids 1..n in that order; re-key segments, remap jobs/exports, fix volume ranges
     _renumber(bookId: string, ordered: Chapter[]): void {

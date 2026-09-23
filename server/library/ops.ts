@@ -6,12 +6,17 @@
 // another for a new volume — so there is one statement of each, and none of them knows what a
 // status code is. A rule that does not hold is thrown as an `AppError`, which `app.onError` turns
 // into the API's one error shape.
+import { and, eq } from "drizzle-orm";
+
 import type { Book, Chapter } from "@/types";
+import { pacingOrDefault, silenceOf } from "@/lib/speech";
 import type { AudioFiles } from "~/audio/files";
 import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
 import * as queue from "~/db/jobs";
 import * as library from "~/db/library";
+import { chapters } from "~/db/schema";
+import { readScript } from "~/db/script";
 import { env } from "~/env";
 import { checkArchive } from "~/epub/archive";
 import { diagnose } from "~/epub/diagnose";
@@ -19,7 +24,7 @@ import { plainText } from "~/epub/markdown";
 import { EpubParseError, parseEpub, type ParsedEpub } from "~/epub/parse";
 import { assembleBook, assembleVolume } from "~/import/assemble";
 import type { Runner } from "~/jobs/runner";
-import { AppError, conflict, notFound } from "~/lib/errors";
+import { AppError, badRequest, conflict, notFound } from "~/lib/errors";
 import { slugify } from "~/lib/http";
 import { inBackground } from "~/lib/background";
 
@@ -344,4 +349,79 @@ export async function removeVolume(
       export: e.id,
     });
   return { removed: "volume", chapters: gone.chapters };
+}
+
+// ---------- a book's settings, and its volumes' names and order ----------
+
+/**
+ * Write a book's budget, script budget or pacing, and answer with the book and its chapters.
+ *
+ * A pacing is stitched between clips rather than rendered, so changing it re-times every chapter
+ * that has been narrated — `settleChapter`'s sum, clips plus the silence between them — and
+ * invalidates nothing. A chapter nobody has narrated has no clips to put silence between and keeps
+ * the length it has. The budget is stored and not yet enforced here: nothing the fake provider
+ * does costs anything to hold against it.
+ */
+export function updateBook(
+  db: Db,
+  bookId: string,
+  settings: library.BookSettings,
+): BookAndChapters {
+  requireBook(db, bookId);
+  db.transaction((tx) => {
+    library.setBookSettings(tx, bookId, settings);
+    if (settings.pacing === undefined) return;
+    const pacing = pacingOrDefault(settings.pacing ?? undefined);
+    for (const ch of library.listChapters(tx, bookId)) {
+      if (ch.narration === "none") continue;
+      const segs = readScript(tx, bookId, ch.id);
+      const duration = segs.reduce((n, s) => n + s.audio.duration, 0) + silenceOf(segs, pacing);
+      tx.update(chapters)
+        .set({ duration })
+        .where(and(eq(chapters.bookId, bookId), eq(chapters.id, ch.id)))
+        .run();
+    }
+  });
+  return bookWithChapters(db, bookId);
+}
+
+/** Rename a volume. Nothing is renumbered; the name is what an audiobook cut by volume is called. */
+export function renameVolume(db: Db, bookId: string, volumeId: number, name: string): Book {
+  const book = requireBook(db, bookId);
+  if (!book.volumes.some((x) => x.id === volumeId)) throw notFound("No such volume");
+  library.renameVolume(db, bookId, volumeId, name);
+  return requireBook(db, bookId);
+}
+
+/**
+ * Read a book's volumes in this order, and number its chapters to follow it.
+ *
+ * `order` names every volume of the book once. Work queued or running carries on under the new
+ * numbers — a job finds its chapter by uid at every write — so nothing is cancelled. Refused while
+ * an audiobook of the book is being built, for the reason a removal is: the build records where
+ * each chapter landed by number. And refused while a volume is still in review, which is added at
+ * the end and has no place in the order until it is.
+ */
+export function reorderVolumes(db: Db, bookId: string, order: readonly number[]): BookAndChapters {
+  const book = requireBook(db, bookId);
+  const ids = book.volumes.map((x) => x.id);
+  if (
+    order.length !== ids.length ||
+    new Set(order).size !== order.length ||
+    !order.every((id) => ids.includes(id))
+  )
+    throw badRequest("Name every volume of the book once", `volumes: ${ids.join(", ")}`);
+  if (book.volumes.some((x) => x.importing))
+    throw conflict(
+      `A volume of “${book.title}” is still in review`,
+      "Add it to the book or cancel it before reordering.",
+    );
+  if (queue.activeJob(db, "export", bookId, null))
+    throw conflict(
+      `An audiobook of “${book.title}” is being built`,
+      "Let the build finish, or cancel it from the Queue, before reordering volumes.",
+    );
+  if (order.every((id, i) => id === ids[i])) return bookWithChapters(db, bookId);
+  library.reorderVolumes(db, bookId, order);
+  return bookWithChapters(db, bookId);
 }

@@ -427,6 +427,41 @@ describe("building an audiobook", () => {
     expect(old.status).toBe(200);
   });
 
+  test("removing the version an update copies from costs its chapters the shortcut, not the build", async () => {
+    const encoder = controlledEncoder();
+    const api = testApi({ encoder, speech: slowerOnRetake() });
+    const { id } = await narrated(api);
+    const settings = settingsFor();
+    await build(api, id, { ids: [1, 2, 3], settings });
+    await api.runner.idle();
+    const [v1] = await exportsOf(api, id);
+    const before = fileBytes(api, id, v1.id);
+    const kept = filePath(api, id, v1.id);
+    const was = (await chaptersOf(api, id))[2].duration;
+    await api.request(`/api/books/${id}/chapters/narrate`, jsonBody({ ids: [3], scope: "all" }));
+    await api.runner.idle();
+    const grew = (await chaptersOf(api, id))[2].duration - was;
+
+    // the plan is made, carries and all, and the version it copies from goes before a byte of it
+    const inside = encoder.hold();
+    const second = await build(api, id, { ids: [1, 2, 3], settings, updates: v1.id });
+    expect(second.body.export.reused).toBe(2);
+    await inside;
+    const removed = await api.request(`/api/books/${id}/exports/${v1.id}`, { method: "DELETE" });
+    expect(removed.status).toBe(200);
+    await untilGone(kept);
+    encoder.open();
+    await api.runner.idle();
+
+    const v2 = (await exportsOf(api, id)).find((e) => e.id === second.body.export.id)!;
+    expect(v2.status).toBe("done");
+    // the two chapters it meant to copy were read from their clips instead: the same audio
+    expect(playsFor(fileBytes(api, id, v2.id))).toBeCloseTo(playsFor(before) + grew, 0);
+    const notes = (await jobById(api, v2.jobId!)).activity ?? [];
+    expect(notes.filter((e) => e.message.endsWith("could not be carried over"))).toHaveLength(2);
+    expect(notes.find((e) => e.message === "Export ready")?.detail?.reusedChapters).toBe(0);
+  });
+
   test("a cancel that arrives after the last file is written still leaves the old version current", async () => {
     // The encoder has returned and the build is on its way to committing — the window the
     // encoders' own signal checks cannot see. Before the build checked once more, it committed,

@@ -74,6 +74,17 @@ export interface EpubInput {
   extraSpine?: string[];
   /** further manifest items that are not documents, by href: an image the zip may not have */
   assets?: string[];
+  /**
+   * A cover image, named the EPUB 3 way (`properties="cover-image"`) or the EPUB 2 way (a
+   * `<meta name="cover">` pointing at the item); `missing` promises it and leaves it out of the zip.
+   */
+  cover?: {
+    bytes: Uint8Array;
+    href?: string;
+    type?: string;
+    how?: "epub3" | "epub2";
+    missing?: true;
+  };
 }
 
 const esc = (s: string): string =>
@@ -138,7 +149,13 @@ export async function buildEpub({
   missingNav,
   extraSpine = [],
   assets = [],
+  cover,
 }: EpubInput): Promise<ArrayBuffer> {
+  const coverHref = cover?.href ?? "images/cover.png";
+  const coverItem = cover
+    ? `<item id="cover-image" href="${esc(coverHref)}" media-type="${cover.type ?? "image/png"}"${cover.how === "epub2" ? "" : ' properties="cover-image"'}/>`
+    : "";
+  const coverMeta = cover?.how === "epub2" ? `<meta name="cover" content="cover-image"/>` : "";
   // With a navigation directory the chapters move too, so the two are genuinely relative to each
   // other rather than both sitting in the package root where every spelling happens to work.
   const textDir = navDir ? "text/" : "";
@@ -186,12 +203,14 @@ export async function buildEpub({
 <dc:creator>${esc(author)}</dc:creator>
 <dc:language>en</dc:language>
 <meta property="dcterms:modified">${MODIFIED}</meta>
+${coverMeta}
 </metadata>
 <manifest>
 <item id="nav" href="${navPath}" media-type="application/xhtml+xml" properties="nav"/>
 ${files.map((f) => `<item id="${f.id}" href="${f.manifestHref}" media-type="application/xhtml+xml"/>`).join("\n")}
 ${extraSpine.map((href, i) => `<item id="x${i + 1}" href="${esc(href)}" media-type="application/xhtml+xml"/>`).join("\n")}
 ${assets.map((href, i) => `<item id="a${i + 1}" href="${esc(href)}" media-type="image/png"/>`).join("\n")}
+${coverItem}
 </manifest>
 <spine>
 ${files.map((f) => `<itemref idref="${f.id}"${f.nonLinear ? ' linear="no"' : ""}/>`).join("\n")}
@@ -213,6 +232,7 @@ ${toc}
   // does not have it, which is what a damaged or incompletely downloaded EPUB looks like.
   for (const f of files)
     if (!f.missing) zip.file(`OEBPS/${f.file}`, xhtml(f.title, bodyOf(f), f.headless));
+  if (cover && !cover.missing) zip.file(`OEBPS/${decodeURIComponent(coverHref)}`, cover.bytes);
   return zip.generateAsync({ type: "arraybuffer" });
 }
 

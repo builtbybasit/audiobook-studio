@@ -235,8 +235,17 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
     normalizes: options.loudness != null,
     // A span of AAC cannot be spliced beside audio encoded in this run; see `carries` on the port.
     carries: false,
+    // An MP4 cover atom and an MP3 picture frame both take the JPEG or PNG as it is.
+    covers: true,
 
-    async encode({ chapters, gap, out, signal, onChapter }: EncodeInput): Promise<EncodedFile> {
+    async encode({
+      chapters,
+      gap,
+      out,
+      signal,
+      onChapter,
+      cover,
+    }: EncodeInput): Promise<EncodedFile> {
       const first = chapters.flatMap((c) => c.parts).find((p) => p.kind !== "silence");
       if (!first) throw new Error("there was nothing to write");
       const head = readWavHeader(new Uint8Array(await Bun.file(first.path).arrayBuffer()));
@@ -282,11 +291,41 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
         const args = [...input];
         if (markers) {
           await writeFile(join(work, "chapters.txt"), chapterMetadata(chapters, spans));
-          args.push("-i", join(work, "chapters.txt"), "-map_metadata", "1", "-map_chapters", "1");
+          args.push("-i", join(work, "chapters.txt"));
         }
+        // The cover is one more input, copied in untouched and marked as the file's picture rather
+        // than a video track — which is what a player reads as cover art. An MP3 gets the frame
+        // spelled the way ID3v2.3 readers expect: a front cover, described as one.
+        const picture: string[] = [];
+        if (cover) {
+          args.push("-i", cover.path);
+          picture.push(
+            "-map",
+            `${markers ? 2 : 1}:v`,
+            "-c:v",
+            "copy",
+            "-disposition:v:0",
+            "attached_pic",
+            ...(format === "mp3"
+              ? [
+                  "-id3v2_version",
+                  "3",
+                  "-metadata:s:v",
+                  "title=Album cover",
+                  "-metadata:s:v",
+                  "comment=Cover (front)",
+                ]
+              : []),
+          );
+        }
+        // Every input is named before any option of the output: ffmpeg reads an option as belonging
+        // to the next file on the line, and the chapter list's mapping in front of the cover's `-i`
+        // is read as an option of the cover.
         args.push(
+          ...(markers ? ["-map_metadata", "1", "-map_chapters", "1"] : []),
           "-map",
           "0:a",
+          ...picture,
           ...filter,
           "-c:a",
           CODEC[format],

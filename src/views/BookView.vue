@@ -23,6 +23,7 @@ import {
 } from "@lucide/vue";
 import { UiNumber } from "@/ui";
 import AddEpubDialog from "@/components/AddEpubDialog.vue";
+import BookCover from "@/components/BookCover.vue";
 import { pendingFor, pickedFrom, type PendingAdd } from "@/components/addEpub";
 import type { Volume } from "@/types";
 import { useBookId } from "@/composables/useBookId";
@@ -148,10 +149,7 @@ const next = computed(() =>
 <template>
   <div v-if="book" class="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
     <div class="flex flex-col gap-5 sm:flex-row">
-      <div
-        class="h-40 w-28 shrink-0 rounded-lg shadow-lg"
-        :style="{ background: `linear-gradient(160deg, ${book.cover[0]}, ${book.cover[1]})` }"
-      ></div>
+      <BookCover :book="book" class="h-40 w-28 shrink-0 rounded-lg shadow-lg" />
       <div class="min-w-0 flex-1">
         <h1 class="font-serif text-3xl">{{ book.title }}</h1>
         <div class="text-zinc-500">

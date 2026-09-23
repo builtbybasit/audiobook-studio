@@ -50,6 +50,7 @@ import {
 } from "@/lib/exports";
 import { pacingOrDefault, pauseAfter, sampleRateLabel } from "@/lib/speech";
 import type { AudioFiles } from "~/audio/files";
+import { coverFiles, coverFileOf } from "~/covers/files";
 import type { Db, Tx } from "~/db/client";
 import * as exports from "~/db/exports";
 import { activeJob, getJob, setRun } from "~/db/jobs";
@@ -148,6 +149,15 @@ export function enqueueBuild(
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
   if (book.importing) throw conflict("Finish the contents review before building this book");
+  // A cover is named by the url it was uploaded to. Anything else — the demo's data URL, another
+  // book's image, a path that is not one — is a cover this server could never find, and is said
+  // now rather than as a build that fails once it gets there. Whether the file is still on disk is
+  // asked by the build itself, which is when it has to be.
+  if (settings.cover != null && !coverFileOf(bookId, settings.cover))
+    throw badRequest(
+      "The cover image is not one this server holds; choose it again",
+      "A cover is uploaded to the book first, and the build names it by the address it was given.",
+    );
 
   const known = new Map(library.listChapters(db, bookId).map((c) => [c.id, c]));
   const absent = [...new Set(ids)].filter((id) => !known.has(id));
@@ -271,6 +281,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
   /** The clip's file on disk, from the url its row carries. */
   const clipPath = (bookId: string, url: string | undefined): string | null =>
     url ? clips.path(bookId, basename(url)) : null;
+  const covers = coverFiles(clips.dir);
 
   async function build(ctx: JobContext, entry: ExportItem): Promise<void> {
     const { job, db, signal } = ctx;
@@ -336,6 +347,31 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         encoder: encoder.name,
         why: "a span of an encoded file cannot be spliced into a new one",
       });
+    // The picture: the one the settings chose, or the EPUB's own. A chosen one that has gone is the
+    // build failing — the audiobook asked for was one with that picture on it — while the EPUB's
+    // gone missing is a build without one, said out loud.
+    const chosen = run.settings.cover;
+    let cover = chosen ? await covers.existing(job.bookId, chosen) : null;
+    if (chosen && !cover)
+      throw new Error(
+        "The cover image this build names is no longer on the server; choose it again",
+      );
+    if (!chosen && book.coverImage) {
+      cover = await covers.existing(job.bookId, book.coverImage);
+      if (!cover)
+        ctx.note(
+          "The EPUB's cover is missing from the server; the file carries none",
+          "warning",
+          {},
+        );
+    }
+    if (cover && !encoder.covers) {
+      ctx.note(`A .${encoder.ext} file carries no cover; the image was not written`, "warning", {
+        encoder: encoder.name,
+      });
+      cover = null;
+    } else if (cover)
+      ctx.note(chosen ? "Embedding your cover image" : "Embedding the EPUB's cover", "info", {});
     if (entry.stale)
       ctx.note(`${entry.stale} chapters use clips the script has moved under`, "warning", {
         accepted: "the build was started with “use stale audio”",
@@ -443,6 +479,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         gap: run.settings.chapterGap,
         out: path,
         signal,
+        cover,
         onChapter: (landed) => {
           if (landed.readAgain) {
             copied--;

@@ -6,6 +6,7 @@ import type { PickedFile } from "@/components/addEpub";
 import { useBookFacts } from "@/views/library/bookFacts";
 import { hours, plural, TONE } from "@/views/library/shared";
 import BookMenu from "@/views/library/BookMenu.vue";
+import BookCover from "@/components/BookCover.vue";
 import { ArrowRight as GoIcon } from "@lucide/vue";
 
 const props = defineProps<{ book: Book }>();
@@ -21,10 +22,7 @@ const pct = (n: number) => `${p.value.total ? (n / p.value.total) * 100 : 0}%`;
   >
     <td class="px-3 py-2.5">
       <button class="flex w-full items-center gap-3 text-left" @click="emit('open')">
-        <span
-          class="h-10 w-8 shrink-0 rounded-sm shadow-sm"
-          :style="{ background: `linear-gradient(160deg, ${book.cover[0]}, ${book.cover[1]})` }"
-        ></span>
+        <BookCover :book="book" as="span" class="h-10 w-8 shrink-0 rounded-sm shadow-sm" />
         <span class="min-w-0">
           <span class="block truncate font-serif text-sm font-semibold leading-tight">{{
             book.title

@@ -142,6 +142,11 @@ export interface Book {
   author: string;
   /** two-stop gradient for the generated cover */
   cover: [string, string];
+  /**
+   * The cover image the EPUB carried, where the server can serve it from — `/api/books/:id/covers/…`.
+   * Absent when the book had none, and in the demo, which has no files; the gradient stands in.
+   */
+  coverImage?: string;
   addedAt: string;
   volumes: Volume[];
   /** how the chapters stand, counted; present on a book the server listed */

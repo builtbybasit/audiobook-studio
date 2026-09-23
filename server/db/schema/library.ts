@@ -26,6 +26,8 @@ export const books = sqliteTable("books", {
   author: text("author").notNull(),
   coverFrom: text("cover_from").notNull(),
   coverTo: text("cover_to").notNull(),
+  /** the EPUB's own cover, a file under the book's covers directory; null when it had none */
+  coverImage: text("cover_image"),
   /** epoch ms; the API serialises this to the YYYY-MM-DD the shelf shows */
   addedAt: integer("added_at").notNull(),
   /** still in its contents review: the library does not list it and nothing runs on it */

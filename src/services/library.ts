@@ -205,6 +205,12 @@ export interface LibraryService {
   ): Promise<Judged>;
 
   // ---------- finished audiobooks ----------
+  /**
+   * Keep an image to write into this book's audiobooks in place of the EPUB's cover. Answers with
+   * the url it is served from, which is what a build's `settings.cover` has to name: the server
+   * embeds only an image it holds for this book. The same image twice is the same url.
+   */
+  uploadCover(bookId: string, file: File): Promise<{ cover: string }>;
   exports(bookId: string): Promise<ExportItem[]>;
   removeExport(bookId: string, exportId: number): Promise<void>;
 }
@@ -388,6 +394,10 @@ export class HttpLibraryService implements LibraryService {
       `/books/${seg(bookId)}/chapters/${chapterId}/lines/${segmentId}/verdict`,
       { verdict },
     );
+  }
+
+  uploadCover(bookId: string, file: File): Promise<{ cover: string }> {
+    return this.http.postForm<{ cover: string }>(`/books/${seg(bookId)}/covers`, file, {});
   }
 
   async exports(bookId: string): Promise<ExportItem[]> {

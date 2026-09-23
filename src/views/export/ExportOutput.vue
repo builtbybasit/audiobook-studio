@@ -7,7 +7,7 @@ import { useScriptsStore } from "@/stores/scripts";
 // How the audiobook is written. The two questions everyone answers — what format, and one file or
 // many — are on the surface with the name and the quality; everything else folds away with its
 // current value on the summary line.
-import { computed } from "vue";
+import { computed, ref } from "vue";
 
 import {
   BITRATES,
@@ -22,6 +22,7 @@ import {
 import { DEFAULT_PACING, secs as secondsOf } from "@/lib/speech";
 import { hms, plural, secs } from "@/views/export/shared";
 import ExportSection from "@/views/export/ExportSection.vue";
+import BookCover from "@/components/BookCover.vue";
 import { UiNumber, UiSelect, UiSwitch, UiToggleGroup } from "@/ui";
 import {
   AudioLines as LoudnessIcon,
@@ -99,14 +100,28 @@ const PACING_PRESETS = {
 const sample = computed(() => chapters.value.slice(0, 3));
 const volNameOf = (volumeId: number) => volumes.value.find((v) => v.id === volumeId)?.name ?? null;
 
-function pickCover(e: Event) {
+// ---- the cover. What is shown is what the build embeds: the image chosen here, else the EPUB's own,
+// else nothing — the gradient stands in on screen and is never written into a file.
+const coverShown = computed(() => s.cover ?? book.value.coverImage);
+const coverCaption = computed(() =>
+  s.cover
+    ? "Your image, embedded in every file."
+    : book.value.coverImage
+      ? "From the EPUB, embedded in every file."
+      : "This EPUB has no cover image; the file will carry none.",
+);
+const uploading = ref(false);
+async function pickCover(e: Event) {
   const input = e.target as HTMLInputElement;
   const f = input.files?.[0];
-  if (!f) return;
-  const r = new FileReader();
-  r.onload = () => (s.cover = String(r.result));
-  r.readAsDataURL(f);
   input.value = "";
+  if (!f) return;
+  uploading.value = true;
+  try {
+    await exportsStore.chooseCover(props.bookId, s, f);
+  } finally {
+    uploading.value = false;
+  }
 }
 const trackSample = computed(() =>
   chapters.value.length ? trackNo(1, chapters.value.length) : "01",
@@ -223,32 +238,32 @@ const trackSample = computed(() =>
         </label>
       </div>
       <div class="mt-4 flex items-center gap-4">
-        <img
-          v-if="s.cover"
-          :src="s.cover"
-          class="h-24 w-16 shrink-0 rounded-md object-cover"
-          alt="cover"
-        />
-        <div
-          v-else
+        <BookCover
+          :book="{ cover: book.cover, coverImage: coverShown }"
           class="h-24 w-16 shrink-0 rounded-md"
-          :style="{ background: `linear-gradient(160deg, ${book.cover[0]}, ${book.cover[1]})` }"
-        ></div>
+        />
         <div class="text-sm">
           <div class="font-medium">Cover</div>
-          <div class="text-xs text-zinc-500">
-            {{
-              s.cover
-                ? "Your image, embedded in every file."
-                : "From the EPUB, embedded in every file."
-            }}
-          </div>
+          <div class="text-xs text-zinc-500">{{ coverCaption }}</div>
           <div class="mt-2 flex flex-wrap gap-1">
-            <label class="btn-ghost btn-xs cursor-pointer"
-              >{{ s.cover ? "Replace…" : "Use my own…"
-              }}<input type="file" accept="image/*" class="hidden" @change="pickCover" /></label
-            ><button v-if="s.cover" class="btn-ghost btn-xs" @click="s.cover = null">
-              Back to the EPUB cover
+            <label
+              class="btn-ghost btn-xs"
+              :class="uploading ? 'pointer-events-none opacity-60' : 'cursor-pointer'"
+              :aria-busy="uploading"
+              >{{ uploading ? "Uploading…" : s.cover ? "Replace…" : "Use my own…"
+              }}<input
+                type="file"
+                accept="image/jpeg,image/png"
+                class="hidden"
+                :disabled="uploading"
+                @change="pickCover" /></label
+            ><button
+              v-if="s.cover"
+              class="btn-ghost btn-xs"
+              :disabled="uploading"
+              @click="s.cover = null"
+            >
+              {{ book.coverImage ? "Back to the EPUB cover" : "Remove it" }}
             </button>
           </div>
         </div>

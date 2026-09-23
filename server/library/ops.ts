@@ -11,6 +11,7 @@ import { and, eq } from "drizzle-orm";
 import type { Book, Chapter } from "@/types";
 import { pacingOrDefault, silenceOf } from "@/lib/speech";
 import type { AudioFiles } from "~/audio/files";
+import { MAX_COVER_BYTES, sniffCover, type CoverFiles } from "~/covers/files";
 import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
 import * as queue from "~/db/jobs";
@@ -81,6 +82,8 @@ export interface ImportInput {
   bookId?: string;
   /** the volume's name; only read when `bookId` is set */
   name?: string;
+  /** where a new book's cover image is kept; without it the book keeps none */
+  covers?: CoverFiles;
 }
 
 export interface Imported extends BookAndChapters {
@@ -127,7 +130,7 @@ async function refused(bytes: ArrayBuffer, e: EpubParseError, log?: ImportLog): 
  * does not have to fetch again to show what it just imported.
  */
 export async function importEpub(db: Db, input: ImportInput, log?: ImportLog): Promise<Imported> {
-  const { bytes, fileName, title, bookId, name } = input;
+  const { bytes, fileName, title, bookId, name, covers } = input;
 
   // A volume goes onto a book that exists and has nothing already waiting in its review. Asked
   // before the file is read, because a thousand-chapter EPUB is several seconds of parsing to throw
@@ -176,12 +179,69 @@ export async function importEpub(db: Db, input: ImportInput, log?: ImportLog): P
 
   const id = library.freeBookId(db, slugify(title?.trim() || parsed.title || fileName));
   const assembled = assembleBook(parsed, id, fileName, { title });
+  // A new book's cover is its first file's. A volume added later brings its own, which is a
+  // different edition's cover as often as it is the same one, and replacing the book's with it
+  // unasked would be a surprise on the shelf; so a volume's is not read.
+  const cover = covers && parsed.cover ? await keepCover(covers, id, parsed.cover, log) : null;
+  if (cover) assembled.book.coverImage = cover;
   library.insertBook(db, assembled.book, assembled.chapters, assembled.bodies);
   log?.info(
     { book: id, title: assembled.book.title, chapters: assembled.chapters.length },
     "stored a new book",
   );
   return { ...bookWithChapters(db, id), read };
+}
+
+/**
+ * Keep the EPUB's cover when it is one a player would show — a JPEG or a PNG of a sane size — and
+ * say why not when it is not. A book without a usable cover is still a book: the shelf draws its
+ * gradient, and an audiobook built from it carries no picture unless one is chosen for it.
+ */
+async function keepCover(
+  covers: CoverFiles,
+  bookId: string,
+  bytes: Uint8Array,
+  log?: ImportLog,
+): Promise<string | null> {
+  const type = sniffCover(bytes);
+  if (!type || bytes.byteLength > MAX_COVER_BYTES) {
+    log?.info(
+      { bytes: bytes.byteLength },
+      type ? "the cover is too large to keep" : "the cover is not a JPEG or PNG; it was not kept",
+    );
+    return null;
+  }
+  return (await covers.write(bookId, bytes, type)).url;
+}
+
+/**
+ * Keep an image chosen for a book's audiobook, and say where it is.
+ *
+ * It does not replace the book's own cover: it is what an export's settings name, so one build can
+ * carry it and the next the EPUB's. The same image twice is the same file and the same url.
+ */
+export async function uploadCover(
+  db: Db,
+  covers: CoverFiles,
+  bookId: string,
+  bytes: Uint8Array,
+): Promise<{ cover: string }> {
+  requireBook(db, bookId);
+  if (!bytes.byteLength) throw badRequest("That image is empty");
+  if (bytes.byteLength > MAX_COVER_BYTES)
+    throw new AppError(
+      413,
+      `That image is larger than ${MAX_COVER_BYTES / 1024 / 1024} MB`,
+      "A cover a store asks for — a 3000-pixel square JPEG — is a few megabytes at most.",
+    );
+  const type = sniffCover(bytes);
+  if (!type)
+    throw new AppError(
+      415,
+      "A cover has to be a JPEG or PNG image",
+      "Those are the pictures an M4B and an MP3 carry that every player shows.",
+    );
+  return { cover: (await covers.write(bookId, bytes, type)).url };
 }
 
 /** The review is done: the book, or its new volume, joins the library. Nothing starts running. */

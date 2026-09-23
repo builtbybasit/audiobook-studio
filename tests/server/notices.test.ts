@@ -177,6 +177,59 @@ describe("notices in a web-novel EPUB", () => {
     expect(noteOn([chapter("Chapter 12", "")])).toBeNull();
   });
 
+  test("speech in single quotes is dialogue, curly or straight", () => {
+    // a short scene, British-printed: without the quotes counting it reads as a notice about a vote
+    for (const [open, close] of [
+      ["‘", "’"],
+      ["'", "'"],
+    ])
+      expect(
+        noteOn([
+          chapter(
+            "The Assembly",
+            `${open}Sit down,${close} said the steward. ${open}The council will vote at dusk, and not before.${close}\n\nNobody sat.`,
+          ),
+        ]),
+      ).toBeNull();
+  });
+
+  test("an apostrophe is not a quote, so a notice full of them is still a notice", () => {
+    const note = noteOn([
+      chapter(
+        "Update",
+        "I’m sorry, I can’t post this week — it’s been a rough month and the readers’ comments have kept me going. ’Tis the season. Thanks for reading.",
+      ),
+    ]);
+    expect(note?.verdict).toBe("skip");
+    expect(note?.evidence).toContain("no dialogue");
+  });
+
+  test("a story's own votes, health and drafts do not make it a notice", () => {
+    const narration = [
+      "The village would vote on the matter at first light, and every family had already chosen.",
+      "His health had been failing since the winter, though he told no one.",
+      "Her brother was drafted in the spring and marched south with the rest.",
+    ];
+    for (const text of narration) expect(noteOn([chapter("Chapter 4", text)])).toBeNull();
+  });
+
+  test("the same words aimed at readers are still told apart", () => {
+    const notes = detectNotices([
+      chapter("Chapter 40", "Please vote for the story on the listing if you can!"),
+      chapter("Chapter 41", "No chapter this week, for health reasons. Back soon."),
+      chapter("Chapter 42", "I’ve drafted the next three chapters and they are with the editor."),
+      chapter("Chapter 43", "I’m back, and the story picks up where it left off."),
+    ]);
+    expect(notes.map((n) => n?.kind)).toEqual(["vote", "health", "progress", "return"]);
+    expect(notes.every((n) => n?.verdict === "skip")).toBe(true);
+  });
+
+  test("a title only looks like a notice if the word is whole", () => {
+    // "Noticed" and "Updated" are story titles; a short chapter under one is not an announcement
+    for (const title of ["Noticed", "Updated Orders"])
+      expect(noteOn([chapter(title, "The ship left harbour before the tide turned.")])).toBeNull();
+  });
+
   test("every note a chapter can carry is one the review can act on", () => {
     const notes = detectNotices([
       chapter("Hiatus", "Going on hiatus for a few weeks. Thank you for reading."),

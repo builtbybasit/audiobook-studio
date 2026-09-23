@@ -13,8 +13,8 @@
 // model's own rate. An endpoint that names a rate therefore fails before any request, saying to
 // clear it. Sending the line anyway would not be honest either way — a clip at another rate than
 // the endpoint names is drift to the job, so every run would render the line again and spend again.
-import { audioAnswer, refuseEncoding } from "~/providers/answer";
-import type { SpeechCallOptions } from "~/providers/fishSpeech";
+import { refuseEncoding } from "~/providers/answer";
+import { sendSpeech, type SpeechCallOptions } from "~/providers/fishSpeech";
 import { call, jsonHeaders } from "~/providers/http";
 import type { RenderedClip, SpeechInput } from "~/providers/speech";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
@@ -28,28 +28,34 @@ export async function openaiSpeak(
   voice: string,
   options: SpeechCallOptions,
 ): Promise<RenderedClip> {
-  const { signal } = input;
   const { format } = input.encoding;
   refuseEncoding(target, input);
-  const instructions = input.instructions.trim();
+  // what is actually sent beside the words, and so what the ledger counts: nothing for a model
+  // that takes none
+  const instructions = NO_INSTRUCTIONS.test(target.model) ? "" : input.instructions.trim();
   const started = Date.now();
-  const res = await call(
+  const audio = await sendSpeech(
+    input,
     target,
-    `${target.baseUrl}/audio/speech`,
     {
-      method: "POST",
-      headers: jsonHeaders(target),
-      body: JSON.stringify({
-        model: target.model,
-        input: input.text,
-        voice,
-        response_format: format,
-        ...(instructions && !NO_INSTRUCTIONS.test(target.model) ? { instructions } : {}),
-      }),
+      url: `${target.baseUrl}/audio/speech`,
+      init: {
+        method: "POST",
+        headers: jsonHeaders(target),
+        body: JSON.stringify({
+          model: target.model,
+          input: input.text,
+          voice,
+          response_format: format,
+          ...(instructions ? { instructions } : {}),
+        }),
+      },
+      format,
+      text: input.text,
+      instructions,
     },
-    { signal, ...options },
+    options,
   );
-  const audio = await audioAnswer(target, res, signal, format);
   return {
     ...audio,
     ms: Date.now() - started,

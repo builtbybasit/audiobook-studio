@@ -13,7 +13,9 @@ import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { ApiError } from "@/services/http";
 import { activeJobsService, type JobsService } from "@/services/jobs";
+import { activeUsageService } from "@/services/usage";
 import type {
+  BookSpend,
   EndpointLoad,
   Eta,
   Job,
@@ -36,6 +38,11 @@ const AVG_JOB: Record<JobKind, number> = { scripting: 25, narration: 60, export:
 interface JobsState {
   jobs: Job[];
   scriptTelemetry: Record<string, ScriptEndpointTelemetry>;
+  /**
+   * What each book has spent and holds, as the server's ledger last said — what `useBookSpend`
+   * and `useLibrarySpend` install. Empty in the demo, whose spending is `useUsageStore`'s.
+   */
+  spend: Record<string, BookSpend>;
   _nextId: number;
   /** ids for bulk runs: every chapter asked for in one press shares one */
   _nextRun: number;
@@ -51,6 +58,7 @@ export const useJobsStore = defineStore("jobs", {
       _nextId: nextId,
       _nextRun: 1,
       scriptTelemetry: {},
+      spend: {},
     };
   },
   getters: {
@@ -95,11 +103,17 @@ export const useJobsStore = defineStore("jobs", {
     scriptUsage(): ScriptUsageRecord[] {
       return useUsageStore().scriptUsage;
     },
-    scriptSpent(): (bookId: string) => number {
+    // The four figures below are what every budget panel, gate and wait reason reads. With a server
+    // answering they are the server's (`spend`, read from its ledger and its queue), because the
+    // server prices every request and holds every reservation; the demo's ledger has nothing real
+    // in it there, and a server job carries no reservation of its own to add up here.
+    scriptSpent(s): (bookId: string) => number {
       const usageStore = useUsageStore();
+      if (activeUsageService()) return (bookId) => s.spend[bookId]?.scriptSpent ?? 0;
       return (bookId: string): number => usageStore.scriptSpent(bookId);
     },
     scriptReserved(s): (bookId: string) => number {
+      if (activeUsageService()) return (bookId) => s.spend[bookId]?.scriptReserved ?? 0;
       return (bookId: string): number =>
         s.jobs
           .filter((j) => j.bookId === bookId && !j.finishedAt)
@@ -111,6 +125,7 @@ export const useJobsStore = defineStore("jobs", {
      * so a reservation is what stops the second one rather than the first one's spending.
      */
     reserved(s): (bookId: string) => number {
+      if (activeUsageService()) return (bookId) => s.spend[bookId]?.reserved ?? 0;
       return (bookId: string): number =>
         s.jobs
           .filter((j) => j.bookId === bookId && !j.finishedAt)
@@ -140,8 +155,9 @@ export const useJobsStore = defineStore("jobs", {
      * world's own narration predates the ledger and is added from the clips that carry no receipt;
      * those two sets never overlap. See `useUsageStore`.
      */
-    spent(): (bookId: string) => number {
+    spent(s): (bookId: string) => number {
       const usageStore = useUsageStore();
+      if (activeUsageService()) return (bookId) => s.spend[bookId]?.spent ?? 0;
       return (bookId: string): number =>
         usageStore.scriptSpent(bookId) +
         usageStore.speechSpent(bookId) +
@@ -184,6 +200,10 @@ export const useJobsStore = defineStore("jobs", {
         description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
         timeout: 8000,
       });
+    },
+    /** A book's spending as the server's ledger sums it. What `useBookSpend` installs. */
+    _installSpend(bookId: string, spend: BookSpend): void {
+      this.spend[bookId] = spend;
     },
     /** The queue as the server holds it, in place of what was here. What `useBookJobs` installs. */
     _install(jobs: Job[]): void {

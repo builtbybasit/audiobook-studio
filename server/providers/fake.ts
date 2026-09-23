@@ -9,6 +9,11 @@
 // and the speaker is whoever the paragraph names beside a speech verb — "…," said Mara — or
 // `Unknown` when it names nobody. That is enough to give the Scripting page a cast to route, a
 // script to correct and clips to render, which is what the screens need to be tested against.
+//
+// Each call reports one simulated request, with token counts worked out from the text (four
+// characters to a token), so a priced profile puts real-looking rows in the ledger and a budget can
+// be run out — in a test or a demo — without spending anything.
+import { normalizeUsage } from "@/lib/pricing";
 import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -70,11 +75,28 @@ export function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** A rough token count: four characters to a token, which is what the demo's estimates assume. */
+const tokensIn = (text: string): number => Math.ceil(text.length / 4);
+
 export function fakeScriptingProvider(options: FakeScriptingOptions = {}): ScriptingProvider {
   return {
     name: "Fake scripting (local)",
-    async script({ text, signal, progress }: ScriptInput): Promise<ScriptedLine[]> {
-      if (options.failWith) throw new Error(options.failWith);
+    async script({ text, signal, progress, sent }: ScriptInput): Promise<ScriptedLine[]> {
+      const startedAt = Date.now();
+      if (options.failWith) {
+        // a refusal, as a provider that answered with an error would report it: nothing was used
+        sent?.({
+          startedAt,
+          finishedAt: Date.now(),
+          attempts: 1,
+          rateLimited: false,
+          status: "failed",
+          error: { code: 0, message: options.failWith },
+          simulated: true,
+          usage: null,
+        });
+        throw new Error(options.failWith);
+      }
       const paragraphs = text
         .split(/\n\s*\n/)
         .map((p) => p.replace(/\s+/g, " ").trim())
@@ -86,6 +108,22 @@ export function fakeScriptingProvider(options: FakeScriptingOptions = {}): Scrip
         out.push(...attributeParagraph(paragraph));
         progress?.(i + 1, paragraphs.length);
       }
+      sent?.({
+        startedAt,
+        finishedAt: Date.now(),
+        attempts: 1,
+        rateLimited: false,
+        status: "done",
+        simulated: true,
+        usage: normalizeUsage(
+          {
+            inputTokens: tokensIn(text),
+            outputTokens: tokensIn(out.map((l) => l.text).join("")),
+            cachedInput: null,
+          },
+          "internal",
+        ),
+      });
       return out;
     },
     async probe() {

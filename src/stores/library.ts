@@ -504,9 +504,22 @@ export const useLibraryStore = defineStore("library", {
       else this.books[i] = book;
     },
     /** The budget as it now stands here, written whole: the server takes the cap and the pause together. */
-    _pushBudget(bookId: string, what: string): Promise<unknown> {
+    async _pushBudget(bookId: string, what: string): Promise<unknown> {
       const b = this.bookById(bookId);
-      return this._writeSettings(bookId, { budget: b?.budget ?? null }, what);
+      const answer = await this._writeSettings(bookId, { budget: b?.budget ?? null }, what);
+      if (answer) await this._budgetMoved(bookId);
+      return answer;
+    },
+    /**
+     * A budget was written: the book's spending is read again alongside it, so every panel that
+     * sets the one against the other shows both as the server now has them. `keys.spend` is
+     * named here rather than through `@/queries/spend`, which reads this store.
+     */
+    _budgetMoved(bookId: string): Promise<unknown> {
+      return Promise.all([
+        invalidate({ key: keys.spend(bookId) }),
+        invalidate({ key: keys.librarySpend }),
+      ]);
     },
     async pauseBook(bookId: string): Promise<void> {
       const jobsStore = useJobsStore();
@@ -544,7 +557,8 @@ export const useLibraryStore = defineStore("library", {
       const b = this.bookById(bookId);
       if (!b) return;
       b.scriptBudget = v;
-      await this._writeSettings(bookId, { scriptBudget: v }, "save the scripting budget");
+      if (await this._writeSettings(bookId, { scriptBudget: v }, "save the scripting budget"))
+        await this._budgetMoved(bookId);
     },
     _blocked(bookId: string, kind: string): boolean {
       const uiStore = useUiStore();

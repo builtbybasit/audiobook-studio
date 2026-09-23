@@ -45,11 +45,10 @@ import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { billingOf, speechPricing } from "@/lib/endpoints";
+import { plannedSpeechUnits, worstCaseOf } from "@/lib/narrationCost";
 import {
   addUnits,
-  AUDIO_CHARS_PER_SECOND,
   estimateSpeech,
-  measureSpeech,
   money,
   noUnits,
   speechComponents,
@@ -192,7 +191,7 @@ export const useNarrationStore = defineStore("narration", {
           // both halves unknown is a rate nobody can reserve against; a known undiscounted figure is
           // still a cap to check, even when the discounted one is missing
           if (priced.cost == null && priced.withoutPromotions == null) unpriced += row.requests;
-          cost += Math.max(priced.cost ?? 0, priced.withoutPromotions ?? 0);
+          cost += worstCaseOf(priced);
         }
         return { cost, unpriced };
       };
@@ -269,19 +268,11 @@ export const useNarrationStore = defineStore("narration", {
       const castStore = useCastStore();
 
       return (bookId, seg, ep) => {
-        const render = this.expressionRender(bookId, seg);
-        const parts = render.issues.length
-          ? partsFor(render.text, ep)
-          : expressionParts(render, ep).length;
         const who = castStore.charactersOf(bookId).find((x) => x.name === seg.speaker);
-        return measureSpeech(
-          {
-            text: render.text,
-            instructions: speechInstructions({ style: who?.style, direction: seg.direction }),
-            requests: parts,
-            audioSeconds: render.text.length / AUDIO_CHARS_PER_SECOND,
-          },
-          billingOf(ep),
+        return plannedSpeechUnits(
+          this.expressionRender(bookId, seg),
+          ep,
+          speechInstructions({ style: who?.style, direction: seg.direction }),
         );
       };
     },
@@ -950,9 +941,11 @@ export const useNarrationStore = defineStore("narration", {
 
       if (libraryStore._blocked(bookId, "narrate")) return;
       // With a server answering, the run is the server's: it decides which lines the scope
-      // covers from the clips it holds, renders them and writes each as it lands. The expression
-      // guard, the estimate and the budget gates are the seeded endpoints' and do not apply —
-      // see `docs/backend.md`.
+      // covers from the clips it holds, renders them and writes each as it lands. The budget is
+      // the server's to enforce too: it refuses a run that does not fit the book's cap, or any run
+      // on a paused book, with a 409 whose sentence the toast shows as it is, and stops a running
+      // job before a request the cap no longer allows. The expression guard and the local budget
+      // gate are the demo's and are not asked here — see `docs/backend.md`.
       if (activeJobsService()) {
         void this._runRemote(bookId, ids, { scope, quiet });
         return;

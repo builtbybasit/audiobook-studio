@@ -13,3 +13,5 @@ export { useChapterHistory } from "@/queries/history";
 export { useCast } from "@/queries/cast";
 export { useBookExports } from "@/queries/exports";
 export { useBookJobs, POLL_MS } from "@/queries/jobs";
+export { useBookSpend, useLibrarySpend, spendMoved } from "@/queries/spend";
+export { useEndpointHistory } from "@/queries/endpointHistory";

@@ -1,13 +1,14 @@
 // The port a scripting model is reached through.
 //
-// A scripting job hands a provider a chapter's prose and gets back lines with speakers. That is the
-// whole contract: what model, what prompt, what key and what it cost are the provider's business,
-// and the job neither knows nor stores any of it. A key, when there is one, is read by the provider
+// A scripting job hands a provider a chapter's prose and gets back lines with speakers. What model,
+// what prompt and what key are the provider's business; what each request used it reports through
+// `sent`, and the job prices that into the ledger (`sent.ts`). A key, when there is one, is read by the provider
 // from the server's own environment and never leaves the process — see `docs/backend.md`.
 //
 // Two implementations: the fake, which reads the prose and never the network, and the one that
 // calls the profile the run was queued with (`SCRIPTING_PROVIDER=endpoints`).
 import type { SegmentType } from "@/types";
+import type { SentScript } from "~/providers/sent";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
 
 /** A profile as a request needs it: the target, and how long an answer may be. */
@@ -34,6 +35,8 @@ export interface ScriptInput {
    * "the girl". Names only, Narrator included; a provider may ignore it.
    */
   cast: string[];
+  /** called once for every request that reached the wire, answered or not; see `sent.ts` */
+  sent?(request: SentScript): void;
 }
 
 /** One line the model attributed. The job gives it an id and a place. */

@@ -2,8 +2,9 @@
 //
 // A narration job hands a provider one line — the words, who says them, how — and gets back audio
 // with a duration. That is the whole contract, the same shape of contract the scripting port
-// keeps: what model, what request, what key and what it cost are the provider's business, and the
-// job records only what the provider says about itself. A key, when there is one, is read by the
+// keeps: what model, what request and what key are the provider's business, and the job records
+// only what the provider says about itself — each request it sent included, through `sent`, which
+// the job prices into the ledger (`sent.ts`). A key, when there is one, is read by the
 // provider from the server's own environment and never leaves the process — see `docs/backend.md`.
 //
 // Two implementations: the fake, which renders a tone and never the network, and the one that
@@ -14,6 +15,7 @@
 // it really came back in, because that is what it is kept as and served as. The fake answers WAV
 // whatever it is asked for, and says so.
 import type { AudioEncoding, AudioFormat, SegmentType, VoiceRef } from "@/types";
+import type { SentSpeech } from "~/providers/sent";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
 
 export interface SpeechInput {
@@ -48,6 +50,8 @@ export interface SpeechInput {
   target: ProviderTarget | null;
   /** aborted when the job is cancelled; a provider that is mid-request should stop */
   signal: AbortSignal;
+  /** called once for every request that reached the wire, answered or not; see `sent.ts` */
+  sent?(request: SentSpeech): void;
 }
 
 export interface RenderedClip {

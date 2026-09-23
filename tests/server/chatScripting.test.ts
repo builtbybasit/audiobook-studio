@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { chatScriptingProvider, fidelity, NO_PROFILE } from "~/providers/chatScripting";
 import { ProviderError } from "~/providers/http";
 import type { ScriptInput, ScriptTarget } from "~/providers/scripting";
+import type { SentScript } from "~/providers/sent";
 
 const TEXT = "The door opened. “Come in,” said Mara softly.";
 
@@ -28,8 +29,15 @@ const target = (over: Partial<ScriptTarget> = {}): ScriptTarget => ({
   ...over,
 });
 
+/** What a gateway says a request used, OpenAI-shaped: the cached tokens inside the prompt's. */
+const USAGE = {
+  prompt_tokens: 1200,
+  completion_tokens: 300,
+  prompt_tokens_details: { cached_tokens: 1000 },
+};
+
 /** A completion as the gateway sends one: content fenced, reasoning alongside. */
-function completion(content: string, finish = "stop"): Response {
+function completion(content: string, finish = "stop", usage?: typeof USAGE): Response {
   return Response.json({
     choices: [
       {
@@ -37,6 +45,7 @@ function completion(content: string, finish = "stop"): Response {
         finish_reason: finish,
       },
     ],
+    ...(usage ? { usage } : {}),
   });
 }
 const fenced = (lines: unknown[]): string =>
@@ -61,6 +70,12 @@ function gateway(...replies: (() => Response | Promise<Response>)[]) {
     return reply();
   }) as unknown as typeof globalThis.fetch;
   return { sent, provider: chatScriptingProvider({ fetch, backoffMs: () => 0 }) };
+}
+
+/** An input whose reports are kept, for the tests about what reaches the ledger. */
+function reported(over: Partial<ScriptInput> = {}) {
+  const sent: SentScript[] = [];
+  return { sent, input: input({ sent: (r) => sent.push(r), ...over }) };
 }
 
 const input = (over: Partial<ScriptInput> = {}): ScriptInput => ({
@@ -120,6 +135,21 @@ describe("a request", () => {
     expect(user).toContain(TEXT);
   });
 
+  test("reports what the completion said it used, once, as a request that was not simulated", async () => {
+    const { provider } = gateway(() => completion(fenced(LINES), "stop", USAGE));
+    const { sent, input } = reported();
+    await provider.script(input);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      status: "done",
+      attempts: 1,
+      rateLimited: false,
+      simulated: false,
+      usage: { inputTokens: 1200, cachedInput: 1000, outputTokens: 300, format: "openai" },
+    });
+    expect(sent[0].error).toBeUndefined();
+  });
+
   test("carries no key when none is needed, and no cap when the profile sets none", async () => {
     const { sent, provider } = gateway(() => completion(JSON.stringify({ lines: LINES })));
     await provider.script(
@@ -154,9 +184,31 @@ describe("a refusal", () => {
     await expect(provider.script(input())).rejects.toThrow(/left out 3 of 8 words/);
   });
 
-  test("an answer cut off at max output tokens says so", async () => {
-    const { provider } = gateway(() => completion('```json\n{"lines":[{"type":', "length"));
-    await expect(provider.script(input())).rejects.toThrow(/cut off at max output tokens \(4000\)/);
+  test("an answer cut off at max output tokens says so, and is reported failed with what it used", async () => {
+    const { provider } = gateway(() => completion('```json\n{"lines":[{"type":', "length", USAGE));
+    const { sent, input } = reported();
+    await expect(provider.script(input)).rejects.toThrow(/cut off at max output tokens \(4000\)/);
+    // the model wrote those tokens and they are billed, whatever became of the script
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      status: "failed",
+      usage: { inputTokens: 1200, outputTokens: 300 },
+      error: { code: 200, message: expect.stringMatching(/cut off at max output tokens/) },
+    });
+  });
+
+  test("a server fault that outlasts the retries is reported failed, with every attempt and no usage", async () => {
+    const { sent: wire, provider } = gateway(() => new Response("upstream down", { status: 500 }));
+    const { sent, input } = reported();
+    await expect(provider.script(input)).rejects.toThrow("Gateway answered 500: upstream down");
+    expect(wire).toHaveLength(3);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      status: "failed",
+      attempts: 3,
+      usage: null,
+      error: { code: 500, message: "Gateway answered 500: upstream down" },
+    });
   });
 
   test("an answer that is not a script is quoted back", async () => {
@@ -177,16 +229,21 @@ describe("a refusal", () => {
       () => new Response("slow down", { status: 429, headers: { "retry-after": "0" } }),
       () => completion(fenced(LINES)),
     );
-    expect(await provider.script(input())).toHaveLength(3);
+    const report = reported();
+    expect(await provider.script(report.input)).toHaveLength(3);
     expect(sent).toHaveLength(2);
+    expect(report.sent).toMatchObject([{ status: "done", attempts: 2, rateLimited: true }]);
   });
 
   test("a profile that needs a key and has none is refused before any request", async () => {
     const { sent, provider } = gateway(() => completion(fenced(LINES)));
-    const run = provider.script(input({ target: target({ apiKey: null }) }));
+    const report = reported({ target: target({ apiKey: null }) });
+    const run = provider.script(report.input);
     await expect(run).rejects.toBeInstanceOf(ProviderError);
     await expect(run).rejects.toThrow(/needs an API key/);
     expect(sent).toHaveLength(0);
+    // nothing went out, so there is nothing to bill
+    expect(report.sent).toEqual([]);
   });
 
   test("a run with no profile is refused before any request", async () => {
@@ -204,7 +261,10 @@ describe("a refusal", () => {
         controller.abort(reason);
       })) as unknown as typeof globalThis.fetch;
     const provider = chatScriptingProvider({ fetch, backoffMs: () => 0 });
-    await expect(provider.script(input({ signal: controller.signal }))).rejects.toBe(reason);
+    const report = reported({ signal: controller.signal });
+    await expect(provider.script(report.input)).rejects.toBe(reason);
+    // what the provider made of a request dropped halfway is not knowable, so nothing is claimed
+    expect(report.sent).toEqual([]);
   });
 });
 

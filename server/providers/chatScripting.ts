@@ -12,18 +12,31 @@
 // that silently skips text is the worst thing this app could make, so every answer is checked word
 // for word against what was sent (`fidelity`) and refused, saying how much went missing, when it
 // does not match.
+//
+// Every request that reaches the wire is reported through `input.sent` with the usage the answer
+// carried, whether its script was accepted or refused: a model that was cut off or dropped a
+// sentence was still billed for it. See `sent.ts`.
 import * as v from "valibot";
 
-import type { SegmentType } from "@/types";
+import type { SegmentType, TokenUsage } from "@/types";
 import { NARRATOR } from "@/lib/cast";
+import { normalizeUsage } from "@/lib/pricing";
 import { UNKNOWN_SPEAKER } from "~/providers/fake";
-import { call, jsonHeaders, ProviderError, requireKey, type CallOptions } from "~/providers/http";
+import {
+  call,
+  jsonHeaders,
+  ProviderError,
+  requireKey,
+  type CallOptions,
+  type CallStats,
+} from "~/providers/http";
 import type {
   ScriptInput,
   ScriptTarget,
   ScriptedLine,
   ScriptingProvider,
 } from "~/providers/scripting";
+import type { SentScript } from "~/providers/sent";
 import type { ProbeResult } from "~/providers/target";
 
 export interface ChatScriptingOptions {
@@ -151,6 +164,26 @@ const Completion = v.object({
   ),
 });
 
+/**
+ * The `usage` block of a completion, read on its own: a gateway that sends a malformed one must not
+ * cost a good script, so it is checked apart from the answer and simply read as not reported.
+ */
+const Metered = v.looseObject({
+  usage: v.looseObject({
+    prompt_tokens: v.optional(v.nullable(v.number())),
+    completion_tokens: v.optional(v.nullable(v.number())),
+    prompt_tokens_details: v.optional(
+      v.nullable(v.looseObject({ cached_tokens: v.optional(v.nullable(v.number())) })),
+    ),
+  }),
+});
+
+/** What a completion says it used, normalized; null when it said nothing readable. */
+export function usageOf(body: unknown): TokenUsage | null {
+  const read = v.safeParse(Metered, body);
+  return read.success ? normalizeUsage(read.output.usage, "openai") : null;
+}
+
 /** A type as a model may spell it, read as the one it means. */
 function typeOf(said: string, speaker: string): SegmentType {
   const t = said.trim().toLowerCase();
@@ -227,6 +260,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     cast: readonly string[],
     text: string,
     signal: AbortSignal,
+    sent?: (request: SentScript) => void,
   ): Promise<ScriptedLine[]> {
     requireKey(target);
     const body = {
@@ -239,40 +273,84 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
       temperature: 0.1,
       ...(target.maxOutputTokens > 0 ? { max_tokens: target.maxOutputTokens } : {}),
     };
-    const res = await call(
-      target,
-      `${target.baseUrl}/chat/completions`,
-      { method: "POST", headers: jsonHeaders(target), body: JSON.stringify(body) },
-      { signal, fetch: options.fetch, backoffMs: options.backoffMs },
-    );
-    let completion: v.InferOutput<typeof Completion>;
+    const stats: CallStats = { attempts: 0, rateLimited: false };
+    const startedAt = Date.now();
+    /** The one report for this request: what it used, and how it ended. */
+    const report = (usage: TokenUsage | null, error?: ProviderError): void =>
+      sent?.({
+        startedAt,
+        finishedAt: Date.now(),
+        attempts: Math.max(1, stats.attempts),
+        rateLimited: stats.rateLimited,
+        status: error ? "failed" : "done",
+        ...(error ? { error: { code: error.status, message: error.message } } : {}),
+        simulated: false,
+        usage,
+      });
+
+    let res: Response;
     try {
-      completion = v.parse(Completion, await res.json());
+      res = await call(
+        target,
+        `${target.baseUrl}/chat/completions`,
+        { method: "POST", headers: jsonHeaders(target), body: JSON.stringify(body) },
+        { signal, fetch: options.fetch, backoffMs: options.backoffMs, stats },
+      );
+    } catch (e) {
+      // a cancel is not a request that ended: what the provider made of it is not knowable
+      if (signal.aborted) throw signal.reason;
+      if (e instanceof ProviderError) report(null, e);
+      throw e;
+    }
+
+    // From here the request was answered, and whatever is refused below was billed as it stands.
+    let raw: unknown;
+    try {
+      raw = await res.json();
     } catch {
       if (signal.aborted) throw signal.reason;
+      raw = undefined;
+    }
+    if (signal.aborted) throw signal.reason;
+    const usage = usageOf(raw);
+    try {
+      const lines = readAnswer(target, text, res.status, raw);
+      report(usage);
+      return lines;
+    } catch (e) {
+      if (e instanceof ProviderError) report(usage, e);
+      throw e;
+    }
+  }
+
+  /** The script an answer holds, checked against the prose it was sent; throws what is wrong. */
+  function readAnswer(
+    target: ScriptTarget,
+    text: string,
+    status: number,
+    raw: unknown,
+  ): ScriptedLine[] {
+    const parsed = v.safeParse(Completion, raw);
+    if (!parsed.success)
       throw new ProviderError(
         `${target.name} answered with something that is not a chat completion`,
-        res.status,
+        status,
         false,
       );
-    }
+    const completion = parsed.output;
     const [choice] = completion.choices;
     if (choice.finish_reason === "length")
       throw new ProviderError(
         `${target.name}’s answer was cut off at max output tokens (${target.maxOutputTokens || "the model’s own limit"}); raise it on the Endpoints page (a reasoning model spends part of it thinking) or use smaller chunks`,
-        res.status,
+        status,
         false,
       );
     const content = choice.message?.content ?? "";
     if (!content.trim())
-      throw new ProviderError(`${target.name} answered with no script at all`, res.status, false);
+      throw new ProviderError(`${target.name} answered with no script at all`, status, false);
     const lines = linesOf(content, target.name);
     if (!lines.length)
-      throw new ProviderError(
-        `${target.name} answered with a script of no lines`,
-        res.status,
-        false,
-      );
+      throw new ProviderError(`${target.name} answered with a script of no lines`, status, false);
     const check = fidelity(text, lines);
     if (!check.ok) {
       const parts = [
@@ -284,7 +362,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         : "";
       throw new ProviderError(
         `${target.name} did not copy the text faithfully: it ${parts.join(" and ")}${example}. The script was not written; run it again or try another model`,
-        res.status,
+        status,
         false,
       );
     }
@@ -294,10 +372,10 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
   return {
     name: "Chat completions",
     callsProfile: true,
-    async script({ title, text, signal, progress, target, cast }: ScriptInput) {
+    async script({ title, text, signal, progress, target, cast, sent }: ScriptInput) {
       if (!target) throw new ProviderError(NO_PROFILE, 0, false);
       progress?.(0, 1);
-      const lines = await request(target, title, cast, text, signal);
+      const lines = await request(target, title, cast, text, signal, sent);
       progress?.(1, 1);
       return lines;
     },
@@ -305,6 +383,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
       const started = performance.now();
       const ms = (): number => Math.round(performance.now() - started);
       try {
+        // reports nothing: a connection test belongs to no book, and the ledger is per book
         const lines = await request(target, "Connection test", [], PROBE_TEXT, signal);
         const speakers = [
           ...new Set(lines.filter((l) => l.type !== "narration").map((l) => l.speaker)),

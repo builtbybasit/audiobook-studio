@@ -21,4 +21,10 @@ export const keys = {
     ["books", bookId, "history", chapterId] as const,
   cast: (bookId: string) => ["books", bookId, "cast"] as const,
   exports: (bookId: string) => ["books", bookId, "exports"] as const,
+  /** what a book has spent and holds, from the server's ledger */
+  spend: (bookId: string) => ["books", bookId, "spend"] as const,
+  /** every book's spending at once, for the pages that total the library */
+  librarySpend: ["spend"] as const,
+  /** every endpoint's settled requests, for the Endpoints page */
+  endpointRequests: ["endpoints", "requests"] as const,
 };

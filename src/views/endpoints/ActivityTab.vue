@@ -21,6 +21,7 @@ import { useUiStore } from "@/stores/ui";
 //
 // Error bodies are redacted before they are shown or copied.
 import { computed, ref } from "vue";
+import { activeUsageService } from "@/services/usage";
 
 import { UiSelect, UiToggleGroup } from "@/ui";
 import StatusDot from "@/components/StatusDot.vue";
@@ -45,6 +46,13 @@ import {
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import type { ActivityFilter } from "@/views/endpoints/state";
 import type { RequestRecord } from "@/types";
+
+/**
+ * With a server answering, every row is from its ledger: an unmarked one was answered by a fake
+ * provider and billed nothing, a marked one went to a real provider. In the demo the marked rows
+ * are this session's and the rest is the fixture's sample week.
+ */
+const ledger = !!activeUsageService();
 
 const props = defineProps<{
   u: UnifiedEndpoint;
@@ -390,7 +398,10 @@ async function copyDiagnostics(r: RequestRecord) {
     error: r.error
       ? { code: r.error.code, message: r.error.message, body: sanitize(r.error.body) }
       : null,
-    note: "Prototype: this row is simulated. No provider was called and no key is included.",
+    note:
+      ledger && !r.simulated
+        ? "Sent to the provider. No key is included."
+        : "Prototype: this row is simulated. No provider was called and no key is included.",
   };
   try {
     await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
@@ -526,8 +537,10 @@ function clearAll() {
                 <span
                   v-if="!r.simulated"
                   class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle"
-                  title="Produced this session"
-                  ><span class="sr-only">produced this session</span></span
+                  :title="ledger ? 'Sent to a real provider' : 'Produced this session'"
+                  ><span class="sr-only">{{
+                    ledger ? "sent to a real provider" : "produced this session"
+                  }}</span></span
                 >
                 <span
                   v-if="r.waiting"
@@ -777,7 +790,12 @@ function clearAll() {
       </div>
     </div>
 
-    <p class="text-[11px] leading-relaxed text-zinc-500">
+    <p v-if="ledger" class="text-[11px] leading-relaxed text-zinc-500">
+      A <span class="inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle"></span> marks
+      a request sent to a real provider, priced when it completed; the rest were answered by a
+      simulated provider and billed nothing.
+    </p>
+    <p v-else class="text-[11px] leading-relaxed text-zinc-500">
       A <span class="inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle"></span> marks
       a request this session produced; the rest is sample history from the fixture service, shown so
       the page has something to read. Nothing here was billed.

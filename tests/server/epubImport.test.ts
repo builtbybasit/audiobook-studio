@@ -1,7 +1,7 @@
 // Reading an actual EPUB into a book. The prototype never parsed a file; everything here is the
 // part that was missing, so the cases are about what real files contain rather than what the
 // samples declared.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import { EpubCheck } from "@likecoin/epubcheck-ts";
 import { eq } from "drizzle-orm";
@@ -585,12 +585,113 @@ describe("importing an EPUB", () => {
   });
 });
 
+describe("links as real EPUBs write them", () => {
+  const twoInOne = (file: Record<string, string>) =>
+    epubFile({
+      chapters: [
+        { title: "Prologue", paragraphs: story() },
+        {
+          title: "Two chapters",
+          ...file,
+          sections: [
+            { id: "ch1", title: "The Ledger Opens", paragraphs: story() },
+            { id: "ch2", title: "Salt Tax", paragraphs: story() },
+          ],
+        },
+      ],
+    });
+
+  test("a file named with a space is found however each half of the package spells it", async () => {
+    for (const spelling of [
+      { manifestHref: "Chapter%201.xhtml", navHref: "Chapter 1.xhtml" },
+      { manifestHref: "Chapter 1.xhtml", navHref: "Chapter%201.xhtml" },
+      { manifestHref: "Chapter%201.xhtml", navHref: "Chapter%201.xhtml" },
+    ]) {
+      const { body } = await testApi().import<ImportResult>(
+        await twoInOne({ file: "Chapter 1.xhtml", ...spelling }),
+      );
+      // not "Chapter%201", and the second chapter not run on into the first
+      expect(body.chapters.map((c) => c.title)).toEqual([
+        "Prologue",
+        "The Ledger Opens",
+        "Salt Tax",
+      ]);
+    }
+  });
+
+  test("a chapter anchored by name is found though the element has an id as well", async () => {
+    const api = testApi();
+    const { body } = await api.import<ImportResult>(
+      await epubFile({
+        chapters: [
+          {
+            title: "Two chapters",
+            sections: [
+              { id: "ch1", title: "The Ledger Opens", paragraphs: story(), byName: true },
+              { id: "ch2", title: "Salt Tax", paragraphs: story(), byName: true },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(body.chapters.map((c) => c.title)).toEqual(["The Ledger Opens", "Salt Tax"]);
+    const first = await api.request<{ text: string }>(`/api/books/${body.book.id}/chapters/1/text`);
+    expect(first.body.text).not.toContain("Salt Tax");
+  });
+
+  test("a spine item outside the book is not a chapter of it", async () => {
+    const { body } = await testApi().import<ImportResult>(
+      await epubFile({
+        chapters: [{ title: "The Ledger Opens", paragraphs: story() }],
+        extraSpine: [
+          "https://example.com/extra.xhtml",
+          "//example.com/x.xhtml",
+          "../../beside.xhtml",
+        ],
+      }),
+    );
+    expect(body.chapters.map((c) => c.title)).toEqual(["The Ledger Opens"]);
+  });
+
+  test("the EPUB library writes nothing to the console, over a missing asset or a missing head", async () => {
+    const errors = spyOn(console, "error");
+    const warnings = spyOn(console, "warn");
+    try {
+      const { body } = await testApi().import<ImportResult>(
+        await epubFile({
+          chapters: [
+            { title: "The Ledger Opens", paragraphs: story() },
+            { title: "Salt Tax", paragraphs: story(), headless: true },
+          ],
+          assets: ["images/not-there.png"],
+        }),
+      );
+      expect(body.chapters).toHaveLength(2);
+      expect(errors).not.toHaveBeenCalled();
+      expect(warnings).not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+      warnings.mockRestore();
+    }
+  });
+});
+
 describe("extracting a section's text", () => {
   test("blocks are separated, so a heading does not run into the sentence under it", async () => {
     const text = await sectionText("<body><h1>The Ledger Opens</h1><p>Rain fell.</p></body>");
     // `textContent` would give "The Ledger OpensRain fell." — and every count downstream inherits it
     expect(text).toBe("# The Ledger Opens\n\nRain fell.");
     expect(plainText(text)).toBe("The Ledger Opens\n\nRain fell.");
+  });
+
+  test("an epigraph or a poem in a figure is kept, a picture and its caption are not", async () => {
+    const text = await sectionText(
+      "<body><figure class='epigraph'><blockquote><p>Hope is the thing with feathers</p></blockquote>" +
+        "<figcaption>— Emily Dickinson</figcaption></figure>" +
+        "<figure><img src='map.png' alt='A map'/><figcaption>Figure 1. The harbour.</figcaption></figure>" +
+        "<p>Rain fell.</p></body>",
+    );
+    expect(text).toBe("> Hope is the thing with feathers\n\n— Emily Dickinson\n\nRain fell.");
   });
 
   test("markup that is not prose is left out", async () => {

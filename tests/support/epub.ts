@@ -19,6 +19,11 @@ export interface SectionInput {
   /** the heading in the markup, when it differs from the navigation's label */
   heading?: string;
   paragraphs: string[];
+  /**
+   * Anchor it the way older books do, `<a name="…">`, with an unrelated `id` beside it as a
+   * converter leaves one, rather than an `id` on the section.
+   */
+  byName?: true;
 }
 
 export interface ChapterInput {
@@ -37,6 +42,14 @@ export interface ChapterInput {
   sections?: SectionInput[];
   /** in the manifest and the spine, but not in the zip: a file the package promises and lacks */
   missing?: true;
+  /** write the file with no `<head>`, as some converters do */
+  headless?: true;
+  /** the file's name in the zip, in place of `cN.xhtml` — `Chapter 1.xhtml`, say */
+  file?: string;
+  /** how the manifest spells the file, when it is not as written — `Chapter%201.xhtml` */
+  manifestHref?: string;
+  /** how the navigation spells the file, when it is not as written */
+  navHref?: string;
 }
 
 export interface EpubInput {
@@ -57,6 +70,10 @@ export interface EpubInput {
   nestLinked?: true;
   /** promise a navigation document in the manifest and leave it out of the archive */
   missingNav?: true;
+  /** further spine items, by href as the manifest writes them — links out of the book, say */
+  extraSpine?: string[];
+  /** further manifest items that are not documents, by href: an image the zip may not have */
+  assets?: string[];
 }
 
 const esc = (s: string): string =>
@@ -95,17 +112,18 @@ function bodyOf(c: ChapterInput): string {
   if (c.raw) return c.raw;
   if (c.sections)
     return c.sections
-      .map(
-        (s) =>
-          `<section id="${s.id}"><h2>${esc(s.heading ?? s.title)}</h2>\n${para(s.paragraphs)}</section>`,
+      .map((s) =>
+        s.byName
+          ? `<section><h2><a name="${s.id}" id="calibre_${s.id}"></a>${esc(s.heading ?? s.title)}</h2>\n${para(s.paragraphs)}</section>`
+          : `<section id="${s.id}"><h2>${esc(s.heading ?? s.title)}</h2>\n${para(s.paragraphs)}</section>`,
       )
       .join("\n");
   return `<h1>${esc(c.title)}</h1>\n${para(c.paragraphs ?? [])}`;
 }
 
-const xhtml = (title: string, body: string): string =>
+const xhtml = (title: string, body: string, headless = false): string =>
   `<?xml version="1.0" encoding="utf-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${esc(title)}</title></head>
+<html xmlns="http://www.w3.org/1999/xhtml">${headless ? "" : `<head><title>${esc(title)}</title></head>`}
 <body>${body}
 </body></html>`;
 
@@ -118,6 +136,8 @@ export async function buildEpub({
   nestUnder,
   nestLinked,
   missingNav,
+  extraSpine = [],
+  assets = [],
 }: EpubInput): Promise<ArrayBuffer> {
   // With a navigation directory the chapters move too, so the two are genuinely relative to each
   // other rather than both sitting in the package root where every spelling happens to work.
@@ -126,15 +146,17 @@ export async function buildEpub({
   const up = navDir ? "../" : "";
   const files = chapters.map((c, i) => ({
     ...c,
-    file: `${textDir}c${i + 1}.xhtml`,
+    file: `${textDir}${c.file ?? `c${i + 1}.xhtml`}`,
+    manifestHref: `${textDir}${c.manifestHref ?? c.file ?? `c${i + 1}.xhtml`}`,
+    navHref: `${textDir}${c.navHref ?? c.file ?? `c${i + 1}.xhtml`}`,
     id: `c${i + 1}`,
   }));
 
   /** The navigation entries for one chapter file: one per anchor, or one for the file. */
   const links = (f: (typeof files)[number]): string[] =>
     f.sections
-      ? f.sections.map((s) => `<a href="${up}${f.file}#${s.id}">${esc(s.title)}</a>`)
-      : [`<a href="${up}${f.file}">${esc(f.navTitle ?? f.title)}</a>`];
+      ? f.sections.map((s) => `<a href="${up}${f.navHref}#${s.id}">${esc(s.title)}</a>`)
+      : [`<a href="${up}${f.navHref}">${esc(f.navTitle ?? f.title)}</a>`];
 
   const items = files
     .filter((f) => !f.untitled)
@@ -142,7 +164,7 @@ export async function buildEpub({
     .map((a) => `<li>${a}</li>`)
     .join("\n");
   const nestLabel = nestLinked
-    ? `<a href="${up}${files[0].file}">${esc(nestUnder ?? "")}</a>`
+    ? `<a href="${up}${files[0].navHref}">${esc(nestUnder ?? "")}</a>`
     : `<span>${esc(nestUnder ?? "")}</span>`;
   const toc = nestUnder ? `<li>${nestLabel}<ol>\n${items}\n</ol></li>` : items;
 
@@ -167,10 +189,13 @@ export async function buildEpub({
 </metadata>
 <manifest>
 <item id="nav" href="${navPath}" media-type="application/xhtml+xml" properties="nav"/>
-${files.map((f) => `<item id="${f.id}" href="${f.file}" media-type="application/xhtml+xml"/>`).join("\n")}
+${files.map((f) => `<item id="${f.id}" href="${f.manifestHref}" media-type="application/xhtml+xml"/>`).join("\n")}
+${extraSpine.map((href, i) => `<item id="x${i + 1}" href="${esc(href)}" media-type="application/xhtml+xml"/>`).join("\n")}
+${assets.map((href, i) => `<item id="a${i + 1}" href="${esc(href)}" media-type="image/png"/>`).join("\n")}
 </manifest>
 <spine>
 ${files.map((f) => `<itemref idref="${f.id}"${f.nonLinear ? ' linear="no"' : ""}/>`).join("\n")}
+${extraSpine.map((_, i) => `<itemref idref="x${i + 1}"/>`).join("\n")}
 </spine>
 </package>`,
   );
@@ -186,7 +211,8 @@ ${toc}
     );
   // A missing file is written nowhere: the manifest and the spine both promise it, and the archive
   // does not have it, which is what a damaged or incompletely downloaded EPUB looks like.
-  for (const f of files) if (!f.missing) zip.file(`OEBPS/${f.file}`, xhtml(f.title, bodyOf(f)));
+  for (const f of files)
+    if (!f.missing) zip.file(`OEBPS/${f.file}`, xhtml(f.title, bodyOf(f), f.headless));
   return zip.generateAsync({ type: "arraybuffer" });
 }
 

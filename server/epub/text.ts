@@ -141,8 +141,12 @@ function cut(document: Doc, anchors: readonly string[]): TextPart[] {
       }
       if (child.nodeType !== 1) continue;
       const el = child as Element;
-      const id = el.getAttribute?.("id") ?? el.getAttribute?.("name") ?? "";
-      if (id && wanted.has(id)) {
+      // Either attribute can be the one the navigation named: `<a name="ch3" id="calibre_link-7">`
+      // is how converters leave an older book, and the link still says `#ch3`.
+      const id = [el.getAttribute?.("id"), el.getAttribute?.("name")].find(
+        (name): name is string => !!name && wanted.has(name),
+      );
+      if (id) {
         startPart(id);
         wanted.delete(id);
       }

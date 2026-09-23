@@ -233,6 +233,13 @@ Things the parse is deliberate about:
   than this project ever will. [markdown.ts](../server/epub/markdown.ts) configures it;
   [text.ts](../server/epub/text.ts) keeps only the part no converter can do, which is cutting a file
   into chapters before anything converts it.
+- **HTML's named entities are made ones XML knows.** A chapter file is XHTML, parsed as XML, and
+  XML knows five names; `&nbsp;`, `&mdash;` and `&hellip;` are the DTD's, which no parser here
+  reads, so they arrived as the text `&nbsp;` for the narrator to spell out. EPUB 2 and Calibre
+  books use them everywhere. Before a section is parsed, [entities.ts](../server/epub/entities.ts)
+  replaces each HTML name with the numeric reference for the same character — what a parser that
+  read the DTD would have made of it — using the `entities` package's table. A name that is not
+  HTML's is left alone.
 - **The navigation is waited for.** `open()` resolves as soon as the package document is parsed;
   the navigation document is a second file still being fetched. Read too early it is simply absent,
   every chapter quietly falls back to its own heading, and the result usually looks close enough to
@@ -377,9 +384,16 @@ The scripting job reads `plainText` before it sends a chapter to the provider, a
 server sends the column anywhere. `?format=plain` is what the frontend's estimate reads for the
 same reason.
 
-Both run `marked` over the stored text rather than stripping punctuation somebody remembered. A
-table becomes `Day, Chapter` a row at a time; a horizontal rule becomes a paragraph break; `\*`
-comes back the star the book had.
+Both run a real Markdown parser over the stored text rather than stripping punctuation somebody
+remembered. A table becomes `Day, Chapter` a row at a time; a horizontal rule becomes a paragraph
+break; `\*` comes back the star the book had.
+
+The parser is markdown-it, not the `marked` the frontend draws with. Under Bun, `marked`'s lexer
+slows with the length of the document — 4,000 paragraphs took 30 seconds, where Node takes 15 ms —
+and a single-file novel is one chapter of that, read twice on import and again by every count,
+bill and speak. markdown-it reads 64,000 paragraphs in under 300 ms. The walk over its tokens keeps
+the last two characters beside the prose rather than asking the prose, for the same engine's
+reason: a string built by `+=` is flattened before its end can be read, once per block.
 
 ### Turndown chooses its DOM once, and can choose wrong
 
@@ -811,7 +825,9 @@ write over the version still playing. They are kept apart from the clips because
 the next build reads again and an audiobook is the deliverable. A download is addressed through the
 export that owns it (`…/exports/:e/files/:n`) rather than by the file's name on disk, so there is
 no path a request can build to a file this book did not produce; the name goes back on in the
-header that decides what the browser calls it. A version that has been superseded keeps its file
+header that decides what the browser calls it. That header is Latin-1 and a title is not, so the
+name goes in the `filename*` a browser reads as UTF-8, with an ASCII stand-in beside it
+(`content-disposition` writes both); an em dash in the title used to make the download a 500. A version that has been superseded keeps its file
 until it is forgotten, so an older version can still be saved; removing a book removes both
 directories, and forgetting one audiobook removes its files and leaves the rest.
 

@@ -10,14 +10,16 @@ import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
 import type { AudioFiles } from "~/audio/files";
+import { coverFiles, MAX_COVER_BYTES } from "~/covers/files";
 import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
 import { env, importBodyBytes } from "~/env";
 import { enqueueNarration } from "~/jobs/narration";
 import type { Runner } from "~/jobs/runner";
 import { enqueueScripting } from "~/jobs/scripting";
-import { fail } from "~/lib/errors";
+import { fail, notFound } from "~/lib/errors";
 import { IdParam } from "~/lib/http";
+import { fileResponse } from "~/lib/serve";
 import { validate } from "~/lib/validate";
 import * as ops from "~/library/ops";
 
@@ -95,6 +97,9 @@ const ImportForm = v.object({
   name: v.optional(v.string()),
 });
 
+const CoverForm = v.object({ file: v.instance(File) });
+const CoverParam = v.object({ id: v.string(), file: v.string() });
+
 export function bookRoutes(
   db: Db,
   runner: Runner,
@@ -102,6 +107,8 @@ export function bookRoutes(
   built?: AudiobookFiles,
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
+  // A book's covers are kept beside its clips, so they go when its directory does.
+  const covers = files ? coverFiles(files.dir) : undefined;
 
   // ---------- reading ----------
   app.get("/", (c) => c.json({ books: ops.listBooks(db) }));
@@ -159,12 +166,43 @@ export function bookRoutes(
 
       const result = await ops.importEpub(
         db,
-        { bytes: await file.arrayBuffer(), fileName: file.name, title, bookId, name },
+        { bytes: await file.arrayBuffer(), fileName: file.name, title, bookId, name, covers },
         log,
       );
       return c.json(result, 201);
     },
   );
+
+  // ---------- covers ----------
+  if (covers) {
+    /** An image for an audiobook's cover; answers with the url its settings name it by. */
+    app.post(
+      "/:id/covers",
+      bodyLimit({
+        // a little over the limit, for the multipart envelope around the image
+        maxSize: MAX_COVER_BYTES + 64 * 1024,
+        onError: () => fail(413, `That image is larger than ${MAX_COVER_BYTES / 1024 / 1024} MB`),
+      }),
+      validate("param", BookParam),
+      validate("form", CoverForm),
+      async (c) => {
+        const bytes = new Uint8Array(await c.req.valid("form").file.arrayBuffer());
+        return c.json(await ops.uploadCover(db, covers, c.req.valid("param").id, bytes), 201);
+      },
+    );
+
+    /** A cover's bytes. Named by their hash, so what a url serves never changes. */
+    app.get("/:id/covers/:file", validate("param", CoverParam), async (c) => {
+      const { id, file } = c.req.valid("param");
+      const path = covers.path(id, file);
+      const found = path ? Bun.file(path) : null;
+      if (!found || !(await found.exists())) throw notFound("No such cover");
+      return fileResponse(c.req.raw, found, {
+        "content-type": file.endsWith(".png") ? "image/png" : "image/jpeg",
+        "cache-control": "private, max-age=31536000, immutable",
+      });
+    });
+  }
 
   /** The review is done: the book, or its new volume, joins the library. Nothing starts running. */
   app.post("/:id/confirm", validate("param", BookParam), (c) =>

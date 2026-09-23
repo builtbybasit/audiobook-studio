@@ -26,6 +26,7 @@
     "tests/support/epub.ts",
     "tests/support/server.ts",
     "tests/support/persist.ts",
+    "tests/support/images.ts",
     "src/types/**/*.ts",
     "src/lib/**/*.ts",
     "src/ui/types.ts",

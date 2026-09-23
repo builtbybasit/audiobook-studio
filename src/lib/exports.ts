@@ -170,6 +170,42 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   useStale: false,
 };
 
+// ---------- the cover ----------
+
+/**
+ * The images a cover can be. M4B and MP3 both carry a JPEG or a PNG and players read nothing else
+ * reliably, so the server refuses anything else and the demo keeps the same rule rather than
+ * promising to embed an image a real build would turn away.
+ */
+export const COVER_TYPES = ["image/jpeg", "image/png"] as const;
+/** The largest cover the server keeps, in bytes. */
+export const COVER_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Why this file cannot be a cover, in the server's words, or null when it can. Asked before
+ * anything is uploaded, so a PDF picked by mistake is turned away without a round trip — the
+ * server still decides, from the bytes rather than the name.
+ */
+export function coverRefusal(file: { type: string; size: number }): string | null {
+  if (!(COVER_TYPES as readonly string[]).includes(file.type))
+    return "A cover has to be a JPEG or PNG image";
+  if (file.size > COVER_MAX_BYTES) return "That image is larger than 10 MB";
+  return null;
+}
+
+/**
+ * A file as a `data:` URL: how the demo holds a picked cover, having nowhere to upload it. Read
+ * through `arrayBuffer` rather than `FileReader`, so it is the same code in a test as on the page.
+ */
+export async function dataUrlOf(file: Blob): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  // in slices: spreading a whole image into one call overflows the argument limit
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return `data:${file.type || "application/octet-stream"};base64,${btoa(binary)}`;
+}
+
 export const MARKER_PATTERNS = [
   { value: "{n}. {title}", sample: "1. The Silent Peak" },
   { value: "Chapter {n} — {title}", sample: "Chapter 1 — The Silent Peak" },

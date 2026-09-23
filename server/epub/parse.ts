@@ -83,6 +83,12 @@ export interface ParsedEpub {
   author: string;
   language: string;
   chapters: ParsedChapter[];
+  /**
+   * The bytes of the image the package names as its cover, as the file holds them — unchecked:
+   * what counts as a cover is the import's to say. Absent when the package names none, or names
+   * one the archive does not have.
+   */
+  cover?: Uint8Array;
 }
 
 export class EpubParseError extends Error {
@@ -334,6 +340,27 @@ function readSection(archive: Archive) {
 }
 
 /**
+ * The cover image's bytes, when the package names one and the archive has it.
+ *
+ * The library finds it the way both versions of the spec say to — the manifest item marked
+ * `cover-image` in EPUB 3, the item a `<meta name="cover">` points at in EPUB 2 — and only reads
+ * it when asked, which the import never did. A cover that cannot be read is no cover, never a
+ * reason to lose the book: the chapters are what the import is for.
+ */
+async function coverOf(book: InstanceType<BookClass>): Promise<Uint8Array | undefined> {
+  const href = book.packaging?.coverPath;
+  if (!href || !book.archive) return undefined;
+  try {
+    const path = book.resolve(href);
+    // A manifest href is a URL and the archive is keyed by filename; see `decoded`.
+    const blob = (await book.archive.getBlob(path)) ?? (await book.archive.getBlob(decoded(path)));
+    return blob?.size ? new Uint8Array(await blob.arrayBuffer()) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Read an EPUB from its bytes.
  *
  * Sections are read one at a time and unloaded straight after. A web-novel volume can be a
@@ -450,11 +477,13 @@ export async function parseEpub(bytes: ArrayBuffer): Promise<ParsedEpub> {
         `None of the ${sections} section${sections === 1 ? "" : "s"} in this EPUB could be read. Its chapter files are missing or damaged.`,
       );
 
+    const cover = await coverOf(book);
     return {
       title: (meta.title ?? "").trim() || "Untitled",
       author: (meta.creator ?? "").trim() || "Unknown",
       language: (meta.language ?? "").trim(),
       chapters,
+      ...(cover ? { cover } : {}),
     };
   } finally {
     book.destroy();

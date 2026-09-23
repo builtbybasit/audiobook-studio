@@ -130,6 +130,8 @@ export function wavEncoder(): AudiobookEncoder {
     normalizes: false,
     // raw samples, so a chapter that has not moved really is the same bytes in the same order
     carries: true,
+    // and no picture: nothing reads one out of a RIFF file
+    covers: false,
 
     async encode({ chapters, gap, out, signal, onChapter }: EncodeInput): Promise<EncodedFile> {
       const file = await open(out, "w");

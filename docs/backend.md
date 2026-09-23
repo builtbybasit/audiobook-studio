@@ -293,6 +293,15 @@ Things the parse is deliberate about:
   (by a rule: Turndown's own image rule runs before its remove list, and wrote `![](a.png)` into
   the stored text), and so is the `<figcaption>` of a figure that holds a picture; the caption of
   one that holds words is usually who wrote them, and is kept.
+- **The cover is kept, as a file.** The package names its cover the EPUB 3 way (the manifest item
+  marked `cover-image`) or the EPUB 2 way (`<meta name="cover">`), and the parser reads those bytes
+  from the archive once the chapters are done. A new book keeps them when they are a JPEG or a PNG
+  of at most 10 MB, sniffed from the bytes rather than taken from the manifest's media type, in
+  `<AUDIO_DIR>/<bookId>/covers/` under a hash of its contents; the book answers with
+  `coverImage`, the address it is served from. Anything else — a GIF, an SVG, a cover the manifest
+  promises and the zip lacks — leaves the book without one, and the log says why. A volume added
+  later does not bring its cover: that is another edition's as often as the same one, and swapping
+  the shelf's picture unasked would be a surprise.
 
 ### One file, several chapters
 
@@ -596,6 +605,8 @@ service are both built on it, so that rule is written once.
 | `GET`    | `/api/books/:id/exports/:e/files/:n`             | One of its files, to save                                     |
 | `DELETE` | `/api/books/:id/exports/:e`                      | Forget one, and take its files off the disk                   |
 | `POST`   | `/api/books/import`                              | An uploaded EPUB → a book, or one more volume of one          |
+| `POST`   | `/api/books/:id/covers`                          | A JPEG or PNG for an audiobook's cover → its url              |
+| `GET`    | `/api/books/:id/covers/:file`                    | A cover's bytes                                               |
 | `POST`   | `/api/books/:id/confirm`                         | The review is done; it joins the library                      |
 | `POST`   | `/api/books/:id/discard`                         | Cancel: an unconfirmed book goes, or its new volume           |
 | `POST`   | `/api/books/:id/chapters/skip`                   | Skip chapters for the audiobook                               |
@@ -620,6 +631,15 @@ service are both built on it, so that rule is written once.
 
 `POST /api/books/import` is `multipart/form-data`: `file` is the EPUB, `title` optionally overrides
 the one in the file, and `bookId` with `name` adds the file to an existing book as one more volume.
+
+`POST /api/books/:id/covers` is `multipart/form-data` too, with the image as `file`. It is kept
+beside the book's own cover under a hash of its bytes — the same image twice is one file and one
+url — and answers `201 { cover }`; a file that is not a JPEG or PNG is a 415, over 10 MB a 413. It
+does not change the book's `coverImage`: it is what an export's `settings.cover` names, so one
+build can carry it and the next the EPUB's. A build refuses any other `settings.cover` with a 400 —
+a `data:` URL (what the demo holds, and what a build queued before this slice recorded), another
+book's image, a path that is not a cover — since a picture this server could never find would
+otherwise be a build failing halfway.
 
 `POST /api/books/:id/chapters/script` answers with the jobs it made, the chapters it left out and
 why (`excluded`, `busy`, `missing`), and the book's chapters as they now stand — so the client can
@@ -993,6 +1013,14 @@ both to have been encoded identically — the way to do that is a file per chapt
 under ffmpeg re-encodes every chapter and the job says so, rather than reporting chapters it did
 not really reuse.
 
+**The cover goes in as it is.** A build carries the image its settings chose, or the book's own
+when they chose none, and ffmpeg copies it in untouched as the file's attached picture — the MP4
+cover atom, or an ID3v2.3 front-cover frame on an MP3. A chosen image that has gone from disk fails
+the build: the audiobook asked for was one with that picture. The EPUB's gone missing is a build
+without one, and a warning. The stitcher `covers` nothing — a RIFF file has no place every player
+looks — and says so in the job's log rather than leaving the page's "embedded in every file"
+standing.
+
 ### How the screens use it
 
 Reads are queries, through [Pinia Colada](https://pinia-colada.esm.dev): one composable per
@@ -1121,6 +1149,7 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [volumes.test.ts](../tests/server/volumes.test.ts)               | Removing a volume: rekeyed jobs, cancelled work, files, refusals mid-build      |
 | [bookSettings.test.ts](../tests/server/bookSettings.test.ts)     | Budget, pacing and re-timing, a volume's name, and a reorder and its refusals   |
 | [endpoints.test.ts](../tests/server/endpoints.test.ts)           | Saved and refused whole; tags and sample rate on a line; one rate a file        |
+| [covers.test.ts](../tests/server/covers.test.ts)                 | The EPUB's cover kept, an upload and its refusals, a cover in an M4B and an MP3 |
 | [markdown.test.ts](../tests/server/markdown.test.ts)             | The converter's DOM bracket, and reading Markdown back                          |
 | [jobs.test.ts](../tests/server/jobs.test.ts)                     | The queue: dedupe, cancel, restart, revision conflicts, HTTP                    |
 | [narration.test.ts](../tests/server/narration.test.ts)           | Narration: scopes, replacement, failure, cancel, restart, dictionary, files     |
@@ -1183,9 +1212,6 @@ each because a route or a table's writer is missing rather than by oversight:
   key say; a line longer than the endpoint's `maxChars` is not split either. A chapter's duration
   is its clips plus the book's pacing, which a pacing change re-times on the server for every
   chapter that has been narrated.
-- **A cover image is not written into the audiobook.** `customCover` records that one was chosen
-  and the file carries none: the stitcher has nowhere to put it, and ffmpeg would want the image
-  itself, which the browser holds rather than the server.
 - **An update under ffmpeg re-encodes everything.** Carrying a chapter over is real under the
   stitcher and refused under ffmpeg, for the reason [the encoder](#the-encoder-and-what-it-will-not-pretend)
   gives. Making it real there means keeping an encoded file per chapter and joining those with
@@ -1212,7 +1238,7 @@ fail somewhere that does not name the cause. Migrations are versioned in [drizzl
 and applied in order at boot; `0001` added the script revision and the queue's dedupe key, `0002`
 the version an open editing session preserved, and `0003` what a build writes — the file each
 output landed in, the span each chapter occupies inside it, and which encoder wrote it; `0004` an
-endpoint's sample rate and the rate each clip came back at.
+endpoint's sample rate and the rate each clip came back at; `0005` a book's cover image.
 
 **Foreign keys are off while migrations run.** A change drizzle-kit cannot write as `ALTER TABLE` is
 written as a rebuild — new table, copy, `DROP` the old one, rename — and with foreign keys on, that

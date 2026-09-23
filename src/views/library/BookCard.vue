@@ -7,6 +7,7 @@ import { computed, ref } from "vue";
 import { hours, plural, TONE } from "@/views/library/shared";
 import { useBookFacts } from "@/views/library/bookFacts";
 import BookMenu from "@/views/library/BookMenu.vue";
+import BookCover from "@/components/BookCover.vue";
 import type { Book } from "@/types";
 import type { PickedFile } from "@/components/addEpub";
 import { ArrowRight as GoIcon } from "@lucide/vue";
@@ -126,10 +127,7 @@ const audiobook = computed(() => {
       data-card-open
       @click="emit('open')"
     >
-      <div
-        class="relative aspect-[4/5] p-4"
-        :style="{ background: `linear-gradient(160deg, ${book.cover[0]}, ${book.cover[1]})` }"
-      >
+      <BookCover :book="book" class="aspect-[4/5] p-4">
         <!-- a soft vignette so white text reads on the paler covers -->
         <div
           class="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-black/10"
@@ -153,7 +151,7 @@ const audiobook = computed(() => {
             >Open <GoIcon class="icon-sm"
           /></span>
         </div>
-      </div>
+      </BookCover>
     </button>
 
     <!-- the per-book menu sits over the cover, out of the open button -->

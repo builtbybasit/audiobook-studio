@@ -15,7 +15,8 @@ import { ChevronDown as SwitchIcon, ArrowRight as GoIcon, Search as SearchIcon }
 import { useShell } from "@/composables/useShell";
 import { bookFacts } from "@/views/library/bookFacts";
 import { matchesQuery } from "@/views/library/shelf";
-import { coverStyle, TONE_TEXT } from "@/views/library/shared";
+import { TONE_TEXT } from "@/views/library/shared";
+import BookCover from "@/components/BookCover.vue";
 
 defineProps<{ dim?: boolean }>();
 const libraryStore = useLibraryStore();
@@ -53,7 +54,7 @@ function onEnter() {
         :class="dim && 'opacity-70 hover:opacity-100'"
         title="Switch book"
       >
-        <span class="h-7 w-5 shrink-0 rounded-sm shadow-sm" :style="coverStyle(book.cover)"></span>
+        <BookCover :book="book" as="span" class="h-7 w-5 shrink-0 rounded-sm shadow-sm" />
         <span
           class="min-w-0 truncate font-serif text-sm text-zinc-900 lg:max-w-64 dark:text-zinc-100"
           >{{ book.title }}</span
@@ -87,7 +88,7 @@ function onEnter() {
             class="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
             @click="pick(b.id)"
           >
-            <span class="h-9 w-7 shrink-0 rounded-sm" :style="coverStyle(b.cover)"></span>
+            <BookCover :book="b" as="span" class="h-9 w-7 shrink-0 rounded-sm" />
             <span class="min-w-0 flex-1">
               <span class="block truncate text-[13px] font-medium">{{ b.title }}</span>
               <span class="block truncate text-[11px]" :class="TONE_TEXT[next.tone]">{{

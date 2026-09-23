@@ -36,6 +36,13 @@
       "when": 1790164316726,
       "tag": "0004_faulty_black_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790165549297,
+      "tag": "0005_spotty_misty_knight",
+      "breakpoints": true
     }
   ]
 }

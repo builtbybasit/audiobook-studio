@@ -47,6 +47,11 @@ export interface EncodeInput {
   /** aborted when the build is cancelled or the server is stopping; check it between parts */
   signal: AbortSignal;
   /**
+   * The picture to carry as the audiobook's cover, already checked to be a JPEG or a PNG on disk;
+   * null or absent for none. An encoder that `covers` nothing is not handed one.
+   */
+  cover?: { path: string; type: "image/jpeg" | "image/png" } | null;
+  /**
    * Called as each chapter lands, so the Queue can count a long file down rather than showing
    * nothing between "writing" and "written".
    */
@@ -98,6 +103,12 @@ export interface AudiobookEncoder {
    * and the build says so rather than reporting chapters it did not really reuse.
    */
   readonly carries: boolean;
+  /**
+   * Whether it writes a cover picture into the file. An M4B has an atom for one and an MP3 a
+   * picture frame; a RIFF file has nowhere every player looks, so the stitcher writes none and the
+   * build says so rather than leaving the page's "embedded in every file" standing.
+   */
+  readonly covers: boolean;
   encode(input: EncodeInput): Promise<EncodedFile>;
 }
 

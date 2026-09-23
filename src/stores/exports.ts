@@ -7,6 +7,8 @@
 // encoder, its progress and its failures never run with a server answering.
 import {
   chapterSignature,
+  coverRefusal,
+  dataUrlOf,
   DEFAULT_EXPORT_SETTINGS,
   exportKey,
   loudnessReport,
@@ -509,6 +511,38 @@ export const useExportsStore = defineStore("exports", {
     /** A build that fell over. The version that was already good stays the current one. */
     _failBuild(entry: ExportItem, job: Job, file: string, chapter: string): void {
       failBuild(this._buildSim(), entry, job, file, chapter);
+    },
+    /**
+     * Use this image as the audiobook's cover: `settings.cover` names it once it can be built with,
+     * and not before. Anything but a JPEG or a PNG is turned away here, in both modes, without a
+     * request. With a server answering the image is uploaded first and the url it answers with is
+     * the cover, because a build names only an image the server holds for this book; the demo has
+     * nowhere to send it and holds it as a `data:` URL. A refusal says why and leaves the cover
+     * that was chosen before. Returns whether the cover changed.
+     */
+    async chooseCover(bookId: string, settings: ExportSettings, file: File): Promise<boolean> {
+      const uiStore = useUiStore();
+
+      const refused = coverRefusal(file);
+      if (refused) {
+        uiStore.toast(refused, {
+          kind: "warn",
+          description: `${file.name} was not used; the cover is as it was.`,
+        });
+        return false;
+      }
+      const svc = activeLibraryService();
+      if (!svc) {
+        settings.cover = await dataUrlOf(file);
+        return true;
+      }
+      try {
+        settings.cover = (await svc.uploadCover(bookId, file)).cover;
+        return true;
+      } catch (cause) {
+        this._failed("upload that cover", cause);
+        return false;
+      }
     },
     /**
      * The settings an existing export was built with, in the shape the form uses. A build records

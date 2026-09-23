@@ -17,6 +17,11 @@ export interface SpeechInput {
   direction: string;
   /** `<endpointId>/<voiceId>` from the cast, or null when the speaker has no voice */
   voiceRef: VoiceRef | null;
+  /**
+   * The rate the endpoint asks every line for, in Hz, or null for the model's own. A provider
+   * answers at it or fails; the job reads the rate the file actually came back at either way.
+   */
+  sampleRate: number | null;
   /** aborted when the job is cancelled; a provider that is mid-request should stop */
   signal: AbortSignal;
 }

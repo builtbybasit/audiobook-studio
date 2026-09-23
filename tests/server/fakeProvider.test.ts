@@ -82,6 +82,7 @@ const line = (text: string, speaker = "Mara", extra: Partial<SpeechInput> = {}):
   type: "dialogue",
   direction: "",
   voiceRef: null,
+  sampleRate: null,
   signal: new AbortController().signal,
   ...extra,
 });
@@ -112,6 +113,18 @@ describe("the fake speech model", () => {
     // a quiet tone: every sample near silence, and not all of them silence
     expect(bytes.slice(44).every((b) => b >= 100 && b <= 156)).toBe(true);
     expect(new Set(bytes.slice(44)).size).toBeGreaterThan(2);
+  });
+
+  test("answers at the rate it is asked for, with as many samples as the line lasts", async () => {
+    for (const rate of [16000, 44100, 48000]) {
+      const clip = await fakeSpeechProvider().speak(
+        line("Then we count it twice.", "Tobin", { sampleRate: rate }),
+      );
+      const view = new DataView(clip.bytes.buffer, clip.bytes.byteOffset, clip.bytes.byteLength);
+      expect(view.getUint32(24, true)).toBe(rate);
+      expect(view.getUint32(28, true)).toBe(rate); // bytes per second, at one byte a sample
+      expect(view.getUint32(40, true)).toBe(Math.round(clip.duration * rate));
+    }
   });
 
   test("times a line by its words, and never shorter than a breath", async () => {

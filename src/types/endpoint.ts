@@ -80,7 +80,15 @@ export interface Endpoint {
   credentialId?: string | null;
   quotaGroup?: string | null;
   expressions?: ExpressionConfig;
+  /**
+   * The sample rate every line is asked for, in Hz. Absent or null means the model's own rate: the
+   * request carries no rate at all and the clip records whatever the file came back at.
+   */
+  sampleRate?: SampleRate | null;
 }
+
+/** The rates a speech endpoint can be asked to render at — speech-grade 16 kHz up to 48 kHz. */
+export type SampleRate = 16000 | 22050 | 24000 | 32000 | 44100 | 48000;
 
 export interface EndpointLoad {
   active: number;

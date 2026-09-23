@@ -25,6 +25,15 @@ type WindowRow = typeof rateWindows.$inferSelect;
 type PromotionRow = typeof promotions.$inferSelect;
 type TagRow = typeof expressionTags.$inferSelect;
 
+/**
+ * A speech endpoint as it is configured: everything but what this session observed of it, which
+ * is what a save sends and what `endpointValues` writes.
+ */
+export type EndpointSettings = Omit<
+  Endpoint,
+  "history" | "failures" | "rateLimits" | "backoffUntil" | "lastError" | "fetching"
+>;
+
 /** Everything an endpoint owns besides its own row. */
 export interface EndpointParts {
   voices: readonly VoiceRow[];
@@ -117,10 +126,17 @@ function toExpressions(row: EndpointRow, parts: EndpointParts): ExpressionConfig
  * dropping them because they are null would be a different endpoint coming back.
  *
  * `timeoutSec` is the marker for the block, being the one field that is always a number once the
- * block exists at all.
+ * block exists at all. An endpoint without the block can still name a credential, a quota group
+ * or a limit on its own — the seeded ones do, before the page fills the rest in — and those are
+ * read back as they were set, since there a null can only mean "never set".
  */
 function ops(row: EndpointRow): Partial<Endpoint> {
-  if (row.timeoutSec == null) return {};
+  if (row.timeoutSec == null)
+    return {
+      ...(row.spendLimit != null ? { spendLimit: row.spendLimit } : {}),
+      ...(row.credentialId != null ? { credentialId: row.credentialId } : {}),
+      ...(row.quotaGroup != null ? { quotaGroup: row.quotaGroup } : {}),
+    };
   return {
     timeoutSec: row.timeoutSec,
     maxRetries: row.maxRetries ?? 0,
@@ -163,14 +179,27 @@ export function toEndpoint(row: EndpointRow, parts: EndpointParts): Endpoint {
   if (billing) e.billing = billing;
   const expressions = toExpressions(row, parts);
   if (expressions) e.expressions = expressions;
+  if (row.sampleRate != null) e.sampleRate = row.sampleRate;
   return e;
 }
+
+/**
+ * Where a scripting profile's row is kept.
+ *
+ * The two kinds share a table, but not a namespace: the app keys them `tts:<id>` and
+ * `scripting:<id>`, and the seeded world has a speech endpoint and a scripting profile that are
+ * both `openai`. A speech endpoint keeps its bare id, because a character's voice names it —
+ * `<endpointId>/<voiceId>` — and the narration job looks it up by that; a profile's row is kept
+ * under the page's own key for it, so the two never meet.
+ */
+export const PROFILE_KEY = "scripting:";
+export const profileKey = (id: string): string => PROFILE_KEY + id;
 
 /** A scripting profile. Same table, `kind = "scripting"`. */
 export function toProfile(row: EndpointRow, parts: EndpointParts): Profile {
   const pricing = toPricingConfig(row, parts);
   return {
-    id: row.id,
+    id: row.id.startsWith(PROFILE_KEY) ? row.id.slice(PROFILE_KEY.length) : row.id,
     name: row.name,
     model: row.model,
     inPrice: row.inPrice ?? 0,
@@ -188,7 +217,7 @@ export function toProfile(row: EndpointRow, parts: EndpointParts): Profile {
   };
 }
 
-const opsValues = (e: Partial<Endpoint>) => ({
+const opsValues = (e: Partial<EndpointSettings>) => ({
   timeoutSec: e.timeoutSec ?? null,
   maxRetries: e.maxRetries ?? null,
   cooldownSec: e.cooldownSec ?? null,
@@ -197,7 +226,10 @@ const opsValues = (e: Partial<Endpoint>) => ({
   quotaGroup: e.quotaGroup ?? null,
 });
 
-export function endpointValues(e: Endpoint, position: number): typeof endpoints.$inferInsert {
+export function endpointValues(
+  e: EndpointSettings,
+  position: number,
+): typeof endpoints.$inferInsert {
   return {
     id: e.id,
     kind: "tts",
@@ -225,13 +257,14 @@ export function endpointValues(e: Endpoint, position: number): typeof endpoints.
     expressionStatus: e.expressions?.status ?? null,
     expressionModel: e.expressions?.model ?? null,
     expressionBaseUrl: e.expressions?.baseUrl ?? null,
+    sampleRate: e.sampleRate ?? null,
     ...opsValues(e),
   };
 }
 
 export function profileValues(p: Profile, position: number): typeof endpoints.$inferInsert {
   return {
-    id: p.id,
+    id: profileKey(p.id),
     kind: "scripting",
     name: p.name,
     baseUrl: p.baseUrl,

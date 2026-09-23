@@ -24,16 +24,25 @@
 // The chapter's `narration` status is the job's to keep honest, and it is asked of the clips —
 // `chapterNarration` — rather than remembered: `queued` when the job is, `running` while it runs,
 // and afterwards whatever the lines say, which is `failed` for a chapter with a gap in it.
+//
+// What a line is sent as is the demo's rule too, `expressionPlan`: the words after the book's
+// dictionary, with the expression tags placed on the line written in as the speaker's endpoint
+// spells them. The endpoint is read from the stored configuration as each line goes out, and a
+// line whose tags that endpoint cannot say is failed before any request, with the reason, exactly
+// as the demo blocks it. The endpoint's sample rate goes with the request, and the clip records the
+// rate the file actually came back at, read from the file.
 import { and, eq } from "drizzle-orm";
 
 import type { Job, NarrationScope, NarrationStatus, Segment, SegmentAudio } from "@/types";
 import { NARRATOR } from "@/lib/cast";
 import { chapterNarration, narrationTargets, SCOPE_LABEL } from "@/lib/runPlan";
-import { pacingOrDefault, silenceOf, speak, speechInstructions } from "@/lib/speech";
+import { expressionPlan, type ExpressionPlan } from "@/lib/expressions";
+import { pacingOrDefault, silenceOf, speechInstructions } from "@/lib/speech";
 import { nextTakeNumber, requeue } from "@/lib/takes";
 import type { AudioFiles } from "~/audio/files";
 import { readCast, readLexicon } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
+import { readEndpoint } from "~/db/endpoints";
 import { activeJob, getJob, nextRunId } from "~/db/jobs";
 import * as library from "~/db/library";
 import { chapters } from "~/db/schema";
@@ -50,6 +59,7 @@ import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { locate } from "~/jobs/scripting";
 import { conflict, notFound } from "~/lib/errors";
 import type { SpeechProvider } from "~/providers/speech";
+import { readWavHeader } from "~/providers/wavEncoder";
 
 /** The label a retake job carries as its scope and its `bulk.op`; the Queue page shows it as it is. */
 export const RETAKE_LABEL = "Retake";
@@ -278,9 +288,11 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
         const { s, slot } = t;
         const who = deliveryOf(s.speaker);
         const instructions = speechInstructions({ style: who.style, direction: s.direction });
-        // The dictionary as it stands when this line goes out, not when the run began: a term
-        // added mid-run applies to every line not yet sent, as it does in the demo.
-        const spoken = speak(s.text, readLexicon(db, job.bookId));
+        // The dictionary and the endpoint as they stand when this line goes out, not when the run
+        // began: a term added or a tag defined mid-run applies to every line not yet sent, as it
+        // does in the demo.
+        const ep = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;
+        const plan = expressionPlan(s, ep, readLexicon(db, job.bookId));
         const startedAt = Date.now();
         // The audit trail, written when the request goes out: exactly what this clip is being
         // rendered with, so a later edit to the line, the cast or the voice reads as drift.
@@ -300,8 +312,10 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
           text: s.text,
           // what the dictionary made of it, recorded whether or not it changed anything: the
           // browser's drift rule compares this against the dictionary as it now stands
-          pronounced: spoken.text,
-          ...(spoken.text !== s.text ? { said: spoken.text, lex: spoken.hits.length } : {}),
+          pronounced: plan.pronounced,
+          ...(plan.signature ? { expressionSignature: plan.signature } : {}),
+          ...(plan.tags.length ? { expressions: plan.tags } : {}),
+          ...(plan.text !== s.text ? { said: plan.text, lex: plan.hits.length } : {}),
         };
         const gone = (): void => {
           ctx.note(`Line ${s.id} was removed while it rendered; the clip was dropped`, "warning", {
@@ -319,15 +333,30 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
 
         let clip: SegmentAudio;
         try {
+          // A tag the endpoint cannot say is the demo's "blocked before dispatch": the line is
+          // not sent at all, rather than sent without the tag and marked stale on arrival.
+          if (plan.issues.length)
+            throw new Error(`Expression needs attention: ${plan.issues[0].reason}`);
           const rendered = await provider.speak({
-            text: spoken.text,
+            text: plan.text,
             speaker: s.speaker,
             type: s.type,
             direction: s.direction,
             voiceRef: who.voiceRef,
+            sampleRate: ep?.sampleRate ?? null,
             signal,
           });
           if (signal.aborted) throw signal.reason;
+          // the rate is read off the file, whatever was asked for: audio a build cannot read is a
+          // failed line now rather than a failed audiobook later
+          let sampleRate: number;
+          try {
+            ({ sampleRate } = readWavHeader(rendered.bytes));
+          } catch (e) {
+            throw new Error(`The audio that came back could not be read: ${(e as Error).message}`, {
+              cause: e,
+            });
+          }
           // by the book, which is where the file stays whatever the chapter's number becomes
           const { url } = await files.write(job.bookId, rendered.bytes, "wav");
           clip = {
@@ -339,6 +368,7 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
             at: Date.now(),
             model: rendered.model,
             ...(rendered.voice != null ? { voice: rendered.voice } : {}),
+            sampleRate,
           };
         } catch (e) {
           if (signal.aborted) throw e;
@@ -364,11 +394,9 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
           write((tx, at) => {
             // A dictionary replaced while the line was out marked stale only the clips that had
             // landed, so one that lands after it is checked here, in the same transaction as the
-            // write — the words it was sent may no longer be the words the book would send.
-            if (
-              clip.status === "done" &&
-              speak(s.text, readLexicon(tx, at.bookId)).text !== spoken.text
-            )
+            // write — the words it was sent may no longer be the words the book would send. An
+            // endpoint saved meanwhile is the same question about its tags and its rate.
+            if (clip.status === "done" && movedOn(tx, at.bookId, s, who.endpoint, plan, clip))
               clip = { ...clip, status: "stale" };
             writeClip(tx, at.bookId, at.id, s.id, slot, clip);
             if (replacement && clip.status !== "failed")
@@ -383,7 +411,7 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
         const detail = { line: s.id, speaker: s.speaker };
         if (clip.status === "stale")
           ctx.note(
-            `Line ${s.id} was sent before the dictionary changed; it reads as stale`,
+            `Line ${s.id} was sent before the dictionary or its endpoint changed; it reads as stale`,
             "warning",
             detail,
           );
@@ -575,4 +603,27 @@ export function enqueueNarration(
     jobs.push(job);
   });
   return { jobs, skipped, runId };
+}
+
+/**
+ * Whether a clip that has just landed was rendered from a request the book would no longer send:
+ * other words after the dictionary, other tags, or — when the endpoint now names a rate — another
+ * rate than the file came back at. The browser's drift rule asks the same of a clip already in the
+ * book; this asks it of one in flight while the dictionary or the endpoint was saved.
+ */
+function movedOn(
+  tx: Tx,
+  bookId: string,
+  s: Segment,
+  endpointId: string | null,
+  sent: ExpressionPlan,
+  clip: SegmentAudio,
+): boolean {
+  const ep = endpointId ? readEndpoint(tx, endpointId) : undefined;
+  const now = expressionPlan(s, ep, readLexicon(tx, bookId));
+  return (
+    now.text !== sent.text ||
+    now.signature !== sent.signature ||
+    (!!ep?.sampleRate && clip.sampleRate !== ep.sampleRate)
+  );
 }

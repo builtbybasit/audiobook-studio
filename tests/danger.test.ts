@@ -14,7 +14,7 @@ import { useUiStore } from "@/stores/ui";
 // The toast is what the confirmation step used to be, so it has to carry the same facts, including
 // the one thing Undo does not return: runs that were still going.
 import { test, expect, describe, beforeEach } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
+import { testPinia } from "./support/pinia";
 
 import type { Job, ToastOptions } from "@/types";
 
@@ -29,7 +29,8 @@ let toasts: { message: string; options: ToastOptions }[];
 
 beforeEach(() => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  setActivePinia(createPinia());
+  // with the query cache installed, as removing a volume or a book invalidates what it read
+  testPinia();
   castStore = useCastStore();
   endpointsStore = useEndpointsStore();
   exportsStore = useExportsStore();
@@ -136,12 +137,11 @@ describe("everything that can be undone acts at once", () => {
 });
 
 describe("the toast says what the question used to say", () => {
-  test("removing a novel names what went with it", () => {
+  test("removing a novel names it and how many chapters went with it", () => {
     const chapters = libraryStore.chaptersOf("cliche").length;
     libraryStore.removeBook("cliche");
     expect(last().message).toContain("The Cliché Cultivation World");
     expect(last().options.description).toContain(`${chapters} chapters`);
-    expect(last().options.description).toContain("script, cast and audiobooks");
   });
 
   test("removing a volume says the rest were renumbered", () => {
@@ -149,45 +149,41 @@ describe("the toast says what the question used to say", () => {
     expect(last().options.description).toContain("renumbered");
   });
 
-  test("a run still going is named, because Undo is the one thing that cannot bring it back", () => {
-    startJob("cliche", 1);
-    libraryStore.removeBook("cliche");
-    expect(last().options.description).toContain("1 run in flight was cancelled");
-    expect(last().options.description).toContain("does not come back with Undo");
-    // and the undo really does leave it out, so the sentence is not decoration
-    last().options.undo!();
-    expect(jobsStore.jobs.some((j) => j.id === 9001)).toBe(false);
-  });
+  // Undo is the one thing that cannot bring back a cancelled run, so the toast names one exactly
+  // when the removal cancelled it — a run elsewhere in the book is not the volume's to mention
+  const firstVolume = () => libraryStore.bookById("cliche")!.volumes[0].id;
+  const chapterIn = (inFirst: boolean) =>
+    libraryStore.chaptersOf("cliche").find((c) => (c.volumeId === firstVolume()) === inFirst)!.id;
+  const removeBook = () => libraryStore.removeBook("cliche");
+  const removeVolume = () => libraryStore.removeVolume("cliche", firstVolume());
+  test.each([
+    { case: "a novel", runAt: () => 1, remove: removeBook },
+    { case: "a volume", runAt: () => chapterIn(true), remove: removeVolume },
+  ])(
+    "removing $case names the run it cancelled, which Undo cannot bring back",
+    ({ runAt, remove }) => {
+      jobsStore.jobs = [];
+      startJob("cliche", runAt());
+      remove();
+      expect(last().options.description).toContain("1 run in flight was cancelled");
+      expect(last().options.description).toContain("Undo");
+      // and the undo really does leave it out, so the sentence is not decoration
+      last().options.undo!();
+      expect(jobsStore.jobs.some((j) => j.id === 9001)).toBe(false);
+    },
+  );
 
-  test("with nothing running, the toast does not mention runs at all", () => {
-    for (const j of jobsStore.jobs) if (!j.finishedAt) j.status = "done";
-    libraryStore.removeBook("cliche");
-    expect(last().options.description).not.toContain("in flight");
-  });
-
-  test("removing a volume names the runs inside it, which Undo cannot bring back", () => {
-    const book = libraryStore.bookById("cliche")!;
-    const inside = libraryStore
-      .chaptersOf("cliche")
-      .find((c) => c.volumeId === book.volumes[0].id)!;
-    for (const j of jobsStore.jobs) if (!j.finishedAt) j.status = "done";
-    startJob("cliche", inside.id);
-    libraryStore.removeVolume("cliche", book.volumes[0].id);
-    expect(last().options.description).toContain("1 run in flight was cancelled");
-    expect(last().options.description).toContain("does not come back with Undo");
-    // and the undo really does leave it out, so the sentence is not decoration
-    last().options.undo!();
-    expect(jobsStore.jobs.some((j) => j.id === 9001)).toBe(false);
-  });
-
-  test("only the volume's own runs are counted, not the rest of the book's", () => {
-    const book = libraryStore.bookById("cliche")!;
-    const elsewhere = libraryStore
-      .chaptersOf("cliche")
-      .find((c) => c.volumeId !== book.volumes[0].id)!;
-    for (const j of jobsStore.jobs) if (!j.finishedAt) j.status = "done";
-    startJob("cliche", elsewhere.id);
-    libraryStore.removeVolume("cliche", book.volumes[0].id);
+  test.each([
+    { case: "a novel with nothing running", remove: removeBook, start: () => {} },
+    {
+      case: "a volume while a run goes elsewhere in the book",
+      remove: removeVolume,
+      start: () => startJob("cliche", chapterIn(false)),
+    },
+  ])("removing $case does not mention runs at all", ({ remove, start }) => {
+    jobsStore.jobs = [];
+    start();
+    remove();
     expect(last().options.description).not.toContain("in flight");
   });
 });

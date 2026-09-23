@@ -95,27 +95,11 @@ describe("loading the converter", () => {
   });
 });
 
+// A heading, a link, a table and an escaped star are read back beside the conversion that writes
+// them, in epubImport.test.ts ("extracting a section's text"); these are the cases only this end has.
 describe("reading the stored Markdown back", () => {
-  test("a heading is its words, without the marks that made it a heading", () => {
-    expect(plainText("## Chapter Twelve\n\nHe signed.")).toBe("Chapter Twelve\n\nHe signed.");
-  });
-
-  test("a link is what it says, never where it points", () => {
-    expect(plainText("See [the note](http://example.test/a/b?c=d).")).toBe("See the note.");
-  });
-
   test("a list loses its bullets and keeps its items apart", () => {
     expect(plainText("-   Monday\n-   Friday")).toBe("Monday\n\nFriday");
-  });
-
-  test("a table is read a row at a time, never its pipes or its rule", () => {
-    expect(plainText("| Day | Chapter |\n| --- | --- |\n| Monday | Ch 1 |")).toBe(
-      "Day, Chapter\n\nMonday, Ch 1",
-    );
-  });
-
-  test("an escaped star comes back the star the book had", () => {
-    expect(plainText("\\* \\* \\*\n\nA 5 \\* 3 sum.")).toBe("* * *\n\nA 5 * 3 sum.");
   });
 
   test("emphasis lands on the words themselves", () => {

@@ -63,20 +63,15 @@ function writeBooks(): void {
 }
 
 describe("the library", () => {
-  test("every seeded book's chapters come back as they went in", () => {
+  test("every seeded book's chapters come back as they went in, notes and all", () => {
     writeBooks();
     for (const book of world.books)
       expect(readChapters(db, book.id)).toEqual(world.chapters[book.id] ?? []);
-  });
-
-  test("a chapter with an import note keeps it, and one without stays without", () => {
-    writeBooks();
     const all = world.books.flatMap((b) => readChapters(db, b.id));
-    const noted = all.filter((c) => c.note);
     const plain = all.filter((c) => !c.note);
-    expect(noted.length).toBeGreaterThan(0);
+    expect(all.some((c) => c.note)).toBe(true);
     expect(plain.length).toBeGreaterThan(0);
-    // absent is not null: a chapter with no note has no `note` key at all
+    // `toEqual` passes an undefined key as absent; a chapter with no note has no `note` key at all
     expect(plain.every((c) => !("note" in c))).toBe(true);
   });
 });
@@ -113,51 +108,22 @@ describe("the script and its clips", () => {
     return n;
   }
 
-  test("every seeded line of every book comes back identical", () => {
+  // Six thousand lines written and read back a chapter at a time: seconds on a busy machine.
+  test("every seeded line of every book comes back identical, receipts and retakes included", () => {
     writeBooks();
     const written = writeScripts();
     expect(written).toBeGreaterThan(1000);
+    // Equality covers a rendered clip's frozen receipt (rates, why, units and basis) and a retake
+    // waiting for a verdict beside the clip rather than instead of it — so long as the world has both.
+    const lines = Object.values(world.segments).flat();
+    expect(lines.some((s) => s.audio.charge)).toBe(true);
+    expect(lines.some((s) => s.candidate)).toBe(true);
 
     for (const [key, segs] of Object.entries(world.segments)) {
       const i = key.lastIndexOf(":");
       expect(readScript(db, key.slice(0, i), Number(key.slice(i + 1)))).toEqual(segs);
     }
-  });
-
-  test("a rendered clip keeps the receipt it was charged from", () => {
-    writeBooks();
-    writeScripts();
-    const charged = Object.entries(world.segments)
-      .flatMap(([key, segs]) => segs.map((s) => ({ key, s })))
-      .filter(({ s }) => s.audio.charge);
-    expect(charged.length).toBeGreaterThan(0);
-
-    const { key, s } = charged[0];
-    const i = key.lastIndexOf(":");
-    const back = readScript(db, key.slice(0, i), Number(key.slice(i + 1))).find(
-      (x) => x.id === s.id,
-    );
-    // the frozen document, whole: rates, why, units and basis
-    expect(back?.audio.charge).toEqual(s.audio.charge);
-  });
-
-  test("a retake waiting for a verdict stays beside the clip, not instead of it", () => {
-    writeBooks();
-    writeScripts();
-    const withCandidate = Object.entries(world.segments)
-      .flatMap(([key, segs]) => segs.map((s) => ({ key, s })))
-      .filter(({ s }) => s.candidate);
-    expect(withCandidate.length).toBeGreaterThan(0);
-
-    const { key, s } = withCandidate[0];
-    const i = key.lastIndexOf(":");
-    const back = readScript(db, key.slice(0, i), Number(key.slice(i + 1))).find(
-      (x) => x.id === s.id,
-    );
-    expect(back?.candidate).toEqual(s.candidate);
-    // the book's clip is untouched: nothing reads the candidate as what the chapter plays
-    expect(back?.audio).toEqual(s.audio);
-  });
+  }, 30_000);
 
   test("a superseded take comes back a take, not a clip", () => {
     writeBooks();
@@ -265,19 +231,14 @@ describe("endpoints and their rate cards", () => {
     });
   });
 
-  test("every seeded scripting profile round-trips", () => {
+  test("every seeded scripting profile round-trips, an ended promotion included", () => {
+    // An ended promotion is kept like any other, so the receipts it priced stay explicable.
+    const ended = world.profiles
+      .flatMap((p) => p.pricing?.promotions ?? [])
+      .filter((x) => x.until != null && x.until < Date.now());
+    expect(ended.length).toBeGreaterThan(0);
     world.profiles.forEach((p, i) => writeProfile(db, p, i));
-    const back = readProfiles(db);
-    expect(back).toEqual(world.profiles);
-  });
-
-  test("an expired promotion is kept, so the receipts it priced stay explicable", () => {
-    const withPromos = world.profiles.find((p) => (p.pricing?.promotions.length ?? 0) > 0)!;
-    writeProfile(db, withPromos, 0);
-    const back = readProfiles(db)[0];
-    expect(back.pricing?.promotions).toEqual(withPromos.pricing!.promotions);
-    // including any whose end date has already passed
-    expect(back.pricing!.promotions.length).toBeGreaterThan(0);
+    expect(readProfiles(db)).toEqual(world.profiles);
   });
 
   test("live telemetry is not stored: an endpoint comes back with no backoff and no history", () => {

@@ -241,7 +241,13 @@ export async function epubFile(input: EpubInput, name = "book.epub"): Promise<Fi
   return new File([await buildEpub(input)], name, { type: "application/epub+zip" });
 }
 
-/** Enough sentences to read as a full chapter rather than a short notice. */
+/**
+ * Enough sentences to read as a full chapter rather than a short notice.
+ *
+ * The default is for tests about classification. A test that narrates or builds pays for every
+ * line — 24 paragraphs script to ~50 lines, each a clip, and a minute of audio for ffmpeg — so pass
+ * the few it needs.
+ */
 export const story = (n = 24): string[] =>
   Array.from(
     { length: n },

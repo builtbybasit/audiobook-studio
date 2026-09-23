@@ -196,8 +196,9 @@ describe("deciding one empties its row", () => {
 
   test("a merge suggestion the user dismissed does not come back", () => {
     demoStore.applyScenario("resume-book");
+    // the scenario is seeded with one; without it this test would check nothing
     const suggestion = castStore.mergeSuggestions("cliche")[0];
-    if (!suggestion) return;
+    expect(suggestion).toBeDefined();
     expect(group("cliche", "merge")!.items.some((d) => d.id === `merge:${suggestion.from}`)).toBe(
       true,
     );

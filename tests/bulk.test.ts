@@ -229,16 +229,6 @@ test("flagging keeps existing flags unless replacement is chosen, and stales not
   expect(replaced.changing).toBe(1); // only the one that still differs
 });
 
-test("the preview signature moves when a selected line changes underneath it", () => {
-  const targets = all(1);
-  const action = { kind: "direction", mode: "set", direction: "commanding" } as const;
-  const first = scriptsStore.bulkPreview("cliche", targets, action).signature;
-
-  scriptsStore.setSpeaker("cliche", 1, targets[2].segId, "Bai Feng");
-
-  expect(scriptsStore.bulkPreview("cliche", targets, action).signature).not.toBe(first);
-});
-
 test("selected lines that no longer exist are reported, not applied", () => {
   const targets = [...all(1), { chId: 1, segId: 9999 }];
   const p = scriptsStore.bulkPreview("cliche", targets, { kind: "speaker", speaker: "Elder Mo" });

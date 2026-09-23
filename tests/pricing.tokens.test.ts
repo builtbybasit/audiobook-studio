@@ -427,8 +427,7 @@ describe("the seeded world", () => {
     // cached input, a schedule with a midnight-crossing window, and promotions
     expect(byId("openai").pricing!.cachedInput).toBeGreaterThan(0);
     expect(byId("openai").pricing!.windows.some((w) => w.to <= w.from)).toBe(true);
-    expect(byId("openai").pricing!.promotions.length).toBeGreaterThan(2);
-    // one running, one ended, one not started yet
+    // promotions running, ended and not started yet
     const now = Date.now();
     const promos = byId("openai").pricing!.promotions;
     expect(promos.some((p) => promotionRunning(p, now))).toBe(true);

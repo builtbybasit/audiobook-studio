@@ -14,10 +14,11 @@ import type { Runner } from "~/jobs/runner";
 import { AppError } from "~/lib/errors";
 import * as ops from "~/library/ops";
 import { epubFile, story } from "../support/epub";
-import { testApi, type TestApi } from "../support/server";
+import { jsonBody, testApi, type TestApi } from "../support/server";
 
+// A few paragraphs a chapter: the narrated test renders every line, and more lines prove nothing more.
 const chapters = (...titles: string[]) =>
-  epubFile({ chapters: titles.map((title) => ({ title, paragraphs: story() })) });
+  epubFile({ chapters: titles.map((title) => ({ title, paragraphs: story(3) })) });
 
 /** A book of two volumes: chapters 1–3, then 4–6. */
 async function twoVolumes(api: TestApi = testApi()) {
@@ -101,14 +102,9 @@ describe("removing a volume with work queued on the book", () => {
 describe("removing a volume whose chapters were narrated", () => {
   test("takes the clips they rendered off the disk, and leaves the rest", async () => {
     const { api, id } = await twoVolumes();
-    const json = (body: unknown) => ({
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    await api.request(`/api/books/${id}/chapters/script`, json({ ids: [1, 5] }));
+    await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1, 5] }));
     await api.runner.idle();
-    await api.request(`/api/books/${id}/chapters/narrate`, json({ ids: [1, 5] }));
+    await api.request(`/api/books/${id}/chapters/narrate`, jsonBody({ ids: [1, 5] }));
     await api.runner.idle();
     const dir = join(api.audioDir, id);
     const before = readdirSync(dir);

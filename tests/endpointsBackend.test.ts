@@ -10,7 +10,7 @@
 //
 // The service here is a fake that keeps the document in memory, not the Hono app: the subject is
 // the store's side of the seam, and the route has its own tests in `tests/server/`.
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 
 import { credentials, type Credential } from "@/lib/credentials";
 import { ApiError } from "@/services/http";
@@ -102,11 +102,23 @@ let toasts: { msg: string; kind?: string }[];
 /** the registry is module state; every test puts it back */
 let registry: Credential[];
 
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// The write-behind waits on a timer, and the clock is faked so the suite does not sit out
+// WRITE_DELAY_MS a dozen times over. Everything else here is promises, so letting them run is one
+// turn of the real event loop: `setImmediate` is taken before the clock is faked.
+const realImmediate = setImmediate;
+/** Let every promise that can settle, settle. */
+const drain = () => new Promise<void>((r) => realImmediate(() => r()));
+/** Move the fake clock on, with the watch's turn before it and the answer's turn after it. */
+const wait = async (ms: number) => {
+  await drain();
+  jest.advanceTimersByTime(ms);
+  await drain();
+};
 /** Past the write-behind's delay, and the answer's turn after it. */
-const settle = () => wait(WRITE_DELAY_MS + 50);
+const settle = () => wait(WRITE_DELAY_MS);
 
 beforeEach(() => {
+  jest.useFakeTimers();
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   registry = clone([...credentials]);
   svc = new FakeService();
@@ -125,6 +137,7 @@ afterEach(() => {
   pinia.stop();
   setEndpointSettingsService(null);
   credentials.splice(0, credentials.length, ...registry);
+  jest.useRealTimers();
 });
 
 describe("the endpoints store with a server answering", () => {
@@ -183,8 +196,11 @@ describe("the endpoints store with a server answering", () => {
     ep.concurrency = 7;
     await wait(10);
     ep.concurrency = 8;
-    expect(svc.puts).toHaveLength(0); // nothing goes out while the configuration is still moving
-    await settle();
+    // nothing goes out while the configuration is still moving, and the delay runs from the last
+    // change rather than the first
+    await wait(WRITE_DELAY_MS - 1);
+    expect(svc.puts).toHaveLength(0);
+    await wait(1);
     expect(svc.puts).toHaveLength(1);
     const sent = svc.puts[0].endpoints[0];
     expect(sent.sampleRate).toBe(48000);
@@ -272,9 +288,9 @@ describe("the endpoints store with a server answering", () => {
     ep.concurrency = 5;
     await settle(); // the write for 5 is out and held
     ep.concurrency = 9;
-    await wait(0);
+    await drain();
     release(); // …and lands after 9 was typed
-    await wait(0);
+    await drain();
     expect(ep.concurrency).toBe(9);
     await settle();
     expect(svc.puts.map((b) => b.endpoints[0].concurrency)).toEqual([5, 9]);

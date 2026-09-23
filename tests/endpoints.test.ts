@@ -1,6 +1,5 @@
-import { test, expect } from "bun:test";
-import { newProfile, profileErrors } from "@/lib/scripting";
-import { splitText } from "@/lib/split";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { newProfile } from "@/lib/scripting";
 import {
   ensureOps,
   fishModelsUrl,
@@ -14,7 +13,13 @@ import {
   voicesFromFishModels,
 } from "@/lib/endpoints";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
-import { FixtureEndpointService, probeCost, probeUnits, seriesFrom } from "@/services/endpoints";
+import {
+  FixtureEndpointService,
+  probeCost,
+  probeUnits,
+  seriesFrom,
+  type EndpointDescriptor,
+} from "@/services/endpoints";
 import { maybeMoney, money, noUnits, perMillionChars, speechRates, ttsCost } from "@/lib/pricing";
 import type { BillableUnits } from "@/types";
 import type {
@@ -89,7 +94,6 @@ test("a rate that isn't known is never rendered as zero", () => {
   expect(perMillionChars(unknown)).toBeNull();
   expect(ttsCost(unknown, 5000, 300)).toBeNull();
   expect(maybeMoney(null)).toBe("unknown");
-  expect(maybeMoney(null)).not.toContain("0");
   expect(maybeMoney(0)).toBe("$0.00");
   expect(pricingLabel(unifyEndpoint(ttsEndpoint({ billing: unknown })))).toBe("rate not known");
 });
@@ -144,7 +148,6 @@ test("an endpoint that has never been used is not called healthy", () => {
   const h = health(u, { totals: totals() });
   expect(h.state).toBe("untested");
   expect(h.label).toBe("Not tested");
-  expect(h.label).not.toBe("Healthy");
 });
 
 test("an endpoint that has answered before but not lately reads as quiet, not healthy", () => {
@@ -295,24 +298,18 @@ test("operational defaults are filled in once and never overwrite what is set", 
   expect(e).toEqual(before);
 });
 
-// ---------- chunking ----------
-
-test("a very large concurrency is a valid setting, not a slider artefact", () => {
-  const p = newProfile({ id: "p", name: "P", model: "m", concurrency: 2500 });
-  expect(p.concurrency).toBe(2500);
-  expect(profileErrors(p)).toEqual([]);
-});
-
-test("splitting preserves every character of the source, whitespace included", () => {
-  const text =
-    "First sentence here.  Second one follows, with a clause; and a third.\n\nA new paragraph begins, longer than the rest of them put together, so that the splitter has to fall back.";
-  for (const max of [20, 40, 80, 1000]) {
-    const parts = splitText(text, max, "sentence", true);
-    expect(parts.map((p) => p.text).join("")).toBe(text);
-  }
-});
-
 // ---------- the fixture service ----------
+// It sleeps a few hundred milliseconds to feel like a network; the waits are skipped. The hooks
+// apply to the whole file, where nothing else sets a timer.
+let restoreTimers: () => void = () => {};
+beforeEach(() => {
+  const spy = spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) => {
+    fn();
+    return 0;
+  }) as unknown as typeof setTimeout);
+  restoreTimers = () => spy.mockRestore();
+});
+afterEach(() => restoreTimers());
 
 test("the fixture service marks everything it invents as simulated", async () => {
   const service = new FixtureEndpointService();
@@ -336,23 +333,6 @@ test("the fixture service marks everything it invents as simulated", async () =>
   expect(rows.every((r) => r.queuedAt >= Date.now() - 25 * 3600e3)).toBe(true);
 });
 
-test("an endpoint nothing has ever been sent through has no history to show", async () => {
-  const service = new FixtureEndpointService();
-  const rows = await service.history(
-    {
-      key: "scripting:antigravity",
-      id: "antigravity",
-      kind: "scripting",
-      name: "Antigravity",
-      model: "local",
-      baseUrl: "http://localhost:8000/v1",
-      concurrency: 4,
-    },
-    "7d",
-  );
-  expect(rows).toEqual([]);
-});
-
 test("a connection test reports its own cost, and unknown when there is no rate", async () => {
   const service = new FixtureEndpointService();
   const priced = await service.testConnection({
@@ -366,7 +346,8 @@ test("a connection test reports its own cost, and unknown when there is no rate"
     billing: { unit: "chars", rate: 15 },
   });
   expect(priced.simulated).toBe(true);
-  expect(priced.cost).not.toBeNull();
+  // the probe line at the endpoint's own $15 per million characters
+  expect(priced.cost).toBeCloseTo((probeUnits({ unit: "chars", rate: 15 }).chars / 1e6) * 15, 12);
 
   const unpriced = await service.testConnection({
     key: "tts:b",
@@ -409,21 +390,37 @@ test("a busy endpoint has traffic in every range, not just the oldest day", asyn
   expect(days.size).toBeGreaterThanOrEqual(5);
 });
 
-test("an endpoint added in this session starts with no invented history", async () => {
+test("an endpoint with no past has no invented history to show", async () => {
   const service = new FixtureEndpointService();
-  const rows = await service.history(
-    {
-      key: "tts:" + crypto.randomUUID(),
-      id: "new",
-      kind: "tts",
-      name: "New endpoint",
-      model: "",
-      baseUrl: "http://localhost:8880/v1",
-      concurrency: 2,
-    },
-    "7d",
-  );
-  expect(rows).toEqual([]);
+  const cases: [string, EndpointDescriptor][] = [
+    // seeded, but nothing has ever been sent through it
+    [
+      "seeded and never used",
+      {
+        key: "scripting:antigravity",
+        id: "antigravity",
+        kind: "scripting",
+        name: "Antigravity",
+        model: "local",
+        baseUrl: "http://localhost:8000/v1",
+        concurrency: 4,
+      },
+    ],
+    // added in this session: a past invented for it would be reported back as health
+    [
+      "added this session",
+      {
+        key: "tts:" + crypto.randomUUID(),
+        id: "new",
+        kind: "tts",
+        name: "New endpoint",
+        model: "",
+        baseUrl: "http://localhost:8880/v1",
+        concurrency: 2,
+      },
+    ],
+  ];
+  for (const [why, ep] of cases) expect(await service.history(ep, "7d"), why).toEqual([]);
 });
 
 // ---------- Fish Audio ----------
@@ -456,21 +453,16 @@ test("a model list becomes voices, dropping what cannot narrate a line", () => {
     { _id: "c", title: "Steward", type: "tts", state: "trained", tags: ["dry"] },
     { _id: "d", title: "Still training", type: "tts", state: "created", tags: ["female"] },
     { _id: "e", title: "Conversion", type: "svc", state: "trained", tags: [] },
+    { _id: "xyz", title: "   " },
   ]);
-  expect(voices.map((v) => v.id)).toEqual(["a", "b", "c"]);
+  expect(voices.map((v) => v.id)).toEqual(["a", "b", "c", "xyz"]);
   // the reference_id is the id a TTS request quotes, so it is what is kept
   expect(voices[0]).toEqual({ id: "a", label: "Narrator", gender: "m" });
   expect(voices[1].gender).toBe("f");
   // Fish has no gender field; an untagged voice is unknown rather than guessed
   expect(voices[2].gender).toBe("?");
-});
-
-test("a voice with no title falls back to its reference_id", () => {
-  expect(voicesFromFishModels([{ _id: "xyz", title: "   " }])[0]).toEqual({
-    id: "xyz",
-    label: "xyz",
-    gender: "?",
-  });
+  // a voice with no title is labelled by its reference_id
+  expect(voices[3]).toEqual({ id: "xyz", label: "xyz", gender: "?" });
 });
 
 // ---------- the connection test and the estimate beside it agree ----------

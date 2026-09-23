@@ -224,9 +224,10 @@ test("changing an annotation while rendering makes the returned clip stale", () 
   drain();
   expect(segment().audio.status).toBe("stale");
   expect(segment().audio.said).toStartWith("[laughter]");
-  expect(narrationStore.clipDrift("cliche", segment())).toContain(
-    "expressions: tags, position, or model support changed after this clip",
-  );
+  // the drift names expressions as what moved under the clip
+  expect(
+    narrationStore.clipDrift("cliche", segment()).some((d) => d.startsWith("expressions")),
+  ).toBe(true);
 });
 
 test("model changes stale annotated audio and never dispatch incompatible queued tags", () => {
@@ -253,9 +254,7 @@ test("queued clips recheck capabilities after the run has started", () => {
   const second = scriptsStore.segmentsOf("cliche", 1)[1];
   expect(second.audio.status).toBe("failed");
   expect(second.audio.error!.message).toContain("Expression needs attention");
-  expect(
-    jobsStore.jobs[0].activity!.some((e) => e.message === "Segment 2 blocked before dispatch"),
-  ).toBe(true);
+  expect(jobsStore.jobs[0].activity!.some((e) => /Segment 2 blocked/.test(e.message))).toBe(true);
 });
 
 test("split and join preserve annotations at their correct positions without duplicating them", () => {

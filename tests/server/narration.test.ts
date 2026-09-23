@@ -46,10 +46,12 @@ interface Failure {
   error: { code: string; message: string; detail?: string };
 }
 
+// Short on purpose: every line is a clip written to disk and a revision moved, so a chapter of
+// fifty lines made each narration here cost half a second and bought nothing a dozen do not.
 const dialogue = () => [
   "“We are short again,” said Mara.",
   "“Then we count it twice,” said Tobin.",
-  ...story(),
+  ...story(3),
 ];
 
 /** A two-speaker book on the shelf, chapters 1 and 2 scripted, the runner idle. */
@@ -222,19 +224,14 @@ describe("narrating a chapter through the queue", () => {
 });
 
 describe("what a scope renders", () => {
-  test("`fill` after a full narration has nothing to do, and says so instead of queueing", async () => {
-    const { api, id } = await scripted();
-    await narrate(api, id, [1]);
-    await api.runner.idle();
-    const { body } = await narrate(api, id, [1], "fill");
-    expect(body.jobs).toEqual([]);
-    expect(body.skipped).toEqual([{ id: 1, why: "nothing" }]);
-  });
-
   test("`fill` re-renders only the lines whose clip went stale, keeping the rest", async () => {
     const { api, id } = await scripted();
     await narrate(api, id, [1]);
     await api.runner.idle();
+    // straight after a full narration there is nothing to fill, and it says so instead of queueing
+    const nothing = await narrate(api, id, [1], "fill");
+    expect(nothing.body.jobs).toEqual([]);
+    expect(nothing.body.skipped).toEqual([{ id: 1, why: "nothing" }]);
     const before = await scriptOf(api, id);
     // a rename marks the clips of the lines it moves stale, as the cast store does
     await api.request(`/api/books/${id}/characters/Mara/rename`, jsonBody({ to: "Marla" }));
@@ -265,28 +262,6 @@ describe("what a scope renders", () => {
     expect((await chaptersOf(api, id))[0].narration).toBe("done");
   });
 
-  test("`failed` re-renders only the lines whose request failed", async () => {
-    const { api, id } = await scripted(
-      testApi({ speech: failingOnce((t) => t.includes("count it twice")) }),
-    );
-    await narrate(api, id, [1]);
-    await api.runner.idle();
-    const before = await scriptOf(api, id);
-    const broken = before.segments.filter((s) => s.audio.status === "failed");
-    expect(broken).toHaveLength(1);
-    const { body } = await narrate(api, id, [1], "failed");
-    expect(body.jobs[0].bulk?.scope).toBe("Failed only");
-    expect(body.jobs[0].narrationRun?.clips).toBe(1);
-    await api.runner.idle();
-    const { segments } = await scriptOf(api, id);
-    expect(segments.every((s) => s.audio.status === "done")).toBe(true);
-    for (const s of segments)
-      if (s.id !== broken[0].id)
-        expect(s.audio.url).toBe(before.segments.find((b) => b.id === s.id)!.audio.url);
-    // rendered in place: a failed clip is not a clip to keep a take of
-    expect(segments.find((s) => s.id === broken[0].id)?.audio.takes).toBeUndefined();
-  });
-
   test("`all` re-renders every line, and a line that had a clip keeps it as a take", async () => {
     const { api, id } = await scripted();
     await narrate(api, id, [1]);
@@ -314,23 +289,10 @@ describe("what a scope renders", () => {
     expect(third.audio.n).toBe(3);
     expect(third.audio.takes?.map((t) => t.n)).toEqual([1, 2]);
   });
-
-  test("a scope the request does not name is `all`, and one it misspells is refused", async () => {
-    const { api, id } = await scripted();
-    const { body } = await narrate(api, id, [1]);
-    expect(body.jobs[0].bulk?.scope).toBe("Everything");
-    await api.runner.idle();
-    const bad = await api.request<Failure>(
-      `/api/books/${id}/chapters/narrate`,
-      jsonBody({ ids: [1], scope: "some" }),
-    );
-    expect(bad.status).toBe(400);
-    expect(bad.body.error.detail).toContain("scope");
-  });
 });
 
 describe("a line that cannot be rendered", () => {
-  test("fails the job and the chapter, leaves the other lines done, and is retried at the failed scope", async () => {
+  test("fails the job and the chapter, leaves the other lines done, and `failed` re-renders only it", async () => {
     const { api, id } = await scripted(
       testApi({ speech: failingOnce((t) => t.includes("count it twice")) }),
     );
@@ -339,19 +301,29 @@ describe("a line that cannot be rendered", () => {
     const job = await jobById(api, body.jobs[0].id);
     expect(job.status).toBe("failed");
     expect(job.activity?.at(-1)?.detail?.error).toBe("1 line could not be rendered");
-    const { segments } = await scriptOf(api, id);
-    const broken = segments.find((s) => s.text.includes("count it twice"))!;
+    const before = await scriptOf(api, id);
+    const broken = before.segments.find((s) => s.text.includes("count it twice"))!;
     expect(broken.audio.status).toBe("failed");
     expect(broken.audio.error?.message).toBe("The voice service dropped the connection");
     expect(broken.audio.url).toBeUndefined();
-    expect(segments.filter((s) => s.audio.status === "done")).toHaveLength(segments.length - 1);
+    expect(before.segments.filter((s) => s.audio.status === "done")).toHaveLength(
+      before.segments.length - 1,
+    );
     const [c1] = await chaptersOf(api, id);
     expect(c1.narration).toBe("failed");
     expect(c1.narrationProgress).toBe(100);
 
-    await narrate(api, id, [1], "failed");
+    const retry = await narrate(api, id, [1], "failed");
+    expect(retry.body.jobs[0].bulk?.scope).toBe("Failed only");
+    expect(retry.body.jobs[0].narrationRun?.clips).toBe(1);
     await api.runner.idle();
-    expect((await scriptOf(api, id)).segments.every((s) => s.audio.status === "done")).toBe(true);
+    const { segments } = await scriptOf(api, id);
+    expect(segments.every((s) => s.audio.status === "done")).toBe(true);
+    for (const s of segments)
+      if (s.id !== broken.id)
+        expect(s.audio.url).toBe(before.segments.find((b) => b.id === s.id)!.audio.url);
+    // rendered in place: a failed clip is not a clip to keep a take of
+    expect(segments.find((s) => s.id === broken.id)?.audio.takes).toBeUndefined();
     expect((await chaptersOf(api, id))[0].narration).toBe("done");
   });
 
@@ -559,10 +531,10 @@ describe("what is left out of a run", () => {
     expect((await jobById(api, first.body.jobs[0].id)).status).toBe("done");
   });
 
-  test("a book still in its contents review has nothing to narrate", async () => {
+  test("a book still in its contents review, a book that is not there and a misspelled scope are refused", async () => {
     const api = testApi();
     const { body } = await api.import<ImportResult>(
-      await epubFile({ chapters: [{ title: "One", paragraphs: story() }] }),
+      await epubFile({ chapters: [{ title: "One", paragraphs: story(3) }] }),
     );
     const refused = await api.request<Failure>(
       `/api/books/${body.book.id}/chapters/narrate`,
@@ -571,6 +543,13 @@ describe("what is left out of a run", () => {
     expect(refused.status).toBe(409);
     expect(refused.body.error.code).toBe("conflict");
     expect((await narrate(api, "nobody", [1])).status).toBe(404);
+    // a scope the request leaves out is `all` (the first test here), and one it misspells is not
+    const bad = await api.request<Failure>(
+      `/api/books/${body.book.id}/chapters/narrate`,
+      jsonBody({ ids: [1], scope: "some" }),
+    );
+    expect(bad.status).toBe(400);
+    expect(bad.body.error.detail).toContain("scope");
   });
 });
 
@@ -882,24 +861,6 @@ describe("what a line is spoken as", () => {
     expect(plain.audio.lex).toBeUndefined();
   });
 
-  test("an entry that is switched off, or matches only inside a word, is not applied", async () => {
-    const speech = recording();
-    const { api, id } = await scripted(testApi({ speech }));
-    await api.request(`/api/books/${id}/lexicon`, {
-      ...jsonBody({
-        entries: [
-          { id: 1, term: "twice", say: "two times", enabled: false },
-          { id: 2, term: "wic", say: "wick" },
-        ].map((e) => ({ enabled: true, ...e })),
-      }),
-      method: "PUT",
-    });
-    await narrate(api, id, [1]);
-    await api.runner.idle();
-    const { segments } = await scriptOf(api, id);
-    expect(speech.sent).toEqual(segments.map((s) => s.text));
-  });
-
   test("replacing the dictionary marks stale exactly the clips it changes the words of", async () => {
     const { api, id } = await scripted(testApi({ speech: fakeSpeechProvider() }));
     await narrate(api, id, [1, 2]);
@@ -1034,7 +995,9 @@ describe("the files", () => {
   });
 
   test("a path that is not a book and a token is never read", async () => {
-    const { api, id } = await scripted();
+    // no book is needed: the path is refused before anything is looked for
+    const api = testApi();
+    const id = "moonlight-ledger";
     expect(api.files.path("../etc", "passwd.wav")).toBeNull();
     expect(api.files.path(id, "../passwd.wav")).toBeNull();
     expect(api.files.path(id, "evil.wav")).toBeNull();

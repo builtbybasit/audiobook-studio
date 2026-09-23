@@ -222,7 +222,7 @@ async function voiced(api: TestApi) {
       title: "Moonlight Ledger",
       chapters: ["One", "Two"].map((title) => ({
         title,
-        paragraphs: ["“We are short again,” said Mara.", ...story()],
+        paragraphs: ["“We are short again,” said Mara.", ...story(2)],
       })),
     }),
   );

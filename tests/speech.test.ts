@@ -286,44 +286,32 @@ describe("in the store", () => {
       expect(narrationStore.clipDrift("cliche", s)).toContain("sample rate: 24 kHz → 44.1 kHz");
     });
 
-    test("an endpoint on the model's own rate asks for none, so nothing drifts", () => {
+    // an endpoint on the model's own rate asks for none; a clip that recorded none claims nothing
+    test.each([
+      { case: "the endpoint asks for no rate", clip: 24000, endpoint: null },
+      { case: "the endpoint has no rate set at all", clip: 24000, endpoint: undefined },
+      { case: "the clip recorded no rate", clip: undefined, endpoint: 48000 },
+      { case: "the rates are the same", clip: 44100, endpoint: 44100 },
+    ])("nothing drifts when $case", ({ clip, endpoint }) => {
       const { s, ep } = rendered();
-      s.audio.sampleRate = 24000;
-      ep.sampleRate = null;
-      expect(narrationStore.clipDrift("cliche", s).join()).not.toContain("sample rate");
-      delete ep.sampleRate;
-      expect(narrationStore.clipDrift("cliche", s).join()).not.toContain("sample rate");
-    });
-
-    test("a clip that recorded no rate says nothing either way", () => {
-      const { s, ep } = rendered();
-      delete s.audio.sampleRate;
-      ep.sampleRate = 48000;
-      expect(narrationStore.clipDrift("cliche", s).join()).not.toContain("sample rate");
-    });
-
-    test("the same rate is not drift", () => {
-      const { s, ep } = rendered();
-      s.audio.sampleRate = 44100;
-      ep.sampleRate = 44100;
+      if (clip === undefined) delete s.audio.sampleRate;
+      else s.audio.sampleRate = clip;
+      if (endpoint === undefined) delete ep.sampleRate;
+      else ep.sampleRate = endpoint;
       expect(narrationStore.clipDrift("cliche", s).join()).not.toContain("sample rate");
     });
 
-    test("the demo records the rate it asked for, and then the clip matches its endpoint", () => {
+    test.each([
+      { case: "the rate it asked for", endpoint: 44100, recorded: 44100 },
+      { case: "none when the endpoint asks for none", endpoint: null, recorded: undefined },
+    ])("a demo render records $case", ({ endpoint, recorded }) => {
       const { s, ep } = rendered();
-      ep.sampleRate = 44100;
+      ep.sampleRate = endpoint;
       narrationStore.retrySegment("cliche", 1, s.id);
       run();
-      expect(s.audio.sampleRate).toBe(44100);
+      expect(s.audio.sampleRate).toBe(recorded);
+      // …so the clip matches its endpoint straight away
       expect(narrationStore.clipDrift("cliche", s).join()).not.toContain("sample rate");
-    });
-
-    test("an endpoint on the model's own rate records none", () => {
-      const { s, ep } = rendered();
-      ep.sampleRate = null;
-      narrationStore.retrySegment("cliche", 1, s.id);
-      run();
-      expect(s.audio.sampleRate).toBeUndefined();
     });
   });
 });

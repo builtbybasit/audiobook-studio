@@ -51,7 +51,9 @@ function finish(max = 400) {
   for (let i = 0; i < max && callbacks.size; i++) tick();
 }
 
-beforeEach(() => {
+/** A fresh seeded world. Only the store tests pay for one: the plan, the blockers and loudness
+ *  are functions of what they are handed. */
+function freshStores() {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   setActivePinia(createPinia());
   castStore = useCastStore();
@@ -63,6 +65,9 @@ beforeEach(() => {
   uiStore = useUiStore();
   jobsStore.jobs = [];
   uiStore.toast = () => "test";
+}
+
+beforeEach(() => {
   callbacks = new Map();
   clock = 1000;
   let seq = 0;
@@ -239,6 +244,8 @@ describe("loudness", () => {
 });
 
 describe("a build", () => {
+  beforeEach(freshStores);
+
   const ready = (bookId: string) =>
     libraryStore
       .chaptersOf(bookId)
@@ -331,6 +338,8 @@ describe("a build", () => {
 });
 
 describe("staying up to date", () => {
+  beforeEach(freshStores);
+
   /** every chapter of Starforge a build could use, stale included */
   const usableIds = () =>
     libraryStore
@@ -455,8 +464,10 @@ describe("staying up to date", () => {
     );
     expect(sameOutput(first, settings({ cover: "art.jpg" }))).toBe(false);
 
+    // a different bitrate is the same audiobook, built again — as a new version with nothing carried
     const louder = (await exportsStore.buildExport("starforge", ids, settings({ bitrate: 128 })))!;
     finish();
+    expect(louder.version).toBe(2);
     expect(louder.reused).toBe(0);
     expect(louder.rebuilt).toBe(ids.length);
   });
@@ -493,21 +504,6 @@ describe("staying up to date", () => {
     expect(chapterSignature(c, segs, DEFAULT_PACING)).not.toBe(before);
   });
 
-  test("changing the output settings is a different file, so nothing is carried over", async () => {
-    const ids = usableIds().slice(0, 5);
-    await exportsStore.buildExport("starforge", ids, settings({ bitrate: 64, useStale: true }));
-    finish();
-    const louder = (await exportsStore.buildExport(
-      "starforge",
-      ids,
-      settings({ bitrate: 128, useStale: true }),
-    ))!;
-    finish();
-    expect(louder.version).toBe(2);
-    expect(louder.reused).toBe(0);
-    expect(louder.rebuilt).toBe(ids.length);
-  });
-
   test("the fingerprint covers the clips, the stitched silence and the chapter's state", () => {
     const c = chapter(1, 1, 100);
     const segs = scriptsStore.segmentsOf("starforge", 2);
@@ -519,6 +515,8 @@ describe("staying up to date", () => {
 });
 
 describe("update and retry ask before they decide", () => {
+  beforeEach(freshStores);
+
   // Both are "this audiobook again". Neither may shrink the selection or accept clips the script has
   // moved under on your behalf — when either would have to, the build goes to the Build tab and the
   // same readiness review that guards a first build guards this one.
@@ -631,6 +629,8 @@ describe("update and retry ask before they decide", () => {
 });
 
 describe("the demo scenarios", () => {
+  beforeEach(freshStores);
+
   test("the long book is there to be exported", () => {
     const chapters = libraryStore.chaptersOf("gates");
     expect(chapters.length).toBeGreaterThan(100);

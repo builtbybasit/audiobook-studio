@@ -79,6 +79,17 @@ export interface MovedLines {
   moved: (ChapterLines & { revision: number })[];
 }
 
+/**
+ * The dictionary as the server now holds it, and the clips the change reached: those whose
+ * recorded pronunciation it no longer matches (`stale`), and those an Undo named that match it
+ * again (`restored`). Each chapter comes with the revision its script is at after the change.
+ */
+export interface LexiconSaved {
+  entries: LexEntry[];
+  stale: (ChapterLines & { revision: number })[];
+  restored: (ChapterLines & { revision: number })[];
+}
+
 /** A verdict on a retake: the line as it now stands, and the chapter whose clip changed. */
 export interface Judged {
   segment: Segment;
@@ -155,8 +166,12 @@ export interface LibraryService {
   deleteCharacter(bookId: string, name: string): Promise<MovedLines>;
   /** Put a speaker back on exactly these lines, and back in the cast: what an Undo sends. */
   attribute(bookId: string, character: Character, lines: ChapterLines[]): Promise<MovedLines>;
-  /** The pronunciation dictionary, replaced whole. */
-  putLexicon(bookId: string, entries: LexEntry[]): Promise<LexEntry[]>;
+  /**
+   * The pronunciation dictionary, replaced whole. Every rendered clip that now reads the old
+   * pronunciation is marked stale; `restore` names lines an earlier change staled (what an Undo
+   * sends), and those that read this pronunciation again go back to done.
+   */
+  putLexicon(bookId: string, entries: LexEntry[], restore?: ChapterLines[]): Promise<LexiconSaved>;
   /** Keep a retake as the clip in the book, or discard it; either way it is judged once. */
   judgeTake(
     bookId: string,
@@ -318,10 +333,11 @@ export class HttpLibraryService implements LibraryService {
     });
   }
 
-  async putLexicon(bookId: string, entries: LexEntry[]): Promise<LexEntry[]> {
-    return (
-      await this.http.put<{ entries: LexEntry[] }>(`/books/${seg(bookId)}/lexicon`, { entries })
-    ).entries;
+  putLexicon(bookId: string, entries: LexEntry[], restore?: ChapterLines[]): Promise<LexiconSaved> {
+    return this.http.put<LexiconSaved>(`/books/${seg(bookId)}/lexicon`, {
+      entries,
+      ...(restore && { restore: restore.map(({ chapterId, ids }) => ({ chapterId, ids })) }),
+    });
   }
 
   judgeTake(

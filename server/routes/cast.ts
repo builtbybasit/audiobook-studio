@@ -14,7 +14,11 @@ const NameParam = v.object({ id: v.string(), name: v.pipe(v.string(), v.nonEmpty
 const Rename = v.object({ to: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")) });
 const Merge = v.object({ into: v.pipe(v.string(), v.nonEmpty("must name a speaker")) });
 const Attribute = v.object({ character: CharacterSchema, lines: v.array(ChapterLinesSchema) });
-const Lexicon = v.object({ entries: v.array(LexEntrySchema) });
+const Lexicon = v.object({
+  entries: v.array(LexEntrySchema),
+  /** the lines an earlier change staled, which an Undo asks to have back */
+  restore: v.optional(v.array(ChapterLinesSchema)),
+});
 
 export function castRoutes(db: Db): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
@@ -75,9 +79,10 @@ export function castRoutes(db: Db): Hono<PinoEnv> {
     },
   );
 
-  app.put("/:id/lexicon", validate("param", BookParam), validate("json", Lexicon), (c) =>
-    c.json({ entries: ops.putLexicon(db, c.req.valid("param").id, c.req.valid("json").entries) }),
-  );
+  app.put("/:id/lexicon", validate("param", BookParam), validate("json", Lexicon), (c) => {
+    const { entries, restore } = c.req.valid("json");
+    return c.json(ops.putLexicon(db, c.req.valid("param").id, entries, restore));
+  });
 
   return app;
 }

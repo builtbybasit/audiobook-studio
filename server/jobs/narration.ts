@@ -29,10 +29,10 @@ import { and, eq } from "drizzle-orm";
 import type { Job, NarrationScope, NarrationStatus, Segment, SegmentAudio } from "@/types";
 import { NARRATOR } from "@/lib/cast";
 import { chapterNarration, narrationTargets, SCOPE_LABEL } from "@/lib/runPlan";
-import { pacingOrDefault, silenceOf, speechInstructions } from "@/lib/speech";
+import { pacingOrDefault, silenceOf, speak, speechInstructions } from "@/lib/speech";
 import { nextTakeNumber, requeue } from "@/lib/takes";
 import type { AudioFiles } from "~/audio/files";
-import { readCast } from "~/db/cast";
+import { readCast, readLexicon } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { activeJob, getJob, nextRunId } from "~/db/jobs";
 import * as library from "~/db/library";
@@ -278,6 +278,9 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
         const { s, slot } = t;
         const who = deliveryOf(s.speaker);
         const instructions = speechInstructions({ style: who.style, direction: s.direction });
+        // The dictionary as it stands when this line goes out, not when the run began: a term
+        // added mid-run applies to every line not yet sent, as it does in the demo.
+        const spoken = speak(s.text, readLexicon(db, job.bookId));
         const startedAt = Date.now();
         // The audit trail, written when the request goes out: exactly what this clip is being
         // rendered with, so a later edit to the line, the cast or the voice reads as drift.
@@ -295,6 +298,10 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
           ...(instructions ? { instructions } : {}),
           type: s.type,
           text: s.text,
+          // what the dictionary made of it, recorded whether or not it changed anything: the
+          // browser's drift rule compares this against the dictionary as it now stands
+          pronounced: spoken.text,
+          ...(spoken.text !== s.text ? { said: spoken.text, lex: spoken.hits.length } : {}),
         };
         const gone = (): void => {
           ctx.note(`Line ${s.id} was removed while it rendered; the clip was dropped`, "warning", {
@@ -313,7 +320,7 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
         let clip: SegmentAudio;
         try {
           const rendered = await provider.speak({
-            text: s.text,
+            text: spoken.text,
             speaker: s.speaker,
             type: s.type,
             direction: s.direction,
@@ -355,8 +362,17 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
         const retake = slot === "candidate" && !clip.auto;
         try {
           write((tx, at) => {
+            // A dictionary replaced while the line was out marked stale only the clips that had
+            // landed, so one that lands after it is checked here, in the same transaction as the
+            // write — the words it was sent may no longer be the words the book would send.
+            if (
+              clip.status === "done" &&
+              speak(s.text, readLexicon(tx, at.bookId)).text !== spoken.text
+            )
+              clip = { ...clip, status: "stale" };
             writeClip(tx, at.bookId, at.id, s.id, slot, clip);
-            if (replacement && clip.status === "done") acceptCandidate(tx, at.bookId, at.id, s.id);
+            if (replacement && clip.status !== "failed")
+              acceptCandidate(tx, at.bookId, at.id, s.id);
           });
         } catch (e) {
           if (!(e instanceof LineGone)) throw e;
@@ -365,7 +381,13 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
         }
         landed++;
         const detail = { line: s.id, speaker: s.speaker };
-        if (clip.status === "done") {
+        if (clip.status === "stale")
+          ctx.note(
+            `Line ${s.id} was sent before the dictionary changed; it reads as stale`,
+            "warning",
+            detail,
+          );
+        if (clip.status !== "failed") {
           const arrived = {
             ...detail,
             seconds: Number(clip.duration.toFixed(2)),

@@ -581,7 +581,7 @@ service are both built on it, so that rule is written once.
 | `POST`   | `/api/books/:id/characters/:name/merge`          | Fold one speaker into another                                 |
 | `DELETE` | `/api/books/:id/characters/:name`                | Remove a speaker; their lines go to the Narrator              |
 | `POST`   | `/api/books/:id/characters/attribute`            | Put a speaker back on exactly these lines; an Undo            |
-| `PUT`    | `/api/books/:id/lexicon`                         | The pronunciation dictionary, replaced whole                  |
+| `PUT`    | `/api/books/:id/lexicon`                         | The dictionary, replaced whole, and the clips it made stale   |
 | `GET`    | `/api/books/:id/exports`                         | The finished audiobooks                                       |
 | `POST`   | `/api/books/:id/exports`                         | Queue a build; the job and the version it makes (202)         |
 | `GET`    | `/api/books/:id/exports/:e`                      | One of them                                                   |
@@ -779,6 +779,20 @@ chapter that has no script yet (`unscripted`). Each line goes to a
 [`SpeechProvider`](../server/providers/speech.ts) with its text, its speaker's voice from the cast
 (the Narrator's when the speaker has none, as `effectiveVoice` decides in the browser) and its
 direction, and comes back as audio with a duration.
+
+**A line is sent what the dictionary makes of it.** The book's pronunciation dictionary is applied
+by `speak` in [src/lib/speech.ts](../src/lib/speech.ts) — the function the demo's simulator
+applies — as each line goes out, so a term added mid-run reaches every line not yet sent. The
+clip records what it was sent: `pronounced` always, and `said` with the number of substitutions
+(`lex`) when that differs from the line, because the browser's drift rule compares `pronounced`
+against the dictionary as it now stands. Two things keep that record honest. `PUT …/lexicon`
+marks stale, in the same transaction as the list, every rendered clip the new list would send
+different words for, and answers with those lines and their chapters' revisions (`stale`), so the
+client's next edit names the revision the change moved the script to. And a clip that was out
+when the list changed is checked as it lands, since the change had nothing landed to mark: it
+lands `stale` if its words are no longer the book's. An Undo sends the old list with the lines
+the change reported (`restore`), and those whose clip matches again go back to `done` — only
+those, because a clip stale by a rename would also match and is not the dictionary's to clear.
 
 **Nothing usable is thrown away to make room.** A line that already has a playable clip renders
 its replacement beside it, in the `candidate` role, and the clip in the book keeps playing until
@@ -1057,7 +1071,7 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [contentsReview.test.ts](../tests/server/contentsReview.test.ts) | Import → review → add, volumes, removal, renumbering                            |
 | [markdown.test.ts](../tests/server/markdown.test.ts)             | The converter's DOM bracket, and reading Markdown back                          |
 | [jobs.test.ts](../tests/server/jobs.test.ts)                     | The queue: dedupe, cancel, restart, revision conflicts, HTTP                    |
-| [narration.test.ts](../tests/server/narration.test.ts)           | Narration: scopes, replacement, failure, cancel, restart, files                 |
+| [narration.test.ts](../tests/server/narration.test.ts)           | Narration: scopes, replacement, failure, cancel, restart, dictionary, files     |
 | [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)         | Editing against a revision, the history rule, what a run writes                 |
 | [cast.test.ts](../tests/server/cast.test.ts)                     | The cast a run leaves, rename, merge, removal, exact undo                       |
 | [exports.test.ts](../tests/server/exports.test.ts)               | Building one: the file, the spans, refusals, cancel, failure, download          |
@@ -1112,12 +1126,13 @@ the library screens are the server's in backend mode. Two things about that wort
 The queue runs three kinds of job. What the scripting, narration and export slices do not do yet,
 each because a route or a table's writer is missing rather than by oversight:
 
-- **The line is spoken as written.** The pronunciation dictionary and expression tags are
-  applied in the browser's simulator and not by the server's handler, so a clip records the text
-  it was given and nothing it was rewritten to. The browser's drift rule reads that as the
-  dictionary having changed: in a book with a dictionary entry that matches a line, or a line
-  that carries expression tags, a freshly rendered clip reads as stale on the Narration page
-  until the handler applies both. The seeded endpoints' voices are names the fake accepts, not
+- **Expression tags are not sent.** The handler applies the dictionary, and not the tags placed
+  on a line: which tags a model accepts, and the token each is written as, is its endpoint's
+  configuration, and the endpoints live in the browser — the `endpoints` table has no writer and
+  no route. So a line that carries tags is sent without them, records no `expressionSignature`,
+  and reads as stale on the Narration page as soon as it lands. Applying them is `expressionPlan`
+  in [src/lib/expressions.ts](../src/lib/expressions.ts), which is pure and ready; what it waits
+  for is the endpoint the server would hand it. The seeded endpoints' voices are names the fake accepts, not
   endpoints the server knows, and a chapter's duration is its clips plus the book's pacing.
 - **A cover image is not written into the audiobook.** `customCover` records that one was chosen
   and the file carries none: the stitcher has nowhere to put it, and ffmpeg would want the image

@@ -6,11 +6,24 @@
 // rename, a merge, a removal — moves lines in every chapter of the book, and does so in the same
 // transaction as the cast row. Each says which lines it moved, so an Undo can put exactly those
 // back through `attribute` rather than guessing at an inverse.
-import type { Character, LexEntry } from "@/types";
+import { and, asc, eq } from "drizzle-orm";
+
+import type { Character, LexEntry, SegmentAudio } from "@/types";
 import { NARRATOR } from "@/lib/cast";
-import type { Db } from "~/db/client";
+import { speak } from "@/lib/speech";
+import type { Db, Tx } from "~/db/client";
 import * as cast from "~/db/cast";
-import { attributeLines, reattribute, type ChapterLines, type MovedLines } from "~/db/script";
+import { chapters } from "~/db/schema";
+import {
+  attributeLines,
+  bumpRevision,
+  readScript,
+  reattribute,
+  writeClip,
+  type ChapterLines,
+  type MovedLines,
+} from "~/db/script";
+import { settleChapter } from "~/jobs/narration";
 import { badRequest, conflict, notFound } from "~/lib/errors";
 import { requireBook } from "~/library/ops";
 
@@ -127,14 +140,87 @@ export function attribute(
   });
 }
 
-/** The pronunciation dictionary, replaced whole. */
-export function putLexicon(db: Db, bookId: string, entries: readonly LexEntry[]): LexEntry[] {
+/** The dictionary as it now stands, and the clips it moved, by chapter with the revision now. */
+export interface LexiconSaved {
+  entries: LexEntry[];
+  stale: MovedLines[];
+  restored: MovedLines[];
+}
+
+/**
+ * The pronunciation dictionary, replaced whole, and the clips it changes the words of.
+ *
+ * A clip records what the dictionary made of its line when it was sent (`pronounced`), so a clip
+ * whose line the new list would send differently no longer says what the book would, and is marked
+ * stale — the cast store's `_lexRestale`, in the same transaction as the list. `restore` is the
+ * inverse an Undo sends: the lines an earlier change staled, put back to `done` where the list in
+ * this request sends exactly what their clip was sent. A clip is not put back because it merely
+ * could be: a clip stale by a rename has words the dictionary would still send, and is not this
+ * request's to clear. So only the lines the Undo names are looked at — the ones the change it
+ * undoes reported, as `attribute` trusts the lines a merge reported — and each only if its text is
+ * still the text it was rendered from.
+ */
+export function putLexicon(
+  db: Db,
+  bookId: string,
+  entries: readonly LexEntry[],
+  restore: readonly ChapterLines[] = [],
+): LexiconSaved {
   requireBook(db, bookId);
   const ids = new Set<number>();
   for (const e of entries) {
     if (ids.has(e.id)) throw badRequest(`Entry ${e.id} appears twice`);
     ids.add(e.id);
   }
-  cast.replaceLexicon(db, bookId, entries);
-  return cast.readLexicon(db, bookId);
+  return db.transaction((tx) => {
+    cast.replaceLexicon(tx, bookId, entries);
+    const lexicon = cast.readLexicon(tx, bookId);
+    const named = new Map(restore.map((r) => [r.chapterId, new Set(r.ids)]));
+    const stale: MovedLines[] = [];
+    const restored: MovedLines[] = [];
+    for (const chapterId of chapterIds(tx, bookId)) {
+      const staled: number[] = [];
+      const back: number[] = [];
+      const undo = named.get(chapterId);
+      for (const s of readScript(tx, bookId, chapterId)) {
+        const a = s.audio;
+        const sent = a.pronounced ?? a.said ?? a.text;
+        if (sent == null) continue;
+        const now = speak(s.text, lexicon).text;
+        let status: SegmentAudio["status"] | null = null;
+        if (a.status === "done" && now !== sent) status = "stale";
+        else if (a.status === "stale" && undo?.has(s.id) && a.text === s.text && now === sent)
+          status = "done";
+        if (!status) continue;
+        writeClip(tx, bookId, chapterId, s.id, "current", { ...a, status });
+        (status === "stale" ? staled : back).push(s.id);
+      }
+      if (!staled.length && !back.length) continue;
+      const revision = bumpRevision(tx, bookId, chapterId);
+      // a chapter a run is working through is the run's to add up when it finishes
+      if (!inProgress(tx, bookId, chapterId)) settleChapter(tx, bookId, chapterId);
+      if (staled.length) stale.push({ chapterId, ids: staled, revision });
+      if (back.length) restored.push({ chapterId, ids: back, revision });
+    }
+    return { entries: lexicon, stale, restored };
+  });
+}
+
+function chapterIds(tx: Tx, bookId: string): number[] {
+  return tx
+    .select({ id: chapters.id })
+    .from(chapters)
+    .where(eq(chapters.bookId, bookId))
+    .orderBy(asc(chapters.id))
+    .all()
+    .map((c) => c.id);
+}
+
+function inProgress(tx: Tx, bookId: string, chapterId: number): boolean {
+  const row = tx
+    .select({ narration: chapters.narration })
+    .from(chapters)
+    .where(and(eq(chapters.bookId, bookId), eq(chapters.id, chapterId)))
+    .get();
+  return row?.narration === "queued" || row?.narration === "running";
 }

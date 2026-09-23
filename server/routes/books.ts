@@ -217,16 +217,16 @@ export function bookRoutes(
   );
 
   // ---------- removal ----------
-  app.delete("/:id", validate("param", BookParam), (c) => {
+  app.delete("/:id", validate("param", BookParam), async (c) => {
     const { id } = c.req.valid("param");
-    ops.removeBook(db, id, files, built);
+    await ops.removeBook(db, id, { runner, files, built });
     return c.json({ removed: id });
   });
 
-  app.delete("/:id/volumes/:volumeId", validate("param", VolumeParam), (c) => {
+  app.delete("/:id/volumes/:volumeId", validate("param", VolumeParam), async (c) => {
     const { id, volumeId } = c.req.valid("param");
     // the last volume going takes the book with it, files and all; see `removeVolume` for the rest
-    return c.json(ops.removeVolume(db, id, volumeId, { runner, files, built }));
+    return c.json(await ops.removeVolume(db, id, volumeId, { runner, files, built }));
   });
 
   return app;

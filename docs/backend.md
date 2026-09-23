@@ -861,6 +861,13 @@ one pattern the file modules accept. `slugify` makes only what it allows: accent
 `æ` → `ae`), an apostrophe is dropped and anything else separates words. A title that kept its
 `ß` used to be a book whose audio was written and then could never be fetched or removed.
 
+**A book's work stops before the book goes.** A narration or a build still running writes into the
+book's directories as it goes, `mkdir` and all, so removing them under it only had the job put
+them back, holding files no book owns. `removeBook` cancels every live job of the book first and
+waits for the one running (`runner.finished`) — a handler honours a cancel at its next step — so
+its `onSettled` clears what it half wrote while the rows it needs are still there. Only then do the
+rows and the directories go. Removing the last volume is removing the book, and does the same.
+
 **Removing files is never waited for, and never fatal.** The rows go first and the response does
 not wait on the disk. A promise nobody holds that rejects is an unhandled rejection, which Bun
 exits on — so a removal that met a permission error, or a directory a narration job was still

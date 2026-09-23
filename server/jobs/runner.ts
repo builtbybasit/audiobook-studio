@@ -67,6 +67,11 @@ export interface Runner {
   kick(): void;
   /** Recover interrupted work, then run and keep running until `stop`. */
   start(): void;
+  /**
+   * Resolves once a job is no longer being run: at once if it is not the one running, and
+   * otherwise when its handler has returned or thrown and the row says how it ended.
+   */
+  finished(id: number): Promise<void>;
   /** Hand a running job back to the queue and stop taking work. Resolves once the worker is idle. */
   stop(): Promise<void>;
   /** Resolves when the worker has nothing left to do. For tests, mostly. */
@@ -83,7 +88,12 @@ export function createRunner(
   { log, pollMs = 2000, maxAttempts = 2 }: RunnerOptions,
 ): Runner {
   const rlog = log.child({ name: "jobs" });
-  let current: { job: Job; controller: AbortController; reason: AbortReason | null } | null = null;
+  let current: {
+    job: Job;
+    controller: AbortController;
+    reason: AbortReason | null;
+    ended: Promise<void>;
+  } | null = null;
   let draining: Promise<void> | null = null;
   let stopped = false;
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -122,7 +132,8 @@ export function createRunner(
   /** Run one claimed job to its end and record what it came to. */
   async function runOne(job: Job): Promise<void> {
     const controller = new AbortController();
-    current = { job, controller, reason: null };
+    let end!: () => void;
+    current = { job, controller, reason: null, ended: new Promise<void>((r) => (end = r)) };
     const ctx = contextFor(job, controller.signal);
     const jlog = ctx.log;
     const handler = handlers[job.kind];
@@ -171,6 +182,7 @@ export function createRunner(
       jlog.error({ err: e }, "could not record how the job ended");
     } finally {
       current = null;
+      end();
     }
   }
 
@@ -231,6 +243,9 @@ export function createRunner(
         if (job) settled(job, "cancelled");
       }
       return was;
+    },
+    finished(id) {
+      return current?.job.id === id ? current.ended : Promise.resolve();
     },
     kick,
     start() {

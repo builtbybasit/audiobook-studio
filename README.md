@@ -13,16 +13,11 @@ pnpm install
 pnpm dev
 ```
 
-Open the URL Vite prints, normally `http://localhost:5173`. No backend or provider credentials are needed. See [development and verification](docs/development.md) for prerequisites and all commands.
+That starts the API on :8787 and the frontend beside it, proxying `/api` to it, in one terminal. Open the URL Vite prints, normally `http://localhost:5173`. No provider credentials are needed: the server starts on fake models. See [development and verification](docs/development.md) for prerequisites and all commands.
 
-The server can be run alongside the frontend:
+`pnpm dev:server` and `pnpm dev:web` start the two halves on their own.
 
-```sh
-pnpm dev:server                 # the API on :8787
-VITE_MODE=backend pnpm dev      # the frontend, proxying /api to it
-```
-
-**The library, Scripting, Cast, Narration, Export and Queue screens use it.** `VITE_MODE=backend` selects the real services at the seam in [src/services/](src/services/), and the stores read and write through them: the shelf, the import, the contents review and removal are the server's; a chapter's prose is the one the EPUB contained; scripting a chapter queues a job the server runs, which writes the script, the speakers it found and a version in the chapter's history; editing a line, renaming a speaker or saving a checkpoint is a request; and the Queue page shows the server's jobs. Narrating a chapter renders a real audio file the player plays, and building an audiobook stitches those files into one you can download. Reads go through queries ([src/queries/](src/queries/), on Pinia Colada), which ask the server in that mode and the seeded world in the demo. In backend mode the library, the queue and the cast start empty rather than on the seeded shelf, because a real library is not something the demo can stand in for. Endpoints and pricing are still the seeded world in both modes, and the only speech and scripting models the server can be started with are fakes that never reach the network. What the server itself does is in [backend](docs/backend.md). Demo is the default and needs none of this.
+**The library, Scripting, Cast, Narration, Export and Queue screens use it.** `VITE_MODE=backend` selects the real services at the seam in [src/services/](src/services/), and the stores read and write through them: the shelf, the import, the contents review and removal are the server's; a chapter's prose is the one the EPUB contained; scripting a chapter queues a job the server runs, which writes the script, the speakers it found and a version in the chapter's history; editing a line, renaming a speaker or saving a checkpoint is a request; and the Queue page shows the server's jobs. Narrating a chapter renders a real audio file the player plays, and building an audiobook stitches those files into one you can download. Reads go through queries ([src/queries/](src/queries/), on Pinia Colada), which ask the server in that mode and the seeded world in the demo. In backend mode the library, the queue and the cast start empty rather than on the seeded shelf, because a real library is not something the demo can stand in for. Endpoints and pricing are still the seeded world in both modes, and the only speech and scripting models the server can be started with are fakes that never reach the network. What the server itself does is in [backend](docs/backend.md). The seeded demo (Vite without `VITE_MODE`) needs none of this.
 
 ## What works in this prototype
 

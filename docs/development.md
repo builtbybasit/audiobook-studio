@@ -4,20 +4,21 @@
 
 ## Setup and commands
 
-Use Node.js compatible with the installed Vite version, pnpm for the checked-in `pnpm-lock.yaml`, and Bun for the existing test runner. No provider keys or backend are required for the seeded demo.
+Use Node.js compatible with the installed Vite version, pnpm for the checked-in `pnpm-lock.yaml`, and Bun for the existing test runner. No provider keys are required: the server starts on fake models.
 
 ```sh
 pnpm install
 pnpm dev
 ```
 
-Vite prints the local URL, normally `http://localhost:5173`. If that port is occupied, use the URL it prints. There is no `prototype` script; `dev` is the current command.
+That starts the API and the frontend together. Vite prints the local URL, normally `http://localhost:5173`. If that port is occupied, use the URL it prints. There is no `prototype` script; `dev` is the current command.
 
 The scripts are defined in [package.json](../package.json):
 
 | Command            | Purpose                                      |
 | ------------------ | -------------------------------------------- |
-| `pnpm dev`         | Start the development server                 |
+| `pnpm dev`         | Start the API and the frontend together      |
+| `pnpm dev:web`     | Start the frontend alone, in backend mode    |
 | `pnpm dev:server`  | Start the backend API on :8787               |
 | `pnpm typecheck`   | Run `vue-tsc --build`                        |
 | `pnpm lint`        | Check with Oxlint                            |

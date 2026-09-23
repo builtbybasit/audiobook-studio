@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently --kill-others --names api,web --prefix-colors blue,green \"pnpm dev:server\" \"pnpm dev:web\"",
+    "dev:web": "VITE_MODE=backend vite",
     "dev:server": "bun --watch server/index.ts",
     "typecheck": "vue-tsc --build",
     "lint": "oxlint",
@@ -65,6 +66,7 @@
     "@types/range-parser": "^1.2.7",
     "@types/turndown": "^5.0.6",
     "@types/yauzl": "^3.4.0",
+    "concurrently": "^10.0.5",
     "drizzle-kit": "^0.31.10",
     "jszip": "^3.10.2",
     "oxfmt": "^0.67.0",

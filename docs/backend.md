@@ -22,16 +22,16 @@ in its configuration, and there is no code path from an import to a paid request
 ## Run it
 
 ```sh
-pnpm dev:server   # the API on :8787
-pnpm dev          # the frontend on :5173, proxying /api to it
+pnpm dev          # both at once: the API on :8787, the frontend on :5173 proxying /api to it
 ```
 
-Both are needed only for backend mode. `pnpm dev` on its own is the seeded demo, which is still the
-default and still needs no server. Settings and their defaults are in
+That is `pnpm dev:server` and `pnpm dev:web` (Vite with `VITE_MODE=backend`) side by side through
+`concurrently`, each line prefixed `api` or `web`; stopping either stops both. Settings and their defaults are in
 [.env.example](../.env.example); every one has a working default, so no `.env` is also fine.
 
 | Command            | Purpose                                             |
 | ------------------ | --------------------------------------------------- |
+| `pnpm dev`         | Start the API and the frontend together             |
 | `pnpm dev:server`  | Start the API, applying migrations first            |
 | `pnpm db:generate` | Generate SQL in `drizzle/` after editing the schema |
 | `pnpm db:migrate`  | Apply migrations without starting the server        |

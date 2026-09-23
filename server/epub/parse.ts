@@ -15,7 +15,7 @@ import { numericEntities } from "~/epub/entities";
 import { plainText } from "~/epub/markdown";
 import { countWords, sectionParts } from "~/epub/text";
 
-type BookClass = new (url?: ConstructorParameters<typeof Book>[0]) => Book;
+type BookClass = new (options?: { replacements?: "none" | "blobUrl" | "base64" }) => Book;
 let cached: BookClass | null = null;
 
 /**
@@ -90,6 +90,23 @@ export class EpubParseError extends Error {
 }
 
 /**
+ * An href as the file it names is spelled: `Chapter%201.xhtml` is `Chapter 1.xhtml`.
+ *
+ * An href is a URL, so a space or an accent in a filename is percent-encoded in one — but only by
+ * the tools that remember to, and the navigation and the manifest are often written by different
+ * ones. Compared as written, `Text/Chapter%201.xhtml#c2` never meets `Text/Chapter 1.xhtml`, and a
+ * chapter anchored there loses its title and runs on into the one before. A `%` that is not an
+ * escape is left as it is, since it can only be a filename that really has one.
+ */
+function decoded(href: string): string {
+  try {
+    return decodeURIComponent(href);
+  } catch {
+    return href;
+  }
+}
+
+/**
  * A path inside the EPUB, with `.` and `..` resolved, relative to `from`.
  *
  * The two halves of a package do not agree on what a path is relative to. A spine item's `href` is
@@ -99,15 +116,38 @@ export class EpubParseError extends Error {
  */
 function resolve(href: string, from = ""): string {
   const raw = (href ?? "").trim();
-  // A link out of the book is not a chapter of it.
-  if (!raw || /^[a-z][a-z0-9+.-]*:/i.test(raw)) return "";
+  // A link out of the book is not a chapter of it — `//host/x.html` included, which has no scheme
+  // and names another site all the same.
+  if (!raw || raw.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(raw)) return "";
+  const hash = raw.indexOf("#");
+  const path = hash < 0 ? raw : raw.slice(0, hash);
+  const frag = hash < 0 ? "" : decoded(raw.slice(hash + 1));
   const out: string[] = [];
-  for (const part of (raw.startsWith("/") ? raw.slice(1) : from + raw).split("/")) {
+  for (const part of (path.startsWith("/") ? path.slice(1) : from + path).split("/")) {
     if (!part || part === ".") continue;
     if (part === "..") out.pop();
-    else out.push(part);
+    else out.push(decoded(part));
   }
-  return out.join("/");
+  return out.join("/") + (hash < 0 ? "" : `#${frag}`);
+}
+
+/**
+ * Whether a package-relative href climbs above the root of the zip it came in.
+ *
+ * `resolve` drops a `..` it has nothing left to climb out of, which is right for a path that is
+ * only spelled badly and wrong for one that points somewhere else entirely: `../../extras.xhtml`
+ * from a package in `OEBPS/` names a file beside the EPUB, not in it. As a spine item that used to
+ * arrive as a chapter that "could not be read", for the review to decide on — a chapter the book
+ * never had. A link out of the book is not a chapter of it, the same as an `https:` one.
+ */
+function leavesArchive(href: string, packageDir: string): boolean {
+  let depth = 0;
+  for (const part of (packageDir + href.split("#")[0]).split("/")) {
+    if (!part || part === ".") continue;
+    if (part !== "..") depth++;
+    else if (--depth < 0) return true;
+  }
+  return false;
 }
 
 /** The directory a document lives in, as a prefix other paths resolve against. */
@@ -311,7 +351,11 @@ export async function parseEpub(bytes: ArrayBuffer): Promise<ParsedEpub> {
   // output either way. Settling them with a no-op handler first costs nothing on a good file and
   // turns a bad one into the single error the caller is already catching.
   const Book = await loadBookClass();
-  const book = new Book();
+  // No replacements. Left to its default, an archived book has every asset in its manifest turned
+  // into a blob URL for a browser to display — work nothing here reads, since a section is read
+  // through `readSection` — and an asset the manifest lists and the zip lacks is `console.error`ed
+  // with its stack, straight past the logger, on an import that is otherwise fine.
+  const book = new Book({ replacements: "none" });
   book.opened?.catch(() => {});
   book.ready?.catch(() => {});
   for (const part of Object.values(book.loaded ?? {}))
@@ -326,6 +370,12 @@ export async function parseEpub(bytes: ArrayBuffer): Promise<ParsedEpub> {
       `This file could not be opened as an EPUB. ${cause instanceof Error ? cause.message : ""}`.trim(),
     );
   }
+
+  // The spine's content hooks add a `<base>`, a canonical `<link>` and an identifier `<meta>` to
+  // each section's head, for a reader displaying it. Nothing here displays it and the converter drops
+  // the head anyway — and on a section with no `<head>` each hook throws, and the library
+  // `console.error`s all three stacks past the logger. So they are not run.
+  book.spine?.hooks?.content?.clear();
 
   try {
     const meta = book.packaging?.metadata;
@@ -343,6 +393,7 @@ export async function parseEpub(bytes: ArrayBuffer): Promise<ParsedEpub> {
     await book.loaded?.navigation?.catch(() => undefined);
 
     const navDoc = resolve(book.packaging.navPath ?? "");
+    const packageDir = dirOf(resolve(book.container?.packagePath ?? ""));
     const entries = tocEntries((book.navigation?.toc ?? []) as TocItem[], dirOf(navDoc));
     const chapters: ParsedChapter[] = [];
     let readable = 0;
@@ -353,7 +404,7 @@ export async function parseEpub(bytes: ArrayBuffer): Promise<ParsedEpub> {
       // The navigation document is the table of contents itself, and a non-linear section is
       // supplementary by the spec's own definition — a cover plate, a colophon. Neither is a
       // chapter, and both would otherwise arrive in the review as one to decide on.
-      if (!doc || doc === navDoc) continue;
+      if (!doc || doc === navDoc || leavesArchive(section.href ?? "", packageDir)) continue;
       if (section.linear === false) continue;
       sections++;
 

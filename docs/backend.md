@@ -262,18 +262,29 @@ Things the parse is deliberate about:
 - **Navigation links are resolved against the navigation document.** A spine item's `href` is
   written against the package document and a navigation entry's against the navigation document,
   which may sit in a directory of its own. `../text/c1.xhtml` and `text/c1.xhtml` are then the same
-  file spelled two ways, and comparing them as written loses every label in the book.
+  file spelled two ways, and comparing them as written loses every label in the book. Both halves
+  are also **percent-decoded**, a path segment and the fragment each on its own: an href is a URL,
+  so `Chapter%201.xhtml` is `Chapter 1.xhtml`, but the manifest and the navigation are often written
+  by different tools and only one of them remembered. Compared as written, a chapter lost its label
+  and one anchored inside that file ran on into the one before.
 - **Sections are unloaded as they are read.** A web-novel volume can be a thousand chapters, and
   holding every parsed document at once is how a routine import becomes an out-of-memory crash.
-- **The navigation document and non-linear spine items are not chapters.** A cover plate and a
-  colophon would otherwise arrive in the review as something to decide about.
+- **The navigation document, non-linear spine items and links out of the book are not chapters.**
+  A cover plate and a colophon would otherwise arrive in the review as something to decide about.
+  A spine item with a scheme (`https:`), a protocol-relative `//host/…`, or a `..` that climbs above
+  the root of the zip names something beside the EPUB rather than in it; it used to arrive as a
+  chapter that "could not be read". A file inside the zip that is merely missing is still one.
 - **Tables are kept, not dropped.** A `<table>` in a novel is as often prose as it is data — a
   character list, a release timetable, or a paragraph an old conversion laid out in cells — and
   dropping the element takes everything inside it with it. They are stored as GFM tables and read
-  out a row at a time. `figure`, `figcaption`, `aside` and `nav` are still dropped, because they
-  caption something the audiobook cannot show, hold a sidebar the narrator is not reading, or are
-  the table of contents itself — judgements about the narration rather than accidents of how the
-  page was built.
+  out a row at a time. `aside` and `nav` are still dropped, because they hold a sidebar the
+  narrator is not reading or are the table of contents itself — judgements about the narration
+  rather than accidents of how the page was built.
+- **A figure is kept; a picture is not.** Publishers set epigraphs, poems and letters in
+  `<figure>` as often as pictures, and removing the element removed the verse. Images are dropped
+  (by a rule: Turndown's own image rule runs before its remove list, and wrote `![](a.png)` into
+  the stored text), and so is the `<figcaption>` of a figure that holds a picture; the caption of
+  one that holds words is usually who wrote them, and is kept.
 
 ### One file, several chapters
 
@@ -296,6 +307,8 @@ import as one. Its own children are the boundaries instead.
 
 Three cases the cutting has to be right about:
 
+- **An anchor named by `name` rather than `id`** — `<a name="ch3" id="calibre_link-7">`, as a
+  converter leaves an older book — is found by either attribute, not by whichever comes first.
 - **An anchor the file does not contain** produces no chapter. Its text stays with the chapter
   before it — not lost, which is the safe direction to be wrong in.
 - **Text above the first anchor** that no entry claims is the file's own front matter, a series
@@ -980,10 +993,10 @@ are the seeded endpoints' and are bypassed in backend mode — the fake costs no
 provider's spending is the server's to meter. It is listed under
 [what is not done yet](#what-is-not-done-yet).
 
-## Three things the EPUB library does on import
+## Four things the EPUB library does on import
 
 [@likecoin/epub-ts](https://github.com/likecoin/epub.ts) is the parser, through its documented Node
-entry point. Three of its behaviours are worked around in
+entry point. Four of its behaviours are worked around in
 [parse.ts](../server/epub/parse.ts), and all are worth knowing before changing that file:
 
 - It reads `typeof window < "u" ? window.requestAnimationFrame.bind(window)`, taking any `window` at
@@ -1012,6 +1025,15 @@ chapter is present and readable, and the process takes an unhandled rejection th
 Node's `--unhandled-rejections=throw`. `loadNavigation` is therefore shadowed **on the instance**
 and settled as "no navigation" — which is the library's own behaviour for a book that declares none,
 so the outcome is the documented one and the chapters keep their own headings for titles.
+
+The fourth is the console. The library has no logger option and `console.error`s with full stacks
+in two places an import reaches: turning every manifest asset into a blob URL for display, where
+an image the manifest lists and the zip lacks throws; and the spine's content hooks, which add a
+`<base>`, a canonical `<link>` and an identifier `<meta>` to a section's head and throw on a section
+that has none — three stacks per section. Neither is needed: sections are read through
+`readSection`, and the converter drops the head. So the book is opened with
+`replacements: "none"` and the content hooks are cleared before anything renders, which removes the
+output at its source rather than patching a process-global `console` around an `await`.
 
 ## Tests
 

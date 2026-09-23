@@ -42,6 +42,12 @@ interface StyledNode {
   getAttribute?: (name: string) => string | null;
 }
 
+interface FigureNode {
+  nodeName?: string;
+  parentNode?: FigureNode | null;
+  querySelector?: (selector: string) => unknown;
+}
+
 /** Stress written as styling rather than as an element, which is how a lot of real EPUBs write it. */
 const ITALIC = /font-style\s*:\s*(?:italic|oblique)/i;
 const BOLD = /font-weight\s*:\s*(?:bold|bolder|[6-9]00)\b/i;
@@ -120,8 +126,12 @@ function load(): Promise<TurndownService> {
       linkStyle: "inlined",
     });
     // Not prose a narrator reads: the document head, whose <title> repeats the chapter heading
-    // underneath it; scripts and styling; the table of contents; an image we do not keep; the
-    // caption of a picture the audiobook cannot show; a sidebar nobody is narrating.
+    // underneath it; scripts and styling; the table of contents; an image we do not keep; a sidebar
+    // nobody is narrating.
+    //
+    // Not `<figure>`: publishers put epigraphs, poems and letters in one as often as pictures, and
+    // removing the element removed the verse with it. Only the caption of a picture goes — see
+    // `pictureCaption` below.
     service.remove([
       "head",
       "title",
@@ -130,12 +140,27 @@ function load(): Promise<TurndownService> {
       "script",
       "style",
       "nav",
-      "figure",
-      "figcaption",
       "aside",
       "svg",
       "img",
     ]);
+    // `remove` above does not reach `<img>`: Turndown's own image rule is asked first, and wrote
+    // `![](a.png)` into the stored text — a link into an archive that is not kept. Taken out here.
+    service.addRule("picture", { filter: ["img"], replacement: () => "" });
+    // The caption of a picture the audiobook cannot show. A figure with no picture in it is words
+    // set apart, and its caption is usually who wrote them — "— Emily Dickinson" under the verse —
+    // which is read with it.
+    service.addRule("pictureCaption", {
+      filter: (node: unknown) => {
+        const el = node as FigureNode;
+        if (el.nodeName !== "FIGCAPTION") return false;
+        const figure = el.parentNode;
+        return (
+          figure?.nodeName === "FIGURE" && !!figure.querySelector?.("img, svg, picture, image")
+        );
+      },
+      replacement: () => "",
+    });
     service.use(gfm);
     // Stress a publisher wrote as styling. Turndown's own rules match `<em>`, `<i>`, `<strong>` and
     // `<b>`; a word stressed as `<span style="font-style: italic">` reaches them as a span they have

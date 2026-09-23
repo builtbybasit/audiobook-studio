@@ -450,6 +450,45 @@ describe("the worker keeps going", () => {
     await api.runner.stop();
   });
 
+  test("a handler that finished is done, however late a cancel or a stop arrived", async () => {
+    // The handler takes a cancel back by throwing; one that returned is past the point where it
+    // could. Calling it cancelled would have its `onSettled` undo work it had committed.
+    const db = testDb();
+    db.run(
+      `insert into books (id, title, author, cover_from, cover_to, added_at) values ('b0','B','A','#000','#111',0)`,
+    );
+    let entered!: () => void;
+    const inside = new Promise<void>((r) => (entered = r));
+    let finish!: () => void;
+    const released = new Promise<void>((r) => (finish = r));
+    const settledAs: string[] = [];
+    const runner = testRunner(db, collectingLogger().log, {
+      handlers: {
+        export: {
+          async run() {
+            entered();
+            // past its last check of the signal: committing, closing a file
+            await released;
+          },
+          onSettled: (_ctx, status) => void settledAs.push(status),
+        },
+      },
+    });
+    const { job } = runner.enqueue({
+      kind: "export",
+      bookId: "b0",
+      chapterId: null,
+      label: "Build",
+    });
+    // `enqueue` wakes the worker; there is nothing to start
+    await inside;
+    expect(runner.cancel(job.id)).toBe("running");
+    finish();
+    await runner.idle();
+    expect(queue.getJob(db, job.id)?.status).toBe("done");
+    expect(settledAs).toEqual(["done"]);
+  });
+
   test("a handler that queues more work does not start a second worker beside itself", async () => {
     const db = testDb();
     // three books, because a whole-book job dedupes on its book

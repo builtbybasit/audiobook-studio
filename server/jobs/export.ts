@@ -452,6 +452,10 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       });
     }
 
+    // The last point a cancel can still take the build back. Past it the new version is the
+    // audiobook and the one it supersedes is `replaced`; the build returns, and the queue calls
+    // it done however late a cancel arrives.
+    if (signal.aborted) throw signal.reason;
     db.transaction((tx) => {
       exports.finishBuild(tx, entry.id, written, signatures);
       // Only now. Until this line the version it supersedes is still the audiobook on disk.

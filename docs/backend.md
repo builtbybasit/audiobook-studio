@@ -687,6 +687,13 @@ the real runner and a scripting model that reads the prose and never the network
   Either way the handler gets the last word (`onSettled`), which is how a chapter marked `queued`
   goes back to `none` — and the same hook runs when a recovery gives up on a job, so there is no
   path that settles a row without it.
+- **A handler that returned is done.** A handler honours a cancel by throwing, at the last point it
+  can still take its work back — a build checks once more immediately before the transaction that
+  makes the new version current. One that arrives after that point is too late: the job is `done`,
+  whatever the signal says. Calling it cancelled there had an export's `onSettled` delete the
+  version it had just committed and leave the one before it marked `replaced`, so there was no
+  current audiobook at all; and a stop in the same window left the row `running`, for the next
+  start to rebuild over the finished files.
 - **A restart loses no work.** A row still `running` when nothing is running is a job the last
   process died holding. `start` puts it back in the queue with an event saying so, and it starts
   again — twice in all, because a job that takes the process down every time must not be allowed

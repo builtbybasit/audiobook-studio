@@ -1099,3 +1099,14 @@ fail somewhere that does not name the cause. Migrations are versioned in [drizzl
 and applied in order at boot; `0001` added the script revision and the queue's dedupe key, `0002`
 the version an open editing session preserved, and `0003` what a build writes — the file each
 output landed in, the span each chapter occupies inside it, and which encoder wrote it.
+
+**Foreign keys are off while migrations run.** A change drizzle-kit cannot write as `ALTER TABLE` is
+written as a rebuild — new table, copy, `DROP` the old one, rename — and with foreign keys on, that
+`DROP` cascades through every `ON DELETE CASCADE` pointing at the table. The generated SQL does say
+`PRAGMA foreign_keys=OFF`, but drizzle runs the migrations in one transaction, where SQLite ignores
+it. So [migrate.ts](../server/db/migrate.ts) turns them off on the connection before drizzle begins,
+asks `PRAGMA foreign_key_check` afterwards, and refuses to boot on a database a migration left
+with a reference to nothing. [migrate.test.ts](../tests/server/migrate.test.ts) writes the rebuild
+the next change to `chapters` would be and runs it over an imported book; before this, it wiped every
+chapter's text. The connection also waits up to five seconds on a busy database, so
+`pnpm db:migrate` beside a running server waits for a write to finish rather than failing.

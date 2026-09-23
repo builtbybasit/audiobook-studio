@@ -10,8 +10,7 @@
 // prose.** `## Chapter Twelve`, `[the note](http://x.y)` and `| Day | Chapter |` are all things a
 // speech provider would read out loud and bill for, so `plainText` runs a real Markdown parser
 // rather than a regex that strips the punctuation somebody remembered.
-import { marked } from "marked";
-import type { Token, Tokens } from "marked";
+import MarkdownIt, { type Token } from "markdown-it";
 import type TurndownService from "turndown";
 
 /** The two grades of stress a book can ask for, kept apart because the file kept them apart. */
@@ -25,6 +24,16 @@ export interface Emphasis {
 }
 
 let converter: Promise<TurndownService> | null = null;
+
+/**
+ * The parser the way back out goes through: CommonMark, with the GFM tables and strikethrough that
+ * Turndown's plugin writes. Raw HTML stays text, as it is in the stored form.
+ *
+ * markdown-it rather than `marked`, which the frontend still draws with: under Bun, `marked`'s
+ * lexer slows down with the length of the document — 4,000 paragraphs took 30 seconds, where Node
+ * takes 15 ms — and a single-file novel is one chapter of that. markdown-it reads the same in 11 ms.
+ */
+const parser = new MarkdownIt({ html: false, linkify: false, typographer: false });
 
 /** The shape this reads off Turndown's nodes, rather than the DOM lib the server does not have. */
 interface StyledNode {
@@ -158,112 +167,118 @@ export async function toMarkdown(html: string): Promise<string> {
   return service.turndown(html).trim();
 }
 
-/** Walk state: the prose built so far, and where its stress fell. */
+/**
+ * Walk state: the prose built so far, and where its stress fell.
+ *
+ * `tail` is the last two characters of `text`, kept beside it rather than read off it. Asking the
+ * string itself — `text.endsWith("\n\n")` — once per block is quadratic under Bun, whose engine
+ * flattens a string built by `+=` before it will look at its end: 16,000 paragraphs took a second.
+ */
 interface Walk {
   text: string;
+  tail: string;
   emphasis: Emphasis[];
 }
 
 const push = (w: Walk, s: string): void => {
+  if (!s) return;
   w.text += s;
+  w.tail = (w.tail + s).slice(-2);
 };
 
 /** End the current block, if there is one, with the blank line that separates blocks. */
 function endBlock(w: Walk): void {
-  if (w.text && !w.text.endsWith("\n\n")) w.text += w.text.endsWith("\n") ? "\n" : "\n\n";
+  if (w.text && w.tail !== "\n\n") push(w, w.tail.endsWith("\n") ? "\n" : "\n\n");
 }
 
-function inline(w: Walk, tokens: readonly Token[] | undefined, raw = ""): void {
-  if (!tokens?.length) {
-    push(w, raw);
-    return;
-  }
-  for (const token of tokens) walk(w, token);
-}
-
-/** A stressed run: the prose goes in, and where it landed is recorded beside it. */
-function stressed(w: Walk, mark: Mark, t: { tokens?: Token[]; text?: string }): void {
-  const at = w.text.length;
-  inline(w, t.tokens, t.text ?? "");
-  if (w.text.length > at) w.emphasis.push({ at, to: w.text.length, mark });
-}
-
-function walk(w: Walk, token: Token): void {
-  switch (token.type) {
-    case "heading":
-      endBlock(w);
-      inline(w, token.tokens, token.text);
-      endBlock(w);
-      return;
-    case "paragraph":
-      endBlock(w);
-      inline(w, token.tokens, token.text);
-      endBlock(w);
-      return;
-    case "blockquote":
-      endBlock(w);
-      for (const t of token.tokens ?? []) walk(w, t);
-      endBlock(w);
-      return;
-    case "list":
-      endBlock(w);
-      for (const item of token.items) {
-        for (const t of item.tokens ?? []) walk(w, t);
+/**
+ * A document's block tokens, walked in order.
+ *
+ * markdown-it hands back a flat stream — `paragraph_open`, the `inline` run inside it,
+ * `paragraph_close` — rather than a tree, so a block is ended where its token closes, and a table's
+ * cells are separated as they are met.
+ */
+function walk(w: Walk, tokens: readonly Token[]): void {
+  let cell = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    switch (token.type) {
+      case "heading_open":
+      case "heading_close":
+      case "paragraph_open":
+      case "paragraph_close":
+      case "blockquote_open":
+      case "blockquote_close":
+      case "bullet_list_open":
+      case "ordered_list_open":
+      case "list_item_close":
+      case "table_open":
+      case "hr":
         endBlock(w);
+        break;
+      case "thead_open": {
+        // A table with no `<th>` — which is how a good deal of older prose is laid out — converts
+        // with an empty header row above it. Read out, that is a row of nothing: the chapter would
+        // open on a comma. The row stays in the stored Markdown, where it is the table's shape.
+        const close = tokens.findIndex((t, at) => at > i && t.type === "thead_close");
+        const head = tokens.slice(i, close);
+        if (!head.some((t) => t.type === "inline" && t.content.trim())) i = close;
+        break;
       }
-      return;
-    case "table": {
-      endBlock(w);
       // A table read aloud is a row at a time, cells separated by a pause's worth of punctuation.
       // The pipes and the `---` rule are layout and are not said.
-      const row = (cells: Tokens.TableCell[]): void => {
-        cells.forEach((cell, i) => {
-          if (i) push(w, ", ");
-          inline(w, cell.tokens, cell.text);
-        });
+      case "tr_open":
+        cell = 0;
+        break;
+      case "th_open":
+      case "td_open":
+        if (cell++) push(w, ", ");
+        break;
+      case "tr_close":
         endBlock(w);
-      };
-      // A table with no `<th>` — which is how a good deal of older prose is laid out — converts
-      // with an empty header row above it. Read out, that is a row of nothing: the chapter would
-      // open on a comma. The row stays in the stored Markdown, where it is the table's shape.
-      if (token.header.some((cell: Tokens.TableCell) => cell.text?.trim())) row(token.header);
-      for (const cells of token.rows) row(cells);
-      return;
+        break;
+      case "fence":
+      case "code_block":
+        endBlock(w);
+        push(w, token.content.replace(/\n$/, ""));
+        endBlock(w);
+        break;
+      case "inline":
+        inline(w, token.children ?? []);
+        break;
     }
-    case "code":
-      endBlock(w);
-      push(w, token.text);
-      endBlock(w);
-      return;
-    case "hr":
-      endBlock(w);
-      return;
-    case "em":
-      stressed(w, "em", token);
-      return;
-    case "strong":
-      stressed(w, "strong", token);
-      return;
-    case "del":
-    case "link":
-      // The words, never the address. A URL spoken out is a minute of narrated punctuation.
-      inline(w, token.tokens, token.text);
-      return;
-    case "image":
-      return;
-    case "br":
-      push(w, "\n");
-      return;
-    case "space":
-      return;
-    case "codespan":
-    case "text":
-    case "escape":
-    case "html":
-      inline(w, (token as Tokens.Text).tokens, (token as Tokens.Text).text);
-      return;
-    default:
-      inline(w, (token as { tokens?: Token[] }).tokens, (token as { text?: string }).text ?? "");
+  }
+}
+
+/** One inline run: its words, and where its stress opened and closed. */
+function inline(w: Walk, tokens: readonly Token[]): void {
+  const open: Record<Mark, number[]> = { em: [], strong: [] };
+  for (const token of tokens) {
+    switch (token.type) {
+      case "text":
+      case "code_inline":
+      case "html_inline":
+        push(w, token.content);
+        break;
+      case "softbreak":
+      case "hardbreak":
+        push(w, "\n");
+        break;
+      case "em_open":
+      case "strong_open":
+        open[token.tag === "em" ? "em" : "strong"].push(w.text.length);
+        break;
+      case "em_close":
+      case "strong_close": {
+        const mark: Mark = token.tag === "em" ? "em" : "strong";
+        const at = open[mark].pop();
+        if (at != null && w.text.length > at) w.emphasis.push({ at, to: w.text.length, mark });
+        break;
+      }
+      // An image is not narrated, and its alt text arrives as its children, which are skipped
+      // with it. A link is its words, never the address: a URL spoken out is a minute of
+      // narrated punctuation. Its words are the text tokens either side of these.
+    }
   }
 }
 
@@ -312,8 +327,8 @@ function moved(runs: readonly [number, number][], at: number): number {
  * the Markdown and this is computed from it rather than the other way round.
  */
 export function parseEmphasis(markdown: string): { text: string; emphasis: Emphasis[] } {
-  const w: Walk = { text: "", emphasis: [] };
-  for (const token of marked.lexer(markdown)) walk(w, token);
+  const w: Walk = { text: "", tail: "", emphasis: [] };
+  walk(w, parser.parse(markdown, {}));
   const kept = keptRuns(w.text);
   const text = kept.map(([from, to]) => w.text.slice(from, to)).join("");
   const emphasis = w.emphasis

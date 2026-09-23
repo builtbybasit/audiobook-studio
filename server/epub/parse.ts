@@ -11,6 +11,7 @@
 // calling `setDOMParser` is not required.
 import type { Book } from "@likecoin/epub-ts/node";
 
+import { numericEntities } from "~/epub/entities";
 import { plainText } from "~/epub/markdown";
 import { countWords, sectionParts } from "~/epub/text";
 
@@ -272,6 +273,26 @@ function survivableNavigation(book: Book): void {
   b.loadNavigation = (packaging) => load(packaging).catch(() => b.navigation);
 }
 
+type Archive = NonNullable<Book["archive"]>;
+
+/**
+ * The archive's own request for a section, with its HTML entities made ones XML knows.
+ *
+ * The same two steps the library's `request` takes — the file's text, then parsed by its
+ * extension — with `numericEntities` between them, because after the parse is too late: an
+ * `&nbsp;` the XML parser did not know is text by then, indistinguishable from a book that wrote
+ * the word. A file the archive does not have goes through the library's own request, so it fails
+ * the way it always did.
+ */
+function readSection(archive: Archive) {
+  return async (url: string, type?: string): Promise<unknown> => {
+    const text = archive.getText(url);
+    if (!text) return archive.request(url, type);
+    const extension = url.split(/[?#]/)[0].split("/").at(-1)?.split(".").at(-1) ?? "";
+    return archive.handleResponse(numericEntities(await text), type ?? extension.toLowerCase());
+  };
+}
+
 /**
  * Read an EPUB from its bytes.
  *
@@ -338,7 +359,7 @@ export async function parseEpub(bytes: ArrayBuffer): Promise<ParsedEpub> {
 
       let html: string | null = null;
       try {
-        html = await section.render(book.archive!.request.bind(book.archive));
+        html = await section.render(readSection(book.archive!));
       } catch {
         // One unreadable section is not a reason to lose the other nine hundred. It arrives as a
         // chapter that says it could not be read, so the review can decide what to do about it

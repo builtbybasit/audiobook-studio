@@ -1,4 +1,5 @@
 // A book's audiobooks over HTTP: building one, what has been built, downloading it, forgetting it.
+import { create as disposition } from "content-disposition";
 import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
@@ -92,7 +93,11 @@ export function exportRoutes(db: Db, runner: Runner, ports: ExportPorts): Hono<P
         "content-type": MIME[name.split(".").at(-1)!.toLowerCase()] ?? "application/octet-stream",
         // A set is written to a folder, so a file in one carries the folder in its name; a
         // download has nowhere to put that and the last part is what it should be called.
-        "content-disposition": `attachment; filename="${name.split("/").at(-1)!.replaceAll('"', "")}"`,
+        //
+        // A header is Latin-1, and a title is not: an em dash, a curly apostrophe or a Chinese
+        // title would make `Headers` throw and the download a 500. The name goes in the
+        // `filename*` a browser reads in UTF-8, with an ASCII stand-in for anything older.
+        "content-disposition": disposition(name.split("/").at(-1)!),
         "cache-control": "private, max-age=0, must-revalidate",
       },
     });

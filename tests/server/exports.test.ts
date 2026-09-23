@@ -318,6 +318,24 @@ describe("building an audiobook", () => {
     expect((await res.arrayBuffer()).byteLength).toBe(fileBytes(api, id, done.id).byteLength);
   });
 
+  test("a name no header can carry as it stands still downloads, under that name", async () => {
+    // A header is Latin-1. An em dash, a curly apostrophe or a Chinese title in it used to make
+    // `Headers` throw, and the download a 500.
+    const { api, id } = await narrated();
+    const name = "The Philosopher’s Stone — 三体";
+    await build(api, id, { ids: [1, 2], settings: settingsFor({ filename: name }) });
+    await api.runner.idle();
+    const [done] = await exportsOf(api, id);
+    expect(done.files[0].name).toContain("三体");
+
+    const res = await api.fetch(`/api/books/${id}/exports/${done.id}/files/0`);
+    expect(res.status).toBe(200);
+    const header = res.headers.get("content-disposition")!;
+    // The name a browser reads, in UTF-8, and an ASCII stand-in beside it for one that cannot.
+    expect(header).toContain(`filename*=UTF-8''${encodeURIComponent(done.files[0].name)}`);
+    expect(header).toMatch(/^attachment; filename="[\x20-\x7e]+"/);
+  });
+
   test("a chapter with no audio refuses the build in the page's own words", async () => {
     const api = testApi();
     const { body } = await api.import<ImportResult>(

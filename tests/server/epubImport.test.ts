@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 
 import type { Book, Chapter } from "@/types";
 import { chapterTexts } from "~/db/schema";
+import { numericEntities } from "~/epub/entities";
 import { parseEmphasis, plainText } from "~/epub/markdown";
 import { countWords, sectionParts, sectionText } from "~/epub/text";
 import { buildEpub, epubFile, story } from "../support/epub";
@@ -728,5 +729,41 @@ describe("extracting a section's text", () => {
   test("text without spaces is counted by its characters, not as one word", () => {
     // a chapter of Chinese prose has no spaces at all; counting words would report 1
     expect(countWords("他抬起头，望向远处的山峦")).toBeGreaterThan(5);
+  });
+});
+
+describe("the entities an XHTML file names", () => {
+  test("HTML's names become the numeric references XML knows, and nothing else changes", () => {
+    expect(numericEntities("A&nbsp;B &mdash; C&hellip;")).toBe("A&#160;B &#8212; C&#8230;");
+    // XML's own five are read correctly already, and a name HTML does not have is not guessed at.
+    expect(numericEntities("&amp; &lt; &gt; &quot; &apos; &bogus;")).toBe(
+      "&amp; &lt; &gt; &quot; &apos; &bogus;",
+    );
+    // Without its semicolon it is not an entity to an XML parser, whatever HTML would make of it.
+    expect(numericEntities("&nbsp and &copy")).toBe("&nbsp and &copy");
+    // A few names are two characters.
+    expect(numericEntities("&NotEqualTilde;")).toBe("&#8770;&#824;");
+  });
+
+  test("a chapter written with them imports as the characters, not the names", async () => {
+    // EPUB 2 and Calibre books with an XHTML 1.1 doctype write these everywhere, and an XML parser
+    // that does not read the DTD left them as text for the narrator to spell out.
+    const api = testApi();
+    const { body } = await api.import<ImportResult>(
+      await epubFile({
+        chapters: [
+          {
+            title: "One",
+            raw: "<p>Mr.&nbsp;Hale paused &mdash; then went on&hellip; &ldquo;Fine,&rdquo; he said.</p>",
+          },
+        ],
+      }),
+    );
+    const id = body.book.id;
+    const { body: text } = await api.request<{ text: string }>(
+      `/api/books/${id}/chapters/1/text?format=plain`,
+    );
+    expect(text.text).toBe("Mr.\u00a0Hale paused — then went on… “Fine,” he said.");
+    expect(body.chapters[0].words).toBe(9);
   });
 });

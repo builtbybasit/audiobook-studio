@@ -154,3 +154,21 @@ describe("reading the stored Markdown back", () => {
     expect(plainText("Alpha.\n\n---\n\nBeta.")).toBe("Alpha.\n\nBeta.");
   });
 });
+
+describe("reading a long chapter back", () => {
+  test("a single-file novel reads back in time proportional to its length", () => {
+    // Under Bun, `marked`'s lexer took 30 seconds over 4,000 paragraphs, and asking the growing
+    // prose whether it ended in a blank line was quadratic on its own. 64,000 paragraphs — a whole
+    // long novel in one file — now reads in a few hundred milliseconds; the bound is loose enough
+    // for a slow machine and far below either of those.
+    const md = Array.from(
+      { length: 64_000 },
+      (_, i) => `Paragraph ${i} has *stress* and **more** in it, as prose does.`,
+    ).join("\n\n");
+    const started = performance.now();
+    const { text, emphasis } = parseEmphasis(md);
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(emphasis).toHaveLength(128_000);
+    expect(text.startsWith("Paragraph 0 has stress and more in it")).toBe(true);
+  });
+});

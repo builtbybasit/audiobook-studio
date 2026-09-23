@@ -531,7 +531,8 @@ describe("a restart", () => {
     await next.stop();
     const job = queue.getJob(api.db, body.jobs[0].id)!;
     expect(job.status).toBe("done");
-    expect(job.activity?.map((e) => e.message)).toContain("Job started again (attempt 2)");
+    // a clean stop gave back the start it cut short, so this is not counted as a second attempt
+    expect(job.activity?.map((e) => e.message)).toContain("Job started again");
     const { segments } = await scriptOf(api, id);
     expect(segments.every((s) => s.audio.status === "done" && s.audio.url)).toBe(true);
     expect((await chaptersOf(api, id))[0].narration).toBe("done");

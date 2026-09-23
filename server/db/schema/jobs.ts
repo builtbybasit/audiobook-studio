@@ -89,7 +89,10 @@ export const jobs = sqliteTable(
      * NULLs are distinct to SQLite, so finished jobs never collide.
      */
     activeKey: text("active_key"),
-    /** how many times this job has been started; a restart that finds it running starts it again */
+    /**
+     * how many of this job's starts the process died during; a restart that finds it running starts
+     * it again, and a clean stop gives its start back (`handBack`)
+     */
     attempts: integer("attempts").notNull().default(0),
   },
   (t) => [

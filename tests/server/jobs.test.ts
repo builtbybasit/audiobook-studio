@@ -6,6 +6,7 @@
 // or renumbered — the provider is `gatedProvider`, which holds the door until the test says so, so
 // nothing here waits on a timer.
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 
 import type { Book, Chapter, Job, Segment } from "@/types";
 import * as queue from "~/db/jobs";
@@ -409,17 +410,46 @@ describe("a restart", () => {
     expect(job.activity?.map((e) => e.message)).toContain(
       "The server restarted while this ran; queued again",
     );
-    expect(job.activity?.map((e) => e.message)).toContain("Job started again (attempt 2)");
+    // a stop is not a crash: the start it cut short was given back
+    expect(job.activity?.map((e) => e.message)).toContain("Job started again");
+    const row = api.db.select().from(jobs).where(eq(jobs.id, job.id)).get();
+    expect(row?.attempts).toBe(1);
     expect(readScript(api.db, id, 1).length).toBeGreaterThan(0);
   });
 
-  test("gives up on a job that has already been tried twice", async () => {
+  test("a long job survives any number of clean restarts", async () => {
     const gate = gatedProvider();
     const { api, id } = await shelved(testApi({ scripting: gate.provider }));
     const { body } = await script(api, id, [1]);
     await gate.started;
     await api.runner.stop();
-    // the next process puts it back and starts it — and dies holding it too
+
+    // two more processes start it and are stopped with it in flight, as the first was
+    for (let i = 0; i < 2; i++) {
+      const again = gatedProvider();
+      const next = testRunner(api.db, collectingLogger().log, { scripting: again.provider });
+      next.start();
+      await again.started;
+      await next.stop();
+      expect(queue.getJob(api.db, body.jobs[0].id)?.status).toBe("running");
+    }
+
+    const last = testRunner(api.db, collectingLogger().log);
+    last.start();
+    await last.idle();
+    await last.stop();
+    expect(queue.getJob(api.db, body.jobs[0].id)?.status).toBe("done");
+  });
+
+  test("gives up on a job the process has died during twice", async () => {
+    const gate = gatedProvider();
+    const { api, id } = await shelved(testApi({ scripting: gate.provider }));
+    const { body } = await script(api, id, [1]);
+    await gate.started;
+    await api.runner.stop();
+    // the next two processes put it back and start it — and each dies holding it
+    expect(queue.recoverInterrupted(api.db).requeued).toEqual([body.jobs[0].id]);
+    queue.claimNext(api.db);
     expect(queue.recoverInterrupted(api.db).requeued).toEqual([body.jobs[0].id]);
     queue.claimNext(api.db);
     const { requeued, settled } = queue.recoverInterrupted(api.db);

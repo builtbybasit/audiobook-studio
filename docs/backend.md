@@ -711,8 +711,10 @@ the real runner and a scripting model that reads the prose and never the network
   process died holding. `start` puts it back in the queue with an event saying so, and it starts
   again — twice in all, because a job that takes the process down every time must not be allowed
   to forever; the third time it fails with the reason recorded. `stop` (a `SIGINT` from
-  `pnpm dev:server`) aborts the running job and leaves its row `running` on purpose, so a stop and a
-  crash are the same case to the recovery and there is one recovery path rather than two.
+  `pnpm dev:server`) aborts the running job and leaves its row `running` on purpose, so there is one
+  recovery path rather than two — but it gives back the start it interrupted (`handBack`), so
+  `attempts` counts crashes only. A long narration interrupted by any number of clean restarts
+  carries on; one the process dies during twice does not.
 - **A result never lands on newer work.** `chapters.script_revision` counts how many times a
   chapter's script has been written. The scripting job reads it when it starts and writes only if
   it has not moved, inside one transaction with the write, so a script edited or replaced while a

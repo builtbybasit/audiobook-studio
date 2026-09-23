@@ -201,7 +201,11 @@ export function claimNext(db: Db, at = Date.now()): Job | undefined {
       appendEvent(
         tx,
         row.id,
-        row.attempts ? `Job started again (attempt ${row.attempts + 1})` : "Job started",
+        row.attempts
+          ? `Job started again (attempt ${row.attempts + 1})`
+          : row.startedAt != null
+            ? "Job started again"
+            : "Job started",
         "info",
         { queueMs: at - row.queuedAt },
         at,
@@ -209,6 +213,21 @@ export function claimNext(db: Db, at = Date.now()): Job | undefined {
       return getJob(tx, row.id)!;
     }
   });
+}
+
+/**
+ * Give back the start a clean stop interrupted.
+ *
+ * `attempts` is what `recoverInterrupted` weighs against its limit, and it is meant to count the
+ * starts that ended with the process dying. A stop is the server being asked to go — a restart to
+ * pick up a change, a laptop lid — and a long job interrupted by two of them is not a job that
+ * takes the process down. The row stays `running`, so the next start still finds it the one way.
+ */
+export function handBack(db: Db, id: number): void {
+  db.update(jobs)
+    .set({ attempts: sql`max(${jobs.attempts} - 1, 0)`, progress: 0 })
+    .where(eq(jobs.id, id))
+    .run();
 }
 
 export function setProgress(db: Db | Tx, id: number, progress: number): void {
@@ -354,7 +373,7 @@ export function recoverInterrupted(
           row.id,
           row.cancelled
             ? "The server restarted while this was stopping"
-            : `The server restarted while this ran, and it had already been started ${row.attempts} times`,
+            : `The server restarted while this ran, and it had already been cut off ${row.attempts} times`,
           "error",
           undefined,
           at,

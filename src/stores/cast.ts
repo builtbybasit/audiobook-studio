@@ -6,7 +6,8 @@ import type { Spoken } from "@/lib/speech";
 // lines in every chapter, the dictionary replaced whole — with what comes back installed in place
 // of what was here. An Undo is exact on both sides: a rename is renamed back, and a merge or a
 // removal records the lines that moved and puts exactly those back (`attribute`), rather than
-// restoring a snapshot the server never saw.
+// restoring a snapshot the server never saw. The dictionary works the same way: a change reports
+// the clips it staled, and its Undo names exactly those, for the server to put back to done.
 import { keyring } from "@/lib/keyring";
 import { key, norm } from "@/lib/scriptReview";
 import { hitsIn, pacingOrDefault, silenceOf, speak } from "@/lib/speech";
@@ -16,6 +17,7 @@ import {
   activeLibraryService,
   ApiError,
   type Cast,
+  type ChapterLines,
   type LibraryService,
   type MovedLines,
 } from "@/services/library";
@@ -399,27 +401,63 @@ export const useCastStore = defineStore("cast", {
       const uiStore = useUiStore();
 
       const n = this._lexRestale(bookId);
-      void this._pushLexicon(bookId);
+      // The server stales the same clips by the same rule and says which; an Undo names exactly
+      // those back to it, so it can put them back to done rather than leave them for re-narration.
+      const pushed = this._pushLexicon(bookId);
       uiStore.toast(label, {
         kind: n ? "warn" : "info",
         description: n
           ? `${n} rendered line${n === 1 ? "" : "s"} still read the old pronunciation — re-narrate to apply.`
           : "The book text is unchanged; the endpoint is sent the respelling.",
+        // Demo mode holds its own, so its Undo is as immediate as the change was. With a server
+        // answering, an Undo clicked before the change has been answered waits for it: it has to
+        // name the lines it staled, and the answer installs the new list and marks those lines
+        // here — landing after the revert, it would undo the Undo.
         undo: () => {
-          revert();
-          void this._pushLexicon(bookId);
+          if (!this._service()) return revert();
+          return pushed.then(async (staled) => {
+            revert();
+            await this._pushLexicon(bookId, staled ?? undefined);
+          });
         },
       });
     },
-    /** The dictionary as it now stands here, written whole. Demo mode holds its own. */
-    async _pushLexicon(bookId: string): Promise<void> {
+    /**
+     * The dictionary as it now stands here, written whole. Demo mode holds its own.
+     *
+     * The server stales every clip that now reads the old pronunciation, and puts back to done
+     * those `restore` names that read this one again. Both come back with the revision each
+     * chapter's script is at now, which is adopted so the next edit of it names the right one.
+     * Returns the lines it staled, for an Undo to name; null when there is no server or it refused.
+     */
+    async _pushLexicon(bookId: string, restore?: ChapterLines[]): Promise<ChapterLines[] | null> {
+      const scriptsStore = useScriptsStore();
+
       const svc = this._service();
-      if (!svc) return;
+      if (!svc) return null;
       try {
-        this.lexicon[bookId] = await svc.putLexicon(bookId, clone(this.lexicon[bookId] ?? []));
+        const { entries, stale, restored } = await svc.putLexicon(
+          bookId,
+          clone(this.lexicon[bookId] ?? []),
+          restore,
+        );
+        this.lexicon[bookId] = entries;
+        for (const { chapterId, ids } of stale) {
+          // usually already stale here by the same rule; this catches a clip only the server had
+          const set = new Set(ids);
+          for (const s of scriptsStore.segments[key(bookId, chapterId)] ?? [])
+            if (set.has(s.id)) scriptsStore._markStale(bookId, chapterId, s);
+        }
+        for (const { chapterId, revision } of [...stale, ...restored]) {
+          // never backwards: an edit's answer for this chapter may have landed in between
+          const k = key(bookId, chapterId);
+          scriptsStore._revision[k] = Math.max(scriptsStore._revision[k] ?? 0, revision);
+        }
+        return stale.map(({ chapterId, ids }) => ({ chapterId, ids }));
       } catch (cause) {
         this._failed("save the dictionary", cause);
         await this._reread(bookId);
+        return null;
       }
     },
     addTerm(bookId: string, term = "", say = ""): number {

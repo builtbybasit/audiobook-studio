@@ -116,7 +116,7 @@ export function readLexicon(db: Db | Tx, bookId: string): LexEntry[] {
  * It is a short list edited one entry at a time by a person, and the order it reads in is part of
  * it, so the whole list is the natural unit to write — and what an Undo of any change to it sends.
  */
-export function replaceLexicon(db: Db, bookId: string, entries: readonly LexEntry[]): void {
+export function replaceLexicon(db: Db | Tx, bookId: string, entries: readonly LexEntry[]): void {
   db.transaction((tx) => {
     tx.delete(lexiconEntries).where(eq(lexiconEntries.bookId, bookId)).run();
     entries.forEach((e, i) =>

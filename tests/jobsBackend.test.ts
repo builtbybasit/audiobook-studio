@@ -770,6 +770,100 @@ describe("narration with a server answering", () => {
   });
 });
 
+describe("the dictionary with a server answering", () => {
+  /** The line the dictionary below reaches: no other line of chapter 1 says "twice". */
+  const twice = (segs: Segment[]) => segs.find((s) => s.text.includes("count it twice"))!;
+
+  /** Chapter 1 narrated on the server, with its script open the way the Narration page opens it. */
+  async function narrated() {
+    const { id } = await scriptedAndOpen();
+    const narrationStore = useNarrationStore();
+    await narrationStore._runRemote(id, [1], { quiet: true });
+    await api.runner.idle();
+    await poll();
+    return { id, narrationStore };
+  }
+
+  test("a line the dictionary respells is narrated as respelled, and its clip reads as fresh", async () => {
+    const { id } = await scriptedAndOpen();
+    castStore.addTerm(id, "twice", "twyce");
+    await settle();
+    const narrationStore = useNarrationStore();
+    await narrationStore._runRemote(id, [1], { quiet: true });
+    await api.runner.idle();
+    await poll();
+    const line = twice(scriptsStore.segmentsOf(id, 1));
+    expect(line.audio.status).toBe("done");
+    expect(line.audio.pronounced).toContain("twyce");
+    expect(line.audio.said).toContain("twyce");
+    expect(line.audio.lex).toBe(1);
+    // what the clip says it was sent is what the dictionary sends now, so nothing has drifted
+    expect(narrationStore.clipDrift(id, line)).toEqual([]);
+    expect(twice(readScript(api.db, id, 1)).audio.pronounced).toContain("twyce");
+    // a line the dictionary leaves alone records what it was sent too, and no respelling
+    const plain = scriptsStore.segmentsOf(id, 1).find((s) => s !== line)!;
+    expect(plain.audio.pronounced).toBeDefined();
+    expect(plain.audio.said).toBeUndefined();
+    expect(libraryStore.chapter(id, 1)?.narration).toBe("done");
+  });
+
+  test("a term that reaches a narrated line stales its clip on both sides, and the next edit still writes", async () => {
+    const { id } = await narrated();
+    castStore.addTerm(id, "twice", "twyce");
+    await settle();
+    expect(twice(scriptsStore.segmentsOf(id, 1)).audio.status).toBe("stale");
+    expect(twice(readScript(api.db, id, 1)).audio.status).toBe("stale");
+    // only that line: the others still read what the dictionary sends
+    expect(readScript(api.db, id, 1).filter((s) => s.audio.status === "stale")).toHaveLength(1);
+    expect(libraryStore.chapter(id, 1)?.narration).toBe("stale");
+    expect(toasts.at(-1)?.kind).toBe("warn");
+    // the store adopted the revision the change moved the chapter to
+    const [a] = scriptsStore.segmentsOf(id, 1);
+    scriptsStore.updateSegment(id, 1, a.id, { text: "Edited after the dictionary." });
+    await scriptsStore._settled(id, 1);
+    expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
+    expect(readScript(api.db, id, 1)[0].text).toBe("Edited after the dictionary.");
+  });
+
+  test("undoing that term puts the clip back to done on the server too", async () => {
+    const { id } = await narrated();
+    castStore.addTerm(id, "twice", "twyce");
+    await settle();
+    expect(twice(readScript(api.db, id, 1)).audio.status).toBe("stale");
+    await toasts.at(-1)!.undo!();
+    await settle();
+    expect(castStore.lexiconOf(id)).toEqual([]);
+    expect(twice(scriptsStore.segmentsOf(id, 1)).audio.status).toBe("done");
+    expect(twice(readScript(api.db, id, 1)).audio.status).toBe("done");
+    expect(libraryStore.chapter(id, 1)?.narration).toBe("done");
+    // the Undo named the lines the change staled, and nothing else
+    const [undo] = sent.filter((r) => r.path === `/api/books/${id}/lexicon`).slice(-1);
+    expect(undo.body).toMatchObject({
+      entries: [],
+      restore: [{ chapterId: 1, ids: [twice(readScript(api.db, id, 1)).id] }],
+    });
+    // and the revision it moved to was adopted as well
+    const [a] = scriptsStore.segmentsOf(id, 1);
+    scriptsStore.updateSegment(id, 1, a.id, { text: "Edited after the Undo." });
+    await scriptsStore._settled(id, 1);
+    expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
+  });
+
+  test("an Undo clicked before the change is answered still puts the clip back", async () => {
+    const { id } = await narrated();
+    castStore.addTerm(id, "twice", "twyce");
+    await toasts.at(-1)!.undo!();
+    await settle();
+    expect(castStore.lexiconOf(id)).toEqual([]);
+    expect(twice(scriptsStore.segmentsOf(id, 1)).audio.status).toBe("done");
+    expect(twice(readScript(api.db, id, 1)).audio.status).toBe("done");
+    wireStores();
+    const cast = pinia.run(() => useCast(id));
+    await settle();
+    expect(cast.lexicon.value).toEqual([]);
+  });
+});
+
 describe("retakes with a server answering", () => {
   /** Chapter 1 narrated on the server, with its script open the way the Narration page opens it. */
   async function narrated() {

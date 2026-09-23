@@ -836,6 +836,172 @@ describe("the verdict on a retake", () => {
   });
 });
 
+interface LexiconSaved {
+  entries: { id: number; term: string; say: string; enabled: boolean }[];
+  stale: { chapterId: number; ids: number[]; revision: number }[];
+  restored: { chapterId: number; ids: number[]; revision: number }[];
+}
+
+const lexicon = (
+  api: TestApi,
+  id: string,
+  entries: { id: number; term: string; say: string }[],
+  restore?: { chapterId: number; ids: number[] }[],
+) =>
+  api.request<LexiconSaved>(`/api/books/${id}/lexicon`, {
+    ...jsonBody({ entries: entries.map((e) => ({ ...e, enabled: true })), restore }),
+    method: "PUT",
+  });
+
+/** A provider that remembers every text it was sent, and renders it with the fake. */
+function recording(): SpeechProvider & { sent: string[] } {
+  const inner = fakeSpeechProvider();
+  const sent: string[] = [];
+  return { name: inner.name, sent, speak: (input) => (sent.push(input.text), inner.speak(input)) };
+}
+
+describe("what a line is spoken as", () => {
+  test("a line the dictionary matches is sent the respelling, and its clip says so", async () => {
+    const speech = recording();
+    const { api, id } = await scripted(testApi({ speech }));
+    await lexicon(api, id, [{ id: 1, term: "twice", say: "two times" }]);
+    await narrate(api, id, [1]);
+    await api.runner.idle();
+
+    const { segments } = await scriptOf(api, id);
+    const matched = segments.find((s) => s.text.includes("twice"))!;
+    const said = matched.text.replace("twice", "two times");
+    expect(speech.sent).toContain(said);
+    expect(speech.sent).not.toContain(matched.text);
+    expect(matched.audio).toMatchObject({ status: "done", text: matched.text, said, lex: 1 });
+    expect(matched.audio.pronounced).toBe(said);
+    // a line the dictionary leaves alone records that it did, and nothing it was not rewritten to
+    const plain = segments.find((s) => !s.text.includes("twice"))!;
+    expect(plain.audio.pronounced).toBe(plain.text);
+    expect(plain.audio.said).toBeUndefined();
+    expect(plain.audio.lex).toBeUndefined();
+  });
+
+  test("an entry that is switched off, or matches only inside a word, is not applied", async () => {
+    const speech = recording();
+    const { api, id } = await scripted(testApi({ speech }));
+    await api.request(`/api/books/${id}/lexicon`, {
+      ...jsonBody({
+        entries: [
+          { id: 1, term: "twice", say: "two times", enabled: false },
+          { id: 2, term: "wic", say: "wick" },
+        ].map((e) => ({ enabled: true, ...e })),
+      }),
+      method: "PUT",
+    });
+    await narrate(api, id, [1]);
+    await api.runner.idle();
+    const { segments } = await scriptOf(api, id);
+    expect(speech.sent).toEqual(segments.map((s) => s.text));
+  });
+
+  test("replacing the dictionary marks stale exactly the clips it changes the words of", async () => {
+    const { api, id } = await scripted(testApi({ speech: fakeSpeechProvider() }));
+    await narrate(api, id, [1, 2]);
+    await api.runner.idle();
+    const before = await scriptOf(api, id);
+    const matched = before.segments.filter((s) => s.text.includes("twice")).map((s) => s.id);
+    expect(matched.length).toBeGreaterThan(0);
+
+    const { status, body } = await lexicon(api, id, [{ id: 1, term: "twice", say: "two times" }]);
+    expect(status).toBe(200);
+    expect(body.restored).toEqual([]);
+    expect(body.stale.map((m) => [m.chapterId, m.ids])).toEqual([
+      [1, matched],
+      [2, matched],
+    ]);
+
+    const after = await scriptOf(api, id);
+    expect(after.revision).toBe(body.stale[0].revision);
+    expect(after.revision).toBeGreaterThan(before.revision);
+    for (const s of after.segments)
+      expect(s.audio.status).toBe(matched.includes(s.id) ? "stale" : "done");
+    expect((await chaptersOf(api, id)).slice(0, 2).map((c) => c.narration)).toEqual([
+      "stale",
+      "stale",
+    ]);
+
+    // the same list again changes nothing, and moves no revision
+    const again = await lexicon(api, id, [{ id: 1, term: "twice", say: "two times" }]);
+    expect(again.body.stale).toEqual([]);
+    expect((await scriptOf(api, id)).revision).toBe(after.revision);
+  });
+
+  test("an Undo puts back the clips its change staled, and only those that still match", async () => {
+    const { api, id } = await scripted(testApi({ speech: fakeSpeechProvider() }));
+    await narrate(api, id, [1, 2]);
+    await api.runner.idle();
+    const { body: changed } = await lexicon(api, id, [{ id: 1, term: "twice", say: "two times" }]);
+
+    // chapter 2's line is edited after the change, so its clip is stale for a reason of its own
+    const two = await scriptOf(api, id, 2);
+    const line = two.segments.find((s) => s.text.includes("twice"))!;
+    const edited = two.segments.map((s) =>
+      s.id === line.id ? { ...s, text: `${s.text} Again.` } : s,
+    );
+    expect((await edit(api, id, { segments: edited, ifRevision: two.revision }, 2)).status).toBe(
+      200,
+    );
+
+    const { body } = await lexicon(api, id, [], changed.stale);
+    expect(body.stale).toEqual([]);
+    expect(body.restored.map((m) => [m.chapterId, m.ids])).toEqual([[1, changed.stale[0].ids]]);
+    expect((await scriptOf(api, id)).segments.every((s) => s.audio.status === "done")).toBe(true);
+    expect((await chaptersOf(api, id))[0].narration).toBe("done");
+    const kept = (await scriptOf(api, id, 2)).segments.find((s) => s.id === line.id)!;
+    expect(kept.audio.status).toBe("stale");
+  });
+
+  test("an Undo looks only at the lines it names, not at every clip that could go back", async () => {
+    const { api, id } = await scripted(testApi({ speech: fakeSpeechProvider() }));
+    await narrate(api, id, [1]);
+    await api.runner.idle();
+    // Tobin's lines go stale by the rename, and nothing about the dictionary changed them
+    await api.request(`/api/books/${id}/characters/Tobin/rename`, jsonBody({ to: "Toby" }));
+    const { segments } = await scriptOf(api, id);
+    const renamed = segments.filter((s) => s.audio.status === "stale").map((s) => s.id);
+    expect(renamed.length).toBeGreaterThan(0);
+    const other = segments.find((s) => !renamed.includes(s.id))!;
+
+    const { body } = await lexicon(api, id, [], [{ chapterId: 1, ids: [other.id] }]);
+    expect(body.restored).toEqual([]);
+    const after = await scriptOf(api, id);
+    expect(after.segments.filter((s) => s.audio.status === "stale").map((s) => s.id)).toEqual(
+      renamed,
+    );
+  });
+
+  test("a line sent before the dictionary changed lands stale, and the lines after it are sent the new words", async () => {
+    const gate = gatedSpeechProvider();
+    const { api, id } = await scripted(testApi({ speech: gate.provider }));
+    await narrate(api, id, [1]);
+    const idle = api.runner.idle();
+    const first = await gate.started;
+    // the chapter's heading, which is the first line out
+    const term = first.text;
+    const { body } = await lexicon(api, id, [{ id: 1, term, say: "SAID" }]);
+    // the clip in flight is not done yet, so the change has nothing of this chapter's to mark
+    expect(body.stale).toEqual([]);
+    gate.release();
+    await idle;
+
+    const { segments } = await scriptOf(api, id);
+    const [line, ...rest] = segments;
+    expect(line.audio.pronounced).toBe(first.text);
+    expect(line.audio.status).toBe("stale");
+    for (const s of rest) {
+      expect(s.audio.status).toBe("done");
+      expect(s.audio.pronounced).toBe(s.text.replace(new RegExp(`\\b${term}\\b`, "gi"), "SAID"));
+    }
+    expect((await chaptersOf(api, id))[0].narration).toBe("stale");
+  });
+});
+
 describe("the files", () => {
   test("go with the book, and the route answers 404 afterwards", async () => {
     const { api, id } = await scripted();

@@ -21,11 +21,21 @@
 //
 // *A container people's players open.* The clips go in as one concat stream, the silence with
 // them, and what comes out is an `.m4b` an app will read as an audiobook.
+//
+// **Clips in MP3 or Opus are decoded first.** The concat demuxer reads every file in its list as the
+// first one's format, and the spans and the silence are counted in samples, so every clip is made a
+// WAV in the file's format before the list is drawn: one `ffmpeg` per encoded clip, a few at once,
+// into the build's own work directory. After that the list, the rate check, the spans and the
+// silence are exactly what they are for a book narrated in WAV, and a book narrated in a mix of
+// the three builds the same way. The file's format is the first clip's — its header for a WAV,
+// what `probeClip` reads for the others, at 16 bits.
 import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ExportSettings } from "@/types";
+import { formatOfFile } from "~/audio/files";
+import { probeClip } from "~/audio/probe";
 import type {
   AudiobookEncoder,
   EncodeChapter,
@@ -73,7 +83,12 @@ export async function ffmpegAvailable(bin = "ffmpeg"): Promise<string | null> {
 }
 
 /** Run it, and turn a non-zero exit into an error carrying the part of the log that explains it. */
-async function run(bin: string, args: string[], signal: AbortSignal): Promise<string> {
+async function run(
+  bin: string,
+  args: string[],
+  signal: AbortSignal,
+  failed = "ffmpeg could not write the file",
+): Promise<string> {
   const proc = Bun.spawn([bin, "-nostdin", "-hide_banner", ...args], {
     stdout: "ignore",
     stderr: "pipe",
@@ -89,7 +104,7 @@ async function run(bin: string, args: string[], signal: AbortSignal): Promise<st
       // ffmpeg says what went wrong in its last few lines; the rest is the build it was compiled
       // with, which is of no use to anybody reading a failed job.
       const why = stderr.trim().split("\n").slice(-3).join(" ").trim();
-      throw new Error(`ffmpeg could not write the file${why ? `: ${why}` : ""}`);
+      throw new Error(`${failed}${why ? `: ${why}` : ""}`);
     }
     return stderr;
   } finally {
@@ -120,6 +135,8 @@ async function concatList(
   gap: number,
   dir: string,
   format: WavFormat,
+  /** the WAV each encoded clip was decoded to, by the clip's own path */
+  decoded: Map<string, string>,
 ): Promise<{ list: string; spans: EncodedChapter[]; seconds: number }> {
   const lines: string[] = [];
   const spans: EncodedChapter[] = [];
@@ -154,8 +171,9 @@ async function concatList(
       // `carries: false`, so the build hands this encoder clips and silence and nothing else.
       if (part.kind === "carry")
         throw new Error("this encoder cannot copy a span out of an audiobook it already wrote");
-      lines.push(`file '${part.path.replaceAll("'", "'\\''")}'`);
-      const head = readWavHeader(new Uint8Array(await Bun.file(part.path).arrayBuffer()));
+      const path = decoded.get(part.path) ?? part.path;
+      lines.push(`file '${path.replaceAll("'", "'\\''")}'`);
+      const head = readWavHeader(new Uint8Array(await Bun.file(path).arrayBuffer()));
       // The concat demuxer reads every file as the first one's format, so a clip at another rate
       // would play at the wrong speed rather than fail. The stitcher refuses it; so does this.
       if (
@@ -178,6 +196,94 @@ async function concatList(
     });
   }
   return { list: lines.join("\n"), spans, seconds };
+}
+
+/** The PCM codec that writes samples of this many bits, as a WAV holds them. */
+const PCM: Record<number, string> = {
+  8: "pcm_u8",
+  16: "pcm_s16le",
+  24: "pcm_s24le",
+  32: "pcm_s32le",
+};
+
+/** How many clips are decoded at once: enough to hide a process's start-up, few enough to share. */
+const DECODERS = 4;
+
+/**
+ * Every MP3 or Opus clip in these chapters as a WAV in `format`, written into `dir`: the map from
+ * each clip's path to its WAV's. A WAV clip is not in it and is read where it is kept.
+ */
+async function decodeClips(
+  bin: string,
+  chapters: EncodeChapter[],
+  format: WavFormat,
+  dir: string,
+  signal: AbortSignal,
+): Promise<Map<string, string>> {
+  const encoded = [
+    ...new Set(
+      chapters.flatMap((c) =>
+        c.parts.flatMap((p) =>
+          p.kind === "clip" && (formatOfFile(p.path) ?? "wav") !== "wav" ? [p.path] : [],
+        ),
+      ),
+    ),
+  ];
+  const codec = PCM[format.bits];
+  if (encoded.length && !codec)
+    throw new Error(
+      `this file is ${formatLabel(format)}, which an MP3 or Opus clip cannot be decoded to`,
+    );
+  const decoded = new Map<string, string>();
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < encoded.length) {
+      if (signal.aborted) throw signal.reason;
+      const clip = encoded[next];
+      const wav = join(dir, `clip-${next++}.wav`);
+      await run(
+        bin,
+        [
+          "-i",
+          clip,
+          "-vn",
+          "-map_metadata",
+          "-1",
+          "-ar",
+          String(format.sampleRate),
+          "-ac",
+          String(format.channels),
+          "-c:a",
+          codec,
+          "-f",
+          "wav",
+          "-y",
+          wav,
+        ],
+        signal,
+        `ffmpeg could not decode ${clip}`,
+      );
+      decoded.set(clip, wav);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(DECODERS, encoded.length) }, worker));
+  return decoded;
+}
+
+/** The format of the file being built: the first clip's, read from its header or its stream. */
+async function sourceFormat(path: string): Promise<WavFormat> {
+  const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
+  const kept = formatOfFile(path) ?? "wav";
+  if (kept === "wav") {
+    const head = readWavHeader(bytes);
+    return { channels: head.channels, sampleRate: head.sampleRate, bits: head.bits };
+  }
+  try {
+    const info = await probeClip(bytes, kept);
+    return { channels: info.channels, sampleRate: info.sampleRate, bits: 16 };
+  } catch (e) {
+    throw new Error(`${path} could not be read as audio: ${(e as Error).message}`, { cause: e });
+  }
 }
 
 /** The 44 bytes a generated silence file needs in front of it. */
@@ -271,6 +377,8 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
     covers: true,
     // An MP3's ID3 frames and an M4B's atoms both have a place for every field the page asks for.
     tags: true,
+    // Every clip that is not a WAV is decoded to one first; see the top of this file.
+    decodes: true,
 
     async encode({
       chapters,
@@ -283,17 +391,13 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
     }: EncodeInput): Promise<EncodedFile> {
       const first = chapters.flatMap((c) => c.parts).find((p) => p.kind !== "silence");
       if (!first) throw new Error("there was nothing to write");
-      const head = readWavHeader(new Uint8Array(await Bun.file(first.path).arrayBuffer()));
-      const source: WavFormat = {
-        channels: head.channels,
-        sampleRate: head.sampleRate,
-        bits: head.bits,
-      };
+      const source = await sourceFormat(first.path);
 
       const work = join(tmpdir(), `audiobook-ffmpeg-${crypto.randomUUID()}`);
       await Bun.write(join(work, ".keep"), "");
       try {
-        const { list, spans, seconds } = await concatList(chapters, gap, work, source);
+        const decoded = await decodeClips(bin, chapters, source, work, signal);
+        const { list, spans, seconds } = await concatList(chapters, gap, work, source, decoded);
         const listPath = join(work, "concat.txt");
         await writeFile(listPath, list);
         const input = ["-f", "concat", "-safe", "0", "-i", listPath];
@@ -315,12 +419,17 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
               signal,
             ),
           );
-          filter = [
-            "-af",
-            stats
-              ? `loudnorm=I=${options.loudness}:TP=-1.5:LRA=11:measured_I=${stats.input_i}:measured_TP=${stats.input_tp}:measured_LRA=${stats.input_lra}:measured_thresh=${stats.input_thresh}:offset=${stats.target_offset}:linear=true`
-              : `loudnorm=I=${options.loudness}:TP=-1.5:LRA=11`,
-          ];
+          // Silence measures as -inf, which the second pass refuses outright ("Result too large");
+          // there is nothing in it to level, so it is written as it is.
+          const silent = stats != null && !Number.isFinite(Number(stats.input_i));
+          filter = silent
+            ? []
+            : [
+                "-af",
+                stats
+                  ? `loudnorm=I=${options.loudness}:TP=-1.5:LRA=11:measured_I=${stats.input_i}:measured_TP=${stats.input_tp}:measured_LRA=${stats.input_lra}:measured_thresh=${stats.input_thresh}:offset=${stats.target_offset}:linear=true`
+                  : `loudnorm=I=${options.loudness}:TP=-1.5:LRA=11`,
+              ];
         }
 
         const args = [...input];
@@ -360,6 +469,11 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
           ...(tags ? metadataArgs(tags, format) : []),
           ...(format === "mp3" ? ["-id3v2_version", "3"] : []),
           ...filter,
+          // At the clips' own rate. `loudnorm` resamples to 192 kHz inside, and left to itself the
+          // encoder then picks the nearest rate it has — 96 kHz AAC out of 44.1 kHz speech, a file
+          // twice the size for nothing anyone can hear.
+          "-ar",
+          String(source.sampleRate),
           "-c:a",
           CODEC[format],
           "-b:a",

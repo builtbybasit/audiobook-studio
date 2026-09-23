@@ -11,7 +11,7 @@ import type { Book, Chapter, ExportItem, ExportSettings, Job } from "@/types";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { makeWorld } from "@/mock";
 import { chapterSpans, exportFileToken } from "~/db/exports";
-import { fakeSpeechProvider, toneOf, toneWav } from "~/providers/fakeSpeech";
+import { fakeSpeechProvider, SAMPLE_RATE, toneOf, toneWav } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";
 import type { AudiobookEncoder } from "~/providers/encoder";
 import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
@@ -648,18 +648,32 @@ test("a machine without the ffmpeg it was told to run is told so, rather than fa
   expect(await ffmpegAvailable("/nonexistent/ffmpeg")).toBeNull();
 });
 
-/** What ffprobe says is in a file: how long it plays, and the marks inside it. */
-async function probe(path: string): Promise<{ seconds: number; chapters: { title: string }[] }> {
+/** What ffprobe says is in a file: how long it plays, its audio's rate, and the marks inside it. */
+async function probe(
+  path: string,
+): Promise<{ seconds: number; rate: number; chapters: { title: string }[] }> {
   const proc = Bun.spawn(
-    ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_chapters", path],
+    [
+      "ffprobe",
+      "-v",
+      "quiet",
+      "-print_format",
+      "json",
+      "-show_format",
+      "-show_streams",
+      "-show_chapters",
+      path,
+    ],
     { stdout: "pipe", stderr: "ignore" },
   );
   const out = JSON.parse(await new Response(proc.stdout).text()) as {
     format: { duration: string };
+    streams: { codec_type: string; sample_rate?: string }[];
     chapters: { tags?: { title?: string } }[];
   };
   return {
     seconds: Number(out.format.duration),
+    rate: Number(out.streams.find((s) => s.codec_type === "audio")?.sample_rate),
     chapters: (out.chapters ?? []).map((c) => ({ title: c.tags?.title ?? "" })),
   };
 }
@@ -682,6 +696,8 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
     const read = await probe(filePath(api, id, done.id));
     expect(read.chapters.map((c) => c.title)).toEqual(["1. One", "2. Two", "3. Three"]);
     expect(read.seconds).toBeCloseTo(done.duration, 0);
+    // at the clips' rate, though loudnorm resamples inside and the encoder would otherwise pick
+    expect(read.rate).toBe(SAMPLE_RATE);
     // nothing said the format was not the one asked for, because this time it was
     const job = await jobById(api, done.jobId!);
     expect(job.activity?.some((e) => e.message.includes("rather than"))).toBe(false);

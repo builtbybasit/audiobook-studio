@@ -21,6 +21,14 @@ const Probe = v.object({
   id: v.pipe(v.string(), v.nonEmpty()),
 });
 
+const VoiceList = v.object({
+  id: v.pipe(v.string(), v.nonEmpty()),
+  source: v.picklist(["library", "public"]),
+  query: v.optional(v.pipe(v.string(), v.maxLength(200))),
+  language: v.optional(v.pipe(v.string(), v.maxLength(20))),
+  page: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(1000))),
+});
+
 export function endpointRoutes(db: Db, providers: Providers): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
@@ -41,6 +49,20 @@ export function endpointRoutes(db: Db, providers: Providers): Hono<PinoEnv> {
     const { kind, id } = c.req.valid("json");
     const answer = await ops.testEndpoint(db, providers, kind, id, c.req.raw.signal);
     c.var.logger.info({ kind, id, ok: answer.ok, ms: answer.ms }, "endpoint tested");
+    return c.json(answer);
+  });
+
+  /**
+   * The voices a saved speech endpoint offers: its own library, or a page of a public search.
+   * Only an answer — adding one to the endpoint is the whole-configuration PUT above.
+   */
+  app.post("/voices", validate("json", VoiceList), async (c) => {
+    const { id, ...query } = c.req.valid("json");
+    const answer = await ops.listVoices(db, providers, id, query, c.req.raw.signal);
+    c.var.logger.info(
+      { id, source: query.source, voices: answer.voices.length, page: answer.page },
+      "voices listed",
+    );
     return c.json(answer);
   });
 

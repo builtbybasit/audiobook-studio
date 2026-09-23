@@ -8,6 +8,7 @@ import { reactive } from "vue";
 import { bindCredential } from "@/lib/credentials";
 import { onDemoReset } from "@/lib/pageState";
 import { opsOf } from "@/lib/endpoints";
+import { encodingChanged, repairEncoding } from "@/lib/audioFormat";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import type { ConnectionTest, EndpointKind, RangeKey, RequestStatus } from "@/types";
 
@@ -137,7 +138,13 @@ export function draftChanges(u: UnifiedEndpoint): (keyof ConnectionDraft)[] {
 
 export const draftDirty = (u: UnifiedEndpoint): boolean => draftChanges(u).length > 0;
 
-export function applyDraft(u: UnifiedEndpoint): void {
+/**
+ * Write the draft onto the configuration. Returns what had to be put back so the audio choice still
+ * fits: a new base URL can speak another API (Fish Audio's formats and rates are not OpenAI's), and
+ * a format or rate the new one lacks goes back to the provider's default here, in the same write,
+ * rather than being left for the server to refuse the next line with.
+ */
+export function applyDraft(u: UnifiedEndpoint): string[] {
   const d = draftFor(u);
   const target = (u.profile ?? u.endpoint) as unknown as Record<string, unknown>;
   target.name = d.name.trim();
@@ -147,6 +154,15 @@ export function applyDraft(u: UnifiedEndpoint): void {
   target.credentialId = d.credentialId;
   target.quotaGroup = d.quotaGroup.trim() || null;
   bindCredential(u.slot, d.credentialId);
+  let notes: string[] = [];
+  if (u.endpoint) {
+    const r = repairEncoding(u.endpoint);
+    if (encodingChanged(u.endpoint, r)) {
+      u.endpoint.encoding = r.encoding;
+      u.endpoint.sampleRate = r.sampleRate;
+    }
+    notes = r.notes;
+  }
   // Re-seed the draft from what was just written instead of deleting it. `draftFor` would rebuild
   // it from the `u` snapshot this render still holds — the pre-save values — so the form would show
   // the old text back and claim unsaved changes that had in fact just been saved.
@@ -158,6 +174,7 @@ export function applyDraft(u: UnifiedEndpoint): void {
     credentialId: d.credentialId,
     quotaGroup: d.quotaGroup.trim(),
   };
+  return notes;
 }
 
 export function discardDraft(u: UnifiedEndpoint): void {

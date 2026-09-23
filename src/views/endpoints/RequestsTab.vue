@@ -15,9 +15,17 @@ import { SPLIT_MODES, splitText } from "@/lib/split";
 import { compact, opsOf } from "@/lib/endpoints";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import { SAMPLE_RATES, sampleRateLabel } from "@/lib/speech";
+import { FORMAT_LABEL, encodingOf, encodingProblems, speechFormats } from "@/lib/endpointShapes";
+import {
+  encodingChanged,
+  repairEncoding,
+  sizeLabel,
+  sizePerMinute,
+  supportOf,
+} from "@/lib/audioFormat";
 import { isBackend } from "@/services/mode";
 import type { LiveActivity } from "@/views/endpoints/live";
-import type { SampleRate, SplitMode } from "@/types";
+import type { AudioFormat, SampleRate, SplitMode } from "@/types";
 import type { UiOption } from "@/ui/types";
 
 const props = defineProps<{
@@ -66,14 +74,81 @@ const RATE_HINT: Record<SampleRate, string> = {
   44100: "CD, and the ACX audiobook standard",
   48000: "video and broadcast",
 };
-const RATE_OPTIONS: UiOption[] = SAMPLE_RATES.map((hz) => ({
-  value: hz,
-  label: sampleRateLabel(hz),
-  hint: RATE_HINT[hz],
-}));
 /** A speech endpoint's rate; a scripting profile has none, and never shows the control. */
 function setRate(v: string | number | null) {
   if (props.u.endpoint) props.u.endpoint.sampleRate = v == null ? null : (v as SampleRate);
+  repairNotes.value = [];
+}
+
+// ---------- audio format ----------
+// The format, bitrate and rate are one choice: which rates and bitrates exist depends on the
+// format, and which formats exist depends on the API the base URL speaks. So the rate list narrows
+// to the chosen format's, the bitrate list appears only for a format that has one, and switching
+// format goes through `repairEncoding` — anything the new format lacks is put back to the
+// provider's default and said below, rather than left for the server to refuse the next line with.
+const formats = computed(() => (props.u.endpoint ? speechFormats(props.u.endpoint) : []));
+const support = computed(() => (props.u.endpoint ? supportOf(props.u.endpoint) : undefined));
+const encoding = computed(() => encodingOf(props.u.endpoint ?? {}));
+const FORMAT_OPTIONS = computed<UiOption[]>(() =>
+  formats.value.map((f) => ({
+    value: f.format,
+    label: FORMAT_LABEL[f.format],
+    // "WAV · 16-bit PCM, mono" → the part after the name, as the row's hint
+    hint: f.label.split(" · ")[1],
+  })),
+);
+const BITRATE_OPTIONS = computed<UiOption[]>(() =>
+  (support.value?.bitrates ?? []).map((b) => ({
+    value: b.value,
+    label: b.label,
+    hint: b.value === support.value?.defaultBitrate ? "provider default" : undefined,
+  })),
+);
+/** The rates this format may be asked for; an API that takes none offers only the model's own. */
+const RATE_OPTIONS = computed<UiOption[]>(() => {
+  const rates = support.value?.rates;
+  if (!rates) return [];
+  return SAMPLE_RATES.filter((hz) => rates.includes(hz)).map((hz) => ({
+    value: hz,
+    label: sampleRateLabel(hz),
+    hint: RATE_HINT[hz],
+  }));
+});
+const rateNull = computed(() =>
+  support.value?.defaultRate
+    ? `Provider default (${sampleRateLabel(support.value.defaultRate)})`
+    : "Model default",
+);
+/** No rate can be asked for, and none is set — the control has nothing to offer. One that is set
+ *  (saved before the format picker, or imported) stays open so it can be cleared. */
+const rateLocked = computed(
+  () => support.value?.rates === null && (props.u.endpoint?.sampleRate ?? null) === null,
+);
+const problems = computed(() => (props.u.endpoint ? encodingProblems(props.u.endpoint) : []));
+const size = computed(() => (props.u.endpoint ? sizePerMinute(props.u.endpoint) : null));
+/** What the last format change had to put back — shown until the next change. */
+const repairNotes = ref<string[]>([]);
+watch(
+  () => props.u.key,
+  () => (repairNotes.value = []),
+);
+
+function setFormat(v: string | number | null) {
+  const ep = props.u.endpoint;
+  if (!ep || v == null) return;
+  const r = repairEncoding(ep, v as AudioFormat);
+  if (encodingChanged(ep, r)) {
+    ep.encoding = r.encoding;
+    ep.sampleRate = r.sampleRate;
+  }
+  repairNotes.value = r.notes;
+}
+function setBitrate(v: string | number | null) {
+  const ep = props.u.endpoint;
+  if (!ep) return;
+  const { format } = encodingOf(ep);
+  ep.encoding = v == null ? (format === "wav" ? null : { format }) : { format, bitrate: Number(v) };
+  repairNotes.value = [];
 }
 
 const limitNote = computed(() => {
@@ -235,24 +310,88 @@ const limitNote = computed(() => {
         </div>
       </section>
 
-      <!-- sample rate: speech only — a chat model returns text, which has no rate -->
+      <!-- audio: speech only — a chat model returns text, which has no format or rate -->
       <section v-if="u.kind === 'tts' && u.endpoint" class="card p-3">
-        <label class="flex items-center justify-between gap-3 text-sm"
-          ><span class="min-w-0"
-            >Sample rate
-            <span class="block text-[11px] text-zinc-500"
-              >Model default sends no rate; the clip records what came back.</span
-            ></span
-          ><UiSelect
-            :model-value="u.endpoint.sampleRate ?? null"
-            :options="RATE_OPTIONS"
-            null-value="Model default"
-            class="w-44 shrink-0"
-            @update:model-value="setRate"
-        /></label>
+        <h3 class="label mb-2">Audio</h3>
+        <div class="space-y-2.5 text-sm">
+          <label class="flex items-center justify-between gap-3"
+            ><span class="min-w-0"
+              >Audio format
+              <span class="block text-[11px] text-zinc-500"
+                >What every new line is asked for and kept as.</span
+              ></span
+            ><UiSelect
+              :model-value="encoding.format"
+              :options="FORMAT_OPTIONS"
+              class="w-44 shrink-0"
+              aria-label="Audio format"
+              @update:model-value="setFormat"
+          /></label>
+          <label v-if="BITRATE_OPTIONS.length" class="flex items-center justify-between gap-3"
+            ><span class="min-w-0"
+              >Bitrate
+              <span class="block text-[11px] text-zinc-500"
+                >Higher is closer to the original, and larger.</span
+              ></span
+            ><UiSelect
+              :model-value="encoding.bitrate ?? support?.defaultBitrate ?? null"
+              :options="BITRATE_OPTIONS"
+              class="w-44 shrink-0"
+              aria-label="Bitrate"
+              @update:model-value="setBitrate"
+          /></label>
+          <label class="flex items-center justify-between gap-3"
+            ><span class="min-w-0"
+              >Sample rate
+              <span class="block text-[11px] text-zinc-500">
+                <template v-if="support && !support.rates"
+                  >This API takes no rate — it answers at the model’s own.</template
+                >
+                <template v-else
+                  >{{ FORMAT_LABEL[encoding.format] }} here offers
+                  {{ support?.rates?.map(sampleRateLabel).join(", ") }}. The default sends no rate;
+                  the clip records what came back.</template
+                >
+              </span></span
+            ><UiSelect
+              :model-value="u.endpoint.sampleRate ?? null"
+              :options="RATE_OPTIONS"
+              :null-value="rateNull"
+              :disabled="rateLocked"
+              class="w-44 shrink-0"
+              aria-label="Sample rate"
+              @update:model-value="setRate"
+          /></label>
+        </div>
+        <p v-if="size" class="mt-2 rounded-md bg-zinc-50 px-2.5 py-1.5 text-xs dark:bg-zinc-800/60">
+          <span class="font-mono">{{ size.approx ? "~" : "≈ " }}{{ sizeLabel(size.bytes) }}</span>
+          <span class="text-zinc-500"> per minute of speech · {{ size.basis }}</span>
+        </p>
+        <p v-else class="mt-2 text-[11px] text-zinc-500">
+          The size per minute depends on the model’s own rate and bitrate, which this API does not
+          say.
+        </p>
+        <p
+          v-for="n in repairNotes"
+          :key="n"
+          class="mt-2 rounded bg-violet-50 px-2 py-1 text-[11px] text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
+          role="status"
+        >
+          {{ n }}
+        </p>
+        <p
+          v-for="p in problems"
+          :key="p"
+          class="mt-2 rounded bg-amber-400/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
+          role="alert"
+        >
+          {{ p }}. The server refuses a line until this is fixed.
+        </p>
         <p class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
-          Changing it marks clips rendered at another rate as needing a re-render — one audiobook
-          file can only hold one rate.
+          MP3 and Opus are about a tenth the size of WAV. Building an audiobook from them needs
+          ffmpeg on the server (<code class="font-mono">EXPORT_ENCODER=ffmpeg</code>). Clips already
+          rendered keep the format they were made in; changing the rate marks clips at another rate
+          as needing a re-render, since one audiobook file can only hold one rate.
         </p>
       </section>
 
@@ -342,8 +481,8 @@ const limitNote = computed(() => {
               cost stays honest.</template
             >
             <template v-else
-              >Base URL, model, sample rate and prices. Clips already rendered keep the model, rate
-              and cost they were recorded with.</template
+              >Base URL, model, audio format, sample rate and prices. Clips already rendered keep
+              the model, format, rate and cost they were recorded with.</template
             >
           </dd>
         </div>

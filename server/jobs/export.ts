@@ -50,7 +50,8 @@ import {
   setLabel,
 } from "@/lib/exports";
 import { pacingOrDefault, pauseAfter, sampleRateLabel } from "@/lib/speech";
-import type { AudioFiles } from "~/audio/files";
+import { FORMAT_LABEL } from "@/lib/endpointShapes";
+import { formatOfFile, type AudioFiles } from "~/audio/files";
 import { coverFiles, coverFileOf } from "~/covers/files";
 import type { Db, Tx } from "~/db/client";
 import * as exports from "~/db/exports";
@@ -157,6 +158,31 @@ function audioOf(
     signature: chapterSignature(chapter, segments, pacing),
     lines: segments.filter((s) => s.audio.duration > 0),
   };
+}
+
+/**
+ * The stitcher joins WAV samples and has no decoder, so a book with a clip kept as MP3 or Opus is
+ * refused before anything is written, naming the first chapter that has one and the two ways out.
+ * Every clip is asked, a carried chapter's too: the version it would be copied from can be gone by
+ * the time it is read, and then its clips are what is laid down.
+ */
+function refuseEncodedClips(
+  db: Db,
+  bookId: string,
+  ids: readonly number[],
+  known: Map<number, Chapter>,
+): void {
+  for (const id of ids) {
+    const chapter = known.get(id);
+    if (!chapter) continue;
+    for (const s of readScript(db, bookId, id)) {
+      const format = s.audio.duration > 0 && s.audio.url ? formatOfFile(s.audio.url) : null;
+      if (format && format !== "wav")
+        throw new Error(
+          `“${chapter.title}” was narrated in ${FORMAT_LABEL[format]}, and this server builds with the WAV stitcher, which joins WAV clips only. Restart the server with EXPORT_ENCODER=ffmpeg to build from ${FORMAT_LABEL[format]}, or narrate the book again with its endpoints set to WAV.`,
+        );
+    }
+  }
 }
 
 // ---------- queueing one ----------
@@ -336,6 +362,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
 
     const pacing = pacingOrDefault(book.pacing);
     const known = new Map(library.listChapters(db, job.bookId).map((c) => [c.id, c]));
+    if (!encoder.decodes) refuseEncodedClips(db, job.bookId, entry.chapterIds, known);
     const prev = entry.replaces == null ? null : (exports.getExport(db, entry.replaces) ?? null);
     // Only a file this same encoder wrote is ever copied out of: a span is bytes into a WAV and
     // milliseconds into an AAC stream, and reading one as the other would splice noise into the
@@ -463,7 +490,9 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       let carriedHere = 0;
       // One file holds one sample rate — neither encoder resamples — so the first clip that says
       // what rate it is sets the file's, and a line rendered at another is named here, by chapter,
-      // rather than by the path of a clip file deep inside the encoder.
+      // rather than by the path of a clip file deep inside the encoder. The rate is the one the
+      // narration job read off the file whatever its format, so an MP3 at 44.1 kHz and a WAV at
+      // 24 kHz are refused together here, and an Opus clip counts as the 48 kHz it decodes at.
       let rate: { hz: number; chapter: string } | null = null;
       for (const id of file.chapterIds) {
         const chapter = known.get(id);

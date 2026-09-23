@@ -6,12 +6,17 @@
 // The body is JSON, which the endpoint takes alongside msgpack; msgpack is only needed for
 // uploading reference audio inline, which nothing here does.
 //
-// What goes in the body beyond the words is chosen for an audiobook. `format: "wav"` because the
-// job, the join and the export read PCM; `normalize: true` (Fish's default, set so it cannot drift)
-// because it is what makes "1997" and "£3.50" read as words in English; `sample_rate` only when the
-// endpoint names one, and only a rate Fish says WAV comes in — anything else fails before a request
-// rather than being answered at a rate nobody asked for, which the job would then read as drift on
-// every run.
+// What goes in the body beyond the words is chosen for an audiobook. `format` is the endpoint's —
+// WAV unless it chose MP3 or Opus, which are kept as they come and are a tenth of the size — with
+// `mp3_bitrate` or `opus_bitrate` only when it names one; `normalize: true` (Fish's default, set so
+// it cannot drift) because it is what makes "1997" and "£3.50" read as words in English;
+// `sample_rate` only when the endpoint names one. A rate, bitrate or format Fish does not offer
+// together (`speechFormats`) fails before a request rather than being answered at something
+// nobody asked for, which the job would then read as drift on every run.
+//
+// Fish's MP3 is a bare LAME frame stream — no ID3 tag, no Xing frame — at a constant bitrate, and
+// its Opus is Ogg, served as `audio/opus`. Both are read by `probeClip`, which does not need either
+// to carry a length.
 //
 // The line's `direction` is not sent. Fish has no instructions field: an S2 model takes delivery as
 // bracketed cues written into the text itself (https://docs.fish.audio/developer-guide/core-features/emotions),
@@ -19,15 +24,12 @@
 // spelling is explicit and a change to them is tracked as drift. Writing the free-text direction in
 // as another cue would put words into the text the person never configured — and read them aloud on
 // a model that spells cues differently.
-import type { CallOptions } from "~/providers/http";
-import { call, jsonHeaders, ProviderError } from "~/providers/http";
 import { fishModelsUrl } from "@/lib/endpointShapes";
+import { audioAnswer, refuseEncoding } from "~/providers/answer";
+import type { CallOptions } from "~/providers/http";
+import { call, jsonHeaders } from "~/providers/http";
 import type { RenderedClip, SpeechInput } from "~/providers/speech";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
-import { wavAnswer } from "~/providers/wav";
-
-/** The rates Fish renders WAV at, in Hz; with none asked for it answers at 44.1 kHz. */
-export const FISH_WAV_RATES = [8000, 16000, 24000, 32000, 44100] as const;
 
 export type SpeechCallOptions = Pick<CallOptions, "fetch" | "backoffMs">;
 
@@ -43,13 +45,8 @@ export async function fishSpeak(
   options: SpeechCallOptions,
 ): Promise<RenderedClip> {
   const { sampleRate, signal } = input;
-  if (sampleRate != null && !(FISH_WAV_RATES as readonly number[]).includes(sampleRate))
-    throw new ProviderError(
-      `${target.name} cannot render WAV at ${sampleRate} Hz — Fish Audio offers ` +
-        `${FISH_WAV_RATES.join(", ")} Hz. Pick one of those on the Endpoints page, or clear it for 44100.`,
-      0,
-      false,
-    );
+  const { format, bitrate } = input.encoding;
+  refuseEncoding(target, input);
   const started = Date.now();
   const res = await call(
     target,
@@ -60,18 +57,17 @@ export async function fishSpeak(
       body: JSON.stringify({
         text: input.text,
         reference_id: voice,
-        format: "wav",
+        format,
+        ...(bitrate != null && format !== "wav" ? { [`${format}_bitrate`]: bitrate } : {}),
         ...(sampleRate != null ? { sample_rate: sampleRate } : {}),
         normalize: true,
       }),
     },
     { signal, ...options },
   );
-  const wav = await wavAnswer(target, res, signal);
+  const audio = await audioAnswer(target, res, signal, format);
   return {
-    bytes: wav.bytes,
-    mime: "audio/wav",
-    duration: wav.duration,
+    ...audio,
     ms: Date.now() - started,
     model: target.model,
     voice,

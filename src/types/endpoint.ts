@@ -95,6 +95,24 @@ export interface Endpoint {
    * request carries no rate at all and the clip records whatever the file came back at.
    */
   sampleRate?: SampleRate | null;
+  /**
+   * What every line is asked for and kept as. Absent or null means WAV, which every part of the
+   * server reads; MP3 and Opus are a tenth of the size and need `EXPORT_ENCODER=ffmpeg` to build.
+   * What an endpoint can be asked for is `speechFormats` in `lib/endpointShapes.ts`.
+   */
+  encoding?: AudioEncoding | null;
+}
+
+/** A container this app can keep a clip in. */
+export type AudioFormat = "wav" | "mp3" | "opus";
+
+export interface AudioEncoding {
+  format: AudioFormat;
+  /**
+   * MP3 in kbps, Opus in bps with -1000 meaning the encoder's own choice — each as the provider's
+   * API spells it. Absent means the provider's default; WAV has none.
+   */
+  bitrate?: number;
 }
 
 /** The rates a speech endpoint can be asked to render at — speech-grade 16 kHz up to 48 kHz. */

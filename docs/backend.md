@@ -545,7 +545,7 @@ written — and on what was not, which is how the redaction rule is checked.
 `/api` on the same origin, so there is no CORS to configure and no base URL to set. Errors all have
 one shape — `{ error: { code, message, detail? } }` — where `code` is a stable name a client can
 switch on (`not_found`, `conflict`, `bad_request`, `forbidden`, `too_large`, `unsupported_media`,
-`range_not_satisfiable`, `internal`),
+`range_not_satisfiable`, `upstream` for a provider this server called, `internal`),
 `message` is meant to be shown as it stands and `detail` is the longer explanation a panel can
 expand to. `ApiErrorCode` in [src/types/common.ts](../src/types/common.ts) is the one list, and
 the server imports it, so the two sides agree by construction rather than by luck.
@@ -620,6 +620,7 @@ service are both built on it, so that rule is written once.
 | `GET`    | `/api/endpoints`                                 | Speech endpoints, scripting profiles, credentials; `saved`    |
 | `PUT`    | `/api/endpoints`                                 | The whole configuration, in place of what is stored           |
 | `POST`   | `/api/endpoints/test`                            | One small request to a saved endpoint with its saved key      |
+| `POST`   | `/api/endpoints/voices`                          | A saved endpoint's voices: its library, or a public search    |
 | `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                          |
 | `DELETE` | `/api/books/:id/volumes/:volumeId`               | Remove a volume; the last one removes the book; 409 mid-build |
 | `PATCH`  | `/api/books/:id`                                 | The budget, script budget or pacing; chapters are re-timed    |
@@ -871,11 +872,36 @@ base URL is Fish's and to OpenAI's `/audio/speech` shape otherwise (OpenAI, Koko
   line's direction, as the clip records them) except on `tts-1`. This API cannot be asked for a
   sample rate, so an endpoint with one set fails its lines before any request rather than
   rendering at the model's own and reading as drift forever after.
-- Both stream, so the WAV header they send claims sizes that are true of nothing (Fish's reads
+- **The format is the endpoint's** (`encoding`: WAV by default, or MP3 or Opus with a bitrate),
+  and a clip is kept in the format it came back in — the file's extension is the only record of
+  which. Before any request the line is held against `encodingProblems`, so a rate or bitrate the
+  API does not offer fails there, naming it, rather than being refused or quietly changed by the
+  provider.
+- A WAV answer's streamed header claims sizes that are true of nothing (Fish's reads
   `data ffffff00`, about 4 GB). [wav.ts](../server/providers/wav.ts) keeps the samples that arrived,
-  in whole frames, under the plain 44-byte header the rest of the server writes, and counts the
-  clip's duration from them. A 200 carrying JSON, an empty body or something that is not a WAV is a
-  readable failure.
+  in whole frames, under the plain 44-byte header the rest of the server writes. An MP3 or Opus
+  answer is kept byte for byte. [probe.ts](../server/audio/probe.ts) is the one reader of a clip:
+  a WAV by its header, an MP3's length by counting its frames (music-metadata validates it and
+  gives the rate, but estimates the length of an MP3 with no Xing header, which is what Fish
+  sends), an Opus by music-metadata reading to the last page. [answer.ts](../server/providers/answer.ts)
+  turns a 200 carrying JSON, an empty body, a different container from the one asked for, or
+  something unreadable into a failure a person can read.
+- A line split at `maxChars` is joined per format: WAV as before, MP3 by laying the parts' audio
+  frames end to end with every tag and Xing/Info frame dropped
+  ([mp3.ts](../server/audio/mp3.ts)). An Opus line that would need parts fails before any request:
+  chained Ogg streams are legal, but players seek them badly and report the first one's length.
+- The fake answers WAV whatever it is asked for, and the clip is kept as what it is.
+- Changing an endpoint's format stales nothing: it applies to the next line rendered.
+
+**Voices** come from `POST /api/endpoints/voices` `{ id, source, query?, language?, page? }`,
+answering `{ voices, total, page, hasMore }` ([voices.ts](../server/providers/voices.ts)). The saved
+endpoint and key are used and the request is made **whatever `SPEECH_PROVIDER` says**: listing
+voices spends nothing and reads the account, it does not narrate. For Fish, `library` is every
+model in your workspace (`self=true`, every page up to a thousand) and `public` one page of Fish's
+public catalogue by title and language, TTS models only; a pasted 32-character id is looked up
+directly. OpenAI has no voice-list API, so its documented voices are answered without a request;
+any other OpenAI-shaped server is asked `GET /audio/voices`. A provider's refusal is a `502` with
+the code `upstream` and what it said.
 
 **Test connection** is `POST /api/endpoints/test` `{ kind, id }`, answering `{ ok, message, ms }`:
 one small request to the **saved** endpoint with its saved key, through the provider the server
@@ -1268,6 +1294,8 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [cast.test.ts](../tests/server/cast.test.ts)                     | The cast a run leaves, rename, merge, removal, exact undo                                                   |
 | [exports.test.ts](../tests/server/exports.test.ts)               | Building one: the file, the spans, refusals, cancel, failure, download                                      |
 | [endpointKeys.test.ts](../tests/server/endpointKeys.test.ts)     | A key kept, never sent back or logged, kept by a save that omits it; the Test route                         |
+| [encodedClips.test.ts](../tests/server/encodedClips.test.ts)     | MP3 and Opus asked for, kept, read, joined, served; the stitcher's refusal; an ffmpeg build from them       |
+| [voices.test.ts](../tests/server/voices.test.ts)                 | A library read to its end, a public search, OpenAI's list, refusals                                         |
 | [chatScripting.test.ts](../tests/server/chatScripting.test.ts)   | The chat request, a fenced answer, fidelity, a cut-off, retries, cancel, probe                              |
 | [endpointSpeech.test.ts](../tests/server/endpointSpeech.test.ts) | Fish and OpenAI-shaped requests, a streamed header made plain, refusals, retries, probe                     |
 | [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)     | What the fake models produce — attributions, a valid WAV — and that they abort                              |
@@ -1330,8 +1358,9 @@ each because a route or a table's writer is missing rather than by oversight:
   against the saved endpoints, and nothing on the server holds a run against a book's budget or
   records what it cost — see the budgets bullet below. A chapter's duration is its clips plus the
   book's pacing, which a pacing change re-times on the server for every narrated chapter.
-- **A voice list is not fetched from the server.** The Voices tab's "fetch" is still the demo's
-  simulation; a Fish voice is added by its `reference_id` by hand.
+- **Gemini's speech API has no adapter.** Its preset's base URL is neither Fish's nor OpenAI's
+  shape, so it is offered the OpenAI table and a request would go to `/audio/speech`, which it does
+  not serve. It needs a `generateContent` request and a raw-PCM answer before it can be called.
 - **Undoing an endpoint's removal brings it back without its key**, since the save removed the row
   the key was on.
 - **An update under ffmpeg re-encodes everything.** Carrying a chapter over is real under the
@@ -1361,7 +1390,7 @@ and applied in order at boot; `0001` added the script revision and the queue's d
 the version an open editing session preserved, and `0003` what a build writes — the file each
 output landed in, the span each chapter occupies inside it, and which encoder wrote it; `0004` an
 endpoint's sample rate and the rate each clip came back at; `0005` a book's cover image; `0006` an
-endpoint's key.
+endpoint's key; `0007` an endpoint's audio format and bitrate.
 
 **Foreign keys are off while migrations run.** A change drizzle-kit cannot write as `ALTER TABLE` is
 written as a rebuild — new table, copy, `DROP` the old one, rename — and with foreign keys on, that

@@ -118,3 +118,12 @@ measured and corrected to the target rather than invented — and, because a spa
 spliced beside audio encoded in the same run, it re-encodes every chapter on an update instead of
 carrying unchanged ones over. Under the stitcher carrying over is literal: the bytes of an
 unchanged chapter are copied out of the version on disk. [Backend](backend.md#export) has the rest.
+
+**Clips narrated in MP3 or Opus need ffmpeg.** The stitcher joins WAV and nothing else, so a book
+with an MP3 or Opus clip in it is refused before anything is written, naming the chapter and the
+two ways out: restart with `EXPORT_ENCODER=ffmpeg`, or narrate again with the endpoint set to WAV.
+ffmpeg decodes each such clip to WAV in its work directory, so a book narrated partly in one format
+and partly in another builds as one; one sample rate a file still applies, with Opus at 48 kHz. The
+file is written at the clips' rate — loudness correction resamples inside, and left to itself the
+encoder then wrote 96 kHz AAC from 44.1 kHz speech — and a book that is all silence is written
+unlevelled, since there is nothing in it to measure.

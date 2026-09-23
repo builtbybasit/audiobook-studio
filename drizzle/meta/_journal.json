@@ -50,6 +50,13 @@
       "when": 1790172611774,
       "tag": "0006_bizarre_the_leader",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790174453384,
+      "tag": "0007_silky_psynapse",
+      "breakpoints": true
     }
   ]
 }

@@ -6,6 +6,8 @@
 // part of it could not be kept. The second is the narration job reading it: the tags a line
 // carries written in as its endpoint spells them, a line whose tags that endpoint cannot say held
 // back with the reason, and the sample rate asked for, heard in the file and recorded on the clip.
+// A line longer than the endpoint's `maxChars` goes out as the parts the demo would cut it into,
+// one request each, and comes back as one clip holding all of them.
 import { describe, expect, test } from "bun:test";
 
 import type {
@@ -20,7 +22,7 @@ import type {
 } from "@/types";
 import { credentials as registry, type Credential } from "@/lib/credentials";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
-import { expressionPlan } from "@/lib/expressions";
+import { expressionParts, expressionPlan } from "@/lib/expressions";
 import { makeEndpoints } from "@/mock/fixtures/endpoints";
 import { makeProfiles } from "@/mock/fixtures/profiles";
 import { fakeSpeechProvider, SAMPLE_RATE } from "~/providers/fakeSpeech";
@@ -251,17 +253,17 @@ async function rateOf(api: TestApi, url: string): Promise<number> {
   return readWavHeader(new Uint8Array(await res.arrayBuffer())).sampleRate;
 }
 
-/** A laugh placed before the first line of chapter 1. */
-async function laughFirst(api: TestApi, id: string): Promise<Segment> {
+/** A laugh placed before the first line of chapter 1, or before the line at `index`. */
+async function laughFirst(api: TestApi, id: string, index = 0): Promise<Segment> {
   const { segments, revision } = await scriptOf(api, id);
   const laugh: ExpressionAnnotation = { ...LAUGHS, at: 0, annotationId: 1 };
-  const edited = segments.map((s, i) => (i === 0 ? { ...s, expressions: [laugh] } : s));
+  const edited = segments.map((s, i) => (i === index ? { ...s, expressions: [laugh] } : s));
   const { status } = await api.request(`/api/books/${id}/chapters/1/script`, {
     ...jsonBody({ segments: edited, ifRevision: revision }),
     method: "PUT",
   });
   expect(status).toBe(200);
-  return edited[0];
+  return edited[index];
 }
 
 describe("a line sent through its endpoint", () => {
@@ -372,5 +374,117 @@ describe("a line sent through its endpoint", () => {
         `^“${chapters[1].title}” has a line rendered at 48 kHz, and Ledger\\.\\w+ already holds 16 kHz audio from “${chapters[0].title}”`,
       ),
     );
+  });
+});
+
+// ---- a line longer than its endpoint takes ----
+
+/** What a book's lines will be sent as through `endpoint`, one entry per request. */
+const partsOf = (segments: Segment[], endpoint: Endpoint) =>
+  segments.map((s) => expressionParts(expressionPlan(s, endpoint), endpoint));
+
+/** How long a clip's file plays, from the samples it holds. */
+async function secondsOf(api: TestApi, url: string): Promise<number> {
+  const bytes = new Uint8Array(await (await api.fetch(url)).arrayBuffer());
+  const { length, sampleRate, channels, bits } = readWavHeader(bytes);
+  return length / (sampleRate * channels * (bits / 8));
+}
+
+describe("a line longer than its endpoint's maxChars", () => {
+  test("is sent in the parts the splitter cuts, and comes back as one clip that says so", async () => {
+    const provider = recording();
+    const api = testApi({ speech: provider });
+    const endpoint = speech({ maxChars: 60, splitAt: "sentence" });
+    await save(api, { endpoints: [endpoint] });
+    const id = await voiced(api);
+    const before = (await scriptOf(api, id)).segments;
+    const expected = partsOf(before, endpoint);
+    await narrate(api, id, [1]);
+
+    // every part its own request, in reading order, without the whitespace a cut keeps
+    expect(provider.sent.map((s) => s.text)).toEqual(expected.flat().map((p) => p.text.trim()));
+    expect(provider.sent.every((s) => s.text.length <= 60)).toBe(true);
+
+    const { segments } = await scriptOf(api, id);
+    const split = segments.filter((_, i) => expected[i].length > 1);
+    expect(split.length).toBeGreaterThan(0);
+    for (const s of segments) {
+      const cuts = expected[segments.indexOf(s)];
+      expect(s.audio).toMatchObject({ status: "done", parts: cuts.length, splitAt: "sentence" });
+      expect(s.audio.cuts).toEqual(
+        cuts.length > 1
+          ? cuts.map((c) => ({ from: c.from, to: c.to, at: c.at, fallback: c.fallback }))
+          : undefined,
+      );
+      // one file, every part's audio in it: what it plays for is what the clip says it lasts
+      expect(await secondsOf(api, s.audio.url!)).toBeCloseTo(s.audio.duration, 2);
+    }
+    // a line with no sentence end inside the limit is cut at a clause, and says it fell back
+    expect(split.some((s) => s.audio.cuts!.some((c) => c.at === "clause" && c.fallback))).toBe(
+      true,
+    );
+  });
+
+  test("keeps a tag whole, in one part", async () => {
+    const provider = recording();
+    const api = testApi({ speech: provider });
+    const endpoint = laughing({ maxChars: 20, splitAt: "word" });
+    await save(api, { endpoints: [endpoint] });
+    const id = await voiced(api);
+    // the chapter's heading is a word; the laugh goes before a line long enough to be cut
+    const index = (await scriptOf(api, id)).segments.findIndex((s) => s.text.length > 40);
+    await laughFirst(api, id, index);
+    await narrate(api, id, [1]);
+
+    // the line is cut, and the laugh travels in exactly one of its parts, unbroken
+    const first = (await scriptOf(api, id)).segments[index].audio;
+    expect(first.status).toBe("done");
+    expect(first.parts).toBeGreaterThan(1);
+    const tagged = provider.sent.filter((s) => s.text.includes("["));
+    expect(tagged.length).toBe(1);
+    expect(tagged[0].text).toContain("[laughs]");
+    expect(tagged[0].text.length).toBeLessThanOrEqual(20);
+  });
+
+  test("a part that fails fails the line, and says which part it was", async () => {
+    const endpoint = speech({ maxChars: 60, splitAt: "sentence" });
+    const inner = recording();
+    let second = "";
+    const provider: SpeechProvider = {
+      name: inner.name,
+      speak: (input) =>
+        input.text === second
+          ? Promise.reject(new Error("The endpoint answered 500"))
+          : inner.speak(input),
+    };
+    const api = testApi({ speech: provider });
+    await save(api, { endpoints: [endpoint] });
+    const id = await voiced(api);
+    const before = (await scriptOf(api, id)).segments;
+    const at = partsOf(before, endpoint).findIndex((p) => p.length > 1);
+    second = partsOf(before, endpoint)[at][1].text.trim();
+    await narrate(api, id, [1]);
+
+    const { segments } = await scriptOf(api, id);
+    expect(segments[at].audio).toMatchObject({ status: "failed", parts: expect.any(Number) });
+    expect(segments[at].audio.error).toMatchObject({
+      message: "The endpoint answered 500",
+      part: 2,
+    });
+    expect(segments[at].audio.url).toBeUndefined();
+  });
+
+  test("a line within the limit, or an endpoint with none, is one request as before", async () => {
+    const provider = recording();
+    const api = testApi({ speech: provider });
+    await save(api, { endpoints: [speech({ maxChars: 0 })] });
+    const id = await voiced(api);
+    await narrate(api, id, [1]);
+    const { segments } = await scriptOf(api, id);
+    expect(provider.sent.map((s) => s.text)).toEqual(segments.map((s) => s.text));
+    for (const s of segments) {
+      expect(s.audio).toMatchObject({ parts: 1, splitAt: "sentence" });
+      expect(s.audio.cuts).toBeUndefined();
+    }
   });
 });

@@ -96,6 +96,33 @@ export function readWavHeader(head: Uint8Array): WavBody {
   throw new Error("it has no samples in it");
 }
 
+/**
+ * Several WAV files as one, their samples end to end with nothing between them: a line an endpoint
+ * would only take in parts, put back together. They have to agree on what a sample is — 24 kHz
+ * laid after 22.05 kHz plays at the wrong pitch — and a part that does not is named by its place.
+ */
+export function joinWav(files: Uint8Array[]): Uint8Array {
+  const bodies = files.map((f) => readWavHeader(f));
+  const first = bodies[0];
+  if (!first) throw new Error("there was nothing to join");
+  for (const [i, b] of bodies.entries())
+    if (b.channels !== first.channels || b.sampleRate !== first.sampleRate || b.bits !== first.bits)
+      throw new Error(
+        `part ${i + 1} came back as ${formatLabel(b)} and part 1 as ${formatLabel(first)}`,
+      );
+  // what is really there, if a header claims more samples than the file holds
+  const spans = bodies.map((b, i) => files[i].subarray(b.start, b.start + b.length));
+  const length = spans.reduce((a, s) => a + s.byteLength, 0);
+  const out = new Uint8Array(HEADER + length);
+  out.set(wavHeader(first, length));
+  let at = HEADER;
+  for (const s of spans) {
+    out.set(s, at);
+    at += s.byteLength;
+  }
+  return out;
+}
+
 /** The 44 bytes that say what the samples after them are. */
 function wavHeader(f: WavFormat, samples: number): Uint8Array {
   const bytes = new Uint8Array(HEADER);

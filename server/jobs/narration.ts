@@ -36,7 +36,8 @@ import { and, eq } from "drizzle-orm";
 import type { Job, NarrationScope, NarrationStatus, Segment, SegmentAudio } from "@/types";
 import { NARRATOR } from "@/lib/cast";
 import { chapterNarration, narrationTargets, SCOPE_LABEL } from "@/lib/runPlan";
-import { expressionPlan, type ExpressionPlan } from "@/lib/expressions";
+import { expressionParts, expressionPlan, type ExpressionPlan } from "@/lib/expressions";
+import type { SplitPart } from "@/lib/split";
 import { pacingOrDefault, silenceOf, speechInstructions } from "@/lib/speech";
 import { nextTakeNumber, requeue } from "@/lib/takes";
 import type { AudioFiles } from "~/audio/files";
@@ -58,8 +59,8 @@ import {
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { locate } from "~/jobs/scripting";
 import { conflict, notFound } from "~/lib/errors";
-import type { SpeechProvider } from "~/providers/speech";
-import { readWavHeader } from "~/providers/wavEncoder";
+import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
+import { joinWav, readWavHeader } from "~/providers/wavEncoder";
 
 /** The label a retake job carries as its scope and its `bulk.op`; the Queue page shows it as it is. */
 export const RETAKE_LABEL = "Retake";
@@ -187,6 +188,61 @@ interface Delivery {
   style: string;
 }
 
+/** One part of a split line that could not be rendered, by its place, as the Queue shows it. */
+class PartFailed extends Error {
+  constructor(
+    readonly part: number,
+    cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+  }
+}
+
+/**
+ * A line sent the way its endpoint will take it: whole, or — longer than its `maxChars` — as the
+ * parts `expressionParts` cut it into, one request after another, the audio joined into one file.
+ *
+ * Nothing goes between the parts. The cuts fall where the reading already pauses — a sentence's
+ * end, then a clause's — and each request's audio carries its own breath at either end, so adding
+ * silence would read as a pause the line never had. A part that fails fails the line, with its
+ * number: the parts before it are thrown away rather than kept as half a line.
+ */
+async function speakInParts(
+  provider: SpeechProvider,
+  input: SpeechInput,
+  cuts: SplitPart[] | null,
+): Promise<RenderedClip> {
+  if (!cuts || cuts.length < 2) return provider.speak(input);
+  const rendered: RenderedClip[] = [];
+  for (const [i, cut] of cuts.entries()) {
+    if (input.signal.aborted) throw input.signal.reason;
+    try {
+      // the whitespace a cut keeps so the parts rejoin to the line is not the provider's to read
+      rendered.push(await provider.speak({ ...input, text: cut.text.trim() }));
+    } catch (e) {
+      if (input.signal.aborted) throw e;
+      throw new PartFailed(i + 1, e);
+    }
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = joinWav(rendered.map((r) => r.bytes));
+  } catch (e) {
+    throw new Error(`The parts that came back could not be joined: ${(e as Error).message}`, {
+      cause: e,
+    });
+  }
+  const last = rendered.at(-1)!;
+  return {
+    bytes,
+    mime: "audio/wav",
+    duration: rendered.reduce((a, r) => a + r.duration, 0),
+    ms: rendered.reduce((a, r) => a + r.ms, 0),
+    model: last.model,
+    voice: last.voice,
+  };
+}
+
 export function narrationHandler(provider: SpeechProvider, files: AudioFiles): JobHandler {
   return {
     async run(ctx: JobContext): Promise<void> {
@@ -293,6 +349,10 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
         // does in the demo.
         const ep = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;
         const plan = expressionPlan(s, ep, readLexicon(db, job.bookId));
+        // Where the line is cut to fit the endpoint's `maxChars`, decided before it goes out so
+        // the clip can say so while it renders. A line with an issue is not sent at all, and the
+        // one issue `splitText` would throw on — a tag longer than the limit — is one of them.
+        const cuts = ep && !plan.issues.length ? expressionParts(plan, ep) : null;
         const startedAt = Date.now();
         // The audit trail, written when the request goes out: exactly what this clip is being
         // rendered with, so a later edit to the line, the cast or the voice reads as drift.
@@ -316,6 +376,15 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
           ...(plan.signature ? { expressionSignature: plan.signature } : {}),
           ...(plan.tags.length ? { expressions: plan.tags } : {}),
           ...(plan.text !== s.text ? { said: plan.text, lex: plan.hits.length } : {}),
+          // Recorded as the demo records them: how many requests and at which boundary always,
+          // where each cut fell only when there was more than one part. Set every time rather than
+          // carried from the clip this one replaces, whose endpoint may have had another limit.
+          parts: cuts?.length,
+          splitAt: cuts ? ep!.splitAt : undefined,
+          cuts:
+            cuts && cuts.length > 1
+              ? cuts.map((c) => ({ from: c.from, to: c.to, at: c.at, fallback: c.fallback }))
+              : undefined,
         };
         const gone = (): void => {
           ctx.note(`Line ${s.id} was removed while it rendered; the clip was dropped`, "warning", {
@@ -337,15 +406,19 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
           // not sent at all, rather than sent without the tag and marked stale on arrival.
           if (plan.issues.length)
             throw new Error(`Expression needs attention: ${plan.issues[0].reason}`);
-          const rendered = await provider.speak({
-            text: plan.text,
-            speaker: s.speaker,
-            type: s.type,
-            direction: s.direction,
-            voiceRef: who.voiceRef,
-            sampleRate: ep?.sampleRate ?? null,
-            signal,
-          });
+          const rendered = await speakInParts(
+            provider,
+            {
+              text: plan.text,
+              speaker: s.speaker,
+              type: s.type,
+              direction: s.direction,
+              voiceRef: who.voiceRef,
+              sampleRate: ep?.sampleRate ?? null,
+              signal,
+            },
+            cuts,
+          );
           if (signal.aborted) throw signal.reason;
           // the rate is read off the file, whatever was asked for: audio a build cannot read is a
           // failed line now rather than a failed audiobook later
@@ -382,7 +455,13 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
             ms: Date.now() - startedAt,
             duration: 0,
             at: Date.now(),
-            error: { code: 0, message, body: "", at: Date.now() },
+            error: {
+              code: 0,
+              message,
+              body: "",
+              at: Date.now(),
+              ...(e instanceof PartFailed ? { part: e.part } : {}),
+            },
           };
         }
 
@@ -419,6 +498,7 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
           const arrived = {
             ...detail,
             seconds: Number(clip.duration.toFixed(2)),
+            ...(clip.parts && clip.parts > 1 ? { parts: clip.parts } : {}),
             ms: clip.ms,
             ...(slot === "candidate" ? { take: clip.n ?? 1 } : {}),
           };

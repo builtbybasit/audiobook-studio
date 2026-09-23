@@ -201,7 +201,7 @@ const money = (n: number) =>
           :empty="null"
           placeholder="No cap"
           label="Book scripting budget"
-          @update:model-value="(v: number | null) => (book!.scriptBudget = v)"
+          @update:model-value="(v: number | null) => libraryStore.setScriptBudget(bookId, v)"
         />
       </div>
     </div>

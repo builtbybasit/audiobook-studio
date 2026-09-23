@@ -90,7 +90,7 @@ export function getBook(db: Db | Tx, id: string): Book | undefined {
   return toBook(row, vols, chapterCounts(db, id).get(id) ?? NO_CHAPTERS);
 }
 
-export function listChapters(db: Db, bookId: string): Chapter[] {
+export function listChapters(db: Db | Tx, bookId: string): Chapter[] {
   return db
     .select()
     .from(chapters)
@@ -452,4 +452,64 @@ export function deleteVolume(db: Db, bookId: string, volumeId: number): DeletedV
 /** Everything a book owns. The foreign keys cascade the rest. */
 export function deleteBook(db: Db, bookId: string): void {
   db.delete(books).where(eq(books.id, bookId)).run();
+}
+
+// ---------- a book's settings, and its volumes' names and order ----------
+
+/** What a book's settings write says: a key left out is left alone, and `null` clears it. */
+export interface BookSettings {
+  budget?: { cap: number | null; paused: boolean } | null;
+  scriptBudget?: number | null;
+  pacing?: { line: number; turn: number } | null;
+}
+
+/**
+ * Write the settings a request names, and nothing else.
+ *
+ * A budget and a pacing are each one value in two columns, and are written as one: the row reads
+ * back a pacing only when both of its columns are set, so writing half of one would store a value
+ * that reads as the default.
+ */
+export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): void {
+  const set: Partial<typeof books.$inferInsert> = {};
+  if (s.budget !== undefined) {
+    set.budgetCap = s.budget?.cap ?? null;
+    set.budgetPaused = s.budget ? s.budget.paused : null;
+  }
+  if (s.scriptBudget !== undefined) set.scriptBudget = s.scriptBudget;
+  if (s.pacing !== undefined) {
+    set.pacingLine = s.pacing?.line ?? null;
+    set.pacingTurn = s.pacing?.turn ?? null;
+  }
+  if (!Object.keys(set).length) return;
+  db.update(books).set(set).where(eq(books.id, bookId)).run();
+}
+
+export function renameVolume(db: Db, bookId: string, volumeId: number, name: string): void {
+  db.update(volumes)
+    .set({ name })
+    .where(and(eq(volumes.bookId, bookId), eq(volumes.id, volumeId)))
+    .run();
+}
+
+/**
+ * Put a book's volumes in this order, and number its chapters to follow it.
+ *
+ * The same renumbering a removal does, without the removal: every chapter keeps its place within
+ * its volume, and everything it owns follows its new number by the cascade, with the live jobs'
+ * duplicate keys rewritten in the same transaction (`rekeyActive`). `order` is every volume of the
+ * book, checked by the caller.
+ */
+export function reorderVolumes(db: Db, bookId: string, order: readonly number[]): void {
+  db.transaction((tx) => {
+    order.forEach((id, position) =>
+      tx
+        .update(volumes)
+        .set({ position })
+        .where(and(eq(volumes.bookId, bookId), eq(volumes.id, id)))
+        .run(),
+    );
+    renumber(tx, bookId);
+    rekeyActive(tx, bookId);
+  });
 }

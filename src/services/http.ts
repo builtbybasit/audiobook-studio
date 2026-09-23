@@ -110,6 +110,15 @@ export class HttpClient {
     });
   }
 
+  /** Change part of something: what the body leaves out is left alone. */
+  patch<T>(path: string, body: unknown): Promise<T> {
+    return this.send<T>(path, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
   /** `multipart/form-data`: the file under `file`, and only the fields that have something in them. */
   postForm<T>(path: string, file: File, fields: Record<string, string | undefined>): Promise<T> {
     const form = new FormData();

@@ -45,6 +45,29 @@ const Decisions = v.object({
   ),
 });
 
+/** Seconds of silence: a pause nobody would sit through is a typo, not a setting. */
+const Seconds = v.pipe(v.number(), v.minValue(0), v.maxValue(60));
+const Dollars = v.pipe(v.number(), v.minValue(0));
+
+/** A book's settings: a key left out is left alone, and `null` clears it. */
+const Settings = v.pipe(
+  v.strictObject({
+    budget: v.optional(
+      v.nullable(v.strictObject({ cap: v.nullable(Dollars), paused: v.boolean() })),
+    ),
+    scriptBudget: v.optional(v.nullable(Dollars)),
+    pacing: v.optional(v.nullable(v.strictObject({ line: Seconds, turn: Seconds }))),
+  }),
+  v.check((s) => Object.keys(s).length > 0, "name at least one setting"),
+);
+
+const VolumeName = v.object({
+  name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),
+});
+const VolumeOrder = v.object({
+  order: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
+});
+
 const BookParam = v.object({ id: v.string() });
 const ChapterParam = v.object({ id: v.string(), chapterId: IdParam });
 const VolumeParam = v.object({ id: v.string(), volumeId: IdParam });
@@ -151,6 +174,27 @@ export function bookRoutes(
   /** Cancel an import: a book never added goes entirely; a new volume comes off its book. */
   app.post("/:id/discard", validate("param", BookParam), (c) =>
     c.json(ops.discardImport(db, c.req.valid("param").id)),
+  );
+
+  // ---------- a book's settings, and its volumes ----------
+  /** The budget, the script budget and the pacing; answers with the book and its re-timed chapters. */
+  app.patch("/:id", validate("param", BookParam), validate("json", Settings), (c) =>
+    c.json(ops.updateBook(db, c.req.valid("param").id, c.req.valid("json"))),
+  );
+
+  /** Read the volumes in this order; the chapters are numbered to follow it. */
+  app.put("/:id/volumes/order", validate("param", BookParam), validate("json", VolumeOrder), (c) =>
+    c.json(ops.reorderVolumes(db, c.req.valid("param").id, c.req.valid("json").order)),
+  );
+
+  app.patch(
+    "/:id/volumes/:volumeId",
+    validate("param", VolumeParam),
+    validate("json", VolumeName),
+    (c) => {
+      const { id, volumeId } = c.req.valid("param");
+      return c.json({ book: ops.renameVolume(db, id, volumeId, c.req.valid("json").name) });
+    },
   );
 
   // ---------- the contents review ----------

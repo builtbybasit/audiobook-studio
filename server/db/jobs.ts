@@ -240,13 +240,25 @@ export function setProgress(db: Db | Tx, id: number, progress: number): void {
 /**
  * Replace the live detail the Queue page opens up.
  *
- * A scripting or narration job's `run` is settled when it is queued and never moves. A build's
- * does: which file it is writing and how many chapters it has laid down are the only account of a
+ * A narration job's `run` is settled when it is queued and never moves. A build's does, and so do
+ * a scripting job's request counts (`setScriptRun`): which file it is writing and how many chapters it has laid down are the only account of a
  * run that can last minutes, and the Queue reads them by polling the row.
  */
 export function setRun(db: Db | Tx, id: number, run: NonNullable<Job["exportRun"]>): void {
   db.update(jobs)
     .set({ run: { exportRun: run } })
+    .where(eq(jobs.id, id))
+    .run();
+}
+
+/**
+ * Replace a scripting job's request counts. The profile it was queued with does not move; how
+ * many of its chunks are out and how many have come back do, and the Queue and the Scripting page
+ * read them off the row the way they read a build's progress.
+ */
+export function setScriptRun(db: Db | Tx, id: number, run: NonNullable<Job["scriptRun"]>): void {
+  db.update(jobs)
+    .set({ run: { scriptRun: run } })
     .where(eq(jobs.id, id))
     .run();
 }

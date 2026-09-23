@@ -27,6 +27,16 @@ const Ids = v.object({
   ids: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
 });
 
+/**
+ * Chapters to script, and the scripting profile the browser has chosen — whose `maxChars` and
+ * `splitAt` cut each chapter into the requests the Endpoints page previews. Absent, a chapter goes
+ * whole.
+ */
+const ScriptIds = v.object({
+  ...Ids.entries,
+  profile: v.optional(v.pipe(v.string(), v.maxLength(200))),
+});
+
 /** Chapters to narrate, and which of their lines: `all` when the request does not say. */
 const Narrate = v.object({
   ...Ids.entries,
@@ -260,19 +270,26 @@ export function bookRoutes(
    * Script these chapters: one job each, as one run. Answers with the jobs, and with the chapters
    * it left out and why, so the client can say so instead of waiting for work that is not coming.
    */
-  app.post("/:id/chapters/script", validate("param", BookParam), validate("json", Ids), (c) => {
-    const result = enqueueScripting(db, runner, c.req.valid("param").id, c.req.valid("json").ids, {
-      provider: env.SCRIPTING_PROVIDER,
-    });
-    c.var.logger.info(
-      { run: result.runId, jobs: result.jobs.length, skipped: result.skipped.length },
-      "scripting queued",
-    );
-    return c.json(
-      { ...result, chapters: ops.bookWithChapters(db, c.req.valid("param").id).chapters },
-      202,
-    );
-  });
+  app.post(
+    "/:id/chapters/script",
+    validate("param", BookParam),
+    validate("json", ScriptIds),
+    (c) => {
+      const { ids, profile } = c.req.valid("json");
+      const result = enqueueScripting(db, runner, c.req.valid("param").id, ids, {
+        provider: env.SCRIPTING_PROVIDER,
+        profile,
+      });
+      c.var.logger.info(
+        { run: result.runId, jobs: result.jobs.length, skipped: result.skipped.length },
+        "scripting queued",
+      );
+      return c.json(
+        { ...result, chapters: ops.bookWithChapters(db, c.req.valid("param").id).chapters },
+        202,
+      );
+    },
+  );
 
   // ---------- narration ----------
   /**

@@ -125,6 +125,19 @@ one the Queue can neither open nor retry. `jobs.chapter_id` is nullable for a wh
 a build, and a foreign key with a null in it is satisfied by definition — which is exactly what that
 needs.
 
+Three things a removal changes do not follow a key, and `deleteVolume` does them in the same
+transaction. A live job's **duplicate key** (`active_key`, `kind:book:chapter`) is a string built
+from the number, so `rekeyActive` writes it again from the number the job now has — parking every
+key on the job's id first, because the index is unique and chapter 10's new key is chapter 7's old
+one. Left alone, a job queued for chapter 7 that became chapter 4 was not seen as a duplicate of a
+request for chapter 4, which was then rendered and paid for twice, while the new chapter 7 read as
+busy. An **audiobook** keeps the chapters it still has, as the demo's does, and one left with none
+goes with its files. And the **clips** the removed chapters rendered are handed back and removed
+from disk after the rows. Before any of it, work queued or running on the chapters that go is
+cancelled through the runner, so a provider stops being paid for them; and a removal is refused
+while an audiobook of the book is being built, because a build reads clips and records where each
+chapter landed by number.
+
 ### The number is an address; the ledger needs an identity
 
 `chapters.uid` is assigned once at import and never rewritten. It exists for the one table that must
@@ -538,46 +551,46 @@ method whose whole contract is that it raises `ApiError`, and the page would rep
 fault where it should be saying the server is unreachable. The library service and the jobs
 service are both built on it, so that rule is written once.
 
-| Method   | Path                                             | Does                                                     |
-| -------- | ------------------------------------------------ | -------------------------------------------------------- |
-| `GET`    | `/api/health`                                    | Is it up                                                 |
-| `GET`    | `/api/books`                                     | Every book, importing ones included, with chapter counts |
-| `GET`    | `/api/books/:id`                                 | A book and its chapters                                  |
-| `GET`    | `/api/books/:id/chapters/:n/text`                | A chapter's prose                                        |
-| `GET`    | `/api/books/:id/chapters/:n/script`              | A chapter's script, and its revision                     |
-| `PUT`    | `/api/books/:id/chapters/:n/script`              | Replace the script, naming the revision that was read    |
-| `GET`    | `/api/books/:id/chapters/:n/history`             | The chapter's versions and how the script came to be     |
-| `POST`   | `/api/books/:id/chapters/:n/history/checkpoints` | Name the script as it stands and keep a copy (201)       |
-| `DELETE` | `/api/books/:id/chapters/:n/history/versions/:v` | Forget one version; what an Undo of a checkpoint sends   |
-| `GET`    | `/api/books/:id/cast`                            | The cast and the pronunciation dictionary                |
-| `PUT`    | `/api/books/:id/characters/:name`                | One speaker, written as stated: new or replaced          |
-| `POST`   | `/api/books/:id/characters/:name/rename`         | Rename; every line that names them moves                 |
-| `POST`   | `/api/books/:id/characters/:name/merge`          | Fold one speaker into another                            |
-| `DELETE` | `/api/books/:id/characters/:name`                | Remove a speaker; their lines go to the Narrator         |
-| `POST`   | `/api/books/:id/characters/attribute`            | Put a speaker back on exactly these lines; an Undo       |
-| `PUT`    | `/api/books/:id/lexicon`                         | The pronunciation dictionary, replaced whole             |
-| `GET`    | `/api/books/:id/exports`                         | The finished audiobooks                                  |
-| `POST`   | `/api/books/:id/exports`                         | Queue a build; the job and the version it makes (202)    |
-| `GET`    | `/api/books/:id/exports/:e`                      | One of them                                              |
-| `GET`    | `/api/books/:id/exports/:e/files/:n`             | One of its files, to save                                |
-| `DELETE` | `/api/books/:id/exports/:e`                      | Forget one, and take its files off the disk              |
-| `POST`   | `/api/books/import`                              | An uploaded EPUB → a book, or one more volume of one     |
-| `POST`   | `/api/books/:id/confirm`                         | The review is done; it joins the library                 |
-| `POST`   | `/api/books/:id/discard`                         | Cancel: an unconfirmed book goes, or its new volume      |
-| `POST`   | `/api/books/:id/chapters/skip`                   | Skip chapters for the audiobook                          |
-| `POST`   | `/api/books/:id/chapters/include`                | Put them back                                            |
-| `POST`   | `/api/books/:id/chapters/keep`                   | Keep a noted chapter and stop the suggestion asking      |
-| `POST`   | `/api/books/:id/chapters/decisions`              | Put decisions back exactly as stated; what an Undo sends |
-| `POST`   | `/api/books/:id/chapters/script`                 | Queue a scripting job per chapter, as one run (202)      |
-| `POST`   | `/api/books/:id/chapters/narrate`                | Queue a narration job per chapter, at a scope (202)      |
-| `GET`    | `/api/audio/:bookId/:file`                       | A rendered clip's audio                                  |
-| `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                     |
-| `DELETE` | `/api/books/:id/volumes/:volumeId`               | Remove a volume; the last one removes the book           |
-| `GET`    | `/api/jobs`                                      | Every job, oldest first; `?bookId=` narrows it           |
-| `GET`    | `/api/jobs/:id`                                  | One job, with its activity                               |
-| `POST`   | `/api/jobs/:id/cancel`                           | Stop it: a queued job never starts, a running one stops  |
-| `DELETE` | `/api/jobs/:id`                                  | Take a finished job out of the history                   |
-| `POST`   | `/api/jobs/clear`                                | Clear the history; live jobs stay                        |
+| Method   | Path                                             | Does                                                          |
+| -------- | ------------------------------------------------ | ------------------------------------------------------------- |
+| `GET`    | `/api/health`                                    | Is it up                                                      |
+| `GET`    | `/api/books`                                     | Every book, importing ones included, with chapter counts      |
+| `GET`    | `/api/books/:id`                                 | A book and its chapters                                       |
+| `GET`    | `/api/books/:id/chapters/:n/text`                | A chapter's prose                                             |
+| `GET`    | `/api/books/:id/chapters/:n/script`              | A chapter's script, and its revision                          |
+| `PUT`    | `/api/books/:id/chapters/:n/script`              | Replace the script, naming the revision that was read         |
+| `GET`    | `/api/books/:id/chapters/:n/history`             | The chapter's versions and how the script came to be          |
+| `POST`   | `/api/books/:id/chapters/:n/history/checkpoints` | Name the script as it stands and keep a copy (201)            |
+| `DELETE` | `/api/books/:id/chapters/:n/history/versions/:v` | Forget one version; what an Undo of a checkpoint sends        |
+| `GET`    | `/api/books/:id/cast`                            | The cast and the pronunciation dictionary                     |
+| `PUT`    | `/api/books/:id/characters/:name`                | One speaker, written as stated: new or replaced               |
+| `POST`   | `/api/books/:id/characters/:name/rename`         | Rename; every line that names them moves                      |
+| `POST`   | `/api/books/:id/characters/:name/merge`          | Fold one speaker into another                                 |
+| `DELETE` | `/api/books/:id/characters/:name`                | Remove a speaker; their lines go to the Narrator              |
+| `POST`   | `/api/books/:id/characters/attribute`            | Put a speaker back on exactly these lines; an Undo            |
+| `PUT`    | `/api/books/:id/lexicon`                         | The pronunciation dictionary, replaced whole                  |
+| `GET`    | `/api/books/:id/exports`                         | The finished audiobooks                                       |
+| `POST`   | `/api/books/:id/exports`                         | Queue a build; the job and the version it makes (202)         |
+| `GET`    | `/api/books/:id/exports/:e`                      | One of them                                                   |
+| `GET`    | `/api/books/:id/exports/:e/files/:n`             | One of its files, to save                                     |
+| `DELETE` | `/api/books/:id/exports/:e`                      | Forget one, and take its files off the disk                   |
+| `POST`   | `/api/books/import`                              | An uploaded EPUB → a book, or one more volume of one          |
+| `POST`   | `/api/books/:id/confirm`                         | The review is done; it joins the library                      |
+| `POST`   | `/api/books/:id/discard`                         | Cancel: an unconfirmed book goes, or its new volume           |
+| `POST`   | `/api/books/:id/chapters/skip`                   | Skip chapters for the audiobook                               |
+| `POST`   | `/api/books/:id/chapters/include`                | Put them back                                                 |
+| `POST`   | `/api/books/:id/chapters/keep`                   | Keep a noted chapter and stop the suggestion asking           |
+| `POST`   | `/api/books/:id/chapters/decisions`              | Put decisions back exactly as stated; what an Undo sends      |
+| `POST`   | `/api/books/:id/chapters/script`                 | Queue a scripting job per chapter, as one run (202)           |
+| `POST`   | `/api/books/:id/chapters/narrate`                | Queue a narration job per chapter, at a scope (202)           |
+| `GET`    | `/api/audio/:bookId/:file`                       | A rendered clip's audio                                       |
+| `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                          |
+| `DELETE` | `/api/books/:id/volumes/:volumeId`               | Remove a volume; the last one removes the book; 409 mid-build |
+| `GET`    | `/api/jobs`                                      | Every job, oldest first; `?bookId=` narrows it                |
+| `GET`    | `/api/jobs/:id`                                  | One job, with its activity                                    |
+| `POST`   | `/api/jobs/:id/cancel`                           | Stop it: a queued job never starts, a running one stops       |
+| `DELETE` | `/api/jobs/:id`                                  | Take a finished job out of the history                        |
+| `POST`   | `/api/jobs/clear`                                | Clear the history; live jobs stay                             |
 
 `POST /api/books/import` is `multipart/form-data`: `file` is the EPUB, `title` optionally overrides
 the one in the file, and `bookId` with `name` adds the file to an existing book as one more volume.
@@ -769,8 +782,7 @@ by the chapter's number, because a renumbering must not move files; `clips.url` 
 file is served at, `/api/audio/:bookId/:file`, and the player plays a clip that has one rather
 than timing it in silence. The route serves nothing whose name is not a token it could have
 made, so there is no path a request can build to a file that is not a clip. Removing a book
-removes its directory; removing a volume leaves the volume's files behind, which is listed under
-[what is not done yet](#what-is-not-done-yet).
+removes its directory; removing a volume removes the clips its chapters rendered.
 
 Only [the fake speech model](../server/providers/fakeSpeech.ts) exists, and `SPEECH_PROVIDER=fake`
 is the only value [env.ts](../server/env.ts) accepts, for the reason the scripting side gives.
@@ -1067,9 +1079,6 @@ each because a route or a table's writer is missing rather than by oversight:
   that carries expression tags, a freshly rendered clip reads as stale on the Narration page
   until the handler applies both. The seeded endpoints' voices are names the fake accepts, not
   endpoints the server knows, and a chapter's duration is its clips plus the book's pacing.
-- **Removing a volume leaves its clips' files behind.** Removing a book removes both its
-  directories; a volume's chapters go with it in the database, and their files stay on disk until
-  the book does.
 - **A cover image is not written into the audiobook.** `customCover` records that one was chosen
   and the file carries none: the stitcher has nowhere to put it, and ffmpeg would want the image
   itself, which the browser holds rather than the server.

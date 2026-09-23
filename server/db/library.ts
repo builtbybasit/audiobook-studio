@@ -9,7 +9,17 @@ import { and, asc, count, eq, inArray, max, sql } from "drizzle-orm";
 import type { Book, Chapter, ChapterCounts, Volume } from "@/types";
 import type { Db, Tx } from "~/db/client";
 import type { ChapterBody } from "~/import/assemble";
-import { books, chapters, chapterTexts, volumes } from "~/db/schema";
+import { rekeyActive } from "~/db/jobs";
+import {
+  books,
+  chapters,
+  chapterTexts,
+  clips,
+  exportChapters,
+  exportFiles,
+  exportItems,
+  volumes,
+} from "~/db/schema";
 import { bookValues, chapterValues, toBook, toChapter, volumeValues } from "~/db/rows";
 
 /** SQLite takes its parameters one variable at a time, and a long web novel is thousands of rows. */
@@ -367,9 +377,27 @@ function renumber(tx: Tx, bookId: string): void {
   }
 }
 
-/** Take a volume off its book: its chapters and their text go, and the rest are renumbered. */
-export function deleteVolume(db: Db, bookId: string, volumeId: number): number {
-  let gone = 0;
+/** What taking a volume off left behind on disk, for the caller to remove once the rows are gone. */
+export interface DeletedVolume {
+  /** how many chapters went */
+  chapters: number;
+  /** the file names of every clip those chapters had rendered, under the book's audio directory */
+  clips: string[];
+  /** audiobooks that were only those chapters, and are gone with them: their files, by export */
+  exports: { id: number; tokens: string[] }[];
+}
+
+/**
+ * Take a volume off its book: its chapters and their text go, and the rest are renumbered.
+ *
+ * Everything keyed on a chapter follows by foreign key — the script, the clips, the history, an
+ * audiobook's list of chapters — which is the demo's rule too: an export keeps the chapters it
+ * still has, under their new numbers, and one left with none goes entirely. Two things do not
+ * follow a key and are done here, in the same transaction: the book's live jobs get their duplicate
+ * keys again (`rekeyActive`), and what the rows pointed at on disk is handed back to be removed.
+ */
+export function deleteVolume(db: Db, bookId: string, volumeId: number): DeletedVolume {
+  const out: DeletedVolume = { chapters: 0, clips: [], exports: [] };
   db.transaction((tx) => {
     const mine = tx
       .select({ id: chapters.id })
@@ -377,7 +405,19 @@ export function deleteVolume(db: Db, bookId: string, volumeId: number): number {
       .where(and(eq(chapters.bookId, bookId), eq(chapters.volumeId, volumeId)))
       .all()
       .map((r) => r.id);
-    // the chapter's text, script, clips and history all cascade from this one delete
+    const touched = new Set<number>();
+    for (const part of chunked(mine)) {
+      const within = and(eq(clips.bookId, bookId), inArray(clips.chapterId, part));
+      for (const c of tx.select({ url: clips.url }).from(clips).where(within).all())
+        if (c.url) out.clips.push(c.url.split("/").at(-1)!);
+      for (const e of tx
+        .select({ id: exportChapters.exportId })
+        .from(exportChapters)
+        .where(and(eq(exportChapters.bookId, bookId), inArray(exportChapters.chapterId, part)))
+        .all())
+        touched.add(e.id);
+    }
+    // the chapter's text, script, clips, history and its place in an export all cascade from this
     for (const part of chunked(mine))
       tx.delete(chapters)
         .where(and(eq(chapters.bookId, bookId), inArray(chapters.id, part)))
@@ -386,9 +426,27 @@ export function deleteVolume(db: Db, bookId: string, volumeId: number): number {
       .where(and(eq(volumes.bookId, bookId), eq(volumes.id, volumeId)))
       .run();
     renumber(tx, bookId);
-    gone = mine.length;
+    rekeyActive(tx, bookId);
+
+    for (const id of touched) {
+      const left = tx
+        .select({ n: count() })
+        .from(exportChapters)
+        .where(eq(exportChapters.exportId, id))
+        .get()!.n;
+      if (left) continue;
+      const tokens = tx
+        .select({ path: exportFiles.path })
+        .from(exportFiles)
+        .where(eq(exportFiles.exportId, id))
+        .all()
+        .flatMap((r) => (r.path ? [r.path] : []));
+      tx.delete(exportItems).where(eq(exportItems.id, id)).run();
+      out.exports.push({ id, tokens });
+    }
+    out.chapters = mine.length;
   });
-  return gone;
+  return out;
 }
 
 /** Everything a book owns. The foreign keys cascade the rest. */

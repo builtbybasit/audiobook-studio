@@ -59,6 +59,7 @@ describe("removing a book whose files will not go", () => {
         dir: "/nowhere",
         write: async () => ({ url: "/api/audio/x/y.wav" }),
         path: () => null,
+        remove: () => refuse("some clips"),
         removeBook: () => refuse("clips"),
       },
       built: { ...built, removeBook: () => refuse("audiobooks"), remove: () => refuse("export") },

@@ -10,6 +10,7 @@ import type { Book, Chapter } from "@/types";
 import type { AudioFiles } from "~/audio/files";
 import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
+import * as queue from "~/db/jobs";
 import * as library from "~/db/library";
 import { env } from "~/env";
 import { checkArchive } from "~/epub/archive";
@@ -17,6 +18,7 @@ import { diagnose } from "~/epub/diagnose";
 import { plainText } from "~/epub/markdown";
 import { EpubParseError, parseEpub, type ParsedEpub } from "~/epub/parse";
 import { assembleBook, assembleVolume } from "~/import/assemble";
+import type { Runner } from "~/jobs/runner";
 import { AppError, conflict, notFound } from "~/lib/errors";
 import { slugify } from "~/lib/http";
 import { inBackground } from "~/lib/background";
@@ -197,7 +199,8 @@ export function discardImport(db: Db, bookId: string): Discarded {
   }
   const vol = book.volumes.find((x) => x.importing);
   if (!vol) throw conflict("Nothing is waiting in this book’s contents review");
-  const chapters = library.deleteVolume(db, bookId, vol.id);
+  // A volume still in its review has had nothing run on it, so nothing on disk to remove.
+  const { chapters } = library.deleteVolume(db, bookId, vol.id);
   return { discarded: "volume", volumeId: vol.id, chapters };
 }
 
@@ -263,18 +266,70 @@ export function removeBook(
 
 export type Removed = { removed: "book" } | { removed: "volume"; chapters: number };
 
+/** What removing a volume reaches beyond the database: the queue, and the files on disk. */
+export interface VolumePorts {
+  runner?: Runner;
+  files?: AudioFiles;
+  built?: AudiobookFiles;
+}
+
 /**
  * Remove a volume; its chapters go and the rest are renumbered.
  *
  * Removing the last volume removes the book: a book with no chapters is not a library entry, it is
  * a row nothing can be done with.
+ *
+ * The rest is the demo's rule, kept on the server. Work queued or running on the chapters that go
+ * is cancelled first, so a provider stops being paid for lines nobody will hear; work on the
+ * chapters that stay carries on under their new numbers. An audiobook keeps the chapters it still
+ * has and one left with none goes. The clips those chapters rendered, and the files of any
+ * audiobook that went, are removed from disk after the rows, without waiting.
+ *
+ * Refused while an audiobook of this book is being built, as removing that audiobook is: a build
+ * reads its chapters' clips and records where each landed by chapter number, and both are what a
+ * removal changes under it.
  */
-export function removeVolume(db: Db, bookId: string, volumeId: number): Removed {
+export function removeVolume(
+  db: Db,
+  bookId: string,
+  volumeId: number,
+  { runner, files, built }: VolumePorts = {},
+): Removed {
   const book = requireBook(db, bookId);
   if (!book.volumes.some((x) => x.id === volumeId)) throw notFound("No such volume");
+  if (queue.activeJob(db, "export", bookId, null))
+    throw conflict(
+      `An audiobook of “${book.title}” is being built`,
+      "Let the build finish, or cancel it from the Queue, before removing a volume.",
+    );
   if (book.volumes.length <= 1) {
-    library.deleteBook(db, bookId);
+    removeBook(db, bookId, files, built);
     return { removed: "book" };
   }
-  return { removed: "volume", chapters: library.deleteVolume(db, bookId, volumeId) };
+
+  const going = new Set(
+    library
+      .listChapters(db, bookId)
+      .filter((ch) => ch.volumeId === volumeId)
+      .map((ch) => ch.id),
+  );
+  for (const job of queue.listJobs(db, { bookId }))
+    if (
+      (job.status === "queued" || job.status === "running") &&
+      job.chapterId != null &&
+      going.has(job.chapterId)
+    )
+      runner?.cancel(job.id);
+
+  const gone = library.deleteVolume(db, bookId, volumeId);
+  inBackground(files?.remove(bookId, gone.clips), "could not remove a volume's clips", {
+    book: bookId,
+    volume: volumeId,
+  });
+  for (const e of gone.exports)
+    inBackground(built?.remove(bookId, e.tokens), "could not remove an audiobook's files", {
+      book: bookId,
+      export: e.id,
+    });
+  return { removed: "volume", chapters: gone.chapters };
 }

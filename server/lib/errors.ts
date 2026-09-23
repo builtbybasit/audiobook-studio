@@ -9,16 +9,21 @@ import type { ApiErrorCode } from "@/types";
 
 export type ErrorCode = ApiErrorCode;
 
-export type ErrorStatus = 400 | 404 | 409 | 413 | 415 | 500;
+export type ErrorStatus = 400 | 403 | 404 | 409 | 413 | 415 | 500;
 
 const CODES: Record<ErrorStatus, ErrorCode> = {
   400: "bad_request",
+  403: "forbidden",
   404: "not_found",
   409: "conflict",
   413: "too_large",
   415: "unsupported_media",
   500: "internal",
 };
+
+/** The code for a status this API did not choose itself: any other 4xx is the request's fault. */
+export const codeFor = (status: number): ErrorCode =>
+  CODES[status as ErrorStatus] ?? (status >= 400 && status < 500 ? "bad_request" : "internal");
 
 /** What a failure looks like on the wire. One shape for every error the API returns. */
 export interface ApiError {

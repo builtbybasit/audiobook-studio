@@ -11,6 +11,8 @@ import type { AudioFiles } from "~/audio/files";
 import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
 import * as library from "~/db/library";
+import { env } from "~/env";
+import { checkArchive } from "~/epub/archive";
 import { diagnose } from "~/epub/diagnose";
 import { plainText } from "~/epub/markdown";
 import { EpubParseError, parseEpub, type ParsedEpub } from "~/epub/parse";
@@ -127,6 +129,12 @@ export async function importEpub(db: Db, input: ImportInput, log?: ImportLog): P
   const started = performance.now();
   let parsed: ParsedEpub;
   try {
+    // Measured before it is read: an upload is a zip, and what it unzips to is what costs memory.
+    // A refusal here is a 413 and skips the diagnosis below, which would unzip it all again.
+    await checkArchive(bytes, {
+      total: env.MAX_UNZIPPED_MB * 1024 * 1024,
+      document: env.MAX_DOCUMENT_MB * 1024 * 1024,
+    });
     parsed = await parseEpub(bytes);
   } catch (e) {
     if (!(e instanceof EpubParseError)) throw e;

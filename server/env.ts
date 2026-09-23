@@ -30,9 +30,39 @@ const Env = v.object({
    * exactly when something is piping a dev server's output somewhere it wants parsed.
    */
   LOG_FORMAT: v.optional(v.picklist(["pretty", "json"])),
+  /**
+   * The address the server listens on. Loopback by default: the API has no accounts and deletes
+   * books on request, so it answers this machine and nothing else unless told otherwise. `0.0.0.0`
+   * opens it to the network, and everyone on it.
+   */
+  HOST: v.optional(v.string(), "127.0.0.1"),
   /** hard ceiling on an uploaded EPUB, in megabytes */
   MAX_UPLOAD_MB: v.pipe(
     v.optional(v.string(), "64"),
+    v.transform(Number),
+    v.number(),
+    v.minValue(1),
+  ),
+  /**
+   * Hard ceiling on what an uploaded EPUB unzips to, in megabytes, everything in it together.
+   *
+   * The upload limit is on the zip, and a zip can be a thousand times smaller than its contents.
+   * Images are most of a big book, so this is generous; the limit that protects the parser is the
+   * next one.
+   */
+  MAX_UNZIPPED_MB: v.pipe(
+    v.optional(v.string(), "512"),
+    v.transform(Number),
+    v.number(),
+    v.minValue(1),
+  ),
+  /**
+   * Hard ceiling on any one document inside an EPUB — a chapter file, above all — in megabytes,
+   * unzipped. A document is held whole, parsed into a DOM and converted, at many times its own
+   * size; a whole novel in a single file is around 10 MB.
+   */
+  MAX_DOCUMENT_MB: v.pipe(
+    v.optional(v.string(), "32"),
     v.transform(Number),
     v.number(),
     v.minValue(1),
@@ -93,3 +123,9 @@ export function readEnv(source: Record<string, string | undefined> = Bun.env): E
 }
 
 export const env: Env = readEnv();
+
+/**
+ * The most an import's request body may be: the file at its limit, and the multipart envelope
+ * around it — the boundaries, the field names, a title — which a megabyte covers many times over.
+ */
+export const importBodyBytes = (e: Env = env): number => (e.MAX_UPLOAD_MB + 1) * 1024 * 1024;

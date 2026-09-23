@@ -58,6 +58,7 @@ import { readScript } from "~/db/script";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { badRequest, conflict, notFound } from "~/lib/errors";
 import type { AudiobookEncoder, EncodeChapter, EncodePart, ExportPorts } from "~/providers/encoder";
+import { inBackground } from "~/lib/background";
 
 export interface BuildQueued {
   job: Job;
@@ -520,7 +521,10 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         exports.clearBuildFiles(ctx.db, id);
       }
       // Nobody is waiting on the disk, and a settle that blocked on it would hold the queue.
-      void files.remove(ctx.job.bookId, tokens);
+      inBackground(files.remove(ctx.job.bookId, tokens), "could not remove a build's files", {
+        book: ctx.job.bookId,
+        export: id,
+      });
     },
   };
 }

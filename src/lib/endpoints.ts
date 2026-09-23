@@ -12,15 +12,13 @@ import type {
   Endpoint,
   EndpointKind,
   EndpointOps,
-  Gender,
   MetricTotals,
   Profile,
   TtsBilling,
-  Voice,
   WaitReason,
 } from "@/types";
 import { profileErrors } from "@/lib/scripting";
-import { OPS_DEFAULTS } from "@/lib/endpointShapes";
+import { OPS_DEFAULTS, encodingProblems } from "@/lib/endpointShapes";
 import { keyring } from "@/lib/keyring";
 import {
   baseRates,
@@ -39,6 +37,8 @@ export {
   fishModelsUrl,
   isFishAudio,
   ttsRequestPath,
+  voicesFromFishModels,
+  type FishModel,
 } from "@/lib/endpointShapes";
 
 /** Fill in operational defaults in place. Idempotent — only absent fields are written. */
@@ -246,38 +246,6 @@ export const TTS_PRESETS: TtsPreset[] = [
 
 export const presetById = (id: string): TtsPreset | undefined =>
   TTS_PRESETS.find((p) => p.id === id);
-
-/** One entry of Fish Audio's `GET /model` response. Only the fields a voice list needs are typed;
- *  the real payload also carries covers, samples, like counts and the author's profile. */
-export interface FishModel {
-  _id: string;
-  title: string;
-  type?: string;
-  state?: string;
-  tags?: string[];
-  languages?: string[];
-  visibility?: string;
-}
-
-/** Fish has no gender field — a voice carries free-form tags, and only some of them say. */
-function fishGender(tags: string[] = []): Gender {
-  const t = tags.map((x) => x.toLowerCase());
-  if (t.includes("male") || t.includes("man") || t.includes("boy")) return "m";
-  if (t.includes("female") || t.includes("woman") || t.includes("girl")) return "f";
-  return "?";
-}
-
-/** A Fish voice's id *is* the `reference_id` a TTS request quotes, so the `_id` is what to keep.
- *  Anything still training, or a voice-conversion model, cannot narrate a line and is dropped. */
-export function voicesFromFishModels(items: FishModel[]): Voice[] {
-  return items
-    .filter((m) => m._id && (m.type ?? "tts") === "tts" && (m.state ?? "trained") === "trained")
-    .map((m) => ({
-      id: m._id,
-      label: m.title?.trim() || m._id,
-      gender: fishGender(m.tags),
-    }));
-}
 
 // ---------- billing ----------
 // The units, the conversion and the arithmetic live in `lib/pricing.ts`, beside the schedules and
@@ -535,6 +503,9 @@ export function endpointErrors(u: UnifiedEndpoint): string[] {
   // duplicate promotion id or an end date before its start, and stay enabled with it.
   errors.push(...pricingProblems(ensurePricing(e)));
   errors.push(...billingProblems(billingOf(e)));
+  // The server refuses a line whose format, bitrate and rate cannot be asked for together, so an
+  // endpoint set up that way (imported, or saved before the base URL moved) is not ready either.
+  errors.push(...encodingProblems(e).map((p) => p + "."));
   return errors;
 }
 

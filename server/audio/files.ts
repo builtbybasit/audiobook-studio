@@ -10,18 +10,34 @@
 // `path` is the one function that turns a request into a filesystem path, and it refuses anything
 // that is not exactly a book id and a token: there is no request that legitimately reads outside a
 // book's directory, so none is allowed to try.
+//
+// A clip is kept in the format it came back in, and its extension is the only record of which:
+// `.wav`, `.mp3` or `.opus` (`AUDIO_EXT`). The route serves each by its extension, and the export
+// decides by it whether a clip needs decoding before it can be stitched.
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { AudioFormat } from "@/types";
+import { AUDIO_EXT } from "@/lib/endpointShapes";
 import { BOOK_ID } from "~/lib/http";
 
-const FILE = /^[a-f0-9-]+\.wav$/;
+const FILE = new RegExp(`^[a-f0-9-]+\\.(${Object.values(AUDIO_EXT).join("|")})$`);
+
+const BY_EXT = new Map(
+  (Object.entries(AUDIO_EXT) as [AudioFormat, string][]).map(([format, ext]) => [ext, format]),
+);
+
+/** The format a clip's file name, path or url says it is in, or null when it names none kept here. */
+export function formatOfFile(name: string): AudioFormat | null {
+  const dot = name.lastIndexOf(".");
+  return dot < 0 ? null : (BY_EXT.get(name.slice(dot + 1).toLowerCase()) ?? null);
+}
 
 export interface AudioFiles {
   /** the directory everything is under, for the boot log */
   readonly dir: string;
-  /** Keep one render, and say where a browser can fetch it. */
-  write(bookId: string, bytes: Uint8Array, ext: "wav"): Promise<{ url: string }>;
+  /** Keep one render, under its format's extension, and say where a browser can fetch it. */
+  write(bookId: string, bytes: Uint8Array, format: AudioFormat): Promise<{ url: string }>;
   /** The file a request names, or null when the request names something that cannot be a file. */
   path(bookId: string, file: string): string | null;
   /** Some of a book's clips, by file name; one already gone is not an error. */
@@ -33,8 +49,8 @@ export interface AudioFiles {
 export function audioFiles(dir: string): AudioFiles {
   return {
     dir,
-    async write(bookId, bytes, ext) {
-      const file = `${crypto.randomUUID()}.${ext}`;
+    async write(bookId, bytes, format) {
+      const file = `${crypto.randomUUID()}.${AUDIO_EXT[format]}`;
       await mkdir(join(dir, bookId), { recursive: true });
       await writeFile(join(dir, bookId, file), bytes);
       return { url: `/api/audio/${bookId}/${file}` };

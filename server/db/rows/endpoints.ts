@@ -180,6 +180,11 @@ export function toEndpoint(row: EndpointRow, parts: EndpointParts): Endpoint {
   const expressions = toExpressions(row, parts);
   if (expressions) e.expressions = expressions;
   if (row.sampleRate != null) e.sampleRate = row.sampleRate;
+  if (row.audioFormat != null)
+    e.encoding = {
+      format: row.audioFormat,
+      ...(row.audioBitrate != null ? { bitrate: row.audioBitrate } : {}),
+    };
   // whether there is a key, and never the key: `api_key` is write-only over HTTP
   if (row.apiKey) e.hasKey = true;
   return e;
@@ -263,6 +268,8 @@ export function endpointValues(
     expressionModel: e.expressions?.model ?? null,
     expressionBaseUrl: e.expressions?.baseUrl ?? null,
     sampleRate: e.sampleRate ?? null,
+    audioFormat: e.encoding?.format ?? null,
+    audioBitrate: e.encoding?.bitrate ?? null,
     ...opsValues(e),
   };
 }

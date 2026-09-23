@@ -11,11 +11,18 @@ import type { Db, Tx } from "~/db/client";
 import { readEndpointKey } from "~/db/endpoints";
 import type { ScriptTarget, ScriptingProvider } from "~/providers/scripting";
 import type { SpeechProvider } from "~/providers/speech";
+import type { VoiceLister } from "~/providers/voices";
 
 /** The pair a server is started with: what scripting and narration send their work to. */
 export interface Providers {
   scripting: ScriptingProvider;
   speech: SpeechProvider;
+  /**
+   * Where the Voices tab's lists come from. Not chosen by `SPEECH_PROVIDER` like the pair above:
+   * listing voices spends nothing, so the real lister is the default everywhere and only a test
+   * hands over another.
+   */
+  voices?: VoiceLister;
 }
 
 export interface ProviderTarget {

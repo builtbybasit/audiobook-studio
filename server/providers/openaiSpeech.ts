@@ -2,8 +2,9 @@
 // it (Kokoro-FastAPI, an Orpheus or Piper bridge).
 //
 // The request is the one OpenAI documents (https://platform.openai.com/docs/api-reference/audio/createSpeech):
-// `model`, `input`, `voice` and `response_format: "wav"`, since the job, the join and the export
-// read PCM. The line's `direction` goes as `instructions` when there is one — OpenAI documents it
+// `model`, `input`, `voice` and `response_format`: the endpoint's format, WAV unless it chose MP3
+// or Opus, which are kept as they come. The API takes no bitrate, so an endpoint naming one fails
+// before a request, as a rate does below (`encodingProblems`). The line's `direction` goes as `instructions` when there is one — OpenAI documents it
 // for its newer models and says it "does not work with tts-1 or tts-1-hd", so it is left off for
 // those two; a compatible server that does not know the field ignores it, as the servers this app
 // names do with fields they do not model.
@@ -12,11 +13,11 @@
 // model's own rate. An endpoint that names a rate therefore fails before any request, saying to
 // clear it. Sending the line anyway would not be honest either way — a clip at another rate than
 // the endpoint names is drift to the job, so every run would render the line again and spend again.
-import { call, jsonHeaders, ProviderError } from "~/providers/http";
+import { audioAnswer, refuseEncoding } from "~/providers/answer";
 import type { SpeechCallOptions } from "~/providers/fishSpeech";
+import { call, jsonHeaders } from "~/providers/http";
 import type { RenderedClip, SpeechInput } from "~/providers/speech";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
-import { wavAnswer } from "~/providers/wav";
 
 /** The models OpenAI says take no `instructions`. */
 const NO_INSTRUCTIONS = /^tts-1(-hd)?$/;
@@ -28,14 +29,8 @@ export async function openaiSpeak(
   options: SpeechCallOptions,
 ): Promise<RenderedClip> {
   const { signal } = input;
-  if (input.sampleRate != null)
-    throw new ProviderError(
-      `${target.name} cannot be asked for a sample rate — the /audio/speech API answers at the ` +
-        `model's own — so ${input.sampleRate} Hz cannot be honoured. Clear the sample rate on the ` +
-        `Endpoints page.`,
-      0,
-      false,
-    );
+  const { format } = input.encoding;
+  refuseEncoding(target, input);
   const instructions = input.instructions.trim();
   const started = Date.now();
   const res = await call(
@@ -48,17 +43,15 @@ export async function openaiSpeak(
         model: target.model,
         input: input.text,
         voice,
-        response_format: "wav",
+        response_format: format,
         ...(instructions && !NO_INSTRUCTIONS.test(target.model) ? { instructions } : {}),
       }),
     },
     { signal, ...options },
   );
-  const wav = await wavAnswer(target, res, signal);
+  const audio = await audioAnswer(target, res, signal, format);
   return {
-    bytes: wav.bytes,
-    mime: "audio/wav",
-    duration: wav.duration,
+    ...audio,
     ms: Date.now() - started,
     model: target.model,
     voice,

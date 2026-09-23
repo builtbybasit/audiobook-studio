@@ -33,6 +33,7 @@ import {
   ttsRequestPath,
 } from "@/lib/endpoints";
 import { maybeMoney } from "@/lib/pricing";
+import { encodingSummary } from "@/lib/audioFormat";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import {
   addCredential,
@@ -125,14 +126,22 @@ function save() {
     return;
   }
   const name = draft.value.name.trim() || props.u.name;
-  applyDraft(props.u);
+  const rerouted = providerChanged.value;
+  const repaired = applyDraft(props.u);
   confirming.value = false;
   uiStore.toast(`${name} connection saved`, {
     kind: "success",
-    description: providerChanged.value
+    description: rerouted
       ? "New jobs use it from now on. Jobs already queued keep the connection they were created with."
       : "Nothing was re-routed — only this configuration’s labels changed.",
   });
+  // A new base URL can speak an API without the format or rate this endpoint was set to; what was
+  // put back is said on its own, so it is not lost inside the saved message.
+  if (repaired.length)
+    uiStore.toast("Audio format adjusted for the new API", {
+      kind: "warn",
+      description: repaired.join(" ") + " See the Requests tab.",
+    });
 }
 function discard() {
   discardDraft(props.u);
@@ -402,6 +411,9 @@ function newCredential() {
           <p class="break-words text-[11px] leading-relaxed text-zinc-500">
             Sends <b>one</b> request to
             <code class="font-mono">{{ (u.baseUrl || "…").replace(/\/$/, "") }}{{ path }}</code>
+            <template v-if="u.endpoint">
+              for <b>{{ encodingSummary(u.endpoint) }}</b></template
+            >
             using
             <b v-if="onServer">the key saved on the server</b>
             <b v-else>{{ usingCredential ? usingCredential.label : "this endpoint’s own key" }}</b

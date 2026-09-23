@@ -173,3 +173,26 @@ describe("testing a saved endpoint", () => {
     expect(fake.body.message).toContain("SPEECH_PROVIDER=fake");
   });
 });
+
+describe("an endpoint's format", () => {
+  test("is kept with its bitrate, read back as sent, and absent reads back as none", async () => {
+    const api = testApi();
+    const { body } = await save(api, [
+      speech({ encoding: { format: "mp3", bitrate: 128 }, sampleRate: 44100 }),
+      speech({ id: "plain", name: "Plain" }),
+    ]);
+    expect(body.endpoints[0]).toMatchObject({
+      encoding: { format: "mp3", bitrate: 128 },
+      sampleRate: 44100,
+    });
+    expect(body.endpoints[1]).not.toHaveProperty("encoding");
+    const opus = await save(api, [speech({ encoding: { format: "opus" } })]);
+    expect(opus.body.endpoints[0].encoding).toEqual({ format: "opus" });
+  });
+
+  test("a format the app does not keep clips in is refused", async () => {
+    const api = testApi();
+    const { status } = await save(api, [speech({ encoding: { format: "flac" as "wav" } })]);
+    expect(status).toBe(400);
+  });
+});

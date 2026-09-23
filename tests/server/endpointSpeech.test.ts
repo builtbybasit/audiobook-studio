@@ -35,6 +35,7 @@ const line = (target: ProviderTarget | null, over: Partial<SpeechInput> = {}): S
   instructions: "",
   voiceRef: `${target?.id ?? "gone"}/voice-1`,
   sampleRate: null,
+  encoding: { format: "wav" },
   target,
   signal: new AbortController().signal,
   ...over,
@@ -120,7 +121,9 @@ describe("Fish Audio", () => {
   test("a rate Fish does not render WAV at is refused before a request", async () => {
     const f = scripted(audio);
     const speaking = provider(f.fetch).speak(line(fish, { sampleRate: 22050 }));
-    await expect(speaking).rejects.toThrow(/cannot render WAV at 22050 Hz.*8000, 16000, 24000/);
+    await expect(speaking).rejects.toThrow(
+      "Fish Audio (free) cannot be asked for this line's audio as it is set up: WAV here is 16 kHz, 24 kHz, 32 kHz, 44.1 kHz. Change it on the Endpoints page.",
+    );
     expect(f.sent).toHaveLength(0);
   });
 });
@@ -161,7 +164,7 @@ describe("an OpenAI-shaped server", () => {
   test("a sample rate cannot be asked for, so one is refused before a request", async () => {
     const f = scripted(audio);
     const speaking = provider(f.fetch).speak(line(openai, { sampleRate: 24000 }));
-    await expect(speaking).rejects.toThrow(/cannot be asked for a sample rate/);
+    await expect(speaking).rejects.toThrow(/cannot be asked for one; clear it/);
     expect(f.sent).toHaveLength(0);
   });
 });

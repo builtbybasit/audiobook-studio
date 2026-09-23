@@ -12,7 +12,7 @@
 // in the same body), which a partial write could not let it do.
 import type { Credential } from "@/lib/credentials";
 import { keyring } from "@/lib/keyring";
-import type { Endpoint, EndpointKind, Profile } from "@/types";
+import type { Endpoint, EndpointKind, Profile, Voice } from "@/types";
 import { HttpClient, type FetchLike } from "@/services/http";
 import { isBackend } from "@/services/mode";
 
@@ -61,6 +61,27 @@ export interface EndpointProbe {
   ms: number;
 }
 
+/** Which of a speech endpoint's catalogues to read. Only Fish Audio has a public one. */
+export interface VoiceListQuery {
+  /** `library`: every voice the account holds; `public`: one page of a search */
+  source: "library" | "public";
+  /** words in a voice's title, or a Fish voice id to find that one voice */
+  query?: string;
+  /** a language code the voices must speak, e.g. `en` */
+  language?: string;
+  /** 1-based */
+  page?: number;
+}
+
+/** A page of voices the server found. Nothing is added to the endpoint until the page adds it. */
+export interface VoiceListPage {
+  voices: Voice[];
+  /** how many the provider says match */
+  total: number;
+  page: number;
+  hasMore: boolean;
+}
+
 export interface EndpointSettingsService {
   getSettings(): Promise<EndpointSettings>;
   /**
@@ -72,6 +93,8 @@ export interface EndpointSettingsService {
   putSettings(body: EndpointConfig): Promise<EndpointSettings>;
   /** Test the *saved* endpoint, with the key the server holds for it. */
   testEndpoint(kind: EndpointKind, id: string): Promise<EndpointProbe>;
+  /** Ask the *saved* speech endpoint, with the key the server holds, what voices it offers. */
+  listVoices(id: string, query: VoiceListQuery): Promise<VoiceListPage>;
 }
 
 export class HttpEndpointSettingsService implements EndpointSettingsService {
@@ -90,6 +113,10 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
 
   testEndpoint(kind: EndpointKind, id: string): Promise<EndpointProbe> {
     return this.http.post<EndpointProbe>("/endpoints/test", { kind, id });
+  }
+
+  listVoices(id: string, query: VoiceListQuery): Promise<VoiceListPage> {
+    return this.http.post<VoiceListPage>("/endpoints/voices", { id, ...query });
   }
 }
 

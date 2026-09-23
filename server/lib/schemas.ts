@@ -279,6 +279,14 @@ export const EndpointSchema = v.object({
   sampleRate: v.optional(
     v.nullable(v.picklist(SAMPLE_RATES, `must be one of ${SAMPLE_RATES.join(", ")} Hz`)),
   ),
+  encoding: v.optional(
+    v.nullable(
+      v.object({
+        format: v.picklist(["wav", "mp3", "opus"]),
+        bitrate: v.optional(v.pipe(v.number(), v.integer())),
+      }),
+    ),
+  ),
 }) satisfies v.GenericSchema<unknown, EndpointSettings>;
 
 export const ProfileSchema = v.object({

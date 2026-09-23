@@ -12,13 +12,23 @@ import { useLibraryStore } from "@/stores/library";
 //
 // Two ways in, because providers differ: fetch the server's list where there is one (Fish Audio's
 // catalogue is per account and needs the key first), or type an id by hand for a server that has no
-// list endpoint at all.
+// list endpoint at all. With a server answering, a Fish endpoint has a third: search Fish's public
+// catalogue and add a voice from the results.
 import { computed, reactive, ref } from "vue";
-import { keyInPlace } from "@/services/endpointSettings";
+import {
+  activeEndpointSettingsService,
+  keyInPlace,
+  type VoiceListPage,
+} from "@/services/endpointSettings";
+import { ApiError } from "@/services/http";
 import { speak } from "@/composables/usePlayer";
 import type { Component } from "vue";
 import {
+  Check as AddedIcon,
+  ChevronLeft as PrevIcon,
+  ChevronRight as NextIcon,
   Dot as NeutralIcon,
+  Globe as PublicIcon,
   Mars as MaleIcon,
   Play as PlayIcon,
   Plus as AddIcon,
@@ -100,6 +110,60 @@ const needsKeyFirst = computed(
 );
 const fetchBlocked = computed(() => fish.value && needsKeyFirst.value);
 
+// ---------- searching the public catalogue ----------
+// Fish Audio's public voices, a page at a time, through the server — which asks with the saved key.
+// Only with a server answering: the demo has no catalogue to search. A result is only a result
+// until "Add" puts it on this endpoint, and the write-behind saves it like any other voice.
+const searchable = computed(() => fish.value && !!activeEndpointSettingsService());
+const LANGUAGES = [
+  { value: "", label: "Any language" },
+  { value: "en", label: "English" },
+  { value: "zh", label: "Chinese" },
+  { value: "ja", label: "Japanese" },
+  { value: "ko", label: "Korean" },
+  { value: "fr", label: "French" },
+  { value: "de", label: "German" },
+  { value: "es", label: "Spanish" },
+  { value: "pt", label: "Portuguese" },
+  { value: "it", label: "Italian" },
+  { value: "ru", label: "Russian" },
+  { value: "ar", label: "Arabic" },
+];
+const search = reactive({
+  query: "",
+  language: "en",
+  busy: false,
+  error: "",
+  result: null as VoiceListPage | null,
+});
+/** Only the latest search's answer is shown; an earlier one arriving late is dropped. */
+let searches = 0;
+async function runSearch(page = 1) {
+  const n = ++searches;
+  search.busy = true;
+  search.error = "";
+  try {
+    const result = await endpointsStore.searchVoices(props.endpoint, {
+      query: search.query.trim() || undefined,
+      language: search.language || undefined,
+      page,
+    });
+    if (n === searches) search.result = result;
+  } catch (e) {
+    if (n !== searches) return;
+    search.result = null;
+    search.error =
+      e instanceof ApiError && e.status === 404
+        ? "This endpoint is not saved on the server yet."
+        : e instanceof Error
+          ? e.message
+          : String(e);
+  } finally {
+    if (n === searches) search.busy = false;
+  }
+}
+const has = (v: Voice) => props.endpoint.voices.some((x) => x.id === v.id);
+
 const SAMPLE = "The mountain mist thinned as dawn crept over the outer sect grounds.";
 </script>
 
@@ -169,8 +233,8 @@ const SAMPLE = "The mountain mist thinned as dawn crept over the outer sect grou
             ></template
           >
           <template v-else-if="fish"
-            >Fish Audio quotes a voice as a <code class="font-mono">reference_id</code> from your
-            own library, not a named voice.</template
+            >Fish Audio quotes a voice as a <code class="font-mono">reference_id</code> — a model
+            from your library or a public one, found by searching above.</template
           >
           <template v-else
             >Exactly what the provider expects in the request’s
@@ -187,6 +251,107 @@ const SAMPLE = "The mountain mist thinned as dawn crept over the outer sect grou
         <WarnIcon class="icon-sm" /> No key is set for this endpoint. Voices can still be listed
         here, but nothing routed to them renders until one is added on the Connection tab.
       </p>
+    </section>
+
+    <section v-if="searchable" class="card p-3">
+      <h3 class="label mb-1"><PublicIcon class="icon-sm" /> Public voices</h3>
+      <p class="mb-2 text-[11px] leading-relaxed text-zinc-500">
+        Search Fish Audio’s public catalogue by title, or paste a voice’s id to find that one. Best
+        rated first. Adding one puts it in this endpoint’s list; it is spoken with like your own.
+      </p>
+      <form class="flex flex-wrap items-center gap-2" @submit.prevent="runSearch(1)">
+        <div class="relative min-w-48 flex-1">
+          <SearchIcon
+            class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 icon"
+          />
+          <input
+            v-model="search.query"
+            class="input w-full pl-7!"
+            placeholder="narrator, calm, old man… or a voice id"
+            aria-label="Search Fish Audio's public voices"
+            spellcheck="false"
+          />
+        </div>
+        <UiSelect
+          v-model="search.language"
+          :options="LANGUAGES"
+          size="xs"
+          class="w-36"
+          aria-label="Language the voices speak"
+        />
+        <button
+          class="btn-primary btn-xs"
+          type="submit"
+          :disabled="search.busy || needsKeyFirst"
+          :title="needsKeyFirst ? 'Set the API key on the Connection tab first' : undefined"
+        >
+          <SearchIcon class="icon-sm" /> {{ search.busy ? "Searching…" : "Search" }}
+        </button>
+      </form>
+
+      <p
+        v-if="search.error"
+        class="mt-2 rounded bg-red-500/10 px-2 py-1 text-[11px] text-red-700 dark:text-red-300"
+        role="alert"
+      >
+        {{ search.error }}
+      </p>
+      <template v-else-if="search.result">
+        <p
+          v-if="!search.result.voices.length"
+          class="mt-2 rounded-lg border border-dashed border-zinc-300 px-3 py-4 text-center text-xs text-zinc-500 dark:border-zinc-700"
+        >
+          No public voice matches that{{ search.language ? " in that language" : "" }}.
+        </p>
+        <ul v-else class="mt-2 divide-y divide-zinc-100 dark:divide-zinc-800">
+          <li
+            v-for="v in search.result.voices"
+            :key="v.id"
+            class="flex flex-wrap items-center gap-2 py-1.5 text-sm"
+          >
+            <component :is="GENDER_ICON[v.gender]" class="icon-sm shrink-0 text-zinc-400" />
+            <span class="min-w-0 flex-1 truncate" :title="v.label">{{ v.label }}</span>
+            <span
+              class="hidden w-40 shrink-0 truncate font-mono text-[11px] text-zinc-500 sm:inline"
+              :title="v.id"
+              >{{ v.id }}</span
+            >
+            <button
+              class="btn-ghost btn-xs shrink-0"
+              :disabled="has(v)"
+              :aria-label="has(v) ? `${v.label} is on this endpoint` : `Add ${v.label}`"
+              @click="endpointsStore.addVoice(endpoint, v)"
+            >
+              <component :is="has(v) ? AddedIcon : AddIcon" class="icon-sm" />
+              {{ has(v) ? "Added" : "Add" }}
+            </button>
+          </li>
+        </ul>
+        <div
+          v-if="search.result.page > 1 || search.result.hasMore"
+          class="mt-2 flex items-center justify-between gap-2 text-[11px] text-zinc-500"
+        >
+          <button
+            class="btn-ghost btn-xs"
+            :disabled="search.busy || search.result.page <= 1"
+            @click="runSearch(search.result.page - 1)"
+          >
+            <PrevIcon class="icon-sm" /> Previous
+          </button>
+          <span
+            >Page {{ search.result.page }} · {{ search.result.total.toLocaleString() }} match{{
+              search.result.total === 1 ? "" : "es"
+            }}</span
+          >
+          <button
+            class="btn-ghost btn-xs"
+            :disabled="search.busy || !search.result.hasMore"
+            @click="runSearch(search.result.page + 1)"
+          >
+            Next <NextIcon class="icon-sm" />
+          </button>
+        </div>
+      </template>
     </section>
 
     <section class="card p-3">

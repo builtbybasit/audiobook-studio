@@ -15,7 +15,7 @@ import type { AudiobookFiles } from "~/exports/files";
 
 /** A piece of an output file laid down from the book's own audio. */
 export type FreshPart =
-  /** a rendered clip, by the path its file is kept at */
+  /** a rendered clip, by the path its file is kept at; its extension says its format */
   | { kind: "clip"; path: string }
   /** silence: the book's pacing inside a chapter, or the export's gap between two */
   | { kind: "silence"; seconds: number };
@@ -142,6 +142,12 @@ export interface AudiobookEncoder {
    * the build says so rather than leaving the page's book details looking written.
    */
   readonly tags: boolean;
+  /**
+   * Whether it reads MP3 and Opus clips as well as WAV. The stitcher joins samples and has none to
+   * join in an encoded clip, so a build of a book narrated in either is refused, by chapter, before
+   * a byte is written; ffmpeg decodes each one first and builds from any mix.
+   */
+  readonly decodes: boolean;
   encode(input: EncodeInput): Promise<EncodedFile>;
 }
 

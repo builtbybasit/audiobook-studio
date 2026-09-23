@@ -9,7 +9,11 @@
 // Two implementations: the fake, which renders a tone and never the network, and the one that
 // calls the endpoint a line's voice belongs to (`SPEECH_PROVIDER=endpoints`) — Fish Audio when its
 // base URL is Fish's, OpenAI's `/audio/speech` shape otherwise.
-import type { SegmentType, VoiceRef } from "@/types";
+//
+// A line is asked for in the endpoint's format — WAV, MP3 or Opus — and the clip says which format
+// it really came back in, because that is what it is kept as and served as. The fake answers WAV
+// whatever it is asked for, and says so.
+import type { AudioEncoding, AudioFormat, SegmentType, VoiceRef } from "@/types";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
 
 export interface SpeechInput {
@@ -31,6 +35,12 @@ export interface SpeechInput {
    */
   sampleRate: number | null;
   /**
+   * The format the endpoint asks every line for, and its bitrate: `encodingOf` the endpoint, WAV
+   * when the line has none. A real provider refuses a combination its API cannot be asked for,
+   * before any request (`encodingProblems`).
+   */
+  encoding: AudioEncoding;
+  /**
    * The endpoint the voice belongs to, and its key; null when the speaker has no voice or the
    * voice names an endpoint that is no longer configured. The fake ignores it; a real provider
    * fails the line, naming why, rather than sending it somewhere nobody chose.
@@ -43,8 +53,10 @@ export interface SpeechInput {
 export interface RenderedClip {
   /** the audio, ready to be written to a file */
   bytes: Uint8Array;
-  /** the media type of `bytes` */
-  mime: "audio/wav";
+  /** what `bytes` is, and so the extension it is kept under */
+  format: AudioFormat;
+  /** the media type of `bytes`, `AUDIO_MIME[format]` */
+  mime: string;
   /** how long the audio plays, in seconds */
   duration: number;
   /** how long the request took, in milliseconds */

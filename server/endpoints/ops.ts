@@ -17,8 +17,10 @@ import {
   replaceEndpoints,
   type EndpointConfig,
 } from "~/db/endpoints";
-import { badRequest, notFound } from "~/lib/errors";
+import { AppError, badRequest, notFound } from "~/lib/errors";
+import { ProviderError } from "~/providers/http";
 import { scriptTarget, speechTarget, type ProbeResult, type Providers } from "~/providers/target";
+import { endpointVoiceLister, type VoicePage, type VoiceQuery } from "~/providers/voices";
 
 /** What the page reads: the configuration, and whether it was ever saved here. */
 export interface EndpointSettingsAnswer extends EndpointConfig {
@@ -129,3 +131,31 @@ const untestable = (name: string): ProbeResult => ({
   message: `${name} has no connection test`,
   ms: 0,
 });
+
+/**
+ * The voices a saved speech endpoint offers, asked with its saved key.
+ *
+ * Always of the real endpoint, whichever provider the server was started with: the fakes are there
+ * so nothing is spent by accident, and a list of voices costs nothing and changes nothing — while a
+ * list the fakes made up would be voices no real request could use. The answer is only shown;
+ * putting a voice on the endpoint is the page's own whole-configuration save.
+ */
+export async function listVoices(
+  db: Db,
+  providers: Providers,
+  id: string,
+  query: VoiceQuery,
+  signal: AbortSignal,
+): Promise<VoicePage> {
+  const ep = readEndpoint(db, id);
+  if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
+  const lister = providers.voices ?? endpointVoiceLister();
+  try {
+    return await lister.list(speechTarget(db, ep), query, signal);
+  } catch (e) {
+    if (!(e instanceof ProviderError)) throw e;
+    // Refused before any request — no key, nothing to search — is the request's to fix; anything
+    // the provider answered, or failed to, is the provider's.
+    throw new AppError(e.status === 0 && !e.retryable ? 400 : 502, e.message);
+  }
+}

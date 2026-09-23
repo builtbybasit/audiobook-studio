@@ -97,5 +97,12 @@ export function fakeSpeechProvider(options: FakeSpeechOptions = {}): SpeechProvi
         voice: voiceRef ? voiceRef.slice(voiceRef.indexOf("/") + 1) : null,
       };
     },
+    async probe() {
+      return {
+        ok: true,
+        message: "The fake answers without a request: SPEECH_PROVIDER=fake",
+        ms: 0,
+      };
+    },
   };
 }

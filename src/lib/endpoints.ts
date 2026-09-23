@@ -20,6 +20,7 @@ import type {
   WaitReason,
 } from "@/types";
 import { profileErrors } from "@/lib/scripting";
+import { OPS_DEFAULTS } from "@/lib/endpointShapes";
 import { keyring } from "@/lib/keyring";
 import {
   baseRates,
@@ -32,24 +33,13 @@ import {
   speechRateKnown,
 } from "@/lib/pricing";
 
-export const OPS_DEFAULTS: Record<EndpointKind, EndpointOps> = {
-  scripting: {
-    timeoutSec: 120,
-    maxRetries: 3,
-    cooldownSec: 10,
-    spendLimit: null,
-    credentialId: null,
-    quotaGroup: null,
-  },
-  tts: {
-    timeoutSec: 60,
-    maxRetries: 2,
-    cooldownSec: 8,
-    spendLimit: null,
-    credentialId: null,
-    quotaGroup: null,
-  },
-};
+export {
+  KIND_PATH,
+  OPS_DEFAULTS,
+  fishModelsUrl,
+  isFishAudio,
+  ttsRequestPath,
+} from "@/lib/endpointShapes";
 
 /** Fill in operational defaults in place. Idempotent — only absent fields are written. */
 export function ensureOps<T extends Profile | Endpoint>(ep: T, kind: EndpointKind): T {
@@ -122,12 +112,6 @@ export const opsOf = (u: UnifiedEndpoint): EndpointOps =>
 export const KIND_LABEL: Record<EndpointKind, string> = {
   scripting: "Scripting",
   tts: "Text to speech",
-};
-
-/** What each kind appends to the base URL — worth showing, since the two differ. */
-export const KIND_PATH: Record<EndpointKind, string> = {
-  scripting: "/chat/completions",
-  tts: "/audio/speech",
 };
 
 // ---------- presets ----------
@@ -263,15 +247,6 @@ export const TTS_PRESETS: TtsPreset[] = [
 export const presetById = (id: string): TtsPreset | undefined =>
   TTS_PRESETS.find((p) => p.id === id);
 
-/** Fish Audio takes the model in a header and the voice as `reference_id`, so the path everything
- *  else uses does not apply. Kept here so the Connection tab can show the right request line. */
-export const isFishAudio = (e: Pick<Endpoint, "baseUrl">): boolean =>
-  /(^|\/\/)([a-z0-9-]+\.)*fish\.audio(\/|$)/i.test(e.baseUrl);
-
-export function ttsRequestPath(e: Pick<Endpoint, "baseUrl">): string {
-  return isFishAudio(e) ? "/tts" : KIND_PATH.tts;
-}
-
 /** One entry of Fish Audio's `GET /model` response. Only the fields a voice list needs are typed;
  *  the real payload also carries covers, samples, like counts and the author's profile. */
 export interface FishModel {
@@ -282,17 +257,6 @@ export interface FishModel {
   tags?: string[];
   languages?: string[];
   visibility?: string;
-}
-
-/** Fish Audio serves speech under /v1 but its model catalogue at the host root, so the voice list
- *  cannot just be appended to the base URL the way an OpenAI-compatible /audio/voices can. */
-export function fishModelsUrl(baseUrl: string): string {
-  return (
-    baseUrl
-      .trim()
-      .replace(/\/+$/, "")
-      .replace(/\/v\d+$/, "") + "/model?self=true&page_size=100"
-  );
 }
 
 /** Fish has no gender field — a voice carries free-form tags, and only some of them say. */

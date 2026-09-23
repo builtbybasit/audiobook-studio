@@ -12,7 +12,7 @@ import { useScriptsStore } from "@/stores/scripts";
 // What is left is the half that is genuinely per book: which endpoint each speaker resolves to,
 // and which of them can't currently render.
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { keyring } from "@/lib/keyring";
+import { keyInPlace } from "@/services/endpointSettings";
 import {
   ArrowUpRight as ArrowIcon,
   Server as EndpointIcon,
@@ -59,7 +59,7 @@ function statusOf(e: Endpoint): Status {
       fix: "Lines routed here wait instead of going out. Resume it to narrate them.",
       tab: "overview",
     };
-  if (e.needsKey && !keyring.has(e.id))
+  if (e.needsKey && !keyInPlace(e, e.id))
     return {
       label: "No API key",
       tone: "warn",

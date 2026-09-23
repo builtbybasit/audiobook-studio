@@ -8,7 +8,7 @@ import { useLibraryStore } from "@/stores/library";
 
 import { computed } from "vue";
 import { useRoute } from "vue-router";
-import { keyring } from "@/lib/keyring";
+import { keyInPlace } from "@/services/endpointSettings";
 import { endpointErrors, unifyEndpoint, unifyProfile } from "@/lib/endpoints";
 import { bookFacts } from "@/views/library/bookFacts";
 import { reviewCount } from "@/views/review/inbox";
@@ -56,7 +56,10 @@ export function useShell() {
         ...endpointsStore.profiles.map(unifyProfile),
         ...endpointsStore.endpoints.map(unifyEndpoint),
       ].filter(
-        (u) => u.enabled && ((u.needsKey && !keyring.has(u.slot)) || endpointErrors(u).length > 0),
+        (u) =>
+          u.enabled &&
+          ((u.needsKey && !keyInPlace(u.profile ?? u.endpoint, u.slot)) ||
+            endpointErrors(u).length > 0),
       ).length,
   );
   /** A link to another book that lands on the page you are already on, so switching keeps your place. */

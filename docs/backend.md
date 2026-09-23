@@ -619,6 +619,7 @@ service are both built on it, so that rule is written once.
 | `GET`    | `/api/audio/:bookId/:file`                       | A rendered clip's audio                                       |
 | `GET`    | `/api/endpoints`                                 | Speech endpoints, scripting profiles, credentials; `saved`    |
 | `PUT`    | `/api/endpoints`                                 | The whole configuration, in place of what is stored           |
+| `POST`   | `/api/endpoints/test`                            | One small request to a saved endpoint with its saved key      |
 | `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                          |
 | `DELETE` | `/api/books/:id/volumes/:volumeId`               | Remove a volume; the last one removes the book; 409 mid-build |
 | `PATCH`  | `/api/books/:id`                                 | The budget, script budget or pacing; chapters are re-timed    |
@@ -808,25 +809,80 @@ the preview shows where — and the fake then reads each side on its own, so a q
 back as narration or `Unknown`. That is what the Scripting page's "smaller chunks" button and the
 preview are for; a real provider will want the same care.
 
-### The provider, and where a key would live
+### The providers, and where a key lives
 
 A scripting job hands a [`ScriptingProvider`](../server/providers/scripting.ts) a chapter's prose —
-the `plain` reading, never the stored Markdown — and gets back lines with speakers. That is the
-whole contract. What model, what prompt, what key and what it cost are the provider's business.
+the `plain` reading, never the stored Markdown — and gets back lines with speakers; a narration job
+hands a [`SpeechProvider`](../server/providers/speech.ts) one line and gets back a WAV. That is the
+whole contract. Which of two implementations answers is the one thing the environment decides:
 
-Only [the fake](../server/providers/fake.ts) exists, and `SCRIPTING_PROVIDER=fake` is the only value
-[env.ts](../server/env.ts) accepts, so a server cannot be started in a configuration that spends
-money. The fake is deterministic and honest about what it is: a paragraph is narration, a quoted
-span is dialogue, and the speaker is whoever the paragraph names beside a speech verb — "…," said
-Mara — or `Unknown`. That is enough to give the Scripting page a cast to route, a script to correct
-and clips to render, which is what the screens need to be tested against, and it is the "fake AI
-provider" the [demo requirements](demo.md#future-backend-integration-requirements) ask for.
+- **`fake`**, the default for both, never reaches the network. [The scripting fake](../server/providers/fake.ts)
+  makes a paragraph narration and a quoted span dialogue, spoken by whoever the paragraph names
+  beside a speech verb — "…," said Mara — or `Unknown`; [the speech fake](../server/providers/fakeSpeech.ts)
+  renders a quiet tone per speaker. A fresh clone and the test suite cannot spend money whatever
+  the Endpoints page holds, and this is the "fake AI provider" the
+  [demo requirements](demo.md#future-backend-integration-requirements) ask for.
+- **`endpoints`** (`SCRIPTING_PROVIDER=endpoints`, `SPEECH_PROVIDER=endpoints`) calls what the
+  Endpoints page configured. A chapter goes to the scripting profile its run was queued with; a
+  line goes to the endpoint its speaker's voice belongs to (`<endpointId>/<voiceId>`).
 
-A real provider is a value for `SCRIPTING_PROVIDER`, an implementation next to the fake, and a key
-read from the server's environment by that implementation. **The key never leaves the process**:
-it is not in the schema (`credentials` is a registry of names), not in a response, and the
-[logger's redaction list](#logging) catches it if it is ever spread into a log record. The browser's
-keyring is the demo's; nothing in backend mode sends a key anywhere.
+**Nothing about a provider is in the environment.** Base URL, model, timeout, retries and key are
+the endpoint's, saved with it. The `.env` variables `SCRIPTING_PROVIDER_URL`, `…_MODEL`, `…_TOKEN`,
+`FISHAUDIO_TOKEN` and `FISHAUDIO_VOICE_ID` are read by `pnpm test:live` and nothing else.
+
+**The key is write-only.** It is `endpoints.api_key`, one per endpoint and one per profile (a
+speech endpoint and a profile that share an id keep separate keys). `PUT /api/endpoints` takes an
+`apiKey` beside an endpoint: left out, the stored key is kept — the page never has it to send back,
+so absent has to mean keep — and `""` forgets it. `GET` answers `hasKey: true` and never the key.
+The target a request is sent to ([target.ts](../server/providers/target.ts)) reads the key at the
+moment of dispatch, so it is never copied onto a job — `scriptRun.profile` is the profile as read,
+which carries `hasKey` and not the key — and a key changed on the page is the one the next request
+uses. The logger redacts `apiKey` wherever it sits. Named credentials stay a registry of labels:
+in backend mode every endpoint has its own key field.
+
+**Around every request** [http.ts](../server/providers/http.ts) keeps the endpoint's own
+`timeoutSec` per attempt and `maxRetries` after the first, retries only what another attempt could
+fix (408, 425, 429, 5xx, no answer), waits what a `Retry-After` names or `cooldownSec` after a bare
+429, and stops at once on a cancel, mid-request or mid-wait. A refusal becomes a sentence naming the
+endpoint and what it said; an endpoint that `needsKey` and has none fails before any request.
+
+**Scripting** ([chatScripting.ts](../server/providers/chatScripting.ts)) is OpenAI's chat
+completions — OpenAI, a gateway, a local model — at `{baseUrl}/chat/completions`, asking for
+`{"lines":[…]}` with `response_format: json_object`, `max_tokens` only when the profile's
+`maxOutputTokens` is above 0, and the book's cast in the prompt so a chunk read on its own still
+calls Mara "Mara". A gateway may wrap the JSON in a code fence anyway; the answer is read from the
+first `{` to the last `}`. A **reasoning model counts its thinking against `max_tokens`**: a
+cap of 8000 cut a 200-word excerpt off on the model this was tested with, so give such a profile 0. Before anything is written, the lines are held against the prose (`fidelity`): if more than 2% of
+the words went missing or were invented, the chapter fails saying how many and which — an
+audiobook that silently skips a paragraph is the worst thing this job could do. Word counts, not
+order, so it catches a dropped sentence but not a moved one. A bad answer is not retried by the
+provider, so a failure never spends tokens twice without anyone asking.
+
+**Speech** ([endpointSpeech.ts](../server/providers/endpointSpeech.ts)) goes to Fish Audio when the
+base URL is Fish's and to OpenAI's `/audio/speech` shape otherwise (OpenAI, Kokoro-FastAPI, …):
+
+- Fish ([fishSpeech.ts](../server/providers/fishSpeech.ts)): `POST /v1/tts` with the model in a
+  `model` header, the voice as `reference_id`, `format: "wav"` and `normalize`. Its WAV rates are
+  8, 16, 24, 32 and 44.1 kHz, 44.1 when none is asked for; another rate fails before the request.
+  The line's direction is not written in — the job already placed the endpoint's configured
+  expression tags, and a free-text cue would be words nobody configured.
+- OpenAI-shaped ([openaiSpeech.ts](../server/providers/openaiSpeech.ts)): `model`, `input`,
+  `voice`, `response_format: "wav"`, and the line's instructions (the speaker's style and the
+  line's direction, as the clip records them) except on `tts-1`. This API cannot be asked for a
+  sample rate, so an endpoint with one set fails its lines before any request rather than
+  rendering at the model's own and reading as drift forever after.
+- Both stream, so the WAV header they send claims sizes that are true of nothing (Fish's reads
+  `data ffffff00`, about 4 GB). [wav.ts](../server/providers/wav.ts) keeps the samples that arrived,
+  in whole frames, under the plain 44-byte header the rest of the server writes, and counts the
+  clip's duration from them. A 200 carrying JSON, an empty body or something that is not a WAV is a
+  readable failure.
+
+**Test connection** is `POST /api/endpoints/test` `{ kind, id }`, answering `{ ok, message, ms }`:
+one small request to the **saved** endpoint with its saved key, through the provider the server
+runs — the fakes say so without a request. Scripting sends a two-sentence excerpt through the same
+path a chapter takes; Fish lists the account's models, which proves the key and costs nothing; an
+OpenAI-shaped server lists `/models`. The page sends any edit still waiting to be written first,
+but not an unsaved connection draft: saving one can move queued work, which asks first.
 
 ### Narration
 
@@ -1211,6 +1267,9 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)         | Editing against a revision, the history rule, what a run writes                                             |
 | [cast.test.ts](../tests/server/cast.test.ts)                     | The cast a run leaves, rename, merge, removal, exact undo                                                   |
 | [exports.test.ts](../tests/server/exports.test.ts)               | Building one: the file, the spans, refusals, cancel, failure, download                                      |
+| [endpointKeys.test.ts](../tests/server/endpointKeys.test.ts)     | A key kept, never sent back or logged, kept by a save that omits it; the Test route                         |
+| [chatScripting.test.ts](../tests/server/chatScripting.test.ts)   | The chat request, a fenced answer, fidelity, a cut-off, retries, cancel, probe                              |
+| [endpointSpeech.test.ts](../tests/server/endpointSpeech.test.ts) | Fish and OpenAI-shaped requests, a streamed header made plain, refusals, retries, probe                     |
 | [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)     | What the fake models produce — attributions, a valid WAV — and that they abort                              |
 | [libraryClient.test.ts](../tests/server/libraryClient.test.ts)   | The client and the API against each other                                                                   |
 | [schema.test.ts](../tests/server/schema.test.ts)                 | The seeded world through the schema and back                                                                |
@@ -1233,6 +1292,11 @@ that chapter's span in the new file against the same span in the old one. A row 
 itself and not with the disk is the failure the Export page exists to catch, so it is not a thing
 the suite can be satisfied by. The two tests that need a real encoder are skipped where `ffmpeg`
 is not installed, and are the only ones in the suite that depend on anything outside the process.
+
+[tests/live/](../tests/live/) is the exception on purpose: `pnpm test:live` sends a few real
+requests — a short excerpt to the scripting gateway in `.env`, one sentence to Fish Audio at its
+own rate and at 24 kHz, and both connection tests — to prove the providers against the real APIs.
+`bun test` skips them unless `LIVE=1`, so the ordinary suite still never reaches the network.
 
 ## What is not done yet
 
@@ -1262,11 +1326,14 @@ the library screens are the server's in backend mode. What is worth knowing abou
 The queue runs three kinds of job. What the scripting, narration and export slices do not do yet,
 each because a route or a table's writer is missing rather than by oversight:
 
-- **An endpoint saved is not an endpoint called.** The server keeps the configuration and reads
-  the tags and the rate from it, and the fake renders every line whatever the base URL, model and
-  key say. A chapter's duration
-  is its clips plus the book's pacing, which a pacing change re-times on the server for every
-  chapter that has been narrated.
+- **A real request is not metered.** With `endpoints`, scripting and narration spend real money
+  against the saved endpoints, and nothing on the server holds a run against a book's budget or
+  records what it cost — see the budgets bullet below. A chapter's duration is its clips plus the
+  book's pacing, which a pacing change re-times on the server for every narrated chapter.
+- **A voice list is not fetched from the server.** The Voices tab's "fetch" is still the demo's
+  simulation; a Fish voice is added by its `reference_id` by hand.
+- **Undoing an endpoint's removal brings it back without its key**, since the save removed the row
+  the key was on.
 - **An update under ffmpeg re-encodes everything.** Carrying a chapter over is real under the
   stitcher and refused under ffmpeg, for the reason [the encoder](#the-encoder-and-what-it-will-not-pretend)
   gives. Making it real there means keeping an encoded file per chapter and joining those with
@@ -1293,7 +1360,8 @@ fail somewhere that does not name the cause. Migrations are versioned in [drizzl
 and applied in order at boot; `0001` added the script revision and the queue's dedupe key, `0002`
 the version an open editing session preserved, and `0003` what a build writes — the file each
 output landed in, the span each chapter occupies inside it, and which encoder wrote it; `0004` an
-endpoint's sample rate and the rate each clip came back at; `0005` a book's cover image.
+endpoint's sample rate and the rate each clip came back at; `0005` a book's cover image; `0006` an
+endpoint's key.
 
 **Foreign keys are off while migrations run.** A change drizzle-kit cannot write as `ALTER TABLE` is
 written as a rebuild — new table, copy, `DROP` the old one, rename — and with foreign keys on, that

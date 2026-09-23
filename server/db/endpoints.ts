@@ -42,8 +42,15 @@ export function writeCredentials(db: Db | Tx, registry: readonly Credential[]): 
 }
 
 /** An endpoint and everything hanging off it: voices, the schedule, promotions, expression tags. */
-export function writeEndpoint(db: Db | Tx, e: rows.EndpointSettings, position: number): void {
-  db.insert(endpoints).values(rows.endpointValues(e, position)).run();
+export function writeEndpoint(
+  db: Db | Tx,
+  e: rows.EndpointSettings,
+  position: number,
+  apiKey: string | null = null,
+): void {
+  db.insert(endpoints)
+    .values(rows.endpointValues(e, position, apiKey))
+    .run();
   e.voices.forEach((v, i) =>
     db
       .insert(voices)
@@ -59,8 +66,15 @@ export function writeEndpoint(db: Db | Tx, e: rows.EndpointSettings, position: n
   );
 }
 
-export function writeProfile(db: Db | Tx, p: Profile, position: number): void {
-  db.insert(endpoints).values(rows.profileValues(p, position)).run();
+export function writeProfile(
+  db: Db | Tx,
+  p: Profile,
+  position: number,
+  apiKey: string | null = null,
+): void {
+  db.insert(endpoints)
+    .values(rows.profileValues(p, position, apiKey))
+    .run();
   writeCard(db, rows.profileKey(p.id), p.pricing?.windows ?? [], p.pricing?.promotions ?? []);
 }
 
@@ -149,14 +163,49 @@ export function readEndpointConfig(db: Db | Tx): EndpointConfig {
   };
 }
 
+/**
+ * The key a real provider is called with, read at the moment of the request — never copied onto a
+ * job, so a key changed or forgotten on the Endpoints page is the one the next request uses.
+ * `kind` keeps a speech endpoint and a scripting profile that share an id apart.
+ */
+export function readEndpointKey(db: Db | Tx, kind: "tts" | "scripting", id: string): string | null {
+  const row = db
+    .select({ apiKey: endpoints.apiKey })
+    .from(endpoints)
+    .where(eq(endpoints.id, kind === "scripting" ? rows.profileKey(id) : id))
+    .get();
+  return row?.apiKey || null;
+}
+
+/**
+ * What a save leaves an endpoint's key as. The key is write-only, so a page that never saw it
+ * sends nothing for it, and that has to mean "keep it" rather than "forget it"; `""` forgets it.
+ */
+function keyAfterSave(sent: string | undefined, kept: string | null | undefined): string | null {
+  if (sent === undefined) return kept ?? null;
+  return sent.trim() || null;
+}
+
 /** Lay the whole configuration down in place of what was there. Call inside a transaction. */
 export function replaceEndpoints(tx: Tx, config: EndpointConfig): void {
+  // keys by row id, read before the rows go, so a save that did not mention a key keeps it
+  const kept = new Map(
+    tx
+      .select({ id: endpoints.id, apiKey: endpoints.apiKey })
+      .from(endpoints)
+      .all()
+      .map((r) => [r.id, r.apiKey]),
+  );
   // the children cascade with their endpoint, and an endpoint's credential is set null as it goes
   tx.delete(endpoints).run();
   tx.delete(credentials).run();
   writeCredentials(tx, config.credentials);
-  config.endpoints.forEach((e, i) => writeEndpoint(tx, e, i));
-  config.profiles.forEach((p, i) => writeProfile(tx, p, i));
+  config.endpoints.forEach((e, i) =>
+    writeEndpoint(tx, e, i, keyAfterSave(e.apiKey, kept.get(e.id))),
+  );
+  config.profiles.forEach((p, i) =>
+    writeProfile(tx, p, i, keyAfterSave(p.apiKey, kept.get(rows.profileKey(p.id)))),
+  );
   tx.insert(settings)
     .values({ key: "endpoints", value: { savedAt: Date.now() } })
     .onConflictDoUpdate({ target: settings.key, set: { value: { savedAt: Date.now() } } })

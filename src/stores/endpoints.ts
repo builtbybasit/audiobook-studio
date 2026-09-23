@@ -1,4 +1,6 @@
-// Provider configurations and voice catalogues. Credentials remain in the keyring.
+// Provider configurations and voice catalogues. In the demo, credentials remain in the keyring;
+// with a server answering, the server keeps each endpoint's key and this store only ever holds
+// whether it does (`hasKey`) — a typed key goes out in one write (`saveKey`) and is never kept.
 //
 // With a server answering, the configuration is the server's: a narration job there reads it to
 // know which endpoint a line goes to and at what sample rate. The page binds its fields straight
@@ -31,7 +33,9 @@ import {
 } from "@/services/endpointSettings";
 import { ApiError } from "@/services/http";
 import type {
+  ConnectionTest,
   Endpoint,
+  EndpointKind,
   ExpressionConfig,
   Profile,
   ResolvedVoice,
@@ -66,16 +70,25 @@ function storedOf(ep: Endpoint): StoredEndpoint {
   // Key by key rather than a rest spread: a spread reads every field, and the write-behind watch
   // would then run again on every request an endpoint records, only to find nothing to send.
   const out: Record<string, unknown> = {};
-  for (const k of Object.keys(ep)) if (!telemetry.has(k)) out[k] = ep[k as keyof Endpoint];
+  for (const k of Object.keys(ep))
+    if (!telemetry.has(k) && k !== "apiKey") out[k] = ep[k as keyof Endpoint];
   return out as unknown as StoredEndpoint;
 }
 
 function configOf(endpoints: Endpoint[], profiles: Profile[]): EndpointConfig {
   return {
     endpoints: endpoints.map(storedOf),
-    profiles: profiles.map((p) => ({ ...p })),
+    // `apiKey` is never on these objects, and is dropped anyway: a key that got onto one would
+    // otherwise go out with every write-behind, and a stale `""` there would forget the key
+    profiles: profiles.map(({ apiKey: _apiKey, ...p }) => p),
     credentials: credentials.map((c) => ({ ...c })),
   };
+}
+
+/** What a settings file keeps of an entry: neither the key nor whether some server holds one. */
+function portable<T extends { apiKey?: string; hasKey?: boolean }>(e: T): T {
+  const { apiKey: _apiKey, hasKey: _hasKey, ...rest } = e;
+  return rest as T;
 }
 
 /**
@@ -275,6 +288,96 @@ export const useEndpointsStore = defineStore("endpoints", {
         held = sent;
       else this._install(answer);
     },
+    /**
+     * Give the server a key for one endpoint or profile (`""` forgets it). Resolves true once the
+     * server has answered.
+     *
+     * The key rides on the whole-configuration write, on that one entry only, and never touches
+     * the objects the page edits: the write-behind sends those again and again, and an `apiKey`
+     * left on one would go out with every write after it. So this writes now rather than behind —
+     * with whatever else is waiting, which it therefore takes off the timer — and what comes back
+     * is `hasKey`, which is all the page is ever told.
+     */
+    async saveKey(kind: EndpointKind, id: string, apiKey: string): Promise<boolean> {
+      const svc = this._service();
+      if (!svc) return false;
+      const body = this._config();
+      const entry = (kind === "tts" ? body.endpoints : body.profiles).find((e) => e.id === id);
+      if (!entry) return false;
+      entry.apiKey = apiKey;
+      cancelTimer();
+      const n = edits;
+      inFlight++;
+      let answer: EndpointSettings;
+      try {
+        answer = await svc.putSettings(body);
+      } catch (cause) {
+        inFlight--;
+        this._failed(apiKey ? "save the key" : "remove the key", cause);
+        if (edits === n) await this.load(true);
+        return false;
+      }
+      inFlight--;
+      if (edits === n) this._install(answer);
+      else {
+        // Typed past while the key was out: the rest of the answer is older than the page, but
+        // whether a key is held is not something the page could have changed in the meantime.
+        const list: (Endpoint | Profile)[] = kind === "tts" ? this.endpoints : this.profiles;
+        const held = (kind === "tts" ? answer.endpoints : answer.profiles).find((e) => e.id === id);
+        const cur = list.find((e) => e.id === id);
+        if (cur && held?.hasKey) cur.hasKey = true;
+        else if (cur) delete cur.hasKey;
+      }
+      return true;
+    },
+    /**
+     * Ask the server to test what it holds for this endpoint, as the Connection tab's result.
+     *
+     * It tests the *saved* settings, not a connection draft: saving a draft can re-point queued
+     * work at another provider, which is what the Save button's confirmation is there for, and a
+     * test that saved on the way would step round it. What the write-behind is still holding is
+     * sent first, though — the page shows those edits as already in force. A test that could not
+     * run is a failed result rather than a throw, so the tab shows it where it shows the others.
+     */
+    async testSaved(kind: EndpointKind, id: string): Promise<ConnectionTest> {
+      const failed = (message: string, detail: string): ConnectionTest => ({
+        ok: false,
+        at: Date.now(),
+        ms: 0,
+        message,
+        detail,
+        cost: null,
+        simulated: false,
+      });
+      const svc = this._service();
+      if (!svc) return failed("The test did not run", "There is no server to run it.");
+      try {
+        await this.flushWrites();
+        const probe = await svc.testEndpoint(kind, id);
+        return {
+          ok: probe.ok,
+          at: Date.now(),
+          ms: probe.ms,
+          message: probe.message,
+          detail: probe.ms
+            ? `The server's request took ${probe.ms} ms, with the settings and key it has saved.`
+            : "The server made no request to the provider.",
+          // the server reports no charge for its probe, and an estimate is not a receipt
+          cost: null,
+          simulated: false,
+        };
+      } catch (cause) {
+        const api = cause instanceof ApiError ? cause : null;
+        return failed(
+          api?.status === 404 ? "Not saved on the server yet" : "The test did not run",
+          api
+            ? (api.detail ?? api.message)
+            : cause instanceof Error
+              ? cause.message
+              : String(cause),
+        );
+      }
+    },
     saveExpressionConfig(id: string, config: ExpressionConfig): boolean {
       const narrationStore = useNarrationStore();
       const uiStore = useUiStore();
@@ -320,9 +423,9 @@ export const useEndpointsStore = defineStore("endpoints", {
             lastError: _lastError,
             fetching: _fetching,
             ...e
-          }) => e,
+          }) => portable(e),
         ),
-        profiles: this.profiles.map((p) => ({ ...p })),
+        profiles: this.profiles.map(portable),
         scriptSettings: { ...scriptingStore.scriptSettings },
       };
     },
@@ -338,7 +441,9 @@ export const useEndpointsStore = defineStore("endpoints", {
         throw new Error("Invalid scripting endpoints");
       const profiles = (obj.profiles ?? []).map((imported) => {
         const existing = this.profiles.find((p) => p.id === imported?.id);
-        const profile = newProfile({ ...existing, ...imported });
+        // what the file says about a key is dropped: `hasKey` belongs to the server that wrote it,
+        // and a key in the file would ride along on every write from here on
+        const profile = newProfile({ ...existing, ...portable(imported ?? {}) });
         if (profileErrors(profile).length)
           throw new Error("Invalid scripting endpoint: " + profile.name);
         return profile;
@@ -351,7 +456,7 @@ export const useEndpointsStore = defineStore("endpoints", {
           failures: 0,
           rateLimits: 0,
           backoffUntil: 0,
-          ...e,
+          ...portable(e),
         } as Endpoint;
         if (cur) Object.assign(cur, fresh);
         else this.endpoints.push(fresh);

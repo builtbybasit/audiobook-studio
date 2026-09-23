@@ -14,6 +14,8 @@ import { narrationHandler } from "~/jobs/narration";
 import { createRunner } from "~/jobs/runner";
 import { scriptingHandler } from "~/jobs/scripting";
 import { log } from "~/log";
+import { chatScriptingProvider } from "~/providers/chatScripting";
+import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { fakeScriptingProvider } from "~/providers/fake";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
@@ -29,10 +31,13 @@ boot.debug(
   "migrations applied",
 );
 
-// The providers are chosen once, here, from the server's own configuration. A key for a real one
-// would be read from `env` by its implementation and would never leave this process.
-const scripting = fakeScriptingProvider();
-const speech = fakeSpeechProvider();
+// The providers are chosen once, here: the fakes unless the environment asks for the real thing.
+// Where a real one sends a request, with what model and what key, is the Endpoints page's — read
+// from the database at the moment of each request, and never out of this process but to it.
+const scripting =
+  env.SCRIPTING_PROVIDER === "endpoints" ? chatScriptingProvider() : fakeScriptingProvider();
+const speech =
+  env.SPEECH_PROVIDER === "endpoints" ? endpointSpeechProvider() : fakeSpeechProvider();
 const files = audioFiles(env.AUDIO_DIR);
 // An encoder that shells out is the one thing here that needs something outside this process, so
 // it is checked now rather than at the first build: a server that cannot write an audiobook says
@@ -68,7 +73,7 @@ const server = Bun.serve({
   // megabyte above the import route's own limit, so that the route is the one that answers — in
   // the API's error shape, before the body is read — and this only catches what gets past it.
   maxRequestBodySize: importBodyBytes() + 1024 * 1024,
-  fetch: createApp(db, { runner, files, exports }).fetch,
+  fetch: createApp(db, { runner, files, exports, providers: { scripting, speech } }).fetch,
 });
 
 boot.info(

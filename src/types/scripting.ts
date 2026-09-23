@@ -49,6 +49,16 @@ export interface Profile {
   maxOutputTokens: number;
   secPerChunk: number;
   needsKey: boolean;
+  /**
+   * Backend only, and only ever read: the server holds a key for this endpoint. The key itself
+   * never comes back from the server.
+   */
+  hasKey?: boolean;
+  /**
+   * Backend only, and only ever sent: a key for the server to keep for this endpoint. Left out, a
+   * save keeps the one already kept; `""` forgets it.
+   */
+  apiKey?: string;
   // operational settings — see EndpointOps; optional so older saved profiles still load
   timeoutSec?: number;
   maxRetries?: number;

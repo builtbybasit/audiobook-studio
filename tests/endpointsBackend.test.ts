@@ -13,17 +13,21 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 
 import { credentials, type Credential } from "@/lib/credentials";
+import { keyring } from "@/lib/keyring";
 import { ApiError } from "@/services/http";
 import {
+  HttpEndpointSettingsService,
+  keyInPlace,
   setEndpointSettingsService,
   type EndpointConfig,
+  type EndpointProbe,
   type EndpointSettings,
   type EndpointSettingsService,
 } from "@/services/endpointSettings";
 import { useEndpointsStore, WRITE_DELAY_MS } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 import { clone } from "@/lib/utils";
-import type { Endpoint } from "@/types";
+import type { Endpoint, EndpointKind } from "@/types";
 import { testPinia, type TestPinia } from "./support/pinia";
 
 const TELEMETRY = ["history", "failures", "rateLimits", "backoffUntil", "lastError", "fetching"];
@@ -35,6 +39,10 @@ class FakeService implements EndpointSettingsService {
   gets = 0;
   /** the next write is refused with this */
   refuse: ApiError | null = null;
+  /** keys by `<kind>:<id>`, kept the way the server keeps them: write-only */
+  keys = new Map<string, string>();
+  tests: { kind: EndpointKind; id: string }[] = [];
+  probe: EndpointProbe | ApiError = { ok: true, message: "tts-1 answered", ms: 840 };
 
   answer(): EndpointSettings {
     const held = this.held ?? { endpoints: [], profiles: [], credentials: [] };
@@ -46,8 +54,12 @@ class FakeService implements EndpointSettingsService {
         failures: 0,
         rateLimits: 0,
         backoffUntil: 0,
+        ...(this.keys.has("tts:" + e.id) ? { hasKey: true } : {}),
       })),
-      profiles: clone(held.profiles),
+      profiles: clone(held.profiles).map((p) => ({
+        ...p,
+        ...(this.keys.has("scripting:" + p.id) ? { hasKey: true } : {}),
+      })),
       credentials: clone(held.credentials),
       saved: this.held !== null,
     };
@@ -64,12 +76,34 @@ class FakeService implements EndpointSettingsService {
       throw e;
     }
     const stored = clone(body);
-    for (const e of stored.endpoints)
+    // absent keeps the key, "" forgets it, anything else replaces it; `hasKey` sent is ignored
+    const take = (kind: EndpointKind, e: { id: string; apiKey?: string; hasKey?: boolean }) => {
+      if (e.apiKey === "") this.keys.delete(`${kind}:${e.id}`);
+      else if (e.apiKey !== undefined) this.keys.set(`${kind}:${e.id}`, e.apiKey);
+      delete e.apiKey;
+      delete e.hasKey;
+    };
+    for (const e of stored.endpoints) {
       for (const k of TELEMETRY) delete (e as unknown as Record<string, unknown>)[k];
+      take("tts", e);
+    }
+    for (const p of stored.profiles) take("scripting", p);
     this.held = stored;
     return this.answer();
   }
+  async testEndpoint(kind: EndpointKind, id: string): Promise<EndpointProbe> {
+    this.tests.push({ kind, id });
+    if (this.probe instanceof ApiError) throw this.probe;
+    return this.probe;
+  }
 }
+
+/** Which entries of a write carried a key, and what it was. */
+const keysSent = (body: EndpointConfig) =>
+  [
+    ...body.endpoints.map((e) => ["tts:" + e.id, e.apiKey] as const),
+    ...body.profiles.map((p) => ["scripting:" + p.id, p.apiKey] as const),
+  ].filter(([, k]) => k !== undefined);
 
 const server = (): EndpointConfig => ({
   endpoints: [
@@ -309,5 +343,134 @@ describe("the endpoints store in the demo", () => {
     expect(svc.gets).toBe(0);
     expect(svc.puts).toEqual([]);
     expect(endpointsStore.loaded).toBe(false);
+  });
+});
+
+describe("API keys with a server answering", () => {
+  test("a typed key goes out once, on its own entry, and only hasKey comes back", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    expect(keyInPlace(ep, ep.id)).toBe(false);
+
+    expect(await endpointsStore.saveKey("tts", "srv-tts", "sk-typed")).toBe(true);
+    expect(svc.puts).toHaveLength(1);
+    expect(keysSent(svc.puts[0])).toEqual([["tts:srv-tts", "sk-typed"]]);
+    expect(ep.hasKey).toBe(true);
+    expect(keyInPlace(ep, ep.id)).toBe(true);
+    // the key is never on what the store holds…
+    expect(JSON.stringify(endpointsStore.$state)).not.toContain("sk-typed");
+    // …so the next edit keeps it by saying nothing about it, and installing `hasKey` sent nothing
+    await settle();
+    expect(svc.puts).toHaveLength(1);
+    ep.concurrency = 9;
+    await settle();
+    expect(svc.puts).toHaveLength(2);
+    expect(keysSent(svc.puts[1])).toEqual([]);
+    expect(svc.keys.get("tts:srv-tts")).toBe("sk-typed");
+    expect(ep.hasKey).toBe(true);
+  });
+
+  test("removing sends an empty key, and hasKey goes", async () => {
+    svc.held = server();
+    svc.keys.set("tts:srv-tts", "sk-old");
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    expect(ep.hasKey).toBe(true);
+    await endpointsStore.saveKey("tts", "srv-tts", "");
+    expect(keysSent(svc.puts[0])).toEqual([["tts:srv-tts", ""]]);
+    expect(svc.keys.has("tts:srv-tts")).toBe(false);
+    expect(ep).not.toHaveProperty("hasKey");
+  });
+
+  test("a scripting profile's key is its own, and a pending edit rides along with it", async () => {
+    svc.held = { ...server(), profiles: [] };
+    await endpointsStore.load();
+    const id = endpointsStore.addScriptProfile();
+    endpointsStore.endpoints[0].concurrency = 4;
+    await drain();
+    // before the write-behind's timer: the key write takes what is waiting with it
+    await endpointsStore.saveKey("scripting", id, "sk-chat");
+    expect(svc.puts).toHaveLength(1);
+    expect(keysSent(svc.puts[0])).toEqual([["scripting:" + id, "sk-chat"]]);
+    expect(svc.puts[0].endpoints[0].concurrency).toBe(4);
+    expect(endpointsStore.profiles[0].hasKey).toBe(true);
+    await settle();
+    expect(svc.puts).toHaveLength(1);
+  });
+
+  test("the key warnings read hasKey, not the browser's keyring", () => {
+    keyring.set("srv-tts", "sk-in-the-browser");
+    try {
+      expect(keyInPlace({}, "srv-tts")).toBe(false);
+      expect(keyInPlace({ hasKey: true }, "srv-tts")).toBe(true);
+      setEndpointSettingsService(null);
+      expect(keyInPlace({}, "srv-tts")).toBe(true);
+    } finally {
+      keyring.set("srv-tts", "");
+    }
+  });
+
+  test("a settings file carries neither a key nor hasKey, in or out", async () => {
+    svc.held = server();
+    svc.keys.set("tts:srv-tts", "sk-old");
+    await endpointsStore.load();
+    expect(endpointsStore.exportSettings().endpoints[0]).not.toHaveProperty("hasKey");
+    const file = endpointsStore.exportSettings();
+    file.endpoints[0] = {
+      ...file.endpoints[0],
+      name: "Imported",
+      apiKey: "sk-in-a-file",
+      hasKey: false,
+    };
+    endpointsStore.importSettings(file);
+    await settle();
+    expect(svc.puts.at(-1)!.endpoints[0].name).toBe("Imported");
+    expect(keysSent(svc.puts.at(-1)!)).toEqual([]);
+    expect(svc.keys.get("tts:srv-tts")).toBe("sk-old");
+    expect(endpointsStore.endpoints[0].hasKey).toBe(true);
+  });
+});
+
+describe("the connection test with a server answering", () => {
+  test("sends what is waiting, then asks the server about the saved endpoint", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    endpointsStore.endpoints[0].model = "tts-2";
+    await drain();
+    const result = await endpointsStore.testSaved("tts", "srv-tts");
+    expect(svc.puts.map((b) => b.endpoints[0].model)).toEqual(["tts-2"]);
+    expect(svc.tests).toEqual([{ kind: "tts", id: "srv-tts" }]);
+    expect(result).toMatchObject({
+      ok: true,
+      message: "tts-1 answered",
+      ms: 840,
+      simulated: false,
+    });
+    expect(result.detail).toContain("840 ms");
+  });
+
+  test("a test that could not run is a failed result, not a throw", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    svc.probe = new ApiError("No such endpoint", 404);
+    const result = await endpointsStore.testSaved("scripting", "gone");
+    expect(result).toMatchObject({ ok: false, message: "Not saved on the server yet", ms: 0 });
+  });
+
+  test("the HTTP service posts the kind and id to /endpoints/test", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const http = new HttpEndpointSettingsService("/api", async (url, init) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ ok: false, message: "401: key refused", ms: 120 }));
+    });
+    expect(await http.testEndpoint("scripting", "openai")).toEqual({
+      ok: false,
+      message: "401: key refused",
+      ms: 120,
+    });
+    expect(calls[0].url).toBe("/api/endpoints/test");
+    expect(calls[0].init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ kind: "scripting", id: "openai" });
   });
 });

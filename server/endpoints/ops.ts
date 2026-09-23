@@ -11,11 +11,14 @@ import type { Credential } from "@/lib/credentials";
 import type { Db } from "~/db/client";
 import {
   endpointsSaved,
+  readEndpoint,
+  readProfiles,
   readEndpointConfig,
   replaceEndpoints,
   type EndpointConfig,
 } from "~/db/endpoints";
-import { badRequest } from "~/lib/errors";
+import { badRequest, notFound } from "~/lib/errors";
+import { scriptTarget, speechTarget, type ProbeResult, type Providers } from "~/providers/target";
 
 /** What the page reads: the configuration, and whether it was ever saved here. */
 export interface EndpointSettingsAnswer extends EndpointConfig {
@@ -93,3 +96,36 @@ export function saveEndpoints(db: Db, config: EndpointConfig): EndpointSettingsA
   db.transaction((tx) => replaceEndpoints(tx, config));
   return endpointSettings(db);
 }
+
+/**
+ * Ask a saved endpoint one small question with its saved key, through the provider the server was
+ * started with — so under the fakes a test says so rather than pretending a request went out, and
+ * under `endpoints` it is the request a real run would make. What is tested is what is saved: an
+ * edit on the page is not the endpoint until it is.
+ */
+export async function testEndpoint(
+  db: Db,
+  providers: Providers,
+  kind: "tts" | "scripting",
+  id: string,
+  signal: AbortSignal,
+): Promise<ProbeResult> {
+  if (kind === "tts") {
+    const ep = readEndpoint(db, id);
+    if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
+    const probe = providers.speech.probe;
+    if (!probe) return untestable(providers.speech.name);
+    return probe.call(providers.speech, speechTarget(db, ep), signal);
+  }
+  const profile = readProfiles(db).find((p) => p.id === id);
+  if (!profile) throw notFound("There is no saved scripting profile by that id", `id: ${id}`);
+  const probe = providers.scripting.probe;
+  if (!probe) return untestable(providers.scripting.name);
+  return probe.call(providers.scripting, scriptTarget(db, profile), signal);
+}
+
+const untestable = (name: string): ProbeResult => ({
+  ok: false,
+  message: `${name} has no connection test`,
+  ms: 0,
+});

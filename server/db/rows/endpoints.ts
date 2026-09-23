@@ -180,6 +180,8 @@ export function toEndpoint(row: EndpointRow, parts: EndpointParts): Endpoint {
   const expressions = toExpressions(row, parts);
   if (expressions) e.expressions = expressions;
   if (row.sampleRate != null) e.sampleRate = row.sampleRate;
+  // whether there is a key, and never the key: `api_key` is write-only over HTTP
+  if (row.apiKey) e.hasKey = true;
   return e;
 }
 
@@ -213,6 +215,7 @@ export function toProfile(row: EndpointRow, parts: EndpointParts): Profile {
     maxOutputTokens: row.maxOutputTokens ?? 0,
     secPerChunk: row.secPerChunk ?? 0,
     needsKey: row.needsKey,
+    ...(row.apiKey ? { hasKey: true } : {}),
     ...ops(row),
   };
 }
@@ -229,6 +232,7 @@ const opsValues = (e: Partial<EndpointSettings>) => ({
 export function endpointValues(
   e: EndpointSettings,
   position: number,
+  apiKey: string | null = null,
 ): typeof endpoints.$inferInsert {
   return {
     id: e.id,
@@ -239,6 +243,7 @@ export function endpointValues(
     enabled: e.enabled,
     concurrency: e.concurrency,
     needsKey: e.needsKey,
+    apiKey,
     maxChars: e.maxChars,
     splitAt: e.splitAt,
     position,
@@ -262,7 +267,11 @@ export function endpointValues(
   };
 }
 
-export function profileValues(p: Profile, position: number): typeof endpoints.$inferInsert {
+export function profileValues(
+  p: Profile,
+  position: number,
+  apiKey: string | null = null,
+): typeof endpoints.$inferInsert {
   return {
     id: profileKey(p.id),
     kind: "scripting",
@@ -272,6 +281,7 @@ export function profileValues(p: Profile, position: number): typeof endpoints.$i
     enabled: p.enabled,
     concurrency: p.concurrency,
     needsKey: p.needsKey,
+    apiKey,
     maxChars: p.maxChars,
     splitAt: p.splitAt,
     position,

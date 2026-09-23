@@ -57,8 +57,11 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   one, `Esc` clears, and the readout under the chart is a live region that announces each one.
 - **Connection** — keeps three things apart that usually get confused: the saved model
   configuration, the provider connection (base URL + credential, shareable between configurations)
-  and the shared quota group. Named credentials can be used by several endpoints; the key itself
-  stays in the in-memory keyring and never reaches an export. Edits are staged and applied
+  and the shared quota group. Named credentials can be used by several endpoints; in the demo the
+  key itself stays in the in-memory keyring and never reaches an export. With a server, the key is
+  the server's: the field saves it there at once, shows "Key saved on the server" afterwards (it
+  cannot show the key, which never comes back), and Test asks the server to send one small request
+  with the saved settings — see [the providers](backend.md#the-providers-and-where-a-key-lives). Edits are staged and applied
   deliberately: changing base URL, model or credential while jobs are unfinished asks first and says
   that queued jobs keep the connection they were created with. The connection test states its scope
   and cost before you press it, and both that estimate and the figure the test reports afterwards go

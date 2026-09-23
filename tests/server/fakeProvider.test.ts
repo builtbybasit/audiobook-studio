@@ -39,6 +39,8 @@ describe("the provider", () => {
     const seen: [number, number][] = [];
     const first = await provider.script({
       title: "t",
+      target: null,
+      cast: [],
       text,
       signal: new AbortController().signal,
       progress: (d, t) => seen.push([d, t]),
@@ -50,6 +52,8 @@ describe("the provider", () => {
     ]);
     const second = await provider.script({
       title: "t",
+      target: null,
+      cast: [],
       text,
       signal: new AbortController().signal,
     });
@@ -61,6 +65,8 @@ describe("the provider", () => {
     const controller = new AbortController();
     const run = provider.script({
       title: "t",
+      target: null,
+      cast: [],
       text: "One.\n\nTwo.\n\nThree.",
       signal: controller.signal,
       progress: () => controller.abort(new DOMException("stop", "AbortError")),
@@ -74,8 +80,10 @@ const line = (text: string, speaker = "Mara", extra: Partial<SpeechInput> = {}):
   speaker,
   type: "dialogue",
   direction: "",
+  instructions: "",
   voiceRef: null,
   sampleRate: null,
+  target: null,
   signal: new AbortController().signal,
   ...extra,
 });

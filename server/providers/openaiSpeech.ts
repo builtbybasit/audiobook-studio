@@ -1,0 +1,100 @@
+// A line spoken through OpenAI's `/audio/speech` shape — OpenAI itself, or any server that copies
+// it (Kokoro-FastAPI, an Orpheus or Piper bridge).
+//
+// The request is the one OpenAI documents (https://platform.openai.com/docs/api-reference/audio/createSpeech):
+// `model`, `input`, `voice` and `response_format: "wav"`, since the job, the join and the export
+// read PCM. The line's `direction` goes as `instructions` when there is one — OpenAI documents it
+// for its newer models and says it "does not work with tts-1 or tts-1-hd", so it is left off for
+// those two; a compatible server that does not know the field ignores it, as the servers this app
+// names do with fields they do not model.
+//
+// There is no sample-rate field in that API: OpenAI answers at 24 kHz and a local server at its
+// model's own rate. An endpoint that names a rate therefore fails before any request, saying to
+// clear it. Sending the line anyway would not be honest either way — a clip at another rate than
+// the endpoint names is drift to the job, so every run would render the line again and spend again.
+import { call, jsonHeaders, ProviderError } from "~/providers/http";
+import type { SpeechCallOptions } from "~/providers/fishSpeech";
+import type { RenderedClip, SpeechInput } from "~/providers/speech";
+import type { ProbeResult, ProviderTarget } from "~/providers/target";
+import { wavAnswer } from "~/providers/wav";
+
+/** The models OpenAI says take no `instructions`. */
+const NO_INSTRUCTIONS = /^tts-1(-hd)?$/;
+
+export async function openaiSpeak(
+  input: SpeechInput,
+  target: ProviderTarget,
+  voice: string,
+  options: SpeechCallOptions,
+): Promise<RenderedClip> {
+  const { signal } = input;
+  if (input.sampleRate != null)
+    throw new ProviderError(
+      `${target.name} cannot be asked for a sample rate — the /audio/speech API answers at the ` +
+        `model's own — so ${input.sampleRate} Hz cannot be honoured. Clear the sample rate on the ` +
+        `Endpoints page.`,
+      0,
+      false,
+    );
+  const instructions = input.instructions.trim();
+  const started = Date.now();
+  const res = await call(
+    target,
+    `${target.baseUrl}/audio/speech`,
+    {
+      method: "POST",
+      headers: jsonHeaders(target),
+      body: JSON.stringify({
+        model: target.model,
+        input: input.text,
+        voice,
+        response_format: "wav",
+        ...(instructions && !NO_INSTRUCTIONS.test(target.model) ? { instructions } : {}),
+      }),
+    },
+    { signal, ...options },
+  );
+  const wav = await wavAnswer(target, res, signal);
+  return {
+    bytes: wav.bytes,
+    mime: "audio/wav",
+    duration: wav.duration,
+    ms: Date.now() - started,
+    model: target.model,
+    voice,
+  };
+}
+
+/**
+ * The Test button for an OpenAI-shaped server: its model list, which proves the address and the
+ * key without rendering (and paying for) a word, and says so when the configured model is not on it.
+ */
+export async function openaiProbe(
+  target: ProviderTarget,
+  signal: AbortSignal,
+  options: SpeechCallOptions,
+): Promise<ProbeResult> {
+  const started = Date.now();
+  const res = await call(
+    target,
+    `${target.baseUrl}/models`,
+    { method: "GET", headers: jsonHeaders(target) },
+    { signal, ...options },
+  );
+  const ms = Date.now() - started;
+  const body = (await res.json().catch(() => null)) as { data?: { id?: unknown }[] } | null;
+  const ids = Array.isArray(body?.data)
+    ? body.data.map((m) => m?.id).filter((id): id is string => typeof id === "string")
+    : [];
+  if (ids.length && !ids.includes(target.model))
+    return {
+      ok: false,
+      message: `Answered in ${ms} ms, but “${target.model}” is not among the ${ids.length} models it lists`,
+      ms,
+    };
+  return {
+    ok: true,
+    message: `Answered in ${ms} ms` + (ids.length ? ` and lists “${target.model}”` : ""),
+    ms,
+  };
+}

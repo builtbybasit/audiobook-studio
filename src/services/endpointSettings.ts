@@ -11,7 +11,8 @@
 // has to check the three lists against each other anyway (a credential an endpoint names must be
 // in the same body), which a partial write could not let it do.
 import type { Credential } from "@/lib/credentials";
-import type { Endpoint, Profile } from "@/types";
+import { keyring } from "@/lib/keyring";
+import type { Endpoint, EndpointKind, Profile } from "@/types";
 import { HttpClient, type FetchLike } from "@/services/http";
 import { isBackend } from "@/services/mode";
 
@@ -50,10 +51,27 @@ export interface EndpointSettings extends EndpointConfig {
   saved: boolean;
 }
 
+/** What the server found when it sent one small real request to a saved endpoint. `ok: false` is
+ *  an answer — a refused key, a wrong model — not a failed request. */
+export interface EndpointProbe {
+  ok: boolean;
+  /** one sentence to show as it is */
+  message: string;
+  /** how long the request took; 0 when none was made */
+  ms: number;
+}
+
 export interface EndpointSettingsService {
   getSettings(): Promise<EndpointSettings>;
-  /** Replace the whole configuration. Refused whole when any part of it does not hold together. */
+  /**
+   * Replace the whole configuration. Refused whole when any part of it does not hold together.
+   *
+   * An entry's `apiKey` is the one write-only field: left out, the server keeps the key it holds;
+   * `""` forgets it. The store puts it on exactly one entry, and only when a key was typed.
+   */
   putSettings(body: EndpointConfig): Promise<EndpointSettings>;
+  /** Test the *saved* endpoint, with the key the server holds for it. */
+  testEndpoint(kind: EndpointKind, id: string): Promise<EndpointProbe>;
 }
 
 export class HttpEndpointSettingsService implements EndpointSettingsService {
@@ -69,6 +87,10 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
   putSettings(body: EndpointConfig): Promise<EndpointSettings> {
     return this.http.put<EndpointSettings>("/endpoints", body);
   }
+
+  testEndpoint(kind: EndpointKind, id: string): Promise<EndpointProbe> {
+    return this.http.post<EndpointProbe>("/endpoints/test", { kind, id });
+  }
 }
 
 let service: EndpointSettingsService | null = null;
@@ -82,4 +104,16 @@ export function activeEndpointSettingsService(): EndpointSettingsService | null 
 /** For tests and for wiring at startup. Set it before the endpoints store loads. */
 export function setEndpointSettingsService(next: EndpointSettingsService | null): void {
   service = next;
+}
+
+/**
+ * Whether the key an endpoint or profile needs is in place, for every "no key" warning and gate.
+ *
+ * With a server answering, the key is the server's and the browser only ever learns that one is
+ * held (`hasKey`); the keyring is the demo's, and whatever it holds is sent nowhere. Asking the
+ * keyring there would clear a warning for a key the server has never seen. `slot` is the keyring
+ * slot — the endpoint's id, or `profile:<id>`.
+ */
+export function keyInPlace(entry: { hasKey?: boolean } | null | undefined, slot: string): boolean {
+  return activeEndpointSettingsService() ? !!entry?.hasKey : keyring.has(slot);
 }

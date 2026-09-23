@@ -2,8 +2,8 @@
 //
 // A missing or malformed setting stops the process here with a message naming the variable, rather
 // than surfacing as a confusing failure three layers into a request. Nothing in this file has a
-// provider credential in it: the first backend slice reads EPUBs and stores books, and makes no
-// paid requests at all.
+// provider credential in it: a real provider's base URL, model and key are the Endpoints page's,
+// kept in the database. The `.env` variables the live tests read are theirs alone.
 import * as v from "valibot";
 
 const Env = v.object({
@@ -68,19 +68,19 @@ const Env = v.object({
     v.minValue(1),
   ),
   /**
-   * Which scripting model the queue sends chapters to.
+   * Whether scripting calls a real model.
    *
-   * Only `fake` exists: it reads the prose and never the network, so nothing this server does can
-   * spend money. A real provider is a value here, an implementation under `server/providers/`,
-   * and a key read from this environment by that implementation — never from the browser.
+   * `fake` is the default: it reads the prose and never the network, so a fresh clone and the
+   * tests cannot spend money whatever the Endpoints page holds. `endpoints` sends each chapter to
+   * the scripting profile its run was queued with — its base URL, its model and the key kept for
+   * it on the server. Nothing about a provider is configured here: that is the Endpoints page's.
    */
-  SCRIPTING_PROVIDER: v.optional(v.picklist(["fake"]), "fake"),
+  SCRIPTING_PROVIDER: v.optional(v.picklist(["fake", "endpoints"]), "fake"),
   /**
-   * Which speech model the queue sends lines to. The same arrangement as scripting: only `fake`
-   * exists, it renders a tone and never reaches the network, and a real provider is a value here
-   * and an implementation under `server/providers/` that reads its own key from this environment.
+   * Whether narration calls a real model. The same arrangement: `fake` renders a tone and never
+   * reaches the network; `endpoints` sends each line to the endpoint its speaker's voice belongs to.
    */
-  SPEECH_PROVIDER: v.optional(v.picklist(["fake"]), "fake"),
+  SPEECH_PROVIDER: v.optional(v.picklist(["fake", "endpoints"]), "fake"),
   /**
    * Where rendered clips are kept: one directory per book under this one, and a file per render.
    * A clip's url points here and nowhere else, so moving the directory means moving the files

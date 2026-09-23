@@ -15,6 +15,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { HttpLibraryService, setLibraryService } from "@/services/library";
+import { useCastStore } from "@/stores/cast";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
@@ -308,5 +309,133 @@ describe("chapter prose with a server answering", () => {
     const first = pinia.run(() => useChapterText(id, 1));
     await flush();
     expect(first.text.value).toBe(third.text.value);
+  });
+});
+
+describe("a book's settings with a server answering", () => {
+  /** A reload: a fresh store reading the shelf and the book from the server. */
+  const reload = async (id: string) => {
+    pinia = testPinia();
+    libraryStore = useLibraryStore();
+    const uiStore = useUiStore();
+    uiStore.toast = (msg, opts = {}) => {
+      toasts.push({ msg, undo: opts.undo ?? null });
+      return "";
+    };
+    await libraryStore.load();
+    await libraryStore.loadBook(id);
+  };
+
+  /** A shelved book of two volumes: "One", "Two", then "Three", "Four", "Five". */
+  const twoVolumes = async () => {
+    const id = (await libraryStore.importBook({ source: await volume(["One", "Two"]) }))!;
+    await libraryStore.confirmImport(id);
+    await libraryStore.importVolume(id, {
+      source: await volume(["Three", "Four", "Five"]),
+      name: "Vol. 2",
+    });
+    await libraryStore.confirmImport(id);
+    return id;
+  };
+
+  /** What a renumbering has to agree on: which chapter has which number, in which volume. */
+  const numbering = (id: string) => ({
+    chapters: libraryStore
+      .chaptersOf(id)
+      .map((c) => ({ id: c.id, title: c.title, volumeId: c.volumeId, at: c.volumeIndex })),
+    volumes: libraryStore
+      .volumesOf(id)
+      .map((v) => ({ id: v.id, name: v.name, from: v.from, to: v.to })),
+  });
+
+  test("a budget cap and a pause survive a reload", async () => {
+    const id = (await libraryStore.importBook({ source: await volume(["One"]) }))!;
+    await libraryStore.confirmImport(id);
+    await libraryStore.setBudgetCap(id, 12);
+    await libraryStore.pauseBook(id);
+    expect(libraryStore.bookById(id)?.budget).toEqual({ cap: 12, paused: true });
+
+    await reload(id);
+    expect(libraryStore.bookById(id)?.budget).toEqual({ cap: 12, paused: true });
+    await libraryStore.resumeBook(id);
+    await reload(id);
+    expect(libraryStore.bookById(id)?.budget).toEqual({ cap: 12, paused: false });
+  });
+
+  test("a script budget set through the store survives a reload", async () => {
+    const id = (await libraryStore.importBook({ source: await volume(["One"]) }))!;
+    await libraryStore.confirmImport(id);
+    await libraryStore.setScriptBudget(id, 4.5);
+    await reload(id);
+    expect(libraryStore.bookById(id)?.scriptBudget).toBe(4.5);
+    await libraryStore.setScriptBudget(id, null);
+    await reload(id);
+    expect(libraryStore.bookById(id)?.scriptBudget ?? null).toBeNull();
+  });
+
+  test("a pacing change survives a reload, and leaves an unnarrated chapter's length alone", async () => {
+    const id = (await libraryStore.importBook({ source: await volume(["One", "Two"]) }))!;
+    await libraryStore.confirmImport(id);
+    const castStore = useCastStore();
+    const before = libraryStore.chaptersOf(id).map((c) => c.duration);
+    await castStore.setPacing(id, { line: 1.5 });
+    expect(libraryStore.bookById(id)?.pacing?.line).toBe(1.5);
+    // no script has been read here, so nothing may be re-timed to a length of pure silence
+    expect(libraryStore.chaptersOf(id).map((c) => c.duration)).toEqual(before);
+
+    await reload(id);
+    expect(libraryStore.bookById(id)?.pacing?.line).toBe(1.5);
+    expect(libraryStore.chaptersOf(id).map((c) => c.duration)).toEqual(before);
+
+    await useCastStore().resetPacing(id);
+    await reload(id);
+    expect(libraryStore.bookById(id)?.pacing).toBeUndefined();
+  });
+
+  test("a renamed volume keeps its name after a reload", async () => {
+    const id = await twoVolumes();
+    await libraryStore.renameVolume(id, 2, "  The Second Book ");
+    expect(libraryStore.volumesOf(id)[1].name).toBe("The Second Book");
+    await reload(id);
+    expect(libraryStore.volumesOf(id)[1].name).toBe("The Second Book");
+  });
+
+  test("moving a volume renumbers the chapters here exactly as the server does", async () => {
+    const id = await twoVolumes();
+    // what the local renumbering produced, before the server's answer is installed over it
+    let local: ReturnType<typeof numbering> | null = null;
+    libraryStore.$onAction(({ name, after }) => {
+      if (name === "_renumber") after(() => (local = numbering(id)));
+    });
+
+    expect(await libraryStore.moveVolume(id, 2, 0)).toBe(true);
+    expect(local).not.toBeNull();
+    const moved = numbering(id);
+    expect(moved.chapters.map((c) => c.title)).toEqual(["Three", "Four", "Five", "One", "Two"]);
+    expect(moved.chapters.map((c) => c.id)).toEqual([1, 2, 3, 4, 5]);
+    expect(moved.volumes.map((v) => [v.id, v.from, v.to])).toEqual([
+      [2, 1, 3],
+      [1, 4, 5],
+    ]);
+    expect(local!).toEqual(moved);
+
+    // a job moving reads the book again; that must not put the old order back
+    await libraryStore.loadBook(id);
+    expect(numbering(id)).toEqual(moved);
+    await reload(id);
+    expect(numbering(id)).toEqual(moved);
+  });
+
+  test("a move the server refuses moves nothing and says why", async () => {
+    const id = await twoVolumes();
+    // a third volume still in its review: the server will not renumber around it
+    await libraryStore.importVolume(id, { source: await volume(["Six"]), name: "Vol. 3" });
+    const before = numbering(id);
+    const n = toasts.length;
+    expect(await libraryStore.moveVolume(id, 2, 0)).toBe(false);
+    expect(numbering(id)).toEqual(before);
+    expect(toasts.length).toBe(n + 1);
+    await reload(id);
+    expect(numbering(id)).toEqual(before);
   });
 });

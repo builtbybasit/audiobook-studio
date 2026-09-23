@@ -511,21 +511,53 @@ export const useCastStore = defineStore("cast", {
       this._retime(bookId, chId);
       scriptsStore._commit(bookId, chId);
     },
-    setPacing(bookId: string, patch: Partial<Pacing>): void {
+    setPacing(bookId: string, patch: Partial<Pacing>): Promise<void> {
       const libraryStore = useLibraryStore();
 
       const b = libraryStore.bookById(bookId);
-      if (!b) return;
+      if (!b) return Promise.resolve();
       b.pacing = { ...this.pacingOf(bookId), ...patch };
-      for (const c of libraryStore.chaptersOf(bookId)) this._retime(bookId, c.id);
+      return this._pacingChanged(bookId, b.pacing);
     },
-    resetPacing(bookId: string): void {
+    resetPacing(bookId: string): Promise<void> {
       const libraryStore = useLibraryStore();
 
       const b = libraryStore.bookById(bookId);
-      if (!b?.pacing) return;
+      if (!b?.pacing) return Promise.resolve();
       delete b.pacing;
-      for (const c of libraryStore.chaptersOf(bookId)) this._retime(bookId, c.id);
+      return this._pacingChanged(bookId, null);
+    },
+    /**
+     * The book's pacing changed here; re-time its chapters to match.
+     *
+     * Demo mode holds every chapter's script, so every chapter is re-timed here. With a server
+     * answering, a chapter's clips are only here once its script has been read, and re-timing one
+     * that has not been would give it a length of nothing but silence — so only those are re-timed
+     * here, for a length that moves as the slider does, and the pacing is written to the server,
+     * which re-times every narrated chapter from its clips. The lengths it answers with are the ones
+     * the store keeps.
+     */
+    async _pacingChanged(bookId: string, pacing: Pacing | null): Promise<void> {
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+
+      const svc = this._service();
+      for (const c of libraryStore.chaptersOf(bookId))
+        if (!svc || key(bookId, c.id) in scriptsStore.segments) this._retime(bookId, c.id);
+      if (!svc) return;
+      const answer = await libraryStore._writeSettings(
+        bookId,
+        { pacing },
+        pacing ? "save the pacing" : "reset the pacing",
+      );
+      if (!answer) return;
+      const held = libraryStore.chapters[bookId];
+      if (!held) return;
+      const timed = new Map(answer.chapters.map((c) => [c.id, c.duration]));
+      for (const c of held) {
+        const d = timed.get(c.id);
+        if (d !== undefined) c.duration = d;
+      }
     },
     /** Lines in this book that carry a pause of their own. */
     pauseOverrides(bookId: string): {

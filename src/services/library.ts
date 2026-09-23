@@ -15,6 +15,7 @@ import type {
   Character,
   ExportItem,
   LexEntry,
+  Pacing,
   ScriptVersion,
   Segment,
   VersionOrigin,
@@ -27,6 +28,16 @@ export { ApiError, type FetchLike } from "@/services/http";
 export interface ImportedBook {
   book: Book;
   chapters: Chapter[];
+}
+
+/**
+ * A book's settings, any of them. A key left out is left alone; `null` clears it — for `pacing`,
+ * back to the built-in gaps.
+ */
+export interface BookSettings {
+  budget?: { cap: number | null; paused: boolean } | null;
+  scriptBudget?: number | null;
+  pacing?: Pacing | null;
 }
 
 /** The two forms a chapter's prose comes in. See `LibraryService.chapterText`. */
@@ -136,6 +147,19 @@ export interface LibraryService {
   setDecisions(bookId: string, decisions: ReviewDecision[]): Promise<Chapter[]>;
   removeBook(bookId: string): Promise<void>;
   removeVolume(bookId: string, volumeId: number): Promise<"book" | "volume">;
+  /**
+   * Change a book's budget, script budget or pacing. Changing the pacing re-times every narrated
+   * chapter on the server, so the chapters come back with the book.
+   */
+  updateBook(bookId: string, settings: BookSettings): Promise<ImportedBook>;
+  /** Give a volume a new name. */
+  renameVolume(bookId: string, volumeId: number, name: string): Promise<Book>;
+  /**
+   * Read the volumes in this order — every volume of the book, once each. The chapters are
+   * renumbered to follow, and the server moves everything filed under a chapter number with them.
+   * Refused while an audiobook of the book is being built or a volume is still in its review.
+   */
+  reorderVolumes(bookId: string, order: number[]): Promise<ImportedBook>;
 
   // ---------- a chapter's script, edited by a person ----------
   /**
@@ -265,6 +289,20 @@ export class HttpLibraryService implements LibraryService {
         `/books/${seg(bookId)}/volumes/${volumeId}`,
       )
     ).removed;
+  }
+
+  updateBook(bookId: string, settings: BookSettings): Promise<ImportedBook> {
+    return this.http.patch<ImportedBook>(`/books/${seg(bookId)}`, settings);
+  }
+
+  async renameVolume(bookId: string, volumeId: number, name: string): Promise<Book> {
+    return (
+      await this.http.patch<{ book: Book }>(`/books/${seg(bookId)}/volumes/${volumeId}`, { name })
+    ).book;
+  }
+
+  reorderVolumes(bookId: string, order: number[]): Promise<ImportedBook> {
+    return this.http.put<ImportedBook>(`/books/${seg(bookId)}/volumes/order`, { order });
   }
 
   editScript(bookId: string, chapterId: number, edit: ScriptEdit): Promise<EditedScript> {

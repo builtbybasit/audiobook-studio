@@ -4,6 +4,7 @@
 // stands on its own; the building half drives the real runner and the real encoder and checks the
 // file that comes out.
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 
 import type { Book, Chapter, ExportItem, ExportSettings, Job } from "@/types";
@@ -586,6 +587,44 @@ describe("building an audiobook", () => {
 
     await api.request(`/api/books/${id}`, { method: "DELETE" });
     expect(await untilGone(path)).toBe(true);
+  });
+
+  test("removing a book mid-build stops the build, and leaves no directory behind", async () => {
+    // Held after the first of two files is written, where a build that carried on would reserve
+    // the second and `mkdir` the book's directory back. It is cancelled and settled before the
+    // rows and the directory go, so its `onSettled` clears what it wrote while it still can.
+    const inner = wavEncoder();
+    let written!: () => void;
+    const between = new Promise<void>((r) => (written = r));
+    let release!: () => void;
+    const released = new Promise<void>((r) => (release = r));
+    let calls = 0;
+    const encoder: AudiobookEncoder = {
+      ...inner,
+      async encode(input) {
+        const result = await inner.encode(input);
+        if (calls++ === 0) {
+          written();
+          await new Promise<void>((resolve, reject) => {
+            const abort = () => reject(input.signal.reason);
+            if (input.signal.aborted) return abort();
+            input.signal.addEventListener("abort", abort, { once: true });
+            void released.then(resolve);
+          });
+        }
+        return result;
+      },
+    };
+    const { api, id } = await narrated(testApi({ encoder }));
+    await build(api, id, { ids: [1, 2], settings: settingsFor({ grouping: "chapter" }) });
+    await between;
+
+    const removed = await api.request(`/api/books/${id}`, { method: "DELETE" });
+    expect(removed.status).toBe(200);
+    release();
+    await api.runner.idle();
+    expect(await untilGone(join(api.exportDir, id))).toBe(true);
+    expect(existsSync(join(api.exportDir, id))).toBe(false);
   });
 
   test("forgetting an audiobook takes its files with it", async () => {

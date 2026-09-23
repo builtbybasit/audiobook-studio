@@ -246,19 +246,31 @@ export function setDecisions(
 /**
  * Remove a book and everything it owns.
  *
+ * Its work goes first. A narration or a build still running writes into the book's directories as
+ * it goes — `mkdir` and all — so removing them under it only has the job put them back, holding
+ * files no book owns. Every live job of the book is cancelled, and the one running is waited for:
+ * a handler honours a cancel at its next step, and its `onSettled` clears up what it had half
+ * written while the rows it needs are still there.
+ *
  * Its files on disk go after the rows have — the clips it was narrated from and the audiobooks it
  * was built into, which are kept in two places and both belong to the book. A directory that
  * outlives its book is a leak, and a book whose rows outlive its files is a chapter that plays
  * nothing, so the order is the one that can only ever leave the first. The removal is not waited
  * for, because nothing that follows depends on it and a slow disk must not hold the response.
  */
-export function removeBook(
+export async function removeBook(
   db: Db,
   bookId: string,
-  files?: AudioFiles,
-  built?: AudiobookFiles,
-): void {
+  { runner, files, built }: VolumePorts = {},
+): Promise<void> {
   requireBook(db, bookId);
+  if (runner) {
+    const live = queue
+      .listJobs(db, { bookId })
+      .filter((job) => job.status === "queued" || job.status === "running");
+    for (const job of live) runner.cancel(job.id);
+    for (const job of live) await runner.finished(job.id);
+  }
   library.deleteBook(db, bookId);
   inBackground(files?.removeBook(bookId), "could not remove a book's clips", { book: bookId });
   inBackground(built?.removeBook(bookId), "could not remove a book's audiobooks", { book: bookId });
@@ -289,12 +301,12 @@ export interface VolumePorts {
  * reads its chapters' clips and records where each landed by chapter number, and both are what a
  * removal changes under it.
  */
-export function removeVolume(
+export async function removeVolume(
   db: Db,
   bookId: string,
   volumeId: number,
   { runner, files, built }: VolumePorts = {},
-): Removed {
+): Promise<Removed> {
   const book = requireBook(db, bookId);
   if (!book.volumes.some((x) => x.id === volumeId)) throw notFound("No such volume");
   if (queue.activeJob(db, "export", bookId, null))
@@ -303,7 +315,7 @@ export function removeVolume(
       "Let the build finish, or cancel it from the Queue, before removing a volume.",
     );
   if (book.volumes.length <= 1) {
-    removeBook(db, bookId, files, built);
+    await removeBook(db, bookId, { runner, files, built });
     return { removed: "book" };
   }
 

@@ -42,7 +42,7 @@ describe("removing a volume with work queued on the book", () => {
     // Queued straight into the table, with no worker to pick it up, so it waits as asked.
     const { job } = queue.enqueueJob(api.db, narrate(id, 5));
 
-    ops.removeVolume(api.db, id, 1);
+    await ops.removeVolume(api.db, id, 1);
 
     const moved = queue.getJob(api.db, job.id)!;
     expect(moved.chapterId).toBe(2);
@@ -64,7 +64,7 @@ describe("removing a volume with work queued on the book", () => {
     const b = queue.enqueueJob(api.db, narrate(id, 10)).job;
     const a = queue.enqueueJob(api.db, narrate(id, 7)).job;
 
-    ops.removeVolume(api.db, id, 1);
+    await ops.removeVolume(api.db, id, 1);
 
     expect(queue.activeJob(api.db, "narration", id, 4)?.id).toBe(a.id);
     expect(queue.activeJob(api.db, "narration", id, 7)?.id).toBe(b.id);
@@ -79,7 +79,7 @@ describe("removing a volume with work queued on the book", () => {
       cancel: (job: number) => (cancelled.push(job), "queued"),
     } as unknown as Runner;
 
-    ops.removeVolume(api.db, id, 1, { runner });
+    await ops.removeVolume(api.db, id, 1, { runner });
 
     expect(cancelled).toEqual([going.id]);
     expect(queue.getJob(api.db, staying.id)?.status).toBe("queued");
@@ -89,13 +89,7 @@ describe("removing a volume with work queued on the book", () => {
     const { api, id } = await twoVolumes();
     queue.enqueueJob(api.db, { kind: "export", bookId: id, chapterId: null, label: "Build" });
 
-    const e = (() => {
-      try {
-        ops.removeVolume(api.db, id, 1);
-      } catch (err) {
-        return err;
-      }
-    })();
+    const e = await ops.removeVolume(api.db, id, 1).catch((err: unknown) => err);
     expect(e).toBeInstanceOf(AppError);
     expect((e as AppError).status).toBe(409);
     // and nothing moved

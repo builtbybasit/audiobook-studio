@@ -851,6 +851,22 @@ describe("the files", () => {
     expect(res.body.error.code).toBe("not_found");
   });
 
+  test("go with a book removed mid-narration, and the job does not bring them back", async () => {
+    const gate = gatedSpeechProvider();
+    const { api, id } = await scripted(testApi({ speech: gate.provider }));
+    const { body } = await narrate(api, id, [1]);
+    await gate.started;
+
+    const removed = await api.request(`/api/books/${id}`, { method: "DELETE" });
+    expect(removed.status).toBe(200);
+    // the line it was reading comes back after the removal, as a slow model's would
+    gate.release();
+    await api.runner.idle();
+    expect(await untilGone(join(api.audioDir, id))).toBe(true);
+    expect(existsSync(join(api.audioDir, id))).toBe(false);
+    expect(queue.getJob(api.db, body.jobs[0].id)).toBeUndefined();
+  });
+
   test("a path that is not a book and a token is never read", async () => {
     const { api, id } = await scripted();
     expect(api.files.path("../etc", "passwd.wav")).toBeNull();

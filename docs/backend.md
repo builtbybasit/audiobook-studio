@@ -11,7 +11,8 @@ queries. The fourth is narration: rendering a chapter is a job the server runs a
 speech model, the clips are files the server keeps and serves, the player hears them, and a
 retake is judged and kept or discarded. The fifth is export: building an audiobook is a job too,
 and what it writes is a file on disk that can be downloaded and played.** The endpoints are
-saved on the server too, and narration reads its expression tags and its sample rate from them;
+saved on the server too, and narration reads its expression tags, its sample rate and its
+per-request limit from them;
 pricing is still the seeded demo's and is untouched by all of it.
 
 Nothing in the server contacts a provider or spends money. The only scripting model it can be
@@ -843,6 +844,19 @@ saved under it is checked the way a dictionary change is: it lands `stale` if th
 send other words, other tags or ask another rate. A voice naming an endpoint the server does not
 have is sent as before, at the model's rate, and a line carrying tags through it is held back.
 
+**A line longer than its endpoint takes goes out in parts.** The plan is cut by
+`expressionParts` — the demo's call, `splitText` over the words as sent, at the endpoint's
+`splitAt` and falling down to a clause, a word, a hard cut when the boundary it prefers is not
+inside the limit — with every tag protected, so a laugh is never sent as half a token. Each part
+is its own request, in order, and the audio comes back as one file: the WAVs joined end to end
+with nothing between them, because the cuts fall where the reading already pauses and each
+part's audio brings its own breath. Parts that disagree on rate, width or channels fail the line
+rather than play at the wrong pitch. The clip records it as the demo does — `parts` and `splitAt`
+on every clip sent through an endpoint, `cuts` (offsets into what was said) when there was more
+than one — so the render details show where the line was cut and the Queue's badge counts the
+requests. A part that fails fails the line with `error.part`, and the parts before it are thrown
+away rather than kept as half a line. Its duration is the parts' together.
+
 **The endpoints are saved whole.** `PUT /api/endpoints` takes what the Endpoints page holds — speech
 endpoints, scripting profiles and the credential registry, with each endpoint's voices, rate
 schedule, promotions and expression tags — and keeps exactly that in place of what was stored, in
@@ -1160,7 +1174,7 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [contentsReview.test.ts](../tests/server/contentsReview.test.ts) | Import → review → add, volumes, removal, renumbering                                                        |
 | [volumes.test.ts](../tests/server/volumes.test.ts)               | Removing a volume: rekeyed jobs, cancelled work, files, refusals mid-build                                  |
 | [bookSettings.test.ts](../tests/server/bookSettings.test.ts)     | Budget, pacing and re-timing, a volume's name, and a reorder and its refusals                               |
-| [endpoints.test.ts](../tests/server/endpoints.test.ts)           | Saved and refused whole; tags and sample rate on a line; one rate a file                                    |
+| [endpoints.test.ts](../tests/server/endpoints.test.ts)           | Saved and refused whole; tags and sample rate on a line; one rate a file; a long line sent in parts         |
 | [covers.test.ts](../tests/server/covers.test.ts)                 | The EPUB's cover kept, an upload and its refusals, a cover in an M4B and an MP3, the book's details as tags |
 | [markdown.test.ts](../tests/server/markdown.test.ts)             | The converter's DOM bracket, and reading Markdown back                                                      |
 | [jobs.test.ts](../tests/server/jobs.test.ts)                     | The queue: dedupe, cancel, restart, revision conflicts, HTTP                                                |
@@ -1221,9 +1235,13 @@ each because a route or a table's writer is missing rather than by oversight:
 
 - **An endpoint saved is not an endpoint called.** The server keeps the configuration and reads
   the tags and the rate from it, and the fake renders every line whatever the base URL, model and
-  key say; a line longer than the endpoint's `maxChars` is not split either. A chapter's duration
+  key say. A chapter's duration
   is its clips plus the book's pacing, which a pacing change re-times on the server for every
   chapter that has been narrated.
+- **A chapter goes to the scripting model whole.** The scripting profile's `maxChars` and `splitAt`
+  are saved with it, and the demo cuts a chapter into chunks by them, but the server's scripting
+  job sends the chapter in one request; cutting it means stitching the model's answers for each
+  chunk back into one script, which the fake has never needed.
 - **An update under ffmpeg re-encodes everything.** Carrying a chapter over is real under the
   stitcher and refused under ffmpeg, for the reason [the encoder](#the-encoder-and-what-it-will-not-pretend)
   gives. Making it real there means keeping an encoded file per chapter and joining those with

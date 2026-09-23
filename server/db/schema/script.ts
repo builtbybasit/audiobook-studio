@@ -153,6 +153,8 @@ export const clips = sqliteTable(
     pronounced: text("pronounced"),
     expressionSignature: text("expression_signature"),
     expressions: text("expressions", { mode: "json" }).$type<string[]>(),
+    /** the rate the file came back at, in Hz, read from the file rather than the request */
+    sampleRate: integer("sample_rate"),
 
     // ---- splitting, when the line exceeded the endpoint's per-request cap ----
     parts: integer("parts"),

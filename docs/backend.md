@@ -10,8 +10,9 @@ book's cast are written by the run that made them, and the frontend reads all of
 queries. The fourth is narration: rendering a chapter is a job the server runs against a fake
 speech model, the clips are files the server keeps and serves, the player hears them, and a
 retake is judged and kept or discarded. The fifth is export: building an audiobook is a job too,
-and what it writes is a file on disk that can be downloaded and played.** Endpoints and pricing
-are still the seeded demo and are untouched by all five.
+and what it writes is a file on disk that can be downloaded and played.** The endpoints are
+saved on the server too, and narration reads its expression tags and its sample rate from them;
+pricing is still the seeded demo's and is untouched by all of it.
 
 Nothing in the server contacts a provider or spends money. The only scripting model it can be
 started with is the fake one ([the queue](#the-queue) says what it does), there are no credentials
@@ -604,6 +605,8 @@ service are both built on it, so that rule is written once.
 | `POST`   | `/api/books/:id/chapters/script`                 | Queue a scripting job per chapter, as one run (202)           |
 | `POST`   | `/api/books/:id/chapters/narrate`                | Queue a narration job per chapter, at a scope (202)           |
 | `GET`    | `/api/audio/:bookId/:file`                       | A rendered clip's audio                                       |
+| `GET`    | `/api/endpoints`                                 | Speech endpoints, scripting profiles, credentials; `saved`    |
+| `PUT`    | `/api/endpoints`                                 | The whole configuration, in place of what is stored           |
 | `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                          |
 | `DELETE` | `/api/books/:id/volumes/:volumeId`               | Remove a volume; the last one removes the book; 409 mid-build |
 | `PATCH`  | `/api/books/:id`                                 | The budget, script budget or pacing; chapters are re-timed    |
@@ -804,6 +807,37 @@ lands `stale` if its words are no longer the book's. An Undo sends the old list 
 the change reported (`restore`), and those whose clip matches again go back to `done` — only
 those, because a clip stale by a rename would also match and is not the dictionary's to clear.
 
+**A line carries its tags, at its endpoint's rate.** The speaker's voice names an endpoint —
+`<endpointId>/<voiceId>` — and the handler reads that endpoint from the stored configuration as
+each line goes out, then hands it to `expressionPlan` in
+[src/lib/expressions.ts](../src/lib/expressions.ts), the demo simulator's function: the words after
+the dictionary, with each tag placed on the line written in as that endpoint spells it. The clip
+records the plan — `expressionSignature` and the tags sent, beside `pronounced` — so the
+browser's drift rule compares like with like. A line whose tags the endpoint cannot say (support
+unconfirmed or switched off, a tag it does not list, one inside a respelled word) is failed before
+any request, with the reason, as the demo blocks it; the other lines are sent. The endpoint's
+`sampleRate` (16–48 kHz, speech endpoints only; none means the model's own) goes with the request,
+and the clip records the rate the file came back at, read from the file, so a provider that ignored
+the request cannot make the record lie. A clip that lands after the dictionary or the endpoint was
+saved under it is checked the way a dictionary change is: it lands `stale` if the book would now
+send other words, other tags or ask another rate. A voice naming an endpoint the server does not
+have is sent as before, at the model's rate, and a line carrying tags through it is held back.
+
+**The endpoints are saved whole.** `PUT /api/endpoints` takes what the Endpoints page holds — speech
+endpoints, scripting profiles and the credential registry, with each endpoint's voices, rate
+schedule, promotions and expression tags — and keeps exactly that in place of what was stored, in
+one transaction ([server/endpoints/ops.ts](../server/endpoints/ops.ts)). What an endpoint observed
+(its latency history, failures, a backoff) is the session's and is dropped on the way in, and reads
+back empty. It is refused whole when two endpoints of one kind share an id, one endpoint has two
+voices, tags, windows or promotions under one id, or an endpoint names a credential that is not in
+the list. A speech endpoint and a scripting profile may share an id — the seeded `openai` is both —
+so a profile's row is kept under `scripting:<id>`; a speech endpoint keeps its bare id, because a
+voice names it. `GET` answers `saved: false` until the first save, which an empty table could not
+say — a server whose every endpoint was removed has none either — and is the browser's cue to hand
+over the configuration it started with. Nothing already rendered is touched by a save: a clip
+records what it was rendered with, and the drift rule finds what a tag redefined or a rate changed
+reaches.
+
 **Nothing usable is thrown away to make room.** A line that already has a playable clip renders
 its replacement beside it, in the `candidate` role, and the clip in the book keeps playing until
 the replacement lands, when it takes over and the displaced clip joins the take list. That is the
@@ -937,7 +971,12 @@ suite all build something that genuinely plays. It is not an M4B and writes no c
 rather than name a file `.m4b` that is not one, it writes `.wav`, records no markers, and the job's
 log says both in those words. It does not assume the fake's format either: every source file's RIFF
 header is read and checked, so a speech provider answering at 24 kHz or in 16-bit stitches
-correctly and one that changes format mid-chapter is an error naming the file. A pause is a whole
+correctly and one that changes format mid-chapter is an error naming the file. Neither encoder
+resamples, so one output file holds one rate: the build checks the rate each clip recorded before
+anything is written, and names the chapter that brought a second rate rather than a clip's path —
+an endpoint's rate changed between two chapters' narrations is the usual way to get there. ffmpeg
+checks each file's format as well, since its concat demuxer would otherwise play a clip at another
+rate at the wrong speed rather than fail. A pause is a whole
 number of sample frames in that format (`silenceBytes`), never a byte count rounded from seconds:
 at 16-bit, an odd number of bytes of silence puts every sample after it a byte out of step, which
 plays as noise to the end of the file, and the 8-bit fake could never have shown it. The ffmpeg
@@ -1081,6 +1120,7 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [contentsReview.test.ts](../tests/server/contentsReview.test.ts) | Import → review → add, volumes, removal, renumbering                            |
 | [volumes.test.ts](../tests/server/volumes.test.ts)               | Removing a volume: rekeyed jobs, cancelled work, files, refusals mid-build      |
 | [bookSettings.test.ts](../tests/server/bookSettings.test.ts)     | Budget, pacing and re-timing, a volume's name, and a reorder and its refusals   |
+| [endpoints.test.ts](../tests/server/endpoints.test.ts)           | Saved and refused whole; tags and sample rate on a line; one rate a file        |
 | [markdown.test.ts](../tests/server/markdown.test.ts)             | The converter's DOM bracket, and reading Markdown back                          |
 | [jobs.test.ts](../tests/server/jobs.test.ts)                     | The queue: dedupe, cancel, restart, revision conflicts, HTTP                    |
 | [narration.test.ts](../tests/server/narration.test.ts)           | Narration: scopes, replacement, failure, cancel, restart, dictionary, files     |
@@ -1138,15 +1178,11 @@ the library screens are the server's in backend mode. What is worth knowing abou
 The queue runs three kinds of job. What the scripting, narration and export slices do not do yet,
 each because a route or a table's writer is missing rather than by oversight:
 
-- **Expression tags are not sent.** The handler applies the dictionary, and not the tags placed
-  on a line: which tags a model accepts, and the token each is written as, is its endpoint's
-  configuration, and the endpoints live in the browser — the `endpoints` table has no writer and
-  no route. So a line that carries tags is sent without them, records no `expressionSignature`,
-  and reads as stale on the Narration page as soon as it lands. Applying them is `expressionPlan`
-  in [src/lib/expressions.ts](../src/lib/expressions.ts), which is pure and ready; what it waits
-  for is the endpoint the server would hand it. The seeded endpoints' voices are names the fake accepts, not
-  endpoints the server knows, and a chapter's duration is its clips plus the book's pacing, which
-  a pacing change re-times on the server for every chapter that has been narrated.
+- **An endpoint saved is not an endpoint called.** The server keeps the configuration and reads
+  the tags and the rate from it, and the fake renders every line whatever the base URL, model and
+  key say; a line longer than the endpoint's `maxChars` is not split either. A chapter's duration
+  is its clips plus the book's pacing, which a pacing change re-times on the server for every
+  chapter that has been narrated.
 - **A cover image is not written into the audiobook.** `customCover` records that one was chosen
   and the file carries none: the stitcher has nowhere to put it, and ffmpeg would want the image
   itself, which the browser holds rather than the server.
@@ -1166,7 +1202,7 @@ each because a route or a table's writer is missing rather than by oversight:
   events; a script edited elsewhere is found when an edit here is refused for its stale revision.
 
 The tables for the rest of the domain exist and are proven against the seeded world. The usage
-ledger and the endpoints have no routes, and neither do credential storage or any real provider.
+ledger has no route, and neither do the secrets a credential names or any real provider.
 The seeded demo remains the way to exercise all of it, and stays that way after the backend is
 finished — see [the demo guide](demo.md).
 
@@ -1175,7 +1211,8 @@ Changing the schema means regenerating: `pnpm db:generate` after editing anythin
 fail somewhere that does not name the cause. Migrations are versioned in [drizzle/](../drizzle/)
 and applied in order at boot; `0001` added the script revision and the queue's dedupe key, `0002`
 the version an open editing session preserved, and `0003` what a build writes — the file each
-output landed in, the span each chapter occupies inside it, and which encoder wrote it.
+output landed in, the span each chapter occupies inside it, and which encoder wrote it; `0004` an
+endpoint's sample rate and the rate each clip came back at.
 
 **Foreign keys are off while migrations run.** A change drizzle-kit cannot write as `ALTER TABLE` is
 written as a rebuild — new table, copy, `DROP` the old one, rename — and with foreign keys on, that

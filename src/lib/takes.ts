@@ -48,4 +48,5 @@ export const snapshotTake = (a: SegmentAudio): Take => ({
   pronounced: a.pronounced,
   expressionSignature: a.expressionSignature,
   expressions: a.expressions,
+  sampleRate: a.sampleRate,
 });

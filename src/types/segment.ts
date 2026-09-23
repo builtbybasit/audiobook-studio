@@ -55,6 +55,8 @@ export interface Take {
   pronounced?: string;
   expressionSignature?: string;
   expressions?: string[];
+  /** the rate the file actually came back at, in Hz, read from the file rather than the request */
+  sampleRate?: number;
   /** the user listened to it and chose the other take */
   rejected?: boolean;
   /** where the rendered audio can be fetched; absent in the prototype, which has no files */
@@ -107,6 +109,8 @@ export interface SegmentAudio {
   pronounced?: string;
   expressionSignature?: string;
   expressions?: string[];
+  /** the rate the file actually came back at, in Hz, read from the file rather than the request */
+  sampleRate?: number;
 
   // retakes
   /** take number of this clip; absent until the segment has been retaken at least once */

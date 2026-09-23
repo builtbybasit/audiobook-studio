@@ -16,7 +16,7 @@ import { useUiStore } from "@/stores/ui";
 // how a line too long for its endpoint was cut up. It is a record of a request, so nothing here is
 // re-derived from what the book holds now — the facts come off the clip itself.
 import { useJob } from "@/views/narration/shared";
-import { secs } from "@/lib/speech";
+import { sampleRateLabel, secs } from "@/lib/speech";
 import { usePlayer } from "@/composables/usePlayer";
 import {
   Pause as PauseIcon,
@@ -85,6 +85,9 @@ function facts(s: Segment): Fact[] {
     { label: "voice", value: endpointsStore.voiceLabel(a.voiceRef) || a.voice || "—" },
     { label: "endpoint", value: epName(a.endpoint) },
     { label: "model", value: a.model ?? "—", mono: true },
+    // what the file came back at, which is not always what was asked for — absent on a clip
+    // rendered before rates were recorded, and then there is nothing true to say
+    ...(a.sampleRate ? [{ label: "sample rate", value: sampleRateLabel(a.sampleRate) }] : []),
     { label: "read as", value: a.type ?? s.type },
     { label: "rendered", value: clock(a.at) },
     { label: "took", value: a.ms ? (a.ms / 1000).toFixed(1) + "s" : "—", mono: true },

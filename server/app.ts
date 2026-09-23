@@ -21,6 +21,7 @@ import { wavEncoders } from "~/providers/wavEncoder";
 import { audioRoutes } from "~/routes/audio";
 import { bookRoutes } from "~/routes/books";
 import { castRoutes } from "~/routes/cast";
+import { endpointRoutes } from "~/routes/endpoints";
 import { exportRoutes } from "~/routes/exports";
 import { jobRoutes } from "~/routes/jobs";
 import { scriptRoutes } from "~/routes/script";
@@ -110,6 +111,8 @@ export function createApp(
   app.route("/api/books", scriptRoutes(db, runner));
   app.route("/api/books", exportRoutes(db, runner, exports));
   app.route("/api/jobs", jobRoutes(db, runner));
+  // The endpoints belong to the installation rather than to a book.
+  app.route("/api/endpoints", endpointRoutes(db));
   // A clip's url is served from disk, and the files it names belong to the same book routes above
   // remove — see `server/audio/files.ts` for why the path is a book and a token.
   app.route("/api/audio", audioRoutes(files));

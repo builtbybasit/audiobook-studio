@@ -2,7 +2,7 @@
 // neither one touches the book: the per-book pronunciation dictionary rewrites names and invented
 // words on their way to the endpoint, and the pacing rules decide how much silence is stitched in
 // after each clip. The script the reader shows is always the original prose.
-import type { LexEntry, Pacing, Segment } from "@/types";
+import type { LexEntry, Pacing, SampleRate, Segment } from "@/types";
 
 /** One dictionary substitution, with offsets into the *original* text. */
 export interface LexHit {
@@ -140,3 +140,9 @@ export const secs = (n: number): string => `${Number(n.toFixed(2))}s`;
 export function speechInstructions(parts: { style?: string; direction?: string }): string {
   return [parts.style?.trim(), parts.direction?.trim()].filter(Boolean).join(". ");
 }
+
+/** Every rate an endpoint can be asked for, lowest first. The server refuses any other. */
+export const SAMPLE_RATES: readonly SampleRate[] = [16000, 22050, 24000, 32000, 44100, 48000];
+
+/** 44100 → "44.1 kHz", 16000 → "16 kHz". */
+export const sampleRateLabel = (hz: number): string => `${Number((hz / 1000).toFixed(2))} kHz`;

@@ -14,8 +14,11 @@ import { ChevronLeft as PrevIcon, ChevronRight as NextIcon, Check as OkIcon } fr
 import { SPLIT_MODES, splitText } from "@/lib/split";
 import { compact, opsOf } from "@/lib/endpoints";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
+import { SAMPLE_RATES, sampleRateLabel } from "@/lib/speech";
+import { isBackend } from "@/services/mode";
 import type { LiveActivity } from "@/views/endpoints/live";
-import type { SplitMode } from "@/types";
+import type { SampleRate, SplitMode } from "@/types";
+import type { UiOption } from "@/ui/types";
 
 const props = defineProps<{
   u: UnifiedEndpoint;
@@ -52,6 +55,26 @@ const AT_LABEL: Record<SplitMode, string> = {
   word: "word",
   char: "hard cut",
 };
+
+// What each rate is for, in the terms someone choosing one would ask about. The model's own rate is
+// the `nullValue` row above these, so it is not listed here.
+const RATE_HINT: Record<SampleRate, string> = {
+  16000: "speech-grade, smallest files",
+  22050: "half of CD",
+  24000: "what most speech models render natively",
+  32000: "wideband",
+  44100: "CD, and the ACX audiobook standard",
+  48000: "video and broadcast",
+};
+const RATE_OPTIONS: UiOption[] = SAMPLE_RATES.map((hz) => ({
+  value: hz,
+  label: sampleRateLabel(hz),
+  hint: RATE_HINT[hz],
+}));
+/** A speech endpoint's rate; a scripting profile has none, and never shows the control. */
+function setRate(v: string | number | null) {
+  if (props.u.endpoint) props.u.endpoint.sampleRate = v == null ? null : (v as SampleRate);
+}
 
 const limitNote = computed(() => {
   const l = props.live;
@@ -212,6 +235,27 @@ const limitNote = computed(() => {
         </div>
       </section>
 
+      <!-- sample rate: speech only — a chat model returns text, which has no rate -->
+      <section v-if="u.kind === 'tts' && u.endpoint" class="card p-3">
+        <label class="flex items-center justify-between gap-3 text-sm"
+          ><span class="min-w-0"
+            >Sample rate
+            <span class="block text-[11px] text-zinc-500"
+              >Model default sends no rate; the clip records what came back.</span
+            ></span
+          ><UiSelect
+            :model-value="u.endpoint.sampleRate ?? null"
+            :options="RATE_OPTIONS"
+            null-value="Model default"
+            class="w-44 shrink-0"
+            @update:model-value="setRate"
+        /></label>
+        <p class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
+          Changing it marks clips rendered at another rate as needing a re-render — one audiobook
+          file can only hold one rate.
+        </p>
+      </section>
+
       <!-- split preview -->
       <section class="card p-3">
         <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -298,13 +342,16 @@ const limitNote = computed(() => {
               cost stays honest.</template
             >
             <template v-else
-              >Base URL, model and prices. Clips already rendered keep the model and cost they were
-              recorded with.</template
+              >Base URL, model, sample rate and prices. Clips already rendered keep the model, rate
+              and cost they were recorded with.</template
             >
           </dd>
         </div>
       </dl>
-      <p class="mt-2 flex items-center gap-1.5 text-[11px] text-zinc-500">
+      <p v-if="isBackend" class="mt-2 text-[11px] text-zinc-500">
+        Saved to the server a moment after each change, and read by the next line it sends.
+      </p>
+      <p v-else class="mt-2 flex items-center gap-1.5 text-[11px] text-zinc-500">
         <UiTooltip
           text="Nothing on this page is written to disk: reload and it is back to the seeded configuration."
         >

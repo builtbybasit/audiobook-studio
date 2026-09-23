@@ -13,6 +13,7 @@ import { useUiStore } from "@/stores/ui";
 import { defineAsyncComponent } from "vue";
 import { FLAG_LABEL } from "@/lib/scriptReview";
 import { speechPeaks } from "@/lib/peaks";
+import { sampleRateLabel } from "@/lib/speech";
 import { usePlayer } from "@/composables/usePlayer";
 import { Pause as PauseIcon, Play as PlayIcon, Flag as FlagIcon } from "@lucide/vue";
 import type { Segment } from "@/types";
@@ -67,6 +68,9 @@ function takeDiff(s: Segment): string[] {
     );
   if ((a.style || "") !== (b.style || ""))
     out.push(`style “${a.style || "—"}” → “${b.style || "—"}”`);
+  // only when both clips recorded one: a clip from before rates were recorded says nothing either way
+  if (a.sampleRate && b.sampleRate && a.sampleRate !== b.sampleRate)
+    out.push(`sample rate ${sampleRateLabel(a.sampleRate)} → ${sampleRateLabel(b.sampleRate)}`);
   if ((a.text || "") !== (b.text || "")) out.push("the line itself was edited");
   if ((a.said || a.text || "") !== (b.said || b.text || "") && (a.text || "") === (b.text || ""))
     out.push("the dictionary changed how a word is said");
@@ -144,7 +148,9 @@ function seekTake(id: string, duration: number, url: string | undefined, frac: n
           <div class="mt-1 pl-8 text-[11px] text-zinc-500">
             {{ endpointsStore.voiceLabel(segment.audio.voiceRef) || segment.audio.voice || "—" }} ·
             {{ segment.audio.direction || "no direction"
-            }}<span v-if="segment.audio.at"> · {{ clock(segment.audio.at) }}</span>
+            }}<span v-if="segment.audio.sampleRate">
+              · {{ sampleRateLabel(segment.audio.sampleRate) }}</span
+            ><span v-if="segment.audio.at"> · {{ clock(segment.audio.at) }}</span>
           </div>
         </div>
         <div
@@ -206,9 +212,9 @@ function seekTake(id: string, duration: number, url: string | undefined, frac: n
                 "—"
               }}
               · {{ segment.candidate!.direction || "no direction"
-              }}<span v-if="segment.candidate!.at">
-                · {{ clock(segment.candidate!.at) }}</span
-              ></span
+              }}<span v-if="segment.candidate!.sampleRate">
+                · {{ sampleRateLabel(segment.candidate!.sampleRate!) }}</span
+              ><span v-if="segment.candidate!.at"> · {{ clock(segment.candidate!.at) }}</span></span
             >
           </div>
         </div>

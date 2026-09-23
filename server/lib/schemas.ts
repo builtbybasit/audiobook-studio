@@ -7,7 +7,10 @@
 // the fields every reader relies on and passed through otherwise.
 import * as v from "valibot";
 
-import type { Character, ExportSettings, LexEntry, Segment, VersionOrigin } from "@/types";
+import type { Character, ExportSettings, LexEntry, Profile, Segment, VersionOrigin } from "@/types";
+import type { Credential } from "@/lib/credentials";
+import { SAMPLE_RATES } from "@/lib/speech";
+import type { EndpointSettings } from "~/db/rows";
 
 const Gender = v.picklist(["m", "f", "n", "?"]);
 
@@ -142,3 +145,148 @@ export const ExportSettingsSchema = v.object({
   loudness: v.picklist([-23, -18, -16]),
   useStale: v.boolean(),
 }) satisfies v.GenericSchema<unknown, ExportSettings>;
+
+// ---- endpoints ----
+//
+// The Endpoints page saves its whole configuration at once, so these are the domain's endpoint
+// shapes minus what an endpoint *observed* — its latency history, its failure counts, a backoff —
+// which is this session's telemetry and not configuration. `v.object` drops those fields rather
+// than refusing them, so the page can send the objects it holds as they are.
+
+/** A price: `null` is "not known", which is never `0`. */
+const Rate = v.nullable(v.pipe(v.number(), v.minValue(0)));
+const Id = v.pipe(v.string(), v.nonEmpty("must not be empty"));
+const Count = v.pipe(v.number(), v.integer(), v.minValue(0));
+const Percent = v.pipe(v.number(), v.minValue(0), v.maxValue(100));
+const SplitMode = v.picklist(["sentence", "clause", "word", "char"]);
+const BillingUnit = v.picklist(["chars", "bytes", "tokens", "audio-tokens", "minute", "request"]);
+const Rates = v.partial(
+  v.object({
+    input: Rate,
+    output: Rate,
+    cachedInput: Rate,
+    cacheWrite: Rate,
+    speech: Rate,
+    textTokens: Rate,
+    audioTokens: Rate,
+  }),
+);
+const Minute = v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(1440));
+
+const RateWindowSchema = v.object({
+  id: Id,
+  label: v.string(),
+  days: v.array(v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(6))),
+  from: Minute,
+  to: Minute,
+  percent: v.optional(Percent),
+  rates: v.optional(Rates),
+});
+
+const PromotionSchema = v.object({
+  id: Id,
+  label: v.string(),
+  from: v.nullable(v.number()),
+  until: v.nullable(v.number()),
+  scope: v.array(
+    v.picklist([
+      "input",
+      "cachedInput",
+      "cacheWrite",
+      "output",
+      "speech",
+      "textTokens",
+      "audioTokens",
+      "model",
+    ]),
+  ),
+  percent: v.optional(Percent),
+  rates: v.optional(Rates),
+  note: v.optional(v.string()),
+});
+
+const PricingSchema = v.object({
+  cachedInput: Rate,
+  cacheWrite: Rate,
+  timezone: v.pipe(v.string(), v.nonEmpty("must name a timezone")),
+  windows: v.array(RateWindowSchema),
+  promotions: v.array(PromotionSchema),
+});
+
+/** The operational block; optional field by field, as an endpoint saved before it existed has none. */
+const Ops = {
+  timeoutSec: v.optional(Count),
+  maxRetries: v.optional(Count),
+  cooldownSec: v.optional(Count),
+  spendLimit: v.optional(Rate),
+  credentialId: v.optional(v.nullable(Id)),
+  quotaGroup: v.optional(v.nullable(v.string())),
+};
+
+const Common = {
+  id: Id,
+  name: v.string(),
+  baseUrl: v.string(),
+  model: v.string(),
+  enabled: v.boolean(),
+  concurrency: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  needsKey: v.boolean(),
+  maxChars: Count,
+  splitAt: SplitMode,
+  pricing: v.optional(PricingSchema),
+  ...Ops,
+};
+
+export const EndpointSchema = v.object({
+  ...Common,
+  latency: v.pipe(v.number(), v.minValue(0)),
+  failRate: v.pipe(v.number(), v.minValue(0), v.maxValue(1)),
+  price: v.pipe(v.number(), v.minValue(0)),
+  voices: v.array(v.object({ id: Id, gender: Gender, label: v.string() })),
+  billing: v.optional(
+    v.object({
+      unit: BillingUnit,
+      rate: Rate,
+      audioRate: v.optional(Rate),
+      audioTokensPerSecond: v.optional(v.pipe(v.number(), v.minValue(0))),
+      billsInstructions: v.optional(v.boolean()),
+      parked: v.optional(
+        v.record(BillingUnit, v.object({ rate: Rate, audioRate: v.optional(Rate) })),
+      ),
+    }),
+  ),
+  expressions: v.optional(
+    v.object({
+      status: v.picklist(["unknown", "unsupported", "supported"]),
+      model: v.string(),
+      baseUrl: v.string(),
+      tags: v.array(
+        v.object({
+          id: Id,
+          label: v.string(),
+          token: v.string(),
+          kind: v.picklist(["sound", "delivery"]),
+        }),
+      ),
+    }),
+  ),
+  // speech only: a scripting profile has no rate, and one sent on a profile is dropped with the
+  // other fields a profile does not have
+  sampleRate: v.optional(
+    v.nullable(v.picklist(SAMPLE_RATES, `must be one of ${SAMPLE_RATES.join(", ")} Hz`)),
+  ),
+}) satisfies v.GenericSchema<unknown, EndpointSettings>;
+
+export const ProfileSchema = v.object({
+  ...Common,
+  inPrice: v.pipe(v.number(), v.minValue(0)),
+  outPrice: v.pipe(v.number(), v.minValue(0)),
+  maxOutputTokens: Count,
+  secPerChunk: v.pipe(v.number(), v.minValue(0)),
+}) satisfies v.GenericSchema<unknown, Profile>;
+
+export const CredentialSchema = v.object({
+  id: Id,
+  label: v.string(),
+  note: v.string(),
+}) satisfies v.GenericSchema<unknown, Credential>;

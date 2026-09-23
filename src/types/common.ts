@@ -15,6 +15,7 @@ export type VoiceRef = string;
  */
 export type ApiErrorCode =
   | "bad_request"
+  | "forbidden"
   | "not_found"
   | "conflict"
   | "too_large"

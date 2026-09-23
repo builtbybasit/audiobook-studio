@@ -7,7 +7,7 @@ import { createApp } from "~/app";
 import { audioFiles } from "~/audio/files";
 import { openDb } from "~/db/client";
 import { migrate } from "~/db/migrate";
-import { env } from "~/env";
+import { env, importBodyBytes } from "~/env";
 import { audiobookFiles } from "~/exports/files";
 import { exportHandler } from "~/jobs/export";
 import { narrationHandler } from "~/jobs/narration";
@@ -62,15 +62,18 @@ const runner = createRunner(
 runner.start();
 
 const server = Bun.serve({
+  hostname: env.HOST,
   port: env.PORT,
-  // A long web novel is a big upload, and Bun's default body limit is well under it.
-  maxRequestBodySize: env.MAX_UPLOAD_MB * 1024 * 1024,
+  // A long web novel is a big upload, and Bun's default body limit is well under it. Set a
+  // megabyte above the import route's own limit, so that the route is the one that answers — in
+  // the API's error shape, before the body is read — and this only catches what gets past it.
+  maxRequestBodySize: importBodyBytes() + 1024 * 1024,
   fetch: createApp(db, { runner, files, exports }).fetch,
 });
 
 boot.info(
   {
-    url: `http://localhost:${server.port}`,
+    url: server.url.href,
     database: env.DATABASE_URL,
     uploadMb: env.MAX_UPLOAD_MB,
     scripting: scripting.name,

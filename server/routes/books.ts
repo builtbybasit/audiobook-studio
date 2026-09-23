@@ -5,13 +5,14 @@
 // turned into one call on `server/library/ops.ts` and the result turned into JSON: the rules are
 // there, and a refusal they raise is answered by `app.onError` in the API's one error shape.
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
 import type { AudioFiles } from "~/audio/files";
 import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
-import { env } from "~/env";
+import { env, importBodyBytes } from "~/env";
 import { enqueueNarration } from "~/jobs/narration";
 import type { Runner } from "~/jobs/runner";
 import { enqueueScripting } from "~/jobs/scripting";
@@ -100,30 +101,47 @@ export function bookRoutes(
   );
 
   // ---------- importing ----------
-  app.post("/import", validate("form", ImportForm), async (c) => {
-    const { file, title, bookId, name } = c.req.valid("form");
+  app.post(
+    "/import",
+    // Refused as the body arrives — from its `content-length` when it says, and by counting when
+    // it does not — rather than after the whole of it has been buffered to be looked at. The
+    // server's own ceiling (`maxRequestBodySize`) sits just above this, as a backstop that answers
+    // in Bun's words; this is the one that answers in the API's.
+    bodyLimit({
+      maxSize: importBodyBytes(),
+      onError: () =>
+        fail(
+          413,
+          `That file is larger than the ${env.MAX_UPLOAD_MB} MB limit`,
+          "Raise MAX_UPLOAD_MB if this is a file you expect to import.",
+        ),
+    }),
+    validate("form", ImportForm),
+    async (c) => {
+      const { file, title, bookId, name } = c.req.valid("form");
 
-    const limit = env.MAX_UPLOAD_MB * 1024 * 1024;
-    if (file.size > limit)
-      fail(
-        413,
-        `That file is larger than the ${env.MAX_UPLOAD_MB} MB limit`,
-        `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. Raise MAX_UPLOAD_MB if this is a file you expect to import.`,
+      const limit = env.MAX_UPLOAD_MB * 1024 * 1024;
+      if (file.size > limit)
+        fail(
+          413,
+          `That file is larger than the ${env.MAX_UPLOAD_MB} MB limit`,
+          `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. Raise MAX_UPLOAD_MB if this is a file you expect to import.`,
+        );
+      if (!file.size) fail(400, "That file is empty");
+
+      // `assign` puts these on the request's own line too, so the one-line summary of the request
+      // and anything written during it agree about which file they are talking about.
+      const log = c.var.logger;
+      log.assign({ name: "import", file: file.name, bytes: file.size });
+
+      const result = await ops.importEpub(
+        db,
+        { bytes: await file.arrayBuffer(), fileName: file.name, title, bookId, name },
+        log,
       );
-    if (!file.size) fail(400, "That file is empty");
-
-    // `assign` puts these on the request's own line too, so the one-line summary of the request
-    // and anything written during it agree about which file they are talking about.
-    const log = c.var.logger;
-    log.assign({ name: "import", file: file.name, bytes: file.size });
-
-    const result = await ops.importEpub(
-      db,
-      { bytes: await file.arrayBuffer(), fileName: file.name, title, bookId, name },
-      log,
-    );
-    return c.json(result, 201);
-  });
+      return c.json(result, 201);
+    },
+  );
 
   /** The review is done: the book, or its new volume, joins the library. Nothing starts running. */
   app.post("/:id/confirm", validate("param", BookParam), (c) =>

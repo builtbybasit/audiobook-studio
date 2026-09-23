@@ -3,7 +3,9 @@
 // Built around a database handle rather than importing one, so a test can hand it a private
 // `:memory:` database and drive the real routes end to end without a server listening anywhere.
 import { Hono } from "hono";
+import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
+import { secureHeaders } from "hono/secure-headers";
 import { pinoLogger, type Env as PinoEnv } from "hono-pino";
 
 import { audioFiles, type AudioFiles } from "~/audio/files";
@@ -11,7 +13,7 @@ import type { Db } from "~/db/client";
 import { env } from "~/env";
 import { audiobookFiles } from "~/exports/files";
 import { createRunner, type Runner } from "~/jobs/runner";
-import { AppError, type ApiError } from "~/lib/errors";
+import { AppError, codeFor, type ApiError } from "~/lib/errors";
 import type { Logger } from "~/log";
 import { log as defaultLog } from "~/log";
 import type { ExportPorts } from "~/providers/encoder";
@@ -22,6 +24,11 @@ import { castRoutes } from "~/routes/cast";
 import { exportRoutes } from "~/routes/exports";
 import { jobRoutes } from "~/routes/jobs";
 import { scriptRoutes } from "~/routes/script";
+
+/** What Hono's refusals say, for the ones that come without a message of their own. */
+const REFUSED: Partial<Record<number, string>> = {
+  403: "That request came from another site, and was refused",
+};
 
 export interface AppOptions {
   /** the logger requests are recorded against; a test hands over a silent one */
@@ -78,6 +85,22 @@ export function createApp(
     }),
   );
 
+  // The API has no accounts, and a request that deletes a book is a request that deletes a book.
+  // Listening on loopback keeps other machines out (see `HOST`); this keeps other *sites* out. A
+  // page on any origin can make the browser send a form post or a bodyless one here without
+  // asking first — the kind that needs no preflight — and Hono's check refuses it unless the
+  // browser says it came from this origin. The rest need a preflight this API never answers.
+  //
+  // Only a browser is asked. Its requests carry `Origin` or `Sec-Fetch-Site`, and one with neither
+  // is a script, a test or `curl`, which is on this machine already and forges nothing.
+  const sameSite = csrf();
+  app.use("/api/*", (c, next) =>
+    c.req.header("origin") || c.req.header("sec-fetch-site") ? sameSite(c, next) : next(),
+  );
+  // The standard set: no sniffing a clip as something else, no framing, no borrowing a response
+  // from another origin.
+  app.use("/api/*", secureHeaders());
+
   app.get("/api/health", (c) => c.json({ ok: true }));
   // Everything a book owns is addressed under it. The library's own routes come first; the cast,
   // the scripts and the audiobooks each have a file of their own so that a route reads as one call
@@ -105,7 +128,18 @@ export function createApp(
   // stack goes to the log, where it is of use to somebody.
   app.onError((err, c) => {
     if (err instanceof AppError) return c.json(err.body(), err.status);
-    if (err instanceof HTTPException) return err.getResponse();
+    // Hono's own refusals — a body that is not the JSON it claims, a post from another site — are
+    // answers too, and get the same shape rather than the plain text Hono writes by default.
+    if (err instanceof HTTPException)
+      return c.json(
+        {
+          error: {
+            code: codeFor(err.status),
+            message: err.message || REFUSED[err.status] || "That request was refused",
+          },
+        } satisfies ApiError,
+        err.status,
+      );
     (c.var.logger ?? log).error({ err }, "unhandled request error");
     return c.json(
       {

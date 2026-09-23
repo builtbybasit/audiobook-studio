@@ -300,6 +300,22 @@ If **every** section fails, the import is refused. The file is an EPUB and its p
 opened — but there is no book in it, and importing one chapter of nothing per file would put an
 empty shelf entry in the library and call it a success.
 
+### What an upload unzips to
+
+The upload limit is on the zip, and a zip can be a thousand times smaller than what it holds: an
+80 KB file with one 80 MB chapter took a gigabyte and a half and seventeen seconds to import, with
+nothing else served meanwhile. So [archive.ts](../server/epub/archive.ts) reads the archive with
+yauzl before the EPUB library sees it, and refuses — a 413, `too_large` — one that unzips to more
+than `MAX_UNZIPPED_MB` in all or holds a document (a chapter file, the package, the navigation) over
+`MAX_DOCUMENT_MB`. Pictures are held only to the total: they are carried, not parsed.
+
+**The sizes are trusted because they are checked.** A zip states each entry's size, and it can lie;
+the EPUB library unzips with jszip, which believes it. yauzl fails an entry the moment its data runs
+past what it declared, so every entry is inflated once, into nothing, a chunk at a time — and an
+archive that gets through is exactly as big as it said. One that lied is refused as unreadable.
+Neither refusal is handed to EPUBCheck for a diagnosis, which would unzip the whole thing again.
+An entry that merely will not inflate is let through, to become the unreadable chapter below.
+
 Either way the refusal says _why_. The parser can only report what stopped it; EPUBCheck, through
 [diagnose.ts](../server/epub/diagnose.ts), reports what is wrong with the file — `RSC-001:
 Referenced resource "c2.xhtml" could not be found (OEBPS/content.opf line 12)` — and that is the
@@ -470,7 +486,8 @@ written — and on what was not, which is how the redaction rule is checked.
 
 `/api` on the same origin, so there is no CORS to configure and no base URL to set. Errors all have
 one shape — `{ error: { code, message, detail? } }` — where `code` is a stable name a client can
-switch on (`not_found`, `conflict`, `bad_request`, `too_large`, `unsupported_media`, `internal`),
+switch on (`not_found`, `conflict`, `bad_request`, `forbidden`, `too_large`, `unsupported_media`,
+`internal`),
 `message` is meant to be shown as it stands and `detail` is the longer explanation a panel can
 expand to. `ApiErrorCode` in [src/types/common.ts](../src/types/common.ts) is the one list, and
 the server imports it, so the two sides agree by construction rather than by luck.
@@ -484,6 +501,21 @@ use it in place of `sValidator` so the contract cannot be opted out of by forget
 parameters go through it too: a chapter number or a job id that is not a whole number is a 400
 naming the parameter, rather than `Number("latest")` looking up nothing and answering 404 for a
 request that was never well formed.
+
+So are Hono's own refusals: a body that is not the JSON it claims is a `bad_request` in that shape,
+not the plain text Hono writes by default.
+
+**Nobody else gets to ask.** The API has no accounts, and a request that deletes a book deletes a
+book. It listens on loopback (`HOST`, `127.0.0.1` by default), so another machine cannot reach it.
+Another _site_ can still make your browser send it a request — a form post, or a post with no body,
+needs no preflight — so Hono's `csrf` check refuses any such request unless the browser says it came
+from this origin (`Sec-Fetch-Site`, or `Origin` from a browser too old to send that), with a
+`forbidden`. A request with neither header is not from a browser, and is let through: a script on
+this machine forges nothing. `secureHeaders` adds the usual set to every response.
+
+**An upload is refused before it is read.** The import route's `bodyLimit` answers a body over
+`MAX_UPLOAD_MB` from its `content-length` — or by counting, when it has none — with the `too_large`
+above. Bun's own ceiling sits a megabyte higher, as a backstop, so it is never the one that answers.
 
 The client holds up the other end. Not everything that answers `/api` is the API — a proxy, a dev
 server or a gateway in front of it answers with HTML — so [`HttpClient`](../src/services/http.ts)

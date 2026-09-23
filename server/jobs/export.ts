@@ -57,7 +57,7 @@ import * as library from "~/db/library";
 import { readScript } from "~/db/script";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { badRequest, conflict, notFound } from "~/lib/errors";
-import type { AudiobookEncoder, EncodeChapter, EncodePart, ExportPorts } from "~/providers/encoder";
+import type { AudiobookEncoder, EncodeChapter, ExportPorts, FreshPart } from "~/providers/encoder";
 import { inBackground } from "~/lib/background";
 
 export interface BuildQueued {
@@ -387,26 +387,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
           run.settings,
           file.volume?.name ?? null,
         );
-        const span = carryable.has(id) ? spans.get(id) : undefined;
-        const from = span ? files.path(job.bookId, span.token) : null;
-        // Checked again here and not only when the build was queued: a chapter re-narrated in the
-        // meantime has to be read from its clips, however cheap copying it would have been.
-        if (span && from && signature === entry.state?.[id]) {
-          plan.push({
-            id,
-            title,
-            parts: [{ kind: "carry", path: from, start: span.start, length: span.length }],
-          });
-          copied++;
-          carriedHere++;
-          continue;
-        }
-        if (span)
-          ctx.note(`Chapter ${id} could not be carried over`, "warning", {
-            chapter: chapter.title,
-            reason: from ? "its audio has changed since" : "the file it was in is gone",
-          });
-        const parts: EncodePart[] = [];
+        const parts: FreshPart[] = [];
         for (const [i, s] of lines.entries()) {
           const at = clipPath(job.bookId, s.audio.url);
           if (!at)
@@ -419,6 +400,29 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
           const pause = pauseAfter(s, lines[i + 1], pacing);
           if (pause > 0) parts.push({ kind: "silence", seconds: pause });
         }
+        const span = carryable.has(id) ? spans.get(id) : undefined;
+        const from = span ? files.path(job.bookId, span.token) : null;
+        // Checked again here and not only when the build was queued: a chapter re-narrated in the
+        // meantime has to be read from its clips, however cheap copying it would have been. The
+        // clips go with the carry too, for the encoder to fall back on if the version it copies
+        // from is removed before it gets there.
+        if (span && from && signature === entry.state?.[id]) {
+          plan.push({
+            id,
+            title,
+            parts: [
+              { kind: "carry", path: from, start: span.start, length: span.length, instead: parts },
+            ],
+          });
+          copied++;
+          carriedHere++;
+          continue;
+        }
+        if (span)
+          ctx.note(`Chapter ${id} could not be carried over`, "warning", {
+            chapter: chapter.title,
+            reason: from ? "its audio has changed since" : "the file it was in is gone",
+          });
         plan.push({ id, title, parts });
         encoded++;
       }
@@ -429,7 +433,15 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         gap: run.settings.chapterGap,
         out: path,
         signal,
-        onChapter: () => {
+        onChapter: (landed) => {
+          if (landed.readAgain) {
+            copied--;
+            encoded++;
+            ctx.note(`Chapter ${landed.id} could not be carried over`, "warning", {
+              chapter: known.get(landed.id)?.title ?? landed.id,
+              reason: "the file it was in is gone",
+            });
+          }
           done++;
           tick(carriedHere === plan.length ? "Copying" : "Encoding", position + 1, file.name);
         },

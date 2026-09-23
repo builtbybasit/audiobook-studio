@@ -13,14 +13,23 @@
 import type { ExportSettings } from "@/types";
 import type { AudiobookFiles } from "~/exports/files";
 
-/** One piece of an output file, in the order it is laid down. */
-export type EncodePart =
+/** A piece of an output file laid down from the book's own audio. */
+export type FreshPart =
   /** a rendered clip, by the path its file is kept at */
   | { kind: "clip"; path: string }
   /** silence: the book's pacing inside a chapter, or the export's gap between two */
-  | { kind: "silence"; seconds: number }
-  /** a span of a file this export supersedes, copied rather than encoded again */
-  | { kind: "carry"; path: string; start: number; length: number };
+  | { kind: "silence"; seconds: number };
+
+/** One piece of an output file, in the order it is laid down. */
+export type EncodePart =
+  | FreshPart
+  /**
+   * A span of a file this export supersedes, copied rather than encoded again — or, if that file
+   * is gone by the time it is read, `instead`: the same chapter from its clips. The version it
+   * comes from can be removed while the build runs, and that costs the chapter its shortcut
+   * rather than costing the build.
+   */
+  | { kind: "carry"; path: string; start: number; length: number; instead: FreshPart[] };
 
 export interface EncodeChapter {
   id: number;
@@ -50,6 +59,8 @@ export interface EncodedChapter {
   start: number;
   length: number;
   seconds: number;
+  /** a chapter planned as a carry whose file was gone, so it was laid down from its clips */
+  readAgain?: boolean;
 }
 
 export interface EncodedFile {

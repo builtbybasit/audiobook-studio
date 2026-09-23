@@ -826,7 +826,9 @@ the version on disk instead of having its clips read again; `reusedChapters` dec
 is the same function that drew "191 of its 196 chapters would be carried over" on the page. Each
 span is checked again as the build runs, so a chapter re-narrated since the build was queued, or a
 file removed behind the server's back, costs that one chapter its shortcut rather than putting
-stale audio in the file or failing the build. `exports.encoder` records what wrote a version and
+stale audio in the file or failing the build. That includes the version being copied from removed
+mid-build: a `carry` part brings the chapter's clips along as `instead`, and an encoder that finds
+the file gone lays those down and marks the chapter `readAgain`. `exports.encoder` records what wrote a version and
 only the same encoder ever copies out of it, because a span is bytes into a WAV and milliseconds
 into an AAC stream — reading one as the other would splice noise into the middle of an audiobook.
 

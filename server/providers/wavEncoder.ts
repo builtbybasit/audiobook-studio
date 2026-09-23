@@ -19,6 +19,7 @@ import type {
   EncodedChapter,
   EncodedFile,
   EncoderChoice,
+  FreshPart,
 } from "~/providers/encoder";
 
 const HEADER = 44;
@@ -180,9 +181,19 @@ export function wavEncoder(): AudiobookEncoder {
         await append(bytes.subarray(body.start, body.start + body.length));
       };
 
-      /** A span of a file this export supersedes, moved a chunk at a time. */
-      const carry = async (path: string, start: number, length: number): Promise<void> => {
-        const handle = await open(path, "r");
+      /**
+       * A span of a file this export supersedes, moved a chunk at a time. False if the file is
+       * gone: the version it belonged to was removed while this build ran. Once it is open it
+       * stays readable to the end, however soon after that it is removed.
+       */
+      const carry = async (path: string, start: number, length: number): Promise<boolean> => {
+        let handle;
+        try {
+          handle = await open(path, "r");
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === "ENOENT") return false;
+          throw e;
+        }
         try {
           const head = Buffer.alloc(4096);
           const { bytesRead } = await handle.read(head, 0, head.byteLength, 0);
@@ -208,6 +219,12 @@ export function wavEncoder(): AudiobookEncoder {
         } finally {
           await handle.close();
         }
+        return true;
+      };
+
+      const fresh = async (part: FreshPart): Promise<void> => {
+        if (part.kind === "silence") await silence(part.seconds);
+        else await clip(part.path);
       };
 
       try {
@@ -217,17 +234,24 @@ export function wavEncoder(): AudiobookEncoder {
           // stitched, so it is laid down here and never counted inside a chapter's span.
           if (i > 0) await silence(gap);
           const start = at;
+          let readAgain = false;
           for (const part of chapter.parts) {
             if (signal.aborted) throw signal.reason;
-            if (part.kind === "silence") await silence(part.seconds);
-            else if (part.kind === "clip") await clip(part.path);
-            else await carry(part.path, part.start, part.length);
+            if (part.kind !== "carry") await fresh(part);
+            else if (!(await carry(part.path, part.start, part.length))) {
+              readAgain = true;
+              for (const instead of part.instead) {
+                if (signal.aborted) throw signal.reason;
+                await fresh(instead);
+              }
+            }
           }
           const landed: EncodedChapter = {
             id: chapter.id,
             start: start - HEADER,
             length: at - start,
             seconds: format ? (at - start) / byteRate(format) : 0,
+            ...(readAgain ? { readAgain } : {}),
           };
           written.push(landed);
           onChapter?.(landed, i);

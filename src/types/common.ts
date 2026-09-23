@@ -20,4 +20,5 @@ export type ApiErrorCode =
   | "conflict"
   | "too_large"
   | "unsupported_media"
+  | "range_not_satisfiable"
   | "internal";

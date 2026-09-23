@@ -318,6 +318,25 @@ describe("building an audiobook", () => {
     expect((await res.arrayBuffer()).byteLength).toBe(fileBytes(api, id, done.id).byteLength);
   });
 
+  test("a finished file answers a range, so a player can seek in it", async () => {
+    const { api, id } = await narrated();
+    await build(api, id, { ids: [1, 2], settings: settingsFor() });
+    await api.runner.idle();
+    const [done] = await exportsOf(api, id);
+
+    const res = await api.fetch(`/api/books/${id}/exports/${done.id}/files/0`, {
+      headers: { range: "bytes=0-43" },
+    });
+    expect(res.status).toBe(206);
+    const size = fileBytes(api, id, done.id).byteLength;
+    expect(res.headers.get("content-range")).toBe(`bytes 0-43/${size}`);
+    expect(res.headers.get("accept-ranges")).toBe("bytes");
+    expect(res.headers.get("content-disposition")).toContain(done.files[0].name);
+    // The first 44 bytes of a WAV are its header.
+    const head = new Uint8Array(await res.arrayBuffer());
+    expect(head).toEqual(fileBytes(api, id, done.id).slice(0, 44));
+  });
+
   test("a name no header can carry as it stands still downloads, under that name", async () => {
     // A header is Latin-1. An em dash, a curly apostrophe or a Chinese title in it used to make
     // `Headers` throw, and the download a 500.

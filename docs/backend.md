@@ -501,7 +501,7 @@ written — and on what was not, which is how the redaction rule is checked.
 `/api` on the same origin, so there is no CORS to configure and no base URL to set. Errors all have
 one shape — `{ error: { code, message, detail? } }` — where `code` is a stable name a client can
 switch on (`not_found`, `conflict`, `bad_request`, `forbidden`, `too_large`, `unsupported_media`,
-`internal`),
+`range_not_satisfiable`, `internal`),
 `message` is meant to be shown as it stands and `detail` is the longer explanation a panel can
 expand to. `ApiErrorCode` in [src/types/common.ts](../src/types/common.ts) is the one list, and
 the server imports it, so the two sides agree by construction rather than by luck.
@@ -827,7 +827,16 @@ export that owns it (`…/exports/:e/files/:n`) rather than by the file's name o
 no path a request can build to a file this book did not produce; the name goes back on in the
 header that decides what the browser calls it. That header is Latin-1 and a title is not, so the
 name goes in the `filename*` a browser reads as UTF-8, with an ASCII stand-in beside it
-(`content-disposition` writes both); an em dash in the title used to make the download a 500. A version that has been superseded keeps its file
+(`content-disposition` writes both); an em dash in the title used to make the download a 500.
+
+**Both are served a part at a time.** A clip and an audiobook go out through
+[serve.ts](../server/lib/serve.ts), which answers `Range` — Bun does not, for a `Response` built in a
+fetch handler, and a player that cannot ask for a part cannot seek. Every answer says
+`Accept-Ranges: bytes`; one range inside the file is a 206 with its `Content-Range`; a range past
+the end is a 416 (`range_not_satisfiable`) carrying the size. A malformed header, another unit or
+several ranges at once get the whole file, which a server may always send instead — a media element
+never asks for more than one. `range-parser`, the one Express's `send` uses, reads the header, and
+the length is set outright so a `HEAD` reports it too. A version that has been superseded keeps its file
 until it is forgotten, so an older version can still be saved; removing a book removes both
 directories, and forgetting one audiobook removes its files and leaves the rest.
 

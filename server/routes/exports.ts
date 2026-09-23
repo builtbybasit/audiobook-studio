@@ -9,6 +9,7 @@ import * as ops from "~/exports/ops";
 import { enqueueBuild } from "~/jobs/export";
 import type { Runner } from "~/jobs/runner";
 import { notFound } from "~/lib/errors";
+import { fileResponse } from "~/lib/serve";
 import { IdParam, IntParam } from "~/lib/http";
 import { ExportSettingsSchema } from "~/lib/schemas";
 import { validate } from "~/lib/validate";
@@ -88,18 +89,17 @@ export function exportRoutes(db: Db, runner: Runner, ports: ExportPorts): Hono<P
     const { path, name } = ops.exportFile(db, id, exportId, position, ports.files);
     const found = Bun.file(path);
     if (!(await found.exists())) throw notFound("That file is no longer on this server");
-    return new Response(found, {
-      headers: {
-        "content-type": MIME[name.split(".").at(-1)!.toLowerCase()] ?? "application/octet-stream",
-        // A set is written to a folder, so a file in one carries the folder in its name; a
-        // download has nowhere to put that and the last part is what it should be called.
-        //
-        // A header is Latin-1, and a title is not: an em dash, a curly apostrophe or a Chinese
-        // title would make `Headers` throw and the download a 500. The name goes in the
-        // `filename*` a browser reads in UTF-8, with an ASCII stand-in for anything older.
-        "content-disposition": disposition(name.split("/").at(-1)!),
-        "cache-control": "private, max-age=0, must-revalidate",
-      },
+    // A part at a time when the player asks for one, which is how it seeks; see `fileResponse`.
+    return fileResponse(c.req.raw, found, {
+      "content-type": MIME[name.split(".").at(-1)!.toLowerCase()] ?? "application/octet-stream",
+      // A set is written to a folder, so a file in one carries the folder in its name; a
+      // download has nowhere to put that and the last part is what it should be called.
+      //
+      // A header is Latin-1, and a title is not: an em dash, a curly apostrophe or a Chinese
+      // title would make `Headers` throw and the download a 500. The name goes in the
+      // `filename*` a browser reads in UTF-8, with an ASCII stand-in for anything older.
+      "content-disposition": disposition(name.split("/").at(-1)!),
+      "cache-control": "private, max-age=0, must-revalidate",
     });
   });
 

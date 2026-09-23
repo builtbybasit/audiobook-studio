@@ -11,7 +11,8 @@ import { dirname } from "node:path";
 import { env } from "~/env";
 import * as schema from "~/db/schema";
 
-export type Db = BunSQLiteDatabase<typeof schema>;
+/** The handle, and the SQLite connection under it, for the pragmas drizzle has no words for. */
+export type Db = BunSQLiteDatabase<typeof schema> & { $client: Database };
 
 /**
  * The handle inside a transaction.
@@ -30,5 +31,8 @@ export function openDb(url: string = env.DATABASE_URL): Db {
   // from `books` is what makes removing a book remove everything it owns.
   if (url !== ":memory:") sqlite.exec("PRAGMA journal_mode = WAL;");
   sqlite.exec("PRAGMA foreign_keys = ON;");
+  // A second connection — `pnpm db:migrate` while the server is running — waits for a writer to
+  // finish rather than failing on the spot with SQLITE_BUSY.
+  sqlite.exec("PRAGMA busy_timeout = 5000;");
   return drizzle(sqlite, { schema });
 }

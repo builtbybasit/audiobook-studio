@@ -195,6 +195,19 @@ describe("what every response carries, and how a malformed request is answered",
     expect(res.headers.get("cross-origin-resource-policy")).toBe("same-origin");
   });
 
+  test("an upload that is not the multipart it claims is refused in the API's shape", async () => {
+    const res = await testApi().fetch("/api/books/import", {
+      method: "POST",
+      headers: { "content-type": "multipart/form-data; boundary=xyz" },
+      body: '--xyz\r\nContent-Disposition: form-data; name="file"\r\n\r\nno final boundary',
+    });
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const body = (await res.json()) as Refusal;
+    expect(body.error.code).toBe("bad_request");
+    expect(body.error.message).toContain("Malformed FormData");
+  });
+
   test("a body that is not the JSON it claims is refused in the API's shape", async () => {
     const res = await testApi().fetch("/api/books/x/chapters/decisions", {
       method: "POST",

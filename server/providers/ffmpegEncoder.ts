@@ -30,6 +30,7 @@ import type {
   AudiobookEncoder,
   EncodeChapter,
   EncodeInput,
+  EncodeTags,
   EncodedChapter,
   EncodedFile,
   EncoderChoice,
@@ -219,6 +220,37 @@ function chapterMetadata(chapters: EncodeChapter[], spans: EncodedChapter[]): st
   return lines.join("\n");
 }
 
+/**
+ * The book's words as `-metadata` options. ffmpeg's generic keys are what it spells as ID3 frames
+ * in an MP3 and as iTunes atoms in an MP4 — `album` is TALB and ©alb, `composer` TCOM and ©wrt —
+ * so one list serves both. The narrator goes in as the composer, which is where Apple's and
+ * Audiobookshelf's readers look for one; the series as the grouping. An M4B is also marked as an
+ * audiobook (`stik` 2) rather than as music, so a phone files it with its books.
+ */
+function metadataArgs(tags: EncodeTags, format: FfmpegFormat): string[] {
+  const pairs: [string, string][] = [
+    ["title", tags.title],
+    ["album", tags.book],
+    ["artist", tags.author],
+    ["album_artist", tags.author],
+    ["composer", tags.narrator],
+    ["grouping", tags.series],
+    ["date", tags.year > 0 ? String(tags.year) : ""],
+    ["comment", tags.description],
+    ["description", tags.description],
+    ["genre", "Audiobook"],
+    ["track", tags.track ? `${tags.track.n}/${tags.track.of}` : ""],
+    ["disc", tags.disc ? `${tags.disc.n}/${tags.disc.of}` : ""],
+  ];
+  if (format === "m4b") pairs.push(["media_type", "2"]);
+  // Handed over as arguments rather than through a shell or a metadata file, so nothing in them
+  // needs escaping.
+  return pairs
+    .map(([key, value]) => [key, value.trim()] as const)
+    .filter(([, value]) => value)
+    .flatMap(([key, value]) => ["-metadata", `${key}=${value}`]);
+}
+
 export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
   const format = options.format ?? "m4b";
   const bin = options.bin ?? "ffmpeg";
@@ -237,6 +269,8 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
     carries: false,
     // An MP4 cover atom and an MP3 picture frame both take the JPEG or PNG as it is.
     covers: true,
+    // An MP3's ID3 frames and an M4B's atoms both have a place for every field the page asks for.
+    tags: true,
 
     async encode({
       chapters,
@@ -245,6 +279,7 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
       signal,
       onChapter,
       cover,
+      tags,
     }: EncodeInput): Promise<EncodedFile> {
       const first = chapters.flatMap((c) => c.parts).find((p) => p.kind !== "silence");
       if (!first) throw new Error("there was nothing to write");
@@ -296,6 +331,9 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
         // The cover is one more input, copied in untouched and marked as the file's picture rather
         // than a video track — which is what a player reads as cover art. An MP3 gets the frame
         // spelled the way ID3v2.3 readers expect: a front cover, described as one.
+        //
+        // ID3v2.3 is asked for whether or not there is a picture: ffmpeg's default is 2.4, which
+        // Windows and older car stereos do not read, and a title nobody can see is not a title.
         const picture: string[] = [];
         if (cover) {
           args.push("-i", cover.path);
@@ -307,14 +345,7 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
             "-disposition:v:0",
             "attached_pic",
             ...(format === "mp3"
-              ? [
-                  "-id3v2_version",
-                  "3",
-                  "-metadata:s:v",
-                  "title=Album cover",
-                  "-metadata:s:v",
-                  "comment=Cover (front)",
-                ]
+              ? ["-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)"]
               : []),
           );
         }
@@ -326,6 +357,8 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
           "-map",
           "0:a",
           ...picture,
+          ...(tags ? metadataArgs(tags, format) : []),
+          ...(format === "mp3" ? ["-id3v2_version", "3"] : []),
           ...filter,
           "-c:a",
           CODEC[format],

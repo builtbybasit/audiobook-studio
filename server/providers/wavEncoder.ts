@@ -132,6 +132,8 @@ export function wavEncoder(): AudiobookEncoder {
     carries: true,
     // and no picture: nothing reads one out of a RIFF file
     covers: false,
+    // nor any words about the book: a RIFF INFO chunk exists, but few players read one
+    tags: false,
 
     async encode({ chapters, gap, out, signal, onChapter }: EncodeInput): Promise<EncodedFile> {
       const file = await open(out, "w");

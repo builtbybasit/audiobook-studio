@@ -128,6 +128,21 @@ export const setLabel = (s: ExportSettings, files: { name: string }[]): string =
 export const exportKey = (s: ExportSettings): string =>
   `${baseName(s).toLowerCase()}|${s.format}|${s.grouping}`;
 
+/**
+ * What one file is called inside itself — the title a player lists it by, which the plan shows
+ * and the build writes as the file's tag: the book's for a single file, the book's and its
+ * volume's for a file per volume, the chapter's for a file per chapter.
+ */
+export function fileTitle(
+  s: ExportSettings,
+  volume: string | null,
+  chapters: { title: string }[],
+): string {
+  if (volume) return `${s.title} · ${shortVolume(volume)}`;
+  if (s.grouping === "chapter" && chapters.length) return chapters[0].title;
+  return s.title;
+}
+
 /** One chapter marker as the player will list it. */
 export function markerTitle(
   c: Chapter,
@@ -270,12 +285,7 @@ export function planOf({ chapters, volumes, settings }: PlanInput): ExportPlan {
     const duration = durationOf(g.chapters, s.chapterGap);
     return {
       name: `${g.name}.${ext}`,
-      title:
-        s.grouping === "volume" && g.volume
-          ? `${s.title} · ${shortVolume(g.volume.name)}`
-          : s.grouping === "chapter"
-            ? g.chapters[0].title
-            : s.title,
+      title: fileTitle(s, s.grouping === "volume" ? (g.volume?.name ?? null) : null, g.chapters),
       chapterIds: g.chapters.map((c) => c.id),
       volume:
         s.grouping === "volume" && g.volume

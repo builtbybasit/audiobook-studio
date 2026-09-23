@@ -52,10 +52,37 @@ export interface EncodeInput {
    */
   cover?: { path: string; type: "image/jpeg" | "image/png" } | null;
   /**
+   * What the file says about itself — title, author, narrator — for a player's library to list
+   * it by rather than by its file name. An encoder that `tags` nothing is not handed any.
+   */
+  tags?: EncodeTags | null;
+  /**
    * Called as each chapter lands, so the Queue can count a long file down rather than showing
    * nothing between "writing" and "written".
    */
   onChapter?(chapter: EncodedChapter, index: number): void;
+}
+
+/**
+ * The words a file carries about itself, in the book's terms rather than a container's: which
+ * ID3 frame or MP4 atom each one lands in is the encoder's business. A blank field is left out
+ * rather than written empty.
+ */
+export interface EncodeTags {
+  /** this file's own title: the book's, a volume's or a chapter's, as the plan named it */
+  title: string;
+  /** the whole audiobook's title, which is what groups a set of files as one book */
+  book: string;
+  author: string;
+  narrator: string;
+  series: string;
+  /** 0 for none */
+  year: number;
+  description: string;
+  /** where this file falls in a file-per-chapter set */
+  track?: { n: number; of: number };
+  /** where this file falls in a file-per-volume set */
+  disc?: { n: number; of: number };
 }
 
 /** Where one chapter ended up, so the next version of this audiobook can copy it. */
@@ -109,6 +136,12 @@ export interface AudiobookEncoder {
    * build says so rather than leaving the page's "embedded in every file" standing.
    */
   readonly covers: boolean;
+  /**
+   * Whether it writes title, author and the rest into the file. An MP3 has ID3 frames for them and
+   * an M4B the atoms a phone's audiobook app reads; the stitcher writes a bare RIFF header, and
+   * the build says so rather than leaving the page's book details looking written.
+   */
+  readonly tags: boolean;
   encode(input: EncodeInput): Promise<EncodedFile>;
 }
 

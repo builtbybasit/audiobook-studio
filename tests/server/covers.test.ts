@@ -1,10 +1,13 @@
-// A cover image: kept from the EPUB, chosen for an audiobook, and written into the file.
+// A cover image: kept from the EPUB, chosen for an audiobook, and written into the file — with
+// the book's title, author and narrator beside it, which go into the file the same way.
 //
 // Until this slice a book's cover was two colours, and the Export page's picture travelled inside
 // the build's JSON as a data URL that nothing ever wrote anywhere. Here the EPUB's own cover is
 // kept when the book is imported, an image chosen for an audiobook is uploaded and named by the
 // address it was given, and a build hands whichever applies to the encoder. The ffmpeg half is
-// read back out of the file it wrote, with ffprobe, because "embedded" is a claim about bytes.
+// read back out of the file it wrote, with ffprobe, because "embedded" is a claim about bytes. So
+// are the tags: the Export page has asked for a title, an author and a narrator since it was
+// drawn, and until this slice they were kept on the export's row and written nowhere.
 import { describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -212,15 +215,17 @@ describe("a build and its cover", () => {
     expect(await lastExport(api, book.id)).toBeUndefined();
   });
 
-  test("the stitcher writes no picture, and the build says so rather than leaving the promise", async () => {
+  test("the stitcher writes no picture and no tags, and the build says so rather than leaving the promise", async () => {
     const api = testApi();
     const book = await narrated(api);
     const queued = await build(api, book.id, settingsFor());
     expect(queued.status).toBe(202);
     await api.runner.idle();
     expect((await lastExport(api, book.id)).status).toBe("done");
-    expect(await notes(api, queued.body.job.id)).toContain(
-      "A .wav file carries no cover; the image was not written",
+    const said = await notes(api, queued.body.job.id);
+    expect(said).toContain("A .wav file carries no cover; the image was not written");
+    expect(said).toContain(
+      "A .wav file carries no title or author; the book's details were not written",
     );
   });
 
@@ -254,21 +259,88 @@ async function pictures(path: string): Promise<{ codec: string; attached: boolea
     .map((s) => ({ codec: s.codec_name, attached: s.disposition?.attached_pic === 1 }));
 }
 
-const builtFile = (api: TestApi, bookId: string, exportId: number): string =>
-  api.exports.files.path(bookId, exportFileToken(api.db, exportId, 0) ?? "") ?? "";
+/** What ffmpeg writes into every file whatever it is asked: its own name, and an MP4's brands. */
+const UNASKED = new Set(["encoder", "major_brand", "minor_version", "compatible_brands"]);
+
+/** The tags of a file's container, as ffprobe reads them, less the ones nobody asked for. */
+async function tags(path: string): Promise<Record<string, string>> {
+  const proc = Bun.spawn(
+    ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path],
+    {
+      stdout: "pipe",
+      stderr: "ignore",
+    },
+  );
+  const out = JSON.parse(await new Response(proc.stdout).text()) as {
+    format: { tags?: Record<string, string> };
+  };
+  return Object.fromEntries(Object.entries(out.format.tags ?? {}).filter(([k]) => !UNASKED.has(k)));
+}
+
+const builtFile = (api: TestApi, bookId: string, exportId: number, position = 0): string =>
+  api.exports.files.path(bookId, exportFileToken(api.db, exportId, position) ?? "") ?? "";
+
+const details = {
+  author: "Iris Vane",
+  narrator: "Tom Hollis",
+  series: "The Ledger Books",
+  year: 2024,
+  description: "A ledger that balances itself; a clerk who notices.",
+};
 
 describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
-  test("an M4B carries the EPUB's cover as its picture", async () => {
+  test("an M4B carries the EPUB's cover as its picture, and the book's details as its tags", async () => {
     const api = testApi({ encoder: ffmpegEncoders() });
     const book = await narrated(api);
-    const queued = await build(api, book.id, settingsFor());
+    const queued = await build(api, book.id, settingsFor(details));
     await api.runner.idle();
     const done = await lastExport(api, book.id);
     expect(done.status).toBe("done");
-    expect(await pictures(builtFile(api, book.id, done.id))).toEqual([
-      { codec: "png", attached: true },
-    ]);
-    expect(await notes(api, queued.body.job.id)).toContain("Embedding the EPUB's cover");
+    const path = builtFile(api, book.id, done.id);
+    expect(await pictures(path)).toEqual([{ codec: "png", attached: true }]);
+    // One file holding the whole book is the book: no track or disc number to give it.
+    expect(await tags(path)).toEqual({
+      title: "Moonlight Ledger",
+      album: "Moonlight Ledger",
+      artist: "Iris Vane",
+      album_artist: "Iris Vane",
+      composer: "Tom Hollis",
+      grouping: "The Ledger Books",
+      date: "2024",
+      comment: details.description,
+      description: details.description,
+      genre: "Audiobook",
+      media_type: "2",
+    });
+    const said = await notes(api, queued.body.job.id);
+    expect(said).toContain("Embedding the EPUB's cover");
+    expect(said).toContain("Tagging each file with the book's details");
+  }, 120_000);
+
+  test("an MP3 per chapter is tagged with its chapter and its place in the set", async () => {
+    const api = testApi({ encoder: ffmpegEncoders() });
+    const book = await narrated(api, {});
+    // A blank title is the book's own, and a blank narrator is left out rather than written empty.
+    await build(
+      api,
+      book.id,
+      settingsFor({ ...details, format: "mp3", grouping: "chapter", title: " ", narrator: "" }),
+    );
+    await api.runner.idle();
+    const done = await lastExport(api, book.id);
+    expect(done.status).toBe("done");
+    for (const [i, chapter] of ["One", "Two"].entries()) {
+      const said = await tags(builtFile(api, book.id, done.id, i));
+      expect(said).toMatchObject({
+        title: chapter,
+        album: book.title,
+        artist: "Iris Vane",
+        track: `${i + 1}/2`,
+        date: "2024",
+      });
+      expect(said.composer).toBeUndefined();
+      expect(said.disc).toBeUndefined();
+    }
   }, 120_000);
 
   test("an MP3 carries the image chosen for it in place of the EPUB's", async () => {

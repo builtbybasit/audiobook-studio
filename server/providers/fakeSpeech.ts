@@ -18,7 +18,13 @@
 // the endpoint asks for and says so on the clip (`format: "wav"`). The job keeps a clip as the
 // format it says it is, so a fake run on an MP3 endpoint writes `.wav` files, which every part of
 // the server reads — the format a clip is in is never drift.
+//
+// It reports every line it is asked for through `sent`, as a real provider reports a request,
+// marked `simulated` so nobody reads the row as a bill: that is what lets a run against a priced
+// endpoint be metered and held to a cap without spending anything. A line it was told to fail is
+// reported failed, the way a request refused on the wire is; a cancel reports nothing.
 import { sleep } from "~/providers/fake";
+import type { SentSpeech } from "~/providers/sent";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 
 export interface FakeSpeechOptions {
@@ -84,15 +90,36 @@ export function fakeSpeechProvider(options: FakeSpeechOptions = {}): SpeechProvi
     async speak({
       text,
       speaker,
+      instructions,
       voiceRef,
       sampleRate,
       signal,
+      sent,
     }: SpeechInput): Promise<RenderedClip> {
+      const startedAt = Date.now();
       if (options.delayMs) await sleep(options.delayMs, signal);
       if (signal.aborted) throw signal.reason;
-      if (options.failWith) throw new Error(options.failWith);
-      if (options.failLines?.(text)) throw new Error(`The fake could not render “${text}”`);
+      const report = (rest: Pick<SentSpeech, "status" | "audioSeconds" | "error">): void =>
+        sent?.({
+          startedAt,
+          finishedAt: Date.now(),
+          attempts: 1,
+          rateLimited: false,
+          simulated: true,
+          text,
+          instructions: instructions.trim(),
+          reported: null,
+          ...rest,
+        });
+      const failure =
+        options.failWith ??
+        (options.failLines?.(text) ? `The fake could not render “${text}”` : null);
+      if (failure) {
+        report({ status: "failed", audioSeconds: 0, error: { code: 0, message: failure } });
+        throw new Error(failure);
+      }
       const duration = fakeDuration(text);
+      report({ status: "done", audioSeconds: duration });
       return {
         bytes: toneWav(toneOf(speaker), duration, sampleRate ?? SAMPLE_RATE),
         format: "wav",

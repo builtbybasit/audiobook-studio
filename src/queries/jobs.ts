@@ -10,14 +10,16 @@
 // a change is noticed: a job whose status or progress changed has its book read again, a
 // scripting job that finished has its chapter's script, history and the book's cast invalidated —
 // the run wrote all three on the server — and an export job has its book's audiobooks read again,
-// because the row it is writing is one of them. Nothing here decides what a chapter holds; it only
-// says what to ask for again.
+// because the row it is writing is one of them; and every move has the book's spending read again,
+// since a request was priced or a reservation let go. Nothing here decides what a chapter holds;
+// it only says what to ask for again.
 import { computed, toValue, watch, type MaybeRefOrGetter } from "vue";
 import { defineQuery, useQuery } from "@pinia/colada";
 
 import type { Job } from "@/types";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
+import { spendMoved } from "@/queries/spend";
 import { activeJobsService } from "@/services/jobs";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
@@ -87,7 +89,14 @@ const useJobsQuery = defineQuery(() => {
       // takes its row with it. Every move of one is therefore a change to the Audiobooks tab.
       if (j.kind === "export") void invalidate({ key: keys.exports(j.bookId) }, "all");
     }
-    for (const id of books) void libraryStore.loadBook(id);
+    // a job that moved sent a request, finished or let go of what it held: the book's spending is
+    // read again, the way its chapters are
+    for (const id of books) {
+      void libraryStore.loadBook(id);
+      void spendMoved(id);
+    }
+    // and each request it sent is a row on the Endpoints page
+    if (books.size) void invalidate({ key: keys.endpointRequests });
   });
 
   return query;

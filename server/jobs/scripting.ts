@@ -12,15 +12,20 @@
 // The chapter's `scripting` status is the job's to keep honest: `queued` when the job is, `running`
 // while it runs, and afterwards whatever the chapter's script actually is — `done` if it has one,
 // `none` if it never did, and `failed` only when a run that was meant to give it one could not.
+//
+// Money follows the rule in `~/usage/budget`. A run is priced at its worst case before anything is
+// queued and refused whole if the book cannot afford it; each job holds its chapter's share while
+// it runs and asks again before every request it sends; and every request the provider reports is
+// priced into the ledger as it lands, releasing what that request held.
 import { and, count, eq } from "drizzle-orm";
 
 import type { Job, Profile, Segment } from "@/types";
-import { scriptParts } from "@/lib/scripting";
+import { scriptParts, tokenEstimate } from "@/lib/scripting";
 import { ensureSpeakers } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { capture } from "~/db/history";
 import { readProfiles } from "~/db/endpoints";
-import { activeJob, appendEvent, getJob, nextRunId, setScriptRun } from "~/db/jobs";
+import { activeJob, appendEvent, getJob, nextRunId, setReserved, setScriptRun } from "~/db/jobs";
 import * as library from "~/db/library";
 import { chapters, characters, segments } from "~/db/schema";
 import { ScriptConflict, readScript, replaceScript } from "~/db/script";
@@ -28,7 +33,10 @@ import { plainText } from "~/epub/markdown";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
 import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
+import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
+import { assertWithinBudget, budgetProblem } from "~/usage/budget";
+import { settleScript } from "~/usage/ledger";
 
 /** The status a chapter reads as when no job is running on it: asked of its script, not remembered. */
 export function settledScriptingStatus(
@@ -94,6 +102,15 @@ function chunksOf(text: string, profile: Profile | undefined): string[] {
   return parts.length ? parts : [text];
 }
 
+/**
+ * What each chunk holds against the budget while it is unsettled: its worst case, undiscounted
+ * with the whole output ceiling (`tokenEstimate`). Nothing for a run with no profile, which has no
+ * rates to price it by.
+ */
+function holdsOf(chunks: readonly string[], profile: Profile | undefined): number[] {
+  return chunks.map((c) => (profile ? tokenEstimate(c, profile).reserve : 0));
+}
+
 export function scriptingHandler(provider: ScriptingProvider): JobHandler {
   return {
     async run(ctx: JobContext): Promise<void> {
@@ -139,12 +156,79 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         const at = locate(db, chapter.uid);
         if (at) setChapterScripting(db, at.bookId, at.id, "running", pct);
       };
-      let completed = 0;
-      let active = 0;
-      const counted = (): void => {
-        if (queued && !signal.aborted)
-          setScriptRun(db, job.id, { ...queued, requests: chunks.length, completed, active });
+      // The run's live detail, one object that every write goes through, so a request settling
+      // from inside the provider and the worker counting it can never write over each other. It
+      // starts holding the whole chapter's worst case — again, on a restart that picks the job
+      // back up — and keeps what earlier attempts cost, which the ledger holds too.
+      const holds = holdsOf(chunks, queued?.profile);
+      const run: NonNullable<Job["scriptRun"]> | undefined = queued && {
+        ...queued,
+        requests: chunks.length,
+        completed: 0,
+        active: 0,
+        reserved: holds.reduce((a, b) => a + b, 0),
       };
+      const counted = (): void => {
+        if (run && !signal.aborted) setScriptRun(db, job.id, run);
+      };
+      counted();
+      /**
+       * Give back what chunk `i` held, once its request has ended, however it ended: by then what
+       * it cost is in the ledger, which the budget counts instead.
+       */
+      const release = (i: number): void => {
+        if (!run || !holds[i]) return;
+        run.reserved = Math.max(0, run.reserved - holds[i]);
+        holds[i] = 0;
+      };
+      /**
+       * Price one request the provider reported into the ledger, against the profile as it is
+       * stored now — the rates in force when the request completed, not those the run was queued
+       * with — or the run's own copy if the profile has since been removed. A run with no profile
+       * is the fake's, which has no rates and no endpoint to put the row against.
+       */
+      const settle = (i: number, sent: SentScript): void => {
+        if (!run) return;
+        const profile = readProfiles(db).find((p) => p.id === run.profile.id) ?? run.profile;
+        const at = locate(db, chapter.uid);
+        try {
+          const record = settleScript(
+            db,
+            profile,
+            {
+              bookId: job.bookId,
+              chapterUid: at ? chapter.uid : null,
+              label: `Script chunk ${i + 1} · ch ${at?.id ?? job.chapterId}`,
+              queuedAt: job.queuedAt,
+            },
+            sent,
+          );
+          run.cost += record.cost ?? 0;
+        } catch (e) {
+          // the book went while the request was out; the job fails on its own when it next looks
+          ctx.log.error({ err: e }, "a scripting request could not be written to the ledger");
+        }
+        if (sent.usage) {
+          run.inputTokens += sent.usage.inputTokens;
+          run.outputTokens += sent.usage.outputTokens;
+          run.cachedInput = (run.cachedInput ?? 0) + (sent.usage.cachedInput ?? 0);
+          if (sent.usage.cachedInput == null) run.cacheUnreported = (run.cacheUnreported ?? 0) + 1;
+        }
+        setScriptRun(db, job.id, run);
+      };
+      /**
+       * Why the next request may not go out, or null. It asks with everything this job still holds
+       * — what is in flight and what is still to send — against what the rest of the book has
+       * spent and holds, so it only answers when the world moved under a run that fitted.
+       */
+      const refusal = (): string | null =>
+        budgetProblem(db, job.bookId, {
+          kind: "scripting",
+          cost: run?.reserved ?? 0,
+          jobId: job.id,
+          what: "the next request",
+        });
+      let refused: string | null = null;
 
       // Up to the profile's concurrency at once, the answers kept in the chapter's order. The
       // first chunk that fails stops the others and fails the chapter: half a script is never
@@ -155,9 +239,13 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       signal.addEventListener("abort", onAbort, { once: true });
       let next = 0;
       const worker = async (): Promise<void> => {
-        while (next < chunks.length && !stop.signal.aborted) {
+        while (next < chunks.length && !stop.signal.aborted && refused == null) {
+          // A budget that no longer allows the next request stops the run here: nothing more goes
+          // out, the requests already out are let land and are paid for, and the job fails after.
+          refused = refusal();
+          if (refused != null) return;
           const i = next++;
-          active++;
+          if (run) run.active++;
           counted();
           try {
             answers[i] = await provider.script({
@@ -166,6 +254,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
               signal: stop.signal,
               target,
               cast,
+              sent: (request) => settle(i, request),
               progress: (done, total) => {
                 share[i] = total ? done / total : 1;
                 report();
@@ -178,10 +267,11 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
               { cause: e },
             );
           } finally {
-            active--;
+            if (run) run.active--;
+            release(i);
           }
           share[i] = 1;
-          completed++;
+          if (run) run.completed++;
           counted();
           report();
           if (chunks.length > 1)
@@ -201,6 +291,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         signal.removeEventListener("abort", onAbort);
       }
       if (signal.aborted) throw signal.reason;
+      if (refused != null) throw new Error(refused);
 
       // Stitched in reading order and numbered afresh: a line belongs to the chunk it came back
       // in, and the ids are the chapter's, 1 to n.
@@ -262,11 +353,14 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
     },
 
     onSettled(ctx, status) {
+      // A finished job holds nothing, however it ended. The budget already leaves finished jobs
+      // out; this is for the Queue's detail, which would otherwise show a hold that is not there.
+      const fresh = getJob(ctx.db, ctx.job.id);
+      if (fresh?.scriptRun?.reserved) setReserved(ctx.db, fresh.id, 0);
       // `done` wrote the chapter's status inside its own transaction. Anything else puts the
       // chapter back to what its script says it is — read off the job's row, whose chapter number
       // has followed any renumbering by cascade, rather than the number the job started with.
       if (status === "done") return;
-      const fresh = getJob(ctx.db, ctx.job.id);
       if (!fresh || fresh.chapterId == null) return;
       const exists = ctx.db
         .select({ id: chapters.id })
@@ -298,6 +392,10 @@ export interface ScriptingQueued {
  * Chapters skipped for the audiobook and chapters already being scripted are left out and said so,
  * rather than refused: a bulk press over a selection that includes one is a person's intent for
  * the rest. A book still in its contents review has nothing to script yet, and that is refused.
+ *
+ * So is a run the book cannot afford, whole: its worst case is checked against the budget before
+ * any chapter is queued, and a run that does not fit queues nothing (409). A paused book refuses
+ * every run, a free one included.
  */
 export function enqueueScripting(
   db: Db,
@@ -338,11 +436,35 @@ export function enqueueScripting(
     outputTokens: 0,
   };
 
+  // Each chapter's worst case, cut exactly as its job will cut it, and what it is expected to cost
+  // at today's rates for the reconciliation afterwards.
+  const priced = new Map(
+    targets.map((id) => {
+      if (!chosen) return [id, { reserve: 0, estimated: 0 }] as const;
+      const text = plainText(library.getChapterBody(db, bookId, id) ?? "");
+      const chunks = chunksOf(text, chosen);
+      return [
+        id,
+        {
+          reserve: holdsOf(chunks, chosen).reduce((a, b) => a + b, 0),
+          estimated: chunks.reduce((n, c) => n + tokenEstimate(c, chosen).cost, 0),
+        },
+      ] as const;
+    }),
+  );
+  if (targets.length)
+    assertWithinBudget(db, bookId, {
+      kind: "scripting",
+      cost: [...priced.values()].reduce((n, p) => n + p.reserve, 0),
+    });
+
   const runId = nextRunId(db);
   const jobs: Job[] = [];
   targets.forEach((id, i) => {
     const c = known.get(id)!;
     const replacing = c.scripting === "done";
+    const { reserve, estimated } = priced.get(id)!;
+    const held = run && { ...run, reserved: reserve, estimated };
     const { job } = runner.enqueue({
       kind: "scripting",
       bookId,
@@ -355,7 +477,7 @@ export function enqueueScripting(
         total: targets.length,
       },
       // in the same transaction as the row, so it cannot land after the worker has moved on
-      ...(run ? { run: { scriptRun: run } } : {}),
+      ...(held ? { run: { scriptRun: held } } : {}),
       onCreated: (tx) => setChapterScripting(tx, bookId, id, "queued", 0),
     });
     if (profile && !chosen)

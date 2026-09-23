@@ -9,7 +9,8 @@
 //
 // A line with nowhere to go fails with the reason rather than going somewhere nobody chose: a
 // speaker with no voice, a voice whose endpoint has been deleted, an endpoint that needs a key and
-// has none. All three are refused before a request, so none of them costs anything.
+// has none. All three are refused before a request, so none of them costs anything, and none is
+// reported through `sent`: the ledger records requests that happened (`sent.ts`).
 import { isFishAudio } from "@/lib/endpointShapes";
 import { ProviderError, requireKey } from "~/providers/http";
 import { fishProbe, fishSpeak, type SpeechCallOptions } from "~/providers/fishSpeech";

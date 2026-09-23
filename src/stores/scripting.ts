@@ -175,8 +175,11 @@ export const useScriptingStore = defineStore("scripting", {
 
       if (libraryStore._blocked(bookId, "script")) return;
       // With a server answering, the run is the server's: it is queued there, the queue is polled
-      // and what comes back is what the chapter holds. The estimate and the budget gates are the
-      // seeded endpoints' and do not apply — see `docs/backend.md`.
+      // and what comes back is what the chapter holds. The budget is the server's to enforce: it
+      // prices the run against the book's cap and script budget before queuing anything, refuses
+      // one that does not fit with a 409 whose sentence the toast below shows as it is, and stops
+      // a running job before a request the budget no longer allows. The local gates here would
+      // only be a second opinion, priced from a different copy of the rates — see `docs/backend.md`.
       if (activeJobsService()) {
         void this._runRemote(bookId, ids, { quiet });
         return;

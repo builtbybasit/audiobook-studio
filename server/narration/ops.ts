@@ -22,10 +22,18 @@ import {
   rejectCandidate,
   writeClip,
 } from "~/db/script";
-import { inFlight, RETAKE_LABEL, setChapterNarration, settleChapter } from "~/jobs/narration";
+import {
+  inFlight,
+  narrationRunOf,
+  RETAKE_LABEL,
+  setChapterNarration,
+  settleChapter,
+} from "~/jobs/narration";
 import type { Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
 import { requireBook } from "~/library/ops";
+import { narrationCost } from "~/narration/cost";
+import { assertWithinBudget } from "~/usage/budget";
 
 export interface RetakesQueued {
   /** the job, or null when nothing was queued */
@@ -67,7 +75,9 @@ const beingNarrated = (chapterId: number, then: string) =>
  * has seen; one with nothing worth keeping renders in place, which is a plain re-render and not a
  * comparison. Nothing is written when nothing is queued. A chapter with a run in flight is refused
  * rather than joined, as the demo's `_resume` returns early while the chapter is running, and the
- * queue's one-job-per-chapter rule would hand back that run's job in any case.
+ * queue's one-job-per-chapter rule would hand back that run's job in any case. A retake is held to
+ * the book's budget exactly as a bulk run is: priced at its worst case, refused whole with a 409
+ * when it does not fit, and held by its job until its lines settle.
  */
 export function retakeLines(
   db: Db,
@@ -89,6 +99,9 @@ export function retakeLines(
     else queued.push(s);
   }
   if (!queued.length) return { job: null, queued: [], skipped };
+  // held to the book's budget as a bulk run is, before anything is written
+  const cost = narrationCost(db, bookId, queued);
+  assertWithinBudget(db, bookId, { kind: "narration", cost: cost.reserved, what: "this retake" });
 
   const { job, created } = runner.enqueue({
     kind: "narration",
@@ -96,8 +109,7 @@ export function retakeLines(
     chapterId,
     label: `${RETAKE_LABEL} · ch ${chapterId}`,
     bulk: { id: nextRunId(db), op: RETAKE_LABEL, index: 1, total: 1, scope: RETAKE_LABEL },
-    // the fake costs nothing to reserve; a real provider's price is the server's to meter
-    run: { narrationRun: { reserved: 0, clips: queued.length } },
+    run: { narrationRun: narrationRunOf(cost, queued.length) },
     // in the same transaction as the row, so the lines hold their slots before the run can start
     // and the chapter cannot read as queued after the worker has moved on
     onCreated: (tx) => {

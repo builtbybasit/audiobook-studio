@@ -17,6 +17,7 @@ import { readScript, writeScript } from "~/db/script";
 import { jobs } from "~/db/schema";
 import { fakeScriptingProvider, sleep } from "~/providers/fake";
 import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
+import { endpointRequests } from "~/usage/ledger";
 import { epubFile, story } from "../support/epub";
 import {
   collectingLogger,
@@ -772,5 +773,170 @@ describe("a chapter longer than its scripting profile takes", () => {
     expect(job.activity?.map((e) => e.message)).toContain(
       "The scripting profile “openai” is not saved on this server; the chapter goes whole",
     );
+  });
+});
+
+// ---- what a run costs, and what the book lets it spend ----
+
+/** The book's cap, pause or script budget, set the way the overview sets them. */
+const budget = (api: ReturnType<typeof testApi>, id: string, settings: Record<string, unknown>) =>
+  api.request(`/api/books/${id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+
+/** Every scripting request the ledger holds for the seeded OpenAI profile. */
+const ledger = (api: ReturnType<typeof testApi>) =>
+  endpointRequests(api.db, "scripting", "openai", 0);
+
+/**
+ * What one chapter of this fixture holds while it is queued, read off a run of it on a book of its
+ * own in the same API — so the figure is the server's, and the book under test has spent nothing.
+ */
+async function oneChapterHolds(api: ReturnType<typeof testApi>): Promise<number> {
+  const other = await shelved(api, ["Solo"]);
+  const { body } = await script(api, other.id, [1], "openai");
+  await api.runner.idle();
+  const held = body.jobs[0].scriptRun!.reserved;
+  expect(held).toBeGreaterThan(0);
+  return held;
+}
+
+describe("a scripting run's spending", () => {
+  test("every request lands in the ledger priced, and the run's cost is their sum with nothing left held", async () => {
+    const { api, id } = await shelved(testApi(), ["One"]);
+    await saveProfile(api, small());
+    const { body } = await script(api, id, [1], "openai");
+    expect(body.jobs[0].scriptRun!.reserved).toBeGreaterThan(0);
+    await api.runner.idle();
+
+    const job = await jobById(api, body.jobs[0].id);
+    const rows = ledger(api);
+    expect(rows).toHaveLength(job.scriptRun!.requests);
+    expect(rows.length).toBeGreaterThan(1);
+    expect(rows.every((r) => r.simulated && r.status === "done" && (r.cost ?? 0) > 0)).toBe(true);
+    expect(rows.map((r) => r.label).sort()).toEqual(
+      rows.map((_, i) => `Script chunk ${i + 1} · ch 1`).sort(),
+    );
+    expect(job.scriptRun!.cost).toBeCloseTo(
+      rows.reduce((n, r) => n + (r.cost ?? 0), 0),
+      12,
+    );
+    expect(job.scriptRun!.inputTokens).toBe(
+      rows.reduce((n, r) => n + (r.usage.inputTokens ?? 0), 0),
+    );
+    // the fake says nothing about its cache, and each request is counted as having said nothing
+    expect(job.scriptRun!.cacheUnreported).toBe(rows.length);
+    expect(job.scriptRun!.reserved).toBe(0);
+  });
+
+  test.each([
+    {
+      why: "over the book's cap",
+      settings: { budget: { cap: 0.0001, paused: false } },
+      profile: "openai",
+      said: /^Over the book's .+ cap: .+ for this run/,
+    },
+    {
+      why: "over the book's script budget",
+      settings: { scriptBudget: 0.0001 },
+      profile: "openai",
+      said: /^Over the book's .+ script budget/,
+    },
+    {
+      why: "on a paused book, even with no profile to pay",
+      settings: { budget: { cap: null, paused: true } },
+      profile: undefined,
+      said: /^Moonlight Ledger is paused\./,
+    },
+  ])("a run $why is refused before anything is queued", async ({ settings, profile, said }) => {
+    const { api, id } = await shelved(testApi(), ["One"]);
+    await saveProfile(api, small());
+    await budget(api, id, settings);
+    const { status, body } = await api.request<Failure>(
+      `/api/books/${id}/chapters/script`,
+      jsonBody({ ids: [1], profile }),
+    );
+    expect(status).toBe(409);
+    expect(body.error.message).toMatch(said);
+    expect((await api.request<{ jobs: Job[] }>(`/api/jobs?bookId=${id}`)).body.jobs).toEqual([]);
+    expect((await chaptersOf(api, id))[0].scripting).toBe("none");
+  });
+
+  test("a run is refused whole: one chapter fits the cap, two do not, and neither is queued", async () => {
+    const api = testApi();
+    await saveProfile(api, small());
+    const held = await oneChapterHolds(api);
+    const { id } = await shelved(api, ["One", "Two"]);
+    await budget(api, id, { budget: { cap: held * 1.5, paused: false } });
+
+    expect((await script(api, id, [1, 2], "openai")).status).toBe(409);
+    expect((await api.request<{ jobs: Job[] }>(`/api/jobs?bookId=${id}`)).body.jobs).toEqual([]);
+    expect((await script(api, id, [1], "openai")).status).toBe(202);
+    await api.runner.idle();
+  });
+
+  test("a queued run holds its worst case, so a second that fits alone is refused while it runs", async () => {
+    const gate = gatedProvider();
+    const api = testApi({ scripting: gate.provider });
+    await saveProfile(api, small());
+    const other = await shelved(api, ["Solo"]);
+    const first = await script(api, other.id, [1], "openai");
+    const held = first.body.jobs[0].scriptRun!.reserved;
+    const { id } = await shelved(api, ["One", "Two"]);
+    await budget(api, id, { budget: { cap: held * 1.5, paused: false } });
+
+    const running = await script(api, id, [1], "openai");
+    expect(running.status).toBe(202);
+    const second = await api.request<Failure>(
+      `/api/books/${id}/chapters/script`,
+      jsonBody({ ids: [2], profile: "openai" }),
+    );
+    expect(second.status).toBe(409);
+    expect(second.body.error.message).toContain("held by work already running");
+    gate.release();
+    await api.runner.idle();
+  });
+
+  test("a cap lowered under a running job stops it before its next request, keeping what was paid for", async () => {
+    // the fake, with its first request held until the test says so
+    const inner = fakeScriptingProvider();
+    let onStart!: () => void;
+    let onRelease!: () => void;
+    const started = new Promise<void>((r) => (onStart = r));
+    const gate = new Promise<void>((r) => (onRelease = r));
+    let calls = 0;
+    const held: ScriptingProvider = {
+      name: inner.name,
+      async script(input) {
+        if (++calls === 1) {
+          onStart();
+          await gate;
+        }
+        return inner.script(input);
+      },
+    };
+    const { api, id } = await shelved(testApi({ scripting: held }), ["One"]);
+    await saveProfile(api, small({ concurrency: 1 }));
+    await budget(api, id, { budget: { cap: 100, paused: false } });
+    const { body } = await script(api, id, [1], "openai");
+    await started;
+    await budget(api, id, { budget: { cap: 0, paused: false } });
+    onRelease();
+    await api.runner.idle();
+
+    const job = await jobById(api, body.jobs[0].id);
+    expect(job.status).toBe("failed");
+    expect(String(job.activity?.at(-1)?.detail?.error)).toMatch(
+      /^Over the book's .+ cap: .+ for the next request/,
+    );
+    expect(calls).toBe(1);
+    expect(ledger(api)).toHaveLength(1);
+    expect(job.scriptRun).toMatchObject({ completed: 1, reserved: 0 });
+    expect(job.scriptRun!.cost).toBeGreaterThan(0);
+    const { segments } = (await api.request<ScriptResult>(`/api/books/${id}/chapters/1/script`))
+      .body;
+    expect(segments).toEqual([]);
   });
 });

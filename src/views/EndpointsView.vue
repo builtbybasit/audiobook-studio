@@ -16,9 +16,11 @@ import { useUsageStore } from "@/stores/usage";
 // endpoint, and the selected one's detail behind the tabs the scripting editor already used.
 //
 // Where the numbers come from:
-//   · what is running now  — the live job simulator in the store (`live.ts`)
-//   · everything historical — `endpointService`, which in this build is a fixture generator
-// Both are simulated. No provider is called, nothing is billed, and nothing persists.
+//   · what is running now  — the queue in the store (`live.ts`)
+//   · everything historical — `useEndpointHistory`: with a server answering, the rows of its
+//     ledger, each a request a job really sent (a fake provider's marked simulated); in the demo,
+//     `endpointService`'s invented week, where no provider is called and nothing is billed
+//   · a book's spending — the jobs store, which with a server answering holds the server's figures
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { activeEndpointSettingsService, keyInPlace } from "@/services/endpointSettings";
@@ -43,7 +45,9 @@ import ExpressionsTab from "@/views/endpoints/ExpressionsTab.vue";
 import VoicesTab from "@/views/endpoints/VoicesTab.vue";
 import PricingTab from "@/views/endpoints/PricingTab.vue";
 import ActivityTab from "@/views/endpoints/ActivityTab.vue";
+import { useEndpointHistory, useLibrarySpend } from "@/queries";
 import { endpointService, probeCost, seriesFrom, RANGES } from "@/services/endpoints";
+import { activeUsageService } from "@/services/usage";
 import type { EndpointDescriptor } from "@/services/endpoints";
 import {
   DOT,
@@ -124,11 +128,7 @@ const list = computed(() => {
 });
 
 // ---------- history ----------
-// One pull of the widest range per endpoint; every shorter range is bucketed from it locally. A
-// real backend would more likely serve pre-aggregated buckets — `EndpointService` leaves room for
-// either.
-const histories = ref<Record<string, RequestRecord[]>>({});
-const loading = ref(true);
+// One pull of the widest range per endpoint; every shorter range is bucketed from it locally.
 
 const describe = (u: UnifiedEndpoint): EndpointDescriptor => ({
   key: u.key,
@@ -149,41 +149,41 @@ const describe = (u: UnifiedEndpoint): EndpointDescriptor => ({
   hasKey: keyInPlace(u.profile ?? u.endpoint, u.slot),
 });
 
-async function load() {
-  loading.value = true;
-  const next: Record<string, RequestRecord[]> = {};
-  await Promise.all(
-    all.value.map(async (u) => {
-      next[u.key] = await endpointService.history(describe(u), "7d");
-    }),
-  );
-  histories.value = next;
-  loading.value = false;
-}
-onMounted(load);
-watch(() => all.value.length, load);
+const history = useEndpointHistory(() => all.value.map(describe));
+const histories = history.histories;
+const loading = computed(() => history.status.value === "pending");
 // A demo reset or a scenario replaces the rate cards this history was priced from, and the fixture
 // service has already dropped it by the time the epoch changes — so pull it again rather than keep
 // showing a week priced against a world that is gone.
-watch(() => demoStore._epoch, load);
+watch(
+  () => demoStore._epoch,
+  () => void history.refetch(),
+);
+// the budget table and the wait reasons set each book's spending against its cap
+useLibrarySpend();
 
 const rangeLabel = computed(() => RANGES.find((r) => r.value === ui.range)!.label);
 
 /**
- * Every settled request against this endpoint: the ones this session actually made, then the
- * fixture service's invented week.
+ * Every settled request against this endpoint. With a server answering, the rows of its ledger;
+ * in the demo, the ones this session actually made, then the fixture service's invented week.
  *
  * The session's own rows come out of the append-only ledger rather than out of the running job
  * simulator, which only knows about work that has not finished yet. Reading the simulator alone
  * made a request disappear from this page the moment it completed — the one point at which it had
  * a receipt worth looking at — and left the page showing unrelated backstory instead.
  */
-const settledFor = (u: UnifiedEndpoint): RequestRecord[] => [
-  // by id *and* kind: a speech endpoint and a scripting profile may share an id, and the seeded
-  // world has an `openai` of each
-  ...usageStore.ofEndpoint(u.id, u.kind),
-  ...(histories.value[u.key] ?? []),
-];
+const settledFor = (u: UnifiedEndpoint): RequestRecord[] =>
+  // With a server answering, its ledger is every settled request, this session's included, and
+  // the session's own ledger has nothing in it.
+  activeUsageService()
+    ? (histories.value[u.key] ?? [])
+    : [
+        // by id *and* kind: a speech endpoint and a scripting profile may share an id, and the
+        // seeded world has an `openai` of each
+        ...usageStore.ofEndpoint(u.id, u.kind),
+        ...(histories.value[u.key] ?? []),
+      ];
 
 /** Buckets for one endpoint over one range, folded from its records. */
 const seriesFor = (u: UnifiedEndpoint, range = ui.range) =>
@@ -360,7 +360,6 @@ function probeCostOf(u: UnifiedEndpoint): number | null {
 function remove(u: UnifiedEndpoint) {
   if (u.profile) endpointsStore.removeScriptProfile(u.id);
   else endpointsStore.removeEndpoint(u.id);
-  delete histories.value[u.key];
   ui.selected = null;
 }
 

@@ -621,6 +621,8 @@ service are both built on it, so that rule is written once.
 | `PUT`    | `/api/endpoints`                                 | The whole configuration, in place of what is stored           |
 | `POST`   | `/api/endpoints/test`                            | One small request to a saved endpoint with its saved key      |
 | `POST`   | `/api/endpoints/voices`                          | A saved endpoint's voices: its library, or a public search    |
+| `GET`    | `/api/endpoints/requests`                        | One endpoint's requests, newest first; `?kind&id&range`       |
+| `GET`    | `/api/books/:id/spend`                           | What the book has spent, and what its unfinished work holds   |
 | `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                          |
 | `DELETE` | `/api/books/:id/volumes/:volumeId`               | Remove a volume; the last one removes the book; 409 mid-build |
 | `PATCH`  | `/api/books/:id`                                 | The budget, script budget or pacing; chapters are re-timed    |
@@ -802,8 +804,8 @@ from zero. The answers are stitched in the chapter's order, whichever came back 
 numbered 1 to n afresh, then written in the one transaction a whole chapter is. A request that
 fails stops the others and fails the chapter — `Request 2 of 5 failed: …` — and nothing is
 written: half a script is not a script. The history entry names the profile and the provider as
-its model. Nothing is priced or held against the budget yet (see
-[what is not done yet](#what-is-not-done-yet)).
+its model. Every request is priced into the ledger and the run is held against the book's budget —
+see [what a request costs](#what-a-request-costs-and-what-a-book-may-spend).
 
 A cut can fall inside a quotation or between a line and the "said Mara" that names its speaker —
 the preview shows where — and the fake then reads each side on its own, so a quoted line can come
@@ -909,6 +911,56 @@ runs — the fakes say so without a request. Scripting sends a two-sentence exce
 path a chapter takes; Fish lists the account's models, which proves the key and costs nothing; an
 OpenAI-shaped server lists `/models`. The page sends any edit still waiting to be written first,
 but not an unsaved connection draft: saving one can move queued work, which asks first.
+
+### What a request costs, and what a book may spend
+
+**Every request a provider sends is priced and appended to the ledger, answered or not.** A
+provider reports each one through its input's `sent` callback ([sent.ts](../server/providers/sent.ts))
+— when it went out and came back, how many attempts `call` made and whether one was a 429, what it
+used — and the job settles it with the book, the chapter's uid and a label
+([ledger.ts](../server/usage/ledger.ts)). The price is the browser's engine, `src/lib/pricing.ts`,
+imported as it is: a scripting request through `priceRequest` against its profile's card, a speech
+request through `measureSpeech` and `priceSpeechRequest` against its endpoint's, both at the rates
+in force the moment the request completed. The card read is the one stored then, not the one the
+run was queued with, and the receipt is frozen on the row, so a rate changed tomorrow re-prices
+nothing.
+
+Which requests count follows what a provider bills. An answer a provider then refuses — cut off at
+the length limit, empty, a line that is not the chapter's — was billed and is priced from the usage
+it reported. A chat request that failed on the wire reported no usage and costs nothing. A speech
+request that failed is charged for what it sent on an endpoint that bills characters, bytes or
+requests, and nothing on one that bills the audio that came back. A request refused before it was
+sent — no key, no voice, a format the endpoint cannot be asked for — never happened, and has no
+row; nor does a request cancelled mid-flight, since what the provider made of it is not knowable.
+
+**The fakes are metered too.** They report what they were given and what they answered, marked
+`simulated`, and the rows are priced at the endpoints' cards like any other. A fresh clone still
+spends nothing, and a budget can be run into, tested and shown without a key.
+
+**A book's budget is enforced here, by one question asked twice.**
+[budget.ts](../server/usage/budget.ts) asks whether some work fits: a paused book fits nothing; a
+book with a cap fits what keeps _spent + held by unfinished jobs + this_ under it; scripting must
+also fit under the script budget. The price asked about is the worst case — undiscounted rates,
+the dearest input rate, the whole output ceiling — because a run lasts long enough for a promotion
+to end inside it, which is the rule `src/stores/README.md` sets for the browser.
+
+- **Before anything is queued**, with the whole run's worst case. A run that does not fit queues
+  nothing and answers **409** with a sentence that says what to change. Every way of asking for
+  work goes through it: a run, a retry, a retake.
+- **Before each request goes out**, by the running job, with what it still holds and its own
+  reservation left out of the book's total. That only fails when something moved under a run that
+  fitted — a request cost more than it reserved, the cap was lowered, the book was paused — and
+  the job stops and fails with the same sentence. What it already paid for stays in the ledger.
+
+A job holds its reservation in `jobs.reserved`, written with the row and summed by the gate over
+unfinished jobs, and gives it back as the work settles — a scripting job each chunk's share as its
+request ends, a narration job each line's once the line is written — so what is held plus what is
+spent never counts the same money twice. A finished job holds nothing. A narration job stopped by
+the budget puts the lines it had not sent back as they were, rather than failing them; a scripting
+job stopped by it writes no script, as any failed chunk does. A run with no profile is still asked
+about the pause, but has no card to price by and writes no rows. `GET /api/books/:id/spend` answers the sums; `GET /api/endpoints/requests`
+answers one endpoint's rows for the Activity list and the charts, each with the number its chapter
+goes by now.
 
 ### Narration
 
@@ -1200,8 +1252,9 @@ through the same composables the pages use.
 
 Narration takes the same shape. `runNarration` in [narration.ts](../src/stores/narration.ts)
 queues the chapters on the server at the scope asked for and marks nothing itself; the expression
-guard, the estimate and the budget gates are the seeded endpoints' and are bypassed as scripting's
-are. A narration job that moved — a clip landed, so its progress changed — has its chapter's script
+guard, the estimate and the budget gates are the demo's and are skipped as scripting's are, because
+the server holds the budget and refuses a run that does not fit with a 409 whose sentence the toast
+shows. A narration job that moved — a clip landed, so its progress changed — has its chapter's script
 read again, which is how the Narration page shows clips arriving one by one rather than when the
 run ends; the read moves the store's revision on without showing a re-script diff, because the
 lines say the same things and only their clips differ. "Re-narrate what changed" and "retry what
@@ -1216,10 +1269,15 @@ arriving rather than nothing; an export job that moved has the book's exports re
 how progress, a finish, a failure and a cancel that removed the row all reach the page. Cancel and
 Retry are the queue's, as they are for every other kind.
 
-One thing the seeded run does that the server's does not, yet: the estimate and the budget gates
-are the seeded endpoints' and are bypassed in backend mode — the fake costs nothing, and a real
-provider's spending is the server's to meter. It is listed under
-[what is not done yet](#what-is-not-done-yet).
+**Every figure about money on screen is the server's.** The browser's estimate and budget gates are
+skipped in backend mode, because the server is the authority: it refuses before queuing and stops
+a running job before a request that no longer fits (see
+[what a request costs](#what-a-request-costs-and-what-a-book-may-spend)). The jobs store's
+`spent`, `reserved`, `scriptSpent` and `scriptReserved` answer from `GET /api/books/:id/spend`
+(`useBookSpend` for the open book, `useLibrarySpend` for the Endpoints page's budgets table), read
+again as the book's jobs move and after a budget is written; the Endpoints page's Activity list,
+charts and spent-today read `GET /api/endpoints/requests` (`useEndpointHistory`). A row a real
+provider answered is marked as such, and one from the fakes as simulated.
 
 ## Four things the EPUB library does on import
 
@@ -1278,31 +1336,33 @@ What it can vary is what real EPUBs vary: where the navigation document sits rel
 chapters, whether it calls a chapter something other than the heading inside it, whether one file
 holds several chapters, and whether a file the package promises is in the archive at all.
 
-| File                                                             | Covers                                                                                                      |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| [epubImport.test.ts](../tests/server/epubImport.test.ts)         | Reading a file: metadata, titles, text, refusals                                                            |
-| [notices.test.ts](../tests/server/notices.test.ts)               | Which chapters are not story                                                                                |
-| [contentsReview.test.ts](../tests/server/contentsReview.test.ts) | Import → review → add, volumes, removal, renumbering                                                        |
-| [volumes.test.ts](../tests/server/volumes.test.ts)               | Removing a volume: rekeyed jobs, cancelled work, files, refusals mid-build                                  |
-| [bookSettings.test.ts](../tests/server/bookSettings.test.ts)     | Budget, pacing and re-timing, a volume's name, and a reorder and its refusals                               |
-| [endpoints.test.ts](../tests/server/endpoints.test.ts)           | Saved and refused whole; tags and sample rate on a line; one rate a file; a long line sent in parts         |
-| [covers.test.ts](../tests/server/covers.test.ts)                 | The EPUB's cover kept, an upload and its refusals, a cover in an M4B and an MP3, the book's details as tags |
-| [markdown.test.ts](../tests/server/markdown.test.ts)             | The converter's DOM bracket, and reading Markdown back                                                      |
-| [jobs.test.ts](../tests/server/jobs.test.ts)                     | The queue: dedupe, cancel, restart, revision conflicts, HTTP; a chapter in a profile's chunks               |
-| [narration.test.ts](../tests/server/narration.test.ts)           | Narration: scopes, replacement, failure, cancel, restart, dictionary, files                                 |
-| [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)         | Editing against a revision, the history rule, what a run writes                                             |
-| [cast.test.ts](../tests/server/cast.test.ts)                     | The cast a run leaves, rename, merge, removal, exact undo                                                   |
-| [exports.test.ts](../tests/server/exports.test.ts)               | Building one: the file, the spans, refusals, cancel, failure, download                                      |
-| [endpointKeys.test.ts](../tests/server/endpointKeys.test.ts)     | A key kept, never sent back or logged, kept by a save that omits it; the Test route                         |
-| [encodedClips.test.ts](../tests/server/encodedClips.test.ts)     | MP3 and Opus asked for, kept, read, joined, served; the stitcher's refusal; an ffmpeg build from them       |
-| [voices.test.ts](../tests/server/voices.test.ts)                 | A library read to its end, a public search, OpenAI's list, refusals                                         |
-| [chatScripting.test.ts](../tests/server/chatScripting.test.ts)   | The chat request, a fenced answer, fidelity, a cut-off, retries, cancel, probe                              |
-| [endpointSpeech.test.ts](../tests/server/endpointSpeech.test.ts) | Fish and OpenAI-shaped requests, a streamed header made plain, refusals, retries, probe                     |
-| [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)     | What the fake models produce — attributions, a valid WAV — and that they abort                              |
-| [libraryClient.test.ts](../tests/server/libraryClient.test.ts)   | The client and the API against each other                                                                   |
-| [schema.test.ts](../tests/server/schema.test.ts)                 | The seeded world through the schema and back                                                                |
-| [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)     | The library store, with a server answering                                                                  |
-| [../jobsBackend.test.ts](../tests/jobsBackend.test.ts)           | The jobs, scripting, narration, scripts, cast and history stores, with a server                             |
+| File                                                               | Covers                                                                                                      |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| [epubImport.test.ts](../tests/server/epubImport.test.ts)           | Reading a file: metadata, titles, text, refusals                                                            |
+| [notices.test.ts](../tests/server/notices.test.ts)                 | Which chapters are not story                                                                                |
+| [contentsReview.test.ts](../tests/server/contentsReview.test.ts)   | Import → review → add, volumes, removal, renumbering                                                        |
+| [volumes.test.ts](../tests/server/volumes.test.ts)                 | Removing a volume: rekeyed jobs, cancelled work, files, refusals mid-build                                  |
+| [bookSettings.test.ts](../tests/server/bookSettings.test.ts)       | Budget, pacing and re-timing, a volume's name, and a reorder and its refusals                               |
+| [endpoints.test.ts](../tests/server/endpoints.test.ts)             | Saved and refused whole; tags and sample rate on a line; one rate a file; a long line sent in parts         |
+| [covers.test.ts](../tests/server/covers.test.ts)                   | The EPUB's cover kept, an upload and its refusals, a cover in an M4B and an MP3, the book's details as tags |
+| [markdown.test.ts](../tests/server/markdown.test.ts)               | The converter's DOM bracket, and reading Markdown back                                                      |
+| [jobs.test.ts](../tests/server/jobs.test.ts)                       | The queue: dedupe, cancel, restart, revision conflicts, HTTP; a chapter in a profile's chunks; its spending |
+| [usage.test.ts](../tests/server/usage.test.ts)                     | Pricing a request into the ledger, a book's spending, the budget gate, the two ledger routes                |
+| [narrationBudget.test.ts](../tests/server/narrationBudget.test.ts) | A row per part, a failed part charged, runs and retakes refused, a cap lowered mid-run                      |
+| [narration.test.ts](../tests/server/narration.test.ts)             | Narration: scopes, replacement, failure, cancel, restart, dictionary, files                                 |
+| [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)           | Editing against a revision, the history rule, what a run writes                                             |
+| [cast.test.ts](../tests/server/cast.test.ts)                       | The cast a run leaves, rename, merge, removal, exact undo                                                   |
+| [exports.test.ts](../tests/server/exports.test.ts)                 | Building one: the file, the spans, refusals, cancel, failure, download                                      |
+| [endpointKeys.test.ts](../tests/server/endpointKeys.test.ts)       | A key kept, never sent back or logged, kept by a save that omits it; the Test route                         |
+| [encodedClips.test.ts](../tests/server/encodedClips.test.ts)       | MP3 and Opus asked for, kept, read, joined, served; the stitcher's refusal; an ffmpeg build from them       |
+| [voices.test.ts](../tests/server/voices.test.ts)                   | A library read to its end, a public search, OpenAI's list, refusals                                         |
+| [chatScripting.test.ts](../tests/server/chatScripting.test.ts)     | The chat request, a fenced answer, fidelity, a cut-off, retries, cancel, probe                              |
+| [endpointSpeech.test.ts](../tests/server/endpointSpeech.test.ts)   | Fish and OpenAI-shaped requests, a streamed header made plain, refusals, retries, probe                     |
+| [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)       | What the fake models produce — attributions, a valid WAV — and that they abort                              |
+| [libraryClient.test.ts](../tests/server/libraryClient.test.ts)     | The client and the API against each other                                                                   |
+| [schema.test.ts](../tests/server/schema.test.ts)                   | The seeded world through the schema and back                                                                |
+| [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)       | The library store, with a server answering                                                                  |
+| [../jobsBackend.test.ts](../tests/jobsBackend.test.ts)             | The jobs, scripting, narration, scripts, cast and history stores, with a server                             |
 
 The client tests matter more than they look. Both sides of the seam are in this repository, so "the
 API returns what the client reads" is something the suite can check rather than a comment two files
@@ -1342,9 +1402,6 @@ the library screens are the server's in backend mode. What is worth knowing abou
   inverse rule: the store records what the chapters were and sends that to
   `POST /api/books/:id/chapters/decisions`, which puts it back as stated. A skip that is undone
   comes back undecided, and keeping a chapter offers Undo, on both sides of the seam.
-- **A budget is stored, not enforced.** The cap, the pause and the script budget are written by
-  `PATCH /api/books/:id` and read back on every load, and the browser's gates read them; nothing on
-  the server holds a job against them yet, for the reason the budgets bullet below gives.
 - **An undo over HTTP is an edit.** A rename is renamed back and a merge or a removal puts back the
   lines that moved, exactly; but undoing an edit, a bulk correction or a restore writes the previous
   script back as an edit, so the history says an edit happened rather than forgetting the entry the
@@ -1354,10 +1411,15 @@ the library screens are the server's in backend mode. What is worth knowing abou
 The queue runs three kinds of job. What the scripting, narration and export slices do not do yet,
 each because a route or a table's writer is missing rather than by oversight:
 
-- **A real request is not metered.** With `endpoints`, scripting and narration spend real money
-  against the saved endpoints, and nothing on the server holds a run against a book's budget or
-  records what it cost — see the budgets bullet below. A chapter's duration is its clips plus the
-  book's pacing, which a pacing change re-times on the server for every narrated chapter.
+- **An endpoint's daily limit is shown, not enforced.** `spendLimit` and `quotaGroup` are stored
+  and the Pricing tab draws the day's spending against the limit, but only a book's cap, pause and
+  script budget hold work back — in the demo as on the server.
+- **A billed request that was aborted has no row.** When one chunk of a chapter fails, the others
+  in flight are aborted, and a request cancelled mid-flight reports nothing, since what the
+  provider made of it is not knowable. A budget stop, by contrast, lets what is out land and pays
+  for it.
+- **The opening balance has no writer.** `opening_spend` is summed into a book's spending, but only
+  the seeded world has one; a book imported on the server starts at zero.
 - **Gemini's speech API has no adapter.** Its preset's base URL is neither Fish's nor OpenAI's
   shape, so it is offered the OpenAI table and a request would go to `/audio/speech`, which it does
   not serve. It needs a `generateContent` request and a raw-PCM answer before it can be called.
@@ -1367,19 +1429,13 @@ each because a route or a table's writer is missing rather than by oversight:
   stitcher and refused under ffmpeg, for the reason [the encoder](#the-encoder-and-what-it-will-not-pretend)
   gives. Making it real there means keeping an encoded file per chapter and joining those with
   `-c copy`, which is a different arrangement on disk from the one this server has.
-- **No usage record is settled.** The seeded run also settles a usage record with a receipt; the
-  server's writes the script, the speakers and the version, and the fake provider has nothing to
-  bill. The ledger has no route.
-- **Budgets and estimates are not enforced on the server.** The fake provider costs nothing to
-  meter. A real one needs the pricing engine in `src/lib/pricing.ts` on the server side and a
-  reservation against the book's cap before dispatch, the way `_reserveQueued` does it in the demo.
 - **Retrying a failed job re-queues it through the same route** it was asked for by, so a retry is
   planned again against the book as it now stands rather than replayed as it was.
 - **A change made in another tab is noticed on the next write, not before.** Nothing pushes
   events; a script edited elsewhere is found when an edit here is refused for its stale revision.
 
-The tables for the rest of the domain exist and are proven against the seeded world. The usage
-ledger has no route, and neither do the secrets a credential names or any real provider.
+The tables for the rest of the domain exist and are proven against the seeded world. The secrets a
+credential names have no route.
 The seeded demo remains the way to exercise all of it, and stays that way after the backend is
 finished — see [the demo guide](demo.md).
 

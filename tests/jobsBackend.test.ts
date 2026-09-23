@@ -12,8 +12,10 @@
 // what the store assumed when it sent the request.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import type { Segment } from "@/types";
+import type { BookSpend, RequestRecord, Segment } from "@/types";
+import { credentials } from "@/lib/credentials";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
+import { makeProfiles } from "@/mock/fixtures/profiles";
 import { key } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
 import { silenceOf } from "@/lib/speech";
@@ -22,9 +24,13 @@ import {
   useBookJobs,
   useCast,
   useChapterHistory,
+  useBookSpend,
   useChapterScript,
+  useEndpointHistory,
 } from "@/queries";
+import type { EndpointDescriptor } from "@/services/endpoints";
 import { HttpJobsService, setJobsService } from "@/services/jobs";
+import { HttpUsageService, setUsageService } from "@/services/usage";
 import { activeLibraryService, HttpLibraryService, setLibraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 import { useExportsStore } from "@/stores/exports";
@@ -35,12 +41,13 @@ import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
+import { useUsageStore } from "@/stores/usage";
 import { readScript, writeScript } from "~/db/script";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";
 import { epubFile, story } from "./support/epub";
 import { flush, testPinia, type TestPinia } from "./support/pinia";
-import { gatedProvider, testApi, type TestApi } from "./support/server";
+import { gatedProvider, jsonBody, testApi, type TestApi } from "./support/server";
 
 let api: TestApi;
 let pinia: TestPinia;
@@ -108,6 +115,7 @@ function wireStores() {
   // its state, which is how it knows not to seed itself from the demo world.
   setLibraryService(new HttpLibraryService("/api", fetch));
   setJobsService(new HttpJobsService("/api", fetch));
+  setUsageService(new HttpUsageService("/api", fetch));
   pinia?.stop();
   pinia = testPinia();
   castStore = useCastStore();
@@ -175,6 +183,7 @@ afterEach(() => {
   pinia.stop();
   setLibraryService(null);
   setJobsService(null);
+  setUsageService(null);
 });
 
 describe("the queue with a server answering", () => {
@@ -1025,5 +1034,79 @@ describe("the audiobooks with a server answering", () => {
     expect(toasts.at(-1)?.msg).toContain("no audio");
     expect(exportsStore.exports).toEqual([]);
     expect(jobsStore.jobs.some((j) => j.kind === "export")).toBe(false);
+  });
+});
+
+describe("spending with a server answering", () => {
+  /** The seeded OpenAI profile, priced, saved to the server the way the Endpoints page saves it. */
+  async function priced(): Promise<void> {
+    const profile = makeProfiles().find((p) => p.id === "openai")!;
+    const { status } = await api.request("/api/endpoints", {
+      ...jsonBody({ endpoints: [], profiles: [profile], credentials: [...credentials] }),
+      method: "PUT",
+    });
+    expect(status).toBe(200);
+    scriptingStore.scriptSettings.profile = profile.id;
+  }
+
+  const serverSpend = async (id: string) =>
+    (await api.request<{ spend: BookSpend }>(`/api/books/${id}/spend`)).body.spend;
+
+  test("a run's cost reaches every budget figure from the server's ledger as its job moves", async () => {
+    await priced();
+    const id = await shelved(["One"]);
+    // open before the run, as the shell holds the open book's spending: the job moving is what
+    // has it read again
+    pinia.run(() => useBookSpend(id));
+    await settle();
+    expect(jobsStore.spent(id)).toBe(0);
+    await scriptingStore._runRemote(id, [1], { quiet: true });
+    await api.runner.idle();
+    await poll();
+    const spend = await serverSpend(id);
+    expect(spend.spent).toBeGreaterThan(0);
+    expect(jobsStore.spent(id)).toBe(spend.spent);
+    expect(jobsStore.scriptSpent(id)).toBe(spend.scriptSpent);
+    expect(jobsStore.reserved(id)).toBe(spend.reserved);
+    // and none of it is the demo's ledger, which a server run never writes
+    expect(useUsageStore().scriptUsage).toEqual([]);
+  });
+
+  test("a run the server refuses for its budget says the server's sentence and queues nothing", async () => {
+    await priced();
+    const id = await shelved(["One"]);
+    await libraryStore.setBudgetCap(id, 0.0001);
+    scriptingStore.runScripting(id, [1]);
+    await settle();
+    const refusal = toasts.at(-1)!;
+    expect(refusal.kind).toBe("error");
+    expect(refusal.msg).toMatch(/^Over the book's .+ cap: .+ for this run/);
+    expect(jobsStore.jobs).toEqual([]);
+    expect(libraryStore.chapter(id, 1)?.scripting).toBe("none");
+  });
+
+  test("the Endpoints page's history is the ledger's rows, not the fixture's week", async () => {
+    await priced();
+    const id = await shelved(["One"]);
+    await scriptingStore._runRemote(id, [1], { quiet: true });
+    await api.runner.idle();
+    const ep = {
+      key: "scripting:openai",
+      id: "openai",
+      kind: "scripting",
+      name: "OpenAI",
+      model: "gpt-4o-mini",
+      baseUrl: "https://api.openai.com/v1",
+      concurrency: 1,
+    } satisfies EndpointDescriptor;
+    const history = pinia.run(() => useEndpointHistory([ep]));
+    await settle();
+    const { body } = await api.request<{ requests: RequestRecord[] }>(
+      "/api/endpoints/requests?kind=scripting&id=openai&range=7d",
+    );
+    expect(body.requests.length).toBeGreaterThan(0);
+    expect(history.histories.value[ep.key]).toEqual(body.requests);
+    // the fake provider answered, so each row says it was simulated
+    expect(body.requests.every((r) => r.simulated && r.bookId === id)).toBe(true);
   });
 });

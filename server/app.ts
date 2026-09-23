@@ -28,6 +28,7 @@ import { endpointRoutes } from "~/routes/endpoints";
 import { exportRoutes } from "~/routes/exports";
 import { jobRoutes } from "~/routes/jobs";
 import { scriptRoutes } from "~/routes/script";
+import { bookUsageRoutes, endpointUsageRoutes } from "~/routes/usage";
 
 /** What Hono's refusals say, for the ones that come without a message of their own. */
 const REFUSED: Partial<Record<number, string>> = {
@@ -119,9 +120,11 @@ export function createApp(
   app.route("/api/books", castRoutes(db));
   app.route("/api/books", scriptRoutes(db, runner));
   app.route("/api/books", exportRoutes(db, runner, exports));
+  app.route("/api/books", bookUsageRoutes(db));
   app.route("/api/jobs", jobRoutes(db, runner));
   // The endpoints belong to the installation rather than to a book.
   app.route("/api/endpoints", endpointRoutes(db, providers));
+  app.route("/api/endpoints", endpointUsageRoutes(db));
   // A clip's url is served from disk, and the files it names belong to the same book routes above
   // remove — see `server/audio/files.ts` for why the path is a book and a token.
   app.route("/api/audio", audioRoutes(files));

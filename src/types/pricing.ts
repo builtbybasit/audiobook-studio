@@ -473,3 +473,24 @@ export interface SpeechEstimate {
   /** what could move this figure before the last clip lands, in sentences */
   cautions: string[];
 }
+
+// ---------- a book's spending ----------
+
+/**
+ * What a book has spent and what its unfinished work is holding, in USD — `GET
+ * /api/books/:id/spend`, summed on the server from the ledger and the queue.
+ */
+export interface BookSpend {
+  /** everything: both kinds of request, plus the opening balance */
+  spent: number;
+  scriptSpent: number;
+  speechSpent: number;
+  /** spending recorded before the ledger, which no request row explains */
+  opening: number;
+  /** held by unfinished jobs of either kind, at undiscounted rates */
+  reserved: number;
+  /** of `reserved`, held by scripting jobs — what the script budget is checked against */
+  scriptReserved: number;
+  /** settled requests whose cost is not known, so `spent` is a floor */
+  unpriced: number;
+}

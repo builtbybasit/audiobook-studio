@@ -1,8 +1,10 @@
 // The real speech provider against an injected `fetch`: what it sends to Fish Audio and to an
-// OpenAI-shaped server, what it makes of the answer, and what it refuses before sending anything.
+// OpenAI-shaped server, what it makes of the answer, what it refuses before sending anything, and
+// what it reports to the ledger about each request that went out.
 import { describe, expect, test } from "bun:test";
 
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
+import type { SentSpeech } from "~/providers/sent";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 import { readWavHeader } from "~/providers/wavEncoder";
@@ -80,6 +82,12 @@ function scripted(...answers: (() => Response)[]) {
   return { sent, fetch, body: (i = 0) => JSON.parse(String(sent[i].init.body)) };
 }
 
+/** Collects what a provider reports through `sent`, to hand in as the line's own. */
+function reports() {
+  const got: SentSpeech[] = [];
+  return { got, sent: (r: SentSpeech) => void got.push(r) };
+}
+
 const headersOf = (init: RequestInit) => new Headers(init.headers);
 const provider = (fetch: typeof globalThis.fetch) =>
   endpointSpeechProvider({ fetch, backoffMs: () => 0 });
@@ -87,7 +95,10 @@ const provider = (fetch: typeof globalThis.fetch) =>
 describe("Fish Audio", () => {
   test("is sent the words, the voice and the rate the way its API takes them", async () => {
     const f = scripted(() => audio(streamingWav(24000, 12000)));
-    const clip = await provider(f.fetch).speak(line(fish, { sampleRate: 24000, direction: "sly" }));
+    const r = reports();
+    const clip = await provider(f.fetch).speak(
+      line(fish, { sampleRate: 24000, direction: "sly", instructions: "Sly.", sent: r.sent }),
+    );
     expect(f.sent).toHaveLength(1);
     expect(f.sent[0].url).toBe("https://api.fish.audio/v1/tts");
     const h = headersOf(f.sent[0].init);
@@ -103,6 +114,18 @@ describe("Fish Audio", () => {
     });
     expect(clip).toMatchObject({ model: "s2.1-pro-free", voice: "voice-1", mime: "audio/wav" });
     expect(clip.duration).toBeCloseTo(0.5);
+    // one request, reported as it went: Fish was sent no instructions, so none are billed
+    expect(r.got).toEqual([
+      expect.objectContaining({
+        status: "done",
+        text: "Come in.",
+        instructions: "",
+        audioSeconds: clip.duration,
+        attempts: 1,
+        simulated: false,
+        reported: null,
+      }),
+    ]);
   });
 
   test("a streaming header comes back as a plain one, its sizes counted from what arrived", async () => {
@@ -131,8 +154,13 @@ describe("Fish Audio", () => {
 describe("an OpenAI-shaped server", () => {
   test("is sent model, input, voice, wav and the line's instructions", async () => {
     const f = scripted(() => audio(streamingWav(24000, 24000)));
+    const r = reports();
     const clip = await provider(f.fetch).speak(
-      line(openai, { direction: "whispering", instructions: " Warm, low. Whispering. " }),
+      line(openai, {
+        direction: "whispering",
+        instructions: " Warm, low. Whispering. ",
+        sent: r.sent,
+      }),
     );
     expect(f.sent[0].url).toBe("https://api.openai.com/v1/audio/speech");
     expect(headersOf(f.sent[0].init).get("model")).toBeNull();
@@ -144,6 +172,14 @@ describe("an OpenAI-shaped server", () => {
       instructions: "Warm, low. Whispering.",
     });
     expect(clip.duration).toBeCloseTo(1);
+    expect(r.got).toEqual([
+      expect.objectContaining({
+        status: "done",
+        text: "Come in.",
+        instructions: "Warm, low. Whispering.",
+        audioSeconds: clip.duration,
+      }),
+    ]);
   });
 
   test("a local server without a key is sent none, and tts-1 no instructions", async () => {
@@ -155,10 +191,13 @@ describe("an OpenAI-shaped server", () => {
       needsKey: false,
     };
     const f = scripted(audio);
-    await provider(f.fetch).speak(line(local, { instructions: "Whispering." }));
+    const r = reports();
+    await provider(f.fetch).speak(line(local, { instructions: "Whispering.", sent: r.sent }));
     expect(f.sent[0].url).toBe("http://127.0.0.1:8880/v1/audio/speech");
     expect(headersOf(f.sent[0].init).get("authorization")).toBeNull();
     expect("instructions" in f.body()).toBe(false);
+    // and what was not sent is not billed
+    expect(r.got.map((x) => x.instructions)).toEqual([""]);
   });
 
   test("a sample rate cannot be asked for, so one is refused before a request", async () => {
@@ -172,9 +211,18 @@ describe("an OpenAI-shaped server", () => {
 describe("what comes back", () => {
   test("a 200 that is JSON is a failure saying what it said", async () => {
     const f = scripted(() => Response.json({ message: "voice not found" }));
-    await expect(provider(f.fetch).speak(line(fish))).rejects.toThrow(
+    const r = reports();
+    await expect(provider(f.fetch).speak(line(fish, { sent: r.sent }))).rejects.toThrow(
       /answered 200 but sent no audio.*voice not found/,
     );
+    // it was asked, and answered, so it is still a request the ledger keeps
+    expect(r.got).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        audioSeconds: 0,
+        error: { code: 200, message: expect.stringMatching(/voice not found/) },
+      }),
+    ]);
   });
 
   test("an empty body, or one that is not a WAV, is a failure", async () => {
@@ -205,16 +253,47 @@ describe("what comes back", () => {
     expect(busy.sent).toHaveLength(2);
     expect(clip.duration).toBeCloseTo(1);
   });
+
+  test("a 500 that outlasts the retries is one failed request, reporting every attempt", async () => {
+    const f = scripted(() => new Response("upstream fell over", { status: 500 }));
+    const r = reports();
+    await expect(provider(f.fetch).speak(line(openai, { sent: r.sent }))).rejects.toThrow(
+      "OpenAI answered 500: upstream fell over",
+    );
+    expect(f.sent).toHaveLength(1 + openai.maxRetries);
+    expect(r.got).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        attempts: 1 + openai.maxRetries,
+        rateLimited: false,
+        audioSeconds: 0,
+        error: { code: 500, message: "OpenAI answered 500: upstream fell over" },
+      }),
+    ]);
+  });
 });
 
 describe("refused before any request", () => {
   test("no key, no voice, or a voice whose endpoint is gone", async () => {
     const f = scripted(audio);
     const p = provider(f.fetch);
-    await expect(p.speak(line({ ...fish, apiKey: null }))).rejects.toThrow(/needs an API key/);
-    await expect(p.speak(line(fish, { voiceRef: null }))).rejects.toThrow(/Mara has no voice/);
-    await expect(p.speak(line(null))).rejects.toThrow(/no longer configured \(gone\/voice-1\)/);
+    const r = reports();
+    const { sent } = r;
+    await expect(p.speak(line({ ...fish, apiKey: null }, { sent }))).rejects.toThrow(
+      /needs an API key/,
+    );
+    await expect(p.speak(line(fish, { voiceRef: null, sent }))).rejects.toThrow(
+      /Mara has no voice/,
+    );
+    await expect(p.speak(line(null, { sent }))).rejects.toThrow(
+      /no longer configured \(gone\/voice-1\)/,
+    );
+    await expect(p.speak(line(fish, { sampleRate: 22050, sent }))).rejects.toThrow(
+      /cannot be asked for/,
+    );
     expect(f.sent).toHaveLength(0);
+    // nothing happened on the wire, so there is nothing for the ledger
+    expect(r.got).toEqual([]);
   });
 
   test("a cancel throws the job's own reason", async () => {
@@ -225,7 +304,12 @@ describe("refused before any request", () => {
         init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
         ctl.abort(reason);
       })) as unknown as typeof globalThis.fetch;
-    await expect(provider(fetch).speak(line(fish, { signal: ctl.signal }))).rejects.toBe(reason);
+    const r = reports();
+    await expect(
+      provider(fetch).speak(line(fish, { signal: ctl.signal, sent: r.sent })),
+    ).rejects.toBe(reason);
+    // what the provider did with a request it was mid-way through is not knowable
+    expect(r.got).toEqual([]);
   });
 });
 

@@ -163,6 +163,9 @@ export function enqueueJob(db: Db, input: EnqueueInput, at = Date.now()): Enqueu
         bulkTotal: input.bulk?.total ?? null,
         bulkScope: input.bulk?.scope ?? null,
         run: input.run ?? {},
+        // what the run holds against the book's cap, in the column the budget gate sums, from the
+        // moment the job exists
+        reserved: input.run?.scriptRun?.reserved ?? input.run?.narrationRun?.reserved ?? 0,
       })
       .returning({ id: jobs.id })
       .get();
@@ -258,7 +261,29 @@ export function setRun(db: Db | Tx, id: number, run: NonNullable<Job["exportRun"
  */
 export function setScriptRun(db: Db | Tx, id: number, run: NonNullable<Job["scriptRun"]>): void {
   db.update(jobs)
-    .set({ run: { scriptRun: run } })
+    .set({ run: { scriptRun: run }, reserved: run.reserved })
+    .where(eq(jobs.id, id))
+    .run();
+}
+
+/**
+ * Change what a job holds against its book's cap, in the column the budget gate sums and in the
+ * run detail the Queue shows. A narration job's reservation moves as its lines settle; a scripting
+ * job's moves with its request counts, through `setScriptRun`.
+ */
+export function setReserved(db: Db | Tx, id: number, reserved: number): void {
+  const row = db.select({ run: jobs.run }).from(jobs).where(eq(jobs.id, id)).get();
+  if (!row) return;
+  const run = row.run ?? {};
+  db.update(jobs)
+    .set({
+      reserved,
+      run: run.scriptRun
+        ? { scriptRun: { ...run.scriptRun, reserved } }
+        : run.narrationRun
+          ? { narrationRun: { ...run.narrationRun, reserved } }
+          : run,
+    })
     .where(eq(jobs.id, id))
     .run();
 }

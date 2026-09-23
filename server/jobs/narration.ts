@@ -37,7 +37,6 @@
 import { and, eq } from "drizzle-orm";
 
 import type { Job, NarrationScope, NarrationStatus, Segment, SegmentAudio } from "@/types";
-import { NARRATOR } from "@/lib/cast";
 import { encodingOf, FORMAT_LABEL } from "@/lib/endpointShapes";
 import { chapterNarration, narrationTargets, SCOPE_LABEL } from "@/lib/runPlan";
 import { expressionParts, expressionPlan, type ExpressionPlan } from "@/lib/expressions";
@@ -49,7 +48,7 @@ import { joinClips, probeClip } from "~/audio/probe";
 import { readCast, readLexicon } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
-import { activeJob, getJob, nextRunId } from "~/db/jobs";
+import { activeJob, getJob, nextRunId, setReserved } from "~/db/jobs";
 import * as library from "~/db/library";
 import { chapters } from "~/db/schema";
 import {
@@ -64,8 +63,12 @@ import {
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { locate } from "~/jobs/scripting";
 import { conflict, notFound } from "~/lib/errors";
+import { deliveryFor, lineWorstCase, narrationCost, type NarrationCost } from "~/narration/cost";
+import type { SentSpeech } from "~/providers/sent";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 import { speechTarget } from "~/providers/target";
+import { assertWithinBudget, budgetProblem } from "~/usage/budget";
+import { settleSpeech } from "~/usage/ledger";
 
 /** The label a retake job carries as its scope and its `bulk.op`; the Queue page shows it as it is. */
 export const RETAKE_LABEL = "Retake";
@@ -185,14 +188,6 @@ function queueRender(tx: Tx, at: { bookId: string; id: number }, s: Segment): Ta
   return { s, slot: "current", queued: requeue(audio) };
 }
 
-/** Everything a clip records about how it was asked for, so drift can compare the line to it later. */
-interface Delivery {
-  voiceRef: string | null;
-  voice: string | null;
-  endpoint: string | null;
-  style: string;
-}
-
 /** One part of a split line that could not be rendered, by its place, as the Queue shows it. */
 class PartFailed extends Error {
   constructor(
@@ -278,19 +273,7 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
       // A speaker's voice is their own or the Narrator's, and their style is their own: the cast
       // store's `effectiveVoice`, read once, because the cast is the book's and a rename mid-run
       // is the rename's problem — it marks the clips it moved stale.
-      const cast = readCast(db, job.bookId);
-      const narratorVoice = cast.find((c) => c.name === NARRATOR)?.voice ?? null;
-      const deliveryOf = (speaker: string): Delivery => {
-        const who = cast.find((c) => c.name === speaker);
-        const voiceRef = who?.voice || narratorVoice;
-        const slash = voiceRef?.indexOf("/") ?? -1;
-        return {
-          voiceRef,
-          voice: voiceRef ? voiceRef.slice(slash + 1) : null,
-          endpoint: voiceRef && slash > 0 ? voiceRef.slice(0, slash) : null,
-          style: who?.style ?? "",
-        };
-      };
+      const deliveryOf = deliveryFor(readCast(db, job.bookId));
 
       // The plan, written in one transaction: every line this run renders holds its slot with a
       // queued clip before the first request goes out, so the chapter reads as a run in progress
@@ -363,9 +346,29 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
       let rendered = 0;
       let waiting = 0;
       let failed = 0;
+      // What this job still holds against the book's cap: the worst case it was queued with, less
+      // each line's as that line settles. The column the gate sums is kept in step with it.
+      let held = job.narrationRun?.reserved ?? 0;
       for (const t of targets) {
         if (signal.aborted) throw signal.reason;
         const { s, slot } = t;
+        // The budget is asked again before every line, with what the job still holds and its own
+        // reservation left out of the book's: a run that fitted when it was queued stops here when
+        // the cap was lowered, the book was paused, or other lines cost more than they held. The
+        // lines not yet sent are put back as they were (`onSettled`), and the clips landed stay.
+        const problem = budgetProblem(db, job.bookId, {
+          kind: "narration",
+          cost: held,
+          jobId: job.id,
+          what: "the next line",
+        });
+        if (problem) {
+          ctx.note(`Stopped before line ${s.id}: the book's budget does not cover it`, "warning", {
+            line: s.id,
+            why: problem,
+          });
+          throw new Error(problem);
+        }
         const who = deliveryOf(s.speaker);
         const instructions = speechInstructions({ style: who.style, direction: s.direction });
         // The dictionary and the endpoint as they stand when this line goes out, not when the run
@@ -373,6 +376,29 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
         // does in the demo.
         const ep = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;
         const plan = expressionPlan(s, ep, readLexicon(db, job.bookId));
+        // What this line gives back to the cap once it has settled, whether it rendered, failed or
+        // was never sent: from then on its cost is in the ledger, or it was never going to be.
+        const worst = lineWorstCase(ep, plan, instructions, Date.now());
+        const release = (): void => {
+          held = Math.max(0, held - worst);
+          setReserved(db, job.id, held);
+        };
+        // Every request that reached the wire — each part of a split line is its own — is priced
+        // into the ledger as it settles, against the endpoint as it is stored at that moment. A
+        // request whose endpoint has been removed since has no rate card to be priced on and is
+        // left out, as is one whose book has gone: the ledger has nothing to attribute it to.
+        const work = {
+          bookId: job.bookId,
+          label: `${slot === "candidate" ? (t.queued.auto ? "Replacement" : "Retake") : "Line"} ${s.id} · ${s.speaker}`,
+          queuedAt: job.queuedAt,
+        };
+        const settle = (sent: SentSpeech): void => {
+          const priced = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;
+          if (!priced || !library.getBook(db, job.bookId)) return;
+          // a chapter removed mid-request is still where the money went; the label says which
+          const chapterUid = locate(db, chapter.uid) ? chapter.uid : null;
+          settleSpeech(db, priced, { ...work, chapterUid }, sent);
+        };
         // Where the line is cut to fit the endpoint's `maxChars`, decided before it goes out so
         // the clip can say so while it renders. A line with an issue is not sent at all, and the
         // one issue `splitText` would throw on — a tag longer than the limit — is one of them.
@@ -415,6 +441,7 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
             line: s.id,
           });
           landed++;
+          release();
         };
         try {
           write((tx, at) => writeClip(tx, at.bookId, at.id, s.id, slot, generating));
@@ -444,6 +471,7 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
               // the endpoint as saved now and its key read now, for the provider alone
               target: ep ? speechTarget(db, ep) : null,
               signal,
+              sent: settle,
             },
             cuts,
           );
@@ -515,6 +543,7 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
           continue;
         }
         landed++;
+        release();
         const detail = { line: s.id, speaker: s.speaker };
         if (clip.status === "stale")
           ctx.note(
@@ -569,6 +598,9 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
         progress();
       }
 
+      // Every line has settled, so the job holds nothing: what is left is only the difference
+      // between pricing the lines one by one and together, and the gate should not keep it.
+      if (held > 0) setReserved(db, job.id, 0);
       let seconds = 0;
       db.transaction((tx) => {
         const at = locate(tx, chapter.uid);
@@ -626,6 +658,20 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
   };
 }
 
+/** A narration job's run detail: what it holds, how many clips, and what it was estimated at. */
+export function narrationRunOf(
+  cost: NarrationCost,
+  clips: number,
+): NonNullable<Job["narrationRun"]> {
+  return {
+    reserved: cost.reserved,
+    clips,
+    estimated: cost.estimated,
+    estimatedInput: cost.estimatedInput,
+    estimatedAudio: cost.estimatedAudio,
+  };
+}
+
 export interface NarrationQueued {
   jobs: Job[];
   /** chapters left out of this run, and why */
@@ -642,6 +688,11 @@ export interface NarrationQueued {
  * contents review has nothing to narrate yet, and that is refused. What the scope will render is
  * decided here, by the same `narrationTargets` the run itself uses, so a chapter queued is a
  * chapter with work in it.
+ *
+ * The run is priced before anything is queued, chapter by chapter at its worst case, and checked
+ * against the book's budget whole: a run that does not fit is refused with a 409 and no chapter of
+ * it is queued, because half a run is not what anyone asked for. Each job holds its own chapter's
+ * figure until its lines settle.
  */
 export function enqueueNarration(
   db: Db,
@@ -655,7 +706,8 @@ export function enqueueNarration(
   if (book.importing) throw conflict("Finish the contents review before narrating this book");
   const known = new Map(library.listChapters(db, bookId).map((c) => [c.id, c]));
 
-  const targets: { id: number; clips: number; replacing: boolean }[] = [];
+  const at = Date.now();
+  const targets: { id: number; clips: number; replacing: boolean; cost: NarrationCost }[] = [];
   const skipped: NarrationQueued["skipped"] = [];
   for (const id of ids) {
     const c = known.get(id);
@@ -685,12 +737,18 @@ export function enqueueNarration(
       id,
       clips: run.length,
       replacing: c.narration === "done" || c.narration === "stale",
+      cost: narrationCost(db, bookId, run, at),
     });
   }
+  if (targets.length)
+    assertWithinBudget(db, bookId, {
+      kind: "narration",
+      cost: targets.reduce((n, t) => n + t.cost.reserved, 0),
+    });
 
   const runId = nextRunId(db);
   const jobs: Job[] = [];
-  targets.forEach(({ id, clips, replacing }, i) => {
+  targets.forEach(({ id, clips, replacing, cost }, i) => {
     const { job } = runner.enqueue({
       kind: "narration",
       bookId,
@@ -703,8 +761,7 @@ export function enqueueNarration(
         total: targets.length,
         scope: SCOPE_LABEL[scope],
       },
-      // the fake costs nothing to reserve; a real provider's price is the server's to meter
-      run: { narrationRun: { reserved: 0, clips } },
+      run: { narrationRun: narrationRunOf(cost, clips) },
       // in the same transaction as the row, so it cannot land after the worker has moved on
       onCreated: (tx) => setChapterNarration(tx, bookId, id, "queued", 0),
     });

@@ -61,6 +61,18 @@ export interface CallOptions {
   fetch?: typeof fetch;
   /** the wait before attempt `n` (1-based) when the answer named none; tests make it 0 */
   backoffMs?: (attempt: number, target: ProviderTarget) => number;
+  /**
+   * Filled in as the call goes, for the ledger: how many attempts went out and whether any was
+   * refused with a 429. Written whether the call answers or throws, so a provider that reports a
+   * failed request can say how hard it tried.
+   */
+  stats?: CallStats;
+}
+
+/** What one `call` did on the wire; see `CallOptions.stats`. */
+export interface CallStats {
+  attempts: number;
+  rateLimited: boolean;
 }
 
 const defaultBackoff = (attempt: number, t: ProviderTarget): number =>
@@ -84,11 +96,13 @@ export async function call(
   let last: ProviderError | undefined;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     if (signal.aborted) throw signal.reason;
+    if (options.stats) options.stats.attempts = attempt;
     const clock = AbortSignal.timeout(target.timeoutSec * 1000);
     let wait: number | undefined;
     try {
       const res = await send(url, { ...init, signal: AbortSignal.any([signal, clock]) });
       if (res.ok) return res;
+      if (res.status === 429 && options.stats) options.stats.rateLimited = true;
       const said = await refusal(res);
       last = new ProviderError(
         `${target.name} answered ${res.status}${said ? `: ${said}` : ""}`,

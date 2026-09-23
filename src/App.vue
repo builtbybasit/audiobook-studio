@@ -14,7 +14,7 @@ import { useUiStore } from "@/stores/ui";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { usePlayer } from "@/composables/usePlayer";
-import { useBookJobs } from "@/queries";
+import { useBookJobs, useBookSpend } from "@/queries";
 import JobIndicator from "@/components/JobIndicator.vue";
 import CommandPalette from "@/components/CommandPalette.vue";
 import DemoTools from "@/components/DemoTools.vue";
@@ -48,6 +48,10 @@ const shortcuts = ref(false);
 // The shell reads the queue for as long as the app is open, which with a server answering is what
 // keeps it polling while a job is live: the indicator, the title and the notifications all follow.
 useBookJobs();
+// …and the open book's spending, which every page of it sets against the book's budget: the
+// overview's panel, the scripting estimate and the narration run's cap check. With a server
+// answering it is the server's ledger, read again as the book's jobs move.
+useBookSpend(() => uiStore.currentBookId);
 watch(
   () =>
     endpointsStore.endpoints.map((e) => JSON.stringify([e.id, e.model, e.baseUrl, e.expressions])),

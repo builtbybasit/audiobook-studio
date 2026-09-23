@@ -68,8 +68,9 @@ export interface Job {
    * Narration is charged per clip as each one lands, so without this two runs that each fit the
    * remaining budget on their own could start together and land past the cap between them. The
    * figure is the **undiscounted** price of everything the job queued — the same rule the scripting
-   * side reserves by — and it is released when the job finishes rather than clip by clip, so the
-   * reservation only ever errs towards holding too much back.
+   * side reserves by. The demo releases it when the job finishes rather than clip by clip, so the
+   * reservation only ever errs towards holding too much back; the server gives each line's share
+   * back once the line is written, because it asks the budget again before every line it sends.
    */
   narrationRun?: {
     reserved: number;

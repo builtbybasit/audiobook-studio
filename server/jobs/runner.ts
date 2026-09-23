@@ -131,7 +131,12 @@ export function createRunner(
     try {
       if (!handler) throw new Error(`This server has no handler for ${job.kind} jobs`);
       await handler.run(ctx);
-      status = controller.signal.aborted ? "cancelled" : "done";
+      // A handler that returned finished. A cancel or a stop is honoured by the handler throwing,
+      // at the last point it can still take the work back; one that arrives after that — while an
+      // export's final write commits, say — is too late, and calling the job cancelled then would
+      // have its `onSettled` delete what it had just committed, or leave it `running` for the
+      // next start to rebuild over.
+      status = "done";
     } catch (e) {
       if (controller.signal.aborted || isAbortError(e)) status = "cancelled";
       else {

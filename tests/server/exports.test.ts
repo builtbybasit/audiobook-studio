@@ -426,6 +426,47 @@ describe("building an audiobook", () => {
     expect(old.status).toBe(200);
   });
 
+  test("a cancel that arrives after the last file is written still leaves the old version current", async () => {
+    // The encoder has returned and the build is on its way to committing — the window the
+    // encoders' own signal checks cannot see. Before the build checked once more, it committed,
+    // marked the old version `replaced`, and was then called cancelled and deleted: no current
+    // audiobook at all.
+    const inner = wavEncoder();
+    let written!: () => void;
+    const encoded = new Promise<void>((r) => (written = r));
+    let release!: () => void;
+    const closing = new Promise<void>((r) => (release = r));
+    let hold = false;
+    const encoder = {
+      ...inner,
+      async encode(input: Parameters<typeof inner.encode>[0]) {
+        const result = await inner.encode(input);
+        if (hold) {
+          written();
+          await closing;
+        }
+        return result;
+      },
+    };
+    const { api, id } = await narrated(testApi({ encoder }));
+    const settings = settingsFor();
+    await build(api, id, { ids: [1, 2], settings });
+    await api.runner.idle();
+    const [v1] = await exportsOf(api, id);
+
+    hold = true;
+    const second = await build(api, id, { ids: [1, 2], settings, updates: v1.id });
+    await encoded;
+    await api.request(`/api/jobs/${second.body.job.id}/cancel`, { method: "POST" });
+    release();
+    await api.runner.idle();
+
+    expect((await jobById(api, second.body.job.id)).status).toBe("cancelled");
+    const left = await exportsOf(api, id);
+    expect(left.map((e) => [e.id, e.status])).toEqual([[v1.id, "done"]]);
+    expect(existsSync(filePath(api, id, v1.id))).toBe(true);
+  });
+
   test("a cancelled build leaves nothing behind, and the version on disk still plays", async () => {
     const encoder = controlledEncoder();
     const { api, id } = await narrated(testApi({ encoder }));

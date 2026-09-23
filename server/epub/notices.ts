@@ -20,7 +20,14 @@ const SHORT_WORDS = 600;
 /** Above this, a chapter is a full one: a note inside it is a note *plus* story. */
 const FULL_WORDS = 900;
 
-/** What gives a kind away, most specific first. The first kind to match names the note. */
+/**
+ * What gives a kind away, most specific first. The first kind to match names the note.
+ *
+ * Phrases, not words. A story uses "vote", "health" and "drafted" as freely as an announcement
+ * does — a council votes, a soldier is drafted — and a short chapter of narration that happened to
+ * say one would be suggested for skipping. What gives a notice away is the word aimed at the
+ * reader or the writing: "please vote", "health reasons", "drafted the next chapter".
+ */
 const KINDS: { kind: NoticeKind; test: RegExp; saw: string }[] = [
   {
     kind: "hiatus",
@@ -44,7 +51,7 @@ const KINDS: { kind: NoticeKind; test: RegExp; saw: string }[] = [
   },
   {
     kind: "vote",
-    test: /\bvote\b|\bvoting\b|\bpower stones?\b|\bvotes reset\b/i,
+    test: /\b(?:please|remember to|don't forget to) vote\b|\bvot(?:e|es|ing) (?:for|on) (?:the|this|my) (?:story|book|novel|series|listing)\b|\bpower stones?\b|\bvotes reset\b|\bvote reminder\b/i,
     saw: "asks readers to vote",
   },
   {
@@ -69,28 +76,41 @@ const KINDS: { kind: NoticeKind; test: RegExp; saw: string }[] = [
   },
   {
     kind: "health",
-    test: /\b(?:i'?ve been|i am|i'?m) (?:unwell|ill|sick)\b|\bin (?:the )?hospital\b|\bfamily emergency\b|\bpersonal (?:update|reasons)\b|\bhealth\b/i,
+    test: /\b(?:i'?ve been|i am|i'?m) (?:unwell|ill|sick)\b|\bin (?:the )?hospital\b|\bfamily emergency\b|\bpersonal (?:update|reasons)\b|\bhealth (?:update|issues?|problems?|reasons)\b/i,
     saw: "a personal or health update",
   },
   {
     kind: "progress",
-    test: /\bprogress update\b|\bsome news\b|\bwhere things stand\b|\bwith the editor\b|\bdrafted\b|\bword count\b/i,
+    test: /\bprogress update\b|\bsome news\b|\bwhere things stand\b|\bwith the editor\b|\bdrafted (?:the )?(?:next )?(?:\w+ )?chapters?\b|\bword count\b/i,
     saw: "talks about the writing, not the story",
   },
 ];
 
 /** Titles that read as an announcement whatever the text under them turns out to be. */
 const NOTICE_TITLE =
-  /^\s*(?:author'?s? note|a? ?note (?:from|to) (?:the )?(?:author|readers?)|not a chapter|announcement|notice|update|hiatus|afterword|translator'?s? notes?|schedule|please vote|vote reminder|support|thank you|sorry|apolog)/i;
+  /^\s*(?:author'?s? note|a? ?note (?:from|to) (?:the )?(?:author|readers?)|not a chapter|announcement|notice|update|hiatus|afterword|translator'?s? notes?|schedule|please vote|vote reminder|support|thank you|sorry|apolog\w*)\b/i;
 
 /** Phrases that address the reader rather than narrate to them. */
 const ADDRESS =
-  /\bthank you for reading\b|\bthanks for reading\b|\bsorry for the\b|\bnext chapter\b|\bthis chapter\b|\bthe comments\b|\bdear readers?\b|\bhi everyone\b|\bsee you next\b|\benjoy!?\b|\bplease read\b|\bmy (?:patreon|discord)\b/i;
+  /\bthank you for reading\b|\bthanks for reading\b|\bsorry for the\b|\bnext chapter\b|\bthis chapter\b|\bthe comments\b|\bdear readers?\b|\bhi everyone\b|\bsee you next\b|\benjoy(?: the chapter)?!|\benjoy the chapter\b|\bplease read\b|\bmy (?:patreon|discord)\b/i;
 
 const URL_RE = /https?:\/\/\S+|\bwww\.\S+/gi;
 
 /** Speech, in the punctuation English and CJK web novels actually use. */
 const DIALOGUE = /[“”"]|[「」『』]|^\s*[—–]\s*\p{Lu}/mu;
+
+/**
+ * Speech in single quotes, as British books print it: ‘Hello,’ she said.
+ *
+ * Not simply any ‘ or ’, because those are apostrophes too — every notice says "I'm" or "don’t".
+ * A quote here is a pair: one that opens a line or follows a space, bracket or dash and is followed
+ * by a letter, and one that closes right after the sentence's punctuation. "don't", "’tis" and
+ * "readers' comments" have only half of that.
+ */
+const SINGLE_QUOTED = /(?:^|[\s([—–])[‘']\p{L}[^\n]*?[,.!?…—–][’'](?=[\s)\]—–]|$)/mu;
+
+/** Curly apostrophes read as straight ones, so "I’m back" is the same words as "I'm back". */
+const straight = (text: string): string => text.replace(/[‘’]/g, "'");
 
 interface Signals {
   words: number;
@@ -102,15 +122,17 @@ interface Signals {
 
 function read(text: string, title: string): Signals {
   const links = text.match(URL_RE)?.length ?? 0;
-  const hit = KINDS.find((k) => k.test.test(text) || k.test.test(title));
+  const words = straight(text);
+  const heading = straight(title);
+  const hit = KINDS.find((k) => k.test.test(words) || k.test.test(heading));
   return {
     // The same count the import puts on the chapter, rather than a second one that disagrees with
     // it. Splitting on whitespace reads a chapter of Chinese prose as a single word, which makes
     // 689 words of story a one-word notice and suggests skipping it.
     words: countWords(text),
     links,
-    hasDialogue: DIALOGUE.test(text),
-    addresses: ADDRESS.test(text),
+    hasDialogue: DIALOGUE.test(text) || SINGLE_QUOTED.test(text),
+    addresses: ADDRESS.test(words),
     kind: hit ? { kind: hit.kind, saw: hit.saw } : null,
   };
 }
@@ -176,7 +198,7 @@ export function detectNotices(chapters: readonly ParsedChapter[]): (ChapterNote 
     // keyword, and a fingerprint taken over `*` would make two postings of one notice differ.
     const text = plainText(chapter.text);
     const s = read(text, title);
-    const titleLooksLikeNotice = NOTICE_TITLE.test(title);
+    const titleLooksLikeNotice = NOTICE_TITLE.test(straight(title));
 
     const note = (kind: NoticeKind, evidence: string[], at?: "start" | "end"): ChapterNote => ({
       verdict: kind === "mixed" || kind === "title" || kind === "unreadable" ? "review" : "skip",

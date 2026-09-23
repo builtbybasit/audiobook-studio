@@ -16,6 +16,7 @@ import type { Segment } from "@/types";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { key } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
+import { silenceOf } from "@/lib/speech";
 import { useBookJobs, useCast, useChapterHistory, useChapterScript } from "@/queries";
 import { HttpJobsService, setJobsService } from "@/services/jobs";
 import { activeLibraryService, HttpLibraryService, setLibraryService } from "@/services/library";
@@ -701,6 +702,36 @@ describe("narration with a server answering", () => {
     await scriptsStore._settled(id, 1);
     expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
     expect(readScript(api.db, id, 1)[0].text).toBe("Edited after narration.");
+  });
+
+  test("a pacing change re-times a narrated chapter as the server does, even one not opened here", async () => {
+    const { id } = await scriptedAndOpen();
+    await useNarrationStore()._runRemote(id, [1], { quiet: true });
+    await api.runner.idle();
+    await poll();
+    const narrated = libraryStore.chapter(id, 1)!.duration;
+    expect(narrated).toBeGreaterThan(0);
+
+    // a reload: the book is open but chapter 1's script has not been read, so its clips are not here
+    wireStores();
+    await libraryStore.load();
+    await libraryStore.loadBook(id);
+    expect(scriptsStore.segmentsOf(id, 1)).toEqual([]);
+    await castStore.setPacing(id, { line: 3, turn: 3 });
+    const segs = readScript(api.db, id, 1);
+    const expected =
+      segs.reduce((a, s) => a + s.audio.duration, 0) + silenceOf(segs, { line: 3, turn: 3 });
+    // not the length of silence alone, which is what re-timing it from no clips would give
+    expect(libraryStore.chapter(id, 1)?.duration).toBeCloseTo(expected, 6);
+    expect(libraryStore.chapter(id, 1)?.duration).toBeGreaterThan(narrated);
+    // an unnarrated chapter keeps the length it had
+    expect(libraryStore.chapter(id, 2)?.duration).toBe(0);
+
+    wireStores();
+    await libraryStore.load();
+    await libraryStore.loadBook(id);
+    expect(libraryStore.bookById(id)?.pacing).toEqual({ line: 3, turn: 3 });
+    expect(libraryStore.chapter(id, 1)?.duration).toBeCloseTo(expected, 6);
   });
 
   test("re-narrating what changed renders only those lines, and keeps the rest", async () => {

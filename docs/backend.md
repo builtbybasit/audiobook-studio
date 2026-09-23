@@ -138,6 +138,13 @@ cancelled through the runner, so a provider stops being paid for them; and a rem
 while an audiobook of the book is being built, because a build reads clips and records where each
 chapter landed by number.
 
+**A reorder is the same renumbering without the removal.** `PUT /api/books/:id/volumes/order`
+writes each volume's `position` and runs the same `renumber` and `rekeyActive`, so every chapter
+keeps its place within its volume and everything it owns follows its new number. Nothing is
+cancelled — a running job finds its chapter by uid at every write — and nothing leaves the disk.
+It is refused mid-build for the removal's reason, and while a volume is still in review, since a
+new volume is added at the end and has no place in an order until it is confirmed.
+
 ### The number is an address; the ledger needs an identity
 
 `chapters.uid` is assigned once at import and never rewritten. It exists for the one table that must
@@ -599,6 +606,9 @@ service are both built on it, so that rule is written once.
 | `GET`    | `/api/audio/:bookId/:file`                       | A rendered clip's audio                                       |
 | `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                          |
 | `DELETE` | `/api/books/:id/volumes/:volumeId`               | Remove a volume; the last one removes the book; 409 mid-build |
+| `PATCH`  | `/api/books/:id`                                 | The budget, script budget or pacing; chapters are re-timed    |
+| `PATCH`  | `/api/books/:id/volumes/:volumeId`               | Rename a volume                                               |
+| `PUT`    | `/api/books/:id/volumes/order`                   | Read the volumes in this order; chapters renumber to follow   |
 | `GET`    | `/api/jobs`                                      | Every job, oldest first; `?bookId=` narrows it                |
 | `GET`    | `/api/jobs/:id`                                  | One job, with its activity                                    |
 | `POST`   | `/api/jobs/:id/cancel`                           | Stop it: a queued job never starts, a running one stops       |
@@ -1069,6 +1079,8 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [epubImport.test.ts](../tests/server/epubImport.test.ts)         | Reading a file: metadata, titles, text, refusals                                |
 | [notices.test.ts](../tests/server/notices.test.ts)               | Which chapters are not story                                                    |
 | [contentsReview.test.ts](../tests/server/contentsReview.test.ts) | Import → review → add, volumes, removal, renumbering                            |
+| [volumes.test.ts](../tests/server/volumes.test.ts)               | Removing a volume: rekeyed jobs, cancelled work, files, refusals mid-build      |
+| [bookSettings.test.ts](../tests/server/bookSettings.test.ts)     | Budget, pacing and re-timing, a volume's name, and a reorder and its refusals   |
 | [markdown.test.ts](../tests/server/markdown.test.ts)             | The converter's DOM bracket, and reading Markdown back                          |
 | [jobs.test.ts](../tests/server/jobs.test.ts)                     | The queue: dedupe, cancel, restart, revision conflicts, HTTP                    |
 | [narration.test.ts](../tests/server/narration.test.ts)           | Narration: scopes, replacement, failure, cancel, restart, dictionary, files     |
@@ -1101,7 +1113,7 @@ is not installed, and are the only ones in the suite that depend on anything out
 ## What is not done yet
 
 `libraryStore` reads and writes through [src/services/library.ts](../src/services/library.ts), so
-the library screens are the server's in backend mode. Two things about that worth knowing:
+the library screens are the server's in backend mode. What is worth knowing about that:
 
 - **A removal cannot be undone, so it asks first.** `_bookSnapshot` puts a book back in the store;
   nothing puts one back in the database. The danger rule in
@@ -1114,9 +1126,9 @@ the library screens are the server's in backend mode. Two things about that wort
   inverse rule: the store records what the chapters were and sends that to
   `POST /api/books/:id/chapters/decisions`, which puts it back as stated. A skip that is undone
   comes back undecided, and keeping a chapter offers Undo, on both sides of the seam.
-- **A budget cap, a pause, the pacing, a volume rename and a volume reorder stay in the browser.**
-  The columns are in the schema and nothing writes them, so those survive a navigation and not a
-  reload.
+- **A budget is stored, not enforced.** The cap, the pause and the script budget are written by
+  `PATCH /api/books/:id` and read back on every load, and the browser's gates read them; nothing on
+  the server holds a job against them yet, for the reason the budgets bullet below gives.
 - **An undo over HTTP is an edit.** A rename is renamed back and a merge or a removal puts back the
   lines that moved, exactly; but undoing an edit, a bulk correction or a restore writes the previous
   script back as an edit, so the history says an edit happened rather than forgetting the entry the
@@ -1133,7 +1145,8 @@ each because a route or a table's writer is missing rather than by oversight:
   and reads as stale on the Narration page as soon as it lands. Applying them is `expressionPlan`
   in [src/lib/expressions.ts](../src/lib/expressions.ts), which is pure and ready; what it waits
   for is the endpoint the server would hand it. The seeded endpoints' voices are names the fake accepts, not
-  endpoints the server knows, and a chapter's duration is its clips plus the book's pacing.
+  endpoints the server knows, and a chapter's duration is its clips plus the book's pacing, which
+  a pacing change re-times on the server for every chapter that has been narrated.
 - **A cover image is not written into the audiobook.** `customCover` records that one was chosen
   and the file carries none: the stitcher has nowhere to put it, and ffmpeg would want the image
   itself, which the browser holds rather than the server.

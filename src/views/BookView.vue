@@ -71,12 +71,12 @@ const draft = ref("");
 const dragging = ref<number | null>(null);
 const dragOver = ref<number | null>(null);
 function drop(toIndex: number) {
-  if (dragging.value != null) libraryStore.moveVolume(bookId, dragging.value, toIndex);
+  if (dragging.value != null) void libraryStore.moveVolume(bookId, dragging.value, toIndex);
   dragging.value = null;
   dragOver.value = null;
 }
 function saveName(v: Volume) {
-  libraryStore.renameVolume(bookId, v.id, draft.value);
+  void libraryStore.renameVolume(bookId, v.id, draft.value);
   editing.value = null;
 }
 /** Backend mode: a removal cannot be undone, so the row asks first. */
@@ -108,7 +108,7 @@ const scriptSpent = computed(() => jobsStore.scriptSpent(bookId));
 const narrationSpent = computed(() => Math.max(0, spent.value - scriptSpent.value));
 const capInput = computed({
   get: () => book.value.budget?.cap ?? null,
-  set: (v) => libraryStore.setBudgetCap(bookId, v || null),
+  set: (v) => void libraryStore.setBudgetCap(bookId, v || null),
 });
 const volStats = (v: Volume) => {
   const chs = chapters.value.filter((c) => c.volumeId === v.id);

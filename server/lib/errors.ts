@@ -9,7 +9,7 @@ import type { ApiErrorCode } from "@/types";
 
 export type ErrorCode = ApiErrorCode;
 
-export type ErrorStatus = 400 | 403 | 404 | 409 | 413 | 415 | 500;
+export type ErrorStatus = 400 | 403 | 404 | 409 | 413 | 415 | 416 | 500;
 
 const CODES: Record<ErrorStatus, ErrorCode> = {
   400: "bad_request",
@@ -18,6 +18,7 @@ const CODES: Record<ErrorStatus, ErrorCode> = {
   409: "conflict",
   413: "too_large",
   415: "unsupported_media",
+  416: "range_not_satisfiable",
   500: "internal",
 };
 

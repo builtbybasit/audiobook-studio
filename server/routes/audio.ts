@@ -10,6 +10,7 @@ import * as v from "valibot";
 
 import type { AudioFiles } from "~/audio/files";
 import { notFound } from "~/lib/errors";
+import { fileResponse } from "~/lib/serve";
 import { validate } from "~/lib/validate";
 
 const FileParam = v.object({ bookId: v.string(), file: v.string() });
@@ -22,11 +23,10 @@ export function audioRoutes(files: AudioFiles): Hono<PinoEnv> {
     const path = files.path(bookId, file);
     const found = path ? Bun.file(path) : null;
     if (!found || !(await found.exists())) throw notFound("No such audio file");
-    return new Response(found, {
-      headers: {
-        "content-type": "audio/wav",
-        "cache-control": "private, max-age=31536000, immutable",
-      },
+    // A part at a time when the player asks for one, which is how it seeks; see `fileResponse`.
+    return fileResponse(c.req.raw, found, {
+      "content-type": "audio/wav",
+      "cache-control": "private, max-age=31536000, immutable",
     });
   });
 

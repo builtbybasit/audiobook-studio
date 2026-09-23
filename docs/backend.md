@@ -1021,6 +1021,18 @@ without one, and a warning. The stitcher `covers` nothing — a RIFF file has no
 looks — and says so in the job's log rather than leaving the page's "embedded in every file"
 standing.
 
+**The book's details go in as tags.** The Export page's title, author, narrator, series, year and
+description travel with every build, and ffmpeg writes them with `-metadata`, whose generic keys it
+spells as ID3v2.3 frames in an MP3 and iTunes atoms in an M4B: the title as the file's own (the
+book's, `Title · Vol. 2`, or the chapter's, as the plan names the file), the book's title as the
+album so a set groups as one book, the author as artist and album artist, the narrator as composer
+— where Apple's and Audiobookshelf's readers look for one — and the series as the grouping. A file
+per chapter gets a track number and a file per volume a disc number; an M4B is marked as an
+audiobook (`stik` 2) so a phone files it with its books. A blank field is left out rather than
+written empty, and a blank title is the book's own. An MP3's description goes in as a `TXXX`
+frame rather than `COMM`, which is what ffmpeg writes; players that read only `COMM` show none.
+The stitcher `tags` nothing and says so in the job's log.
+
 ### How the screens use it
 
 Reads are queries, through [Pinia Colada](https://pinia-colada.esm.dev): one composable per
@@ -1141,26 +1153,26 @@ What it can vary is what real EPUBs vary: where the navigation document sits rel
 chapters, whether it calls a chapter something other than the heading inside it, whether one file
 holds several chapters, and whether a file the package promises is in the archive at all.
 
-| File                                                             | Covers                                                                          |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| [epubImport.test.ts](../tests/server/epubImport.test.ts)         | Reading a file: metadata, titles, text, refusals                                |
-| [notices.test.ts](../tests/server/notices.test.ts)               | Which chapters are not story                                                    |
-| [contentsReview.test.ts](../tests/server/contentsReview.test.ts) | Import → review → add, volumes, removal, renumbering                            |
-| [volumes.test.ts](../tests/server/volumes.test.ts)               | Removing a volume: rekeyed jobs, cancelled work, files, refusals mid-build      |
-| [bookSettings.test.ts](../tests/server/bookSettings.test.ts)     | Budget, pacing and re-timing, a volume's name, and a reorder and its refusals   |
-| [endpoints.test.ts](../tests/server/endpoints.test.ts)           | Saved and refused whole; tags and sample rate on a line; one rate a file        |
-| [covers.test.ts](../tests/server/covers.test.ts)                 | The EPUB's cover kept, an upload and its refusals, a cover in an M4B and an MP3 |
-| [markdown.test.ts](../tests/server/markdown.test.ts)             | The converter's DOM bracket, and reading Markdown back                          |
-| [jobs.test.ts](../tests/server/jobs.test.ts)                     | The queue: dedupe, cancel, restart, revision conflicts, HTTP                    |
-| [narration.test.ts](../tests/server/narration.test.ts)           | Narration: scopes, replacement, failure, cancel, restart, dictionary, files     |
-| [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)         | Editing against a revision, the history rule, what a run writes                 |
-| [cast.test.ts](../tests/server/cast.test.ts)                     | The cast a run leaves, rename, merge, removal, exact undo                       |
-| [exports.test.ts](../tests/server/exports.test.ts)               | Building one: the file, the spans, refusals, cancel, failure, download          |
-| [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)     | What the fake models produce — attributions, a valid WAV — and that they abort  |
-| [libraryClient.test.ts](../tests/server/libraryClient.test.ts)   | The client and the API against each other                                       |
-| [schema.test.ts](../tests/server/schema.test.ts)                 | The seeded world through the schema and back                                    |
-| [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)     | The library store, with a server answering                                      |
-| [../jobsBackend.test.ts](../tests/jobsBackend.test.ts)           | The jobs, scripting, narration, scripts, cast and history stores, with a server |
+| File                                                             | Covers                                                                                                      |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| [epubImport.test.ts](../tests/server/epubImport.test.ts)         | Reading a file: metadata, titles, text, refusals                                                            |
+| [notices.test.ts](../tests/server/notices.test.ts)               | Which chapters are not story                                                                                |
+| [contentsReview.test.ts](../tests/server/contentsReview.test.ts) | Import → review → add, volumes, removal, renumbering                                                        |
+| [volumes.test.ts](../tests/server/volumes.test.ts)               | Removing a volume: rekeyed jobs, cancelled work, files, refusals mid-build                                  |
+| [bookSettings.test.ts](../tests/server/bookSettings.test.ts)     | Budget, pacing and re-timing, a volume's name, and a reorder and its refusals                               |
+| [endpoints.test.ts](../tests/server/endpoints.test.ts)           | Saved and refused whole; tags and sample rate on a line; one rate a file                                    |
+| [covers.test.ts](../tests/server/covers.test.ts)                 | The EPUB's cover kept, an upload and its refusals, a cover in an M4B and an MP3, the book's details as tags |
+| [markdown.test.ts](../tests/server/markdown.test.ts)             | The converter's DOM bracket, and reading Markdown back                                                      |
+| [jobs.test.ts](../tests/server/jobs.test.ts)                     | The queue: dedupe, cancel, restart, revision conflicts, HTTP                                                |
+| [narration.test.ts](../tests/server/narration.test.ts)           | Narration: scopes, replacement, failure, cancel, restart, dictionary, files                                 |
+| [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)         | Editing against a revision, the history rule, what a run writes                                             |
+| [cast.test.ts](../tests/server/cast.test.ts)                     | The cast a run leaves, rename, merge, removal, exact undo                                                   |
+| [exports.test.ts](../tests/server/exports.test.ts)               | Building one: the file, the spans, refusals, cancel, failure, download                                      |
+| [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)     | What the fake models produce — attributions, a valid WAV — and that they abort                              |
+| [libraryClient.test.ts](../tests/server/libraryClient.test.ts)   | The client and the API against each other                                                                   |
+| [schema.test.ts](../tests/server/schema.test.ts)                 | The seeded world through the schema and back                                                                |
+| [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)     | The library store, with a server answering                                                                  |
+| [../jobsBackend.test.ts](../tests/jobsBackend.test.ts)           | The jobs, scripting, narration, scripts, cast and history stores, with a server                             |
 
 The client tests matter more than they look. Both sides of the seam are in this repository, so "the
 API returns what the client reads" is something the suite can check rather than a comment two files

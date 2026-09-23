@@ -42,6 +42,7 @@ import {
   chapterSignature,
   exportKey,
   formatOf,
+  fileTitle,
   markerTitle,
   planOf,
   reusedChapters,
@@ -58,7 +59,13 @@ import * as library from "~/db/library";
 import { readScript } from "~/db/script";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { badRequest, conflict, notFound } from "~/lib/errors";
-import type { AudiobookEncoder, EncodeChapter, ExportPorts, FreshPart } from "~/providers/encoder";
+import type {
+  AudiobookEncoder,
+  EncodeChapter,
+  EncodeTags,
+  ExportPorts,
+  FreshPart,
+} from "~/providers/encoder";
 import { inBackground } from "~/lib/background";
 
 export interface BuildQueued {
@@ -78,6 +85,31 @@ export interface BuildInput {
 const mb = (bytes: number): number => Math.round((bytes / 1024 / 1024) * 100) / 100;
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/**
+ * One file's tags. The track number is only said of a file per chapter and the disc only of a
+ * file per volume: a set of one, or a single file holding the whole book, has neither to say.
+ */
+function tagsOf(
+  s: ExportSettings,
+  file: ExportFile,
+  position: number,
+  count: number,
+  known: Map<number, Chapter>,
+): EncodeTags {
+  const chapters = file.chapterIds.flatMap((id) => known.get(id) ?? []);
+  return {
+    title: fileTitle(s, s.grouping === "volume" ? (file.volume?.name ?? null) : null, chapters),
+    book: s.title,
+    author: s.author,
+    narrator: s.narrator,
+    series: s.series,
+    year: s.year,
+    description: s.description,
+    track: s.grouping === "chapter" && count > 1 ? { n: position + 1, of: count } : undefined,
+    disc: file.volume && count > 1 ? { n: file.volume.number, of: file.volume.of } : undefined,
+  };
+}
 
 /**
  * The plan, with the names and the marks the encoder will really produce.
@@ -372,6 +404,24 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       cover = null;
     } else if (cover)
       ctx.note(chosen ? "Embedding your cover image" : "Embedding the EPUB's cover", "info", {});
+    // The book's details from the page: written into every file by an encoder with somewhere to
+    // put them, and said to be missing by one without. A blank title is the book's own, because a
+    // file tagged with no title is listed by its file name.
+    const details = { ...run.settings, title: run.settings.title.trim() || book.title };
+    if (!encoder.tags)
+      ctx.note(
+        `A .${encoder.ext} file carries no title or author; the book's details were not written`,
+        "warning",
+        {
+          encoder: encoder.name,
+        },
+      );
+    else
+      ctx.note("Tagging each file with the book's details", "info", {
+        title: details.title,
+        author: details.author.trim() || "none",
+        narrator: details.narrator.trim() || "none",
+      });
     if (entry.stale)
       ctx.note(`${entry.stale} chapters use clips the script has moved under`, "warning", {
         accepted: "the build was started with “use stale audio”",
@@ -480,6 +530,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         out: path,
         signal,
         cover,
+        tags: encoder.tags ? tagsOf(details, file, position, entry.files.length, known) : null,
         onChapter: (landed) => {
           if (landed.readAgain) {
             copied--;

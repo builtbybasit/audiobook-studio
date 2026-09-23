@@ -29,6 +29,13 @@
       "when": 1790059441012,
       "tag": "0003_quick_the_call",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790164316726,
+      "tag": "0004_faulty_black_queen",
+      "breakpoints": true
     }
   ]
 }

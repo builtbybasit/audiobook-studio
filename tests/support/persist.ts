@@ -11,41 +11,38 @@ import type {
   Chapter,
   Character,
   ChapterHistory,
-  Endpoint,
   ExportItem,
   Job,
   LexEntry,
-  Profile,
-  Promotion,
-  RateWindow,
   RequestRecord,
 } from "@/types";
-import type { Credential } from "@/lib/credentials";
 import type { Db } from "~/db/client";
 import * as rows from "~/db/rows";
 
 // A chapter's script is read and written by the server's own module; the round-trip test drives
 // the same code the scripting job does rather than a copy of it.
 export { readScript, writeScript } from "~/db/script";
+// and the endpoints by the module the endpoints route writes through
+export {
+  readEndpoints,
+  readProfiles,
+  writeCredentials,
+  writeEndpoint,
+  writeProfile,
+} from "~/db/endpoints";
 import {
   books,
   chapters,
   characters,
-  credentials,
-  endpoints,
   exportChapters,
   exportFiles,
   exportItems,
-  expressionTags,
   jobEvents,
   jobs,
   lexiconEntries,
-  promotions,
-  rateWindows,
   requests,
   scriptHeads,
   scriptVersions,
-  voices,
   volumes,
 } from "~/db/schema";
 
@@ -99,61 +96,6 @@ export function writeHistory(
     db.insert(scriptVersions)
       .values(rows.scriptVersionValues(bookId, chapterId, v))
       .run();
-}
-
-/**
- * The credential registry.
- *
- * Endpoints point at it by id, so it has to exist before any of them do. Names only — the secret
- * itself is not in this schema.
- */
-export function writeCredentials(db: Db, registry: readonly Credential[]): void {
-  for (const c of registry)
-    db.insert(credentials).values({ id: c.id, label: c.label, note: c.note }).run();
-}
-
-/** An endpoint and everything hanging off it: voices, the schedule, promotions, expression tags. */
-export function writeEndpoint(db: Db, e: Endpoint, position: number): void {
-  db.insert(endpoints).values(rows.endpointValues(e, position)).run();
-  e.voices.forEach((v, i) =>
-    db
-      .insert(voices)
-      .values(rows.voiceValues(e.id, v, i))
-      .run(),
-  );
-  writeCard(db, e.id, e.pricing?.windows ?? [], e.pricing?.promotions ?? []);
-  (e.expressions?.tags ?? []).forEach((t, i) =>
-    db
-      .insert(expressionTags)
-      .values(rows.expressionTagValues(e.id, t, i))
-      .run(),
-  );
-}
-
-export function writeProfile(db: Db, p: Profile, position: number): void {
-  db.insert(endpoints).values(rows.profileValues(p, position)).run();
-  writeCard(db, p.id, p.pricing?.windows ?? [], p.pricing?.promotions ?? []);
-}
-
-/** The rate card's rows. Shared, because a speech rate goes on discount exactly as a token rate does. */
-function writeCard(
-  db: Db,
-  endpointId: string,
-  windows: readonly RateWindow[],
-  promos: readonly Promotion[],
-): void {
-  windows.forEach((w, i) =>
-    db
-      .insert(rateWindows)
-      .values(rows.rateWindowValues(endpointId, w, i))
-      .run(),
-  );
-  promos.forEach((p, i) =>
-    db
-      .insert(promotions)
-      .values(rows.promotionValues(endpointId, p, i))
-      .run(),
-  );
 }
 
 export function writeExport(db: Db, e: ExportItem, createdAt = Date.now()): void {
@@ -239,35 +181,6 @@ export function readHistory(db: Db, bookId: string, chapterId: number): ChapterH
     .where(and(eq(scriptVersions.bookId, bookId), eq(scriptVersions.chapterId, chapterId)))
     .all();
   return rows.toChapterHistory(head, versions);
-}
-
-function partsOf(db: Db, endpointId: string): rows.EndpointParts {
-  return {
-    voices: db.select().from(voices).where(eq(voices.endpointId, endpointId)).all(),
-    windows: db.select().from(rateWindows).where(eq(rateWindows.endpointId, endpointId)).all(),
-    promotions: db.select().from(promotions).where(eq(promotions.endpointId, endpointId)).all(),
-    tags: db.select().from(expressionTags).where(eq(expressionTags.endpointId, endpointId)).all(),
-  };
-}
-
-export function readEndpoints(db: Db): Endpoint[] {
-  return db
-    .select()
-    .from(endpoints)
-    .where(eq(endpoints.kind, "tts"))
-    .orderBy(asc(endpoints.position))
-    .all()
-    .map((row) => rows.toEndpoint(row, partsOf(db, row.id)));
-}
-
-export function readProfiles(db: Db): Profile[] {
-  return db
-    .select()
-    .from(endpoints)
-    .where(eq(endpoints.kind, "scripting"))
-    .orderBy(asc(endpoints.position))
-    .all()
-    .map((row) => rows.toProfile(row, partsOf(db, row.id)));
 }
 
 export function readExport(db: Db, id: number): ExportItem | null {

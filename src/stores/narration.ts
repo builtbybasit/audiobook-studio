@@ -56,7 +56,7 @@ import {
   speechRates,
 } from "@/lib/pricing";
 import { effectiveRates } from "@/lib/pricing";
-import { speechInstructions } from "@/lib/speech";
+import { sampleRateLabel, speechInstructions } from "@/lib/speech";
 import { plural } from "@/lib/contents";
 import { key } from "@/lib/scriptReview";
 import { ApiError } from "@/services/http";
@@ -140,6 +140,11 @@ export const useNarrationStore = defineStore("narration", {
           out.push(
             `voice: ${endpointsStore.voiceLabel(a.voiceRef)} → ${endpointsStore.voiceLabel(now.ref) || "unset"}`,
           );
+        // An endpoint left on the model's own rate asks for nothing, so no clip it made is at the
+        // wrong one; only a rate the endpoint now names can be one a clip was not rendered at.
+        const rate = now.endpoint?.sampleRate;
+        if (a.sampleRate && rate && a.sampleRate !== rate)
+          out.push(`sample rate: ${sampleRateLabel(a.sampleRate)} → ${sampleRateLabel(rate)}`);
         const who = castStore.charactersOf(bookId).find((c) => c.name === s.speaker);
         if ((a.style ?? "") !== (who?.style ?? ""))
           out.push(`style: “${a.style || "—"}” → “${who?.style || "—"}”`);

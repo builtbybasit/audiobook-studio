@@ -23,6 +23,7 @@ import type {
   ParkedRates,
   PromotionScope,
   RateSet,
+  SampleRate,
   SplitMode,
   TtsBillingUnit,
 } from "@/types";
@@ -58,6 +59,8 @@ export const endpoints = sqliteTable(
     /** per-request character cap; 0 = no limit */
     maxChars: integer("max_chars").notNull().default(0),
     splitAt: text("split_at").$type<SplitMode>().notNull().default("sentence"),
+    /** speech only: the rate every line is asked for, in Hz; null = the model's own */
+    sampleRate: integer("sample_rate").$type<SampleRate>(),
     position: integer("position").notNull().default(0),
 
     // ---- scripting rates: USD per 1M tokens ----

@@ -272,6 +272,10 @@ export function dispatchNarration(
         voiceRef: route.ref ?? undefined,
         voice: route.voice ?? undefined,
         model: ep.model,
+        // A real provider answers at the rate it was asked for, and the clip records what the file
+        // came back at; the demo has no file, so it records the rate asked for. An endpoint on the
+        // model's own rate asks for none, and the demo has no file to read one off.
+        ...(ep.sampleRate ? { sampleRate: ep.sampleRate } : {}),
         direction: next.direction,
         style: who?.style ?? "",
         ...(instructions ? { instructions } : {}),

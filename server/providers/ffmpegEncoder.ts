@@ -36,6 +36,7 @@ import type {
 } from "~/providers/encoder";
 import {
   byteRate,
+  formatLabel,
   readWavHeader,
   silenceBytes,
   silentByte,
@@ -154,6 +155,16 @@ async function concatList(
         throw new Error("this encoder cannot copy a span out of an audiobook it already wrote");
       lines.push(`file '${part.path.replaceAll("'", "'\\''")}'`);
       const head = readWavHeader(new Uint8Array(await Bun.file(part.path).arrayBuffer()));
+      // The concat demuxer reads every file as the first one's format, so a clip at another rate
+      // would play at the wrong speed rather than fail. The stitcher refuses it; so does this.
+      if (
+        head.channels !== format.channels ||
+        head.sampleRate !== format.sampleRate ||
+        head.bits !== format.bits
+      )
+        throw new Error(
+          `${part.path} is ${formatLabel(head)} and this file is ${formatLabel(format)}`,
+        );
       seconds += head.length / byteRate(head);
     }
     spans.push({

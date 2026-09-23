@@ -48,7 +48,7 @@ import {
   reviewOf,
   setLabel,
 } from "@/lib/exports";
-import { pacingOrDefault, pauseAfter } from "@/lib/speech";
+import { pacingOrDefault, pauseAfter, sampleRateLabel } from "@/lib/speech";
 import type { AudioFiles } from "~/audio/files";
 import type { Db, Tx } from "~/db/client";
 import * as exports from "~/db/exports";
@@ -375,6 +375,10 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
 
       const plan: EncodeChapter[] = [];
       let carriedHere = 0;
+      // One file holds one sample rate — neither encoder resamples — so the first clip that says
+      // what rate it is sets the file's, and a line rendered at another is named here, by chapter,
+      // rather than by the path of a clip file deep inside the encoder.
+      let rate: { hz: number; chapter: string } | null = null;
       for (const id of file.chapterIds) {
         const chapter = known.get(id);
         if (!chapter)
@@ -395,6 +399,12 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
               `“${chapter.title}” has a line whose audio is not a file on this server; narrate it again`,
             );
           parts.push({ kind: "clip", path: at });
+          const hz = s.audio.sampleRate;
+          if (hz != null && !rate) rate = { hz, chapter: chapter.title };
+          else if (hz != null && rate && hz !== rate.hz)
+            throw new Error(
+              `“${chapter.title}” has a line rendered at ${sampleRateLabel(hz)}, and ${file.name} already holds ${sampleRateLabel(rate.hz)} audio from “${rate.chapter}”; narrate it again at one rate`,
+            );
           // The silence inside a chapter is the book's pacing, the same gap the reader draws and
           // the player leaves; there is none after the last line.
           const pause = pauseAfter(s, lines[i + 1], pacing);

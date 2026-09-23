@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 import LibraryView from "@/views/LibraryView.vue";
+import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 
 export const router = createRouter({
@@ -28,11 +29,15 @@ export const router = createRouter({
  * This is the one place a book is fetched, so a link pasted into a new tab and a reload land on
  * the same page as a click does. The seeded world is already in the store and never comes here.
  * A book the server does not have sends the person to the library rather than to an empty review.
+ *
+ * The endpoint configuration is read alongside the shelf, for the same reason: the voice pickers,
+ * the run estimates and the Endpoints page all read it, and a page drawn before it arrived would
+ * show the seeded endpoints as if they were the server's.
  */
 router.beforeEach(async (to) => {
   const libraryStore = useLibraryStore();
   if (!libraryStore._service()) return true;
-  await libraryStore.load();
+  await Promise.all([libraryStore.load(), useEndpointsStore().load()]);
   const bookId = typeof to.params.bookId === "string" ? to.params.bookId : null;
   if (!bookId || libraryStore.chaptersOf(bookId).length) return true;
   return (await libraryStore.loadBook(bookId)) ? true : "/library";

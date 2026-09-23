@@ -29,6 +29,7 @@ function auditOf(row: ClipRow): Partial<Take> {
     ...(row.pronounced != null ? { pronounced: row.pronounced } : {}),
     ...(row.expressionSignature != null ? { expressionSignature: row.expressionSignature } : {}),
     ...(row.expressions != null ? { expressions: row.expressions } : {}),
+    ...(row.sampleRate != null ? { sampleRate: row.sampleRate } : {}),
     ...(row.cost != null ? { cost: row.cost } : {}),
     ...(row.charge != null ? { charge: row.charge } : {}),
   };
@@ -107,6 +108,7 @@ export function clipValues(
     pronounced: full.pronounced ?? null,
     expressionSignature: full.expressionSignature ?? null,
     expressions: full.expressions ?? null,
+    sampleRate: full.sampleRate ?? null,
     parts: full.parts ?? null,
     splitAt: full.splitAt ?? null,
     cuts: full.cuts ?? null,

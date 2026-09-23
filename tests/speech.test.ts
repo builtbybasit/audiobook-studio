@@ -267,4 +267,63 @@ describe("in the store", () => {
     castStore.resetPacing("cliche");
     narrated.forEach((c, i) => expect(c.duration).toBeCloseTo(before[i], 10));
   });
+
+  describe("the sample rate", () => {
+    /** A rendered line on chapter 1, and the endpoint its speaker's voice is on now. */
+    const rendered = () => {
+      const s = scriptsStore.segmentsOf("cliche", 1).find((x) => x.audio.status === "done")!;
+      const ep = castStore.effectiveVoice("cliche", s.speaker).endpoint!;
+      expect(ep).toBeDefined();
+      return { s, ep };
+    };
+
+    test("a clip rendered at one rate drifts when its endpoint now asks for another", () => {
+      const { s, ep } = rendered();
+      s.audio.sampleRate = 24000;
+      ep.sampleRate = 48000;
+      expect(narrationStore.clipDrift("cliche", s)).toContain("sample rate: 24 kHz → 48 kHz");
+      ep.sampleRate = 44100;
+      expect(narrationStore.clipDrift("cliche", s)).toContain("sample rate: 24 kHz → 44.1 kHz");
+    });
+
+    test("an endpoint on the model's own rate asks for none, so nothing drifts", () => {
+      const { s, ep } = rendered();
+      s.audio.sampleRate = 24000;
+      ep.sampleRate = null;
+      expect(narrationStore.clipDrift("cliche", s).join()).not.toContain("sample rate");
+      delete ep.sampleRate;
+      expect(narrationStore.clipDrift("cliche", s).join()).not.toContain("sample rate");
+    });
+
+    test("a clip that recorded no rate says nothing either way", () => {
+      const { s, ep } = rendered();
+      delete s.audio.sampleRate;
+      ep.sampleRate = 48000;
+      expect(narrationStore.clipDrift("cliche", s).join()).not.toContain("sample rate");
+    });
+
+    test("the same rate is not drift", () => {
+      const { s, ep } = rendered();
+      s.audio.sampleRate = 44100;
+      ep.sampleRate = 44100;
+      expect(narrationStore.clipDrift("cliche", s).join()).not.toContain("sample rate");
+    });
+
+    test("the demo records the rate it asked for, and then the clip matches its endpoint", () => {
+      const { s, ep } = rendered();
+      ep.sampleRate = 44100;
+      narrationStore.retrySegment("cliche", 1, s.id);
+      run();
+      expect(s.audio.sampleRate).toBe(44100);
+      expect(narrationStore.clipDrift("cliche", s).join()).not.toContain("sample rate");
+    });
+
+    test("an endpoint on the model's own rate records none", () => {
+      const { s, ep } = rendered();
+      ep.sampleRate = null;
+      narrationStore.retrySegment("cliche", 1, s.id);
+      run();
+      expect(s.audio.sampleRate).toBeUndefined();
+    });
+  });
 });

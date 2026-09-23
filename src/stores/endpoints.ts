@@ -1,4 +1,19 @@
 // Provider configurations and voice catalogues. Credentials remain in the keyring.
+//
+// With a server answering, the configuration is the server's: a narration job there reads it to
+// know which endpoint a line goes to and at what sample rate. The page binds its fields straight
+// onto these objects — a text box writes `ep.concurrency`, a toggle `ep.enabled`, an import
+// assigns a dozen fields at once — so rather than chase every one of those into a request, the
+// store *writes behind*: it watches the configuration as one document (the endpoints without their
+// telemetry, the profiles, the credential registry), and a short while after it last changed sends
+// the whole of it. What the server answers is what the store then holds. Demo mode has no server
+// and none of this runs; the seeded configuration is simply what the page edits.
+//
+// The request history, failure counts and back-off on each endpoint are not configuration. They
+// are this browser's record of what it sent, the server never stores them, and neither sending nor
+// installing a configuration touches them.
+import { watch } from "vue";
+import { credentials } from "@/lib/credentials";
 import { isFishAudio, presetById } from "@/lib/endpoints";
 import { configErrors, expressionId } from "@/lib/expressions";
 import { keyring } from "@/lib/keyring";
@@ -6,6 +21,15 @@ import { newProfile, profileErrors } from "@/lib/scripting";
 import { GENDER } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
 import { discoverVoices, voiceRef } from "@/mock";
+import {
+  activeEndpointSettingsService,
+  ENDPOINT_TELEMETRY,
+  type EndpointConfig,
+  type EndpointSettings,
+  type EndpointSettingsService,
+  type StoredEndpoint,
+} from "@/services/endpointSettings";
+import { ApiError } from "@/services/http";
 import type {
   Endpoint,
   ExpressionConfig,
@@ -27,9 +51,67 @@ import { useUiStore } from "@/stores/ui";
 interface EndpointsState {
   endpoints: Endpoint[];
   profiles: Profile[];
+  /** Backend mode: whether the configuration has been read from the server yet. */
+  loaded: boolean;
 }
+
+/** How long the configuration has to sit still before it is sent. A number box sends nothing
+ *  per keystroke; a pause sends the value typed. */
+export const WRITE_DELAY_MS = 400;
+
+const telemetry = new Set<string>(ENDPOINT_TELEMETRY);
+
+/** An endpoint's configuration, leaving its telemetry behind. */
+function storedOf(ep: Endpoint): StoredEndpoint {
+  // Key by key rather than a rest spread: a spread reads every field, and the write-behind watch
+  // would then run again on every request an endpoint records, only to find nothing to send.
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(ep)) if (!telemetry.has(k)) out[k] = ep[k as keyof Endpoint];
+  return out as unknown as StoredEndpoint;
+}
+
+function configOf(endpoints: Endpoint[], profiles: Profile[]): EndpointConfig {
+  return {
+    endpoints: endpoints.map(storedOf),
+    profiles: profiles.map((p) => ({ ...p })),
+    credentials: credentials.map((c) => ({ ...c })),
+  };
+}
+
+/**
+ * Take on what the server holds for one object, keeping the object: the page holds references to
+ * the endpoint it has open, and a replaced object would leave it editing one the store has let go.
+ * A field the server did not send is gone; telemetry is never the server's to change.
+ */
+function adopt<T extends object>(cur: T, next: T): T {
+  const target = cur as Record<string, unknown>;
+  const source = next as Record<string, unknown>;
+  for (const k of Object.keys(target)) if (!telemetry.has(k) && !(k in source)) delete target[k];
+  for (const k of Object.keys(source)) if (!telemetry.has(k)) target[k] = source[k];
+  return cur;
+}
+
+// The write-behind's bookkeeping. Not state: nothing renders it, and a reload starting it again
+// from nothing is correct.
+/** Local changes seen so far. A write's answer is installed only if none came after it. */
+let edits = 0;
+/** Writes sent and not yet answered. */
+let inFlight = 0;
+/** The configuration as the server last described it, serialized: what is not a change. */
+let held = "";
+let timer: ReturnType<typeof setTimeout> | null = null;
+let stopWatch: (() => void) | null = null;
+
+function cancelTimer(): void {
+  if (timer) clearTimeout(timer);
+  timer = null;
+}
+
 export const useEndpointsStore = defineStore("endpoints", {
-  state: (): EndpointsState => seedState("endpoints", "profiles"),
+  // Backend mode starts from the seeded configuration too, but only for as long as it takes to
+  // read the server's: `load` replaces it, and a server that has never been given one is given
+  // this one — which is how a first run adopts the demo's endpoints rather than starting on none.
+  state: (): EndpointsState => ({ ...seedState("endpoints", "profiles"), loaded: false }),
   getters: {
     enabledEndpoints(s): Endpoint[] {
       return s.endpoints.filter((e) => e.enabled);
@@ -66,6 +148,133 @@ export const useEndpointsStore = defineStore("endpoints", {
     },
   },
   actions: {
+    // ---------- the seam ----------
+    _service(): EndpointSettingsService | null {
+      return activeEndpointSettingsService();
+    },
+    /** Say a request failed. The caller decides what to read again. */
+    _failed(what: string, cause: unknown): void {
+      const uiStore = useUiStore();
+      const api = cause instanceof ApiError ? cause : null;
+      uiStore.toast(api ? api.message : `Could not ${what}`, {
+        kind: "error",
+        description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
+        timeout: 8000,
+      });
+    },
+    _config(): EndpointConfig {
+      return configOf(this.endpoints, this.profiles);
+    },
+    /**
+     * Hold the configuration the server answered with, in place of this one.
+     *
+     * An endpoint that survives keeps its object and its telemetry; a new one starts with none.
+     * The credential registry is a module-level list the Connection tab reads directly, so it is
+     * refilled in place rather than replaced.
+     */
+    _install(answer: EndpointSettings): void {
+      const endpoints = new Map(this.endpoints.map((e) => [e.id, e]));
+      this.endpoints = answer.endpoints.map((e) => {
+        const cur = endpoints.get(e.id);
+        return cur
+          ? adopt(cur, e)
+          : { ...e, history: [], failures: 0, rateLimits: 0, backoffUntil: 0 };
+      });
+      const profiles = new Map(this.profiles.map((p) => [p.id, p]));
+      this.profiles = answer.profiles.map((p) => {
+        const cur = profiles.get(p.id);
+        return cur ? adopt(cur, p) : p;
+      });
+      credentials.splice(0, credentials.length, ...answer.credentials);
+      // What the watch will see next is the answer, and the answer is not a change to send.
+      held = JSON.stringify(this._config());
+    },
+    /**
+     * Read the configuration from the server. Demo mode is already holding one.
+     *
+     * Called once when the app starts in backend mode; `force` reads it again, which is what a
+     * refused write does to put back what the server actually holds. A server that has never been
+     * given a configuration is given the one this store started with.
+     */
+    async load(force = false): Promise<void> {
+      const svc = this._service();
+      if (!svc || (this.loaded && !force)) return;
+      const before = edits;
+      try {
+        let answer = await svc.getSettings();
+        if (!answer.saved) answer = await svc.putSettings(this._config());
+        // Something was typed while the read was out: that is newer than what it read, and its
+        // own write is already on its way.
+        if (this.loaded && edits !== before) return;
+        this._install(answer);
+        this.loaded = true;
+        this._writeBehind();
+      } catch (cause) {
+        this._failed("read the endpoints", cause);
+      }
+    },
+    /** Start watching the configuration for changes to send. Once per store. */
+    _writeBehind(): void {
+      if (stopWatch) return;
+      stopWatch = watch(
+        () => JSON.stringify(this._config()),
+        (now) => {
+          edits++;
+          // Back to what the server holds, with nothing on its way that says otherwise: there is
+          // nothing to send. With a write out, the server may be about to hold something else,
+          // so this has to be said too.
+          if (now === held && !inFlight) return cancelTimer();
+          cancelTimer();
+          timer = setTimeout(() => void this.flushWrites(), WRITE_DELAY_MS);
+        },
+      );
+    },
+    /** Stop the write-behind and forget its bookkeeping. For tests, between one store and the next. */
+    _detach(): void {
+      stopWatch?.();
+      stopWatch = null;
+      cancelTimer();
+      edits = 0;
+      inFlight = 0;
+      held = "";
+    },
+    /**
+     * Send the configuration now rather than when the timer would have. Resolves when the answer
+     * is in; a no-op when nothing is waiting to go.
+     *
+     * Only the answer to the latest change is installed: an earlier write answering after the
+     * person has typed past it would put back what they typed over. A refused write is said, and
+     * the server's configuration is read back so the page shows what is actually in force.
+     */
+    async flushWrites(): Promise<void> {
+      const svc = this._service();
+      if (!svc || !timer) return;
+      cancelTimer();
+      const n = edits;
+      const body = this._config();
+      const sent = JSON.stringify(body);
+      // The count comes down before anything is installed: the watch sees an installed answer
+      // after this returns, and while a write is counted as out it would send that answer back.
+      inFlight++;
+      let answer: EndpointSettings;
+      try {
+        answer = await svc.putSettings(body);
+      } catch (cause) {
+        inFlight--;
+        if (edits !== n) return;
+        this._failed("save the endpoints", cause);
+        await this.load(true);
+        return;
+      }
+      inFlight--;
+      if (edits !== n) return;
+      // The usual case: the server holds exactly what was sent, so there is nothing to put back on
+      // the objects the page is editing.
+      const { saved: _saved, ...rest } = answer;
+      if (JSON.stringify({ ...rest, endpoints: rest.endpoints.map(storedOf) }) === sent)
+        held = sent;
+      else this._install(answer);
+    },
     saveExpressionConfig(id: string, config: ExpressionConfig): boolean {
       const narrationStore = useNarrationStore();
       const uiStore = useUiStore();

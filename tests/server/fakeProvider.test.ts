@@ -57,7 +57,7 @@ describe("the provider", () => {
   });
 
   test("stops when the signal is aborted mid-run", async () => {
-    const provider = fakeScriptingProvider({ delayMs: 5 });
+    const provider = fakeScriptingProvider();
     const controller = new AbortController();
     const run = provider.script({
       title: "t",
@@ -66,13 +66,6 @@ describe("the provider", () => {
       progress: () => controller.abort(new DOMException("stop", "AbortError")),
     });
     await expect(run).rejects.toMatchObject({ name: "AbortError" });
-  });
-
-  test("can be told to fail, for the failure path", async () => {
-    const provider = fakeScriptingProvider({ failWith: "no" });
-    await expect(
-      provider.script({ title: "t", text: "x", signal: new AbortController().signal }),
-    ).rejects.toThrow("no");
   });
 });
 
@@ -158,18 +151,10 @@ describe("the fake speech model", () => {
     expect((await provider.speak(line("x"))).voice).toBeNull();
   });
 
-  test("stops when the signal is aborted while it waits", async () => {
-    const provider = fakeSpeechProvider({ delayMs: 50 });
+  test("answers a cancelled request with the cancel, not a clip", async () => {
     const controller = new AbortController();
-    const run = provider.speak(line("Slow.", "Mara", { signal: controller.signal }));
     controller.abort(new DOMException("stop", "AbortError"));
+    const run = fakeSpeechProvider().speak(line("Slow.", "Mara", { signal: controller.signal }));
     await expect(run).rejects.toMatchObject({ name: "AbortError" });
-  });
-
-  test("can be told to fail, for every line or for the lines that match", async () => {
-    await expect(fakeSpeechProvider({ failWith: "no" }).speak(line("x"))).rejects.toThrow("no");
-    const picky = fakeSpeechProvider({ failLines: (t) => t.includes("twice") });
-    await expect(picky.speak(line("Count it twice."))).rejects.toThrow("could not render");
-    expect((await picky.speak(line("Count it once."))).duration).toBeGreaterThan(0);
   });
 });

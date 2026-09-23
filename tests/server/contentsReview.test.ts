@@ -51,12 +51,11 @@ describe("the contents review", () => {
     expect(chapters.some((c) => c.excluded)).toBe(false);
   });
 
-  test("skipping a chapter keeps it in the book", async () => {
+  test("skipping a chapter keeps it in the book, and skipping it again changes nothing", async () => {
     const { api, book } = await imported();
-    const { body } = await api.request<ChapterResult>(
-      `/api/books/${book.id}/chapters/skip`,
-      jsonBody({ ids: [2] }),
-    );
+    const skip = () =>
+      api.request<ChapterResult>(`/api/books/${book.id}/chapters/skip`, jsonBody({ ids: [2] }));
+    const { body } = await skip();
     expect(body.changed).toBe(1);
     expect(body.chapters).toHaveLength(4);
     expect(body.chapters[1].excluded).toBe(true);
@@ -64,13 +63,6 @@ describe("the contents review", () => {
     const text = await api.request<{ text: string }>(`/api/books/${book.id}/chapters/2/text`);
     expect(text.status).toBe(200);
     expect(text.body.text).toContain("hiatus");
-  });
-
-  test("skipping the same chapter twice changes nothing the second time", async () => {
-    const { api, book } = await imported();
-    const skip = () =>
-      api.request<ChapterResult>(`/api/books/${book.id}/chapters/skip`, jsonBody({ ids: [2] }));
-    expect((await skip()).body.changed).toBe(1);
     expect((await skip()).body.changed).toBe(0);
   });
 
@@ -87,23 +79,14 @@ describe("the contents review", () => {
     expect(body.chapters[1].note?.kind).toBe("hiatus");
   });
 
-  test("keeping a noted chapter settles it without a skip first", async () => {
+  test("keeping a noted chapter settles it without a skip first; a chapter with no note has nothing to keep", async () => {
     const { api, book } = await imported();
     const { body } = await api.request<ChapterResult>(
       `/api/books/${book.id}/chapters/keep`,
-      jsonBody({ ids: [2] }),
+      jsonBody({ ids: [1, 2] }),
     );
     expect(body.changed).toBe(1);
     expect(body.chapters[1].kept).toBe(true);
-  });
-
-  test("a chapter with no note has nothing to keep", async () => {
-    const { api, book } = await imported();
-    const { body } = await api.request<ChapterResult>(
-      `/api/books/${book.id}/chapters/keep`,
-      jsonBody({ ids: [1] }),
-    );
-    expect(body.changed).toBe(0);
     expect(body.chapters[0].kept).toBeUndefined();
   });
 
@@ -138,13 +121,17 @@ describe("the contents review", () => {
     expect(stated.body.changed).toBe(1);
   });
 
-  test("confirming the review puts the book on the shelf", async () => {
+  test("a book waits in its review until it is confirmed, and is then on the shelf", async () => {
     const { api, book } = await imported();
+    const listed = async () => (await api.request<{ books: Book[] }>("/api/books")).body.books;
+    // the list carries it marked as waiting, which is what keeps it off the shelf and in "importing"
+    expect((await listed()).map((b) => [b.id, b.importing])).toEqual([[book.id, true]]);
     const { body } = await api.request<{ book: Book }>(`/api/books/${book.id}/confirm`, {
       method: "POST",
     });
     expect(body.book.importing).toBeUndefined();
     expect(body.book.volumes.every((v) => !v.importing)).toBe(true);
+    expect((await listed())[0].importing).toBeUndefined();
   });
 
   test("discarding an unconfirmed import takes the whole book with it", async () => {
@@ -338,27 +325,23 @@ describe("routes that are asked for something that is not there", () => {
     expect(body.error.message).toBe("No such book");
   });
 
-  test("a chapter list with no ids in it is refused, in the API's own error shape", async () => {
+  test("a chapter list that is empty or not numbers is refused, in the API's own error shape", async () => {
     const { api, book } = await imported();
-    const { status, body } = await api.request<{ error: { message: string; detail?: string } }>(
-      `/api/books/${book.id}/chapters/skip`,
-      jsonBody({ ids: [] }),
-    );
-    expect(status).toBe(400);
+    const skip = (ids: unknown[]) =>
+      api.request<{ error: { message: string; detail?: string } }>(
+        `/api/books/${book.id}/chapters/skip`,
+        jsonBody({ ids }),
+      );
+    const empty = await skip([]);
+    expect(empty.status).toBe(400);
     // The validator answers with its own `{success,error,data}` unless it is told not to, and a
     // client reading `error.message` finds nothing in it but "Request failed (400)".
-    expect(body.error.message).toContain("not valid");
-    expect(body.error.detail?.length).toBeGreaterThan(0);
-  });
-
-  test("a body that is not the right shape says which field was wrong", async () => {
-    const { api, book } = await imported();
-    const { status, body } = await api.request<{ error: { message: string; detail?: string } }>(
-      `/api/books/${book.id}/chapters/skip`,
-      jsonBody({ ids: ["one"] }),
-    );
-    expect(status).toBe(400);
-    expect(body.error.detail).toContain("ids.0");
+    expect(empty.body.error.message).toContain("not valid");
+    expect(empty.body.error.detail?.length).toBeGreaterThan(0);
+    // and the detail says which field was wrong
+    const words = await skip(["one"]);
+    expect(words.status).toBe(400);
+    expect(words.body.error.detail).toContain("ids.0");
   });
 
   test("an unknown route says which one it was", async () => {

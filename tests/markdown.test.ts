@@ -37,14 +37,6 @@ describe("what a link may point at", () => {
     expect(safeHref("../text/c2.xhtml")).toBeNull();
     expect(safeHref("#footnote-3")).toBeNull();
   });
-
-  test("a link that cannot be followed still shows its words", () => {
-    const [piece] = inline("See [the note](javascript:alert(1)).");
-    expect(piece.kind).toBe("text");
-    const link = inline("See [the note](javascript:alert%281%29).").find((p) => p.kind === "link");
-    // whichever way marked tokenises it, the words survive and the target does not
-    expect(link?.href ?? null).toBeNull();
-  });
 });
 
 describe("flattening an inline run", () => {
@@ -97,7 +89,7 @@ describe("flattening an inline run", () => {
     expect(both[0].pieces).toEqual([{ kind: "both", text: "the note" }]);
   });
 
-  test("a link nobody may follow still keeps the stress in its words", () => {
+  test("a link nobody may follow still shows its words, stress included", () => {
     const [link] = inline("See [*the note*](javascript:alert%281%29).").filter(
       (p) => p.kind === "link",
     );

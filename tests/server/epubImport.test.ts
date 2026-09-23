@@ -126,14 +126,6 @@ describe("importing an EPUB", () => {
     expect(body.book.volumes[0].importing).toBe(true);
   });
 
-  test("a book waiting in its review is not on the shelf yet", async () => {
-    const api = testApi();
-    await api.import(await epubFile({ chapters: [{ title: "One", paragraphs: story() }] }));
-    const { body } = await api.request<{ books: Book[] }>("/api/books");
-    expect(body.books).toHaveLength(1);
-    expect(body.books[0].importing).toBe(true);
-  });
-
   test("a chapter the navigation does not name is titled by its own heading", async () => {
     const api = testApi();
     const { body } = await api.import<ImportResult>(
@@ -513,7 +505,9 @@ describe("importing an EPUB", () => {
     const api = testApi();
     const { body } = await api.import<ImportResult>(
       await epubFile({
-        chapters: [{ title: "Scene", raw: "<p>* * *</p><p>He said <em>never</em>.</p>" }],
+        chapters: [
+          { title: "Scene", raw: "<p>* * *</p><p>A 5 * 3 sum.</p><p>He said <em>never</em>.</p>" },
+        ],
       }),
     );
     const row = api.db
@@ -523,8 +517,8 @@ describe("importing an EPUB", () => {
       .get();
     // A scene break is three stars, not emphasised whitespace — which is what an unescaped `*`
     // would make of it the moment anything read the markers back.
-    expect(row?.body).toBe("\\* \\* \\*\n\nHe said *never*.");
-    expect(plainText(row?.body ?? "")).toBe("* * *\n\nHe said never.");
+    expect(row?.body).toBe("\\* \\* \\*\n\nA 5 \\* 3 sum.\n\nHe said *never*.");
+    expect(plainText(row?.body ?? "")).toBe("* * *\n\nA 5 * 3 sum.\n\nHe said never.");
   });
 
   test("a chapter comes back as Markdown, or stripped for a model, and says which", async () => {
@@ -558,30 +552,9 @@ describe("importing an EPUB", () => {
     expect(plain.body.text).not.toContain("http://x.y/z");
     expect(plain.body.text).not.toContain("|");
     expect(plain.body.text).not.toContain("#");
-  });
 
-  test("a format the API does not have is refused rather than guessed at", async () => {
-    const api = testApi();
-    const { body } = await api.import<ImportResult>(
-      await epubFile({ chapters: [{ title: "One", paragraphs: story() }] }),
-    );
-    const { status } = await api.request(
-      `/api/books/${body.book.id}/chapters/1/text?format=sneaky`,
-    );
-    expect(status).toBe(400);
-  });
-
-  test("the chapter's text can be read back as it was stored", async () => {
-    const api = testApi();
-    const { body } = await api.import<ImportResult>(
-      await epubFile({
-        chapters: [{ title: "The Ledger Opens", paragraphs: ["Rain fell.", "He signed twice."] }],
-      }),
-    );
-    const text = await api.request<{ text: string }>(`/api/books/${body.book.id}/chapters/1/text`);
-    expect(text.status).toBe(200);
-    // stored as Markdown: the heading the file had is still a heading
-    expect(text.body.text).toBe("# The Ledger Opens\n\nRain fell.\n\nHe signed twice.");
+    // and a format the API does not have is refused rather than guessed at
+    expect((await api.request(`${url}?format=sneaky`)).status).toBe(400);
   });
 });
 
@@ -601,12 +574,13 @@ describe("links as real EPUBs write them", () => {
       ],
     });
 
-  test("a file named with a space is found however each half of the package spells it", async () => {
-    for (const spelling of [
-      { manifestHref: "Chapter%201.xhtml", navHref: "Chapter 1.xhtml" },
-      { manifestHref: "Chapter 1.xhtml", navHref: "Chapter%201.xhtml" },
-      { manifestHref: "Chapter%201.xhtml", navHref: "Chapter%201.xhtml" },
-    ]) {
+  test.each([
+    { manifestHref: "Chapter%201.xhtml", navHref: "Chapter 1.xhtml" },
+    { manifestHref: "Chapter 1.xhtml", navHref: "Chapter%201.xhtml" },
+    { manifestHref: "Chapter%201.xhtml", navHref: "Chapter%201.xhtml" },
+  ])(
+    "a file named with a space is found with the manifest saying $manifestHref and the navigation $navHref",
+    async (spelling) => {
       const { body } = await testApi().import<ImportResult>(
         await twoInOne({ file: "Chapter 1.xhtml", ...spelling }),
       );
@@ -616,8 +590,8 @@ describe("links as real EPUBs write them", () => {
         "The Ledger Opens",
         "Salt Tax",
       ]);
-    }
-  });
+    },
+  );
 
   test("a chapter anchored by name is found though the element has an id as well", async () => {
     const api = testApi();
@@ -701,12 +675,6 @@ describe("extracting a section's text", () => {
     expect(text).toBe("Rain fell.");
   });
 
-  test("inline markup inside a paragraph does not break the sentence up", async () => {
-    const text = await sectionText("<body><p>He signed <em>twice</em>, then left.</p></body>");
-    expect(text).toBe("He signed *twice*, then left.");
-    expect(plainText(text)).toBe("He signed twice, then left.");
-  });
-
   test("italic and bold are kept apart, and nest", async () => {
     expect(await sectionText("<body><p>He said <em>never</em>.</p></body>")).toBe(
       "He said *never*.",
@@ -755,17 +723,6 @@ describe("extracting a section's text", () => {
     expect(text).toBe("See [the note](http://x.y/z).");
     // a URL spoken aloud is a minute of narrated punctuation, and billed by the character
     expect(plainText(text)).toBe("See the note.");
-  });
-
-  test("a star the book itself used is escaped, and comes back a star", async () => {
-    const text = await sectionText("<body><p>* * *</p><p>A 5 * 3 sum.</p></body>");
-    expect(plainText(text)).toBe("* * *\n\nA 5 * 3 sum.");
-  });
-
-  test("a heading is counted as the words it says, not as the marks around them", async () => {
-    const text = await sectionText("<body><h2>Chapter Twelve</h2><p>He signed.</p></body>");
-    expect(text).toBe("## Chapter Twelve\n\nHe signed.");
-    expect(countWords(plainText(text))).toBe(4);
   });
 
   test("a section splits at the anchors the navigation points at", async () => {

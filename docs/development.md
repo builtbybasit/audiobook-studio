@@ -70,10 +70,22 @@ Use checks appropriate to the change:
 
 ### Before adding a test
 
-Read what already covers the behavior first — the topic guide names the file, and the store method is
-worth a `grep`. Extend the nearest existing test when the new case shares its setup and its subject;
-add a new one only for a behavior or a regression the suite cannot already fail on. If you cannot
-name the assertion that would break, there is no new test to write.
+A change extends or replaces the tests it touches before it adds any. Read what already covers the
+behavior first — the topic guide names the file, and the store method is worth a `grep`. When a
+behavior changes, change its test; when a behavior is removed, remove its test in the same change.
+Extend the nearest existing test when the new case shares its setup and its subject, and add a new
+one only for a behavior or a failure case the suite cannot already fail on. Each test protects one
+distinct behavior: if you cannot name the assertion that would break, there is no new test to write.
+
+The same goes the other way. A test is redundant only when another one would fail on the same
+breakage — name that test when you delete this one, and check it is not itself being removed. A
+repeated case belongs in a `test.each` table whose row names itself in the failure, not in a copy.
+
+Keep tests inexpensive. Use the smallest fixture that still reaches the rule: `story(n)` for the few
+paragraphs a test needs rather than the default whole chapter, which renders dozens of clips and made
+single files take a minute. Replace a real wait with a gated provider or fake timers. Keep the fake
+providers; no test makes a paid or network call. The real encoder runs only where it is the point,
+and skips where `ffmpeg` is not installed.
 
 Never guard an assertion behind an `if`: a condition the test needs in order to mean anything is
 itself an assertion, and a test that skips its own point reports green while checking nothing. Assert

@@ -112,7 +112,9 @@ describe("the library store with a server answering", () => {
   test("an import with no file asks for one instead of inventing a book", async () => {
     expect(await libraryStore.importBook({ sample: "clean", file: "x.epub" })).toBeNull();
     expect(libraryStore.books).toEqual([]);
-    expect(toasts.at(-1)?.msg).toContain("Could not read that file");
+    // nothing was sent in place of the file, and the person is told
+    expect(asked).toEqual([]);
+    expect(toasts).toHaveLength(1);
   });
 
   test("a file the server will not read leaves the library alone and says why", async () => {

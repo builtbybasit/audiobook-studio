@@ -35,7 +35,7 @@ interface Failure {
 
 const dialogue = () => [
   "The ledger lay open on the table. “We are short again,” said Mara.",
-  ...story(),
+  ...story(3),
 ];
 /** How the fake model signs the versions it replaces. */
 const FAKE = fakeScriptingProvider().name;
@@ -215,7 +215,7 @@ describe("the history an edit writes", () => {
     expect(c.body.history.head.origin).toEqual({ kind: "edited", edits: 2 });
   });
 
-  test("a session drops only the version its first edit preserved, not the newest one", async () => {
+  test("an edit after a quiet spell opens a session of its own, which drops only the version it preserved when undone", async () => {
     const { api, id, segments, revision } = await scripted();
     const a = await edit(api, id, { segments: rewrite(segments, "One."), ifRevision: revision });
     // a quiet spell, then a session of its own that preserves the edited script as v2
@@ -226,7 +226,12 @@ describe("the history an edit writes", () => {
       segments: rewrite(segments, "Two."),
       ifRevision: a.body.revision,
     });
+    expect(b.body.history.versions.map((v) => v.origin)).toEqual([
+      { kind: "scripted", profile: FAKE, again: false },
+      { kind: "edited", edits: 1 },
+    ]);
     expect(b.body.history.versions.map((v) => v.id)).toEqual([1, 2]);
+    expect(b.body.history.head.origin).toEqual({ kind: "edited", edits: 1 });
     const c = await edit(api, id, {
       segments: rewrite(segments, "One."),
       ifRevision: b.body.revision,
@@ -261,24 +266,6 @@ describe("the history an edit writes", () => {
     });
     expect(c.body.history.head).toEqual(b.body.history.head);
     expect(c.body.history.versions).toEqual(b.body.history.versions);
-  });
-
-  test("an edit after a quiet spell opens a session of its own", async () => {
-    const { api, id, segments, revision } = await scripted();
-    const a = await edit(api, id, { segments: rewrite(segments, "One."), ifRevision: revision });
-    // the clock moves past the idle limit
-    api.db.run(
-      `update script_heads set at = at - ${SESSION_IDLE_MS + 1} where book_id = '${id}' and chapter_id = 1`,
-    );
-    const b = await edit(api, id, {
-      segments: rewrite(segments, "Two."),
-      ifRevision: a.body.revision,
-    });
-    expect(b.body.history.versions.map((v) => v.origin)).toEqual([
-      { kind: "scripted", profile: FAKE, again: false },
-      { kind: "edited", edits: 1 },
-    ]);
-    expect(b.body.history.head.origin).toEqual({ kind: "edited", edits: 1 });
   });
 
   test("a checkpoint names the script as it stands and changes nothing else; forgetting it puts the head back", async () => {

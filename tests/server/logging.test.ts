@@ -8,7 +8,7 @@ import { describe, expect, test } from "bun:test";
 
 import { createLogger } from "~/log";
 import { COLOUR, NO_COLOUR, colourWanted, visibleWidth } from "~/log/colour";
-import { formatRecord } from "~/log/pretty";
+import { formatRecord, prettyStream } from "~/log/pretty";
 import { epubFile, story } from "../support/epub";
 import { testApi } from "../support/server";
 
@@ -70,8 +70,8 @@ describe("what the server records about an import", () => {
     await api.import(
       await epubFile({
         chapters: [
-          { title: "One", paragraphs: story() },
-          { title: "Two", paragraphs: story() },
+          { title: "One", paragraphs: story(1) },
+          { title: "Two", paragraphs: story(1) },
         ],
       }),
     );
@@ -86,7 +86,7 @@ describe("what the server records about an import", () => {
     await api.import(
       await epubFile({
         chapters: [
-          { title: "One", paragraphs: story() },
+          { title: "One", paragraphs: story(1) },
           { title: "Two", missing: true },
         ],
       }),
@@ -104,11 +104,14 @@ describe("what the server records about an import", () => {
     expect(String(line?.epubcheck)).toContain("PKG-004");
   });
 
-  test("every request is recorded with what it was and what came back", async () => {
+  test("every request is recorded with what it was and what came back, and a 404 as a warning", async () => {
     const api = testApi();
     await api.request("/api/books/nope");
     const line = api.logs.find((l) => (l.res as { status?: number })?.status === 404);
     expect((line?.req as { method?: string })?.method).toBe("GET");
+    // hono-pino calls anything with an error on the context an error; "no such book" is an answer,
+    // and a warning, so the red lines mean something
+    expect(line?.level).toBe(40);
   });
 });
 
@@ -147,14 +150,6 @@ describe("the line a person reads", () => {
     expect(line).not.toContain("POST /api/books/import");
   });
 
-  test("a 404 is a warning and a 500 is an error, so the red lines mean something", async () => {
-    const api = testApi();
-    await api.request("/api/books/nope");
-    const notFound = api.logs.find((l) => (l.res as { status?: number })?.status === 404);
-    // hono-pino calls anything with an error on the context an error; "no such book" is an answer
-    expect(notFound?.level).toBe(40);
-  });
-
   test("an error brings its stack, with this repository's paths made readable", () => {
     const line = pretty({
       level: 50,
@@ -175,6 +170,10 @@ describe("the line a person reads", () => {
   test("a line the formatter cannot read is passed through rather than lost", () => {
     // Losing a log line to the log formatter is the worst trade available
     const lines: string[] = [];
+    const stream = prettyStream({ palette: NO_COLOUR, out: (s) => lines.push(s) });
+    stream.write("not a record {\n");
+    expect(lines).toEqual(["not a record {\n"]);
+    // and a record it can read is still formatted, through the logger that uses it
     const log = createLogger({
       level: "info",
       format: "pretty",
@@ -182,7 +181,8 @@ describe("the line a person reads", () => {
       out: (s) => lines.push(s),
     });
     log.info("plain");
-    expect(lines[0]).toContain("plain");
+    expect(lines[1]).toContain("INFO");
+    expect(lines[1]).toContain("plain");
   });
 
   test("a level and a value are coloured, and the colour is not counted as width", () => {

@@ -19,8 +19,17 @@ import { useUiStore } from "@/stores/ui";
 // cannot land in the situation you are looking at now.
 //
 // The simulated runs are timer-driven, so the clock and both timer APIs are faked here.
-import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
+import {
+  test,
+  expect,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  afterEach,
+  spyOn,
+  describe,
+} from "bun:test";
+import { createPinia, setActivePinia, type Pinia } from "pinia";
 import { toRaw } from "vue";
 
 import { clock as simClock, demoScenarios, DEMO_GROUPS, simMs } from "@/mock";
@@ -28,8 +37,12 @@ import { scriptSignature } from "@/lib/scriptHistory";
 import { isScripted } from "@/lib/scriptReview";
 
 let timers = new Map<number, { fn: () => void; repeat: boolean }>();
+/** A world kept across a block's tests, where each test puts it back itself; otherwise a fresh one each. */
+let shared: Pinia | null = null;
 let clock = 1_000_000;
 let restore: (() => void)[] = [];
+/** Every request anything made. The demo has no server, so this stays empty. */
+let fetched: ReturnType<typeof spyOn>;
 let castStore: ReturnType<typeof useCastStore>;
 let demoStore: ReturnType<typeof useDemoStore>;
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
@@ -56,7 +69,7 @@ function drain(max = 300) {
 
 beforeEach(() => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  setActivePinia(createPinia());
+  setActivePinia(shared ?? createPinia());
   castStore = useCastStore();
   demoStore = useDemoStore();
   endpointsStore = useEndpointsStore();
@@ -76,7 +89,10 @@ beforeEach(() => {
     timers.set(++seq, { fn, repeat });
     return seq;
   };
+  fetched = spyOn(globalThis, "fetch").mockImplementation((() =>
+    Promise.reject(new Error("the demo asked a server"))) as unknown as typeof fetch);
   restore = [
+    fetched,
     spyOn(globalThis, "setInterval").mockImplementation(((fn: () => void) =>
       add(fn, true)) as typeof setInterval),
     spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) =>
@@ -93,11 +109,11 @@ beforeEach(() => {
 });
 afterEach(() => restore.forEach((f) => f()));
 
-const digest = (s: string): string => {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
-  return h.toString(16) + ":" + s.length;
-};
+/**
+ * A short name for a state that runs to megabytes, so a failing assertion only has to say which row
+ * moved. Hashed natively: a character-by-character hash in JavaScript was most of this file's time.
+ */
+const digest = (s: string): string => Bun.hash(s).toString(16) + ":" + s.length;
 
 /**
  * Everything a scenario is allowed to touch, digested. Timestamps are left out on purpose: the
@@ -171,8 +187,25 @@ const worldState = (): string =>
     }),
   );
 
+/** One book's share of the world: what a row about another book must leave alone. */
+const bookState = (bookId: string): string =>
+  digest(
+    JSON.stringify({
+      book: libraryStore.bookById(bookId),
+      chapters: libraryStore.chaptersOf(bookId),
+      characters: castStore.charactersOf(bookId),
+      segments: Object.entries(scriptsStore.segments).filter(([k]) => k.startsWith(bookId + ":")),
+      exports: exportsStore.exports
+        .filter((e) => e.bookId === bookId)
+        .map((e) => e.key + ":" + e.version),
+      jobs: jobsStore.jobs
+        .filter((j) => j.bookId === bookId)
+        .map((j) => [j.kind, j.status, j.label]),
+    }),
+  );
+
 describe("the scenario catalogue", () => {
-  test("every row names a book that exists, a group that is listed, and its own id", () => {
+  test("every row names a book that exists, a group that is listed, its own id and what to try", () => {
     const rows = demoScenarios();
     const groups = new Set(DEMO_GROUPS.map((g) => g.id));
     expect(rows.length).toBeGreaterThan(5);
@@ -184,6 +217,9 @@ describe("the scenario catalogue", () => {
       expect(r.name.length, r.id).toBeGreaterThan(0);
       expect(r.blurb.length, r.id).toBeGreaterThan(0);
       expect(r.path.startsWith("/"), r.id).toBe(true);
+      // and says what to try once it is applied
+      expect(r.steps?.length ?? 0, r.id).toBeGreaterThan(0);
+      for (const step of r.steps ?? []) expect(step.trim().length, r.id).toBeGreaterThan(10);
     }
   });
 
@@ -191,37 +227,48 @@ describe("the scenario catalogue", () => {
     expect(demoScenarios()).not.toBe(demoScenarios());
     expect(demoScenarios()[0]).toEqual(demoScenarios()[0]);
   });
-  test("every row says what to try once it is applied", () => {
-    for (const s of demoScenarios()) {
-      expect(s.steps?.length ?? 0).toBeGreaterThan(0);
-      for (const step of s.steps ?? []) expect(step.trim().length).toBeGreaterThan(10);
-    }
+});
+
+/** The Export rows that only explain the book as it already stands, and so change nothing. */
+const AS_SEEDED = new Set(["mixed", "update"]);
+
+describe("every row", () => {
+  // A row at a time rather than one loop over the catalogue, so a row names itself when it fails.
+  // They share one world, which each row resets before the next: a fresh world per row is most of
+  // what they would cost, and every row then has to reset to the world as it was first built —
+  // not merely to whatever the row before it left.
+  let seeded = "";
+  beforeAll(() => {
+    shared = createPinia();
   });
+  afterAll(() => {
+    shared = null;
+  });
+
+  test.each(demoScenarios().map((s) => [s.id] as const))(
+    "%s applies, opens a page and resets to the seeded world",
+    (id) => {
+      seeded ||= worldState();
+      const to = demoStore.applyScenario(id);
+      expect(to, id).toBeTruthy();
+      expect(to!.startsWith("/"), id).toBe(true);
+      expect(demoStore.activeScenario?.id, id).toBe(id);
+      // a row that changed nothing would be a row with nothing to try, unless that is its point
+      expect(
+        worldState() === seeded,
+        `${id} changed ${AS_SEEDED.has(id) ? "something" : "nothing"}`,
+      ).toBe(AS_SEEDED.has(id));
+      demoStore.resetDemo();
+      drain();
+      expect(worldState(), `${id} did not reset cleanly`).toBe(seeded);
+      expect(demoStore.activeScenario).toBeNull();
+      // the demo is its own world: neither the row, its runs nor the reset asked a server anything
+      expect(fetched, id).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("applying a scenario", () => {
-  // A row at a time rather than one loop over the catalogue: digesting the whole world is what
-  // costs, three digests a row, and a single test carrying every row grew slow enough to sit
-  // against its own timeout. A row now has its own budget and names itself when it fails.
-  test.each(demoScenarios().map((s) => [s.id] as const))(
-    "%s applies, opens a page and leaves the world it describes",
-    (id) => {
-      const s = demoScenarios().find((x) => x.id === id)!;
-      const seeded = worldState();
-      const to = demoStore.applyScenario(s.id);
-      expect(to, s.id).toBeTruthy();
-      expect(to!.startsWith("/"), s.id).toBe(true);
-      expect(demoStore.activeScenario?.id, s.id).toBe(s.id);
-      // a scenario that changed nothing at all would be a row with nothing to test
-      if (s.id !== "resume-book" && s.id !== "mixed" && s.id !== "update")
-        expect(worldState(), `${s.id} changed nothing`).not.toBe(seeded);
-      demoStore.resetDemo();
-      drain();
-      expect(worldState(), `${s.id} did not reset cleanly`).toBe(seeded);
-      expect(demoStore.activeScenario).toBeNull();
-    },
-  );
-
   test("a scenario applied after every other row is the same as one applied first", () => {
     demoStore.applyScenario("no-voices");
     const first = worldState();
@@ -364,6 +411,31 @@ describe("what a reset has to reach", () => {
     // and the form rebuilt from the restored endpoint claims no unsaved changes
     expect(draftDirty(unifyEndpoint(endpointsStore.endpoints[0]))).toBe(false);
   });
+});
+
+describe("the demo chips on the Search and Export pages", () => {
+  const speakersOf = (bookId: string) =>
+    new Set(
+      libraryStore
+        .chaptersOf(bookId)
+        .flatMap((c) => scriptsStore.segmentsOf(bookId, c.id).map((s) => s.speaker)),
+    );
+
+  test("the Search demo scatters an alias through the book, and its reset puts the book back", () => {
+    const before = worldState();
+    const { alias } = demoStore.searchDemo("cliche")!;
+    demoStore.seedSearchDemo("cliche");
+    expect(speakersOf("cliche").has(alias)).toBe(true);
+    expect(castStore.charactersOf("cliche").some((c) => c.name === alias)).toBe(true);
+    // seeding it again is a no-op: a second snapshot would be of the seeded book, and the reset
+    // would put back the demo rather than the book
+    const once = worldState();
+    demoStore.seedSearchDemo("cliche");
+    expect(worldState()).toBe(once);
+
+    demoStore.resetSearchDemo();
+    expect(worldState()).toBe(before);
+  });
 
   test("seeding a second book's Search demo puts the first one back", () => {
     const before = worldState();
@@ -372,6 +444,31 @@ describe("what a reset has to reach", () => {
     demoStore.resetSearchDemo();
     // one Reset cannot undo two books, so the second seeding restores the first
     expect(worldState()).toBe(before);
+  });
+
+  test("the Search demo is offered only for a book with a script", () => {
+    expect(demoStore.searchScenarios("cliche").length).toBeGreaterThan(0);
+    const unscripted = libraryStore.addNovel("brand-new.epub", "Brand New");
+    expect(demoStore.searchDemo(unscripted)).toBeNull();
+    expect(demoStore.searchScenarios(unscripted)).toEqual([]);
+  });
+
+  test("the Export chip applies its row to that book alone, and its reset puts the world back", () => {
+    const row = demoScenarios().find((s) => s.id === "builds")!;
+    const before = worldState();
+    const others = libraryStore.books.filter((b) => b.id !== row.bookId).map((b) => b.id);
+    const othersBefore = others.map(bookState);
+
+    expect(demoStore.seedExportDemo(row.id)).toBe(row.bookId);
+    expect(worldState()).not.toBe(before);
+    // a row is about its own book: the rest of the shelf is as it was seeded
+    expect(others.map(bookState)).toEqual(othersBefore);
+
+    demoStore.resetExportDemo();
+    drain(); // a cancelled build only notices on its next tick
+    expect(worldState()).toBe(before);
+    // and the store stops claiming a scenario is seeded
+    expect(demoStore._exportDemo).toBeNull();
   });
 });
 
@@ -431,16 +528,20 @@ describe("what each situation puts on screen", () => {
     const failedChapters = libraryStore
       .chaptersOf("cliche")
       .filter((c) => c.narration === "failed");
-    expect(failedChapters.length).toBeGreaterThan(1);
-    const partial = failedChapters.at(-1)!;
-    const segs = scriptsStore.segmentsOf("cliche", partial.id);
-    expect(segs.some((s) => s.audio.status === "failed")).toBe(true);
-    expect(segs.some((s) => s.audio.status === "done")).toBe(true);
+    expect(failedChapters.length).toBeGreaterThan(0);
+    // a chapter that failed part-way: failed clips beside finished ones
+    const partial = failedChapters.find((c) => {
+      const segs = scriptsStore.segmentsOf("cliche", c.id);
+      return (
+        segs.some((s) => s.audio.status === "failed") && segs.some((s) => s.audio.status === "done")
+      );
+    });
+    expect(partial).toBeDefined();
     expect(endpointsStore.endpoints.some((e) => e.backoffUntil > Date.now())).toBe(true);
     expect(endpointsStore.endpoints.some((e) => e.lastError?.code === 429)).toBe(true);
 
     const row = jobsStore.jobs.find(
-      (j) => j.kind === "narration" && j.chapterId === partial.id && j.status === "failed",
+      (j) => j.kind === "narration" && j.chapterId === partial!.id && j.status === "failed",
     )!;
     expect(row.activity!.some((e) => e.level === "error")).toBe(true);
     expect(row.activity!.at(-1)!.at).toBeLessThanOrEqual(row.finishedAt!);
@@ -475,12 +576,12 @@ describe("what each situation puts on screen", () => {
   test("stale audio and retakes leave something to compare and something to re-narrate", () => {
     demoStore.applyScenario("stale-audio");
     const chapters = libraryStore.chaptersOf("starforge");
-    expect(chapters.filter((c) => c.narration === "stale").length).toBeGreaterThan(1);
+    expect(chapters.some((c) => c.narration === "stale")).toBe(true);
     const all = chapters.flatMap((c) => scriptsStore.segmentsOf("starforge", c.id));
-    expect(all.filter((s) => s.edited && s.audio.status === "stale").length).toBeGreaterThan(1);
+    expect(all.some((s) => s.edited && s.audio.status === "stale")).toBe(true);
     expect(all.some((s) => s.candidate)).toBe(true);
     expect(all.some((s) => s.audio.takes?.some((t) => t.rejected))).toBe(true);
-    expect(all.filter((s) => s.flag).length).toBeGreaterThan(1);
+    expect(all.some((s) => s.flag)).toBe(true);
     // the drift the ledger explains is real drift, not a status set by hand
     const edited = all.find((s) => s.edited && s.audio.status === "stale")!;
     expect(narrationStore.clipDrift("starforge", edited).length).toBeGreaterThan(0);

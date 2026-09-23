@@ -1,14 +1,3 @@
-import { useCastStore } from "@/stores/cast";
-import { useDemoStore } from "@/stores/demo";
-import { useEndpointsStore } from "@/stores/endpoints";
-import { useHistoryStore } from "@/stores/history";
-import { useJobsStore } from "@/stores/jobs";
-import { useLibraryStore } from "@/stores/library";
-import { useNarrationStore } from "@/stores/narration";
-import { useScriptingStore } from "@/stores/scripting";
-import { useScriptsStore } from "@/stores/scripts";
-import { useUiStore } from "@/stores/ui";
-import { speechWhy } from "@/lib/pricing";
 // Bulk re-scripting and bulk re-narration over chapters that are already finished.
 //
 // Four properties hold this feature together, and they are what is tested here.
@@ -30,7 +19,18 @@ import { speechWhy } from "@/lib/pricing";
 import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 
+import { useCastStore } from "@/stores/cast";
+import { useDemoStore } from "@/stores/demo";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptingStore } from "@/stores/scripting";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
+
 import { keyring } from "@/lib/keyring";
+import { speechWhy } from "@/lib/pricing";
 import {
   chapterNarration,
   narrationTargets,
@@ -48,7 +48,6 @@ let restore: (() => void)[] = [];
 let castStore: ReturnType<typeof useCastStore>;
 let demoStore: ReturnType<typeof useDemoStore>;
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
-let historyStore: ReturnType<typeof useHistoryStore>;
 let jobsStore: ReturnType<typeof useJobsStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let narrationStore: ReturnType<typeof useNarrationStore>;
@@ -76,7 +75,6 @@ beforeEach(() => {
   castStore = useCastStore();
   demoStore = useDemoStore();
   endpointsStore = useEndpointsStore();
-  historyStore = useHistoryStore();
   jobsStore = useJobsStore();
   libraryStore = useLibraryStore();
   narrationStore = useNarrationStore();
@@ -115,6 +113,11 @@ const BOOK = "cliche";
 const chapters = () => libraryStore.chaptersOf(BOOK);
 const chapter = (id: number) => libraryStore.chapter(BOOK, id)!;
 const segments = (id: number) => scriptsStore.segmentsOf(BOOK, id);
+/** A chapter's script as one comparable string: what a replacement would change. */
+const scriptOf = (id: number) =>
+  segments(id)
+    .map((s) => s.text)
+    .join("|");
 /** A scripting endpoint with no key, no price and no chunking surprises. */
 function profile(id = "test") {
   const p = newProfile({
@@ -179,16 +182,6 @@ describe("the selection says what it contains", () => {
     expect(skipSummary(plan)).toBe(
       "2 chapters left out: 1 already running or queued, 1 skipped from the audiobook.",
     );
-  });
-
-  test("a whole-book selection and a filtered one are the same calculation", () => {
-    profile();
-    const all = chapters().map((c) => c.id);
-    const half = all.slice(0, Math.ceil(all.length / 2));
-    const whole = scriptingStore.scriptPlan(BOOK, all);
-    const part = scriptingStore.scriptPlan(BOOK, half);
-    expect(whole.chapters.length).toBeGreaterThan(part.chapters.length);
-    expect(part.chapters.every((row) => half.includes(row.id))).toBe(true);
   });
 });
 
@@ -277,37 +270,13 @@ describe("bulk re-scripting", () => {
     expect(report.unmatched[0].text).toBe("The hall went quiet.");
   });
 
-  test("a replacement that fails leaves the chapter with the script it had", () => {
-    profile();
-    const ch = chapters().find((c) => c.scripting === "done")!;
-    const before = segments(ch.id)
-      .map((s) => s.text)
-      .join("|");
-    spyOn(Math, "random").mockReturnValue(0.01); // the verifier rejects this run
-    scriptingStore.runScripting(BOOK, [ch.id]);
-    drain();
-    expect(jobsStore.jobs.at(-1)!.status).toBe("failed");
-    expect(
-      segments(ch.id)
-        .map((s) => s.text)
-        .join("|"),
-    ).toBe(before);
-    // and the chapter still reads as scripted, so it is still narratable and still exportable
-    expect(ch.scripting).toBe("done");
-    expect(historyStore.versionsOf(BOOK, ch.id)).toHaveLength(0);
-  });
-
   test("a cancelled run keeps the chapters it finished and never starts the rest", () => {
     profile();
     const done = chapters()
       .filter((c) => c.scripting === "done")
       .slice(0, 3);
     const ids = done.map((c) => c.id);
-    const before = ids.map((id) =>
-      segments(id)
-        .map((s) => s.text)
-        .join("|"),
-    );
+    const before = ids.map(scriptOf);
     scriptingStore.runScripting(BOOK, ids);
     // let the first chapter finish, then stop the run
     for (let i = 0; i < 60 && chapter(ids[1]).scripting === "queued"; i++) {
@@ -323,21 +292,9 @@ describe("bulk re-scripting", () => {
     expect(rows[0].status).toBe("done");
     expect(rows.slice(1).every((j) => j.status === "cancelled")).toBe(true);
     // the replacement that landed is kept; the chapters that never ran are untouched
-    expect(
-      segments(ids[0])
-        .map((s) => s.text)
-        .join("|"),
-    ).not.toBe(before[0]);
-    expect(
-      segments(ids[1])
-        .map((s) => s.text)
-        .join("|"),
-    ).toBe(before[1]);
-    expect(
-      segments(ids[2])
-        .map((s) => s.text)
-        .join("|"),
-    ).toBe(before[2]);
+    expect(scriptOf(ids[0])).not.toBe(before[0]);
+    expect(scriptOf(ids[1])).toBe(before[1]);
+    expect(scriptOf(ids[2])).toBe(before[2]);
     for (const c of done) expect(c.scripting).toBe("done");
   });
 
@@ -357,19 +314,13 @@ describe("bulk re-scripting", () => {
     scriptingStore.runScripting(BOOK, [ch.id]);
     tick();
     // something else claims the chapter while the requests are in flight — a newer run, a restore
-    const before = segments(ch.id)
-      .map((s) => s.text)
-      .join("|");
+    const before = scriptOf(ch.id);
     ch.rescript = { keepEdits: true, was: "done", token: -1 };
     drain();
     const job = jobsStore.jobs.at(-1)!;
     expect(job.status).toBe("cancelled");
     expect(job.activity!.some((e) => e.message.startsWith("Result discarded"))).toBe(true);
-    expect(
-      segments(ch.id)
-        .map((s) => s.text)
-        .join("|"),
-    ).toBe(before);
+    expect(scriptOf(ch.id)).toBe(before);
     expect(ch.scripting).toBe("done");
   });
 });
@@ -575,15 +526,19 @@ describe("bulk re-narration", () => {
     expect(segments(ch.id).every((s) => s.audio.n === 2)).toBe(true);
   });
 
-  test("a re-script that failed is retried by Retry all failed, though the chapter reads as scripted", () => {
+  test("a re-script that failed keeps the script it was replacing, and Retry all failed picks it up", () => {
     profile();
     const ch = chapters().find((c) => c.scripting === "done")!;
+    const before = scriptOf(ch.id);
     const rnd = spyOn(Math, "random").mockReturnValue(0.01); // the verifier rejects this run
     scriptingStore.runScripting(BOOK, [ch.id]);
     drain();
     const failed = jobsStore.jobs.at(-1)!;
     expect(failed.status).toBe("failed");
-    expect(ch.scripting).toBe("done"); // the script it was replacing is still the chapter's script
+    // the script it was replacing is still the chapter's script, so the chapter still reads as
+    // scripted — which is why the retry cannot find this failure on the chapter's status
+    expect(scriptOf(ch.id)).toBe(before);
+    expect(ch.scripting).toBe("done");
 
     rnd.mockReturnValue(0.5);
     jobsStore.retryAllFailed();
@@ -727,7 +682,7 @@ describe("the seeded situations", () => {
       expect(jobsStore.runJobs(id).every((j) => j.bulk!.id === id)).toBe(true);
   });
 
-  test("switching scenario and resetting both clear bulk work in flight", () => {
+  test("a reset clears bulk work in flight, replacements rendering beside their clips included", () => {
     profile();
     route();
     const ch = chapters().find((c) => c.scripting === "done")!;

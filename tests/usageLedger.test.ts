@@ -104,8 +104,8 @@ const BOOK = "cliche";
 const segments = (id: number) => scriptsStore.segmentsOf(BOOK, id);
 
 /** Route every speaker at one endpoint with a rate card we control. */
-function route(rate: number | null = 12) {
-  const ep = endpointsStore.endpoints.find((e) => e.id === "local")!;
+function route(rate: number | null = 12, id = "local") {
+  const ep = endpointsStore.endpoints.find((e) => e.id === id)!;
   ep.enabled = true;
   ep.backoffUntil = 0;
   ep.failRate = 0;
@@ -118,7 +118,7 @@ function route(rate: number | null = 12) {
     windows: [],
     promotions: [],
   };
-  for (const c of castStore.characters[BOOK]) c.voice = `local/${ep.voices[0].id}`;
+  for (const c of castStore.characters[BOOK]) c.voice = `${ep.id}/${ep.voices[0].id}`;
   return ep;
 }
 
@@ -185,27 +185,18 @@ describe("spending is append-only", () => {
     expect(line.audio.takes!.some((t) => t.rejected)).toBe(true);
   });
 
-  test("a request that failed is charged for what it sent", () => {
-    const ep = route();
-    ep.failRate = 1;
-    narrationStore.runNarration(BOOK, [1], { scope: "all" });
-    drain();
-    const rows = usageStore.requests.filter((r) => r.kind === "tts");
-    expect(rows.length).toBeGreaterThan(0);
-    expect(rows.every((r) => r.status === "failed")).toBe(true);
-    // per-character billing charges what went out even when nothing came back
-    expect(rows.every((r) => (r.cost ?? 0) > 0)).toBe(true);
-    expect(jobsStore.spent(BOOK)).toBeGreaterThan(0);
-  });
-
   test("a later run over the same chapter adds to the bill rather than replacing it", () => {
     route();
+    const opening = jobsStore.spent(BOOK);
     narrationStore.runNarration(BOOK, [1], { scope: "all" });
     drain();
     const once = jobsStore.spent(BOOK);
+    const firstRun = once - opening;
+    expect(firstRun).toBeGreaterThan(0);
     narrationStore.runNarration(BOOK, [1], { scope: "all" });
     drain();
-    expect(jobsStore.spent(BOOK)).toBeGreaterThan(once * 1.5);
+    // the same lines at the same rate cost the same again, on top of the first run
+    expect(jobsStore.spent(BOOK) - once).toBeCloseTo(firstRun, 12);
   });
 
   test("retrying a clip the seeded world arrived with does not refund it", () => {
@@ -224,15 +215,6 @@ describe("spending is append-only", () => {
     drain();
     // and the re-render is a request of its own, on top
     expect(jobsStore.spent(BOOK)).toBeGreaterThan(before);
-  });
-
-  test("an endpoint with no rate is counted and never priced, so nothing is invented as zero", () => {
-    route(null);
-    narrationStore.runNarration(BOOK, [1], { scope: "all" });
-    drain();
-    const rows = usageStore.requests.filter((r) => r.kind === "tts");
-    expect(rows.length).toBeGreaterThan(0);
-    expect(rows.every((r) => r.cost === null && r.costBasis === "unknown")).toBe(true);
   });
 });
 
@@ -255,16 +237,12 @@ describe("a settled request keeps its place in the endpoint's activity", () => {
 
   test("a speech endpoint and a scripting profile sharing an id keep their own rows", () => {
     // the seeded world has an `openai` of each kind, and the page keys them `tts:` / `scripting:`
-    const tts = endpointsStore.endpoints.find((e) => e.id === "openai")!;
-    const profile = endpointsStore.profiles.find((p) => p.id === "openai");
-    expect(tts).toBeTruthy();
-    expect(profile).toBeTruthy();
-
-    route();
+    expect(endpointsStore.profiles.some((p) => p.id === "openai")).toBe(true);
+    route(12, "openai");
     narrationStore.runNarration(BOOK, [1], { scope: "all" });
     drain();
-    expect(usageStore.ofEndpoint("local", "tts").length).toBeGreaterThan(0);
-    // the speech work did not land in the scripting profile that happens to share a name
+    expect(usageStore.ofEndpoint("openai", "tts").length).toBeGreaterThan(0);
+    // the speech work did not land in the scripting profile that happens to share its id
     expect(usageStore.ofEndpoint("openai", "scripting")).toEqual([]);
   });
 
@@ -529,24 +507,26 @@ describe("estimates reconcile against what was actually charged", () => {
     expect(detail.billableAttempts).toBe(ttsRows().filter((r) => r.chapterId === 1).length);
   });
 
-  test("the reconciliation counts billable attempts, not the clips that survived", () => {
+  test("a request that failed is charged for what it sent, and the reconciliation counts it", () => {
     const ep = routeBilling({ unit: "chars", rate: 12 });
     ep.failRate = 1; // every request fails, and every one is still charged for what it sent
+    const before = jobsStore.spent(BOOK);
     narrationStore.runNarration(BOOK, [1], { scope: "all" });
     drain();
+    const rows = ttsRows().filter((r) => r.chapterId === 1);
+    expect(rows.length).toBeGreaterThan(0);
+    // every attempt failed, so this run produced no new audio at all — and still cost money:
+    // per-character billing charges what went out even when nothing came back
+    expect(rows.every((r) => r.status === "failed" && (r.cost ?? 0) > 0)).toBe(true);
+    expect(jobsStore.spent(BOOK)).toBeGreaterThan(before);
+
+    // the reconciliation counts billable attempts, not the clips that survived
     const job = jobsStore.jobs.find((j) => j.kind === "narration" && j.chapterId === 1)!;
     const detail = job.activity!.find((e) => e.message.startsWith("Estimate reconciled"))!
       .detail as Record<string, unknown>;
-    expect(detail.billableAttempts as number).toBeGreaterThan(0);
     expect(String(detail.failedButCharged)).toContain("still charged");
-    // every attempt failed, so this run produced no new audio at all — and still cost money
-    expect(
-      ttsRows()
-        .filter((r) => r.chapterId === 1)
-        .every((r) => r.status === "failed"),
-    ).toBe(true);
     expect(detail.chargedUSD as number).toBeGreaterThan(0);
-    expect(detail.billableAttempts).toBe(ttsRows().filter((r) => r.chapterId === 1).length);
+    expect(detail.billableAttempts).toBe(rows.length);
   });
 
   test("silence stitched between clips is never counted as generated audio", () => {

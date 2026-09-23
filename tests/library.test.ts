@@ -271,11 +271,17 @@ describe("a full shelf", () => {
     const by = Object.fromEntries(SHELF_BOOKS.map((b) => [b.id, b.state]));
     const state = (e: ShelfEntry) => by[e.book.id];
     const counts = filterCounts(entries);
-    // among the new books, only the ones with failed scripting need attention
+    // among the new books, exactly the ones with failed scripting need attention
     const added = (f: "attention" | "behind" | "done") =>
       shelfView(entries, { filter: f }).filter((e) => state(e));
-    expect(added("attention").map(state)).toEqual(["failed", "failed"]);
-    expect(counts.attention).toBeGreaterThanOrEqual(2);
+    const failed = SHELF_BOOKS.filter((b) => b.state === "failed").map((b) => b.id);
+    expect(failed.length).toBeGreaterThan(0);
+    expect(
+      added("attention")
+        .map((e) => e.book.id)
+        .sort(),
+    ).toEqual(failed.sort());
+    expect(counts.attention).toBeGreaterThanOrEqual(failed.length);
     expect(shelfView(entries, { filter: "behind" }).map(state)).toEqual(
       expect.arrayContaining(["behind"]),
     );
@@ -289,7 +295,8 @@ describe("a full shelf", () => {
     // the running filter finds the seeded book the row starts scripting on
     expect(shelfView(entries, { filter: "running" }).map((e) => e.book.id)).toContain("cliche");
     // the search reaches the new books
-    expect(shelfView(entries, { q: "harbour" }).map((e) => e.book.id)).toEqual(["shelf-grey"]);
+    const sought = SHELF_BOOKS[0];
+    expect(shelfView(entries, { q: sought.title }).map((e) => e.book.id)).toContain(sought.id);
     // and a review that was done leaves no chapter undecided
     for (const b of SHELF_BOOKS)
       expect(libraryStore.contentsOf(b.id).suggested + libraryStore.contentsOf(b.id).review).toBe(

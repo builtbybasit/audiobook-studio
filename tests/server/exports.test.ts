@@ -33,7 +33,7 @@ async function withExport() {
   const api = testApi();
   const { body } = await api.import<ImportResult>(
     await epubFile({
-      chapters: ["One", "Two", "Three"].map((title) => ({ title, paragraphs: story() })),
+      chapters: ["One", "Two", "Three"].map((title) => ({ title, paragraphs: story(2) })),
     }),
   );
   const id = body.book.id;
@@ -77,7 +77,7 @@ describe("a book's exports over HTTP", () => {
   test("an export of another book is not found through this one", async () => {
     const { api } = await withExport();
     const other = await api.import<ImportResult>(
-      await epubFile({ chapters: [{ title: "Solo", paragraphs: story() }] }),
+      await epubFile({ chapters: [{ title: "Solo", paragraphs: story(1) }] }),
     );
     const { status } = await api.request<Failure>(`/api/books/${other.body.book.id}/exports/1`);
     expect(status).toBe(404);
@@ -100,7 +100,7 @@ describe("a book's exports over HTTP", () => {
   test("removing the volume that was all of an export takes the export with it", async () => {
     const { api, id } = await withExport();
     await api.import<ImportResult>(
-      await epubFile({ chapters: [{ title: "Four", paragraphs: story() }] }),
+      await epubFile({ chapters: [{ title: "Four", paragraphs: story(1) }] }),
       { bookId: id },
     );
     await api.request(`/api/books/${id}/confirm`, { method: "POST" });
@@ -222,14 +222,20 @@ const chaptersOf = async (api: TestApi, id: string) =>
 const jobById = async (api: TestApi, id: number) =>
   (await api.request<{ job: Job }>(`/api/jobs/${id}`)).body.job;
 
-/** A three-chapter book, scripted and narrated, ready to build. */
+/**
+ * A three-chapter book, scripted and narrated, ready to build.
+ *
+ * A chapter is a handful of lines, well under a minute of audio: the length of what is narrated is
+ * what every build here costs, and under ffmpeg nearly all of it. At `story()`'s full length the
+ * two ffmpeg builds were most of the whole suite's running time and proved nothing more.
+ */
 async function narrated(api = testApi()) {
   const { body } = await api.import<ImportResult>(
     await epubFile({
       title: "Moonlight Ledger",
       chapters: ["One", "Two", "Three"].map((title) => ({
         title,
-        paragraphs: ["\u201cWe are short again,\u201d said Mara.", ...story()],
+        paragraphs: ["\u201cWe are short again,\u201d said Mara.", ...story(1)],
       })),
     }),
   );
@@ -248,7 +254,12 @@ const filePath = (api: TestApi, bookId: string, exportId: number, position = 0):
   return token ? (api.exports.files.path(bookId, token) ?? "") : "";
 };
 
-const fileBytes = (api: TestApi, bookId: string, exportId: number, position = 0): Uint8Array =>
+const fileBytes = (
+  api: TestApi,
+  bookId: string,
+  exportId: number,
+  position = 0,
+): Uint8Array<ArrayBuffer> =>
   new Uint8Array(readFileSync(filePath(api, bookId, exportId, position)));
 
 /** How long a stitched file plays, read out of the file rather than off the row. */
@@ -307,39 +318,7 @@ describe("building an audiobook", () => {
     expect(job.activity?.some((e) => e.message.includes("rather than .m4b"))).toBe(true);
   });
 
-  test("a finished file can be downloaded, under the name it was given", async () => {
-    const { api, id } = await narrated();
-    await build(api, id, { ids: [1, 2], settings: settingsFor() });
-    await api.runner.idle();
-    const [done] = await exportsOf(api, id);
-
-    const res = await api.fetch(`/api/books/${id}/exports/${done.id}/files/0`);
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toBe("audio/wav");
-    expect(res.headers.get("content-disposition")).toContain(done.files[0].name);
-    expect((await res.arrayBuffer()).byteLength).toBe(fileBytes(api, id, done.id).byteLength);
-  });
-
-  test("a finished file answers a range, so a player can seek in it", async () => {
-    const { api, id } = await narrated();
-    await build(api, id, { ids: [1, 2], settings: settingsFor() });
-    await api.runner.idle();
-    const [done] = await exportsOf(api, id);
-
-    const res = await api.fetch(`/api/books/${id}/exports/${done.id}/files/0`, {
-      headers: { range: "bytes=0-43" },
-    });
-    expect(res.status).toBe(206);
-    const size = fileBytes(api, id, done.id).byteLength;
-    expect(res.headers.get("content-range")).toBe(`bytes 0-43/${size}`);
-    expect(res.headers.get("accept-ranges")).toBe("bytes");
-    expect(res.headers.get("content-disposition")).toContain(done.files[0].name);
-    // The first 44 bytes of a WAV are its header.
-    const head = new Uint8Array(await res.arrayBuffer());
-    expect(head).toEqual(fileBytes(api, id, done.id).slice(0, 44));
-  });
-
-  test("a name no header can carry as it stands still downloads, under that name", async () => {
+  test("a finished file downloads under its name, even one no header can carry, and answers a range", async () => {
     // A header is Latin-1. An em dash, a curly apostrophe or a Chinese title in it used to make
     // `Headers` throw, and the download a 500.
     const { api, id } = await narrated();
@@ -348,19 +327,33 @@ describe("building an audiobook", () => {
     await api.runner.idle();
     const [done] = await exportsOf(api, id);
     expect(done.files[0].name).toContain("三体");
+    const url = `/api/books/${id}/exports/${done.id}/files/0`;
+    const onDisk = fileBytes(api, id, done.id);
 
-    const res = await api.fetch(`/api/books/${id}/exports/${done.id}/files/0`);
+    const res = await api.fetch(url);
     expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("audio/wav");
     const header = res.headers.get("content-disposition")!;
     // The name a browser reads, in UTF-8, and an ASCII stand-in beside it for one that cannot.
     expect(header).toContain(`filename*=UTF-8''${encodeURIComponent(done.files[0].name)}`);
     expect(header).toMatch(/^attachment; filename="[\x20-\x7e]+"/);
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(onDisk);
+
+    // and a part of it, so a player can seek: the route answers through the clips' range helper,
+    // whose edge cases are in ranges.test.ts
+    const part = await api.fetch(url, { headers: { range: "bytes=0-43" } });
+    expect(part.status).toBe(206);
+    expect(part.headers.get("content-range")).toBe(`bytes 0-43/${onDisk.byteLength}`);
+    expect(part.headers.get("content-disposition")).toBe(header);
+    expect(new Uint8Array(await part.arrayBuffer())).toEqual(onDisk.slice(0, 44));
   });
 
   test("a chapter with no audio refuses the build in the page's own words", async () => {
     const api = testApi();
     const { body } = await api.import<ImportResult>(
-      await epubFile({ chapters: ["One", "Two"].map((title) => ({ title, paragraphs: story() })) }),
+      await epubFile({
+        chapters: ["One", "Two"].map((title) => ({ title, paragraphs: story(1) })),
+      }),
     );
     const id = body.book.id;
     await api.request(`/api/books/${id}/confirm`, { method: "POST" });
@@ -624,7 +617,6 @@ describe("building an audiobook", () => {
     release();
     await api.runner.idle();
     expect(await untilGone(join(api.exportDir, id))).toBe(true);
-    expect(existsSync(join(api.exportDir, id))).toBe(false);
   });
 
   test("forgetting an audiobook takes its files with it", async () => {
@@ -649,6 +641,12 @@ describe("building an audiobook", () => {
 // carried-over span addressed in time rather than in bytes.
 
 const ffmpeg = await ffmpegAvailable();
+
+test("a machine without the ffmpeg it was told to run is told so, rather than failing a build", async () => {
+  // What boot asks before `EXPORT_ENCODER=ffmpeg` is allowed to start, and what decides whether
+  // the tests below run — so it is the one part of this encoder checked on every machine.
+  expect(await ffmpegAvailable("/nonexistent/ffmpeg")).toBeNull();
+});
 
 /** What ffprobe says is in a file: how long it plays, and the marks inside it. */
 async function probe(path: string): Promise<{ seconds: number; chapters: { title: string }[] }> {
@@ -689,7 +687,7 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
     expect(job.activity?.some((e) => e.message.includes("rather than"))).toBe(false);
     // and the loudness the panel offered was measured rather than waved away
     expect(job.activity?.some((e) => e.detail?.measured != null)).toBe(true);
-  }, 120_000);
+  }, 30_000);
 
   test("an update re-encodes the whole audiobook, and says why", async () => {
     const api = testApi({ encoder: ffmpegEncoders(), speech: slowerOnRetake() });
@@ -723,5 +721,5 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
         (e) => e.message === "Every chapter is being encoded again",
       ),
     ).toBe(true);
-  }, 120_000);
+  }, 30_000);
 });

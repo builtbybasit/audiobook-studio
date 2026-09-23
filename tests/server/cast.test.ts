@@ -212,8 +212,7 @@ describe("renaming and merging", () => {
       `/api/books/${id}/characters/Tobin/merge`,
       jsonBody({ into: "Mara" }),
     );
-    // a line Mara always had is edited in the meantime: it stays hers, because the undo names
-    // only the lines that moved
+    // the lines Mara always had stay hers, because the undo names only the lines that moved
     const { body: restored } = await api.request<Moved>(
       `/api/books/${id}/characters/attribute`,
       jsonBody({
@@ -282,9 +281,13 @@ describe("removing a book", () => {
         entries: [{ id: 1, term: "a", say: "b", enabled: true }],
       }),
     );
+    // counted in the tables, because the book's own routes are a 404 once it is gone either way
+    const rows = () =>
+      ["characters", "lexicon_entries"].map(
+        (table) => api.db.all<{ n: number }>(`select count(*) as n from ${table}`)[0].n,
+      );
+    expect(rows().every((n) => n > 0)).toBe(true);
     await api.request(`/api/books/${id}`, { method: "DELETE" });
-    expect(api.db.run("select count(*) as n from characters")).toBeTruthy();
-    const rows = api.db.all<{ n: number }>("select count(*) as n from characters");
-    expect(rows[0].n).toBe(0);
+    expect(rows()).toEqual([0, 0]);
   });
 });

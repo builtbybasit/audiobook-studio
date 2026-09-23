@@ -22,9 +22,7 @@ import {
   tokenChargeLines,
   utf8Bytes,
 } from "@/lib/pricing";
-import { localTimezone } from "@/lib/wallClock";
 import { TTS_PRESETS, billingOf, endpointErrors, unifyEndpoint } from "@/lib/endpoints";
-import { makeEndpoints } from "@/mock/fixtures/endpoints";
 import { useEndpointsStore } from "@/stores/endpoints";
 import type { Endpoint, TtsBilling } from "@/types";
 import { THU, card, config, promo, u, utc } from "./support/pricingFixtures";
@@ -81,16 +79,6 @@ describe("speech endpoints", () => {
     expect(night.scheduled).toBeCloseTo(7.2, 12);
     expect(night.rate).toBeCloseTo(5.76, 12);
     expect(night.why).toHaveLength(2);
-  });
-
-  test("a speech promotion scoped to a token component does nothing, and says so", () => {
-    const cfg = config({ promotions: [promo({ scope: ["output"], percent: 50 })] });
-    const at = utc(THU, "12:00");
-    const base = speechRates(speechCard());
-    expect(effectiveRates(base, cfg, at).components.speech.rate).toBe(12);
-    expect(pricingWarnings(base, cfg, at).join(" ")).toContain(
-      "applies to nothing this endpoint prices",
-    );
   });
 
   test("a discount on a rate nobody knows is still a rate nobody knows", () => {
@@ -165,18 +153,19 @@ describe("speech endpoints", () => {
     ).toBe(0);
   });
 
-  test("a speech receipt keeps its rate when the card changes afterwards", () => {
+  test("a speech receipt keeps its rate and its billing model when the card changes afterwards", () => {
+    const billing = speechCard();
     const cfg = config({ promotions: [promo({ percent: 50 })] });
-    const receipt = priceSpeechRequest(
-      speechCard(),
-      cfg,
-      u({ chars: 1_000_000, audioSeconds: 60 }),
-      {
-        at: utc(THU, "12:00"),
-      },
-    );
+    const receipt = priceSpeechRequest(billing, cfg, u({ chars: 1_000_000, audioSeconds: 60 }), {
+      at: utc(THU, "12:00"),
+    });
     expect(receipt.amount).toBeCloseTo(6, 12);
+    // the promotion ends and the endpoint moves to token billing, long after the clip landed
     cfg.promotions = [];
+    billing.unit = "audio-tokens";
+    billing.rate = 1;
+    billing.audioRate = 20;
+    expect(receipt.unit).toBe("chars");
     expect(receipt.amount).toBeCloseTo(6, 12);
     expect(receipt.lines[0].rate).toBe(6);
     expect(receipt.lines[0].base).toBe(12);
@@ -228,34 +217,6 @@ describe("speech endpoints", () => {
     expect(speech[0].rate).toBe("$0.30 / audio min");
     // the two shapes agree on what a line is, which is what lets one table render both
     expect(Object.keys(speech[0]).every((k) => k in tokens[0] || k === "note")).toBe(true);
-  });
-
-  test("the seeded speech endpoints cover the discount cases too", () => {
-    const store = useEndpointsStore();
-    const byId = (id: string) => store.endpoints.find((e) => e.id === id)!;
-    // a nightly window that runs past midnight, and a promotion on top of it
-    expect(byId("openai").pricing!.windows.some((w) => w.to <= w.from)).toBe(true);
-    expect(byId("openai").pricing!.promotions.some((p) => promotionRunning(p, Date.now()))).toBe(
-      true,
-    );
-    // a free local model with no advanced pricing at all — the block is absent until something asks
-    // for it, and asking gives it an empty schedule and no promotions, which is "ordinary pricing"
-    expect(byId("local").pricing).toBeUndefined();
-    expect(ensurePricing(byId("local"))).toEqual({
-      cachedInput: null,
-      cacheWrite: null,
-      timezone: localTimezone(),
-      windows: [],
-      promotions: [],
-    });
-    // and one whose rate is unknown, where the window it has changes nothing
-    const proxy = byId("proxy");
-    expect(proxy.billing!.rate).toBeNull();
-    expect(proxy.pricing!.windows.length).toBeGreaterThan(0);
-    expect(
-      effectiveRates(speechRates(proxy.billing!), proxy.pricing!, Date.now()).components.speech
-        .rate,
-    ).toBeNull();
   });
 });
 
@@ -596,21 +557,6 @@ describe("changing the model", () => {
     expect(snapshot.components.audioTokens.why.join(" ")).not.toContain("/ 1M chars");
   });
 
-  test("a receipt keeps the billing model it was charged under", () => {
-    const billing: TtsBilling = { unit: "bytes", rate: 15 };
-    const units = measureSpeech({ text: "外门".repeat(100) }, billing);
-    const charge = priceSpeechRequest(billing, config(), units, { at: utc(THU, "12:00") });
-    expect(charge.unit).toBe("bytes");
-    const before = charge.amount;
-    // the endpoint moves to token billing afterwards; the receipt does not move with it
-    billing.unit = "audio-tokens";
-    billing.rate = 1;
-    billing.audioRate = 20;
-    expect(charge.unit).toBe("bytes");
-    expect(charge.amount).toBe(before);
-    expect(charge.lines[0].rate).toBe(15);
-  });
-
   test("a billing model is validated for contradictions but not for being incomplete", () => {
     expect(billingProblems({ unit: "chars", rate: null })).toEqual([]);
     expect(billingProblems({ unit: "chars", rate: -1 })).toHaveLength(1);
@@ -681,9 +627,14 @@ describe("changing the model", () => {
     expect(switchBillingUnit(chars, "chars")).toBe(chars);
   });
 
-  test("the seeded speech endpoints cover every billing model", () => {
-    const byId = (id: string) => makeEndpoints(Date.now()).find((e) => e.id === id)!;
+  test("the seeded speech endpoints cover every billing model and discount case the demo claims", () => {
+    const store = useEndpointsStore();
+    const byId = (id: string) => store.endpoints.find((e) => e.id === id)!;
+    const now = Date.now();
     expect(billingOf(byId("openai")).unit).toBe("chars");
+    // a nightly window that runs past midnight, and a promotion on top of it
+    expect(byId("openai").pricing!.windows.some((w) => w.to <= w.from)).toBe(true);
+    expect(byId("openai").pricing!.promotions.some((p) => promotionRunning(p, now))).toBe(true);
     // Fish bills the bytes, whatever its price page calls them
     expect(billingOf(byId("fish"))).toMatchObject({ unit: "bytes", rate: 15 });
     // two rates, and the audio conversion is explicit rather than implied
@@ -696,10 +647,20 @@ describe("changing the model", () => {
     // free is zero and unconfigured is null, and the seeded world has one of each
     expect(billingOf(byId("local")).rate).toBe(0);
     expect(billingOf(byId("proxy")).rate).toBeNull();
+    // the free local model has nothing scheduled: "ordinary pricing", not a discount on zero
+    const local = ensurePricing(byId("local"));
+    expect(local.windows).toEqual([]);
+    expect(local.promotions).toEqual([]);
+    // the proxy has a window over its unknown rate, and the window changes nothing
+    const proxy = byId("proxy");
+    expect(proxy.pricing!.windows.length).toBeGreaterThan(0);
+    expect(
+      effectiveRates(speechRates(proxy.billing!), proxy.pricing!, now).components.speech.rate,
+    ).toBeNull();
     // the Gemini promotion touches the audio half only
     const preview = byId("gemini").pricing!.promotions[0];
     expect(preview.scope).toEqual(["audioTokens"]);
-    expect(promotionRunning(preview, Date.now())).toBe(true);
+    expect(promotionRunning(preview, now)).toBe(true);
   });
 
   test("a preset that bills in bytes says so, and the rate is the published one", () => {
@@ -725,14 +686,19 @@ describe("changing the model", () => {
         utc(THU, "12:00"),
       ),
     ).toEqual([]);
-    // but one scoped to the output tokens of a chat model really does apply to nothing on this card
+    // but one scoped to the output tokens of a chat model really does apply to nothing on a speech
+    // card, whichever model it bills on: the rate is untouched, and the card says why
     const wrong = config({ promotions: [promo({ scope: ["output"], percent: 20 })] });
-    expect(
-      pricingWarnings(
-        speechRates({ unit: "audio-tokens", rate: 1, audioRate: 20 }),
-        wrong,
-        utc(THU, "12:00"),
-      ).join(" "),
-    ).toContain("applies to nothing");
+    for (const billing of [
+      speechCard(),
+      speechCard({ unit: "audio-tokens", rate: 1, audioRate: 20 }),
+    ]) {
+      const rates = speechRates(billing);
+      const snapshot = effectiveRates(rates, wrong, utc(THU, "12:00"), billing.unit);
+      expect(snapshot.applied).toEqual([]);
+      expect(pricingWarnings(rates, wrong, utc(THU, "12:00")).join(" ")).toContain(
+        "applies to nothing this endpoint prices",
+      );
+    }
   });
 });

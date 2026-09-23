@@ -123,7 +123,8 @@ describe("choosing a cover with a server answering", () => {
     expect(await exportsStore.chooseCover("b1", s, webp)).toBe(false);
     expect(asked).toEqual([]);
     expect(s.cover).toBeNull();
-    expect(toasts.at(-1)?.msg).toBe("A cover has to be a JPEG or PNG image");
+    // the same refusal the server would have sent, naming the file
+    expect(toasts.at(-1)?.msg).toBe(coverRefusal(webp)!);
     expect(toasts.at(-1)?.description).toContain("cover.webp");
   });
 });

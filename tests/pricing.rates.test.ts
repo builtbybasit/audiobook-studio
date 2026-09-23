@@ -129,8 +129,8 @@ describe("promotions", () => {
     expect(snapshot.applied.map((p) => p.id)).toEqual(["b"]);
     // the one that lost is named rather than silently dropped
     expect(snapshot.shadowed.map((p) => p.id)).toEqual(["a"]);
-    // and it is never 30% and then 60% of what is left
-    expect(snapshot.components.input.rate).not.toBeCloseTo(0.28, 6);
+    // and the card calls the pair out, so nobody expects 30% and then 60% of what is left
+    expect(pricingWarnings(card(), cfg, utc(THU, "12:00")).join(" ")).toContain("do not stack");
   });
 
   test("a tie between two promotions goes to the one ending soonest", () => {
@@ -203,16 +203,6 @@ describe("promotions", () => {
     expect(nextChange(card(), cfg, now)).toEqual({ at: until, label: "P ends" });
     expect(effectiveRates(card(), cfg, until - 1).components.input.rate).toBeCloseTo(0.5, 12);
     expect(effectiveRates(card(), cfg, until).components.input.rate).toBe(1);
-  });
-
-  test("two promotions on one component are called out as not stacking", () => {
-    const cfg = config({
-      promotions: [
-        promo({ id: "a", label: "A", percent: 30 }),
-        promo({ id: "b", label: "B", percent: 60 }),
-      ],
-    });
-    expect(pricingWarnings(card(), cfg, utc(THU, "12:00")).join(" ")).toContain("do not stack");
   });
 });
 

@@ -61,18 +61,10 @@ describe("the library client against the real API", () => {
     expect(await api.chapterText(book.id, 1)).toContain("Rain fell.");
   });
 
-  test("adds a second volume and then removes it", async () => {
-    const api = client();
-    const { book } = await api.importBook(await volume(["One"]));
-    await api.confirmImport(book.id);
-
-    const added = await api.importVolume(book.id, await volume(["Two"]), "Vol. 2");
-    expect(added.chapters.map((c) => c.id)).toEqual([1, 2]);
-    expect(await api.discardImport(book.id)).toBe("volume");
-    expect((await api.book(book.id)).chapters).toHaveLength(1);
-  });
-
   test("removing the only volume removes the book, and says which it did", async () => {
+    // The store never asks the server this — it removes a one-volume book as a book — so the
+    // client's reading of the answer is checked here or nowhere. (A volume added and discarded is
+    // driven through this client by libraryBackend.test.ts.)
     const api = client();
     const { book } = await api.importBook(await volume(["One"]));
     await api.confirmImport(book.id);

@@ -27,9 +27,11 @@ interface Failure {
   error: { code: string; message: string; detail?: string };
 }
 
+// Two short chapters: long enough to read as story rather than a notice, short enough that an
+// ffmpeg build of them takes a fraction of a second — the length of the audio is the build's cost.
 const chapters = ["One", "Two"].map((title) => ({
   title,
-  paragraphs: ["“We are short again,” said Mara.", ...story(6)],
+  paragraphs: ["“We are short again,” said Mara.", ...story(1)],
 }));
 
 async function imported(api: TestApi, input: Partial<EpubInput> = {}): Promise<Book> {
@@ -202,7 +204,9 @@ const notes = async (api: TestApi, jobId: number) =>
 describe("a build and its cover", () => {
   test("names a cover only by the address it was uploaded to", async () => {
     const api = testApi();
-    const book = await narrated(api);
+    // refused before the build looks at a chapter, so the book needs no audio
+    const book = await imported(api);
+    await api.request(`/api/books/${book.id}/confirm`, { method: "POST" });
     const other = await imported(api, { title: "Other" });
     const theirs = (await upload(api, other.id, PNG)).body.cover;
     for (const cover of [`data:image/png;base64,${btoa("x")}`, theirs, "/api/audio/x/y.wav"]) {
@@ -317,7 +321,7 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
     expect(said).toContain("Tagging each file with the book's details");
   }, 120_000);
 
-  test("an MP3 per chapter is tagged with its chapter and its place in the set", async () => {
+  test("an MP3 per chapter is tagged with its chapter and its place in the set, and a book with no cover gets no picture", async () => {
     const api = testApi({ encoder: ffmpegEncoders() });
     const book = await narrated(api, {});
     // A blank title is the book's own, and a blank narrator is left out rather than written empty.
@@ -330,7 +334,8 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
     const done = await lastExport(api, book.id);
     expect(done.status).toBe("done");
     for (const [i, chapter] of ["One", "Two"].entries()) {
-      const said = await tags(builtFile(api, book.id, done.id, i));
+      const path = builtFile(api, book.id, done.id, i);
+      const said = await tags(path);
       expect(said).toMatchObject({
         title: chapter,
         album: book.title,
@@ -340,6 +345,7 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
       });
       expect(said.composer).toBeUndefined();
       expect(said.disc).toBeUndefined();
+      expect(await pictures(path)).toEqual([]);
     }
   }, 120_000);
 
@@ -355,15 +361,5 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
     expect(await pictures(builtFile(api, book.id, done.id))).toEqual([
       { codec: "mjpeg", attached: true },
     ]);
-  }, 120_000);
-
-  test("a book with no cover builds a file with no picture in it", async () => {
-    const api = testApi({ encoder: ffmpegEncoders() });
-    const book = await narrated(api, {});
-    await build(api, book.id, settingsFor());
-    await api.runner.idle();
-    const done = await lastExport(api, book.id);
-    expect(done.status).toBe("done");
-    expect(await pictures(builtFile(api, book.id, done.id))).toEqual([]);
   }, 120_000);
 });

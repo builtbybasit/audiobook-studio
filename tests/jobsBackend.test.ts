@@ -1,4 +1,4 @@
-// The jobs, scripting, scripts, cast and history stores against the real API.
+// The jobs, scripting, narration, scripts, cast, history and exports stores against the real API.
 //
 // `libraryBackend.test.ts` next door proves the library store's backend half. This is the rest:
 // the stores the Queue, Scripting and Cast pages read, driven through the real `HttpJobsService`
@@ -17,7 +17,13 @@ import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { key } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
 import { silenceOf } from "@/lib/speech";
-import { useBookJobs, useCast, useChapterHistory, useChapterScript } from "@/queries";
+import {
+  useBookExports,
+  useBookJobs,
+  useCast,
+  useChapterHistory,
+  useChapterScript,
+} from "@/queries";
 import { HttpJobsService, setJobsService } from "@/services/jobs";
 import { activeLibraryService, HttpLibraryService, setLibraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
@@ -60,7 +66,9 @@ const volume = (titles: string[]) =>
       paragraphs: [
         "“We are short again,” said Mara.",
         "“Then we count it twice,” said Tobin.",
-        ...story(),
+        // a few lines past the dialogue, and no more: the dialogue already keeps the chapter from
+        // reading as a notice, and every line here is one more clip each narration test renders
+        ...story(4),
       ],
     })),
   });
@@ -137,6 +145,28 @@ async function scriptedAndOpen() {
   await poll();
   return { id, script, history, cast };
 }
+
+/** Chapter 1 scripted and then narrated on the server, as the Narration page would find it. */
+async function narrated() {
+  const opened = await scriptedAndOpen();
+  const narrationStore = useNarrationStore();
+  await narrationStore._runRemote(opened.id, [1], { quiet: true });
+  await api.runner.idle();
+  await poll();
+  return { ...opened, narrationStore };
+}
+
+/** A chapter 1 another tab wrote underneath this one. */
+const writtenElsewhere = (): Segment[] => [
+  {
+    id: 1,
+    type: "narration",
+    speaker: "Narrator",
+    text: "Written elsewhere.",
+    direction: "",
+    audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
+  },
+];
 
 beforeEach(() => wire());
 
@@ -353,18 +383,7 @@ describe("editing a script with a server answering", () => {
 
   test("a stale edit is refused: the server's script wins, and the toast says so", async () => {
     const { id } = await scriptedAndOpen();
-    // another tab writes the chapter underneath this one
-    const elsewhere: Segment[] = [
-      {
-        id: 1,
-        type: "narration",
-        speaker: "Narrator",
-        text: "Written elsewhere.",
-        direction: "",
-        audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
-      },
-    ];
-    writeScript(api.db, id, 1, elsewhere);
+    writeScript(api.db, id, 1, writtenElsewhere());
     scriptsStore.updateSegment(id, 1, 1, { text: "Written here." });
     await scriptsStore._settled(id, 1);
     await settle();
@@ -383,17 +402,7 @@ describe("editing a script with a server answering", () => {
     // the script was read once, by a page since closed: the store keeps the copy, the query
     // cache has nothing left to refetch
     scriptsStore._install(id, 1, await activeLibraryService()!.chapterScript(id, 1));
-    const elsewhere: Segment[] = [
-      {
-        id: 1,
-        type: "narration",
-        speaker: "Narrator",
-        text: "Written elsewhere.",
-        direction: "",
-        audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
-      },
-    ];
-    writeScript(api.db, id, 1, elsewhere);
+    writeScript(api.db, id, 1, writtenElsewhere());
     scriptsStore.updateSegment(id, 1, 1, { text: "Written here." });
     await scriptsStore._settled(id, 1);
     expect(toasts.at(-1)?.msg).toBe("The script changed on the server");
@@ -705,12 +714,9 @@ describe("narration with a server answering", () => {
   });
 
   test("a pacing change re-times a narrated chapter as the server does, even one not opened here", async () => {
-    const { id } = await scriptedAndOpen();
-    await useNarrationStore()._runRemote(id, [1], { quiet: true });
-    await api.runner.idle();
-    await poll();
-    const narrated = libraryStore.chapter(id, 1)!.duration;
-    expect(narrated).toBeGreaterThan(0);
+    const { id } = await narrated();
+    const length = libraryStore.chapter(id, 1)!.duration;
+    expect(length).toBeGreaterThan(0);
 
     // a reload: the book is open but chapter 1's script has not been read, so its clips are not here
     wireStores();
@@ -723,7 +729,7 @@ describe("narration with a server answering", () => {
       segs.reduce((a, s) => a + s.audio.duration, 0) + silenceOf(segs, { line: 3, turn: 3 });
     // not the length of silence alone, which is what re-timing it from no clips would give
     expect(libraryStore.chapter(id, 1)?.duration).toBeCloseTo(expected, 6);
-    expect(libraryStore.chapter(id, 1)?.duration).toBeGreaterThan(narrated);
+    expect(libraryStore.chapter(id, 1)?.duration).toBeGreaterThan(length);
     // an unnarrated chapter keeps the length it had
     expect(libraryStore.chapter(id, 2)?.duration).toBe(0);
 
@@ -735,11 +741,7 @@ describe("narration with a server answering", () => {
   });
 
   test("re-narrating what changed renders only those lines, and keeps the rest", async () => {
-    const { id } = await scriptedAndOpen();
-    const narrationStore = useNarrationStore();
-    await narrationStore._runRemote(id, [1], { quiet: true });
-    await api.runner.idle();
-    await poll();
+    const { id, narrationStore } = await narrated();
     const before = scriptsStore.segmentsOf(id, 1).map((s) => s.audio.url);
     const [a] = scriptsStore.segmentsOf(id, 1);
     scriptsStore.updateSegment(id, 1, a.id, { text: "Changed since it was rendered." });
@@ -763,7 +765,7 @@ describe("narration with a server answering", () => {
     expect(toasts.at(-1)?.kind).toBe("warn");
   });
 
-  test("a failed line is retried at the failed scope, and a retake is said to be unavailable", async () => {
+  test("a failed line is retried at the failed scope", async () => {
     // a provider that fails one line once, so the retry has something to succeed at
     const inner = fakeSpeechProvider();
     let failedOnce = false;
@@ -778,11 +780,7 @@ describe("narration with a server answering", () => {
       },
     };
     wire({ speech });
-    const { id } = await scriptedAndOpen();
-    const narrationStore = useNarrationStore();
-    await narrationStore._runRemote(id, [1], { quiet: true });
-    await api.runner.idle();
-    await poll();
+    const { id, narrationStore } = await narrated();
     const broken = scriptsStore.segmentsOf(id, 1).find((s) => s.text.includes("count it twice"))!;
     expect(broken.audio.status).toBe("failed");
     expect(broken.audio.error?.message).toContain("dropped");
@@ -804,16 +802,6 @@ describe("narration with a server answering", () => {
 describe("the dictionary with a server answering", () => {
   /** The line the dictionary below reaches: no other line of chapter 1 says "twice". */
   const twice = (segs: Segment[]) => segs.find((s) => s.text.includes("count it twice"))!;
-
-  /** Chapter 1 narrated on the server, with its script open the way the Narration page opens it. */
-  async function narrated() {
-    const { id } = await scriptedAndOpen();
-    const narrationStore = useNarrationStore();
-    await narrationStore._runRemote(id, [1], { quiet: true });
-    await api.runner.idle();
-    await poll();
-    return { id, narrationStore };
-  }
 
   test("a line the dictionary respells is narrated as respelled, and its clip reads as fresh", async () => {
     const { id } = await scriptedAndOpen();
@@ -896,16 +884,6 @@ describe("the dictionary with a server answering", () => {
 });
 
 describe("retakes with a server answering", () => {
-  /** Chapter 1 narrated on the server, with its script open the way the Narration page opens it. */
-  async function narrated() {
-    const { id, history } = await scriptedAndOpen();
-    const narrationStore = useNarrationStore();
-    await narrationStore._runRemote(id, [1], { quiet: true });
-    await api.runner.idle();
-    await poll();
-    return { id, history, narrationStore };
-  }
-
   test("a retake renders beside the clip and waits for a verdict; keeping it swaps the two", async () => {
     const { id, narrationStore } = await narrated();
     const line = scriptsStore.segmentsOf(id, 1)[0];
@@ -995,7 +973,6 @@ describe("the audiobooks with a server answering", () => {
     const exportsStore = useExportsStore();
     expect(exportsStore.exports).toEqual([]);
     expect(exportsStore.asksFirst).toBe(true);
-    const { useBookExports } = await import("@/queries");
     const exports = pinia.run(() => useBookExports(id));
     await settle();
     expect(exports.status.value).toBe("success");
@@ -1011,7 +988,6 @@ describe("the audiobooks with a server answering", () => {
     await api.runner.idle();
     await poll();
 
-    const { useBookExports } = await import("@/queries");
     const exports = pinia.run(() => useBookExports(id));
     await settle();
 

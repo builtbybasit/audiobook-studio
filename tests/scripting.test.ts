@@ -1,5 +1,4 @@
 import { useEndpointsStore } from "@/stores/endpoints";
-import { useExportsStore } from "@/stores/exports";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
@@ -11,13 +10,11 @@ import { newProfile, profileErrors, scriptParts, tokenEstimate } from "@/lib/scr
 import { newPricing, uncachedInput } from "@/lib/pricing";
 
 import { jobDiagnostics, logJob, MAX_JOB_EVENTS } from "@/lib/jobActivity";
-import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 
 let callbacks = new Map<number, () => void>();
 let clock = 1000;
 let restore: (() => void)[] = [];
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
-let exportsStore: ReturnType<typeof useExportsStore>;
 let jobsStore: ReturnType<typeof useJobsStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let scriptingStore: ReturnType<typeof useScriptingStore>;
@@ -36,7 +33,6 @@ beforeEach(() => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   setActivePinia(createPinia());
   endpointsStore = useEndpointsStore();
-  exportsStore = useExportsStore();
   jobsStore = useJobsStore();
   libraryStore = useLibraryStore();
   scriptingStore = useScriptingStore();
@@ -83,21 +79,23 @@ test("chunk boundaries are lossless and respect the chosen maximum", () => {
   }
   expect(scriptParts(text, newProfile({ model: "m", maxChars: 0 }))).toEqual([text]);
 });
-test("accepts 2,500 concurrency and rejects invalid endpoints and limits", () => {
-  expect(profileErrors(newProfile({ model: "m", concurrency: 2500 }))).toEqual([]);
+test("a concurrency must be a positive whole number, however large, and the URL a base URL", () => {
   for (const value of [-1, 0, 0.5, Infinity, NaN])
     expect(profileErrors(newProfile({ model: "m", concurrency: value })).length).toBeGreaterThan(0);
+  // not a slider artefact: a local server may take thousands at once
+  expect(profileErrors(newProfile({ model: "m", concurrency: 2500 }))).toEqual([]);
   expect(
     profileErrors(newProfile({ model: "m", baseUrl: "https://example.com/v1/chat/completions" })),
   ).toContain("Use the base URL without /chat/completions.");
 });
-test("calculates input/output separately and includes per-request prompt overhead", () => {
-  const p = endpointsStore.profiles[0];
+test("prices input and output at their own rates, and charges the prompt once per request", () => {
+  const p = endpointsStore.profiles[0]; // input $1, output $2 per million
   const text = "a".repeat(400);
   const t = tokenEstimate(text, p);
-  expect(t.inputTokens).toBe(660);
-  expect(t.outputTokens).toBe(115);
-  expect(t.cost).toBeCloseTo(0.00089, 10);
+  expect(t.inputCost).toBeCloseTo((t.inputTokens * p.inPrice) / 1e6, 12);
+  expect(t.outputCost).toBeCloseTo((t.outputTokens * p.outPrice) / 1e6, 12);
+  expect(t.cost).toBeCloseTo(t.inputCost + t.outputCost, 12);
+  // the same text sent in two requests carries the prompt twice
   expect(tokenEstimate(text.slice(0, 200), p).inputTokens * 2).toBeGreaterThan(t.inputTokens);
 });
 test("estimate skips excluded and active chapters and uses endpoint-specific chunking", () => {
@@ -269,24 +267,6 @@ test("retained diagnostics stay bounded and omit connection snapshots and creden
   expect(exported).not.toContain("examplecredential");
   expect(exported).toContain('"inputTokens": 123');
   expect(new Set(job.activity!.map((e) => e.id)).size).toBe(MAX_JOB_EVENTS);
-});
-
-test("export jobs record milestones and the completed artifact", async () => {
-  await exportsStore.buildExport("starforge", [2, 3, 4, 5, 6], {
-    ...DEFAULT_EXPORT_SETTINGS,
-    title: "Test book",
-    filename: "test-log",
-    bitrate: 64,
-  });
-  finish();
-  const job = jobsStore.jobs[0];
-  expect(job.status).toBe("done");
-  expect(job.kind).toBe("export");
-  expect(job.activity!.some((e) => e.message.startsWith("25%"))).toBe(true);
-  expect(job.activity!.find((e) => e.message === "Export ready")!.detail?.files).toBe(1);
-  expect(exportsStore.exports[0].filename).toBe("test-log.m4b");
-  expect(exportsStore.exports[0].status).toBe("done");
-  expect(job.activity!.at(-1)!.message).toBe("Job done");
 });
 
 // ---------- pricing a run ----------

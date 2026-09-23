@@ -26,7 +26,7 @@ const chapters = (...titles: string[]) =>
   epubFile({
     chapters: titles.map((title) => ({
       title,
-      paragraphs: ["“We are short again,” said Mara.", ...story()],
+      paragraphs: ["“We are short again,” said Mara.", ...story(2)],
     })),
   });
 

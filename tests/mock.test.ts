@@ -1,24 +1,20 @@
-import { useCastStore } from "@/stores/cast";
-import { useDemoStore } from "@/stores/demo";
-import { useExportsStore } from "@/stores/exports";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-// The mock world, its fixtures and its demo scenarios.
+// The mock world and its fixtures.
 //
 // Two properties matter here and neither is visible from a screenshot. A world is *fresh*: two
 // calls to `makeWorld()` share nothing, so editing one book cannot be observed through another, and
-// the hand-authored seeds are never written back to. And a scenario is *reversible*: seeding one and
-// resetting it puts the book back exactly as it was, so running scenarios one after another gives
-// the same result as running any of them first.
+// the hand-authored seeds are never written back to. And a world *holds together*: every reference
+// in it — a voice, a volume, a speaker, an exported chapter — points at something that exists.
 //
-// The simulated encoder runs on setInterval, so the clock and the timer API are faked.
-import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
+// What the demo store does with this world — the scenarios, the page chips and their resets — is in
+// `demo.test.ts`.
+import { test, expect, beforeAll, describe } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 
 import {
   BOOK_SEEDS,
-  exportDemoPrep,
   exportScenarios,
   makeEndpoints,
   makeLexicon,
@@ -27,72 +23,7 @@ import {
   searchDemoTarget,
   searchScenarios,
 } from "@/mock";
-
-let callbacks = new Map<number, () => void>();
-let clock = 1000;
-let restore: (() => void)[] = [];
-let castStore: ReturnType<typeof useCastStore>;
-let demoStore: ReturnType<typeof useDemoStore>;
-let exportsStore: ReturnType<typeof useExportsStore>;
-let libraryStore: ReturnType<typeof useLibraryStore>;
-let scriptsStore: ReturnType<typeof useScriptsStore>;
-let uiStore: ReturnType<typeof useUiStore>;
-
-function drain(max = 400) {
-  for (let i = 0; i < max && callbacks.size; i++)
-    for (const [id, fn] of Array.from(callbacks)) if (callbacks.has(id)) fn();
-}
-
-beforeEach(() => {
-  Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  setActivePinia(createPinia());
-  castStore = useCastStore();
-  demoStore = useDemoStore();
-  exportsStore = useExportsStore();
-  libraryStore = useLibraryStore();
-  scriptsStore = useScriptsStore();
-  uiStore = useUiStore();
-  uiStore.toast = () => "test";
-  callbacks = new Map();
-  clock = 1000;
-  let seq = 0;
-  restore = [
-    spyOn(globalThis, "setInterval").mockImplementation(((fn: () => void) => {
-      const id = ++seq;
-      callbacks.set(id, fn);
-      return id;
-    }) as typeof setInterval),
-    spyOn(globalThis, "clearInterval").mockImplementation(((id: number) => {
-      callbacks.delete(id);
-    }) as typeof clearInterval),
-    spyOn(Date, "now").mockImplementation(() => (clock += 1)),
-    spyOn(Math, "random").mockReturnValue(0.5),
-  ].map((s) => () => s.mockRestore());
-});
-afterEach(() => restore.forEach((f) => f()));
-
-/** Everything a demo scenario is allowed to touch, digested — the states compared here run to
- *  hundreds of kilobytes, and a failing assertion only needs to say which scenario moved. */
-const digest = (s: string): string => {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
-  return h.toString(16) + ":" + s.length;
-};
-
-const bookState = (bookId: string): string =>
-  digest(
-    JSON.stringify({
-      book: libraryStore.bookById(bookId),
-      chapters: libraryStore.chaptersOf(bookId),
-      characters: castStore.charactersOf(bookId),
-      segments: Object.entries(scriptsStore.segments)
-        .filter(([k]) => k.startsWith(bookId + ":"))
-        .sort(([a], [b]) => a.localeCompare(b)),
-      exports: exportsStore.exports
-        .filter((e) => e.bookId === bookId)
-        .map((e) => e.key + ":" + e.version),
-    }),
-  );
+import type { World } from "@/types";
 
 describe("fixtures are fresh", () => {
   test("two worlds share no mutable state", () => {
@@ -135,8 +66,13 @@ describe("fixtures are fresh", () => {
 });
 
 describe("the world holds together", () => {
+  // these only read, so one world serves them all
+  let w: World;
+  beforeAll(() => {
+    w = makeWorld();
+  });
+
   test("every speaker routes to a voice that exists on an endpoint that exists", () => {
-    const w = makeWorld();
     for (const [bookId, cast] of Object.entries(w.characters))
       for (const c of cast) {
         if (!c.voice) continue;
@@ -151,7 +87,6 @@ describe("the world holds together", () => {
   });
 
   test("every book has a Narrator, so an unvoiced speaker always has a fallback", () => {
-    const w = makeWorld();
     for (const bookId of Object.keys(w.characters)) {
       const narrator = w.characters[bookId].find((c) => c.name === "Narrator");
       expect(narrator, bookId).toBeDefined();
@@ -160,7 +95,6 @@ describe("the world holds together", () => {
   });
 
   test("chapters, volumes and segments agree", () => {
-    const w = makeWorld();
     for (const b of w.books) {
       const ids = new Set(w.chapters[b.id].map((c) => c.id));
       for (const c of w.chapters[b.id])
@@ -174,7 +108,6 @@ describe("the world holds together", () => {
   });
 
   test("every speaker in a script is in the book's cast", () => {
-    const w = makeWorld();
     for (const [k, segs] of Object.entries(w.segments)) {
       const names = new Set(w.characters[k.split(":")[0]].map((c) => c.name));
       for (const s of segs) expect(names.has(s.speaker), `${k} · ${s.speaker}`).toBe(true);
@@ -182,110 +115,30 @@ describe("the world holds together", () => {
   });
 
   test("every finished export names chapters the book still has", () => {
-    const w = makeWorld();
     for (const e of w.exports) {
       const ids = new Set(w.chapters[e.bookId].map((c) => c.id));
       for (const id of e.chapterIds) expect(ids.has(id), `${e.filename} ch ${id}`).toBe(true);
     }
   });
-});
-
-describe("demo scenarios", () => {
-  test("every export scenario seeds and resets back to where it started", () => {
-    for (const s of exportScenarios()) {
-      const before = bookState(s.bookId);
-      const prep = exportDemoPrep(s.id);
-      expect(demoStore.seedExportDemo(s.id), s.id).toBe(s.bookId);
-      // `mixed` and `update` are the book as it already stands — they only explain what you see
-      if (prep.freshen || prep.clearExports || prep.buildHistory)
-        expect(bookState(s.bookId), `${s.id} changed nothing`).not.toBe(before);
-      // `freshen` is the promise that every chapter is narrated and the book is ready to build —
-      // the substance of the scenario, not just that seeding it is reversible
-      if (prep.freshen)
-        expect(
-          libraryStore.chaptersOf(s.bookId).every((c) => c.excluded || c.narration === "done"),
-          `${s.id} left a chapter unnarrated`,
-        ).toBe(true);
-      demoStore.resetExportDemo();
-      drain(); // a cancelled build only notices on its next tick
-      expect(bookState(s.bookId), `${s.id} did not reset cleanly`).toBe(before);
-      // and the store stops claiming a scenario is seeded
-      expect(demoStore._exportDemo, s.id).toBeNull();
-    }
-  });
-
-  test("a scenario seeded after another is the same as one seeded first", () => {
-    demoStore.seedExportDemo("ready");
-    const first = bookState("starforge");
-    demoStore.resetExportDemo();
-    drain();
-
-    // a different scenario on the same book, in and out again
-    demoStore.seedExportDemo("builds");
-    demoStore.resetExportDemo();
-    drain();
-
-    demoStore.seedExportDemo("ready");
-    expect(bookState("starforge")).toBe(first);
-  });
-
-  test("seeding one book's scenario leaves the other books alone", () => {
-    const others = libraryStore.books.filter((b) => b.id !== "gates").map((b) => b.id);
-    const before = others.map(bookState);
-    demoStore.seedExportDemo("long");
-    expect(others.map(bookState)).toEqual(before);
-    demoStore.resetExportDemo();
-    drain();
-  });
-
-  test("the search demo seeds, scatters an alias and resets back", () => {
-    const before = bookState("cliche");
-    const target = demoStore.searchDemo("cliche")!;
-    expect(target).not.toBeNull();
-
-    demoStore.seedSearchDemo("cliche");
-    const speakers = new Set(
-      libraryStore
-        .chaptersOf("cliche")
-        .flatMap((c) => scriptsStore.segmentsOf("cliche", c.id).map((s) => s.speaker)),
-    );
-    expect(speakers.has(target.alias)).toBe(true);
-    expect(castStore.charactersOf("cliche").some((c) => c.name === target.alias)).toBe(true);
-
-    demoStore.resetSearchDemo();
-    expect(bookState("cliche")).toBe(before);
-  });
-
-  test("seeding the search demo twice is a no-op, so reset cannot lose the original", () => {
-    const before = bookState("cliche");
-    demoStore.seedSearchDemo("cliche");
-    const once = bookState("cliche");
-    demoStore.seedSearchDemo("cliche");
-    expect(bookState("cliche")).toBe(once);
-    demoStore.resetSearchDemo();
-    expect(bookState("cliche")).toBe(before);
-  });
-
-  test("search scenarios are offered only for a book with a script", () => {
-    expect(demoStore.searchScenarios("cliche").length).toBe(3);
-    const unscripted = libraryStore.addNovel("brand-new.epub", "Brand New");
-    expect(demoStore.searchDemo(unscripted)).toBeNull();
-    expect(demoStore.searchScenarios(unscripted)).toEqual([]);
-  });
-
-  test("a newly imported book has deterministic source text for the seeded workflow", () => {
-    const imported = libraryStore.addNovel("brand-new.epub", "Brand New");
-    const first = scriptsStore.rawText(imported, 1);
-    expect(first.length).toBeGreaterThan(100);
-    expect(scriptsStore.rawText(imported, 1)).toBe(first);
-  });
 
   test("the search scenario rows describe the character they were built from", () => {
-    const target = searchDemoTarget(castStore.charactersOf("cliche"))!;
-    const rows = searchScenarios(target);
-    expect(rows.map((r) => r.id)).toEqual(["alias", "settled", "empty"]);
-    expect(rows[0].query).toBe(target.alias);
-    expect(rows[1].speaker).toBe(target.main);
-    expect(rows[2].query).not.toBe(target.alias);
+    const target = searchDemoTarget(w.characters.cliche)!;
+    const row = (id: string) => searchScenarios(target).find((r) => r.id === id)!;
+    // the alias is what the model scattered; the main name is where the lines already sit
+    expect(row("alias").query).toBe(target.alias);
+    expect(row("settled").speaker).toBe(target.main);
+    // and a term the book never uses is not the alias by another name
+    expect(row("empty").query).not.toBe(target.alias);
   });
+});
+
+test("a newly imported book has deterministic source text for the seeded workflow", () => {
+  // no `Math.random` stub here: the point is that the text does not depend on one
+  Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
+  setActivePinia(createPinia());
+  useUiStore().toast = () => "test";
+  const imported = useLibraryStore().addNovel("brand-new.epub", "Brand New");
+  const first = useScriptsStore().rawText(imported, 1);
+  expect(first.length).toBeGreaterThan(100);
+  expect(useScriptsStore().rawText(imported, 1)).toBe(first);
 });

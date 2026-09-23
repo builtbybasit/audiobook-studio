@@ -6,6 +6,7 @@ import { UiSwitch } from "@/ui";
 import { DOT, KIND_LABEL, TEXT, pricingLabel } from "@/lib/endpoints";
 import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
 import type { LiveActivity } from "@/views/endpoints/live";
+import { FORMAT_LABEL, encodingOf } from "@/lib/endpointShapes";
 
 const props = defineProps<{
   u: UnifiedEndpoint;
@@ -42,9 +43,12 @@ const pricing = () => pricingLabel(props.u);
           >{{ u.kind === "scripting" ? "script" : "TTS" }}</span
         >
       </span>
-      <span class="mt-0.5 block truncate font-mono text-[11px] text-zinc-500">{{
-        u.model || "model required"
-      }}</span>
+      <span class="mt-0.5 block truncate font-mono text-[11px] text-zinc-500"
+        >{{ u.model || "model required"
+        }}<template v-if="u.endpoint && encodingOf(u.endpoint).format !== 'wav'">
+          · {{ FORMAT_LABEL[encodingOf(u.endpoint).format] }}</template
+        ></span
+      >
       <span class="mt-1 flex items-baseline justify-between gap-2 text-[11px]">
         <span class="truncate" :class="TEXT[health.tone]">{{ health.label }}</span>
         <span class="shrink-0 font-mono text-zinc-500"

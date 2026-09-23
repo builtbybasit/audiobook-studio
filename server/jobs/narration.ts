@@ -29,18 +29,23 @@
 // dictionary, with the expression tags placed on the line written in as the speaker's endpoint
 // spells them. The endpoint is read from the stored configuration as each line goes out, and a
 // line whose tags that endpoint cannot say is failed before any request, with the reason, exactly
-// as the demo blocks it. The endpoint's sample rate goes with the request, and the clip records the
-// rate the file actually came back at, read from the file.
+// as the demo blocks it. The endpoint's sample rate and format go with the request, and the clip
+// records the rate the file actually came back at, read from the file (`probeClip`), and is kept
+// under the extension of the format it actually came back in — which for the fake is always WAV.
+// The format is not part of what a clip is compared against later: changing an endpoint from WAV
+// to MP3 applies to the lines rendered after it, and leaves the ones already in the book alone.
 import { and, eq } from "drizzle-orm";
 
 import type { Job, NarrationScope, NarrationStatus, Segment, SegmentAudio } from "@/types";
 import { NARRATOR } from "@/lib/cast";
+import { encodingOf, FORMAT_LABEL } from "@/lib/endpointShapes";
 import { chapterNarration, narrationTargets, SCOPE_LABEL } from "@/lib/runPlan";
 import { expressionParts, expressionPlan, type ExpressionPlan } from "@/lib/expressions";
 import type { SplitPart } from "@/lib/split";
 import { pacingOrDefault, silenceOf, speechInstructions } from "@/lib/speech";
 import { nextTakeNumber, requeue } from "@/lib/takes";
 import type { AudioFiles } from "~/audio/files";
+import { joinClips, probeClip } from "~/audio/probe";
 import { readCast, readLexicon } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
@@ -61,7 +66,6 @@ import { locate } from "~/jobs/scripting";
 import { conflict, notFound } from "~/lib/errors";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 import { speechTarget } from "~/providers/target";
-import { joinWav, readWavHeader } from "~/providers/wavEncoder";
 
 /** The label a retake job carries as its scope and its `bulk.op`; the Queue page shows it as it is. */
 export const RETAKE_LABEL = "Retake";
@@ -207,6 +211,11 @@ class PartFailed extends Error {
  * end, then a clause's — and each request's audio carries its own breath at either end, so adding
  * silence would read as a pause the line never had. A part that fails fails the line, with its
  * number: the parts before it are thrown away rather than kept as half a line.
+ *
+ * WAV parts join as samples and MP3 parts as frames (`joinClips`). An Opus line that needs parts
+ * fails before the first is sent: joined Opus is two Ogg streams chained in one file, which is
+ * legal but which browsers seek badly and time as its first stream, so a line would play whole
+ * and show a third of its length. Paying for parts that cannot be kept is worse than saying so.
  */
 async function speakInParts(
   provider: SpeechProvider,
@@ -214,6 +223,10 @@ async function speakInParts(
   cuts: SplitPart[] | null,
 ): Promise<RenderedClip> {
   if (!cuts || cuts.length < 2) return provider.speak(input);
+  if (input.encoding.format === "opus")
+    throw new Error(
+      `This line needs ${cuts.length} requests at its endpoint's max characters, and an Opus line cannot be split into parts; raise this endpoint's max characters or choose MP3 or WAV`,
+    );
   const rendered: RenderedClip[] = [];
   for (const [i, cut] of cuts.entries()) {
     if (input.signal.aborted) throw input.signal.reason;
@@ -225,9 +238,18 @@ async function speakInParts(
       throw new PartFailed(i + 1, e);
     }
   }
+  const { format, mime } = rendered[0];
   let bytes: Uint8Array;
   try {
-    bytes = joinWav(rendered.map((r) => r.bytes));
+    const other = rendered.findIndex((r) => r.format !== format);
+    if (other >= 0)
+      throw new Error(
+        `part ${other + 1} came back as ${FORMAT_LABEL[rendered[other].format]} and part 1 as ${FORMAT_LABEL[format]}`,
+      );
+    bytes = joinClips(
+      format,
+      rendered.map((r) => r.bytes),
+    );
   } catch (e) {
     throw new Error(`The parts that came back could not be joined: ${(e as Error).message}`, {
       cause: e,
@@ -236,7 +258,8 @@ async function speakInParts(
   const last = rendered.at(-1)!;
   return {
     bytes,
-    mime: "audio/wav",
+    format,
+    mime,
     duration: rendered.reduce((a, r) => a + r.duration, 0),
     ms: rendered.reduce((a, r) => a + r.ms, 0),
     model: last.model,
@@ -417,6 +440,7 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
               instructions,
               voiceRef: who.voiceRef,
               sampleRate: ep?.sampleRate ?? null,
+              encoding: ep ? encodingOf(ep) : { format: "wav" },
               // the endpoint as saved now and its key read now, for the provider alone
               target: ep ? speechTarget(db, ep) : null,
               signal,
@@ -428,14 +452,14 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
           // failed line now rather than a failed audiobook later
           let sampleRate: number;
           try {
-            ({ sampleRate } = readWavHeader(rendered.bytes));
+            ({ sampleRate } = await probeClip(rendered.bytes, rendered.format));
           } catch (e) {
             throw new Error(`The audio that came back could not be read: ${(e as Error).message}`, {
               cause: e,
             });
           }
           // by the book, which is where the file stays whatever the chapter's number becomes
-          const { url } = await files.write(job.bookId, rendered.bytes, "wav");
+          const { url } = await files.write(job.bookId, rendered.bytes, rendered.format);
           clip = {
             ...generating,
             status: "done",
@@ -693,7 +717,8 @@ export function enqueueNarration(
  * Whether a clip that has just landed was rendered from a request the book would no longer send:
  * other words after the dictionary, other tags, or — when the endpoint now names a rate — another
  * rate than the file came back at. The browser's drift rule asks the same of a clip already in the
- * book; this asks it of one in flight while the dictionary or the endpoint was saved.
+ * book; this asks it of one in flight while the dictionary or the endpoint was saved. The format
+ * is not asked about: a clip in WAV is as good a clip after the endpoint moves to MP3.
  */
 function movedOn(
   tx: Tx,

@@ -11,7 +11,14 @@
 // against the file being written, so a speech provider that answers at 24 kHz or in 16-bit
 // stitches correctly, and one that changes format mid-chapter is an error naming the file rather
 // than a burst of noise in the middle of an audiobook.
+//
+// It reads WAV and nothing else. A clip kept as MP3 or Opus has no samples to lay down without a
+// decoder, and writing one is what ffmpeg is for, so the build refuses such a book before it starts
+// (`decodes: false`) and says which setting to change; the check here is the backstop.
 import { open, readFile } from "node:fs/promises";
+
+import { FORMAT_LABEL } from "@/lib/endpointShapes";
+import { formatOfFile } from "~/audio/files";
 
 import type {
   AudiobookEncoder,
@@ -161,6 +168,8 @@ export function wavEncoder(): AudiobookEncoder {
     covers: false,
     // nor any words about the book: a RIFF INFO chunk exists, but few players read one
     tags: false,
+    // and no MP3 or Opus: there is no decoder here
+    decodes: false,
 
     async encode({ chapters, gap, out, signal, onChapter }: EncodeInput): Promise<EncodedFile> {
       const file = await open(out, "w");
@@ -201,6 +210,11 @@ export function wavEncoder(): AudiobookEncoder {
 
       /** A whole clip, header trimmed off. They are one line long, so they are read whole. */
       const clip = async (path: string): Promise<void> => {
+        const format = formatOfFile(path);
+        if (format && format !== "wav")
+          throw new Error(
+            `${path} is ${FORMAT_LABEL[format]}, and the WAV stitcher joins WAV clips only`,
+          );
         const bytes = new Uint8Array(await readFile(path));
         let body: WavBody;
         try {

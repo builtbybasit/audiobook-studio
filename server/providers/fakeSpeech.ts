@@ -12,6 +12,12 @@
 // server serves, and a placeholder that only looks like a file would prove nothing about the route.
 // It honours a requested rate the way a real model does, by answering at it, so a clip's recorded
 // rate is read from a file that really is at that rate.
+//
+// It does not honour a requested format. An MP3 or Opus encoder is not something to write by hand
+// for a tone, and the fake stays free of the network and of binaries, so it answers WAV whatever
+// the endpoint asks for and says so on the clip (`format: "wav"`). The job keeps a clip as the
+// format it says it is, so a fake run on an MP3 endpoint writes `.wav` files, which every part of
+// the server reads — the format a clip is in is never drift.
 import { sleep } from "~/providers/fake";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 
@@ -89,6 +95,7 @@ export function fakeSpeechProvider(options: FakeSpeechOptions = {}): SpeechProvi
       const duration = fakeDuration(text);
       return {
         bytes: toneWav(toneOf(speaker), duration, sampleRate ?? SAMPLE_RATE),
+        format: "wav",
         mime: "audio/wav",
         duration,
         // a made-up latency that still grows with the line, so the Queue page has something to show

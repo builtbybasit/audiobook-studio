@@ -23,6 +23,8 @@ import {
   type EndpointProbe,
   type EndpointSettings,
   type EndpointSettingsService,
+  type VoiceListPage,
+  type VoiceListQuery,
 } from "@/services/endpointSettings";
 import { useEndpointsStore, WRITE_DELAY_MS } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
@@ -95,6 +97,14 @@ class FakeService implements EndpointSettingsService {
     this.tests.push({ kind, id });
     if (this.probe instanceof ApiError) throw this.probe;
     return this.probe;
+  }
+  /** what each voice list was asked, with how many writes had gone out by then */
+  lists: { id: string; query: VoiceListQuery; puts: number }[] = [];
+  voicePage: VoiceListPage | ApiError = { voices: [], total: 0, page: 1, hasMore: false };
+  async listVoices(id: string, query: VoiceListQuery): Promise<VoiceListPage> {
+    this.lists.push({ id, query, puts: this.puts.length });
+    if (this.voicePage instanceof ApiError) throw this.voicePage;
+    return clone(this.voicePage);
   }
 }
 
@@ -244,6 +254,25 @@ describe("the endpoints store with a server answering", () => {
     // and the answer landing sends nothing more
     await settle();
     expect(svc.puts).toHaveLength(1);
+  });
+
+  test("the audio format goes out with the endpoint, comes back, and clearing it is sent too", async () => {
+    svc.held = server();
+    svc.held.endpoints[0].encoding = { format: "opus", bitrate: 32000 };
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    expect(ep.encoding).toEqual({ format: "opus", bitrate: 32000 });
+    ep.encoding = { format: "mp3", bitrate: 192 };
+    await settle();
+    expect(svc.puts.at(-1)!.endpoints[0].encoding).toEqual({ format: "mp3", bitrate: 192 });
+    expect(ep.encoding).toEqual({ format: "mp3", bitrate: 192 });
+    // back to WAV is stored as no choice at all, and that is an edit like any other
+    ep.encoding = null;
+    await settle();
+    expect(svc.puts).toHaveLength(2);
+    expect(svc.puts[1].endpoints[0].encoding).toBeNull();
+    await settle();
+    expect(svc.puts).toHaveLength(2);
   });
 
   test("telemetry moving is not an edit", async () => {
@@ -472,5 +501,115 @@ describe("the connection test with a server answering", () => {
     expect(calls[0].url).toBe("/api/endpoints/test");
     expect(calls[0].init?.method).toBe("POST");
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ kind: "scripting", id: "openai" });
+  });
+});
+
+describe("voices with a server answering", () => {
+  /** What each voice toast said once its work settled. */
+  const said: string[] = [];
+  beforeEach(() => {
+    said.length = 0;
+    useUiStore().toastLoading = <T>(
+      work: Promise<T>,
+      o: { success: string | ((r: T) => string); error?: string | ((e: unknown) => string) },
+    ) => {
+      work.then(
+        (r) => said.push(typeof o.success === "function" ? o.success(r) : o.success),
+        (e) => said.push(typeof o.error === "function" ? o.error(e) : String(o.error)),
+      );
+      return work;
+    };
+  });
+
+  test("fetching sends what is waiting, asks the saved library, and merges only new ids", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    ep.name = "Renamed";
+    await drain();
+    svc.voicePage = {
+      voices: [
+        { id: "alloy", label: "Alloy again", gender: "f" },
+        { id: "fish-1", label: "Narrator (EN)", gender: "m" },
+      ],
+      total: 2,
+      page: 1,
+      hasMore: false,
+    };
+    expect(await endpointsStore.fetchVoices(ep)).toBe(1);
+    // the rename went out before the list was asked for
+    expect(svc.lists).toEqual([{ id: "srv-tts", query: { source: "library" }, puts: 1 }]);
+    // what was there is untouched; the new voice is added, and saved like any other edit
+    expect(ep.voices).toEqual([
+      { id: "alloy", label: "Alloy", gender: "n" },
+      { id: "fish-1", label: "Narrator (EN)", gender: "m" },
+    ]);
+    expect(ep.fetching).toBe(false);
+    await settle();
+    expect(svc.puts.at(-1)?.endpoints[0].voices.map((v) => v.id)).toEqual(["alloy", "fish-1"]);
+    await drain();
+    expect(said).toEqual(["1 voice added to Renamed"]);
+  });
+
+  test("an empty Fish library points at the public search, and a refusal is said as sent", async () => {
+    const cfg = server();
+    cfg.endpoints[0].baseUrl = "https://api.fish.audio/v1";
+    svc.held = cfg;
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    expect(await endpointsStore.fetchVoices(ep)).toBe(0);
+    svc.voicePage = new ApiError("Server speech answered 401: Invalid token", 502);
+    expect(await endpointsStore.fetchVoices(ep)).toBe(0);
+    await drain();
+    expect(said).toEqual([
+      "Server speech: your library has no voices \u2014 search the public ones instead",
+      "Server speech: Server speech answered 401: Invalid token",
+    ]);
+  });
+
+  test("a public search asks the server for that page and adds nothing by itself", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    svc.voicePage = {
+      voices: [{ id: "n1", label: "Narrator (EN)", gender: "m" }],
+      total: 200,
+      page: 2,
+      hasMore: true,
+    };
+    const page = await endpointsStore.searchVoices(ep, {
+      query: "narrator",
+      language: "en",
+      page: 2,
+    });
+    expect(page.total).toBe(200);
+    expect(svc.lists[0].query).toEqual({
+      source: "public",
+      query: "narrator",
+      language: "en",
+      page: 2,
+    });
+    expect(ep.voices.map((v) => v.id)).toEqual(["alloy"]);
+    // adding one from the results is the ordinary add, saved by the write-behind
+    expect(endpointsStore.addVoice(ep, page.voices[0])).toBe(true);
+    await settle();
+    expect(svc.puts.at(-1)?.endpoints[0].voices.map((v) => v.id)).toEqual(["alloy", "n1"]);
+  });
+
+  test("the HTTP service posts the id and the query to /endpoints/voices", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const answer = { voices: [], total: 0, page: 1, hasMore: false };
+    const http = new HttpEndpointSettingsService("/api", async (url, init) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify(answer));
+    });
+    expect(await http.listVoices("fish", { source: "public", query: "calm" })).toEqual(answer);
+    expect(calls[0].url).toBe("/api/endpoints/voices");
+    expect(calls[0].init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      id: "fish",
+      source: "public",
+      query: "calm",
+    });
   });
 });

@@ -83,6 +83,7 @@ const line = (text: string, speaker = "Mara", extra: Partial<SpeechInput> = {}):
   instructions: "",
   voiceRef: null,
   sampleRate: null,
+  encoding: { format: "wav" },
   target: null,
   signal: new AbortController().signal,
   ...extra,

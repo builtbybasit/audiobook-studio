@@ -20,6 +20,7 @@ import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import { wavEncoders } from "~/providers/wavEncoder";
 import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
+import type { VoiceLister } from "~/providers/voices";
 import type { FetchLike } from "@/services/http";
 
 export interface TestApi {
@@ -50,6 +51,8 @@ export interface TestApiOptions {
   scripting?: ScriptingProvider;
   /** the speech model the queue sends lines to; the tone-rendering fake by default */
   speech?: SpeechProvider;
+  /** where the Voices tab's lists come from; the real lister, over the network, by default */
+  voices?: VoiceLister;
   /** where clips are written; a fresh temporary directory by default */
   audioDir?: string;
   /** where built audiobooks are written; a fresh temporary directory by default */
@@ -125,6 +128,7 @@ export function testApi(options: TestApiOptions = {}): TestApi {
   const providers = {
     scripting: options.scripting ?? fakeScriptingProvider(),
     speech: options.speech ?? fakeSpeechProvider(),
+    ...(options.voices ? { voices: options.voices } : {}),
   };
   const app = createApp(db, { log, runner, files, exports, providers });
 

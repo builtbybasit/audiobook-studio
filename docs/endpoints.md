@@ -67,7 +67,21 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   and cost before you press it, and both that estimate and the figure the test reports afterwards go
   through the shared pricing engine at the rates in force now — so a probe inside an off-peak window
   or under a promotion is quoted at the price it will actually be charged, in both places.
-- **Voices** (TTS only) — the endpoint’s voice catalogue, discovery and manual voice controls. Voice discovery is simulated.
+- **Voices** (TTS only) — the endpoint’s voice catalogue, discovery and manual voice controls. In
+  the demo discovery is simulated. With a server, **Fetch** asks the server for the voices the
+  saved key can see — a Fish Audio library, OpenAI's documented voices, or an OpenAI-compatible
+  server's `/audio/voices` — and adds the ones not already listed. A Fish endpoint also gets
+  **Public voices**: search Fish's public catalogue by title (or paste an id), filter by language,
+  page through, and add one with a click. A Fish voice is a `reference_id`, public or your own.
+- **Audio** (on the Requests tab, TTS only) — the format every new line is asked for and kept in,
+  the bitrate where the format has one, and the sample rate, each narrowed to what this endpoint's
+  API can be asked for (`speechFormats` in `lib/endpointShapes.ts`). Fish Audio offers WAV
+  (16–44.1 kHz), MP3 (32 or 44.1 kHz; 64, 128 or 192 kbps) and Opus (48 kHz); an OpenAI-shaped
+  endpoint offers the same three with no rate or bitrate. Fish Opus offers only an automatic
+  bitrate: asking it for 24 or 32 kbps came back at about 272 kbps. A change that leaves a rate or
+  bitrate the new format does not have resets it and says what it reset; a base URL saved onto
+  another API does the same. MP3 and Opus are about a tenth of WAV's size, building from them
+  needs `EXPORT_ENCODER=ffmpeg`, and clips already rendered keep the format they were made in.
 - **Expressions** (TTS only) — explicitly configured model support and tag syntax; see [model-specific expressions](audio.md#model-specific-expressions).
 - **Requests** — concurrency as an exact number with a slider whose range grows to fit what you
   type (2,500 is as easy to set as 4), and three separate readouts: configured, in flight now, and

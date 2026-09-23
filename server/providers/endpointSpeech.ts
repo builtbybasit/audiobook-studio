@@ -3,8 +3,9 @@
 // Which endpoint that is, and its key, the job has already decided and hands over as the line's
 // `target` — this module only picks the wire shape. Fish Audio's base URL gets Fish's own request
 // (`fishSpeech.ts`); every other base URL is taken to speak OpenAI's `/audio/speech`
-// (`openaiSpeech.ts`), which is what the compatible local servers copy. Both answer with a plain
-// PCM WAV whose duration was counted from its samples (`wav.ts`), whatever header it came with.
+// (`openaiSpeech.ts`), which is what the compatible local servers copy. Both answer in the format
+// the endpoint asks for (`answer.ts`): a WAV rewritten under a plain header, its duration counted
+// from its samples (`wav.ts`), or an MP3 or Opus file kept as it came, its duration read from it.
 //
 // A line with nowhere to go fails with the reason rather than going somewhere nobody chose: a
 // speaker with no voice, a voice whose endpoint has been deleted, an endpoint that needs a key and

@@ -19,6 +19,7 @@
 import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 import type {
+  AudioFormat,
   EndpointKind,
   Gender,
   ParkedRates,
@@ -64,6 +65,10 @@ export const endpoints = sqliteTable(
     splitAt: text("split_at").$type<SplitMode>().notNull().default("sentence"),
     /** speech only: the rate every line is asked for, in Hz; null = the model's own */
     sampleRate: integer("sample_rate").$type<SampleRate>(),
+    /** speech only: the format every line is asked for and kept as; null = WAV */
+    audioFormat: text("audio_format").$type<AudioFormat>(),
+    /** speech only: MP3 kbps or Opus bps as the API spells it; null = the provider's default */
+    audioBitrate: integer("audio_bitrate"),
     position: integer("position").notNull().default(0),
 
     // ---- scripting rates: USD per 1M tokens ----

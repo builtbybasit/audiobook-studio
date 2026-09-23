@@ -30,6 +30,8 @@ import {
   type EndpointSettings,
   type EndpointSettingsService,
   type StoredEndpoint,
+  type VoiceListPage,
+  type VoiceListQuery,
 } from "@/services/endpointSettings";
 import { ApiError } from "@/services/http";
 import type {
@@ -555,25 +557,74 @@ export const useEndpointsStore = defineStore("endpoints", {
         undo: () => ep.voices.splice(Math.min(i, ep.voices.length), 0, v),
       });
     },
-    // Simulated voice discovery. Most OpenAI-compatible servers (Kokoro-FastAPI, Orpheus…) expose
+    // Voice discovery. Most OpenAI-compatible servers (Kokoro-FastAPI, Orpheus…) expose
     // GET /audio/voices; Fish Audio instead has a per-account model catalogue at the host root,
     // which is authenticated and returns far more than voices, so it is mapped down to the few
-    // fields a voice picker needs.
+    // fields a voice picker needs. With a server answering, the server asks the real endpoint
+    // (`POST /endpoints/voices`); in the demo the simulator stands in for it. Either way what is
+    // found is merged: new ids are added, and nothing already here is touched or removed.
     fetchVoices(ep: Endpoint): Promise<number> {
       const uiStore = useUiStore();
 
       const fish = isFishAudio(ep);
-      const work = discoverVoices(ep);
+      const svc = this._service();
+      let empty = false;
+      const work = svc
+        ? (async () => {
+            ep.fetching = true;
+            try {
+              // The server asks what it has saved, key and base URL alike, so what the page is
+              // still holding goes first.
+              await this.flushWrites();
+              const found = await svc.listVoices(ep.id, { source: "library" });
+              empty = !found.voices.length;
+              return this.mergeVoices(ep, found.voices);
+            } finally {
+              ep.fetching = false;
+            }
+          })()
+        : discoverVoices(ep);
       uiStore.toastLoading(work, {
         loading: `Fetching voices from ${ep.name}\u2026`,
         success: (n) =>
-          n ? `${n} voice${n === 1 ? "" : "s"} added to ${ep.name}` : `${ep.name}: no new voices`,
+          n
+            ? `${n} voice${n === 1 ? "" : "s"} added to ${ep.name}`
+            : empty && fish
+              ? `${ep.name}: your library has no voices \u2014 search the public ones instead`
+              : `${ep.name}: no new voices`,
         error: (e) =>
-          fish && String(e).includes("401")
-            ? `${ep.name}: set the API key first \u2014 the voice library is per account`
-            : `${ep.name}: voice list unavailable`,
+          e instanceof ApiError
+            ? e.status === 404
+              ? `${ep.name} is not saved on the server yet`
+              : `${ep.name}: ${e.message}`
+            : fish && String(e).includes("401")
+              ? `${ep.name}: set the API key first \u2014 the voice library is per account`
+              : `${ep.name}: voice list unavailable`,
       });
       return work.catch(() => 0);
+    },
+    /** Add the voices whose ids this endpoint does not have yet; answers how many that was. */
+    mergeVoices(ep: Endpoint, found: Voice[]): number {
+      const added = found
+        .filter((v) => !ep.voices.some((x) => x.id === v.id))
+        .map((v) => ({ ...v }));
+      ep.voices.push(...added);
+      return added.length;
+    },
+    /**
+     * One page of a public voice search on the server — Fish Audio's catalogue. The answer is only
+     * shown: a voice joins the endpoint when the page adds it (`addVoice`), and the write-behind
+     * saves it. Throws the server's `ApiError`, which the search panel shows where it searched.
+     * Nothing is cached: a search is typed, read and moved past.
+     */
+    async searchVoices(
+      ep: Endpoint,
+      query: Omit<VoiceListQuery, "source">,
+    ): Promise<VoiceListPage> {
+      const svc = this._service();
+      if (!svc) throw new ApiError("Searching voices needs the server", 0);
+      await this.flushWrites();
+      return svc.listVoices(ep.id, { ...query, source: "public" });
     },
     // how many segments of this book a limit would split, for the endpoint card
     splitCount(bookId: string, ep: Endpoint): number {

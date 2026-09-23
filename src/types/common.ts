@@ -21,4 +21,6 @@ export type ApiErrorCode =
   | "too_large"
   | "unsupported_media"
   | "range_not_satisfiable"
+  /** a provider this server called refused or failed; the message is what it said */
+  | "upstream"
   | "internal";

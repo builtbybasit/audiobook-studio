@@ -870,7 +870,11 @@ suite all build something that genuinely plays. It is not an M4B and writes no c
 rather than name a file `.m4b` that is not one, it writes `.wav`, records no markers, and the job's
 log says both in those words. It does not assume the fake's format either: every source file's RIFF
 header is read and checked, so a speech provider answering at 24 kHz or in 16-bit stitches
-correctly and one that changes format mid-chapter is an error naming the file.
+correctly and one that changes format mid-chapter is an error naming the file. A pause is a whole
+number of sample frames in that format (`silenceBytes`), never a byte count rounded from seconds:
+at 16-bit, an odd number of bytes of silence puts every sample after it a byte out of step, which
+plays as noise to the end of the file, and the 8-bit fake could never have shown it. The ffmpeg
+encoder writes its silence the same way.
 
 `EXPORT_ENCODER=ffmpeg` writes what the settings actually asked for — AAC in an M4B with the
 chapter marks a player reads, or an MP3 — and corrects loudness with EBU R128 in two passes when

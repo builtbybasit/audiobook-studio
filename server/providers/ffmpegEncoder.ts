@@ -34,7 +34,13 @@ import type {
   EncodedFile,
   EncoderChoice,
 } from "~/providers/encoder";
-import { byteRate, readWavHeader, silentByte, type WavFormat } from "~/providers/wavEncoder";
+import {
+  byteRate,
+  readWavHeader,
+  silenceBytes,
+  silentByte,
+  type WavFormat,
+} from "~/providers/wavEncoder";
 
 export type FfmpegFormat = "m4b" | "mp3";
 
@@ -124,9 +130,10 @@ async function concatList(
     let path = silences.get(key);
     if (!path) {
       path = join(dir, `silence-${key}.wav`);
-      const samples = Math.round((key / 1000) * byteRate(format));
-      const bytes = new Uint8Array(44 + samples).fill(silentByte(format), 44);
-      bytes.set(wavHeaderFor(format, samples), 0);
+      // Whole sample frames, as the stitcher writes them; see `silenceBytes`.
+      const size = silenceBytes(format, key / 1000);
+      const bytes = new Uint8Array(44 + size).fill(silentByte(format), 44);
+      bytes.set(wavHeaderFor(format, size), 0);
       await writeFile(path, bytes);
       silences.set(key, path);
     }

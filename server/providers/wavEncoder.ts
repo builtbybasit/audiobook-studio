@@ -44,6 +44,17 @@ export const formatLabel = (f: WavFormat): string =>
 export const byteRate = (f: WavFormat): number => (f.sampleRate * f.channels * f.bits) / 8;
 
 /**
+ * How many bytes of silence a pause is: whole sample frames, never a byte count that splits one.
+ *
+ * `seconds × byteRate` rounded to a byte is right only for 8-bit mono, where a frame is one byte.
+ * For 16-bit audio a pause of 0.1234 s at 24 kHz is 5,923 bytes — an odd number — and every sample
+ * after it is read a byte out of step, which plays as loud noise to the end of the file. So the
+ * pause is rounded to a whole number of frames first, and a frame is every channel's sample.
+ */
+export const silenceBytes = (f: WavFormat, seconds: number): number =>
+  Math.round(seconds * f.sampleRate) * ((f.channels * f.bits) / 8);
+
+/**
  * Silence, as this format spells it: 8-bit PCM is unsigned and its zero is 128, everything wider
  * is signed and its zero is 0. Getting this wrong is a click between every clip.
  */
@@ -153,7 +164,7 @@ export function wavEncoder(): AudiobookEncoder {
         // file is not written. The plan never asks for one: a pause follows the line it belongs
         // to, and a gap falls between two chapters that both have audio.
         if (!format || seconds <= 0) return;
-        await append(Buffer.alloc(Math.round(seconds * byteRate(format)), silentByte(format)));
+        await append(Buffer.alloc(silenceBytes(format, seconds), silentByte(format)));
       };
 
       /** A whole clip, header trimmed off. They are one line long, so they are read whole. */

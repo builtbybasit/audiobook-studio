@@ -503,7 +503,7 @@ describe("what follows a renumbered chapter, and what must not", () => {
     const { bookId, volumeId, moved } = twoVolumeBook();
     writeJob(db, job(bookId, moved));
 
-    const gone = deleteVolume(db, bookId, volumeId);
+    const gone = deleteVolume(db, bookId, volumeId).chapters;
     expect(gone).toBeGreaterThan(0);
 
     // A number in a column would have left this job pointing at somebody else's chapter — and a
@@ -536,7 +536,7 @@ describe("what follows a renumbered chapter, and what must not", () => {
     const { bookId, volumeId, moved } = twoVolumeBook();
     writeRequest(db, request(bookId, moved));
 
-    const gone = deleteVolume(db, bookId, volumeId);
+    const gone = deleteVolume(db, bookId, volumeId).chapters;
 
     // The ledger row was not rewritten — it never is — and it still names the right chapter,
     // because what it stored was the chapter itself rather than the number it went by that day.

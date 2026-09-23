@@ -79,6 +79,34 @@ export function listJobs(db: Db | Tx, { bookId }: { bookId?: string } = {}): Job
   return withEvents(db, rows);
 }
 
+/**
+ * Write a book's live jobs' duplicate keys again, from the chapter numbers they now have.
+ *
+ * A job's `chapter_id` follows a renumbering through its foreign key; `active_key` is a string
+ * built from the number and follows nothing. Left alone, a job queued for chapter 7 that became
+ * chapter 4 still says `narration:b:7` — so a second request for chapter 4 is not seen as a
+ * duplicate and is paid for twice, and the new chapter 7 reads as busy when nothing is running on
+ * it. Every key is parked on the job's own id first: `active_key` is unique, and writing chapter
+ * 10's new key while chapter 7's job still holds it would collide mid-way.
+ */
+export function rekeyActive(tx: Tx, bookId: string): void {
+  const live = tx
+    .select({ id: jobs.id, kind: jobs.kind, chapterId: jobs.chapterId })
+    .from(jobs)
+    .where(and(eq(jobs.bookId, bookId), isNotNull(jobs.activeKey)))
+    .all();
+  for (const j of live)
+    tx.update(jobs)
+      .set({ activeKey: `renumbering:${j.id}` })
+      .where(eq(jobs.id, j.id))
+      .run();
+  for (const j of live)
+    tx.update(jobs)
+      .set({ activeKey: activeKey(j.kind, bookId, j.chapterId) })
+      .where(eq(jobs.id, j.id))
+      .run();
+}
+
 /** The live job for this work, if there is one. */
 export function activeJob(
   db: Db | Tx,

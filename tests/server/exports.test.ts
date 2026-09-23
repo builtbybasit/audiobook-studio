@@ -96,7 +96,7 @@ describe("a book's exports over HTTP", () => {
     ).toBe(404);
   });
 
-  test("removing a volume takes the chapters an export claimed off it", async () => {
+  test("removing the volume that was all of an export takes the export with it", async () => {
     const { api, id } = await withExport();
     await api.import<ImportResult>(
       await epubFile({ chapters: [{ title: "Four", paragraphs: story() }] }),
@@ -105,8 +105,9 @@ describe("a book's exports over HTTP", () => {
     await api.request(`/api/books/${id}/confirm`, { method: "POST" });
     await api.request(`/api/books/${id}/volumes/1`, { method: "DELETE" });
     const { body } = await api.request<{ exports: ExportItem[] }>(`/api/books/${id}/exports`);
-    // the export row stays, with no chapters left in it: what the client makes of that is its own
-    expect(body.exports[0].chapterIds).toEqual([]);
+    // Every chapter it claimed went, so it goes too — the rule the page already applies to its own
+    // copy, now kept where the row and its files are.
+    expect(body.exports).toEqual([]);
   });
 });
 

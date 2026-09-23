@@ -20,7 +20,6 @@ import { fail } from "~/lib/errors";
 import { IdParam } from "~/lib/http";
 import { validate } from "~/lib/validate";
 import * as ops from "~/library/ops";
-import { inBackground } from "~/lib/background";
 
 const Ids = v.object({
   ids: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
@@ -226,14 +225,8 @@ export function bookRoutes(
 
   app.delete("/:id/volumes/:volumeId", validate("param", VolumeParam), (c) => {
     const { id, volumeId } = c.req.valid("param");
-    const result = ops.removeVolume(db, id, volumeId);
-    // the last volume going takes the book with it, and the book's clips go the way they do above;
-    // a volume removed from a book that stays leaves its chapters' files behind, for now
-    if (result.removed === "book") {
-      inBackground(files?.removeBook(id), "could not remove a book's clips", { book: id });
-      inBackground(built?.removeBook(id), "could not remove a book's audiobooks", { book: id });
-    }
-    return c.json(result);
+    // the last volume going takes the book with it, files and all; see `removeVolume` for the rest
+    return c.json(ops.removeVolume(db, id, volumeId, { runner, files, built }));
   });
 
   return app;

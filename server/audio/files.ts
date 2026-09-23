@@ -24,6 +24,8 @@ export interface AudioFiles {
   write(bookId: string, bytes: Uint8Array, ext: "wav"): Promise<{ url: string }>;
   /** The file a request names, or null when the request names something that cannot be a file. */
   path(bookId: string, file: string): string | null;
+  /** Some of a book's clips, by file name; one already gone is not an error. */
+  remove(bookId: string, files: readonly string[]): Promise<void>;
   /** Everything a book's clips left on disk; a book that left nothing is not an error. */
   removeBook(bookId: string): Promise<void>;
 }
@@ -40,6 +42,12 @@ export function audioFiles(dir: string): AudioFiles {
     path(bookId, file) {
       if (!BOOK_ID.test(bookId) || !FILE.test(file)) return null;
       return join(dir, bookId, file);
+    },
+    async remove(bookId, files) {
+      for (const file of files) {
+        const path = this.path(bookId, file);
+        if (path) await rm(path, { force: true });
+      }
     },
     async removeBook(bookId) {
       if (!BOOK_ID.test(bookId)) return;

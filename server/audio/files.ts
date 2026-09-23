@@ -13,7 +13,8 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-const BOOK_ID = /^[A-Za-z0-9_-]+$/;
+import { BOOK_ID } from "~/lib/http";
+
 const FILE = /^[a-f0-9-]+\.wav$/;
 
 export interface AudioFiles {

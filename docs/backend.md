@@ -827,7 +827,23 @@ export that owns it (`…/exports/:e/files/:n`) rather than by the file's name o
 no path a request can build to a file this book did not produce; the name goes back on in the
 header that decides what the browser calls it. That header is Latin-1 and a title is not, so the
 name goes in the `filename*` a browser reads as UTF-8, with an ASCII stand-in beside it
-(`content-disposition` writes both); an em dash in the title used to make the download a 500.
+(`content-disposition` writes both); an em dash in the title used to make the download a 500. A version that has been superseded keeps its file until it is forgotten, so an
+older version can still be saved; removing a book removes both directories, and forgetting one
+audiobook removes its files and leaves the rest.
+
+**A book's id is ASCII, and so is every path it names.** The id is the directory both kinds of file
+live under and part of every url that fetches one, and [http.ts](../server/lib/http.ts) holds the
+one pattern the file modules accept. `slugify` makes only what it allows: accents come off
+(`Pokémon` → `pokemon`), the few Latin letters with no base letter are spelled out (`ß` → `ss`,
+`æ` → `ae`), an apostrophe is dropped and anything else separates words. A title that kept its
+`ß` used to be a book whose audio was written and then could never be fetched or removed.
+
+**Removing files is never waited for, and never fatal.** The rows go first and the response does
+not wait on the disk. A promise nobody holds that rejects is an unhandled rejection, which Bun
+exits on — so a removal that met a permission error, or a directory a narration job was still
+writing into, used to take the server down over a leftover directory. Every such removal goes
+through `inBackground` in [background.ts](../server/lib/background.ts), which logs the failure as
+a warning instead.
 
 **Both are served a part at a time.** A clip and an audiobook go out through
 [serve.ts](../server/lib/serve.ts), which answers `Range` — Bun does not, for a `Response` built in a
@@ -836,9 +852,7 @@ fetch handler, and a player that cannot ask for a part cannot seek. Every answer
 the end is a 416 (`range_not_satisfiable`) carrying the size. A malformed header, another unit or
 several ranges at once get the whole file, which a server may always send instead — a media element
 never asks for more than one. `range-parser`, the one Express's `send` uses, reads the header, and
-the length is set outright so a `HEAD` reports it too. A version that has been superseded keeps its file
-until it is forgotten, so an older version can still be saved; removing a book removes both
-directories, and forgetting one audiobook removes its files and leaves the rest.
+the length is set outright so a `HEAD` reports it too.
 
 #### The encoder, and what it will not pretend
 

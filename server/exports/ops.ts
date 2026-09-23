@@ -6,6 +6,7 @@ import * as exports from "~/db/exports";
 import type { AudiobookFiles } from "~/exports/files";
 import { conflict, notFound } from "~/lib/errors";
 import { requireBook } from "~/library/ops";
+import { inBackground } from "~/lib/background";
 
 export function bookExports(db: Db, bookId: string): ExportItem[] {
   requireBook(db, bookId);
@@ -37,7 +38,10 @@ export function removeExport(db: Db, bookId: string, id: number, files?: Audiobo
   const tokens = exports.exportFileTokens(db, id);
   exports.deleteExport(db, id);
   // Nothing is waiting on the disk, and a response that did would be slower for no one's benefit.
-  void files?.remove(bookId, tokens);
+  inBackground(files?.remove(bookId, tokens), "could not remove an audiobook's files", {
+    book: bookId,
+    export: id,
+  });
 }
 
 /**

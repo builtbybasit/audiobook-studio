@@ -19,6 +19,7 @@ import { EpubParseError, parseEpub, type ParsedEpub } from "~/epub/parse";
 import { assembleBook, assembleVolume } from "~/import/assemble";
 import { AppError, conflict, notFound } from "~/lib/errors";
 import { slugify } from "~/lib/http";
+import { inBackground } from "~/lib/background";
 
 /**
  * Enough of a logger to say what an import found. The request logger `hono-pino` puts on the
@@ -256,8 +257,8 @@ export function removeBook(
 ): void {
   requireBook(db, bookId);
   library.deleteBook(db, bookId);
-  void files?.removeBook(bookId);
-  void built?.removeBook(bookId);
+  inBackground(files?.removeBook(bookId), "could not remove a book's clips", { book: bookId });
+  inBackground(built?.removeBook(bookId), "could not remove a book's audiobooks", { book: bookId });
 }
 
 export type Removed = { removed: "book" } | { removed: "volume"; chapters: number };

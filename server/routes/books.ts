@@ -20,6 +20,7 @@ import { fail } from "~/lib/errors";
 import { IdParam } from "~/lib/http";
 import { validate } from "~/lib/validate";
 import * as ops from "~/library/ops";
+import { inBackground } from "~/lib/background";
 
 const Ids = v.object({
   ids: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
@@ -229,8 +230,8 @@ export function bookRoutes(
     // the last volume going takes the book with it, and the book's clips go the way they do above;
     // a volume removed from a book that stays leaves its chapters' files behind, for now
     if (result.removed === "book") {
-      void files?.removeBook(id);
-      void built?.removeBook(id);
+      inBackground(files?.removeBook(id), "could not remove a book's clips", { book: id });
+      inBackground(built?.removeBook(id), "could not remove a book's audiobooks", { book: id });
     }
     return c.json(result);
   });

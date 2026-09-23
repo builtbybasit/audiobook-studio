@@ -155,11 +155,12 @@ export function createRunner(
     // whatever happens, and the worker moves on to the next job.
     try {
       // A stop is not a cancellation. The row is left `running`, exactly as a crash would leave it,
-      // and `recoverInterrupted` at the next start is the one thing that puts it back — so a stop
-      // and a crash are the same case to it, and there is one recovery path rather than two.
+      // and `recoverInterrupted` at the next start is the one thing that puts it back — so there is
+      // one recovery path rather than two. What a stop does not do is count as a crash: the start
+      // it interrupted is given back, so only a job that keeps taking the process down runs out.
       if (status === "cancelled" && current?.reason === "stop") {
         queue.appendEvent(db, job.id, "The server stopped while this ran", "warning");
-        queue.setProgress(db, job.id, 0);
+        queue.handBack(db, job.id);
         jlog.info("job handed back to the queue");
         return;
       }

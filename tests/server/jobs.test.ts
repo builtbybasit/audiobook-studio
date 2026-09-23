@@ -8,10 +8,15 @@
 import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
-import type { Book, Chapter, Job, Segment } from "@/types";
+import type { Book, Chapter, Job, Profile, Segment } from "@/types";
+import { credentials } from "@/lib/credentials";
+import { scriptParts } from "@/lib/scripting";
+import { makeProfiles } from "@/mock/fixtures/profiles";
 import * as queue from "~/db/jobs";
 import { readScript, writeScript } from "~/db/script";
 import { jobs } from "~/db/schema";
+import { fakeScriptingProvider, sleep } from "~/providers/fake";
+import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import { epubFile, story } from "../support/epub";
 import {
   collectingLogger,
@@ -58,8 +63,8 @@ async function shelved(api = testApi(), titles = ["One", "Two", "Three"]) {
   return { api, id: body.book.id };
 }
 
-const script = (api: ReturnType<typeof testApi>, id: string, ids: number[]) =>
-  api.request<Queued>(`/api/books/${id}/chapters/script`, jsonBody({ ids }));
+const script = (api: ReturnType<typeof testApi>, id: string, ids: number[], profile?: string) =>
+  api.request<Queued>(`/api/books/${id}/chapters/script`, jsonBody({ ids, profile }));
 
 const chaptersOf = async (api: ReturnType<typeof testApi>, id: string) =>
   (await api.request<ImportResult>(`/api/books/${id}`)).body.chapters;
@@ -622,5 +627,150 @@ describe("the queue over HTTP", () => {
     const text = await api.request<Failure>("/api/books/b/chapters/one/text");
     expect(text.status).toBe(400);
     expect(text.body.error.detail).toContain("chapterId");
+  });
+});
+
+// ---- a chapter cut into the requests its profile allows ----
+
+/** The seeded OpenAI profile, cut small enough that a chapter takes several requests. */
+const small = (over: Partial<Profile> = {}): Profile => ({
+  ...makeProfiles().find((p) => p.id === "openai")!,
+  maxChars: 700,
+  splitAt: "sentence",
+  concurrency: 2,
+  ...over,
+});
+
+/** Saved to the server the way the Endpoints page saves it, with the credential it names. */
+async function saveProfile(api: ReturnType<typeof testApi>, profile: Profile) {
+  const { status } = await api.request("/api/endpoints", {
+    ...jsonBody({
+      endpoints: [],
+      profiles: [profile],
+      credentials: credentials.map((c) => ({ ...c })),
+    }),
+    method: "PUT",
+  });
+  expect(status).toBe(200);
+}
+
+/**
+ * The fake, remembering what each request was sent and what it answered. `wait` holds a request
+ * back by its text, so a test can make the chunks come back out of order.
+ */
+function recording(wait: (text: string) => number = () => 0) {
+  const inner = fakeScriptingProvider();
+  const sent: string[] = [];
+  const answered = new Map<string, ScriptedLine[]>();
+  const provider: ScriptingProvider = {
+    name: inner.name,
+    async script(input) {
+      sent.push(input.text);
+      await sleep(wait(input.text), input.signal);
+      const lines = await inner.script(input);
+      answered.set(input.text, lines);
+      return lines;
+    },
+  };
+  return { provider, sent, answered };
+}
+
+describe("a chapter longer than its scripting profile takes", () => {
+  test("goes out as the requests the profile previews, and lands as one script numbered 1 to n", async () => {
+    const whole = recording();
+    const one = await shelved(testApi({ scripting: whole.provider }), ["One"]);
+    await script(one.api, one.id, [1]);
+    await one.api.runner.idle();
+    const text = whole.sent[0];
+
+    const cut = recording();
+    const { api, id } = await shelved(testApi({ scripting: cut.provider }), ["One"]);
+    const profile = small();
+    await saveProfile(api, profile);
+    const { body } = await script(api, id, [1], "openai");
+    await api.runner.idle();
+
+    // exactly the Endpoints page's preview of this chapter, which rejoins to the chapter
+    const expected = scriptParts(text, profile);
+    expect(expected.length).toBeGreaterThan(2);
+    expect([...cut.sent].sort()).toEqual([...expected].sort());
+    expect(cut.sent.join("").length).toBe(text.length);
+    expect(cut.sent.every((t) => t.length <= 700)).toBe(true);
+
+    // stitched in the chapter's order, whatever order the answers came in, and numbered afresh
+    const { segments } = (await api.request<ScriptResult>(`/api/books/${id}/chapters/1/script`))
+      .body;
+    const lines = expected.flatMap((t) => cut.answered.get(t)!);
+    expect(segments.map((s) => s.text)).toEqual(lines.map((l) => l.text));
+    expect(segments.map((s) => s.id)).toEqual(segments.map((_, i) => i + 1));
+
+    const job = await jobById(api, body.jobs[0].id);
+    expect(job.status).toBe("done");
+    expect(job.scriptRun).toMatchObject({
+      profile: { id: "openai", maxChars: 700 },
+      requests: expected.length,
+      completed: expected.length,
+      active: 0,
+    });
+    expect(job.activity?.map((e) => e.message)).toContain(
+      `Request ${expected.length} of ${expected.length} answered`,
+    );
+  });
+
+  test("keeps the chapter's order when a later request answers first", async () => {
+    const early = recording();
+    const probe = await shelved(testApi({ scripting: early.provider }), ["One"]);
+    await script(probe.api, probe.id, [1]);
+    await probe.api.runner.idle();
+    const [first] = scriptParts(early.sent[0], small());
+
+    // the first chunk is held back while the others come in
+    const late = recording((text) => (text === first ? 60 : 0));
+    const { api, id } = await shelved(testApi({ scripting: late.provider }), ["One"]);
+    await saveProfile(api, small({ concurrency: 4 }));
+    await script(api, id, [1], "openai");
+    await api.runner.idle();
+    const { segments } = (await api.request<ScriptResult>(`/api/books/${id}/chapters/1/script`))
+      .body;
+    expect(segments[0].text).toBe(late.answered.get(first)![0].text);
+  });
+
+  test("a request that fails fails the chapter, says which it was, and writes nothing", async () => {
+    let calls = 0;
+    const inner = fakeScriptingProvider();
+    const failing: ScriptingProvider = {
+      name: inner.name,
+      script: (input) =>
+        ++calls === 2 ? Promise.reject(new Error("The model timed out")) : inner.script(input),
+    };
+    const { api, id } = await shelved(testApi({ scripting: failing }), ["One"]);
+    await saveProfile(api, small({ concurrency: 1 }));
+    const { body } = await script(api, id, [1], "openai");
+    await api.runner.idle();
+
+    const job = await jobById(api, body.jobs[0].id);
+    expect(job.status).toBe("failed");
+    expect(job.activity?.at(-1)?.detail?.error).toMatch(
+      /^Request 2 of \d+ failed: The model timed out$/,
+    );
+    const { segments } = (await api.request<ScriptResult>(`/api/books/${id}/chapters/1/script`))
+      .body;
+    expect(segments).toEqual([]);
+    expect((await chaptersOf(api, id))[0].scripting).not.toBe("done");
+  });
+
+  test("a profile this server was never sent is not refused: the chapter goes whole, and the job says why", async () => {
+    const whole = recording();
+    const { api, id } = await shelved(testApi({ scripting: whole.provider }), ["One"]);
+    const { status, body } = await script(api, id, [1], "openai");
+    expect(status).toBe(202);
+    await api.runner.idle();
+    expect(whole.sent.length).toBe(1);
+    const job = await jobById(api, body.jobs[0].id);
+    expect(job.status).toBe("done");
+    expect(job.scriptRun).toBeUndefined();
+    expect(job.activity?.map((e) => e.message)).toContain(
+      "The scripting profile “openai” is not saved on this server; the chapter goes whole",
+    );
   });
 });

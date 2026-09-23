@@ -644,7 +644,8 @@ otherwise be a build failing halfway.
 
 `POST /api/books/:id/chapters/script` answers with the jobs it made, the chapters it left out and
 why (`excluded`, `busy`, `missing`), and the book's chapters as they now stand — so the client can
-say "2 already being scripted" instead of waiting for work that is not coming.
+say "2 already being scripted" instead of waiting for work that is not coming. The body can name
+the scripting `profile` the page has chosen; see [a chapter in chunks](#a-chapter-in-chunks).
 
 `GET /api/books` carries each book's chapter counts (`chapters: { total, included, scripted,
 narrated }`), read in one grouped query rather than one per book. The shelf lists books without
@@ -778,6 +779,34 @@ the real runner and a scripting model that reads the prose and never the network
   only when a run that was meant to give it one could not.
 - **The job log is bounded** the same way the frontend's is: the newest thousand events, with
   `dropped_events` counting what is no longer there.
+
+### A chapter in chunks
+
+A chapter longer than its scripting profile's `maxChars` goes to the provider as several requests,
+cut exactly where the Endpoints page's chunk preview cuts it: `scriptParts` in
+[src/lib/scripting.ts](../src/lib/scripting.ts), the demo's own call, at the profile's `splitAt`
+and falling down to a clause, a word, a hard cut, with the source's whitespace kept so the pieces
+rejoin to the chapter. The profile is the one the browser has chosen, named in the request's body
+and read from the endpoints saved to the server when the run is **queued** — copied onto each job
+as `scriptRun.profile`, so an edit to it afterwards does not re-cut a run already waiting. One the
+server was never sent is not a refusal (a fresh server has no endpoints until the page saves them):
+the chapter goes whole, and its job's log says why. No profile named, or a limit of 0, is the
+chapter whole, as before.
+
+Up to the profile's `concurrency` requests are out at once. `scriptRun` counts them — `requests`,
+`completed`, `active` — which is what the Queue's job details and the Scripting page read; the bar
+is the chunks' progress together, so it never runs backwards when the next one starts counting
+from zero. The answers are stitched in the chapter's order, whichever came back first, and the lines
+numbered 1 to n afresh, then written in the one transaction a whole chapter is. A request that
+fails stops the others and fails the chapter — `Request 2 of 5 failed: …` — and nothing is
+written: half a script is not a script. The history entry names the profile and the provider as
+its model. Nothing is priced or held against the budget yet (see
+[what is not done yet](#what-is-not-done-yet)).
+
+A cut can fall inside a quotation or between a line and the "said Mara" that names its speaker —
+the preview shows where — and the fake then reads each side on its own, so a quoted line can come
+back as narration or `Unknown`. That is what the Scripting page's "smaller chunks" button and the
+preview are for; a real provider will want the same care.
 
 ### The provider, and where a key would live
 
@@ -1177,7 +1206,7 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [endpoints.test.ts](../tests/server/endpoints.test.ts)           | Saved and refused whole; tags and sample rate on a line; one rate a file; a long line sent in parts         |
 | [covers.test.ts](../tests/server/covers.test.ts)                 | The EPUB's cover kept, an upload and its refusals, a cover in an M4B and an MP3, the book's details as tags |
 | [markdown.test.ts](../tests/server/markdown.test.ts)             | The converter's DOM bracket, and reading Markdown back                                                      |
-| [jobs.test.ts](../tests/server/jobs.test.ts)                     | The queue: dedupe, cancel, restart, revision conflicts, HTTP                                                |
+| [jobs.test.ts](../tests/server/jobs.test.ts)                     | The queue: dedupe, cancel, restart, revision conflicts, HTTP; a chapter in a profile's chunks               |
 | [narration.test.ts](../tests/server/narration.test.ts)           | Narration: scopes, replacement, failure, cancel, restart, dictionary, files                                 |
 | [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)         | Editing against a revision, the history rule, what a run writes                                             |
 | [cast.test.ts](../tests/server/cast.test.ts)                     | The cast a run leaves, rename, merge, removal, exact undo                                                   |
@@ -1238,10 +1267,6 @@ each because a route or a table's writer is missing rather than by oversight:
   key say. A chapter's duration
   is its clips plus the book's pacing, which a pacing change re-times on the server for every
   chapter that has been narrated.
-- **A chapter goes to the scripting model whole.** The scripting profile's `maxChars` and `splitAt`
-  are saved with it, and the demo cuts a chapter into chunks by them, but the server's scripting
-  job sends the chapter in one request; cutting it means stitching the model's answers for each
-  chunk back into one script, which the fake has never needed.
 - **An update under ffmpeg re-encodes everything.** Carrying a chapter over is real under the
   stitcher and refused under ffmpeg, for the reason [the encoder](#the-encoder-and-what-it-will-not-pretend)
   gives. Making it real there means keeping an encoded file per chapter and joining those with

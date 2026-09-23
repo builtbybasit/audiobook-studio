@@ -14,18 +14,20 @@
 // `none` if it never did, and `failed` only when a run that was meant to give it one could not.
 import { and, count, eq } from "drizzle-orm";
 
-import type { Job, Segment } from "@/types";
+import type { Job, Profile, Segment } from "@/types";
+import { scriptParts } from "@/lib/scripting";
 import { ensureSpeakers } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { capture } from "~/db/history";
-import { activeJob, getJob, nextRunId } from "~/db/jobs";
+import { readProfiles } from "~/db/endpoints";
+import { activeJob, appendEvent, getJob, nextRunId, setScriptRun } from "~/db/jobs";
 import * as library from "~/db/library";
 import { chapters, segments } from "~/db/schema";
 import { ScriptConflict, readScript, replaceScript } from "~/db/script";
 import { plainText } from "~/epub/markdown";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
-import type { ScriptingProvider } from "~/providers/scripting";
+import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 
 /** The status a chapter reads as when no job is running on it: asked of its script, not remembered. */
 export function settledScriptingStatus(
@@ -81,38 +83,112 @@ export function locate(db: Db | Tx, uid: string): { bookId: string; id: number }
     .get();
 }
 
+/**
+ * The chapter cut into the requests its profile allows, exactly as the Endpoints page previews
+ * them: `scriptParts` is the demo's own call, with the source's whitespace kept so the pieces
+ * rejoin to the chapter. No profile, or a limit of 0, is the chapter whole.
+ */
+function chunksOf(text: string, profile: Profile | undefined): string[] {
+  const parts = profile ? scriptParts(text, profile) : [];
+  return parts.length ? parts : [text];
+}
+
 export function scriptingHandler(provider: ScriptingProvider): JobHandler {
   return {
     async run(ctx: JobContext): Promise<void> {
       const { job, db, signal } = ctx;
       if (job.chapterId == null) throw new Error("A scripting job is for one chapter");
       const chapter = readChapter(db, job.bookId, job.chapterId);
+      // The profile as it was when the run was queued, not as it has been edited since: a run
+      // keeps the chunking it was previewed and started with.
+      const queued = job.scriptRun;
+      const chunks = chunksOf(chapter.text, queued?.profile);
       setChapterScripting(db, job.bookId, job.chapterId, "running", 0);
       ctx.note("Scripting started", "info", {
         provider: provider.name,
         characters: chapter.text.length,
+        ...(queued ? { profile: queued.profile.name, requests: chunks.length } : {}),
       });
 
+      // Each chunk's share of the chapter's progress, so the bar counts across all of them and
+      // never runs backwards when a provider starts counting again for the next one.
+      const share = chunks.map(() => 0);
       let lastPct = -1;
-      const lines = await provider.script({
-        title: chapter.title,
-        text: chapter.text,
-        signal,
-        progress: (done, total) => {
-          // a provider that keeps reporting after it was told to stop must not mark the chapter
-          // running again once settling has put it back
-          if (signal.aborted) return;
-          const pct = total ? Math.round((done / total) * 100) : 100;
-          if (pct === lastPct) return;
-          lastPct = pct;
-          ctx.progress(pct);
-          const at = locate(db, chapter.uid);
-          if (at) setChapterScripting(db, at.bookId, at.id, "running", pct);
-        },
-      });
+      const report = (): void => {
+        // a provider that keeps reporting after it was told to stop must not mark the chapter
+        // running again once settling has put it back
+        if (signal.aborted) return;
+        const pct = Math.round((share.reduce((a, b) => a + b, 0) / chunks.length) * 100);
+        if (pct === lastPct) return;
+        lastPct = pct;
+        ctx.progress(pct);
+        const at = locate(db, chapter.uid);
+        if (at) setChapterScripting(db, at.bookId, at.id, "running", pct);
+      };
+      let completed = 0;
+      let active = 0;
+      const counted = (): void => {
+        if (queued && !signal.aborted)
+          setScriptRun(db, job.id, { ...queued, requests: chunks.length, completed, active });
+      };
+
+      // Up to the profile's concurrency at once, the answers kept in the chapter's order. The
+      // first chunk that fails stops the others and fails the chapter: half a script is never
+      // written, and the attempt says which request it was.
+      const answers: ScriptedLine[][] = chunks.map(() => []);
+      const stop = new AbortController();
+      const onAbort = (): void => stop.abort(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      let next = 0;
+      const worker = async (): Promise<void> => {
+        while (next < chunks.length && !stop.signal.aborted) {
+          const i = next++;
+          active++;
+          counted();
+          try {
+            answers[i] = await provider.script({
+              title: chapter.title,
+              text: chunks[i],
+              signal: stop.signal,
+              progress: (done, total) => {
+                share[i] = total ? done / total : 1;
+                report();
+              },
+            });
+          } catch (e) {
+            if (signal.aborted || chunks.length === 1) throw e;
+            throw new Error(
+              `Request ${i + 1} of ${chunks.length} failed: ${e instanceof Error ? e.message : String(e)}`,
+              { cause: e },
+            );
+          } finally {
+            active--;
+          }
+          share[i] = 1;
+          completed++;
+          counted();
+          report();
+          if (chunks.length > 1)
+            ctx.note(`Request ${i + 1} of ${chunks.length} answered`, "info", {
+              characters: chunks[i].length,
+              lines: answers[i].length,
+            });
+        }
+      };
+      try {
+        const width = Math.max(1, Math.min(queued?.profile.concurrency ?? 1, chunks.length));
+        await Promise.all(Array.from({ length: width }, worker));
+      } catch (e) {
+        stop.abort(e);
+        throw e;
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+      }
       if (signal.aborted) throw signal.reason;
 
-      const segs: Segment[] = lines.map((l, i) => ({
+      // Stitched in reading order and numbered afresh: a line belongs to the chunk it came back
+      // in, and the ids are the chapter's, 1 to n.
+      const segs: Segment[] = answers.flat().map((l, i) => ({
         id: i + 1,
         type: l.type,
         speaker: l.speaker,
@@ -137,7 +213,12 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             tx,
             at.bookId,
             at.id,
-            { kind: "scripted", profile: provider.name, again: previous.length > 0 },
+            {
+              kind: "scripted",
+              profile: queued?.profile.name ?? provider.name,
+              ...(queued ? { model: provider.name } : {}),
+              again: previous.length > 0,
+            },
             previous,
             segs,
           );
@@ -205,7 +286,7 @@ export function enqueueScripting(
   runner: Runner,
   bookId: string,
   ids: readonly number[],
-  { provider }: { provider: string },
+  { provider, profile }: { provider: string; profile?: string },
 ): ScriptingQueued {
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
@@ -221,6 +302,21 @@ export function enqueueScripting(
     else if (activeJob(db, "scripting", bookId, id)) skipped.push({ id, why: "busy" });
     else targets.push(id);
   }
+
+  // The profile is read once, here, and kept on every job of the run. One the browser names but
+  // this server was never sent is not a refusal — a fresh server has no endpoints until the page
+  // saves them — so its chapters go whole, and each job says why.
+  const chosen = profile ? readProfiles(db).find((p) => p.id === profile) : undefined;
+  const run: Job["scriptRun"] = chosen && {
+    profile: chosen,
+    requests: 0,
+    completed: 0,
+    active: 0,
+    reserved: 0,
+    cost: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+  };
 
   const runId = nextRunId(db);
   const jobs: Job[] = [];
@@ -239,8 +335,16 @@ export function enqueueScripting(
         total: targets.length,
       },
       // in the same transaction as the row, so it cannot land after the worker has moved on
+      ...(run ? { run: { scriptRun: run } } : {}),
       onCreated: (tx) => setChapterScripting(tx, bookId, id, "queued", 0),
     });
+    if (profile && !chosen)
+      appendEvent(
+        db,
+        job.id,
+        `The scripting profile “${profile}” is not saved on this server; the chapter goes whole`,
+        "warning",
+      );
     jobs.push(job);
   });
   return { jobs, skipped, runId };

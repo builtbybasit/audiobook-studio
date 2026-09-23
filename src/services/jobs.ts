@@ -53,8 +53,11 @@ export interface JobsService {
   remove(id: number): Promise<void>;
   /** Clear the history; live jobs stay. Returns how many went. */
   clear(): Promise<number>;
-  /** Script these chapters of a book, as one run. */
-  scriptChapters(bookId: string, ids: number[]): Promise<ScriptingQueued>;
+  /**
+   * Script these chapters of a book, as one run, cutting each into the requests `profile` allows —
+   * the scripting profile chosen on the page, which the server reads from the endpoints saved to it.
+   */
+  scriptChapters(bookId: string, ids: number[], profile?: string): Promise<ScriptingQueued>;
   /** Narrate these chapters of a book, as one run, at the scope named. */
   narrateChapters(bookId: string, ids: number[], scope: NarrationScope): Promise<NarrationQueued>;
   /** Render these lines of a chapter again, each beside the clip it may replace, as one job. */
@@ -91,8 +94,11 @@ export class HttpJobsService implements JobsService {
     return (await this.http.post<{ removed: number }>("/jobs/clear")).removed;
   }
 
-  scriptChapters(bookId: string, ids: number[]): Promise<ScriptingQueued> {
-    return this.http.post<ScriptingQueued>(`/books/${seg(bookId)}/chapters/script`, { ids });
+  scriptChapters(bookId: string, ids: number[], profile?: string): Promise<ScriptingQueued> {
+    return this.http.post<ScriptingQueued>(`/books/${seg(bookId)}/chapters/script`, {
+      ids,
+      ...(profile ? { profile } : {}),
+    });
   }
 
   narrateChapters(bookId: string, ids: number[], scope: NarrationScope): Promise<NarrationQueued> {

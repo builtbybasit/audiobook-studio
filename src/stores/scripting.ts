@@ -322,7 +322,11 @@ export const useScriptingStore = defineStore("scripting", {
       const svc = activeJobsService();
       if (!svc) return;
       try {
-        const { jobs, skipped, chapters } = await svc.scriptChapters(bookId, ids);
+        const { jobs, skipped, chapters } = await svc.scriptChapters(
+          bookId,
+          ids,
+          this.scriptSettings.profile,
+        );
         libraryStore.chapters[bookId] = chapters;
         // the queue moved: whoever reads it reads it again, and the poll takes it from there
         await jobsStore._changed();

@@ -5,6 +5,9 @@
 // which the Voices tab searches a page at a time. A Fish voice's id is the model's `_id` — the
 // `reference_id` a line is spoken with — so a voice found either way is ready to use.
 //
+// Gemini's prebuilt voices are written down in its speech guide, so they are answered without a
+// request; ElevenLabs lists an account's voices at `GET /v2/voices`, a page at a time.
+//
 // An OpenAI-shaped endpoint has no standard way to say what voices it has. OpenAI itself lists its
 // built-in voices only in its documentation, so for `api.openai.com` the list is that one, written
 // down here. The local servers that copy OpenAI's API mostly answer `GET /audio/voices`
@@ -17,11 +20,15 @@ import {
   fishApiRoot,
   fishSampleOf,
   fishVoiceLabel,
+  isElevenLabs,
   isFishAudio,
+  isGemini,
   voicesFromFishModels,
   type FishModel,
 } from "@/lib/endpointShapes";
 import type { FoundVoice, Gender, Voice } from "@/types";
+import { elevenLabsHeaders, elevenLabsRoot } from "~/providers/elevenLabsSpeech";
+import { GEMINI_VOICES } from "~/providers/geminiSpeech";
 import { call, jsonHeaders, ProviderError, requireKey, type CallOptions } from "~/providers/http";
 import type { ProviderTarget } from "~/providers/target";
 
@@ -179,6 +186,43 @@ export function endpointVoiceLister(options: Omit<CallOptions, "signal"> = {}): 
     };
   }
 
+  /**
+   * An ElevenLabs account's voices — premade, cloned, designed and those saved from its library —
+   * a hundred a page, up to ten pages. Gender is one of a voice's free-form labels, when it has it.
+   */
+  async function elevenLabsVoices(target: ProviderTarget, signal: AbortSignal): Promise<VoicePage> {
+    const voices: Voice[] = [];
+    let token: string | null = null;
+    let more = true;
+    for (let page = 1; more && page <= LIBRARY_PAGES; page++) {
+      const q = new URLSearchParams({ page_size: String(LIBRARY_PAGE) });
+      if (token) q.set("next_page_token", token);
+      const res = await call(
+        target,
+        `${new URL(elevenLabsRoot(target.baseUrl)).origin}/v2/voices?${q}`,
+        { method: "GET", headers: elevenLabsHeaders(target) },
+        { signal, ...options },
+      );
+      const body = (await res.json().catch(() => null)) as {
+        voices?: { voice_id?: unknown; name?: unknown; labels?: Record<string, unknown> }[];
+        has_more?: unknown;
+        next_page_token?: unknown;
+      } | null;
+      for (const v of body?.voices ?? []) {
+        if (typeof v.voice_id !== "string" || !v.voice_id) continue;
+        const gender = String(v.labels?.gender ?? "").toLowerCase();
+        voices.push({
+          id: v.voice_id,
+          label: typeof v.name === "string" && v.name.trim() ? v.name.trim() : v.voice_id,
+          gender: gender === "male" ? "m" : gender === "female" ? "f" : "?",
+        });
+      }
+      token = typeof body?.next_page_token === "string" ? body.next_page_token : null;
+      more = body?.has_more === true && !!token;
+    }
+    return { voices, total: voices.length, page: 1, hasMore: more };
+  }
+
   async function openAiShaped(target: ProviderTarget, signal: AbortSignal): Promise<VoicePage> {
     if (isOpenAi(target)) {
       const voices = OPENAI_VOICES.map((id) => ({
@@ -226,7 +270,14 @@ export function endpointVoiceLister(options: Omit<CallOptions, "signal"> = {}): 
           );
         return fishPublic(target, query, signal);
       }
-      return fish ? fishLibrary(target, signal) : openAiShaped(target, signal);
+      if (fish) return fishLibrary(target, signal);
+      if (isGemini(target)) {
+        // the prebuilt voices, written down in Google's guide: nothing to ask for
+        const voices = GEMINI_VOICES.map((id) => ({ id, label: id, gender: "?" as const }));
+        return { voices, total: voices.length, page: 1, hasMore: false };
+      }
+      if (isElevenLabs(target)) return elevenLabsVoices(target, signal);
+      return openAiShaped(target, signal);
     },
   };
 }

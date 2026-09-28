@@ -864,14 +864,34 @@ audiobook that silently skips a paragraph is the worst thing this job could do. 
 order, so it catches a dropped sentence but not a moved one. A bad answer is not retried by the
 provider, so a failure never spends tokens twice without anyone asking.
 
-**Speech** ([endpointSpeech.ts](../server/providers/endpointSpeech.ts)) goes to Fish Audio when the
-base URL is Fish's and to OpenAI's `/audio/speech` shape otherwise (OpenAI, Kokoro-FastAPI, …):
+**Speech** ([endpointSpeech.ts](../server/providers/endpointSpeech.ts)) picks the wire shape from
+the base URL: Fish Audio's, Google's Gemini API, ElevenLabs', and OpenAI's `/audio/speech` for
+everything else (OpenAI, Kokoro-FastAPI, vLLM-Omni, …):
 
 - Fish ([fishSpeech.ts](../server/providers/fishSpeech.ts)): `POST /v1/tts` with the model in a
   `model` header, the voice as `reference_id`, `format: "wav"` and `normalize`. Its WAV rates are
   8, 16, 24, 32 and 44.1 kHz, 44.1 when none is asked for; another rate fails before the request.
   The line's direction is not written in — the job already placed the endpoint's configured
   expression tags, and a free-text cue would be words nobody configured.
+- Gemini ([geminiSpeech.ts](../server/providers/geminiSpeech.ts)): `POST
+{base}/models/{model}:generateContent` with the key in `x-goog-api-key`, asking for the AUDIO
+  modality in one voice. A 3.8 model is asked for WAV through `responseFormat` (at the endpoint's
+  rate, 16 or 24 kHz, when it names one), names the voice as `voiceConfig.voice`, and gets the
+  line's instructions as the part's `speechMetadata.style` — 3.8 reads the text word for word, so a
+  direction written into it would be spoken. A legacy preview (3.1 and before) takes none of that:
+  `prebuiltVoiceConfig.voiceName`, no style, and it answers raw 24 kHz PCM, which is put under a
+  WAV header. The answer is JSON, the audio base64 in the first candidate; its `usageMetadata` —
+  text tokens in, audio tokens out, which is what Google bills — is reported to the ledger, so a
+  Gemini line is priced from Google's count rather than estimated. The voice list is the guide's
+  thirty prebuilt voices, answered without a request; the Test button reads `GET /models/{model}`.
+- ElevenLabs ([elevenLabsSpeech.ts](../server/providers/elevenLabsSpeech.ts)): `POST
+/v1/text-to-speech/{voice_id}` with the key in `xi-api-key`, `{ text, model_id }`, and an
+  `output_format` that names the rate and, for MP3, the bitrate (`wav_24000` when nothing is set,
+  which every plan may ask for; `mp3_44100_128`). No instructions field — `eleven_v3` takes audio
+  tags in the text, from the Expressions tab. The answer is the audio itself; its
+  `character-cost` header, when present, is reported as the characters billed. Voices come from
+  `GET /v2/voices` a hundred a page; the Test button reads `GET /v1/models` and says when the
+  configured model is not on it.
 - OpenAI-shaped ([openaiSpeech.ts](../server/providers/openaiSpeech.ts)): `model`, `input`,
   `voice`, `response_format: "wav"`, and the line's instructions (the speaker's style and the
   line's direction, as the clip records them) except on `tts-1`. This API cannot be asked for a
@@ -1437,11 +1457,13 @@ each because a route or a table's writer is missing rather than by oversight:
   for it.
 - **The opening balance has no writer.** `opening_spend` is summed into a book's spending, but only
   the seeded world has one; a book imported on the server starts at zero.
-- **Gemini's speech API has no adapter.** Its presets' base URL is neither Fish's nor OpenAI's
-  shape, so it is offered the OpenAI table and a request would go to `/audio/speech`, which it does
-  not serve. It needs a `generateContent` (or `interactions`) request before it can be called. The
-  3.8 models (Flash TTS, Flash-Lite TTS) answer a unary request with WAV — 24 kHz, 16-bit mono —
-  where the legacy 3.1 preview answered raw PCM, so an adapter for 3.8 keeps the file as it comes.
+- **Gemini is WAV only, and ElevenLabs has no Opus.** Gemini's reference lists MP3 and Ogg Opus
+  answers, and ElevenLabs offers Opus, but neither has been tried against this server's readers,
+  so neither is offered yet. Gemini's extended voice library (`GET /v1beta/voices`) is not listed
+  either; its voices can be added by id.
+- **OpenAI's `gpt-4o-mini-tts` audio half is an assumption.** OpenAI bills audio tokens out but
+  publishes no tokens-per-second figure and reports no usage, so the preset leaves the endpoint's
+  setting (25) in place and every figure that leans on it says so.
 - **Undoing an endpoint's removal brings it back without its key**, since the save removed the row
   the key was on.
 - **An update under ffmpeg re-encodes everything.** Carrying a chapter over is real under the

@@ -45,8 +45,20 @@ export const KIND_PATH: Record<EndpointKind, string> = {
 export const isFishAudio = (e: Pick<Endpoint, "baseUrl">): boolean =>
   /(^|\/\/)([a-z0-9-]+\.)*fish\.audio(\/|$)/i.test(e.baseUrl);
 
-export function ttsRequestPath(e: Pick<Endpoint, "baseUrl">): string {
-  return isFishAudio(e) ? "/tts" : KIND_PATH.tts;
+/** Google's Gemini API: speech is a `generateContent` call on the model, answered as JSON. */
+export const isGemini = (e: Pick<Endpoint, "baseUrl">): boolean =>
+  /(^|\/\/)generativelanguage\.googleapis\.com(\/|:|$)/i.test(e.baseUrl);
+
+/** ElevenLabs: the voice is in the path and the model in the body, keyed by `xi-api-key`. */
+export const isElevenLabs = (e: Pick<Endpoint, "baseUrl">): boolean =>
+  /(^|\/\/)([a-z0-9-]+\.)*elevenlabs\.io(\/|:|$)/i.test(e.baseUrl);
+
+/** The path a line is sent to, after the base URL — worth showing, since every provider differs. */
+export function ttsRequestPath(e: Pick<Endpoint, "baseUrl"> & { model?: string }): string {
+  if (isFishAudio(e)) return "/tts";
+  if (isGemini(e)) return `/models/${e.model || "<model>"}:generateContent`;
+  if (isElevenLabs(e)) return "/text-to-speech/<voice>";
+  return KIND_PATH.tts;
 }
 
 /** Fish Audio serves speech under /v1 but its model catalogue at the host root, so the voice list
@@ -144,9 +156,57 @@ const OPENAI_FORMATS: readonly FormatSupport[] = (["wav", "mp3", "opus"] as cons
   }),
 );
 
+/**
+ * Gemini's speech models, asked through `responseFormat` (3.8) — WAV only here. Its reference also
+ * lists MP3 and Ogg Opus, but only the WAV answer is documented in the speech guide, so that is the
+ * one offered until the others are tried. A rate may be named; Google's examples give 24 and 16
+ * kHz (and 8, below what this app keeps speech at), with 24 kHz the default. The legacy 3.1 preview
+ * takes no format at all and answers raw 24 kHz PCM, which the server puts under a WAV header.
+ */
+const GEMINI_FORMATS: readonly FormatSupport[] = [
+  {
+    format: "wav",
+    label: "WAV · 16-bit PCM, mono",
+    rates: [16000, 24000],
+    defaultRate: 24000,
+    bitrates: [],
+    defaultBitrate: null,
+  },
+];
+
+/**
+ * ElevenLabs' `output_format`, which names the rate and, for MP3, the bitrate
+ * (https://elevenlabs.io/docs/api-reference/text-to-speech/convert). Its WAV at 44.1 kHz needs a
+ * Pro plan and its 192 kbps MP3 a Creator plan; a plan without them is refused by ElevenLabs,
+ * which says so. Its Opus is left out until its container is known to be the Ogg this app reads,
+ * and so are the MP3s at 22.05 and 24 kHz, which come at one fixed low bitrate each.
+ */
+const ELEVENLABS_FORMATS: readonly FormatSupport[] = [
+  {
+    format: "wav",
+    label: "WAV · 16-bit PCM, mono",
+    rates: [16000, 22050, 24000, 32000, 44100, 48000],
+    // not the API's own default (that is an MP3): what this app asks for when no rate is set
+    defaultRate: 24000,
+    bitrates: [],
+    defaultBitrate: null,
+  },
+  {
+    format: "mp3",
+    label: "MP3 · mono",
+    rates: [44100],
+    defaultRate: 44100,
+    bitrates: [32, 64, 96, 128, 192].map((value) => ({ value, label: `${value} kbps` })),
+    defaultBitrate: 128,
+  },
+];
+
 /** The formats a speech endpoint can be asked for, by the API its base URL speaks. */
 export function speechFormats(e: Pick<Endpoint, "baseUrl">): readonly FormatSupport[] {
-  return isFishAudio(e) ? FISH_FORMATS : OPENAI_FORMATS;
+  if (isFishAudio(e)) return FISH_FORMATS;
+  if (isGemini(e)) return GEMINI_FORMATS;
+  if (isElevenLabs(e)) return ELEVENLABS_FORMATS;
+  return OPENAI_FORMATS;
 }
 
 /** What an endpoint asks for: its own choice, or WAV when it has made none. */

@@ -1039,36 +1039,65 @@ file. How the voice is made is the provider's wire module's `clone`
 `400` before a request. For Fish it is `POST /model` on the API's host
 ([speech/fish.ts](../server/providers/speech/fish.ts)): `type=tts`, the title, `train_mode=fast`
 so the voice is usable at once, `visibility=private`, and up to 20 samples under `voices`; Fish
-transcribes them itself. PROVIDERS_HERE The answer is the new voice, and the route answers `201`
-with it, which the page adds to the endpoint and the write-behind saves.
+transcribes them itself. The others, each from its own docs, cited in its module:
+
+| Provider   | Request                                                                                                            | Samples                                |
+| ---------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
+| Fish Audio | `POST /model`, multipart                                                                                           | 1–20; WAV, MP3, M4A, Opus, FLAC; 20 MB |
+| ElevenLabs | `POST /v1/voices/add`, multipart `name` + `files` (Instant Voice Cloning)                                          | up to 20; MP3, WAV, M4A, FLAC; 10 MB   |
+| BreezeBlue | `POST /v1/voice-previews/clone`, then `POST /v1/voice-previews/{id}/save` with `language_code=en`                  | 1; WAV, MP3; 5 MB                      |
+| Cartesia   | `POST /voices/clone`, multipart `clip`, `name`, `language=en`, `access=private`                                    | 1; WAV, MP3, FLAC, Opus; 16 MB         |
+| MiniMax    | `POST /v1/files/upload` (`purpose=voice_clone`), then `POST /v1/voice_clone` with a `voice_id` made from the title | 1; WAV, MP3, M4A; 20 MB                |
+| Qwen       | `POST /api/v1/services/audio/tts/customization`, `qwen-voice-enrollment`, the sample as a data URL                 | 1; WAV, MP3, M4A; 10 MB                |
+
+A provider may clone for only some of its models (`cloning.models`): a Qwen voice is enrolled for
+`qwen3-tts-vc-2026-01-22` and speaks only with it, and Qwen-Audio 3.0 enrols only from a public URL,
+which a picked file does not have — so an endpoint on another model is refused with the model to
+change to, and its Voices tab says the same instead of offering the form. OpenAI's custom voices
+need its sales team, and Gemini's voice replication needs a recording of the speaker reading
+Google's consent sentence besides the sample, so neither clones here. The answer is the new voice,
+and the route answers `201` with it — and with a `warning` beside it when the provider said to do
+something before it speaks (ElevenLabs and BreezeBlue may ask for the voice to be verified) — which
+the page adds to the endpoint and the write-behind saves.
+
+**What a clone costs goes in the ledger**, as the provider's `cloning.fee` says, against the
+endpoint and no book, the way a voice sample is ([ledger.ts](../server/usage/ledger.ts),
+`settleClone`). Qwen charges $0.01 as the voice is made, and the row is appended then (`Voice made
+· Mara · $0.01 a voice`); BreezeBlue charges 100 credits then, which a plan prices, so its row has
+no figure and counts as unpriced. MiniMax charges $1.50 the first time a line is spoken in the voice
+and deletes one unused for 7 days, so the fee waits in `clone_fees` and the first billed request
+spoken in that voice — a line, or ▶ on the Voices tab — appends it and removes the row in one
+transaction (`Voice first spoken · …`). Fish, ElevenLabs and Cartesia charge nothing per voice; a
+plan's voice slots are not a charge. A BreezeBlue preview that was made but not saved is paid for
+and not recorded: the clone failed, and its error says to save the preview on BreezeBlue.
 
 Making a voice is not idempotent, so each of its requests goes out **once**, whatever the
 endpoint's `maxRetries` ([clone.ts](../server/providers/clone.ts)): an upload that timed out or met
 a 5xx may still have made the voice, and a second attempt would make a second, private and
 duplicate. A clone of two requests (an upload, then the clone) makes each once and says which
 failed. Its clock is ten minutes rather than the
-endpoint's per-line timeout — 100 MB over a slow uplink and Fish's transcription after it — and the
+endpoint's per-line timeout — 100 MB over a slow uplink and the provider's work after it (Fish transcribes) — and the
 route lifts Bun's ten-second idle limit for this one request, which would otherwise close it while
-Fish works. Fish's refusals are split as the voice list's are. The server's own body ceiling
-(`maxRequestBodySize`) sits above both this route's limit and the import's. The recordings pass
+the provider works. The provider's refusals are split as the voice list's are. The server's own body ceiling
+(`maxRequestBodySize`) sits above both these routes' limit and the import's. The samples pass
 through, held once — the parsed form's files are what is sent on.
 
 **The samples are kept once the provider has answered**, never before, so a failed clone keeps nothing:
 the bytes as they were picked, named by their hash, under `VOICE_DIR` (`./data/voices`) in one
 directory per voice ([voices/files.ts](../server/voices/files.ts)), and a `cloned_voices` row with
 the time the box was ticked and the sentence it said (`consent_at`, `consent_text`) beside a
-`voice_samples` row per recording. The voice already exists on the account by then, so a failure to
+`voice_samples` row per sample. The voice already exists on the account by then, so a failure to
 keep them answers `201` with `samplesKept: false` rather than failing the clone. Neither table
 points at `voices`, because a save of the endpoints replaces every voice row and a cascade would
 empty them on every save; `saveEndpoints` reconciles them in the same transaction instead
 ([voiceSamples.ts](../server/db/voiceSamples.ts)): a voice the saved configuration holds is
-attached, an attached voice it no longer holds loses its recordings, and a clone the page has not
+attached, an attached voice it no longer holds loses its samples, and a clone the page has not
 saved yet is spared for a day, since the clone answers before the page adds its voice. Files go
 after the commit, in the background. `GET /api/endpoints/:id/samples` lists an endpoint's voices
-with kept recordings; under `/api/endpoints/:id/voices/:voice/samples`, `GET` is one voice's list
-and consent, `GET …/:file` one recording as it was picked (immutable, named by its bytes), `POST`
-keeps recordings for a voice already saved — the clone's form, limits and consent, nothing sent to
-Fish — and `DELETE` forgets them and keeps the voice.
+with kept samples; under `/api/endpoints/:id/voices/:voice/samples`, `GET` is one voice's list
+and consent, `GET …/:file` one sample as it was picked (immutable, named by its bytes), `POST`
+keeps samples for a voice already saved — the clone's form, the endpoint's limits and consent,
+nothing sent to the provider — and `DELETE` forgets them and keeps the voice.
 
 **Test connection** is `POST /api/endpoints/test` `{ kind, id }`, answering `{ ok, message, ms }`:
 one small request to the **saved** endpoint with its saved key, through the provider the server
@@ -1625,7 +1654,9 @@ the version an open editing session preserved, and `0003` what a build writes �
 output landed in, the span each chapter occupies inside it, and which encoder wrote it; `0004` an
 endpoint's sample rate and the rate each clip came back at; `0005` a book's cover image; `0006` an
 endpoint's key; `0007` an endpoint's audio format and bitrate; `0008` the recordings a cloned
-voice was made from, and the consent they were kept under.
+voice was made from, and the consent they were kept under; `0009` when a clone's voice went missing
+or its samples were forgotten; `0010` the samples a script import brought, waiting with a speaker;
+`0011` a clone's fee waiting on the first line spoken in its voice.
 
 **Foreign keys are off while migrations run.** A change drizzle-kit cannot write as `ALTER TABLE` is
 written as a rebuild — new table, copy, `DROP` the old one, rename — and with foreign keys on, that

@@ -57,6 +57,13 @@
       "when": 1790174453384,
       "tag": "0007_silky_psynapse",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790608983382,
+      "tag": "0008_fat_thundra",
+      "breakpoints": true
     }
   ]
 }

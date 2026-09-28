@@ -22,6 +22,7 @@ import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/s
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 import type { VoiceCloner } from "~/providers/clone";
 import type { VoiceLister } from "~/providers/voices";
+import { voiceFiles } from "~/voices/files";
 import type { FetchLike } from "@/services/http";
 
 export interface TestApi {
@@ -34,6 +35,8 @@ export interface TestApi {
   /** what this API's builds write with, and where they put it */
   exports: ExportPorts;
   exportDir: string;
+  /** where this API keeps the recordings a cloned voice was made from */
+  voiceDir: string;
   /** `fetch` for a client, answered by this app without a network */
   fetch: FetchLike;
   /** every line this API wrote, for the tests that are about the logging itself */
@@ -66,6 +69,8 @@ export interface TestApiOptions {
   audioDir?: string;
   /** where built audiobooks are written; a fresh temporary directory by default */
   exportDir?: string;
+  /** where cloned voices' recordings are kept; a fresh temporary directory by default */
+  voiceDir?: string;
   /** what a build writes its files with; the WAV stitcher by default */
   encoder?: AudiobookEncoder | EncoderChoice;
   /** handlers for other kinds, or an override for `scripting` or `narration` */
@@ -77,6 +82,9 @@ export const tempAudioDir = (): string => mkdtempSync(join(tmpdir(), "audiobook-
 
 /** The same, for the audiobooks a build writes. */
 export const tempExportDir = (): string => mkdtempSync(join(tmpdir(), "audiobook-built-"));
+
+/** The same, for the recordings a cloned voice was made from. */
+export const tempVoiceDir = (): string => mkdtempSync(join(tmpdir(), "audiobook-voices-"));
 
 /** Both halves of building a file, wherever this test keeps them. */
 export const testExports = (options: TestApiOptions = {}): ExportPorts => ({
@@ -156,7 +164,15 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     samples: options.samples ?? noSamples,
     cloner: options.cloner ?? noCloner,
   };
-  const app = createApp(db, { log, runner, files, exports, providers });
+  const voiceDir = options.voiceDir ?? tempVoiceDir();
+  const app = createApp(db, {
+    log,
+    runner,
+    files,
+    exports,
+    providers,
+    voiceFiles: voiceFiles(voiceDir),
+  });
 
   const request = async <T>(path: string, init?: RequestInit) => {
     const res = await app.request(`http://api.test${path}`, init);
@@ -171,6 +187,7 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     audioDir,
     exports,
     exportDir,
+    voiceDir,
     fetch: async (input, init) => app.request(new Request(`http://api.test${input}`, init)),
     logs: lines,
     request,

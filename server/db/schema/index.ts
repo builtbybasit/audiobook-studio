@@ -11,3 +11,4 @@ export * from "~/db/schema/jobs";
 export * from "~/db/schema/exports";
 export * from "~/db/schema/usage";
 export * from "~/db/schema/settings";
+export * from "~/db/schema/voiceSamples";

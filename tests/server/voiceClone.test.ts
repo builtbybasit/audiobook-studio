@@ -1,13 +1,21 @@
-// Making a voice from recordings: `POST /api/endpoints/voices/clone`.
+// Making a voice from recordings: `POST /api/endpoints/voices/clone`, and keeping the recordings
+// it was made from under `/api/endpoints/:id/voices/:voice/samples`.
 //
-// Three parts. What counts as a recording, read from a file's first bytes. The route, with a cloner
+// Four parts. What counts as a recording, read from a file's first bytes. The route, with a cloner
 // that answers from memory: what it refuses before anything leaves — no consent, no recordings,
 // something that is not a recording — what it hands the cloner, and what it logs. And the real
 // cloner, against a `fetch` that answers from memory: the multipart request Fish Audio's docs give,
-// that it goes out once whatever fails, and how Fish's refusals reach the page.
+// that it goes out once whatever fails, and how Fish's refusals reach the page. And the recordings
+// kept after a clone: byte for byte, beside the consent, and gone with the voice they made.
 import { describe, expect, test } from "bun:test";
+import { readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
-import type { Endpoint, Voice } from "@/types";
+import { eq } from "drizzle-orm";
+
+import type { ClonedVoice, Endpoint, KeptVoiceSamples, Voice } from "@/types";
+import { CLONE_CONSENT } from "@/lib/endpointShapes";
+import { clonedVoices } from "~/db/schema";
 import {
   endpointVoiceCloner,
   sniffRecording,
@@ -16,7 +24,7 @@ import {
   type VoiceClonerOptions,
 } from "~/providers/clone";
 import type { ProviderTarget } from "~/providers/target";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import { jsonBody, tempVoiceDir, testApi, type TestApi } from "../support/server";
 
 const fishEndpoint = (over: Partial<Endpoint> = {}): Endpoint => ({
   id: "fish",
@@ -128,7 +136,7 @@ function form(fields: Record<string, string>, clips: File[]): FormData {
 }
 
 const post = (api: TestApi, body: FormData) =>
-  api.request<Voice & { error?: { message: string } }>("/api/endpoints/voices/clone", {
+  api.request<ClonedVoice & { error?: { message: string } }>("/api/endpoints/voices/clone", {
     method: "POST",
     body,
   });
@@ -148,7 +156,12 @@ describe("the clone route", () => {
       ]),
     );
     expect(status).toBe(201);
-    expect(body).toEqual({ id: "new-voice-id", label: "Narrator — Mara", gender: "?" });
+    expect(body).toEqual({
+      id: "new-voice-id",
+      label: "Narrator — Mara",
+      gender: "?",
+      samplesKept: true,
+    });
     expect(asked).toHaveLength(1);
     expect(asked[0].title).toBe("Narrator — Mara");
     // the files as sent, typed by what their bytes say
@@ -386,6 +399,11 @@ describe("a failure to clone, through the route", () => {
     const { status, body } = await post(api, form({ ...agreed, id: ep.id }, [clip()]));
     return { status, message: body.error?.message ?? "", sent: f.sent, api };
   }
+  /** A failed clone keeps nothing: no row, and not a byte on disk. */
+  const keptNothing = async (api: TestApi) => {
+    expect(readdirSync(api.voiceDir)).toEqual([]);
+    expect(api.db.select().from(clonedVoices).all()).toEqual([]);
+  };
 
   test("what Fish refuses as the request's is a 400 carrying Fish's own words", async () => {
     const bad = await cloningAgainst(() =>
@@ -409,9 +427,10 @@ describe("a failure to clone, through the route", () => {
       () => Promise.reject(new TypeError("connection reset")),
       () => Response.json({ title: "no id" }),
     ]) {
-      const { status, sent } = await cloningAgainst(answer);
+      const { status, sent, api } = await cloningAgainst(answer);
       expect(status).toBe(502);
       expect(sent).toHaveLength(1);
+      await keptNothing(api);
     }
   });
 
@@ -432,5 +451,145 @@ describe("a failure to clone, through the route", () => {
     expect(keyless.status).toBe(400);
     expect(keyless.message).toContain("needs an API key");
     expect(keyless.sent).toEqual([]);
+  });
+});
+
+// ---------- the recordings, kept ----------
+
+const samplesOf = (api: TestApi, voice = "new-voice-id", ep = "fish") =>
+  api.request<KeptVoiceSamples & { error?: { message: string } }>(
+    `/api/endpoints/${ep}/voices/${voice}/samples`,
+  );
+
+const configWith = (voices: Voice[]) => ({
+  ...jsonBody({ endpoints: [fishEndpoint({ voices })], profiles: [], credentials: [] }),
+  method: "PUT",
+});
+
+const made: Voice = { id: "new-voice-id", label: "Mara", gender: "?" };
+
+/** Let the removals a save starts in the background reach the disk. */
+const settled = () => new Promise((r) => setTimeout(r, 20));
+
+describe("the recordings a voice was made from", () => {
+  test("are kept byte for byte, typed by their bytes, beside the consent that was given", async () => {
+    const { cloner } = remembering();
+    const api = testApi({ cloner });
+    await saved(api, fishEndpoint());
+    const memo = clip("memo", HEADS.m4a, "application/octet-stream", 3000);
+    const sent = new Uint8Array(await memo.arrayBuffer());
+    const said = "Mara agreed on the phone, 12 September.";
+    const { body: voice } = await post(api, form({ ...agreed, consentText: said }, [memo, clip()]));
+    expect(voice.samplesKept).toBe(true);
+
+    const { status, body: kept } = await samplesOf(api);
+    expect(status).toBe(200);
+    expect(kept).toMatchObject({ voiceId: "new-voice-id", title: "Mara", consentText: said });
+    expect(kept.consentAt).toBeGreaterThan(0);
+    expect(kept.samples.map((s) => [s.name, s.format, s.bytes])).toEqual([
+      ["memo", "m4a", 3000],
+      ["take-1.wav", "wav", 1024],
+    ]);
+
+    const res = await api.fetch(
+      `/api/endpoints/fish/voices/new-voice-id/samples/${kept.samples[0].file}`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("audio/mp4");
+    expect(res.headers.get("cache-control")).toContain("immutable");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(sent);
+
+    // a form that sends no sentence is held to the one the Voices tab shows
+    await post(api, form(agreed, [clip()]));
+    expect((await samplesOf(api)).body.consentText).toBe(CLONE_CONSENT);
+  });
+
+  test("a voice made but not kept is still made, and the answer says so", async () => {
+    const { cloner, asked } = remembering();
+    // a file where the directory should be: nothing can be written under it
+    const blocked = join(tempVoiceDir(), "not-a-directory");
+    writeFileSync(blocked, "");
+    const api = testApi({ cloner, voiceDir: blocked });
+    await saved(api, fishEndpoint());
+    const { status, body } = await post(api, form(agreed, [clip()]));
+    expect([status, body.samplesKept]).toEqual([201, false]);
+    expect(asked).toHaveLength(1);
+    expect((await samplesOf(api)).status).toBe(404);
+    expect(api.logs.some((l) => l.msg === "cloned, but the recordings were not kept")).toBe(true);
+  });
+
+  test("go with the voice when a save leaves it out, but not before the page has saved it", async () => {
+    const { cloner } = remembering();
+    const api = testApi({ cloner });
+    await saved(api, fishEndpoint());
+    await post(api, form(agreed, [clip()]));
+
+    // a save in the moment between the clone and the page adding its voice is not a removal
+    expect((await api.request("/api/endpoints", configWith([]))).status).toBe(200);
+    expect((await samplesOf(api)).status).toBe(200);
+    // once a save has held the voice, a save without it takes the recordings too
+    await api.request("/api/endpoints", configWith([made]));
+    await api.request("/api/endpoints", configWith([]));
+    expect((await samplesOf(api)).status).toBe(404);
+    await settled();
+    expect(readdirSync(api.voiceDir)).toEqual([]);
+
+    // a clone the page never saved is dropped by the first save after a day
+    await post(api, form(agreed, [clip()]));
+    api.db
+      .update(clonedVoices)
+      .set({ madeAt: Date.now() - 25 * 60 * 60 * 1000 })
+      .where(eq(clonedVoices.voiceId, "new-voice-id"))
+      .run();
+    await api.request("/api/endpoints", configWith([]));
+    expect((await samplesOf(api)).status).toBe(404);
+  });
+
+  test("an older voice can be given its recordings, under the same consent and limits", async () => {
+    const api = testApi();
+    const old: Voice = { id: "old-voice", label: "Old Tomas", gender: "m" };
+    await saved(api, fishEndpoint({ voices: [old] }));
+    const keep = (fields: Record<string, string>, clips: File[], voice = "old-voice") =>
+      api.request<KeptVoiceSamples & { error?: { message: string } }>(
+        `/api/endpoints/fish/voices/${voice}/samples`,
+        { method: "POST", body: form(fields, clips) },
+      );
+
+    expect((await keep({}, [clip()])).body.error?.message).toBe(
+      "Confirm you have the right to clone this voice",
+    );
+    const tooMany = Array.from({ length: 21 }, (_, i) => clip(`t${i}.wav`));
+    expect((await keep({ consent: "yes" }, tooMany)).body.error?.message).toBe(
+      "Use at most 20 recordings",
+    );
+    expect((await keep({ consent: "yes" }, [clip()], "nobody")).status).toBe(404);
+
+    const first = await keep({ consent: "yes" }, [clip("a.wav", HEADS.wav, "audio/wav", 1500)]);
+    expect(first.status).toBe(200);
+    expect(first.body).toMatchObject({ voiceId: "old-voice", title: "Old Tomas" });
+    // kept for a voice already saved: the next save without it takes them
+    const replaced = await keep({ consent: "yes" }, [clip("b.mp3", HEADS.mp3Frame, "audio/mpeg")]);
+    expect(replaced.body.samples.map((s) => s.name)).toEqual(["b.mp3"]);
+    await settled();
+    expect(readdirSync(join(api.voiceDir, readdirSync(api.voiceDir)[0]))).toEqual([
+      replaced.body.samples[0].file,
+    ]);
+
+    for (const bad of ["..%2F..%2Fsecret.wav", "abc.wav", `${"0".repeat(32)}.exe`])
+      expect((await api.fetch(`/api/endpoints/fish/voices/old-voice/samples/${bad}`)).status).toBe(
+        404,
+      );
+
+    expect(
+      (await api.fetch("/api/endpoints/fish/voices/old-voice/samples", { method: "DELETE" }))
+        .status,
+    ).toBe(204);
+    expect((await samplesOf(api, "old-voice")).status).toBe(404);
+    await settled();
+    expect(readdirSync(api.voiceDir)).toEqual([]);
+    // and the voice itself stays
+    expect(
+      (await api.request<{ endpoints: Endpoint[] }>("/api/endpoints")).body.endpoints[0].voices,
+    ).toEqual([old]);
   });
 });

@@ -249,6 +249,14 @@ export const canCloneVoices = (e: Pick<Endpoint, "baseUrl">): boolean => isFishA
  */
 export const MAX_CLONE_CLIPS = 20;
 
+/**
+ * What a person agrees to by ticking the box before a voice is made, or before its recordings are
+ * kept. The form shows it and sends it; the server keeps it beside the recordings, with the time,
+ * so the record of what was agreed to travels with the voice rather than living in a log line.
+ */
+export const CLONE_CONSENT =
+  "This is my voice, or the person whose voice it is has agreed to it being cloned for this use.";
+
 // ---------- voice samples ----------
 
 /**

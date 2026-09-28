@@ -30,6 +30,7 @@ import { jobRoutes } from "~/routes/jobs";
 import { scriptRoutes } from "~/routes/script";
 import { transferRoutes } from "~/routes/transfer";
 import { bookUsageRoutes, endpointUsageRoutes } from "~/routes/usage";
+import { voiceFiles as voiceFilesIn, type VoiceFiles } from "~/voices/files";
 
 /** What Hono's refusals say, for the ones that come without a message of their own. */
 const REFUSED: Partial<Record<number, string>> = {
@@ -57,6 +58,8 @@ export interface AppOptions {
    * fakes by default, which answer a test without a request.
    */
   providers?: Providers;
+  /** where the recordings a cloned voice was made from are kept; the configured directory by default */
+  voiceFiles?: VoiceFiles;
 }
 
 export function createApp(
@@ -67,6 +70,7 @@ export function createApp(
     files = audioFiles(env.AUDIO_DIR),
     exports = { encoders: wavEncoders(), files: audiobookFiles(env.EXPORT_DIR) },
     providers = { scripting: fakeScriptingProvider(), speech: fakeSpeechProvider() },
+    voiceFiles = voiceFilesIn(env.VOICE_DIR),
   }: AppOptions = {},
 ): Hono<PinoEnv> {
   // Typed with the logger the middleware puts on the context, so a route reaching for
@@ -125,7 +129,7 @@ export function createApp(
   app.route("/api/books", bookUsageRoutes(db));
   app.route("/api/jobs", jobRoutes(db, runner));
   // The endpoints belong to the installation rather than to a book.
-  app.route("/api/endpoints", endpointRoutes(db, providers));
+  app.route("/api/endpoints", endpointRoutes(db, providers, voiceFiles));
   app.route("/api/endpoints", endpointUsageRoutes(db));
   // A clip's url is served from disk, and the files it names belong to the same book routes above
   // remove — see `server/audio/files.ts` for why the path is a book and a token.

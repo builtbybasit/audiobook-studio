@@ -1,8 +1,9 @@
 // A successful answer from a speech endpoint, turned into a clip — or into a failure a person can
 // read, when it is not the audio that was asked for.
 //
-// Both real providers end the same way: a 200 whose body should be audio in the format the
-// endpoint asked for. What "is audio" means depends on the format. A WAV is rewritten under a plain
+// Every speech provider ends the same way: a 2xx whose body is audio in the format the endpoint
+// asked for — or, for those that answer JSON around it (Gemini, MiniMax, Qwen), whose JSON leads to
+// that audio, read here too (`jsonAnswer`). What "is audio" means depends on the format. A WAV is rewritten under a plain
 // header, its duration counted from the samples that arrived (`wav.ts`). An MP3 or an Opus file is
 // kept byte for byte — that is the point of asking for one, a tenth of the size — and is read by
 // `probeClip` to prove it is what it says and to learn how long it plays. An answer in another
@@ -15,6 +16,45 @@ import { ProviderError } from "~/providers/http";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 import { plainWav } from "~/providers/wav";
+
+/**
+ * Whether reading a body failed because the attempt's clock ran out. `call` hands back the answer
+ * while its body may still be arriving, under the same per-attempt clock, so a slow body ends in
+ * that clock's `TimeoutError` rather than in anything wrong with what was sent.
+ */
+const timedOut = (e: unknown): boolean =>
+  e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+
+/** The failure for a body the attempt's clock cut off; see `timedOut`. */
+const cutOff = (target: ProviderTarget, res: Response, what: string): ProviderError =>
+  new ProviderError(
+    `${target.name} answered ${res.status} but did not finish sending ${what} within ${target.timeoutSec} s`,
+    res.status,
+    true,
+  );
+
+/**
+ * A successful answer's body as JSON, for a provider that answers JSON around the audio. A body
+ * that is not JSON is reported as such, and one the clock cut off as a timeout; a cancel throws
+ * the signal's reason.
+ */
+export async function jsonAnswer<T>(
+  target: ProviderTarget,
+  res: Response,
+  signal: AbortSignal,
+): Promise<T> {
+  try {
+    return (await res.json()) as T;
+  } catch (e) {
+    if (signal.aborted) throw signal.reason;
+    if (timedOut(e)) throw cutOff(target, res, "its answer");
+    throw new ProviderError(
+      `${target.name} answered ${res.status} with something that is not JSON`,
+      res.status,
+      false,
+    );
+  }
+}
 
 /** An answer as a clip: the bytes to keep, what they are, and how long they play. */
 export interface AnsweredAudio {
@@ -43,6 +83,7 @@ export async function audioAnswer(
     bytes = new Uint8Array(await res.arrayBuffer());
   } catch (e) {
     if (signal.aborted) throw signal.reason;
+    if (timedOut(e)) throw cutOff(target, res, "the audio");
     throw new ProviderError(
       `${target.name} stopped sending audio part-way: ${(e as Error).message}`,
       0,

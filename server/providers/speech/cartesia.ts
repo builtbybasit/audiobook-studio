@@ -5,16 +5,20 @@
 // body of `model_id`, `transcript`, `voice: {id}` and an `output_format` that names the container,
 // the sample encoding and the rate — and, for an MP3, the bitrate in bits a second. The answer is
 // the audio itself, read as every other body of audio is (`audioAnswer`). Cartesia reports no
-// usage, so the ledger counts the characters that were sent, which is what it bills on.
+// usage, so the ledger counts the characters that were sent, which is what it bills on — and only
+// for a request that succeeded: its pricing page says errors consume no credits.
 //
-// Only the words are sent. Sonic takes delivery as tags in the transcript — `[laughter]`,
-// `<break time="1s"/>`, `<emotion value="calm"/>` — which is what the endpoint's Expressions tab is
-// for.
-import { audioAnswer, refuseEncoding } from "~/providers/answer";
-import { sendSpeech, type SpeechCallOptions } from "~/providers/fishSpeech";
+// Only the words are sent. Sonic takes delivery as tags in the transcript — `<break time="1s"/>`,
+// `<emotion value="calm"/>` — which is what the endpoint's Expressions tab is for.
+//
+// Voices are Cartesia's own and the account's, `GET /voices` a hundred a page, each page after
+// the last voice of the one before.
+import type { Voice } from "@/types";
 import { call, jsonHeaders } from "~/providers/http";
-import type { RenderedClip, SpeechInput } from "~/providers/speech";
-import type { ProbeResult, ProviderTarget } from "~/providers/target";
+import type { SpeechCallOptions } from "~/providers/send";
+import type { SpeechInput } from "~/providers/speech";
+import type { ProviderTarget } from "~/providers/target";
+import type { SpeechWire } from "~/providers/speech/wire";
 
 /** The API version every request is written against, the one Cartesia's reference names. */
 export const CARTESIA_VERSION = "2026-08-14";
@@ -22,6 +26,10 @@ export const CARTESIA_VERSION = "2026-08-14";
 /** What this app asks for when the endpoint names no rate: the rate Cartesia's example uses. */
 const DEFAULT_RATE = 44100;
 const DEFAULT_MP3_KBPS = 128;
+
+/** A voice list is read a hundred a page, up to this many pages. */
+const VOICE_PAGE = 100;
+const VOICE_PAGES = 10;
 
 /** Cartesia serves its API at the host root, whatever path the base URL was saved with. */
 export const cartesiaRoot = (baseUrl: string): string => new URL(baseUrl).origin;
@@ -49,41 +57,8 @@ export function cartesiaBody(
   };
 }
 
-export async function cartesiaSpeak(
-  input: SpeechInput,
-  target: ProviderTarget,
-  voice: string,
-  options: SpeechCallOptions,
-): Promise<RenderedClip> {
-  refuseEncoding(target, input);
-  const { format } = input.encoding;
-  const started = Date.now();
-  const audio = await sendSpeech(
-    input,
-    target,
-    {
-      url: `${cartesiaRoot(target.baseUrl)}/tts/bytes`,
-      init: {
-        method: "POST",
-        headers: cartesiaHeaders(target),
-        body: JSON.stringify(cartesiaBody(input, target.model, voice)),
-      },
-      format,
-      text: input.text,
-      // no instructions field (see the header), so none are billed
-      instructions: "",
-      read: async (res, signal) => ({
-        audio: await audioAnswer(target, res, signal, format),
-        reported: null,
-      }),
-    },
-    options,
-  );
-  return { ...audio, ms: Date.now() - started, model: target.model, voice };
-}
-
-/** One page of voices from `GET /voices`: Cartesia's own and the account's, a hundred a page. */
-export async function cartesiaVoicePage(
+/** One page of voices from `GET /voices`: Cartesia's own and the account's. */
+async function voicePage(
   target: ProviderTarget,
   signal: AbortSignal,
   options: SpeechCallOptions,
@@ -115,14 +90,51 @@ export async function cartesiaVoicePage(
   return { voices, hasMore: body?.has_more === true };
 }
 
-/** The Test button for Cartesia: one voice from its list, which needs the key and costs no credit. */
-export async function cartesiaProbe(
-  target: ProviderTarget,
-  signal: AbortSignal,
-  options: SpeechCallOptions,
-): Promise<ProbeResult> {
-  const started = Date.now();
-  await cartesiaVoicePage(target, signal, options, 1);
-  const ms = Date.now() - started;
-  return { ok: true, message: `Answered in ${ms} ms; the key was accepted`, ms };
-}
+export const cartesiaWire: SpeechWire = {
+  request(input, target, voice) {
+    return {
+      url: `${cartesiaRoot(target.baseUrl)}/tts/bytes`,
+      init: {
+        method: "POST",
+        headers: cartesiaHeaders(target),
+        body: JSON.stringify(cartesiaBody(input, target.model, voice)),
+      },
+      format: input.encoding.format,
+      text: input.text,
+      // no instructions field (see the header), so none are billed
+      instructions: "",
+    };
+  },
+
+  /** One voice from its list, which needs the key and costs no credit. */
+  async probe(target, signal, options) {
+    const started = Date.now();
+    await voicePage(target, signal, options, 1);
+    const ms = Date.now() - started;
+    return { ok: true, message: `Answered in ${ms} ms; the key was accepted`, ms };
+  },
+
+  /** Its gender is `masculine`, `feminine` or `gender_neutral`. */
+  async voices(target, signal, options) {
+    const voices: Voice[] = [];
+    let more = true;
+    for (let page = 1; more && page <= VOICE_PAGES; page++) {
+      const found = await voicePage(target, signal, options, VOICE_PAGE, voices.at(-1)?.id);
+      for (const v of found.voices)
+        voices.push({
+          id: v.id,
+          label: v.name,
+          gender:
+            v.gender === "masculine"
+              ? "m"
+              : v.gender === "feminine"
+                ? "f"
+                : v.gender === "gender_neutral"
+                  ? "n"
+                  : "?",
+        });
+      more = found.hasMore && found.voices.length > 0;
+    }
+    return { voices, total: voices.length, page: 1, hasMore: more };
+  },
+};

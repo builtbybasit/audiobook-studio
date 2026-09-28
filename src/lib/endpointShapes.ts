@@ -1,9 +1,11 @@
 // What an endpoint is on the wire: the paths each kind is reached at, the operational defaults a
-// request falls back on, and where Fish Audio differs from everyone else.
+// request falls back on, and — for a speech endpoint — which provider its base URL speaks.
 //
 // Split out of `endpoints.ts` because the server calls these providers too, and that file reaches
 // for the browser's keyring. Nothing here imports Vue or holds state, so both sides share one copy
-// of the rules instead of the server keeping a second that drifts.
+// of the rules instead of the server keeping a second that drifts. What each provider is — its
+// host, its request line, its formats, its tags — is written down once per provider in
+// `lib/providers/`; the helpers here are the questions the pages already ask of it.
 import type {
   AudioEncoding,
   AudioFormat,
@@ -11,9 +13,11 @@ import type {
   EndpointKind,
   EndpointOps,
   Gender,
-  SampleRate,
   Voice,
 } from "@/types";
+import { speechProviderOf, type FormatSupport, type SpeechProviderId } from "@/lib/providers";
+
+export type { FormatSupport } from "@/lib/providers";
 
 export const OPS_DEFAULTS: Record<EndpointKind, EndpointOps> = {
   scripting: {
@@ -40,51 +44,32 @@ export const KIND_PATH: Record<EndpointKind, string> = {
   tts: "/audio/speech",
 };
 
+const speaks =
+  (...ids: SpeechProviderId[]) =>
+  (e: Pick<Endpoint, "baseUrl">): boolean =>
+    ids.includes(speechProviderOf(e).id);
+
 /** Fish Audio takes the model in a header and the voice as `reference_id`, so the path everything
  *  else uses does not apply. Kept here so the Connection tab can show the right request line. */
-export const isFishAudio = (e: Pick<Endpoint, "baseUrl">): boolean =>
-  /(^|\/\/)([a-z0-9-]+\.)*fish\.audio(\/|$)/i.test(e.baseUrl);
-
+export const isFishAudio = speaks("fish");
 /** Google's Gemini API: speech is a `generateContent` call on the model, answered as JSON. */
-export const isGemini = (e: Pick<Endpoint, "baseUrl">): boolean =>
-  /(^|\/\/)generativelanguage\.googleapis\.com(\/|:|$)/i.test(e.baseUrl);
-
+export const isGemini = speaks("gemini");
 /** ElevenLabs: the voice is in the path and the model in the body, keyed by `xi-api-key`. */
-export const isElevenLabs = (e: Pick<Endpoint, "baseUrl">): boolean =>
-  /(^|\/\/)([a-z0-9-]+\.)*elevenlabs\.io(\/|:|$)/i.test(e.baseUrl);
-
+export const isElevenLabs = speaks("elevenlabs");
 /** BreezeBlue's hosted API, which copies ElevenLabs' shape and adds an `instructions` field. */
-export const isBreezeBlue = (e: Pick<Endpoint, "baseUrl">): boolean =>
-  /(^|\/\/)([a-z0-9-]+\.)*breeze\.blue(\/|:|$)/i.test(e.baseUrl);
-
+export const isBreezeBlue = speaks("breezeblue");
 /** Either API that takes the voice in the path of `/text-to-speech/{voice_id}`. */
-export const isElevenLabsShaped = (e: Pick<Endpoint, "baseUrl">): boolean =>
-  isElevenLabs(e) || isBreezeBlue(e);
-
+export const isElevenLabsShaped = speaks("elevenlabs", "breezeblue");
 /** MiniMax: `POST /v1/t2a_v2`, answered with JSON carrying the audio as hex. */
-export const isMiniMax = (e: Pick<Endpoint, "baseUrl">): boolean =>
-  /(^|\/\/)([a-z0-9-]+\.)*minimax\.(io|chat|cn)(\/|:|$)/i.test(e.baseUrl);
-
+export const isMiniMax = speaks("minimax");
 /** Cartesia: `POST /tts/bytes` at the host root, with a `Cartesia-Version` header. */
-export const isCartesia = (e: Pick<Endpoint, "baseUrl">): boolean =>
-  /(^|\/\/)([a-z0-9-]+\.)*cartesia\.ai(\/|:|$)/i.test(e.baseUrl);
-
+export const isCartesia = speaks("cartesia");
 /** Alibaba's Model Studio (DashScope), by its long-standing host or a workspace's own. */
-export const isQwen = (e: Pick<Endpoint, "baseUrl">): boolean =>
-  /(^|\/\/)(dashscope[a-z-]*\.aliyuncs\.com|[a-z0-9-]+\.[a-z0-9-]+\.maas\.aliyuncs\.com)(\/|:|$)/i.test(
-    e.baseUrl,
-  );
+export const isQwen = speaks("qwen");
 
 /** The path a line is sent to, after the base URL — worth showing, since every provider differs. */
-export function ttsRequestPath(e: Pick<Endpoint, "baseUrl"> & { model?: string }): string {
-  if (isFishAudio(e)) return "/tts";
-  if (isGemini(e)) return `/models/${e.model || "<model>"}:generateContent`;
-  if (isElevenLabsShaped(e)) return "/text-to-speech/<voice>";
-  if (isMiniMax(e)) return "/t2a_v2";
-  if (isCartesia(e)) return "/tts/bytes";
-  if (isQwen(e)) return "/services/audio/tts/SpeechSynthesizer";
-  return KIND_PATH.tts;
-}
+export const ttsRequestPath = (e: Pick<Endpoint, "baseUrl"> & { model?: string }): string =>
+  speechProviderOf(e).requestPath(e.model ?? "");
 
 /** Fish Audio serves speech under /v1 but its model catalogue at the host root, so the voice list
  *  cannot just be appended to the base URL the way an OpenAI-compatible /audio/voices can. */
@@ -99,23 +84,6 @@ export function fishModelsUrl(baseUrl: string): string {
 
 // ---------- audio formats ----------
 
-/** One format an endpoint can be asked for, and what may be asked for with it. */
-export interface FormatSupport {
-  format: AudioFormat;
-  label: string;
-  /**
-   * The rates a request may name with this format, or null when the API takes no rate at all —
-   * OpenAI's answers at the model's own, so an endpoint of that shape must leave its rate unset.
-   */
-  rates: readonly SampleRate[] | null;
-  /** what the provider answers at when no rate is named, in Hz; null when it does not say */
-  defaultRate: number | null;
-  /** the bitrates a request may name, as the API spells them; empty when there is no choice */
-  bitrates: readonly { value: number; label: string }[];
-  /** the bitrate the provider uses when none is named; null when there is no choice */
-  defaultBitrate: number | null;
-}
-
 export const FORMAT_LABEL: Record<AudioFormat, string> = { wav: "WAV", mp3: "MP3", opus: "Opus" };
 /** What a clip in each format is served as. */
 export const AUDIO_MIME: Record<AudioFormat, string> = {
@@ -126,207 +94,9 @@ export const AUDIO_MIME: Record<AudioFormat, string> = {
 /** The extension a clip in each format is kept under. */
 export const AUDIO_EXT: Record<AudioFormat, string> = { wav: "wav", mp3: "mp3", opus: "opus" };
 
-/**
- * Fish Audio's formats, from https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech.
- * Its WAV also goes to 8 kHz, below the 16 kHz this app keeps speech at, and its `pcm` is WAV
- * without the header, so neither is offered. The Opus default is the schema's `-1000` (automatic);
- * the prose note on the same page says 32 kbps, and the schema is what the server is sent.
- */
-const FISH_FORMATS: readonly FormatSupport[] = [
-  {
-    format: "wav",
-    label: "WAV · 16-bit PCM, mono",
-    rates: [16000, 24000, 32000, 44100],
-    defaultRate: 44100,
-    bitrates: [],
-    defaultBitrate: null,
-  },
-  {
-    format: "mp3",
-    label: "MP3 · mono",
-    rates: [32000, 44100],
-    defaultRate: 44100,
-    bitrates: [
-      { value: 64, label: "64 kbps" },
-      { value: 128, label: "128 kbps" },
-      { value: 192, label: "192 kbps" },
-    ],
-    defaultBitrate: 128,
-  },
-  {
-    format: "opus",
-    label: "Opus · mono, in Ogg",
-    rates: [48000],
-    defaultRate: 48000,
-    // Only automatic. The API lists 24, 32, 48 and 64 kbps, but on 2026-09-23 asking for 24 or 32
-    // kbps came back at about 272 kbps — five times the size of automatic, which ran near 60 — so
-    // offering them would make "smaller" the larger file. Add them back when Fish honours them.
-    bitrates: [{ value: -1000, label: "Automatic" }],
-    defaultBitrate: -1000,
-  },
-];
-
-/**
- * OpenAI's `/audio/speech` (`response_format`): it also offers AAC, FLAC and raw PCM, which this
- * app does not keep clips in. It takes no rate and no bitrate; the answer is at the model's own.
- */
-const OPENAI_FORMATS: readonly FormatSupport[] = (["wav", "mp3", "opus"] as const).map(
-  (format) => ({
-    format,
-    label: FORMAT_LABEL[format],
-    rates: null,
-    defaultRate: null,
-    bitrates: [],
-    defaultBitrate: null,
-  }),
-);
-
-/**
- * Gemini's speech models, asked through `responseFormat` (3.8) — WAV only here. Its reference also
- * lists MP3 and Ogg Opus, but only the WAV answer is documented in the speech guide, so that is the
- * one offered until the others are tried. A rate may be named; Google's examples give 24 and 16
- * kHz (and 8, below what this app keeps speech at), with 24 kHz the default. The legacy 3.1 preview
- * takes no format at all and answers raw 24 kHz PCM, which the server puts under a WAV header.
- */
-const GEMINI_FORMATS: readonly FormatSupport[] = [
-  {
-    format: "wav",
-    label: "WAV · 16-bit PCM, mono",
-    rates: [16000, 24000],
-    defaultRate: 24000,
-    bitrates: [],
-    defaultBitrate: null,
-  },
-];
-
-/**
- * ElevenLabs' `output_format`, which names the rate and, for MP3, the bitrate
- * (https://elevenlabs.io/docs/api-reference/text-to-speech/convert). Its WAV at 44.1 kHz needs a
- * Pro plan and its 192 kbps MP3 a Creator plan; a plan without them is refused by ElevenLabs,
- * which says so. Its Opus is left out until its container is known to be the Ogg this app reads,
- * and so are the MP3s at 22.05 and 24 kHz, which come at one fixed low bitrate each.
- */
-const ELEVENLABS_FORMATS: readonly FormatSupport[] = [
-  {
-    format: "wav",
-    label: "WAV · 16-bit PCM, mono",
-    rates: [16000, 22050, 24000, 32000, 44100, 48000],
-    // not the API's own default (that is an MP3): what this app asks for when no rate is set
-    defaultRate: 24000,
-    bitrates: [],
-    defaultBitrate: null,
-  },
-  {
-    format: "mp3",
-    label: "MP3 · mono",
-    rates: [44100],
-    defaultRate: 44100,
-    bitrates: [32, 64, 96, 128, 192].map((value) => ({ value, label: `${value} kbps` })),
-    defaultBitrate: 128,
-  },
-];
-
-/**
- * BreezeBlue's `output_format` (https://docs.breezeblue.ai): the same `<format>_<rate>[_<kbps>]` as
- * ElevenLabs, WAV as 16-bit mono at any of its rates, 24 kHz being the model's own. Its MP3 is
- * offered at 44.1 kHz and 128 kbps, the combination its docs show; its Opus is left out until its
- * container is known to be Ogg.
- */
-const BREEZE_FORMATS: readonly FormatSupport[] = [
-  {
-    format: "wav",
-    label: "WAV · 16-bit PCM, mono",
-    rates: [16000, 22050, 24000, 32000, 44100, 48000],
-    defaultRate: 24000,
-    bitrates: [],
-    defaultBitrate: null,
-  },
-  {
-    format: "mp3",
-    label: "MP3 · mono",
-    rates: [44100],
-    defaultRate: 44100,
-    bitrates: [{ value: 128, label: "128 kbps" }],
-    defaultBitrate: 128,
-  },
-];
-
-/**
- * MiniMax's `audio_setting` (https://platform.minimax.io/docs/api-reference/speech-t2a-http): a
- * rate up to 44.1 kHz — it has no 48 — and for an MP3 a bitrate, in bits a second on the wire.
- * Its Ogg Opus is left out until its rates are known. What this app asks for when no rate is set
- * is 32 kHz, the rate MiniMax's own example uses.
- */
-const MINIMAX_RATES = [16000, 22050, 24000, 32000, 44100] as const;
-const MINIMAX_FORMATS: readonly FormatSupport[] = [
-  {
-    format: "wav",
-    label: "WAV · 16-bit PCM, mono",
-    rates: MINIMAX_RATES,
-    defaultRate: 32000,
-    bitrates: [],
-    defaultBitrate: null,
-  },
-  {
-    format: "mp3",
-    label: "MP3 · mono",
-    rates: MINIMAX_RATES,
-    defaultRate: 32000,
-    bitrates: [32, 64, 128, 256].map((value) => ({ value, label: `${value} kbps` })),
-    defaultBitrate: 128,
-  },
-];
-
-/**
- * Cartesia's `output_format` (https://docs.cartesia.ai/api-reference/tts/bytes): WAV as 16-bit PCM
- * at any of its rates, 44.1 kHz when none is set (the rate its own example uses); MP3 offered at
- * 44.1 kHz and 64 to 192 kbps. It has no Opus.
- */
-const CARTESIA_FORMATS: readonly FormatSupport[] = [
-  {
-    format: "wav",
-    label: "WAV · 16-bit PCM, mono",
-    rates: [16000, 22050, 24000, 44100, 48000],
-    defaultRate: 44100,
-    bitrates: [],
-    defaultBitrate: null,
-  },
-  {
-    format: "mp3",
-    label: "MP3 · mono",
-    rates: [44100],
-    defaultRate: 44100,
-    bitrates: [64, 128, 192].map((value) => ({ value, label: `${value} kbps` })),
-    defaultBitrate: 128,
-  },
-];
-
-/**
- * Qwen-Audio 3.0 through Model Studio: WAV at 24 kHz, the combination Alibaba's own example asks
- * for. Its MP3 and other rates are left out until they have been tried against these models.
- */
-const QWEN_FORMATS: readonly FormatSupport[] = [
-  {
-    format: "wav",
-    label: "WAV · 16-bit PCM, mono",
-    rates: [24000],
-    defaultRate: 24000,
-    bitrates: [],
-    defaultBitrate: null,
-  },
-];
-
 /** The formats a speech endpoint can be asked for, by the API its base URL speaks. */
-export function speechFormats(e: Pick<Endpoint, "baseUrl">): readonly FormatSupport[] {
-  if (isFishAudio(e)) return FISH_FORMATS;
-  if (isGemini(e)) return GEMINI_FORMATS;
-  if (isElevenLabs(e)) return ELEVENLABS_FORMATS;
-  if (isBreezeBlue(e)) return BREEZE_FORMATS;
-  if (isMiniMax(e)) return MINIMAX_FORMATS;
-  if (isCartesia(e)) return CARTESIA_FORMATS;
-  if (isQwen(e)) return QWEN_FORMATS;
-  return OPENAI_FORMATS;
-}
+export const speechFormats = (e: Pick<Endpoint, "baseUrl">): readonly FormatSupport[] =>
+  speechProviderOf(e).formats;
 
 /** What an endpoint asks for: its own choice, or WAV when it has made none. */
 export const encodingOf = (e: Pick<Endpoint, "encoding">): AudioEncoding =>

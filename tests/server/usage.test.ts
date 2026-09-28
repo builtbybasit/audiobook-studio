@@ -11,7 +11,7 @@ import { makeProfiles } from "@/mock/fixtures/profiles";
 import * as queue from "~/db/jobs";
 import type { SentScript, SentSpeech } from "~/providers/sent";
 import { budgetProblem } from "~/usage/budget";
-import { bookSpend, chapterUidOf, settleScript, settleSpeech } from "~/usage/ledger";
+import { bookSpend, chapterUidOf, NOT_BILLED, settleScript, settleSpeech } from "~/usage/ledger";
 import { epubFile, story } from "../support/epub";
 import { jsonBody, testApi, type TestApi } from "../support/server";
 
@@ -61,6 +61,7 @@ const spoken = (over: Partial<SentSpeech> = {}): SentSpeech => ({
   instructions: "",
   audioSeconds: 60,
   reported: null,
+  billed: true,
   ...over,
 });
 
@@ -131,18 +132,36 @@ describe("a request settled into the ledger", () => {
     expect([row.cost, row.status, row.attempts, row.error?.code]).toEqual([0, "failed", 3, 500]);
   });
 
-  test("a failed speech request is charged for what it sent per character, and nothing per minute", async () => {
+  test("a speech request the provider did not bill is a row that costs nothing, and says why", async () => {
     const { api, work } = await book();
-    const failed = spoken({
+    const refused = spoken({
       status: "failed",
       audioSeconds: 0,
-      error: { code: 500, message: "down" },
+      billed: false,
+      error: { code: 401, message: "key refused" },
     });
-    expect(settleSpeech(api.db, speech("chars"), work, failed).cost).toBeCloseTo(
+    const row = settleSpeech(api.db, speech("chars"), work, refused);
+    expect([row.status, row.cost, row.error?.code]).toEqual(["failed", 0, 401]);
+    // what it sent is still counted, and the receipt says why none of it was charged
+    expect(row.usage.chars).toBe(11);
+    expect(row.speech?.lines).toEqual([
+      expect.objectContaining({ quantity: 11, amount: 0, note: NOT_BILLED }),
+    ]);
+  });
+
+  test("a billed speech request that failed is charged for what it sent per character, and nothing per minute", async () => {
+    const { api, work } = await book();
+    const unusable = spoken({
+      status: "failed",
+      audioSeconds: 0,
+      billed: true,
+      error: { code: 200, message: "sent no audio" },
+    });
+    expect(settleSpeech(api.db, speech("chars"), work, unusable).cost).toBeCloseTo(
       (11 * 15) / 1e6,
       10,
     );
-    expect(settleSpeech(api.db, speech("minute"), work, failed).cost).toBe(0);
+    expect(settleSpeech(api.db, speech("minute"), work, unusable).cost).toBe(0);
   });
 });
 

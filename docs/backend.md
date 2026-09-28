@@ -848,9 +848,14 @@ in backend mode every endpoint has its own key field.
 
 **Around every request** [http.ts](../server/providers/http.ts) keeps the endpoint's own
 `timeoutSec` per attempt and `maxRetries` after the first, retries only what another attempt could
-fix (408, 425, 429, 5xx, no answer), waits what a `Retry-After` names or `cooldownSec` after a bare
-429, and stops at once on a cancel, mid-request or mid-wait. A refusal becomes a sentence naming the
-endpoint and what it said; an endpoint that `needsKey` and has none fails before any request.
+fix (408, 425, 429, 5xx, no answer — not a 409, which is the same conflict the second time), waits
+what a `Retry-After` names or `cooldownSec` after a bare 429, and stops at once on a cancel,
+mid-request or mid-wait. A provider that refuses inside a 200 hands `call` a `check` that reads the
+answer before it is accepted, so such a refusal is retried in the same loop, a rate limit after the
+cooldown. A refusal becomes a sentence naming the endpoint and what it said — `{error:{message}}`,
+`{message}`, or ElevenLabs' `{detail:{message}}` and 422 `{detail:[{msg}]}` — and a body the
+attempt's clock cuts off says it timed out rather than that it was not JSON. An endpoint that
+`needsKey` and has none fails before any request.
 
 **Scripting** ([chatScripting.ts](../server/providers/chatScripting.ts)) is OpenAI's chat
 completions — OpenAI, a gateway, a local model — at `{baseUrl}/chat/completions`, asking for
@@ -864,60 +869,101 @@ audiobook that silently skips a paragraph is the worst thing this job could do. 
 order, so it catches a dropped sentence but not a moved one. A bad answer is not retried by the
 provider, so a failure never spends tokens twice without anyone asking.
 
-**Speech** ([endpointSpeech.ts](../server/providers/endpointSpeech.ts)) picks the wire shape from
-the base URL: Fish Audio's, Google's Gemini API, ElevenLabs' (and BreezeBlue's, which copies it),
-MiniMax's, Cartesia's, Alibaba's Model Studio for Qwen, and OpenAI's `/audio/speech` for everything
-else (OpenAI, Kokoro-FastAPI, vLLM-Omni, …):
+**Speech** ([endpointSpeech.ts](../server/providers/endpointSpeech.ts)) finds which provider the
+base URL speaks and hands the line to that provider's wire module. A provider is two files:
 
-- Fish ([fishSpeech.ts](../server/providers/fishSpeech.ts)): `POST /v1/tts` with the model in a
-  `model` header, the voice as `reference_id`, `format: "wav"` and `normalize`. Its WAV rates are
-  8, 16, 24, 32 and 44.1 kHz, 44.1 when none is asked for; another rate fails before the request.
-  The line's direction is not written in — the job already placed the endpoint's configured
-  expression tags, and a free-text cue would be words nobody configured.
-- Gemini ([geminiSpeech.ts](../server/providers/geminiSpeech.ts)): `POST
-{base}/models/{model}:generateContent` with the key in `x-goog-api-key`, asking for the AUDIO
-  modality in one voice. A 3.8 model is asked for WAV through `responseFormat` (at the endpoint's
-  rate, 16 or 24 kHz, when it names one), names the voice as `voiceConfig.voice`, and gets the
-  line's instructions as the part's `speechMetadata.style` — 3.8 reads the text word for word, so a
-  direction written into it would be spoken. A legacy preview (3.1 and before) takes none of that:
-  `prebuiltVoiceConfig.voiceName`, no style, and it answers raw 24 kHz PCM, which is put under a
-  WAV header. The answer is JSON, the audio base64 in the first candidate; its `usageMetadata` —
-  text tokens in, audio tokens out, which is what Google bills — is reported to the ledger, so a
-  Gemini line is priced from Google's count rather than estimated. The voice list is the guide's
-  thirty prebuilt voices, answered without a request; the Test button reads `GET /models/{model}`.
-- ElevenLabs ([elevenLabsSpeech.ts](../server/providers/elevenLabsSpeech.ts)): `POST
+- **Its description**, `src/lib/providers/<id>.ts`, shared by the browser and the server and
+  holding nothing that needs either: how its base URL is recognised, the request line the
+  Connection tab shows, the formats it can be asked for (`FormatSupport[]`), how each of its models
+  takes expression tags, whether it bills a request it refused (`billsFailures`), and the models its
+  docs name. [index.ts](../src/lib/providers/index.ts) is the list, read in order;
+  `compatible` — OpenAI's shape, which the local servers copy — says yes to any base URL and is
+  last. The helpers the pages already call (`isFishAudio`, `ttsRequestPath`, `speechFormats`, …) are
+  questions asked of it in [endpointShapes.ts](../src/lib/endpointShapes.ts).
+- **Its wire module**, `server/providers/speech/<id>.ts`: the request a line goes out as (throwing,
+  before anything is sent, for a line it cannot be asked for), how a 2xx that is not the audio
+  itself becomes audio, its Test button, and its voice list. The registry
+  ([registry.ts](../server/providers/speech/registry.ts)) is a `Record` over the description ids, so
+  a provider described and given no wire module does not compile.
+
+What is the same for every provider happens once, around the module. Before anything is built, the
+line is held to the provider's formats (`refuseEncoding`). [send.ts](../server/providers/send.ts)
+sends the request through `call`, turns a 2xx into a clip — by the module's `read`, or as a body of
+audio ([answer.ts](../server/providers/answer.ts)) — and reports the request to the ledger with how
+many attempts it took (a further request that is part of it, like Qwen's download, counted with
+it), the usage the answer said it used, and whether it was billed (see
+[what a request costs](#what-a-request-costs-and-what-a-book-may-spend)). A `read` hands over the
+usage it finds (`counted`) before it decodes anything, so an answer that then proves unusable still
+reports what it cost. Adding a provider is its description and a line in the list, its wire module
+and a line in the registry, and its tests; a preset for it is `src/lib/endpoints.ts`'s.
+
+The providers, as their docs give them:
+
+- Fish ([speech/fish.ts](../server/providers/speech/fish.ts)): `POST /v1/tts` with the model in a
+  `model` header, the voice as `reference_id`, `format: "wav"` and `normalize`. Its WAV rates here are
+  16, 24, 32 and 44.1 kHz, 44.1 when none is asked for; another rate fails before the request.
+  The model is held to the five Fish documents (`s1`, `s2-pro`, `s2.1-pro`, `s2.1-pro-free`,
+  `drama-3-preview`) before a request and by the Test button, because Fish answers any other with
+  the paid `s2.1-pro`. The line's direction is not written in — the job already placed the
+  endpoint's configured expression tags, and a free-text cue would be words nobody configured.
+- Gemini ([speech/gemini.ts](../server/providers/speech/gemini.ts)): `POST
+{base}/models/{model}:generateContent` with the key in `x-goog-api-key` (a model saved as
+  `models/gemini-…` is sent without the prefix doubled), asking for the AUDIO modality in one
+  voice. A 3.8 model is asked for WAV delivered `INLINE` through `responseFormat` (at the
+  endpoint's rate, 16 or 24 kHz, when it names one), names the voice as `voiceConfig.voice`, and
+  gets the line's instructions as the part's `speechMetadata.style` — 3.8 reads the text word for
+  word, so a direction written into it would be spoken. A legacy preview (3.1 and before) takes
+  none of that: `prebuiltVoiceConfig.voiceName`, no style, and it answers raw 24 kHz PCM, which is
+  put under a WAV header. The answer is JSON, the audio base64 in the first candidate; its
+  `usageMetadata` — text tokens in, audio tokens out, which is what Google bills — is reported to
+  the ledger, so a Gemini line is priced from Google's count rather than estimated. An answer
+  that finished for any reason but `STOP` (`MAX_TOKENS` cuts the line off), or came back at
+  another rate than the one asked for, fails — billed, with Google's count kept. The voice list
+  is the guide's thirty prebuilt voices, answered without a request; the Test button reads
+  `GET /models/{model}`.
+- ElevenLabs ([speech/elevenlabs.ts](../server/providers/speech/elevenlabs.ts)): `POST
 /v1/text-to-speech/{voice_id}` with the key in `xi-api-key`, `{ text, model_id }`, and an
   `output_format` that names the rate and, for MP3, the bitrate (`wav_24000` when nothing is set,
   which every plan may ask for; `mp3_44100_128`). No instructions field — `eleven_v3` takes audio
   tags in the text, from the Expressions tab. The answer is the audio itself; its
-  `character-cost` header, when present, is reported as the characters billed. Voices come from
-  `GET /v2/voices` a hundred a page; the Test button reads `GET /v1/models` and says when the
-  configured model is not on it.
-- BreezeBlue (the ElevenLabs adapter): `api.breeze.blue` takes the same path, `xi-api-key` and
-  `output_format`, and also an `instructions` field, which it is sent — the line's style and
-  direction. Voices come from `GET /v1/voices`, with gender as a field; a request is up to 1,000
-  characters.
-- MiniMax ([miniMaxSpeech.ts](../server/providers/miniMaxSpeech.ts)): `POST /v1/t2a_v2` with a
+  `character-cost` header — which the request-stitching guide reads, though the reference does not
+  list it for this endpoint — is reported as the characters billed when it holds a whole count
+  above 0, and ignored otherwise. Voices come from `GET /v2/voices` a hundred a page; the Test
+  button reads the bare list `GET /v1/models` answers and says when the configured model is not
+  on it.
+- BreezeBlue ([speech/breezeblue.ts](../server/providers/speech/breezeblue.ts), built from the
+  ElevenLabs pieces): `api.breeze.blue` takes the same path, `xi-api-key`, `output_format` and model
+  list, and also an `instructions` field, which it is sent — the line's style and direction, up to
+  the 1,000 characters its guide allows; a line with more fails before a request. Voices come from
+  `GET /v1/voices`, with gender as a field.
+- MiniMax ([speech/minimax.ts](../server/providers/speech/minimax.ts)): `POST /v1/t2a_v2` with a
   bearer key, `voice_setting.voice_id` and `audio_setting` (rate up to 44.1 kHz; an MP3's bitrate
-  in bits a second), answered as JSON with the audio in hex. A refusal can arrive as a 200 whose
-  `base_resp.status_code` is not 0; it is read out as a failure, marked retryable for a rate limit
-  or a fault. `extra_info.usage_characters` is reported as the characters billed. Voices, and the
-  Test button, are `POST /v1/get_voice`.
-- Cartesia ([cartesiaSpeech.ts](../server/providers/cartesiaSpeech.ts)): `POST /tts/bytes` with a
+  in bits a second), answered as JSON with the audio in hex, which is checked to be whole hex before
+  it is decoded. A refusal can arrive as a 200 whose `base_resp.status_code` is not 0; its `check`
+  finds it before the answer is accepted, so the codes MiniMax's error page says to retry later
+  (1000, 1001, 1002, 1024, 1033, 1039, 1041, and 2045's rate growth limit) are sent again with the
+  endpoint's retries — the limits among them after its cooldown, marked rate-limited — and any other
+  fails at once. Either way the failure carries MiniMax's code, not the 200. `extra_info.usage_characters`
+  is reported as the characters billed. Voices, and the Test button, are `POST /v1/get_voice`.
+- Cartesia ([speech/cartesia.ts](../server/providers/speech/cartesia.ts)): `POST /tts/bytes` with a
   bearer key and `Cartesia-Version: 2026-08-14`, `{ model_id, transcript, voice: { id },
 output_format }`, answered with the audio. It reports no usage. Voices are `GET /voices`, paged
   after the last voice of the page before; the Test button reads one.
-- Qwen-Audio 3.0 ([qwenSpeech.ts](../server/providers/qwenSpeech.ts)): `POST
+- Qwen-Audio 3.0 ([speech/qwen.ts](../server/providers/speech/qwen.ts)): `POST
 /api/v1/services/audio/tts/SpeechSynthesizer` on `dashscope-intl.aliyuncs.com` or a workspace's
   own host, `{ model, input: { text, voice, format, sample_rate } }`. The answer is a link to the
-  audio, valid a day, fetched at once without the key (it is signed) as part of the same request.
-  WAV at 24 kHz only, and requests kept to 600 characters, until more is known about these models.
-  The voices are each model's system voices from Alibaba's list, answered without a request.
-- OpenAI-shaped ([openaiSpeech.ts](../server/providers/openaiSpeech.ts)): `model`, `input`,
+  audio, valid a day, fetched at once without the key (it is signed) as part of the same request,
+  its attempts counted with it; `usage.characters` beside it is reported as the characters billed.
+  No instructions are sent: Alibaba's realtime guide says these models take them through the
+  realtime API, and the HTTP reference documents no field for them. WAV at 24 kHz only, and
+  requests kept to 600 characters, until more is known about these models. The voices are each
+  model's system voices from Alibaba's list, answered without a request.
+- OpenAI-shaped ([speech/openai.ts](../server/providers/speech/openai.ts)): `model`, `input`,
   `voice`, `response_format: "wav"`, and the line's instructions (the speaker's style and the
-  line's direction, as the clip records them) except on `tts-1`. This API cannot be asked for a
-  sample rate, so an endpoint with one set fails its lines before any request rather than
-  rendering at the model's own and reading as drift forever after.
+  line's direction, as the clip records them) except on `tts-1` and `tts-1-hd`, however their name
+  is cased. OpenAI's own API is sent a custom voice, `voice_…`, as the `{ "id": … }` its reference
+  asks for. This API cannot be asked for a sample rate, so an endpoint with one set fails its lines
+  before any request rather than rendering at the model's own and reading as drift forever after.
 - **The format is the endpoint's** (`encoding`: WAV by default, or MP3 or Opus with a bitrate),
   and a clip is kept in the format it came back in — the file's extension is the only record of
   which. Before any request the line is held against `encodingProblems`, so a rate or bitrate the
@@ -940,7 +986,8 @@ output_format }`, answered with the audio. It reports no usage. Voices are `GET 
 - Changing an endpoint's format stales nothing: it applies to the next line rendered.
 
 **Voices** come from `POST /api/endpoints/voices` `{ id, source, query?, language?, page? }`,
-answering `{ voices, total, page, hasMore }` ([voices.ts](../server/providers/voices.ts)). The saved
+answering `{ voices, total, page, hasMore }` ([voices.ts](../server/providers/voices.ts), which
+asks the endpoint's wire module). The saved
 endpoint and key are used and the request is made **whatever `SPEECH_PROVIDER` says**: listing
 voices spends nothing and reads the account, it does not narrate. For Fish, `library` is every
 model in your workspace (`self=true`, every page up to a thousand) and `public` one page of Fish's
@@ -986,10 +1033,17 @@ nothing.
 Which requests count follows what a provider bills. An answer a provider then refuses — cut off at
 the length limit, empty, a line that is not the chapter's — was billed and is priced from the usage
 it reported. A chat request that failed on the wire reported no usage and costs nothing. A speech
-request that failed is charged for what it sent on an endpoint that bills characters, bytes or
-requests, and nothing on one that bills the audio that came back. A request refused before it was
-sent — no key, no voice, a format the endpoint cannot be asked for — never happened, and has no
-row; nor does a request cancelled mid-flight, since what the provider made of it is not knowable.
+request reports whether it was billed (`billed` on [sent.ts](../server/providers/sent.ts)), by one
+rule in [send.ts](../server/providers/send.ts): a 2xx was generated and is billed, even when what
+came back proved unusable — charged for what it sent on an endpoint that bills characters, bytes or
+requests, and from the usage it reported on one that bills audio. A refusal after the retries, a
+request that never got an answer, and a refusal inside a 200 (MiniMax's `base_resp`) are not billed,
+unless the provider's docs say it bills failures (`billsFailures` in `src/lib/providers/`, false for
+every provider so far; Cartesia's pricing page says outright that errors consume no credits). Such a
+request is still a row, with everything it sent counted, at nothing — each line of its receipt says
+it was not billed. A request refused before it was sent — no key, no voice, a format the endpoint
+cannot be asked for, a model Fish does not document — never happened, and has no row; nor does a
+request cancelled mid-flight, since what the provider made of it is not knowable.
 
 **The fakes are metered too.** They report what they were given and what they answered, marked
 `simulated`, and the rows are priced at the endpoints' cards like any other. A fresh clone still
@@ -1406,7 +1460,7 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [markdown.test.ts](../tests/server/markdown.test.ts)               | The converter's DOM bracket, and reading Markdown back                                                      |
 | [jobs.test.ts](../tests/server/jobs.test.ts)                       | The queue: dedupe, cancel, restart, revision conflicts, HTTP; a chapter in a profile's chunks; its spending |
 | [usage.test.ts](../tests/server/usage.test.ts)                     | Pricing a request into the ledger, a book's spending, the budget gate, the two ledger routes                |
-| [narrationBudget.test.ts](../tests/server/narrationBudget.test.ts) | A row per part, a failed part charged, runs and retakes refused, a cap lowered mid-run                      |
+| [narrationBudget.test.ts](../tests/server/narrationBudget.test.ts) | A row per part, a refused part not charged, runs and retakes refused, a cap lowered mid-run                 |
 | [narration.test.ts](../tests/server/narration.test.ts)             | Narration: scopes, replacement, failure, cancel, restart, dictionary, files                                 |
 | [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)           | Editing against a revision, the history rule, what a run writes                                             |
 | [cast.test.ts](../tests/server/cast.test.ts)                       | The cast a run leaves, rename, merge, removal, exact undo                                                   |
@@ -1415,7 +1469,8 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [encodedClips.test.ts](../tests/server/encodedClips.test.ts)       | MP3 and Opus asked for, kept, read, joined, served; the stitcher's refusal; an ffmpeg build from them       |
 | [voices.test.ts](../tests/server/voices.test.ts)                   | A library read to its end, a public search, OpenAI's list, refusals                                         |
 | [chatScripting.test.ts](../tests/server/chatScripting.test.ts)     | The chat request, a fenced answer, fidelity, a cut-off, retries, cancel, probe                              |
-| [endpointSpeech.test.ts](../tests/server/endpointSpeech.test.ts)   | Fish and OpenAI-shaped requests, a streamed header made plain, refusals, retries, probe                     |
+| [endpointSpeech.test.ts](../tests/server/endpointSpeech.test.ts)   | Fish and OpenAI-shaped requests, a streamed header made plain, refusals, billed or not, probe               |
+| [speechProviders.test.ts](../tests/server/speechProviders.test.ts) | Every other provider's request and answer from its docs; what each reports billed, and the usage kept       |
 | [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)       | What the fake models produce — attributions, a valid WAV — and that they abort                              |
 | [libraryClient.test.ts](../tests/server/libraryClient.test.ts)     | The client and the API against each other                                                                   |
 | [schema.test.ts](../tests/server/schema.test.ts)                   | The seeded world through the schema and back                                                                |

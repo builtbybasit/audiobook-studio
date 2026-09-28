@@ -1,29 +1,43 @@
 // One request to a real provider, with the endpoint's own timeout and retries.
 //
-// Both real providers need the same four things around a `fetch`, and none of them is the
-// provider's business: a wall clock per attempt (`timeoutSec`), another attempt after a failure
-// that another attempt can fix (`maxRetries`), a wait before it that a 429 may name
-// (`Retry-After`, or `cooldownSec` when it does not), and an error a person can read that never
-// carries the key. A cancel is none of those: it stops at once, mid-request or mid-wait, and throws
-// the job's own reason, so the runner records it as cancelled rather than failed.
+// Every provider — the scripting model and each speech API alike — needs the same few things
+// around a `fetch`, and none of them is the provider's business: a wall clock per attempt
+// (`timeoutSec`), another attempt after a failure that another attempt can fix (`maxRetries`), a
+// wait before it that a 429 may name (`Retry-After`, or `cooldownSec` when it does not), and an
+// error a person can read that never carries the key. A provider that refuses inside a 200 —
+// MiniMax does — hands over a `check` that reads the answer before it is accepted, so such a
+// refusal is retried in the same loop as a 429 is. A cancel is none of those: it stops at once,
+// mid-request or mid-wait, and throws the job's own reason, so the runner records it as cancelled
+// rather than failed.
 import { sleep } from "~/providers/fake";
 import type { ProviderTarget } from "~/providers/target";
 
-/** A provider answered, and the answer was a refusal. `status` is 0 for no answer at all. */
+/**
+ * A provider answered, and the answer was a refusal. `status` is the HTTP status, or the provider's
+ * own code when it refused inside a 200 (MiniMax's `base_resp`), or 0 for no answer at all.
+ */
 export class ProviderError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    /** whether another attempt could go differently: a rate limit, a server fault, a timeout */
+    /**
+     * Whether another attempt could go differently: a rate limit, a server fault, a timeout. `call`
+     * retries on it; the routes answer a 502 rather than a 400 for it; the job does not read it.
+     */
     readonly retryable: boolean,
+    /** a refusal inside a 200 that says it is a rate limit, as a 429 would */
+    readonly rateLimited = false,
   ) {
     super(message);
     this.name = "ProviderError";
   }
 }
 
-/** Statuses another attempt may fix. A 4xx other than these is the request, and will be again. */
-const RETRYABLE = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+/**
+ * Statuses another attempt may fix. A 4xx other than these is the request, and will be again — a
+ * 409 among them: a conflict is not resolved by sending the same thing twice.
+ */
+const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 /** The most of a refusal's body worth putting in a message. */
 const BODY_CHARS = 300;
@@ -37,15 +51,33 @@ export function retryAfterMs(header: string | null, now = Date.now()): number | 
   return Number.isNaN(at) ? undefined : Math.max(0, at - now);
 }
 
-/** What a refusal says about itself, trimmed: `{error:{message}}`, `{message}`, `{detail}` or text. */
+/** What a validation error's list of problems says: FastAPI's `[{loc, msg}]`, as ElevenLabs sends. */
+const listed = (detail: unknown[]): string | undefined =>
+  detail
+    .map((d) => (d && typeof d === "object" ? (d as { msg?: unknown }).msg : d))
+    .filter((m): m is string => typeof m === "string" && !!m.trim())
+    .join("; ") || undefined;
+
+/**
+ * What a refusal says about itself, trimmed: `{error:{message}}`, `{error}`, `{message}`,
+ * `{detail}` — which ElevenLabs sends as `{detail:{message}}`, and as `{detail:[{msg}]}` on a 422 —
+ * or the text.
+ */
 async function refusal(res: Response): Promise<string> {
   const text = (await res.text().catch(() => "")).trim();
   let said = text;
   try {
     const body = JSON.parse(text) as Record<string, unknown>;
     const error = body.error as Record<string, unknown> | string | undefined;
+    const detail = body.detail;
     const found =
-      (typeof error === "object" ? error?.message : error) ?? body.message ?? body.detail;
+      (typeof error === "object" ? error?.message : error) ??
+      body.message ??
+      (Array.isArray(detail)
+        ? listed(detail)
+        : detail && typeof detail === "object"
+          ? (detail as { message?: unknown }).message
+          : detail);
     if (typeof found === "string") said = found;
   } catch {
     // not JSON: the text itself is what it said
@@ -67,6 +99,13 @@ export interface CallOptions {
    * failed request can say how hard it tried.
    */
   stats?: CallStats;
+  /**
+   * Reads a 2xx before it is accepted, for a provider that refuses inside one: the refusal it
+   * finds, or null to accept the answer. Handed a clone, so the answer is still there to read
+   * after. A refusal is treated as a refused status is — retried when it is `retryable`, after
+   * `cooldownSec` when it is `rateLimited` — and thrown once the retries run out.
+   */
+  check?(res: Response): Promise<ProviderError | null>;
 }
 
 /** What one `call` did on the wire; see `CallOptions.stats`. */
@@ -101,16 +140,25 @@ export async function call(
     let wait: number | undefined;
     try {
       const res = await send(url, { ...init, signal: AbortSignal.any([signal, clock]) });
-      if (res.ok) return res;
-      if (res.status === 429 && options.stats) options.stats.rateLimited = true;
-      const said = await refusal(res);
-      last = new ProviderError(
-        `${target.name} answered ${res.status}${said ? `: ${said}` : ""}`,
-        res.status,
-        RETRYABLE.has(res.status),
-      );
-      wait = retryAfterMs(res.headers.get("retry-after"));
-      if (res.status === 429 && wait === undefined) wait = target.cooldownSec * 1000;
+      if (res.ok) {
+        const refused = options.check ? await options.check(res.clone() as Response) : null;
+        if (!refused) return res;
+        last = refused;
+        if (refused.rateLimited) {
+          if (options.stats) options.stats.rateLimited = true;
+          wait = target.cooldownSec * 1000;
+        }
+      } else {
+        if (res.status === 429 && options.stats) options.stats.rateLimited = true;
+        const said = await refusal(res);
+        last = new ProviderError(
+          `${target.name} answered ${res.status}${said ? `: ${said}` : ""}`,
+          res.status,
+          RETRYABLE.has(res.status),
+        );
+        wait = retryAfterMs(res.headers.get("retry-after"));
+        if (res.status === 429 && wait === undefined) wait = target.cooldownSec * 1000;
+      }
     } catch (e) {
       if (signal.aborted) throw signal.reason;
       last = clock.aborted

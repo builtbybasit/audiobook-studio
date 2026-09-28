@@ -18,6 +18,7 @@ import type {
   ReqError,
   RequestRecord,
   RequestUsage,
+  SpeechCharge,
 } from "@/types";
 import { billingOf } from "@/lib/endpoints";
 import {
@@ -119,9 +120,12 @@ export function settleScript(
 }
 
 /**
- * Price one speech request against `endpoint`'s card and append it. A failed request is still
- * charged for what it sent on an endpoint that bills what is sent — characters, bytes, requests —
- * and nothing on one that bills the audio that came back, because none did.
+ * Price one speech request against `endpoint`'s card and append it. A request the provider says it
+ * did not bill (`sent.billed`: a refusal, no answer, a refusal inside a 200) is still a row, with
+ * everything it sent counted, and costs nothing — each line of its receipt says why. One that was
+ * billed but failed is charged for what it sent on an endpoint that bills what is sent —
+ * characters, bytes, requests — and for the audio it reported on one that bills audio, which is
+ * nothing when it reported none.
  */
 export function settleSpeech(
   db: Db | Tx,
@@ -134,11 +138,12 @@ export function settleSpeech(
     { text: sent.text, instructions: sent.instructions, audioSeconds: sent.audioSeconds },
     billing,
   );
-  const charge = priceSpeechRequest(billing, readPricing(endpoint), units, {
+  const priced = priceSpeechRequest(billing, readPricing(endpoint), units, {
     at: sent.finishedAt,
     rule: PRICING_RULE,
     reported: sent.reported,
   });
+  const charge = sent.billed ? priced : unbilled(priced);
   const error = errorOf(sent);
   return append(
     db,
@@ -168,6 +173,24 @@ export function settleSpeech(
     },
     work.chapterUid,
   );
+}
+
+/** What a receipt says of a request the provider does not charge for. */
+export const NOT_BILLED =
+  "not billed: the provider charges nothing for a request it refused or never answered";
+
+/**
+ * A charge the provider will not make: the same lines and quantities, each at nothing and saying
+ * why, so the row still shows what was sent and what it would have cost had it gone through.
+ */
+function unbilled(charge: SpeechCharge): SpeechCharge {
+  return {
+    ...charge,
+    lines: charge.lines.map((l) => ({ ...l, amount: 0, note: NOT_BILLED })),
+    amount: 0,
+    basis: "calculated",
+    unknowns: [],
+  };
 }
 
 /** The uid of chapter `chapterId` of `bookId`, which is what a ledger row keeps; null if none. */

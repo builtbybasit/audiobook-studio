@@ -1,34 +1,21 @@
 // The real speech provider: each line sent to the endpoint its voice belongs to.
 //
 // Which endpoint that is, and its key, the job has already decided and hands over as the line's
-// `target` — this module only picks the wire shape, from the base URL. Fish Audio's gets Fish's own
-// request (`fishSpeech.ts`), Google's Gemini API its `generateContent` (`geminiSpeech.ts`),
-// ElevenLabs' and BreezeBlue's theirs (`elevenLabsSpeech.ts`), MiniMax, Cartesia
-// and Alibaba's Qwen their own (`miniMaxSpeech.ts`, `cartesiaSpeech.ts`, `qwenSpeech.ts`); every other base URL is taken to speak OpenAI's
-// `/audio/speech` (`openaiSpeech.ts`), which is what the compatible local servers copy. Both answer in the format
-// the endpoint asks for (`answer.ts`): a WAV rewritten under a plain header, its duration counted
-// from its samples (`wav.ts`), or an MP3 or Opus file kept as it came, its duration read from it.
+// `target` — this module only finds which provider the base URL speaks (`lib/providers/`) and
+// hands the line to that provider's wire module (`speech/`), which knows its request, its answer
+// and its Test button. Every other base URL is taken to speak OpenAI's `/audio/speech`, which is
+// what the compatible local servers copy. Whatever the provider, the line is held to the formats
+// it can be asked for before anything is built (`refuseEncoding`), and sent, read and reported to
+// the ledger the same way (`send.ts`).
 //
 // A line with nowhere to go fails with the reason rather than going somewhere nobody chose: a
 // speaker with no voice, a voice whose endpoint has been deleted, an endpoint that needs a key and
 // has none. All three are refused before a request, so none of them costs anything, and none is
 // reported through `sent`: the ledger records requests that happened (`sent.ts`).
-import {
-  isCartesia,
-  isElevenLabsShaped,
-  isFishAudio,
-  isGemini,
-  isMiniMax,
-  isQwen,
-} from "@/lib/endpointShapes";
+import { refuseEncoding } from "~/providers/answer";
 import { ProviderError, requireKey } from "~/providers/http";
-import { cartesiaProbe, cartesiaSpeak } from "~/providers/cartesiaSpeech";
-import { elevenLabsProbe, elevenLabsSpeak } from "~/providers/elevenLabsSpeech";
-import { fishProbe, fishSpeak, type SpeechCallOptions } from "~/providers/fishSpeech";
-import { geminiProbe, geminiSpeak } from "~/providers/geminiSpeech";
-import { miniMaxProbe, miniMaxSpeak } from "~/providers/miniMaxSpeech";
-import { openaiProbe, openaiSpeak } from "~/providers/openaiSpeech";
-import { qwenProbe, qwenSpeak } from "~/providers/qwenSpeech";
+import { sendSpeech, type SpeechCallOptions } from "~/providers/send";
+import { wireOf } from "~/providers/speech/registry";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
 
@@ -57,13 +44,15 @@ export function endpointSpeechProvider(options: SpeechCallOptions = {}): SpeechP
           false,
         );
       requireKey(target);
-      if (isFishAudio(target)) return fishSpeak(input, target, voice, options);
-      if (isGemini(target)) return geminiSpeak(input, target, voice, options);
-      if (isElevenLabsShaped(target)) return elevenLabsSpeak(input, target, voice, options);
-      if (isMiniMax(target)) return miniMaxSpeak(input, target, voice, options);
-      if (isCartesia(target)) return cartesiaSpeak(input, target, voice, options);
-      if (isQwen(target)) return qwenSpeak(input, target, voice, options);
-      return openaiSpeak(input, target, voice, options);
+      refuseEncoding(target, input);
+      const { shape, wire } = wireOf(target);
+      const request = wire.request(input, target, voice);
+      const started = Date.now();
+      const audio = await sendSpeech(input, target, request, {
+        ...options,
+        billsFailures: shape.billsFailures,
+      });
+      return { ...audio, ms: Date.now() - started, model: target.model, voice };
     },
 
     async probe(target: ProviderTarget, signal: AbortSignal): Promise<ProbeResult> {
@@ -73,20 +62,7 @@ export function endpointSpeechProvider(options: SpeechCallOptions = {}): SpeechP
       try {
         requireKey(once);
         started = Date.now();
-        const probe = isFishAudio(once)
-          ? fishProbe
-          : isGemini(once)
-            ? geminiProbe
-            : isElevenLabsShaped(once)
-              ? elevenLabsProbe
-              : isMiniMax(once)
-                ? miniMaxProbe
-                : isCartesia(once)
-                  ? cartesiaProbe
-                  : isQwen(once)
-                    ? qwenProbe
-                    : openaiProbe;
-        return await probe(once, signal, options);
+        return await wireOf(once).wire.probe(once, signal, options);
       } catch (e) {
         if (signal.aborted) throw signal.reason;
         return {

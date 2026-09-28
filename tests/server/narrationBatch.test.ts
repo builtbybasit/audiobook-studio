@@ -8,9 +8,11 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Book, Character, Endpoint, Job, Segment } from "@/types";
+import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { fakeDuration, fakeSpeechProvider, type FakeSpeechOptions } from "~/providers/fakeSpeech";
 import { endpointRequests } from "~/usage/ledger";
 import { epubFile, story } from "../support/epub";
+import { batchServer } from "../support/batchServer";
 import { jsonBody, testApi, type TestApi } from "../support/server";
 
 const TELEMETRY = { history: [], failures: 0, rateLimits: 0, backoffUntil: 0 };
@@ -210,5 +212,38 @@ describe("narrating through an endpoint that takes batches", () => {
     expect(lines.every((s) => s.audio.status === "none" || s.audio.status === "done")).toBe(true);
     expect(lines.some((s) => s.audio.status === "none")).toBe(true);
     expect(api.gate.live().local).toMatchObject({ active: 0, waiting: 0 });
+  });
+
+  test("end to end: the real provider against a server that answers the batch API, out of order", async () => {
+    const server = batchServer({
+      batch: { max_items: 5, max_input_chars: null },
+      voices: ["mara"],
+      order: "reversed",
+    });
+    const api = testApi({
+      speech: endpointSpeechProvider({ fetch: server.fetch, backoffMs: () => 0 }),
+    });
+    const id = await book(api, speech());
+    const { body } = await api.request<{ jobs: Job[] }>(
+      `/api/books/${id}/chapters/narrate`,
+      jsonBody({ ids: [1] }),
+    );
+    await api.runner.idle();
+
+    const job = (await api.request<{ job: Job }>(`/api/jobs/${body.jobs[0].id}`)).body.job;
+    expect(job.status).toBe("done");
+    const lines = (await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`))
+      .body.segments;
+    expect(lines.every((s) => s.audio.status === "done" && s.audio.sampleRate === 24000)).toBe(
+      true,
+    );
+    const sent = server.batches();
+    expect(sent.every((b) => b.items.length <= 5)).toBe(true);
+    expect(sent.flatMap((b) => b.items.map((i) => i.input))).toEqual(
+      lines.map((s) => s.audio.said ?? s.text),
+    );
+    // no line went the single-line way
+    expect(server.requests.some((r) => r.path === "/audio/speech")).toBe(false);
+    expect(endpointRequests(api.db, "tts", "local", 0)).toHaveLength(lines.length);
   });
 });

@@ -2,7 +2,7 @@
 
 [Back to README](../README.md) · [Script history](scripting.md#chapter-script-history) · [Endpoints](endpoints.md)
 
-**Status: spec, not built.** Three slices, built in order; each is usable on its own.
+Three slices, built in order; each is usable on its own, and each says under its heading whether it is built yet.
 
 A book's script is the most expensive thing in it after the audio: paid scripting runs, then an
 afternoon of corrections to speakers, expression tags and pauses. Until now it lived only as rows
@@ -26,6 +26,12 @@ it back without costing the target book a chapter, a voice or a clip it already 
 | **Other providers' cloning** | A separate slice, not this one.                                                                                                                                                                |
 
 ## Slice 1: script export and import
+
+**Built.** Export and import on the book menu, the import page at `/book/:id/script-import`, and
+the plan route. Tests: [tests/scriptFile.test.ts](../tests/scriptFile.test.ts),
+[tests/server/scriptExport.test.ts](../tests/server/scriptExport.test.ts),
+[tests/server/scriptImport.test.ts](../tests/server/scriptImport.test.ts) and the import cases in
+[tests/history.test.ts](../tests/history.test.ts).
 
 ### The file and the export
 

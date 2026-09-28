@@ -256,7 +256,8 @@ async function prefill() {
   from.value = {
     bookId,
     sampleId,
-    speaker: query("speaker") || sample.speaker,
+    // the server's row, never the address: a rename since the link was made moves the row with it
+    speaker: sample.speaker,
     was: query("was") || null,
     sample,
   };

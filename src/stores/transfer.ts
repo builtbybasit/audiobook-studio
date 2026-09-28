@@ -398,7 +398,7 @@ export const useTransferStore = defineStore("transfer", {
       const storing =
         file && report.samples.length
           ? Promise.all(pushed).then(() => samplesStore._store(bookId, file, report.samples))
-          : Promise.resolve([]);
+          : Promise.resolve({ stored: [], replaced: [] });
 
       this.reports[bookId] = report;
       if (
@@ -457,12 +457,8 @@ export const useTransferStore = defineStore("transfer", {
             });
           };
           delete this.reports[bookId];
-          void storing.then((stored) =>
-            samplesStore._drop(
-              bookId,
-              stored.map((x) => x.id),
-            ),
-          );
+          // before any speaker goes: a row whose speaker is removed first cascades away under it
+          const samplesBack = storing.then((done) => samplesStore._unstore(bookId, done));
           const speakers = report.speakers;
           if (!activeLibraryService()) {
             castStore._dropSpeakers(bookId, speakers);
@@ -476,6 +472,7 @@ export const useTransferStore = defineStore("transfer", {
           return Promise.all([
             ...report.applied.map((a) => scriptsStore._settled(bookId, a.chapterId)),
             lexBack(),
+            samplesBack,
           ]).then(() => castStore._dropSpeakers(bookId, speakers));
         },
       });

@@ -53,16 +53,24 @@ const samples = ref<ScriptExportSamples | null>(null);
 /** Export is asking whether to include the samples: the item opened into its second step. */
 const exporting = ref(false);
 const withSamples = ref(false);
+/**
+ * The item waits for the answer: clicked before it came, a plain download would skip the question
+ * the samples are owed. A failed answer is no samples — the export still downloads, as it always did.
+ */
+const checking = ref(false);
 watch(menu, async (open) => {
   exporting.value = false;
   withSamples.value = false;
   samples.value = null;
   const svc = activeLibraryService();
   if (!open || !svc) return;
+  checking.value = true;
   try {
     samples.value = await svc.scriptExportSamples(props.book.id);
   } catch {
-    // no answer is no samples: the export still downloads, as it always did
+    // answered below as no samples
+  } finally {
+    checking.value = false;
   }
 });
 const sampleVoices = computed(() => samples.value?.voices ?? []);
@@ -165,6 +173,15 @@ async function remove() {
             </a>
           </div>
         </template>
+        <button
+          v-else-if="scriptFiles && checking"
+          class="ui-item w-full opacity-50"
+          disabled
+          title="Checking whether any voice keeps its recordings"
+        >
+          <ExportIcon class="mr-1 icon-sm" /> Export script
+          <span class="ml-auto text-[10px] text-zinc-500">checking…</span>
+        </button>
         <a
           v-else-if="scriptFiles"
           class="ui-item w-full hover:bg-violet-50 dark:hover:bg-violet-500/15"

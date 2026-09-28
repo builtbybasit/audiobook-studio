@@ -7,6 +7,7 @@ import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
+import { useTransferStore } from "@/stores/transfer";
 import { useUiStore } from "@/stores/ui";
 // Chapter script history: the versions a chapter's script has been through, and restoring one.
 //
@@ -18,12 +19,18 @@ import { useUiStore } from "@/stores/ui";
 import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
 import { testPinia } from "./support/pinia";
 
-import { compareScripts, scriptSignature, wordDiff } from "@/lib/scriptHistory";
+import {
+  compareScripts,
+  originLabel,
+  scriptOnly,
+  scriptSignature,
+  wordDiff,
+} from "@/lib/scriptHistory";
 import { readinessOf } from "@/lib/exports";
 import { keyring } from "@/lib/keyring";
 import { newProfile } from "@/lib/scripting";
 import { SEEDED_KEYS } from "@/mock";
-import type { Segment } from "@/types";
+import type { ImportChapter, ScriptImportPlan, Segment } from "@/types";
 
 let timers = new Map<number, { fn: () => void; repeat: boolean }>();
 let clock = 1_000_000;
@@ -37,6 +44,7 @@ let libraryStore: ReturnType<typeof useLibraryStore>;
 let narrationStore: ReturnType<typeof useNarrationStore>;
 let scriptingStore: ReturnType<typeof useScriptingStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
+let transferStore: ReturnType<typeof useTransferStore>;
 let uiStore: ReturnType<typeof useUiStore>;
 /** every undo a toast was given, in order */
 let undos: (() => void)[] = [];
@@ -69,6 +77,7 @@ beforeEach(() => {
   narrationStore = useNarrationStore();
   scriptingStore = useScriptingStore();
   scriptsStore = useScriptsStore();
+  transferStore = useTransferStore();
   uiStore = useUiStore();
   // the real toast needs a DOM; this stub also keeps the last undo it was offered, which is how the
   // tests below take back a batch or a restore exactly as the toast's Undo button would
@@ -605,6 +614,193 @@ describe("restoring", () => {
     drain();
     expect(historyStore.busyJobs("cliche", 1)).toHaveLength(0);
     expect(historyStore.restore("cliche", 1, version.id)).toBe(true);
+  });
+});
+
+describe("importing a script file", () => {
+  // The server matches a file's chapters and answers with a plan; applying it is the store's. A plan
+  // is built here by hand from the chapter as it stands — what an export would carry, read back —
+  // so each test states only what its file says differently.
+  const NAME = "The Cliche.script.zip";
+  function fileChapter(chId: number, edit?: (lines: Segment[]) => void): ImportChapter {
+    const lines = segments(chId).map((s, i) => ({ ...scriptOnly(s), id: i + 1 }));
+    edit?.(lines);
+    const title = libraryStore.chapter("cliche", chId)!.title;
+    return {
+      chapterId: chId,
+      title,
+      fileTitle: title,
+      file: `chapters/${chId}.json`,
+      segments: lines,
+    };
+  }
+  function readIn(chapters: ImportChapter[], extra: Partial<ScriptImportPlan> = {}) {
+    transferStore.plans.cliche = {
+      title: "The Cliche",
+      author: "",
+      name: NAME,
+      chapters,
+      refused: [],
+      ignored: [],
+      cast: { add: [], differ: [], aliases: [] },
+      lexicon: { add: [], differ: [] },
+      voices: [],
+      ...extra,
+    };
+  }
+  const dialogue = (lines: Segment[]) => lines.filter((s) => s.type === "dialogue");
+
+  test("the script read back into the book it came from changes nothing", () => {
+    readIn([fileChapter(1), fileChapter(2)]);
+    const entries = versions().length;
+    const report = transferStore.apply("cliche", [1, 2])!;
+    expect(report.applied).toEqual([]);
+    expect(report.skipped.map((s) => s.why)).toEqual(["identical", "identical"]);
+    expect(versions()).toHaveLength(entries);
+    expect(undos).toHaveLength(0);
+  });
+
+  test("a corrected word stales that line's clip, keeps the rest, and the history names the file", () => {
+    narrationStore.runNarration("cliche", [1]);
+    drain();
+    const target = dialogue(segments())[0];
+    const at = segments().indexOf(target);
+    // chapter 2 comes back as it is, so it is ticked but skipped — and must not be counted
+    readIn([
+      fileChapter(1, (lines) => (lines[at].text = lines[at].text.replace(/\w+/, "Truly"))),
+      fileChapter(2),
+    ]);
+    const preview = transferStore.previewOf("cliche", transferStore.plans.cliche.chapters[0]);
+    expect(preview.stale).toBe(1);
+    expect(preview.dropped).toBe(0);
+
+    transferStore.apply("cliche", [1, 2]);
+    expect(segments()[at].text.startsWith("Truly")).toBe(true);
+    expect(segments()[at].audio.status).toBe("stale");
+    expect(segments().filter((s) => s.audio.status === "done")).toHaveLength(segments().length - 1);
+    expect(head().origin).toEqual({ kind: "imported", file: NAME, chapters: 1 });
+    expect(originLabel(head().origin)).toBe(`Imported from ${NAME}`);
+  });
+
+  test("a chapter with a run in flight is left alone", () => {
+    readIn([fileChapter(1, (lines) => (dialogue(lines)[0].speaker = "Elder Mo"))]);
+    narrationStore.runNarration("cliche", [1]);
+    tick();
+    const before = JSON.stringify(segments());
+    const report = transferStore.apply("cliche", [1])!;
+    expect(report.skipped).toMatchObject([{ chapterId: 1, why: "busy" }]);
+    expect(JSON.stringify(segments())).toBe(before);
+  });
+
+  test("one Undo takes back the scripts, the speakers, the dictionary and the voices", () => {
+    const fish = endpointsStore.endpoints.find((e) => e.id === "fish")!;
+    const kept = endpointsStore.endpoints.find((e) => e.voices.length && e.id !== "fish")!;
+    readIn(
+      [
+        fileChapter(1, (lines) => {
+          dialogue(lines)[0].speaker = "Stranger";
+          dialogue(lines)[1].speaker = "Ferryman";
+        }),
+      ],
+      {
+        cast: {
+          add: [
+            {
+              name: "Stranger",
+              aliases: ["the man in grey"],
+              gender: "m",
+              description: "A traveller",
+              style: "hushed",
+            },
+            { name: "Ferryman", aliases: [], gender: "m", description: "", style: "" },
+            { name: "Nobody Here", aliases: [], gender: "f", description: "", style: "" },
+          ],
+          differ: [],
+          aliases: [{ name: "Elder Mo", add: ["Old Mo"] }],
+        },
+        lexicon: { add: [{ term: "Zhenwu", say: "Jen-woo", enabled: true }], differ: [] },
+      },
+    );
+    const cast = JSON.stringify(castStore.charactersOf("cliche"));
+    const lexicon = JSON.stringify(castStore.lexiconOf("cliche"));
+    const script = JSON.stringify(segments());
+    const fishVoices = fish.voices.length;
+    const ref = `${kept.id}/${kept.voices[0].id}`;
+
+    const report = transferStore.apply(
+      "cliche",
+      [1],
+      [
+        { speaker: "Stranger", ref },
+        {
+          speaker: "Ferryman",
+          ref: "fish/public-ferry",
+          add: { endpointId: "fish", voice: { id: "public-ferry", label: "Ferry", gender: "m" } },
+        },
+      ],
+    )!;
+    const stranger = castStore.charactersOf("cliche").find((c) => c.name === "Stranger")!;
+    expect(stranger).toMatchObject({ description: "A traveller", style: "hushed", voice: ref });
+    expect(stranger.aliases).toEqual(["the man in grey"]);
+    expect(castStore.charactersOf("cliche").find((c) => c.name === "Ferryman")!.voice).toBe(
+      "fish/public-ferry",
+    );
+    expect(fish.voices).toHaveLength(fishVoices + 1);
+    expect(report.unused).toEqual(["Nobody Here"]);
+    expect(castStore.charactersOf("cliche").find((c) => c.name === "Elder Mo")!.aliases).toContain(
+      "Old Mo",
+    );
+    expect(castStore.lexiconOf("cliche").some((e) => e.term === "Zhenwu")).toBe(true);
+
+    undoLast();
+    expect(JSON.stringify(castStore.charactersOf("cliche"))).toBe(cast);
+    expect(JSON.stringify(castStore.lexiconOf("cliche"))).toBe(lexicon);
+    expect(JSON.stringify(segments())).toBe(script);
+    expect(fish.voices).toHaveLength(fishVoices);
+  });
+
+  test("the book keeps its own speakers and terms until one is taken from the file", () => {
+    const mo = castStore.charactersOf("cliche").find((c) => c.name === "Elder Mo")!;
+    const lan = castStore.charactersOf("cliche").find((c) => c.name === "Xiao Lan")!;
+    const term = castStore.lexiconOf("cliche")[0];
+    const differ = [mo, lan].map((c) => ({
+      name: c.name,
+      book: { gender: c.gender, description: c.description, style: c.style },
+      file: { gender: c.gender, description: `${c.name}, as the file has it`, style: "brisk" },
+    }));
+    readIn([fileChapter(1, (lines) => (dialogue(lines)[0].direction = "quietly"))], {
+      cast: { add: [], differ, aliases: [] },
+      lexicon: {
+        add: [],
+        differ: [
+          {
+            term: term.term,
+            book: { say: term.say, enabled: true },
+            file: { say: "Jih Ning", enabled: true },
+          },
+        ],
+      },
+    });
+    const before = { mo: mo.description, lan: lan.description };
+    transferStore.apply("cliche", [1]);
+    expect(mo.description).toBe(before.mo);
+    expect(term.say).not.toBe("Jih Ning");
+
+    expect(transferStore.useFileSpeakers("cliche", [differ[0]])).toBe(1);
+    expect(mo).toMatchObject({ description: "Elder Mo, as the file has it", style: "brisk" });
+    undoLast();
+    expect(mo.description).toBe(before.mo);
+
+    expect(transferStore.useFileSpeakers("cliche", differ)).toBe(2);
+    expect(lan.description).toBe("Xiao Lan, as the file has it");
+    undoLast();
+    expect([mo.description, lan.description]).toEqual([before.mo, before.lan]);
+
+    const was = term.say;
+    expect(transferStore.useFileTerms("cliche", transferStore.plans.cliche.lexicon.differ)).toBe(1);
+    expect(castStore.lexiconOf("cliche")[0].say).toBe("Jih Ning");
+    undoLast();
+    expect(castStore.lexiconOf("cliche")[0].say).toBe(was);
   });
 });
 

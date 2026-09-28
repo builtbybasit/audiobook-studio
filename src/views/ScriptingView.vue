@@ -18,6 +18,7 @@ import ScriptSettings from "@/views/scripting/ScriptSettings.vue";
 import ScriptEndpoints from "@/views/scripting/ScriptEndpoints.vue";
 import { useBookId } from "@/composables/useBookId";
 import { useChapterScript } from "@/queries";
+import { scriptExportUrl } from "@/services/library";
 
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
@@ -27,6 +28,8 @@ const uiStore = useUiStore();
 const route = useRoute();
 const router = useRouter();
 const bookId = useBookId();
+/** A script file is written and read by the server; the demo has none to ask. */
+const scriptFiles = !!libraryStore._service();
 const selected = ref<number[]>([]);
 const showEndpoints = ref(false);
 const focusReader = ref(false);
@@ -155,6 +158,23 @@ function scriptFirst() {
         </div>
         <div class="card shrink-0 p-3">
           <ScriptSettings :book-id="bookId" :selected="selected" @configure="configure" />
+        </div>
+        <div class="flex shrink-0 items-center gap-3 px-1 text-xs text-zinc-500">
+          <span>Script file</span>
+          <RouterLink
+            v-if="scriptFiles"
+            :to="`/book/${bookId}/script-import`"
+            class="text-violet-600 hover:underline dark:text-violet-400"
+            >Import script…</RouterLink
+          >
+          <a
+            v-if="scriptFiles"
+            :href="scriptExportUrl(bookId)"
+            download
+            class="text-violet-600 hover:underline dark:text-violet-400"
+            >Export script</a
+          >
+          <span v-else title="Start the app with pnpm dev">needs the server</span>
         </div>
       </div>
 

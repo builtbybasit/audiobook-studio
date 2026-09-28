@@ -9,6 +9,7 @@ This is a frontend prototype. Keep fixtures, scenarios and simulated endpoint wo
 | `library.ts`   | Books, chapters, volumes, book settings and library removal/undo; chapter counts a shelf reads before a book is opened |
 | `scripts.ts`   | Script segments, previous revisions, edits and bulk corrections                                                        |
 | `history.ts`   | A chapter's script versions, editing sessions, checkpoints and restoring one                                           |
+| `transfer.ts`  | A script file read in: the plan the server answered with, applying it and the report of what it did                    |
 | `cast.ts`      | Characters, dictionary, voice routing and pronunciation actions                                                        |
 | `endpoints.ts` | TTS endpoints, scripting profiles, their rate cards and endpoint configuration; the server's in backend mode           |
 | `jobs.ts`      | Queue/history, telemetry, budget reservations and shared job lifecycle                                                 |

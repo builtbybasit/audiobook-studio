@@ -55,8 +55,17 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   requests in that bucket — chart and list are folded from one array of records. SVG bars can't hold
   focus, so the plot is a keyboard control too: focus it and `←`/`→` walk the buckets, `Enter` picks
   one, `Esc` clears, and the readout under the chart is a live region that announces each one.
-- **Connection** — keeps three things apart that usually get confused: the saved model
-  configuration, the provider connection (base URL + credential, shareable between configurations)
+- **Connection** — starts with **Start from a preset…**, for both kinds: a speech provider
+  (Fish Audio, OpenAI, Gemini, a local server) or a scripting one (OpenAI GPT-6 Luna and Astra,
+  DeepSeek V4.1 Flash and V4 Pro, Gemini 3.8 Flash and 3.1 Pro, Claude Sonnet 5 and Haiku 4.5
+  through Anthropic's OpenAI layer, Ollama, LM Studio). A preset fills in the base URL, model and
+  prices, and every field stays editable. The rates are the providers' published cards on
+  28 September 2026, in `SCRIPTING_PRESETS` and `TTS_PRESETS` in
+  [lib/endpoints.ts](../src/lib/endpoints.ts). DeepSeek's weekday peak hours are a schedule on the
+  Pricing tab over an off-peak card, and Gemini Flash's 2026 price is a promotion that ends when
+  its 2027 card applies. The picker copies what it fills in, so editing an endpoint's prices never
+  changes the preset. The Scripting page's endpoint manager has the same picker. The tab keeps
+  three things apart that usually get confused: the saved model configuration, the provider connection (base URL + credential, shareable between configurations)
   and the shared quota group. Named credentials can be used by several endpoints; in the demo the
   key itself stays in the in-memory keyring and never reaches an export. With a server, the key is
   the server's: the field saves it there at once, shows "Key saved on the server" afterwards (it

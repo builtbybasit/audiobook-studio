@@ -25,6 +25,7 @@ import {
   billingProblems,
   effectiveRates,
   ensurePricing,
+  newPricing,
   pricingOneLiner,
   pricingProblems,
   speechPricingOf,
@@ -118,15 +119,20 @@ export const KIND_LABEL: Record<EndpointKind, string> = {
 
 /** What a provider's "add this endpoint" form should be filled in with. Everything here is a
  *  starting point the user can still edit; only fields a provider genuinely pins down are set.
- *  The app never calls a provider, so these are documentation as much as defaults. */
-export interface TtsPreset {
+ *  Prices are the provider's published card on the date beside them — check them against your
+ *  own plan, since a budget is held to them. */
+export interface Preset<T> {
   id: string;
   label: string;
   hint: string;
   /** shown under the picker once chosen — the caveat that belongs with this choice */
   note?: string;
-  apply: Partial<Endpoint>;
+  apply: Partial<T>;
 }
+export type TtsPreset = Preset<Endpoint>;
+/** A chat model the scripting queue can send a chapter to: anything serving OpenAI's
+ *  `/chat/completions`, which is the only request shape the scripting provider makes. */
+export type ScriptingPreset = Preset<Profile>;
 
 export const TTS_PRESETS: TtsPreset[] = [
   {
@@ -244,8 +250,252 @@ export const TTS_PRESETS: TtsPreset[] = [
   },
 ];
 
+// Every hosted rate below is the provider's own published card as read on 2026-09-28, standard
+// tier, USD per million tokens. A preset leaves limits and timing at `newProfile`'s defaults: a
+// provider's output ceiling is far above what a chunk of one chapter asks for.
+
+const PRICES_AS_OF = "Rates as published on 28 September 2026 — check them against your own plan.";
+
+/**
+ * DeepSeek's peak hours, in UTC, Monday to Friday: 01:00–04:00 and 06:00–10:00. Every other hour
+ * is off-peak at half price, so the card is the off-peak rate and these windows put the full one
+ * back. Chinese public holidays are off-peak too; a schedule cannot know them, so they are billed
+ * here at the peak rate, which overstates rather than understates.
+ */
+function deepseekPeaks(peak: { input: number; output: number; cachedInput: number }) {
+  const weekdays = [1, 2, 3, 4, 5];
+  return [
+    { id: "peak-early", label: "Peak (01–04 UTC)", days: weekdays, from: 60, to: 240, rates: peak },
+    {
+      id: "peak-morning",
+      label: "Peak (06–10 UTC)",
+      days: weekdays,
+      from: 360,
+      to: 600,
+      rates: peak,
+    },
+  ];
+}
+
+/** Gemini 3.8 Flash's 2026 price: half the card until 2027 begins (read as UTC midnight). */
+const GEMINI_FLASH_2026 = {
+  id: "flash-2026",
+  label: "2026 price",
+  from: null,
+  until: Date.UTC(2027, 0, 1),
+  scope: ["model" as const],
+  percent: 50,
+  note: "Google's published 2026 rate for gemini-3.8-flash; the card rate applies from 1 January 2027.",
+};
+
+export const SCRIPTING_PRESETS: ScriptingPreset[] = [
+  {
+    id: "openai-luna",
+    label: "OpenAI · GPT-6 Luna",
+    hint: "gpt-6-luna — cheapest, for high-volume work",
+    note:
+      "OpenAI's most efficient GPT-6 model, which is what scripting a book chapter by chapter " +
+      "wants. Prompts over 272K input tokens cost more, which no chunk here comes near. " +
+      PRICES_AS_OF,
+    apply: {
+      name: "OpenAI · GPT-6 Luna",
+      baseUrl: "https://api.openai.com/v1",
+      model: "gpt-6-luna",
+      needsKey: true,
+      inPrice: 0.1,
+      outPrice: 0.5,
+      pricing: newPricing({ cachedInput: 0.01, cacheWrite: null }),
+    },
+  },
+  {
+    id: "openai-astra",
+    label: "OpenAI · GPT-6 Astra",
+    hint: "gpt-6-astra — flagship, a hundred times Luna",
+    note: PRICES_AS_OF,
+    apply: {
+      name: "OpenAI · GPT-6 Astra",
+      baseUrl: "https://api.openai.com/v1",
+      model: "gpt-6-astra",
+      needsKey: true,
+      inPrice: 10,
+      outPrice: 50,
+      pricing: newPricing({ cachedInput: 1, cacheWrite: null }),
+    },
+  },
+  {
+    id: "deepseek-flash",
+    label: "DeepSeek · V4.1 Flash",
+    hint: "deepseek-flash — half price off-peak",
+    note:
+      "Half price outside DeepSeek's peak hours (01:00–04:00 and 06:00–10:00 UTC on weekdays), " +
+      "which the schedule on the Pricing tab already holds. Thinking mode is on by default and " +
+      "its tokens are billed as output. " +
+      PRICES_AS_OF,
+    apply: {
+      name: "DeepSeek · V4.1 Flash",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-flash",
+      needsKey: true,
+      inPrice: 0.15,
+      outPrice: 0.6,
+      pricing: newPricing({
+        cachedInput: 0.003,
+        cacheWrite: null,
+        timezone: "UTC",
+        windows: deepseekPeaks({ input: 0.3, output: 1.2, cachedInput: 0.006 }),
+      }),
+    },
+  },
+  {
+    id: "deepseek-pro",
+    label: "DeepSeek · V4 Pro",
+    hint: "deepseek-v4-pro — half price off-peak",
+    note:
+      "The same peak hours as Flash, held by the schedule on the Pricing tab. Thinking mode is on " +
+      "by default and its tokens are billed as output. " +
+      PRICES_AS_OF,
+    apply: {
+      name: "DeepSeek · V4 Pro",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-pro",
+      needsKey: true,
+      inPrice: 0.66,
+      outPrice: 1.98,
+      pricing: newPricing({
+        cachedInput: 0.022,
+        cacheWrite: null,
+        timezone: "UTC",
+        windows: deepseekPeaks({ input: 1.32, output: 3.96, cachedInput: 0.044 }),
+      }),
+    },
+  },
+  {
+    id: "gemini-flash",
+    label: "Gemini · 3.8 Flash",
+    hint: "gemini-3.8-flash — price doubles on 1 Jan 2027",
+    note:
+      "Through Google's OpenAI compatibility layer, which Google still calls beta. $0.75 in / " +
+      "$3.75 out until the end of 2026, then $1.50 / $7.50: the card is the 2027 rate and a " +
+      "promotion on the Pricing tab holds the 2026 one until it ends. Reasoning cannot be turned " +
+      "off, and its tokens are billed as output. " +
+      PRICES_AS_OF,
+    apply: {
+      name: "Gemini · 3.8 Flash",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      model: "gemini-3.8-flash",
+      needsKey: true,
+      inPrice: 1.5,
+      outPrice: 7.5,
+      pricing: newPricing({
+        cachedInput: 0.15,
+        cacheWrite: null,
+        promotions: [GEMINI_FLASH_2026],
+      }),
+    },
+  },
+  {
+    id: "gemini-pro",
+    label: "Gemini · 3.1 Pro (preview)",
+    hint: "gemini-3.1-pro-preview",
+    note:
+      "A preview model, through Google's beta OpenAI compatibility layer. These are the rates for " +
+      "prompts of 200K tokens or fewer, which every chunk here is. " +
+      PRICES_AS_OF,
+    apply: {
+      name: "Gemini · 3.1 Pro",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      model: "gemini-3.1-pro-preview",
+      needsKey: true,
+      inPrice: 2,
+      outPrice: 12,
+      pricing: newPricing({ cachedInput: 0.2, cacheWrite: null }),
+    },
+  },
+  {
+    id: "anthropic-sonnet",
+    label: "Anthropic · Claude Sonnet 5",
+    hint: "claude-sonnet-5, through its OpenAI compatibility layer",
+    note:
+      "Anthropic describes its OpenAI compatibility layer as meant for testing and comparing " +
+      "models, not as a long-term or production-ready way in. Prompt caching is not available " +
+      "through it, so no cached rate is set. " +
+      PRICES_AS_OF,
+    apply: {
+      name: "Anthropic · Claude Sonnet 5",
+      baseUrl: "https://api.anthropic.com/v1",
+      model: "claude-sonnet-5",
+      needsKey: true,
+      inPrice: 2,
+      outPrice: 10,
+      pricing: newPricing(),
+    },
+  },
+  {
+    id: "anthropic-haiku",
+    label: "Anthropic · Claude Haiku 4.5",
+    hint: "claude-haiku-4-5, through its OpenAI compatibility layer",
+    note:
+      "The same caveat as Sonnet: a layer for testing and comparing, with no prompt caching. " +
+      PRICES_AS_OF,
+    apply: {
+      name: "Anthropic · Claude Haiku 4.5",
+      baseUrl: "https://api.anthropic.com/v1",
+      model: "claude-haiku-4-5",
+      needsKey: true,
+      inPrice: 1,
+      outPrice: 5,
+      pricing: newPricing(),
+    },
+  },
+  {
+    id: "ollama",
+    label: "Ollama (local)",
+    hint: "a model you have pulled, on localhost:11434",
+    note:
+      "Type the name of a model you have pulled (`ollama list`). Nothing is billed, and no key " +
+      "is needed: Ollama ignores one.",
+    apply: {
+      name: "Ollama (local)",
+      baseUrl: "http://localhost:11434/v1",
+      model: "",
+      needsKey: false,
+      inPrice: 0,
+      outPrice: 0,
+      pricing: newPricing(),
+    },
+  },
+  {
+    id: "lm-studio",
+    label: "LM Studio (local)",
+    hint: "its local server, on localhost:1234",
+    note:
+      "Type the id of the model LM Studio has loaded. Port 1234 is the one its docs use; change " +
+      "it if yours differs. Nothing is billed.",
+    apply: {
+      name: "LM Studio (local)",
+      baseUrl: "http://localhost:1234/v1",
+      model: "",
+      needsKey: false,
+      inPrice: 0,
+      outPrice: 0,
+      pricing: newPricing(),
+    },
+  },
+];
+
+/** The presets for one kind of endpoint. */
+export function presetsOf(kind: "tts"): TtsPreset[];
+export function presetsOf(kind: "scripting"): ScriptingPreset[];
+export function presetsOf(kind: EndpointKind): (TtsPreset | ScriptingPreset)[];
+export function presetsOf(kind: EndpointKind): (TtsPreset | ScriptingPreset)[] {
+  return kind === "tts" ? TTS_PRESETS : SCRIPTING_PRESETS;
+}
+
 export const presetById = (id: string): TtsPreset | undefined =>
   TTS_PRESETS.find((p) => p.id === id);
+
+export const scriptingPresetById = (id: string): ScriptingPreset | undefined =>
+  SCRIPTING_PRESETS.find((p) => p.id === id);
 
 // ---------- billing ----------
 // The units, the conversion and the arithmetic live in `lib/pricing.ts`, beside the schedules and

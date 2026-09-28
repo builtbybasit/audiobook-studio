@@ -152,18 +152,20 @@ describe("a Fish public search", () => {
     });
   });
 
-  test("a voice carries Fish's own recording of it, and a library voice or a non-https link does not", async () => {
+  test("a voice carries Fish's own recording of it, and a library voice or a link off Fish's hosts does not", async () => {
     const recording = (audio: string, text = "Choose your fighter!") => ({
       samples: [{ title: "Default Sample", text, task_id: "t", audio }],
     });
     const cdn = "https://platform.r2.fish.audio/task/265105e4556b4c0f906b0f426de988da.mp3";
     const { api: t } = await api(() =>
       json({
-        total: 4,
+        total: 6,
         items: [
           model("rec", recording(cdn)),
           model("plain", recording("http://example.test/a.mp3")),
           model("odd", recording("javascript:alert(1)")),
+          model("elsewhere", recording("https://example.test/a.mp3")),
+          model("lookalike", recording("https://fish.audio.example.test/a.mp3")),
           model("none"),
         ],
       }),
@@ -173,6 +175,8 @@ describe("a Fish public search", () => {
       ["rec", { url: cdn, text: "Choose your fighter!" }],
       ["plain", null],
       ["odd", null],
+      ["elsewhere", null],
+      ["lookalike", null],
       ["none", null],
     ]);
     // what "Fetch" merges into the endpoint is only ever the voice

@@ -258,9 +258,10 @@ function fullShelf(ctx: ScenarioContext): DemoResult {
 // ---------- expressions on a line ----------
 
 /**
- * Two dialogue lines in the first scripted chapter: one with a sigh before it and a softer
- * delivery placed mid-line, both fine; the next with a laugh whose anchor the text moved out from
- * under, so it asks to be placed again. The reader opens on the first.
+ * Two dialogue lines in the first scripted chapter, their speakers cast on Fish's S2 model, which
+ * ships with tags: one with a sigh before it and a softer delivery placed mid-line, both fine; the
+ * next with a laugh whose anchor the text moved out from under, so it asks to be placed again. The
+ * reader opens on the first.
  */
 function expressionsPlaced(ctx: ScenarioContext, bookId: string): DemoResult {
   const chapter = ctx.chapters(bookId).find(isScripted);
@@ -271,6 +272,10 @@ function expressionsPlaced(ctx: ScenarioContext, bookId: string): DemoResult {
     .filter((s) => s.type === "dialogue" && s.speaker !== "Narrator" && s.text.length > 24);
   const [a, b] = lines;
   const tag = (id: string) => EXPRESSION_TAGS.find((t) => t.id === id)!;
+  // the tags are Fish's S2 model's, so the two speakers are cast there; OpenAI's model takes none
+  const fish = ctx.world.endpoints.find((e) => e.id === "fish");
+  for (const who of ctx.cast(bookId).filter((c) => c.name === a?.speaker || c.name === b?.speaker))
+    if (fish?.voices[0]) who.voice = voiceRef(fish.id, fish.voices[0].id);
   if (a) {
     const gaps = gapsOf(a.text, "split");
     const mid = gaps[Math.floor(gaps.length / 2)]?.at ?? 0;

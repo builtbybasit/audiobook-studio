@@ -8,6 +8,7 @@ import { Plus as AddIcon, Trash2 as RemoveIcon, TriangleAlert as WarnIcon } from
 import { UiSelect } from "@/ui";
 
 import { configErrors, expressionId, validToken } from "@/lib/expressions";
+import { tagSyntaxOf } from "@/lib/providers";
 import { expressionDraft, resetExpressionDraft } from "@/views/endpoints/expressionState";
 import type { Endpoint, ExpressionTag } from "@/types";
 const props = defineProps<{ endpoint: Endpoint }>();
@@ -20,11 +21,19 @@ const token = ref("");
 const kind = ref<ExpressionTag["kind"]>("sound");
 const attempted = ref(false);
 const error = ref("");
-const kinds = [
-  { value: "sound", label: "Vocal sound" },
-  { value: "delivery", label: "Delivery instruction" },
-];
-const errors = computed(() => configErrors(draft.value));
+// the tag syntax is the provider's, for the model and base URL on the page now
+const syntax = computed(() => tagSyntaxOf(props.endpoint));
+const example = computed(() => syntax.value?.example ?? "[laughter]");
+const kinds = computed(() =>
+  [
+    { value: "sound", label: "Vocal sound" },
+    { value: "delivery", label: "Delivery instruction" },
+  ].filter((k) => syntax.value?.kinds.includes(k.value as ExpressionTag["kind"]) ?? true),
+);
+// held to the model it will be saved for, which is the endpoint's now, not the one it was drafted for
+const errors = computed(() =>
+  configErrors({ ...draft.value, model: props.endpoint.model, baseUrl: props.endpoint.baseUrl }),
+);
 const modelChanged = computed(
   () =>
     draft.value.model !== props.endpoint.model || draft.value.baseUrl !== props.endpoint.baseUrl,
@@ -43,8 +52,8 @@ const affected = computed(() =>
 );
 function add() {
   error.value = "";
-  if (!label.value.trim() || !validToken(token.value.trim())) {
-    error.value = "Enter a name and a complete tag, such as [laughter].";
+  if (!label.value.trim() || !validToken(token.value.trim(), syntax.value)) {
+    error.value = `Enter a name and a complete tag, such as ${example.value}.`;
     return;
   }
   const id = expressionId(label.value);
@@ -91,6 +100,10 @@ function save() {
       <WarnIcon class="icon-sm" /> The model or server changed. Review this list, then save to
       confirm it for {{ endpoint.model }}. Expressions are blocked until reviewed.
     </p>
+    <p v-if="!syntax" class="text-xs leading-relaxed text-zinc-500">
+      {{ endpoint.model }} takes no expression tags: its provider documents none, and a tag sent to
+      it would be read out as words. Give delivery as the line's direction instead.
+    </p>
     <label class="block text-xs text-zinc-500"
       >This model supports
       <UiSelect
@@ -106,9 +119,10 @@ function save() {
     </label>
     <template v-if="draft.status === 'supported'">
       <p class="text-xs leading-relaxed text-zinc-500">
-        Copy exact syntax from your model’s documentation. For example, a name such as “Laughter”
-        can map to <code>[laughter]</code> on one model and a different tag on another. Vocal sounds
-        and delivery instructions have separate groups.
+        {{ syntax?.hint ?? "This model takes no expression tags." }} Copy exact syntax from the
+        documentation: a name such as “Laughter” can map to <code>{{ example }}</code> here and a
+        different tag on another model.
+        {{ kinds.length > 1 ? "Vocal sounds and delivery instructions have separate groups." : "" }}
       </p>
       <div v-if="draft.tags.length" class="space-y-3">
         <div
@@ -158,7 +172,7 @@ function save() {
             >Exact syntax<input
               v-model="token"
               class="input mt-1 w-full font-mono"
-              placeholder="[laughter]"
+              :placeholder="example"
               aria-label="New expression syntax"
               spellcheck="false"
           /></label>

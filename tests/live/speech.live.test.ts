@@ -1,7 +1,7 @@
 // The real speech provider against the real Fish Audio, opt-in: `LIVE=1 bun test tests/live`
 // with `FISHAUDIO_TOKEN` and `FISHAUDIO_VOICE_ID` in `.env`. It spends a handful of short requests
-// on the free tier: one test of the key, one sentence at the model's own rate and at 24 kHz, and
-// one each as MP3 and Opus. Set `LIVE_WAV_DIR` to keep the 24 kHz clip, the MP3 and the Opus for a
+// on the free tier: one test of the key, one sentence at the model's own rate and at 24 kHz, one
+// each as MP3 and Opus, and five short lines through the speech gate at the preset's concurrency. Set `LIVE_WAV_DIR` to keep the 24 kHz clip, the MP3 and the Opus for a
 // listen.
 import { join } from "node:path";
 
@@ -11,9 +11,11 @@ import type { AudioEncoding } from "@/types";
 import { AUDIO_EXT } from "@/lib/endpointShapes";
 import { probeClip } from "~/audio/probe";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
+import { createSpeechGate } from "~/providers/gate";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 import { readWavHeader } from "~/providers/wavEncoder";
+import { TTS_PRESETS } from "@/lib/presets/speech";
 
 const env = process.env;
 
@@ -88,4 +90,41 @@ describe.skipIf(!env.LIVE || !env.FISHAUDIO_TOKEN)("Fish Audio, for real", () =>
           clip.bytes,
         );
     }, 120_000);
+
+  // Five lines at once through the gate, at what the fish-free preset allows, as a narration run
+  // sends them: every one answers, and any rate limit Fish sends back is told to the gate rather
+  // than failing a line.
+  test("five lines go out through the gate at the preset's concurrency, and every one answers", async () => {
+    const preset = TTS_PRESETS.find((p) => p.id === "fish-free");
+    const concurrency = preset?.apply.concurrency ?? 1;
+    const gate = createSpeechGate();
+    let most = 0;
+    let out = 0;
+    const clips = await Promise.all(
+      ["One.", "Two, then.", "Three of them.", "Four and more.", "Five, at last."].map(
+        async (words) => {
+          const signal = AbortSignal.timeout(120_000);
+          const leave = await gate.acquire(target.id, () => ({ concurrency, enabled: true }), {
+            signal,
+          });
+          most = Math.max(most, ++out);
+          try {
+            return await provider.speak({
+              ...line(null),
+              text: words,
+              signal,
+              rateLimited: (ms) => gate.rateLimited(target.id, ms),
+            });
+          } finally {
+            out--;
+            leave();
+          }
+        },
+      ),
+    );
+    expect(clips).toHaveLength(5);
+    for (const clip of clips) expect(clip.duration).toBeGreaterThan(0.2);
+    expect(most).toBe(Math.min(5, concurrency));
+    console.log(`fish-free at concurrency ${concurrency}:`, gate.live()[target.id]);
+  }, 240_000);
 });

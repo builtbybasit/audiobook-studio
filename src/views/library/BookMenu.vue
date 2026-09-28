@@ -22,7 +22,7 @@ import { plural } from "@/views/library/shared";
 import type { Book } from "@/types";
 import { pickedFrom, type PickedFile } from "@/components/addEpub";
 import { activeLibraryService, scriptExportUrl } from "@/services/library";
-import { megabytes } from "@/stores/speakerSamples";
+import { sizeLabel } from "@/lib/audioFormat";
 import { UiCheckbox } from "@/ui";
 import type { ScriptExportSamples } from "@/types";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
@@ -79,7 +79,7 @@ const samplesNote = computed(() => {
   const bytes = v.reduce((n, x) => n + x.bytes, 0);
   return (
     `Recordings of ${plural(v.length, "voice")} (${v.map((x) => x.speaker).join(", ")}) · ` +
-    `${megabytes(bytes)}. Share them only with someone the voice's owner agreed to.`
+    `${sizeLabel(bytes)}. Share them only with someone the voice's owner agreed to.`
   );
 });
 /** What the item is about to take, in the menu's own words. */

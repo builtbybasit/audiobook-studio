@@ -35,8 +35,6 @@ export interface CloneFromSamples {
   was: VoiceRef | null;
 }
 
-export const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-
 export const useSpeakerSamplesStore = defineStore("speakerSamples", {
   state: (): SpeakerSamplesState => ({ waiting: {} }),
   getters: {

@@ -101,19 +101,25 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   page through, and add one with a click; ▶ on a result plays Fish's own recording of that voice,
   a file on Fish's CDN that costs nothing (a voice with none is rendered like a listed one). A Fish
   voice is a `reference_id`, public or your own.
-  On a Fish Audio endpoint with a server, **Clone a voice** makes a voice from recordings of one
-  person — a name, up to 20 clips in WAV, MP3, M4A, Opus or FLAC (Fish suggests two or three of
-  15–20 seconds; picking more than 20 keeps the first 20 and says so), and a box saying the voice
-  is yours or its owner agreed, without which nothing is sent. It is sent once and not retried,
-  so a failure never leaves a second copy on the account. Fish keeps it as a private voice on the
-  account and it is added to the list; see
-  [the providers](backend.md#the-providers-and-where-a-key-lives). The server keeps the
-  recordings beside the voice, with the sentence that was agreed to and when, so the voice can go
+  On an endpoint whose provider clones — Fish Audio, ElevenLabs, BreezeBlue, Cartesia, MiniMax, or
+  Qwen on `qwen3-tts-vc-2026-01-22` — with a server, **Clone a voice** makes a voice from samples of
+  one person: audio you recorded or downloaded. It takes a name, the samples the provider takes (the
+  picker offers only its formats; Fish takes up to 20, the others one, and a pick past that keeps
+  the first and says so; a file too large, or named as a format the provider does not take, blocks
+  the button by name), the provider's own advice and what it charges, and a box saying the voice is
+  yours or its owner agreed, without which nothing is sent. The provider makes the voice once, and
+  it is spoken by its id from then on. It is sent once and not retried, so a failure never leaves a
+  second copy on the account. The provider keeps it as a private voice on the account and it is
+  added to the list; a provider that asks for the voice to be verified first says so in the toast.
+  A Qwen endpoint on another model names the model to switch to instead. See
+  [the providers](backend.md#the-providers-and-where-a-key-lives), and a clone's fee lands in the
+  Activity list. The server keeps the
+  samples beside the voice, with the sentence that was agreed to and when, so the voice can go
   with a book's script ([script export](script-transfer.md#slice-2-cloning-keeps-its-samples)); a
   voice's row then says **N samples kept**, and **Forget** drops them and keeps the voice, with
-  Undo. A voice cloned before recordings were kept offers **Keep its samples…**: the same picker,
-  limits and consent box, and nothing is sent to Fish. Removing a voice or its endpoint keeps the
-  recordings for a day, so the removal's Undo — or a settings import that brings the voice back —
+  Undo. A voice cloned before samples were kept offers **Keep its samples…**: the same picker,
+  limits and consent box, and nothing is sent to the provider. Removing a voice or its endpoint keeps the
+  samples for a day, so the removal's Undo — or a settings import that brings the voice back —
   finds them where they were; the first save after that removes them, as it does a forget's.
   With a server, a voice's ▶ has the saved endpoint say a sentence in it — a real request, billed
   and listed under Activity, heard once and replayed from then on; see

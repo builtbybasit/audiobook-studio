@@ -12,18 +12,18 @@ it back without costing the target book a chapter, a voice or a clip it already 
 
 ## Decisions
 
-|                              | Decision                                                                                                                                                                                       |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Format**                   | `<book>.script.zip`: `manifest.json`, `cast.json`, `lexicon.json`, one `chapters/NNNN-slug.json` per scripted chapter. A lone chapter `.json` also imports. Expression tags inline as `{tag}`. |
-| **In the file**              | Lines, cast, dictionary, voice hints; voice samples only when asked for (slice 3). Never clips, charges, flags, history, endpoints or keys.                                                    |
-| **Where it imports**         | Only into a book already imported from the reader's own EPUB. The file never creates a book.                                                                                                   |
-| **Chapter matching**         | By a fingerprint of the chapter's **source** words, never its title or number. Changed source words refuse that chapter.                                                                       |
-| **Choosing chapters**        | Export writes the whole book; import lists the matched chapters and you tick which to apply.                                                                                                   |
-| **Word edits**               | Accepted as corrections; those lines' clips go stale. A chapter whose lines drift over 2% from its source is refused.                                                                          |
-| **Cast and dictionary**      | Missing entries added, existing ones kept, aliases unioned. Each difference offers **Use the file's**, and **Replace all**.                                                                    |
-| **Voices**                   | Chosen per speaker, with **Use all**. Ticked by default only where the speaker has no voice. Public voices can be added; a private clone offers Keep or Replace.                               |
-| **Voice samples**            | Cloning keeps its samples (slice 2). Export carries them only when **Include voice samples** is ticked (slice 3). Import never clones; it links to the Voices tab's clone form, filled in.     |
-| **Other providers' cloning** | A separate slice, not this one.                                                                                                                                                                |
+|                              | Decision                                                                                                                                                                                                            |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Format**                   | `<book>.script.zip`: `manifest.json`, `cast.json`, `lexicon.json`, one `chapters/NNNN-slug.json` per scripted chapter. A lone chapter `.json` also imports. Expression tags inline as `{tag}`.                      |
+| **In the file**              | Lines, cast, dictionary, voice hints; voice samples only when asked for (slice 3). Never clips, charges, flags, history, endpoints or keys.                                                                         |
+| **Where it imports**         | Only into a book already imported from the reader's own EPUB. The file never creates a book.                                                                                                                        |
+| **Chapter matching**         | By a fingerprint of the chapter's **source** words, never its title or number. Changed source words refuse that chapter.                                                                                            |
+| **Choosing chapters**        | Export writes the whole book; import lists the matched chapters and you tick which to apply.                                                                                                                        |
+| **Word edits**               | Accepted as corrections; those lines' clips go stale. A chapter whose lines drift over 2% from its source is refused.                                                                                               |
+| **Cast and dictionary**      | Missing entries added, existing ones kept, aliases unioned. Each difference offers **Use the file's**, and **Replace all**.                                                                                         |
+| **Voices**                   | Chosen per speaker, with **Use all**. Ticked by default only where the speaker has no voice. Public voices can be added; a private clone offers Keep or Replace.                                                    |
+| **Voice samples**            | Cloning keeps its samples (slice 2). Export carries them only when **Include voice samples** is ticked (slice 3). Import never clones; it links to the Voices tab's clone form, filled in.                          |
+| **Other providers' cloning** | Built separately: ElevenLabs, BreezeBlue, Cartesia, MiniMax and Qwen clone too ([the providers](backend.md#the-providers-and-where-a-key-lives)); the clone link opens on the endpoint that takes the samples best. |
 
 ## Slice 1: script export and import
 

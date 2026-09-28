@@ -100,6 +100,13 @@ describe("a pick", () => {
     expect(formatOfName("Clip.Take.MP3")).toBe("mp3");
     expect(pickProblem([file("download")], ONE, "Acme")).toBeNull();
   });
+
+  test("samples that come to more than the server reads in one go stop it", () => {
+    // six of Fish's largest are each allowed, and past 100 MB together
+    const six = Array.from({ length: 6 }, (_, i) => file(`t${i}.wav`, 18 * 1024 * 1024));
+    expect(pickProblem(six, FISH, "Fish Audio")).toBe("The samples come to more than 100 MB.");
+    expect(pickProblem(six.slice(0, 5), FISH, "Fish Audio")).toBeNull();
+  });
 });
 
 describe("where a clone link opens", () => {

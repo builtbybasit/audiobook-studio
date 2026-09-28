@@ -35,7 +35,8 @@ import type { SentScript, SentSpeech } from "~/providers/sent";
 
 /** Which work a request was for. The chapter by its uid, which a renumbering never moves. */
 export interface RequestFor {
-  bookId: string;
+  /** null for a request no book asked for — a voice sample on the Endpoints page */
+  bookId: string | null;
   chapterUid: string | null;
   /** what the Activity list names it; frozen, so it still reads after the chapter is gone */
   label: string;

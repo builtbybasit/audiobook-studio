@@ -73,6 +73,9 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   server's `/audio/voices` — and adds the ones not already listed. A Fish endpoint also gets
   **Public voices**: search Fish's public catalogue by title (or paste an id), filter by language,
   page through, and add one with a click. A Fish voice is a `reference_id`, public or your own.
+  With a server, a voice's ▶ has the saved endpoint say a sentence in it — a real request, billed
+  and listed under Activity, heard once and replayed from then on; see
+  [voice samples](backend.md#the-providers-and-where-a-key-lives). In the demo it is the browser's own voice.
 - **Audio** (on the Requests tab, TTS only) — the format every new line is asked for and kept in,
   the bitrate where the format has one, and the sample rate, each narrowed to what this endpoint's
   API can be asked for (`speechFormats` in `lib/endpointShapes.ts`). Fish Audio offers WAV

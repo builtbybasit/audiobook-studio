@@ -25,6 +25,7 @@ import {
   type EndpointSettingsService,
   type VoiceListPage,
   type VoiceListQuery,
+  type VoiceSample,
 } from "@/services/endpointSettings";
 import { useEndpointsStore, WRITE_DELAY_MS } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
@@ -105,6 +106,17 @@ class FakeService implements EndpointSettingsService {
     this.lists.push({ id, query, puts: this.puts.length });
     if (this.voicePage instanceof ApiError) throw this.voicePage;
     return clone(this.voicePage);
+  }
+  /** what each sample was asked for, with how many writes had gone out by then */
+  sampled: { id: string; voice: string; puts: number }[] = [];
+  sampleAnswer: VoiceSample | ApiError = {
+    blob: new Blob([new Uint8Array([82, 73, 70, 70])], { type: "audio/wav" }),
+    duration: 3.5,
+  };
+  async sampleVoice(id: string, voice: string): Promise<VoiceSample> {
+    this.sampled.push({ id, voice, puts: this.puts.length });
+    if (this.sampleAnswer instanceof ApiError) throw this.sampleAnswer;
+    return this.sampleAnswer;
   }
 }
 
@@ -613,5 +625,56 @@ describe("voices with a server answering", () => {
       source: "public",
       query: "calm",
     });
+  });
+});
+
+describe("voice samples with a server answering", () => {
+  test("send what is waiting, then ask the saved endpoint for that voice", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    ep.model = "tts-2";
+    await drain();
+    const heard = await endpointsStore.sampleVoice(ep, "ash");
+    // the edit went out first, so the sample is of the endpoint as the page shows it
+    expect(svc.sampled).toEqual([{ id: "srv-tts", voice: "ash", puts: 1 }]);
+    expect(svc.puts[0].endpoints[0].model).toBe("tts-2");
+    expect(heard?.duration).toBe(3.5);
+    expect(heard?.url).toStartWith("blob:");
+  });
+
+  test("a sample heard once is replayed, until the endpoint would render another", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    const first = await endpointsStore.sampleVoice(ep, "ash");
+    expect(await endpointsStore.sampleVoice(ep, "ash")).toBe(first);
+    expect(svc.sampled).toHaveLength(1);
+    // another voice is another sample
+    await endpointsStore.sampleVoice(ep, "other");
+    expect(svc.sampled).toHaveLength(2);
+    // and so is the same voice from another model
+    ep.model = "tts-2";
+    expect(await endpointsStore.sampleVoice(ep, "ash")).not.toBe(first);
+    expect(svc.sampled).toHaveLength(3);
+  });
+
+  test("a refused sample is said, and nothing is kept to replay", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    svc.sampleAnswer = new ApiError("Speech server needs an API key", 400);
+    expect(await endpointsStore.sampleVoice(ep, "ash")).toBeNull();
+    expect(toasts).toEqual([{ msg: "Speech server needs an API key", kind: "error" }]);
+    svc.sampleAnswer = { blob: new Blob([]), duration: 1 };
+    expect(await endpointsStore.sampleVoice(ep, "ash")).not.toBeNull();
+    expect(svc.sampled).toHaveLength(2);
+  });
+
+  test("the demo asks nothing", async () => {
+    setEndpointSettingsService(null);
+    endpointsStore.$reset();
+    expect(await endpointsStore.sampleVoice(endpointsStore.endpoints[0], "alloy")).toBeNull();
+    expect(svc.sampled).toEqual([]);
   });
 });

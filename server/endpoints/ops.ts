@@ -8,6 +8,7 @@
 // voices or tags under one id on one endpoint, and an endpoint pointing at a credential that is
 // not in the registry being saved with it.
 import type { Credential } from "@/lib/credentials";
+import { encodingOf } from "@/lib/endpointShapes";
 import type { Db } from "~/db/client";
 import {
   endpointsSaved,
@@ -18,9 +19,12 @@ import {
   type EndpointConfig,
 } from "~/db/endpoints";
 import { AppError, badRequest, notFound } from "~/lib/errors";
+import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { ProviderError } from "~/providers/http";
+import type { RenderedClip } from "~/providers/speech";
 import { scriptTarget, speechTarget, type ProbeResult, type Providers } from "~/providers/target";
 import { endpointVoiceLister, type VoicePage, type VoiceQuery } from "~/providers/voices";
+import { settleSpeech } from "~/usage/ledger";
 
 /** What the page reads: the configuration, and whether it was ever saved here. */
 export interface EndpointSettingsAnswer extends EndpointConfig {
@@ -156,6 +160,57 @@ export async function listVoices(
     if (!(e instanceof ProviderError)) throw e;
     // Refused before any request — no key, nothing to search — is the request's to fix; anything
     // the provider answered, or failed to, is the provider's.
+    throw new AppError(e.status === 0 && !e.retryable ? 400 : 502, e.message);
+  }
+}
+
+/** What a voice sample says: one ordinary sentence of narration, the same for every voice. */
+export const VOICE_SAMPLE = "The mountain mist thinned as dawn crept over the outer sect grounds.";
+
+/**
+ * One voice of a saved speech endpoint saying `VOICE_SAMPLE`, asked for with its saved key.
+ *
+ * Always of the real endpoint, like `listVoices` and for the opposite reason: a sample is not free,
+ * but it is a click that asks to hear this voice, and a tone from the fakes would not be it. It is
+ * asked for the way a line of narration is — the endpoint's format and sample rate — so what is
+ * heard is what a chapter would sound like, and the request is priced into the ledger against the
+ * endpoint with no book. One attempt, like a connection test: a failure says so at once.
+ */
+export async function sampleVoice(
+  db: Db,
+  providers: Providers,
+  id: string,
+  voiceId: string,
+  signal: AbortSignal,
+): Promise<RenderedClip> {
+  const ep = readEndpoint(db, id);
+  if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
+  const voice = ep.voices.find((v) => v.id === voiceId);
+  const speaker = voice?.label || voiceId;
+  const provider = providers.samples ?? endpointSpeechProvider();
+  try {
+    return await provider.speak({
+      text: VOICE_SAMPLE,
+      speaker,
+      type: "narration",
+      direction: "",
+      instructions: "",
+      voiceRef: `${ep.id}/${voiceId}`,
+      sampleRate: ep.sampleRate ?? null,
+      encoding: encodingOf(ep),
+      target: { ...speechTarget(db, ep), maxRetries: 0 },
+      signal,
+      sent: (request) =>
+        settleSpeech(
+          db,
+          ep,
+          { bookId: null, chapterUid: null, label: `Voice sample · ${speaker}` },
+          request,
+        ),
+    });
+  } catch (e) {
+    if (!(e instanceof ProviderError)) throw e;
+    // the same split as `listVoices`: refused before any request is the request's to fix
     throw new AppError(e.status === 0 && !e.retryable ? 400 : 502, e.message);
   }
 }

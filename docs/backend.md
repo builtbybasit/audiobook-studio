@@ -17,7 +17,9 @@ pricing is still the seeded demo's and is untouched by all of it.
 
 Nothing in the server contacts a provider or spends money. The only scripting model it can be
 started with is the fake one ([the queue](#the-queue) says what it does), there are no credentials
-in its configuration, and there is no code path from an import to a paid request.
+in its configuration, and there is no code path from an import to a paid request. The one request
+that spends whatever `SPEECH_PROVIDER` says is a voice sample, which a click on ▶ in the Voices tab
+asks for — see [voice samples](#the-providers-and-where-a-key-lives).
 
 ## Run it
 
@@ -621,6 +623,7 @@ service are both built on it, so that rule is written once.
 | `PUT`    | `/api/endpoints`                                 | The whole configuration, in place of what is stored           |
 | `POST`   | `/api/endpoints/test`                            | One small request to a saved endpoint with its saved key      |
 | `POST`   | `/api/endpoints/voices`                          | A saved endpoint's voices: its library, or a public search    |
+| `POST`   | `/api/endpoints/sample`                          | One saved voice saying the sample sentence: the audio itself  |
 | `GET`    | `/api/endpoints/requests`                        | One endpoint's requests, newest first; `?kind&id&range`       |
 | `GET`    | `/api/books/:id/spend`                           | What the book has spent, and what its unfinished work holds   |
 | `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                          |
@@ -904,6 +907,18 @@ public catalogue by title and language, TTS models only; a pasted 32-character i
 directly. OpenAI has no voice-list API, so its documented voices are answered without a request;
 any other OpenAI-shaped server is asked `GET /audio/voices`. A provider's refusal is a `502` with
 the code `upstream` and what it said.
+
+**A voice sample** is `POST /api/endpoints/sample` `{ id, voice }`, answering the audio itself —
+`content-type` the format it came back in, `x-audio-duration` its length in seconds. The **saved**
+endpoint says one fixed sentence (`VOICE_SAMPLE` in [ops.ts](../server/endpoints/ops.ts)) in that
+voice with its saved key, asked for the way a line is — the endpoint's format and sample rate, no
+instructions — and tried once, like a connection test. Like the voice list it goes to the real
+endpoint **whatever `SPEECH_PROVIDER` says**, but unlike it, it is billed: a click on ▶ asks to
+hear the voice, and the fake's tone is not it. So the request is priced into the ledger like any
+other, against the endpoint with no book (`Voice sample · <label>` in its Activity list). A missing
+key is a `400` before any request; a provider's refusal a `502`. The browser keeps each sample it
+has heard for the session, so pressing ▶ again replays it rather than paying again, until the
+endpoint's base URL, model, format or rate changes.
 
 **Test connection** is `POST /api/endpoints/test` `{ kind, id }`, answering `{ ok, message, ms }`:
 one small request to the **saved** endpoint with its saved key, through the provider the server

@@ -21,6 +21,11 @@ const Probe = v.object({
   id: v.pipe(v.string(), v.nonEmpty()),
 });
 
+const Sample = v.object({
+  id: v.pipe(v.string(), v.nonEmpty()),
+  voice: v.pipe(v.string(), v.nonEmpty(), v.maxLength(200)),
+});
+
 const VoiceList = v.object({
   id: v.pipe(v.string(), v.nonEmpty()),
   source: v.picklist(["library", "public"]),
@@ -50,6 +55,22 @@ export function endpointRoutes(db: Db, providers: Providers): Hono<PinoEnv> {
     const answer = await ops.testEndpoint(db, providers, kind, id, c.req.raw.signal);
     c.var.logger.info({ kind, id, ok: answer.ok, ms: answer.ms }, "endpoint tested");
     return c.json(answer);
+  });
+
+  /**
+   * One voice of a saved speech endpoint saying the sample sentence: the audio itself, in the
+   * format the endpoint answered with, and how long it plays. A real request, priced into the ledger.
+   */
+  app.post("/sample", validate("json", Sample), async (c) => {
+    const { id, voice } = c.req.valid("json");
+    const clip = await ops.sampleVoice(db, providers, id, voice, c.req.raw.signal);
+    c.var.logger.info({ id, voice, ms: clip.ms, format: clip.format }, "voice sampled");
+    // copied onto a plain ArrayBuffer, which is what a response body is typed to take
+    return c.body(new Uint8Array(clip.bytes), 200, {
+      "content-type": clip.mime,
+      "cache-control": "no-store",
+      "x-audio-duration": String(clip.duration),
+    });
   });
 
   /**

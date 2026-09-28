@@ -57,6 +57,27 @@ export const elevenlabs: SpeechProviderShape = {
         },
   // ElevenLabs bills characters of text it spoke; its docs say nothing of charging a refusal.
   billsFailures: false,
-  cloning: null,
+  // Instant Voice Cloning, `POST /v1/voices/add` (https://elevenlabs.io/docs/api-reference/voices/ivc/create).
+  // Its docs set no count of samples — "the number of samples you use doesn't matter; it is the
+  // total combined length" (https://elevenlabs.io/docs/eleven-creative/voices/voice-cloning/instant-voice-cloning)
+  // — so the count is the server's own. The size is its upload box's, "audio or video files up to
+  // 10MB each", as the screenshot on https://elevenlabs.io/docs/eleven-creative/voices/voice-cloning
+  // shows it. The formats: its cloning FAQ "accept[s] a range of file types" and names MP3 and WAV
+  // (https://elevenlabs.io/docs/help-center/product/voices/voice-cloning/what-files-do-you-accept-for-voice-cloning);
+  // the one list of audio it takes from an upload, the Voice Changer's, adds M4A and FLAC
+  // (https://elevenlabs.io/docs/help-center/product/core-capabilities/voice-changer/which-formats-can-be-used-as-the-input-audio-for-voice-changer).
+  // Opus is left out: that list says "OGG", which is as likely to mean Vorbis. Cloning needs a
+  // Starter plan or above (https://elevenlabs.io/docs/overview/administration/billing) and spends no
+  // credits that the docs name, but a voice takes one of the plan's custom voice slots.
+  cloning: {
+    maxClips: 20,
+    maxClipBytes: 10 * 1024 * 1024,
+    formats: ["mp3", "wav", "m4a", "flac"],
+    advice:
+      "ElevenLabs recommends 1–2 minutes of audio in all, and no more than 3 — how many clips does " +
+      "not matter: one speaker, no background noise or reverb, an even tone and volume. It advises " +
+      "MP3 at 128 kbps or more; WAV usually makes no better a clone.",
+    cost: "Needs a Starter plan or above, and each voice takes one of the plan's custom voice slots.",
+  },
   models: ["eleven_v3", "eleven_multilingual_v2", "eleven_flash_v2_5", "eleven_turbo_v2_5"],
 };

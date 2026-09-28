@@ -14,6 +14,7 @@ import { speak } from "@/lib/speech";
 import type { Db, Tx } from "~/db/client";
 import * as cast from "~/db/cast";
 import { chapters } from "~/db/schema";
+import { discardSpeakerSamples, moveSpeakerSamples } from "~/speakerSamples/store";
 import {
   attributeLines,
   bumpRevision,
@@ -101,6 +102,7 @@ export function mergeCharacter(db: Db, bookId: string, from: string, into: strin
       ...dst,
       aliases: [...new Set([...dst.aliases, from, ...src.aliases])],
     });
+    moveSpeakerSamples(tx, bookId, from, into);
     cast.deleteCharacterRow(tx, bookId, from);
     const moved = reattribute(tx, bookId, from, into);
     return { characters: cast.readCast(tx, bookId), moved };
@@ -114,6 +116,7 @@ export function deleteCharacter(db: Db, bookId: string, name: string): Moved {
   requireCharacter(db, bookId, name);
   return db.transaction((tx) => {
     cast.ensureSpeakers(tx, bookId, [NARRATOR]);
+    discardSpeakerSamples(tx, bookId, name, NARRATOR);
     cast.deleteCharacterRow(tx, bookId, name);
     const moved = reattribute(tx, bookId, name, NARRATOR);
     return { characters: cast.readCast(tx, bookId), moved };

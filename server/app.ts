@@ -28,6 +28,7 @@ import { endpointRoutes } from "~/routes/endpoints";
 import { exportRoutes } from "~/routes/exports";
 import { jobRoutes } from "~/routes/jobs";
 import { scriptRoutes } from "~/routes/script";
+import { transferRoutes } from "~/routes/transfer";
 import { bookUsageRoutes, endpointUsageRoutes } from "~/routes/usage";
 
 /** What Hono's refusals say, for the ones that come without a message of their own. */
@@ -120,6 +121,7 @@ export function createApp(
   app.route("/api/books", castRoutes(db));
   app.route("/api/books", scriptRoutes(db, runner));
   app.route("/api/books", exportRoutes(db, runner, exports));
+  app.route("/api/books", transferRoutes(db, providers));
   app.route("/api/books", bookUsageRoutes(db));
   app.route("/api/jobs", jobRoutes(db, runner));
   // The endpoints belong to the installation rather than to a book.

@@ -15,6 +15,8 @@ export type VersionOrigin =
   | { kind: "edited"; edits: number }
   | { kind: "bulk"; label: string; lines: number }
   | { kind: "restored"; from: number; fromAt: number }
+  /** read in from a script file; `file` is its name, `chapters` how many the import applied */
+  | { kind: "imported"; file?: string; chapters?: number }
   /** `was` is how the content came to be before it was given a name */
   | { kind: "checkpoint"; name: string; was?: VersionOrigin };
 

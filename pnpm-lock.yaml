@@ -68,6 +68,9 @@ importers:
       hono-pino:
         specifier: ^0.10.3
         version: 0.10.3(hono@4.13.8)(pino@10.3.1)
+      jszip:
+        specifier: ^3.10.2
+        version: 3.10.2
       linkedom:
         specifier: ^0.18.13
         version: 0.18.13
@@ -144,9 +147,6 @@ importers:
       drizzle-kit:
         specifier: ^0.31.10
         version: 0.31.10
-      jszip:
-        specifier: ^3.10.2
-        version: 3.10.2
       oxfmt:
         specifier: ^0.67.0
         version: 0.67.0

@@ -7,7 +7,18 @@
 // the fields every reader relies on and passed through otherwise.
 import * as v from "valibot";
 
-import type { Character, ExportSettings, LexEntry, Profile, Segment, VersionOrigin } from "@/types";
+import type {
+  Character,
+  ExportSettings,
+  LexEntry,
+  Profile,
+  ScriptFileChapter,
+  ScriptFileSpeaker,
+  ScriptFileTerm,
+  ScriptManifest,
+  Segment,
+  VersionOrigin,
+} from "@/types";
 import type { Credential } from "@/lib/credentials";
 import { SAMPLE_RATES } from "@/lib/speech";
 import type { EndpointSettings } from "~/db/rows";
@@ -108,7 +119,88 @@ export const VersionOriginSchema = v.variant("kind", [
     from: v.pipe(v.number(), v.integer(), v.minValue(1)),
     fromAt: v.number(),
   }),
+  v.object({
+    kind: v.literal("imported"),
+    file: v.optional(v.string()),
+    chapters: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
+  }),
 ]) satisfies v.GenericSchema<unknown, VersionOrigin>;
+
+// ---------- a script file ----------
+//
+// What `<book>.script.zip` holds, checked piece by piece so a hand-edited file that breaks is
+// refused with the path of what broke, and one broken chapter file refuses that chapter rather than
+// the import. Loose where the file is loose: an unknown field someone added is ignored, not an error.
+
+const FileText = v.pipe(v.string(), v.nonEmpty("must not be empty"));
+const Hash = v.pipe(
+  v.string(),
+  v.regex(/^sha256:[0-9a-f]{64}$/, "must be sha256: and 64 hex digits"),
+);
+const WordCount = v.pipe(v.number(), v.integer(), v.minValue(0));
+
+export const ScriptManifestSchema = v.looseObject({
+  format: v.literal("audiobook-studio/script"),
+  version: v.literal(1),
+  title: v.string(),
+  author: v.string(),
+  chapters: v.array(
+    v.looseObject({ file: FileText, title: v.string(), sourceHash: Hash, words: WordCount }),
+  ),
+}) satisfies v.GenericSchema<unknown, ScriptManifest>;
+
+export const ScriptChapterSchema = v.looseObject({
+  format: v.literal("audiobook-studio/script-chapter"),
+  version: v.literal(1),
+  title: v.string(),
+  sourceHash: Hash,
+  words: WordCount,
+  lines: v.array(
+    v.looseObject({
+      speaker: v.pipe(v.string(), v.trim(), v.nonEmpty("must name a speaker")),
+      type: SegmentType,
+      text: FileText,
+      direction: v.optional(v.string()),
+      pause: v.optional(v.pipe(v.number(), v.minValue(0))),
+      sep: v.optional(v.string()),
+      edited: v.optional(v.boolean()),
+      fallback: v.optional(v.boolean()),
+      fallbackCount: v.optional(v.number()),
+      fallbackMismatch: v.optional(v.string()),
+    }),
+  ),
+}) satisfies v.GenericSchema<unknown, ScriptFileChapter>;
+
+export const CastFileSchema = v.array(
+  v.looseObject({
+    name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),
+    aliases: v.optional(v.array(v.pipe(v.string(), v.trim(), v.nonEmpty())), []),
+    gender: v.optional(Gender, "?"),
+    description: v.optional(v.string(), ""),
+    style: v.optional(v.string(), ""),
+    color: v.optional(v.string()),
+    major: v.optional(v.boolean()),
+    voice: v.optional(
+      v.looseObject({
+        endpoint: v.string(),
+        provider: v.string(),
+        voiceId: FileText,
+        voiceLabel: v.string(),
+      }),
+    ),
+  }),
+) satisfies v.GenericSchema<unknown, ScriptFileSpeaker[]>;
+
+export const LexiconFileSchema = v.array(
+  v.looseObject({
+    term: FileText,
+    say: v.string(),
+    ipa: v.optional(v.string()),
+    note: v.optional(v.string()),
+    matchCase: v.optional(v.boolean()),
+    enabled: v.optional(v.boolean(), true),
+  }),
+) satisfies v.GenericSchema<unknown, ScriptFileTerm[]>;
 
 /** Lines of one chapter, named by number: what a re-attribution or its undo points at. */
 export const ChapterLinesSchema = v.object({

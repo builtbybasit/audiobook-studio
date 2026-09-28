@@ -1,5 +1,8 @@
 // The speech presets: what "Start from a preset…" offers a text-to-speech endpoint, grouped by
-// provider. Each rate is the provider's published card on the date its note gives.
+// provider. Each rate is the provider's published card on the date its note gives. Each
+// `concurrency` comes from the provider's own docs as read on 2026-09-28, for the lowest plan or
+// tier someone using the preset plausibly has; a larger plan can raise it on the Requests tab.
+// Where a provider documents only a request rate, or none, the comment beside it says why.
 import type { ExpressionTag } from "@/types";
 import { presetPricing, type TtsPreset } from "@/lib/presets/preset";
 
@@ -28,7 +31,10 @@ function openaiTts1(model: string, label: string, hint: string, rate: number): T
       billing: { unit: "chars", rate },
       maxChars: 4096,
       splitAt: "sentence",
-      concurrency: 3,
+      // no documented concurrency; Tier 1 is 500 RPM for both models, and 8 lines at once stay
+      // under it while each takes a second or more
+      // (https://developers.openai.com/api/docs/models/tts-1)
+      concurrency: 8,
       latency: 1400,
       failRate: 0.01,
     },
@@ -70,7 +76,9 @@ function elevenLabs(
       billing: { unit: "chars", rate },
       maxChars,
       splitAt: "sentence",
-      concurrency: 2,
+      // the Starter plan's limit: 6 for Flash and Turbo models, 3 for every other
+      // (https://elevenlabs.io/docs/help-center/technical/how-many-text-to-speech-requests-can-i-make-and-can-i-increase-it)
+      concurrency: /^eleven_(flash|turbo)_/.test(model) ? 6 : 3,
       latency: 1500,
       failRate: 0.01,
     },
@@ -108,7 +116,9 @@ function breezeTts(model: string, label: string, hint: string, languages: string
       billing: { unit: "chars", rate: 40, billsInstructions: false },
       maxChars: 1000,
       splitAt: "sentence",
-      concurrency: 2,
+      // the free plan's concurrent generations, shared with Studio; Starter allows 6
+      // (https://docs.breezeblue.ai/reference/rate-limits)
+      concurrency: 3,
       latency: 1500,
       failRate: 0.01,
     },
@@ -143,7 +153,9 @@ function miniMax(model: string, label: string, hint: string, rate: number): TtsP
       billing: { unit: "chars", rate },
       maxChars: 3000,
       splitAt: "sentence",
-      concurrency: 2,
+      // no documented concurrency; T2A is 60 RPM, which one line at a time already reaches when a
+      // line takes a second (https://platform.minimax.io/docs/guides/rate-limits)
+      concurrency: 1,
       latency: 1500,
       failRate: 0.01,
     },
@@ -178,7 +190,10 @@ function qwenTts(model: string, label: string, hint: string, rate: number): TtsP
       billing: { unit: "chars", rate },
       maxChars: 600,
       splitAt: "sentence",
-      concurrency: 2,
+      // no documented concurrency; both models are 3 requests a second in Singapore, which 3 lines
+      // at once cannot pass while each takes a second or more
+      // (https://www.alibabacloud.com/help/en/model-studio/rate-limit)
+      concurrency: 3,
       latency: 2000,
       failRate: 0.01,
     },
@@ -259,7 +274,10 @@ function gemini38Tts(
       }),
       maxChars: 5000,
       splitAt: "sentence",
-      concurrency: 2,
+      // no documented concurrency or rate: Google shows a project's speech-model limits only on
+      // AI Studio's rate-limit page (https://ai.google.dev/gemini-api/docs/rate-limits), so one
+      // line at a time until yours says more
+      concurrency: 1,
       latency: 1800,
       failRate: 0.015,
       expressions: {
@@ -294,7 +312,10 @@ export const TTS_PRESETS: TtsPreset[] = [
       // no documented per-request cap; their own chunking tops out at 300 characters a chunk
       maxChars: 0,
       splitAt: "sentence",
-      concurrency: 4,
+      // the Starter tier, under $100 ever paid, which gives the free model no limit of its own;
+      // 15 from $100
+      // (https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits)
+      concurrency: 5,
       latency: 1200,
       failRate: 0.02,
     },
@@ -320,7 +341,9 @@ export const TTS_PRESETS: TtsPreset[] = [
       billing: { unit: "bytes", rate: 15 },
       maxChars: 0,
       splitAt: "sentence",
-      concurrency: 4,
+      // the Starter tier, under $100 ever paid; 15 from $100, 50 from $1,000
+      // (https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits)
+      concurrency: 5,
       latency: 1100,
       failRate: 0.02,
     },
@@ -348,7 +371,9 @@ export const TTS_PRESETS: TtsPreset[] = [
       billing: { unit: "audio-tokens", rate: 0.6, audioRate: 12, audioTokensPerSecond: 25 },
       maxChars: 1500,
       splitAt: "sentence",
-      concurrency: 3,
+      // no documented concurrency; Tier 1 is 500 RPM and 50,000 TPM, and 5 lines at once keep short
+      // lines under both (https://developers.openai.com/api/docs/models/gpt-4o-mini-tts)
+      concurrency: 5,
       latency: 1400,
       failRate: 0.01,
     },
@@ -401,7 +426,10 @@ export const TTS_PRESETS: TtsPreset[] = [
       },
       maxChars: 5000,
       splitAt: "sentence",
-      concurrency: 2,
+      // no documented concurrency or rate: Google shows a project's speech-model limits only on
+      // AI Studio's rate-limit page (https://ai.google.dev/gemini-api/docs/rate-limits), so one
+      // line at a time until yours says more
+      concurrency: 1,
       latency: 1800,
       failRate: 0.015,
     },
@@ -456,7 +484,9 @@ export const TTS_PRESETS: TtsPreset[] = [
       billing: { unit: "chars", rate: 50 },
       maxChars: 0,
       splitAt: "sentence",
-      concurrency: 2,
+      // the Pro plan's limit for speech, the plan its rate is; Startup allows 5, Scale 15
+      // (https://docs.cartesia.ai/use-the-api/concurrency-limits-and-timeouts)
+      concurrency: 3,
       latency: 900,
       failRate: 0.01,
     },
@@ -487,6 +517,7 @@ export const TTS_PRESETS: TtsPreset[] = [
       billing: { unit: "chars", rate: 0 },
       maxChars: 500,
       splitAt: "sentence",
+      // a local server has no published limit: what it holds depends on the machine and the model
       concurrency: 2,
       latency: 2600,
       failRate: 0.025,
@@ -512,6 +543,7 @@ export const TTS_PRESETS: TtsPreset[] = [
       billing: { unit: "chars", rate: 0 },
       maxChars: 500,
       splitAt: "sentence",
+      // a local server has no published limit: what it holds depends on the machine and the model
       concurrency: 2,
       latency: 2600,
       failRate: 0.025,

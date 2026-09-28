@@ -12,7 +12,6 @@ import type { Credential } from "@/lib/credentials";
 import { encodingOf, VOICE_SAMPLE } from "@/lib/endpointShapes";
 import type { Db } from "~/db/client";
 import {
-  endpointsSaved,
   readEndpoint,
   readProfiles,
   readEndpointConfig,
@@ -28,13 +27,9 @@ import { scriptTarget, speechTarget, type ProbeResult, type Providers } from "~/
 import { endpointVoiceLister, type VoicePage, type VoiceQuery } from "~/providers/voices";
 import { settleSpeech } from "~/usage/ledger";
 
-/** What the page reads: the configuration, and whether it was ever saved here. */
-export interface EndpointSettingsAnswer extends EndpointConfig {
-  saved: boolean;
-}
-
-export function endpointSettings(db: Db): EndpointSettingsAnswer {
-  return { ...readEndpointConfig(db), saved: endpointsSaved(db) };
+/** What the page reads: the configuration as saved, or none on a server nobody has saved to. */
+export function endpointSettings(db: Db): EndpointConfig {
+  return readEndpointConfig(db);
 }
 
 /** The first id in `ids` that has been seen before, if any. */
@@ -99,7 +94,7 @@ function check(config: EndpointConfig): void {
  * stands — so a tag redefined or a rate changed reads as drift on exactly the clips it reaches,
  * without this having to find them.
  */
-export function saveEndpoints(db: Db, config: EndpointConfig): EndpointSettingsAnswer {
+export function saveEndpoints(db: Db, config: EndpointConfig): EndpointConfig {
   check(config);
   db.transaction((tx) => replaceEndpoints(tx, config));
   return endpointSettings(db);

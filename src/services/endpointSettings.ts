@@ -43,12 +43,11 @@ export interface EndpointConfig {
 
 /**
  * The configuration as the server holds it. Endpoints come back with their telemetry empty — the
- * request history is this browser's, not something the server keeps. `saved` is false only while
- * nobody has ever written a configuration to this server, and the lists are empty then.
+ * request history is this browser's, not something the server keeps. A server nobody has saved to
+ * answers with empty lists.
  */
 export interface EndpointSettings extends EndpointConfig {
   endpoints: Endpoint[];
-  saved: boolean;
 }
 
 /** What the server found when it sent one small real request to a saved endpoint. `ok: false` is

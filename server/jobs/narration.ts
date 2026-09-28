@@ -63,7 +63,13 @@ import {
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { locate } from "~/jobs/scripting";
 import { conflict, notFound } from "~/lib/errors";
-import { deliveryFor, lineWorstCase, narrationCost, type NarrationCost } from "~/narration/cost";
+import {
+  deliveryFor,
+  lineWorstCase,
+  narrationCost,
+  type Delivery,
+  type NarrationCost,
+} from "~/narration/cost";
 import {
   createSpeechGate,
   type GateLimits,
@@ -71,7 +77,14 @@ import {
   type SpeechGate,
 } from "~/providers/gate";
 import type { SentSpeech } from "~/providers/sent";
-import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
+import { ProviderError } from "~/providers/http";
+import type {
+  BatchLimits,
+  BatchOutcome,
+  RenderedClip,
+  SpeechInput,
+  SpeechProvider,
+} from "~/providers/speech";
 import { speechTarget } from "~/providers/target";
 import { assertWithinBudget, budgetProblem } from "~/usage/budget";
 import { settleSpeech } from "~/usage/ledger";
@@ -224,10 +237,7 @@ async function speakInParts(
   cuts: SplitPart[] | null,
 ): Promise<RenderedClip> {
   if (!cuts || cuts.length < 2) return provider.speak(input);
-  if (input.encoding.format === "opus")
-    throw new Error(
-      `This line needs ${cuts.length} requests at its endpoint's max characters, and an Opus line cannot be split into parts; raise this endpoint's max characters or choose MP3 or WAV`,
-    );
+  if (input.encoding.format === "opus") throw opusInParts(cuts.length);
   const rendered: RenderedClip[] = [];
   for (const [i, cut] of cuts.entries()) {
     if (input.signal.aborted) throw input.signal.reason;
@@ -239,6 +249,17 @@ async function speakInParts(
       throw new PartFailed(i + 1, e);
     }
   }
+  return joinParts(rendered);
+}
+
+/** Why an Opus line cannot go in parts; see `speakInParts`. */
+const opusInParts = (parts: number): Error =>
+  new Error(
+    `This line needs ${parts} requests at its endpoint's max characters, and an Opus line cannot be split into parts; raise this endpoint's max characters or choose MP3 or WAV`,
+  );
+
+/** A line's parts, in order, as one clip: the audio joined end to end, the times summed. */
+function joinParts(rendered: RenderedClip[]): RenderedClip {
   const { format, mime } = rendered[0];
   let bytes: Uint8Array;
   try {
@@ -400,275 +421,530 @@ export function narrationHandler(
         );
       };
 
-      const renderLine = async (t: Target): Promise<void> => {
+      /** Whether nothing more should go out: the run was stopped, or the budget no longer covers it. */
+      const halted = (): boolean => stop.signal.aborted || refused != null;
+
+      /**
+       * The budget, asked before a line goes out, with what the job still holds and its own
+       * reservation left out of the book's: a run that fitted when it was queued stops here when the
+       * cap was lowered, the book was paused, or other lines cost more than they held. The lines not
+       * yet sent are put back as they were (`onSettled`), and the clips landed stay.
+       */
+      const budgetStops = (s: Segment): boolean => {
+        const problem = budgetProblem(db, job.bookId, {
+          kind: "narration",
+          cost: held,
+          jobId: job.id,
+          what: "the next line",
+        });
+        if (!problem) return false;
+        refused = problem;
+        const note = `Stopped before line ${s.id}: the book's budget does not cover it`;
+        ctx.note(note, "warning", { line: s.id, why: problem });
+        return true;
+      };
+
+      /**
+       * A line on its way out: what it is sent as, read as it goes — the dictionary and the endpoint
+       * as they stand now, not when the run began, so a term added or a tag defined mid-run applies
+       * to every line not yet sent, as it does in the demo — and its queued clip turned `generating`.
+       * Null when the line was removed before it could go.
+       */
+      interface Line {
+        t: Target;
+        who: Delivery;
+        plan: ExpressionPlan;
+        /** where it is cut to fit, or null when it goes whole or not at all */
+        cuts: SplitPart[] | null;
+        /** the whole line as the provider is sent it; a part is this with the part's text */
+        input: SpeechInput;
+        generating: SegmentAudio;
+        startedAt: number;
+        /** hands back whatever of the line's reservation its requests did not use */
+        release(): void;
+        /** how many times it has been sent in a batch that failed it as worth another try */
+        tries: number;
+      }
+
+      /**
+       * Commit a line to going out: its reservation, its ledger reports and the audit trail on its
+       * clip. `maxChars` is where it is cut when a batch takes shorter items than the endpoint does.
+       */
+      const commit = (t: Target, who: Delivery, maxChars?: number | null): Line | null => {
         const { s, slot } = t;
-        const who = deliveryOf(s.speaker);
+        const instructions = speechInstructions({ style: who.style, direction: s.direction });
+        const ep = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;
+        const plan = expressionPlan(s, ep, readLexicon(db, job.bookId));
+        // What this line gives back to the cap: each request's charge as it is written to the
+        // ledger, so what a line has spent is never also still held while another line asks the
+        // budget, and whatever is left once the line has settled, whether it rendered, failed or
+        // was never sent — from then on its cost is in the ledger, or it was never going to be.
+        let left = lineWorstCase(ep, plan, instructions, Date.now());
+        const give = (amount: number): void => {
+          const back = Math.min(left, Math.max(0, amount));
+          if (!back) return;
+          left -= back;
+          held = Math.max(0, held - back);
+          setReserved(db, job.id, held);
+        };
+        // Every request that reached the wire — each part of a split line is its own, and so is
+        // each item of a batch — is priced into the ledger as it settles, against the endpoint as
+        // it is stored at that moment. A request whose endpoint has been removed since has no rate
+        // card to be priced on and is left out, as is one whose book has gone.
+        const work = {
+          bookId: job.bookId,
+          label: `${slot === "candidate" ? (t.queued.auto ? "Replacement" : "Retake") : "Line"} ${s.id} · ${s.speaker}`,
+          queuedAt: job.queuedAt,
+          ...(who.voiceRef ? { voiceRef: who.voiceRef } : {}),
+        };
+        const settle = (sent: SentSpeech): void => {
+          const priced = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;
+          if (!priced || !library.getBook(db, job.bookId)) return;
+          // a chapter removed mid-request is still where the money went; the label says which
+          const chapterUid = locate(db, chapter.uid) ? chapter.uid : null;
+          give(settleSpeech(db, priced, { ...work, chapterUid }, sent).cost ?? 0);
+        };
+        // Where the line is cut to fit the endpoint's `maxChars` — or a batch's shorter limit —
+        // decided before it goes out so the clip can say so while it renders. A line with an issue
+        // is not sent at all, and the one issue `splitText` would throw on — a tag longer than the
+        // limit — is one of them.
+        const limit =
+          ep && maxChars ? { ...ep, maxChars: Math.min(ep.maxChars || maxChars, maxChars) } : ep;
+        const cuts = limit && !plan.issues.length ? expressionParts(plan, limit) : null;
+        const startedAt = Date.now();
+        // The audit trail, written when the request goes out: exactly what this clip is being
+        // rendered with, so a later edit to the line, the cast or the voice reads as drift.
+        const generating: SegmentAudio = {
+          ...t.queued,
+          status: "generating",
+          endpoint: who.endpoint,
+          startedAt,
+          at: startedAt,
+          ...(who.voiceRef ? { voiceRef: who.voiceRef } : {}),
+          ...(who.voice ? { voice: who.voice } : {}),
+          model: provider.name,
+          direction: s.direction,
+          style: who.style,
+          ...(instructions ? { instructions } : {}),
+          type: s.type,
+          text: s.text,
+          // what the dictionary made of it, recorded whether or not it changed anything: the
+          // browser's drift rule compares this against the dictionary as it now stands
+          pronounced: plan.pronounced,
+          ...(plan.signature ? { expressionSignature: plan.signature } : {}),
+          ...(plan.tags.length ? { expressions: plan.tags } : {}),
+          ...(plan.text !== s.text ? { said: plan.text, lex: plan.hits.length } : {}),
+          // Recorded as the demo records them: how many requests and at which boundary always,
+          // where each cut fell only when there was more than one part. Set every time rather than
+          // carried from the clip this one replaces, whose endpoint may have had another limit.
+          parts: cuts?.length,
+          splitAt: cuts ? limit!.splitAt : undefined,
+          cuts:
+            cuts && cuts.length > 1
+              ? cuts.map((c) => ({ from: c.from, to: c.to, at: c.at, fallback: c.fallback }))
+              : undefined,
+        };
+        const release = (): void => give(left);
+        try {
+          write((tx, at) => writeClip(tx, at.bookId, at.id, s.id, slot, generating));
+        } catch (e) {
+          if (!(e instanceof LineGone)) throw e;
+          gone(s, release);
+          return null;
+        }
+        return {
+          t,
+          who,
+          plan,
+          cuts,
+          input: {
+            text: plan.text,
+            speaker: s.speaker,
+            type: s.type,
+            direction: s.direction,
+            instructions,
+            voiceRef: who.voiceRef,
+            sampleRate: ep?.sampleRate ?? null,
+            encoding: ep ? encodingOf(ep) : { format: "wav" },
+            // the endpoint as saved now and its key read now, for the provider alone
+            target: ep ? speechTarget(db, ep) : null,
+            signal: stop.signal,
+            sent: settle,
+            ...(who.endpoint
+              ? { rateLimited: (ms: number) => gate.rateLimited(who.endpoint!, ms) }
+              : {}),
+          },
+          generating,
+          startedAt,
+          release,
+          tries: 0,
+        };
+      };
+
+      /** A line removed while it rendered: said, and counted as landed, and its hold given back. */
+      const gone = (s: Segment, release: () => void): void => {
+        const note = `Line ${s.id} was removed while it rendered; the clip was dropped`;
+        ctx.note(note, "warning", { line: s.id });
+        landed++;
+        release();
+      };
+
+      /**
+       * Why a committed line cannot be sent at all, or null: a tag the endpoint cannot say is the
+       * demo's "blocked before dispatch" — the line is not sent, rather than sent without the tag
+       * and marked stale on arrival — and an Opus line in parts could not be kept (`speakInParts`).
+       */
+      const unsendable = (line: Line): Error | null =>
+        line.plan.issues.length
+          ? new Error(`Expression needs attention: ${line.plan.issues[0].reason}`)
+          : line.cuts && line.cuts.length > 1 && line.input.encoding.format === "opus"
+            ? opusInParts(line.cuts.length)
+            : null;
+
+      /** How a line's send ended; a cancel or a stop is thrown instead. */
+      type Outcome = { rendered: RenderedClip } | { error: unknown };
+      const outcomeOf = async (send: () => Promise<RenderedClip>): Promise<Outcome> => {
+        try {
+          const rendered = await send();
+          if (stop.signal.aborted) throw stop.signal.reason;
+          return { rendered };
+        } catch (e) {
+          if (stop.signal.aborted) throw e;
+          return { error: e };
+        }
+      };
+
+      /** Write what came back — a clip, or the failure — where the line's slot is, and say so. */
+      const land = async (line: Line, outcome: Outcome): Promise<void> => {
+        const { t, who, plan, generating, startedAt, release } = line;
+        const { s, slot } = t;
+        let clip: SegmentAudio;
+        try {
+          if ("error" in outcome) throw outcome.error;
+          const { rendered } = outcome;
+          // the rate is read off the file, whatever was asked for: audio a build cannot read is a
+          // failed line now rather than a failed audiobook later
+          let sampleRate: number;
+          try {
+            ({ sampleRate } = await probeClip(rendered.bytes, rendered.format));
+          } catch (e) {
+            const why = (e as Error).message;
+            throw new Error(`The audio that came back could not be read: ${why}`, { cause: e });
+          }
+          // by the book, which is where the file stays whatever the chapter's number becomes
+          const { url } = await files.write(job.bookId, rendered.bytes, rendered.format);
+          clip = {
+            ...generating,
+            status: "done",
+            ms: rendered.ms,
+            duration: rendered.duration,
+            url,
+            at: Date.now(),
+            model: rendered.model,
+            ...(rendered.voice != null ? { voice: rendered.voice } : {}),
+            sampleRate,
+          };
+        } catch (e) {
+          if (stop.signal.aborted) throw e;
+          // A line that could not be rendered is a failed clip where the run put it — a failed
+          // replacement stays a candidate beside the clip it did not replace, and a failed render
+          // in place is the gap the chapter's status will say it has.
+          const message = e instanceof Error ? e.message : String(e);
+          clip = {
+            ...generating,
+            status: "failed",
+            ms: Date.now() - startedAt,
+            duration: 0,
+            at: Date.now(),
+            error: {
+              code: 0,
+              message,
+              body: "",
+              at: Date.now(),
+              ...(e instanceof PartFailed ? { part: e.part } : {}),
+            },
+          };
+        }
+
+        // A replacement the run made for itself takes over as it lands; a retake stays beside the
+        // clip in the book for the verdict.
+        const replacement = slot === "candidate" && !!clip.auto;
+        const retake = slot === "candidate" && !clip.auto;
+        try {
+          write((tx, at) => {
+            // A dictionary replaced while the line was out marked stale only the clips that had
+            // landed, so one that lands after it is checked here, in the same transaction as the
+            // write — the words it was sent may no longer be the words the book would send. An
+            // endpoint saved meanwhile is the same question about its tags and its rate.
+            if (clip.status === "done" && movedOn(tx, at.bookId, s, who.endpoint, plan, clip))
+              clip = { ...clip, status: "stale" };
+            writeClip(tx, at.bookId, at.id, s.id, slot, clip);
+            if (replacement && clip.status !== "failed")
+              acceptCandidate(tx, at.bookId, at.id, s.id);
+          });
+        } catch (e) {
+          if (!(e instanceof LineGone)) throw e;
+          gone(s, release);
+          return;
+        }
+        landed++;
+        release();
+        const detail = { line: s.id, speaker: s.speaker };
+        if (clip.status === "stale")
+          ctx.note(
+            `Line ${s.id} was sent before the dictionary or its endpoint changed; it reads as stale`,
+            "warning",
+            detail,
+          );
+        if (clip.status !== "failed") {
+          const arrived = {
+            ...detail,
+            seconds: Number(clip.duration.toFixed(2)),
+            ...(clip.parts && clip.parts > 1 ? { parts: clip.parts } : {}),
+            ms: clip.ms,
+            ...(slot === "candidate" ? { take: clip.n ?? 1 } : {}),
+          };
+          if (retake) {
+            waiting++;
+            ctx.note(
+              `Line ${s.id} take ${clip.n ?? 1} rendered, waiting for a verdict`,
+              "info",
+              arrived,
+            );
+          } else {
+            rendered++;
+            ctx.note(
+              replacement
+                ? `Line ${s.id} replaced take ${s.audio.n ?? 1}`
+                : `Line ${s.id} rendered`,
+              "info",
+              arrived,
+            );
+          }
+        } else {
+          const error = { ...detail, error: clip.error?.message ?? "" };
+          if (retake) {
+            ctx.note(
+              `Line ${s.id} take ${clip.n ?? 1} failed; the clip in the book is unchanged`,
+              "warning",
+              error,
+            );
+          } else {
+            failed++;
+            ctx.note(
+              replacement
+                ? `Line ${s.id} replacement failed; the clip already in the book is unchanged`
+                : `Line ${s.id} failed`,
+              "error",
+              error,
+            );
+          }
+        }
+        progress();
+      };
+
+      /** One line, on its own: a slot, then its request — or its parts, one after another. */
+      const renderLine = async (t: Target): Promise<void> => {
+        const who = deliveryOf(t.s.speaker);
         const leave = await gate.acquire(who.endpoint, limitsOf(who.endpoint), {
           signal: stop.signal,
           waiting: waited(who.endpoint),
         });
         try {
           if (who.endpoint) told.delete(who.endpoint);
-          if (stop.signal.aborted || refused != null) return;
-          // The budget is asked again before every line, with what the job still holds and its own
-          // reservation left out of the book's: a run that fitted when it was queued stops here when
-          // the cap was lowered, the book was paused, or other lines cost more than they held. The
-          // lines not yet sent are put back as they were (`onSettled`), and the clips landed stay.
-          const problem = budgetProblem(db, job.bookId, {
-            kind: "narration",
-            cost: held,
-            jobId: job.id,
-            what: "the next line",
-          });
-          if (problem) {
-            refused = problem;
-            const note = `Stopped before line ${s.id}: the book's budget does not cover it`;
-            ctx.note(note, "warning", { line: s.id, why: problem });
-            return;
-          }
-          const instructions = speechInstructions({ style: who.style, direction: s.direction });
-          // The dictionary and the endpoint as they stand when this line goes out, not when the run
-          // began: a term added or a tag defined mid-run applies to every line not yet sent, as it
-          // does in the demo.
-          const ep = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;
-          const plan = expressionPlan(s, ep, readLexicon(db, job.bookId));
-          // What this line gives back to the cap: each request's charge as it is written to the
-          // ledger, so what a line has spent is never also still held while another line asks the
-          // budget, and whatever is left once the line has settled, whether it rendered, failed or
-          // was never sent — from then on its cost is in the ledger, or it was never going to be.
-          const worst = lineWorstCase(ep, plan, instructions, Date.now());
-          let left = worst;
-          const give = (amount: number): void => {
-            const back = Math.min(left, Math.max(0, amount));
-            if (!back) return;
-            left -= back;
-            held = Math.max(0, held - back);
-            setReserved(db, job.id, held);
-          };
-          const release = (): void => give(left);
-          // Every request that reached the wire — each part of a split line is its own — is priced
-          // into the ledger as it settles, against the endpoint as it is stored at that moment. A
-          // request whose endpoint has been removed since has no rate card to be priced on and is
-          // left out, as is one whose book has gone: the ledger has nothing to attribute it to.
-          const work = {
-            bookId: job.bookId,
-            label: `${slot === "candidate" ? (t.queued.auto ? "Replacement" : "Retake") : "Line"} ${s.id} · ${s.speaker}`,
-            queuedAt: job.queuedAt,
-            ...(who.voiceRef ? { voiceRef: who.voiceRef } : {}),
-          };
-          const settle = (sent: SentSpeech): void => {
-            const priced = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;
-            if (!priced || !library.getBook(db, job.bookId)) return;
-            // a chapter removed mid-request is still where the money went; the label says which
-            const chapterUid = locate(db, chapter.uid) ? chapter.uid : null;
-            give(settleSpeech(db, priced, { ...work, chapterUid }, sent).cost ?? 0);
-          };
-          // Where the line is cut to fit the endpoint's `maxChars`, decided before it goes out so
-          // the clip can say so while it renders. A line with an issue is not sent at all, and the
-          // one issue `splitText` would throw on — a tag longer than the limit — is one of them.
-          const cuts = ep && !plan.issues.length ? expressionParts(plan, ep) : null;
-          const startedAt = Date.now();
-          // The audit trail, written when the request goes out: exactly what this clip is being
-          // rendered with, so a later edit to the line, the cast or the voice reads as drift.
-          const generating: SegmentAudio = {
-            ...t.queued,
-            status: "generating",
-            endpoint: who.endpoint,
-            startedAt,
-            at: startedAt,
-            ...(who.voiceRef ? { voiceRef: who.voiceRef } : {}),
-            ...(who.voice ? { voice: who.voice } : {}),
-            model: provider.name,
-            direction: s.direction,
-            style: who.style,
-            ...(instructions ? { instructions } : {}),
-            type: s.type,
-            text: s.text,
-            // what the dictionary made of it, recorded whether or not it changed anything: the
-            // browser's drift rule compares this against the dictionary as it now stands
-            pronounced: plan.pronounced,
-            ...(plan.signature ? { expressionSignature: plan.signature } : {}),
-            ...(plan.tags.length ? { expressions: plan.tags } : {}),
-            ...(plan.text !== s.text ? { said: plan.text, lex: plan.hits.length } : {}),
-            // Recorded as the demo records them: how many requests and at which boundary always,
-            // where each cut fell only when there was more than one part. Set every time rather than
-            // carried from the clip this one replaces, whose endpoint may have had another limit.
-            parts: cuts?.length,
-            splitAt: cuts ? ep!.splitAt : undefined,
-            cuts:
-              cuts && cuts.length > 1
-                ? cuts.map((c) => ({ from: c.from, to: c.to, at: c.at, fallback: c.fallback }))
-                : undefined,
-          };
-          const gone = (): void => {
-            const note = `Line ${s.id} was removed while it rendered; the clip was dropped`;
-            ctx.note(note, "warning", { line: s.id });
-            landed++;
-            release();
-          };
-          try {
-            write((tx, at) => writeClip(tx, at.bookId, at.id, s.id, slot, generating));
-          } catch (e) {
-            if (!(e instanceof LineGone)) throw e;
-            gone();
-            return;
-          }
-
-          let clip: SegmentAudio;
-          try {
-            // A tag the endpoint cannot say is the demo's "blocked before dispatch": the line is
-            // not sent at all, rather than sent without the tag and marked stale on arrival.
-            if (plan.issues.length)
-              throw new Error(`Expression needs attention: ${plan.issues[0].reason}`);
-            const rendered = await speakInParts(
-              provider,
-              {
-                text: plan.text,
-                speaker: s.speaker,
-                type: s.type,
-                direction: s.direction,
-                instructions,
-                voiceRef: who.voiceRef,
-                sampleRate: ep?.sampleRate ?? null,
-                encoding: ep ? encodingOf(ep) : { format: "wav" },
-                // the endpoint as saved now and its key read now, for the provider alone
-                target: ep ? speechTarget(db, ep) : null,
-                signal: stop.signal,
-                sent: settle,
-                ...(who.endpoint
-                  ? { rateLimited: (ms: number) => gate.rateLimited(who.endpoint!, ms) }
-                  : {}),
-              },
-              cuts,
-            );
-            if (stop.signal.aborted) throw stop.signal.reason;
-            // the rate is read off the file, whatever was asked for: audio a build cannot read is a
-            // failed line now rather than a failed audiobook later
-            let sampleRate: number;
-            try {
-              ({ sampleRate } = await probeClip(rendered.bytes, rendered.format));
-            } catch (e) {
-              const why = (e as Error).message;
-              throw new Error(`The audio that came back could not be read: ${why}`, { cause: e });
-            }
-            // by the book, which is where the file stays whatever the chapter's number becomes
-            const { url } = await files.write(job.bookId, rendered.bytes, rendered.format);
-            clip = {
-              ...generating,
-              status: "done",
-              ms: rendered.ms,
-              duration: rendered.duration,
-              url,
-              at: Date.now(),
-              model: rendered.model,
-              ...(rendered.voice != null ? { voice: rendered.voice } : {}),
-              sampleRate,
-            };
-          } catch (e) {
-            if (stop.signal.aborted) throw e;
-            // A line that could not be rendered is a failed clip where the run put it — a failed
-            // replacement stays a candidate beside the clip it did not replace, and a failed render
-            // in place is the gap the chapter's status will say it has.
-            const message = e instanceof Error ? e.message : String(e);
-            clip = {
-              ...generating,
-              status: "failed",
-              ms: Date.now() - startedAt,
-              duration: 0,
-              at: Date.now(),
-              error: {
-                code: 0,
-                message,
-                body: "",
-                at: Date.now(),
-                ...(e instanceof PartFailed ? { part: e.part } : {}),
-              },
-            };
-          }
-
-          // A replacement the run made for itself takes over as it lands; a retake stays beside the
-          // clip in the book for the verdict.
-          const replacement = slot === "candidate" && !!clip.auto;
-          const retake = slot === "candidate" && !clip.auto;
-          try {
-            write((tx, at) => {
-              // A dictionary replaced while the line was out marked stale only the clips that had
-              // landed, so one that lands after it is checked here, in the same transaction as the
-              // write — the words it was sent may no longer be the words the book would send. An
-              // endpoint saved meanwhile is the same question about its tags and its rate.
-              if (clip.status === "done" && movedOn(tx, at.bookId, s, who.endpoint, plan, clip))
-                clip = { ...clip, status: "stale" };
-              writeClip(tx, at.bookId, at.id, s.id, slot, clip);
-              if (replacement && clip.status !== "failed")
-                acceptCandidate(tx, at.bookId, at.id, s.id);
-            });
-          } catch (e) {
-            if (!(e instanceof LineGone)) throw e;
-            gone();
-            return;
-          }
-          landed++;
-          release();
-          const detail = { line: s.id, speaker: s.speaker };
-          if (clip.status === "stale")
-            ctx.note(
-              `Line ${s.id} was sent before the dictionary or its endpoint changed; it reads as stale`,
-              "warning",
-              detail,
-            );
-          if (clip.status !== "failed") {
-            const arrived = {
-              ...detail,
-              seconds: Number(clip.duration.toFixed(2)),
-              ...(clip.parts && clip.parts > 1 ? { parts: clip.parts } : {}),
-              ms: clip.ms,
-              ...(slot === "candidate" ? { take: clip.n ?? 1 } : {}),
-            };
-            if (retake) {
-              waiting++;
-              ctx.note(
-                `Line ${s.id} take ${clip.n ?? 1} rendered, waiting for a verdict`,
-                "info",
-                arrived,
-              );
-            } else {
-              rendered++;
-              ctx.note(
-                replacement
-                  ? `Line ${s.id} replaced take ${s.audio.n ?? 1}`
-                  : `Line ${s.id} rendered`,
-                "info",
-                arrived,
-              );
-            }
-          } else {
-            const error = { ...detail, error: clip.error?.message ?? "" };
-            if (retake) {
-              ctx.note(
-                `Line ${s.id} take ${clip.n ?? 1} failed; the clip in the book is unchanged`,
-                "warning",
-                error,
-              );
-            } else {
-              failed++;
-              ctx.note(
-                replacement
-                  ? `Line ${s.id} replacement failed; the clip already in the book is unchanged`
-                  : `Line ${s.id} failed`,
-                "error",
-                error,
-              );
-            }
-          }
-          progress();
+          if (halted() || budgetStops(t.s)) return;
+          const line = commit(t, who);
+          if (!line) return;
+          const blocked = unsendable(line);
+          await land(
+            line,
+            blocked
+              ? { error: blocked }
+              : await outcomeOf(() => speakInParts(provider, line.input, line.cuts)),
+          );
         } finally {
           leave();
         }
       };
 
+      /**
+       * An endpoint's lines in batches (`docs/speech-batch-api.md`): each batch takes one of the
+       * endpoint's slots, and is filled when it has one, from the lines still waiting, in the
+       * chapter's order, up to what the endpoint said it takes. A line longer than an item may be
+       * goes as its parts, each its own item, and is joined when they have all come back. Each line
+       * lands on its own as its items are answered. One that fails as worth another try goes into a
+       * later batch, up to the endpoint's retries; a batch that failed whole does the same with every
+       * line it had not answered.
+       */
+      const batchLines = async (id: string, lines: Target[], limits: BatchLimits) => {
+        const who = new Map(lines.map((t) => [t, deliveryOf(t.s.speaker)]));
+        const pending: (Target | Line)[] = [...lines];
+        const order = new Map(lines.map((t, i) => [t, i]));
+        const maxItems = limits.maxItems ?? Infinity;
+        const maxChars = limits.maxInputChars ?? Infinity;
+
+        /** Take the next batch's lines, committing each; lines that cannot go are landed now. */
+        const fill = async (): Promise<Line[]> => {
+          const batch: Line[] = [];
+          let items = 0;
+          let chars = 0;
+          while (pending.length && !halted()) {
+            const next = pending[0];
+            let line: Line | null;
+            if ("input" in next) line = next;
+            else {
+              if (budgetStops(next.s)) break;
+              line = commit(next, who.get(next)!, limits.maxItemChars);
+            }
+            // a line only goes into a batch it fits beside the others; the first always goes
+            const parts = line?.cuts?.length ?? 1;
+            const size = line?.input.text.length ?? 0;
+            if (line && batch.length && (items + parts > maxItems || chars + size > maxChars)) {
+              pending[0] = line;
+              break;
+            }
+            pending.shift();
+            if (!line) continue;
+            const blocked = unsendable(line);
+            if (blocked) await land(line, { error: blocked });
+            // more parts than a batch may carry: sent the way a line always was, one part at a time
+            else if (parts > maxItems)
+              await land(
+                line,
+                await outcomeOf(() => speakInParts(provider, line.input, line.cuts)),
+              );
+            else {
+              batch.push(line);
+              items += parts;
+              chars += size;
+            }
+          }
+          return batch;
+        };
+
+        const send = async (batch: Line[]): Promise<void> => {
+          const items: SpeechInput[] = [];
+          const owner: { line: Line; part: number }[] = [];
+          for (const line of batch) {
+            const texts =
+              line.cuts && line.cuts.length > 1
+                ? // the whitespace a cut keeps so the parts rejoin is not the provider's to read
+                  line.cuts.map((c) => c.text.trim())
+                : [line.input.text];
+            texts.forEach((text, part) => {
+              items.push({ ...line.input, text });
+              owner.push({ line, part });
+            });
+          }
+          const parts = new Map(batch.map((l) => [l, [] as RenderedClip[]]));
+          const settled = new Set<Line>();
+          const landing: Promise<void>[] = [];
+          /** lines to send again, back at the front of the line in the chapter's order */
+          const again: Line[] = [];
+          const maxRetries = batch[0].input.target?.maxRetries ?? 0;
+          /** A line whose send failed: into a later batch when that could go differently, else landed failed. */
+          const failLine = (line: Line, error: unknown): void => {
+            settled.add(line);
+            if (error instanceof ProviderError && error.retryable && line.tries < maxRetries) {
+              line.tries++;
+              again.push(line);
+              return;
+            }
+            landing.push(land(line, { error }));
+          };
+          const answered = (index: number, outcome: BatchOutcome): void => {
+            const { line, part } = owner[index] ?? {};
+            if (!line || settled.has(line)) return;
+            const count = line.cuts && line.cuts.length > 1 ? line.cuts.length : 1;
+            if ("error" in outcome)
+              return failLine(
+                line,
+                count > 1 ? new PartFailed(part + 1, outcome.error) : outcome.error,
+              );
+            const got = parts.get(line)!;
+            got[part] = outcome.clip;
+            if (got.filter(Boolean).length < count) return;
+            settled.add(line);
+            let joined: Outcome;
+            try {
+              joined = { rendered: count > 1 ? joinParts(got) : got[0] };
+            } catch (e) {
+              joined = { error: e };
+            }
+            landing.push(land(line, joined));
+          };
+          try {
+            await provider.speakBatch!({
+              target: batch[0].input.target!,
+              items,
+              signal: stop.signal,
+              answered,
+              rateLimited: (ms) => gate.rateLimited(id, ms),
+            });
+          } catch (e) {
+            if (stop.signal.aborted) throw e;
+            for (const line of batch) if (!settled.has(line)) failLine(line, e);
+          }
+          pending.unshift(...again.sort((a, b) => order.get(a.t)! - order.get(b.t)!));
+          await Promise.all(landing);
+        };
+
+        const worker = async (): Promise<void> => {
+          while (pending.length && !halted()) {
+            const leave = await gate.acquire(id, limitsOf(id), {
+              signal: stop.signal,
+              waiting: waited(id),
+            });
+            try {
+              told.delete(id);
+              const batch = await fill();
+              if (batch.length) await send(batch);
+            } finally {
+              leave();
+            }
+          }
+        };
+        // as many as could ever be out at once; the gate decides how many are
+        const width = Math.max(1, Math.ceil(lines.length / Math.min(maxItems, lines.length)));
+        await Promise.all(Array.from({ length: width }, worker));
+      };
+
+      // Which endpoints take batches, asked once per run of each endpoint its lines go to; one
+      // that cannot say — no such route, a model it does not batch, no answer — is sent one line
+      // at a time, as every endpoint was before.
+      const groups = new Map<string, Target[]>();
+      const alone: Target[] = [];
+      for (const t of targets) {
+        const id = deliveryOf(t.s.speaker).endpoint;
+        const ep = id ? readEndpoint(db, id) : undefined;
+        if (!id || !ep || !provider.batchLimits || !provider.speakBatch) alone.push(t);
+        else groups.set(id, [...(groups.get(id) ?? []), t]);
+      }
+      const batched: [string, Target[], BatchLimits][] = [];
+      for (const [id, lines] of groups) {
+        const ep = readEndpoint(db, id)!;
+        const limits = await provider.batchLimits!(speechTarget(db, ep), stop.signal).catch(
+          () => null,
+        );
+        if (signal.aborted) throw signal.reason;
+        if (limits) batched.push([id, lines, limits]);
+        else alone.push(...lines);
+      }
+      if (batched.length)
+        ctx.note("Sending in batches", "info", {
+          endpoints: batched
+            .map(([id, , l]) => `${id} (${l.maxItems ?? "any number"} a batch)`)
+            .join(", "),
+        });
+
       await Promise.all(
-        targets.map((t) =>
-          renderLine(t).catch((e: unknown) => {
+        [
+          ...alone
+            .sort((a, b) => targets.indexOf(a) - targets.indexOf(b))
+            .map((t) => renderLine(t)),
+          ...batched.map(([id, lines, limits]) => batchLines(id, lines, limits)),
+        ].map((work) =>
+          work.catch((e: unknown) => {
             // the first thing to go wrong is the one the job fails with; what the stop then shakes
             // loose from the other lines is only the stop
             if (stop.signal.aborted) return;

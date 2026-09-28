@@ -45,7 +45,7 @@ import ExpressionsTab from "@/views/endpoints/ExpressionsTab.vue";
 import VoicesTab from "@/views/endpoints/VoicesTab.vue";
 import PricingTab from "@/views/endpoints/PricingTab.vue";
 import ActivityTab from "@/views/endpoints/ActivityTab.vue";
-import { useEndpointHistory, useLibrarySpend } from "@/queries";
+import { useEndpointHistory, useEndpointLive, useLibrarySpend } from "@/queries";
 import { endpointService, probeCost, seriesFrom, RANGES } from "@/services/endpoints";
 import { activeUsageService } from "@/services/usage";
 import type { EndpointDescriptor } from "@/services/endpoints";
@@ -85,6 +85,9 @@ onMounted(() => {
   clock = setInterval(() => (now.value = Date.now()), 1000);
 });
 onUnmounted(() => clearInterval(clock));
+// with a server answering, the busy slots, waiting lines and cooldowns are its gate's, read while
+// narration runs; the demo's come from the simulator
+useEndpointLive();
 
 // ---------- the unified list ----------
 const all = computed<UnifiedEndpoint[]>(() => [

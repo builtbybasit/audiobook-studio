@@ -31,7 +31,7 @@ import {
 import { useEndpointsStore, WRITE_DELAY_MS } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 import { clone } from "@/lib/utils";
-import type { ClonedVoice, Endpoint, EndpointKind, KeptVoiceSamples } from "@/types";
+import type { ClonedVoice, Endpoint, EndpointKind, EndpointLive, KeptVoiceSamples } from "@/types";
 import { testPinia, type TestPinia } from "./support/pinia";
 
 const TELEMETRY = ["history", "failures", "rateLimits", "backoffUntil", "lastError", "fetching"];
@@ -144,6 +144,10 @@ class FakeService implements EndpointSettingsService {
   }
   async keptSamples(): Promise<KeptVoiceSamples[]> {
     return [];
+  }
+  /** nothing sent, so nothing seen: the live telemetry is `jobsBackend.test.ts`'s, over the real gate */
+  async live(): Promise<Record<string, EndpointLive>> {
+    return {};
   }
   async keepSamples(): Promise<KeptVoiceSamples> {
     throw new ApiError("not used here", 500);

@@ -27,4 +27,6 @@ export const keys = {
   librarySpend: ["spend"] as const,
   /** every endpoint's settled requests, for the Endpoints page */
   endpointRequests: ["endpoints", "requests"] as const,
+  /** what the server's process has seen of each speech endpoint: lines out and held, cooldowns */
+  endpointLive: ["endpoints", "live"] as const,
 };

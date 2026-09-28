@@ -23,6 +23,7 @@ import {
 // the pricing line reads the endpoint's billing model rather than the legacy per-1M-characters
 // number, which says nothing useful about a byte-billed or token-billed endpoint
 import { pricingLabel, unifyEndpoint } from "@/lib/endpoints";
+import { useEndpointLive } from "@/queries";
 
 const endpointsStore = useEndpointsStore();
 const jobsStore = useJobsStore();
@@ -41,6 +42,8 @@ onMounted(() => {
   t = setInterval(() => (now.value = Date.now()), 500);
 });
 onUnmounted(() => clearInterval(t));
+// the endpoint pool's busy slots and back-off, as the server's gate holds them when one answers
+useEndpointLive();
 
 const icon: Record<JobKind, Component> = {
   scripting: ScriptingIcon,

@@ -12,7 +12,7 @@
 // what the store assumed when it sent the request.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import type { BookSpend, RequestRecord, Segment } from "@/types";
+import type { BookSpend, Endpoint, RequestRecord, Segment } from "@/types";
 import { credentials } from "@/lib/credentials";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { makeProfiles } from "@/mock/fixtures/profiles";
@@ -27,12 +27,18 @@ import {
   useBookSpend,
   useChapterScript,
   useEndpointHistory,
+  useEndpointLive,
 } from "@/queries";
 import type { EndpointDescriptor } from "@/services/endpoints";
+import {
+  HttpEndpointSettingsService,
+  setEndpointSettingsService,
+} from "@/services/endpointSettings";
 import { HttpJobsService, setJobsService } from "@/services/jobs";
 import { HttpUsageService, setUsageService } from "@/services/usage";
 import { activeLibraryService, HttpLibraryService, setLibraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore, WRITE_DELAY_MS } from "@/stores/endpoints";
 import { useExportsStore } from "@/stores/exports";
 import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
@@ -47,7 +53,15 @@ import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";
 import { epubFile, story } from "./support/epub";
 import { flush, testPinia, type TestPinia } from "./support/pinia";
-import { gatedProvider, jsonBody, testApi, type TestApi } from "./support/server";
+import { unifyEndpoint } from "@/lib/endpoints";
+import { useEndpointActivity } from "@/views/endpoints/live";
+import {
+  gatedProvider,
+  gatedSpeechProvider,
+  jsonBody,
+  testApi,
+  type TestApi,
+} from "./support/server";
 
 let api: TestApi;
 let pinia: TestPinia;
@@ -92,13 +106,21 @@ const poll = async () => {
   await settle();
 };
 
-function wire(options: Parameters<typeof testApi>[0] = {}) {
+function wire(options: Parameters<typeof testApi>[0] = {}, wiring: Wiring = {}) {
   api = testApi(options);
-  wireStores();
+  wireStores(wiring);
+}
+
+interface Wiring {
+  /**
+   * The endpoint configuration read from the server too, as backend mode reads it. Left out, the
+   * endpoints store is the seeded one, which is what most of these suites run against.
+   */
+  endpoints?: boolean;
 }
 
 /** Fresh stores over the same server, as a reload would give. */
-function wireStores() {
+function wireStores({ endpoints = false }: Wiring = {}) {
   // the seeded world reaches for `matchMedia` as it is built; the stores must not build one at all
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   asked = [];
@@ -116,6 +138,7 @@ function wireStores() {
   setLibraryService(new HttpLibraryService("/api", fetch));
   setJobsService(new HttpJobsService("/api", fetch));
   setUsageService(new HttpUsageService("/api", fetch));
+  setEndpointSettingsService(endpoints ? new HttpEndpointSettingsService("/api", fetch) : null);
   pinia?.stop();
   pinia = testPinia();
   castStore = useCastStore();
@@ -181,9 +204,11 @@ beforeEach(() => wire());
 // The services are module state, and every other suite in this repository is the seeded world.
 afterEach(() => {
   pinia.stop();
+  useEndpointsStore()._detach();
   setLibraryService(null);
   setJobsService(null);
   setUsageService(null);
+  setEndpointSettingsService(null);
 });
 
 describe("the queue with a server answering", () => {
@@ -1108,5 +1133,125 @@ describe("spending with a server answering", () => {
     expect(history.histories.value[ep.key]).toEqual(body.requests);
     // the fake provider answered, so each row says it was simulated
     expect(body.requests.every((r) => r.simulated && r.bookId === id)).toBe(true);
+  });
+});
+
+describe("the speech endpoints' live telemetry with a server answering", () => {
+  const studio: Endpoint = {
+    id: "studio",
+    name: "Studio speech",
+    baseUrl: "http://localhost:8880/v1",
+    model: "studio-tts",
+    concurrency: 1,
+    enabled: true,
+    latency: 0,
+    failRate: 0,
+    price: 15,
+    needsKey: false,
+    maxChars: 0,
+    splitAt: "sentence",
+    voices: [{ id: "ash", gender: "m", label: "Ash" }],
+    history: [],
+    failures: 0,
+    rateLimits: 0,
+    backoffUntil: 0,
+  };
+  // the credential registry is module state, and the configuration read from the server replaces
+  // it; every suite after this one saves the seeded registry
+  let registry: typeof credentials;
+  beforeEach(() => {
+    registry = clone([...credentials]);
+  });
+  afterEach(() => {
+    credentials.splice(0, credentials.length, ...registry);
+  });
+
+  /**
+   * A server holding one speech endpoint whose narration the test holds open, the stores reading
+   * the configuration from it, and a page showing the endpoints' live telemetry.
+   */
+  async function narrating() {
+    const speech = gatedSpeechProvider();
+    wire({ speech: speech.provider }, { endpoints: true });
+    const { status } = await api.request("/api/endpoints", {
+      ...jsonBody({ endpoints: [studio], profiles: [], credentials: [] }),
+      method: "PUT",
+    });
+    expect(status).toBe(200);
+    const endpointsStore = useEndpointsStore();
+    await endpointsStore.load();
+    pinia.run(() => useEndpointLive());
+    const { id } = await scriptedAndOpen();
+    void useNarrationStore()._runRemote(id, [1], { quiet: true });
+    await speech.started;
+    await poll();
+    // two lines at the gate for the endpoint, one out and one held behind it, then a rate limit
+    const stop = new AbortController();
+    const limits = () => ({ concurrency: 1, enabled: true });
+    const out = await api.gate.acquire("studio", limits, { signal: stop.signal });
+    void api.gate.acquire("studio", limits, { signal: stop.signal }).catch(() => {});
+    api.gate.rateLimited("studio", 5000);
+    const done = async () => {
+      stop.abort();
+      out();
+      speech.release();
+      await api.runner.idle();
+    };
+    return { endpointsStore, ep: endpointsStore.endpoints[0], done };
+  }
+  const liveReads = () => asked.filter((path) => path === "/api/endpoints/live").length;
+
+  test("the server's counts and cooldown land on the endpoint, and the cooldown is why lines wait", async () => {
+    const { endpointsStore, ep, done } = await narrating();
+    await poll();
+    expect(endpointsStore.live.studio).toMatchObject({ active: 1, waiting: 1, rateLimits: 1 });
+    expect(ep.rateLimits).toBe(1);
+    expect(ep.backoffUntil).toBeGreaterThan(Date.now());
+    // the Endpoints page's card and the Queue page's pool read the server's numbers
+    const { liveActivity } = pinia.run(() => useEndpointActivity());
+    expect(liveActivity(unifyEndpoint(ep))).toEqual({
+      active: 1,
+      queued: 1,
+      waiting: "cooldown",
+      effectiveLimit: 0,
+    });
+    expect(useJobsStore().endpointLoad.studio).toMatchObject({ active: 1, backoff: true });
+    await done();
+  });
+
+  test("the telemetry is read while narration runs, once after it ends, and not again", async () => {
+    const { ep, done } = await narrating();
+    const before = liveReads();
+    await poll();
+    await poll();
+    expect(liveReads()).toBe(before + 2);
+    await done();
+    await poll();
+    // the read after the last job finished: the lines are let go, the cooldown is still the gate's
+    expect(liveReads()).toBe(before + 3);
+    expect(useEndpointsStore().live.studio).toMatchObject({ active: 0, waiting: 0 });
+    expect(ep.backoffUntil).toBeGreaterThan(Date.now());
+    await poll();
+    await poll();
+    expect(liveReads()).toBe(before + 3);
+  });
+
+  test("telemetry arriving sends no save, and a save sends none of it", async () => {
+    const { ep, done } = await narrating();
+    await poll();
+    expect(ep.backoffUntil).toBeGreaterThan(0);
+    await new Promise((r) => setTimeout(r, WRITE_DELAY_MS + 50));
+    const saves = () => sent.filter((s) => s.path === "/api/endpoints");
+    expect(saves()).toEqual([]);
+    ep.concurrency = 3;
+    await new Promise((r) => setTimeout(r, WRITE_DELAY_MS + 50));
+    expect(saves()).toHaveLength(1);
+    const [saved] = (saves()[0].body as { endpoints: Record<string, unknown>[] }).endpoints;
+    expect(saved.concurrency).toBe(3);
+    for (const k of ["rateLimits", "backoffUntil", "history", "failures", "active", "waiting"])
+      expect(saved).not.toHaveProperty(k);
+    // and what the server answered did not wipe what the gate said
+    expect(ep.backoffUntil).toBeGreaterThan(Date.now());
+    await done();
   });
 });

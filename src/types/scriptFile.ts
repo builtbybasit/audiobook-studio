@@ -6,7 +6,7 @@
 // judges for itself. Expression tags travel inside a line's `text` as `{tag}` markers.
 import type { Gender, VoiceRef } from "@/types/common";
 import type { Segment, SegmentType } from "@/types/segment";
-import type { Voice } from "@/types/voice";
+import type { KeptSample, Voice } from "@/types/voice";
 
 // ---------- the file ----------
 
@@ -76,6 +76,29 @@ export interface ScriptFileSpeaker {
   color?: string;
   major?: boolean;
   voice?: VoiceHint;
+  /**
+   * `voices/<slug>/`, when the export was asked to carry this speaker's voice samples: the folder
+   * in the zip holding the recordings and their `consent.json`.
+   */
+  samples?: string;
+}
+
+/**
+ * `voices/<slug>/consent.json`: which recordings the folder holds, and the consent they were kept
+ * under. A record of what someone agreed to, shown to the importing side — never permission for
+ * it: cloning there still asks for its own consent.
+ */
+export interface ScriptFileVoice {
+  format: "audiobook-studio/voice-samples";
+  version: 1;
+  /** what the voice was called where it was kept */
+  title: string;
+  /** ISO 8601, when the box was ticked */
+  consentAt: string;
+  /** the sentence that was ticked */
+  consentText: string;
+  /** the recordings, by their names inside the folder */
+  samples: { file: string; name: string; format: KeptSample["format"] }[];
 }
 
 /** One entry of `lexicon.json`. */
@@ -183,7 +206,18 @@ export interface VoiceRow {
   match: VoiceMatch;
   /** ticked on arrival: only when `isNew` or `current` is null, and only when `match` is not private */
   ticked: boolean;
+  /** the recordings the file carries for this voice, when it carries any */
+  samples?: VoiceRowSamples;
 }
+
+/**
+ * What an import found of a voice's recordings: usable, with the consent they came under, or
+ * refused whole — a folder with one file that is not audio, or over the clone limits, is refused
+ * and says why, and the lines and cast still import.
+ */
+export type VoiceRowSamples =
+  | { kind: "ok"; count: number; bytes: number; consentAt: string; consentText: string }
+  | { kind: "refused"; reason: string };
 
 export interface ScriptImportPlan {
   /** the manifest's title and author; a lone chapter file has neither */
@@ -208,4 +242,29 @@ export interface ScriptImportPlan {
     differ: TermDiff[];
   };
   voices: VoiceRow[];
+}
+
+// ---------- voice samples waiting with a speaker ----------
+
+/**
+ * Recordings that came in a script file for a speaker whose voice is a private clone this install
+ * does not have. They wait with the speaker — no provider has made a voice from them yet — until
+ * someone clones them on the Voices tab or discards them.
+ */
+export interface SpeakerSamples {
+  id: number;
+  speaker: string;
+  /** the voice's title where it was kept, which the clone form starts from */
+  title: string;
+  /** epoch ms, and the sentence, from the file's consent record */
+  consentAt: number;
+  consentText: string;
+  /** the name of the script file they came in */
+  source: string;
+  samples: KeptSample[];
+}
+
+/** What ticking "Include voice samples" would add to an export: one entry per speaker. */
+export interface ScriptExportSamples {
+  voices: { speaker: string; title: string; count: number; bytes: number }[];
 }

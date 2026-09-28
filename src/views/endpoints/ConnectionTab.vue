@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 
 // Three things get confused with each other and are kept apart here:
@@ -27,12 +26,10 @@ import {
   KIND_PATH,
   endpointErrors,
   opsOf,
-  presetsOf,
   relative,
   ttsRequestPath,
 } from "@/lib/endpoints";
 import { maybeMoney } from "@/lib/pricing";
-import { clone } from "@/lib/utils";
 import { encodingSummary } from "@/lib/audioFormat";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import {
@@ -49,8 +46,10 @@ import {
   discardDraft,
   draftChanges,
   draftFor,
+  stagePreset,
   ui,
 } from "@/views/endpoints/state";
+import { usePresetPicker } from "@/composables/usePresetPicker";
 import type { ConnectionTest } from "@/types";
 
 const props = defineProps<{
@@ -65,7 +64,6 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ test: []; remove: [] }>();
 
-const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
 const draft = computed(() => draftFor(props.u));
 const changes = computed(() => draftChanges(props.u));
@@ -127,13 +125,16 @@ function save() {
   }
   const name = draft.value.name.trim() || props.u.name;
   const rerouted = providerChanged.value;
+  const preset = draft.value.preset?.label;
   const repaired = applyDraft(props.u);
   confirming.value = false;
   uiStore.toast(`${name} connection saved`, {
     kind: "success",
     description: rerouted
       ? "New jobs use it from now on. Jobs already queued keep the connection they were created with."
-      : "Nothing was re-routed — only this configuration’s labels changed.",
+      : preset
+        ? `Nothing was re-routed. ${preset}’s prices and limits apply from the next request.`
+        : "Nothing was re-routed — only this configuration’s labels changed.",
   });
   // A new base URL can speak an API without the format or rate this endpoint was set to; what was
   // put back is said on its own, so it is not lost inside the saved message.
@@ -148,45 +149,32 @@ function discard() {
   confirming.value = false;
 }
 // ---------- presets ----------
-// A preset fills in what the provider pins down. The connection half (base URL, model, whether a
-// key is needed) goes into the draft so it is saved like any other provider change; the rest —
-// billing or token prices, limits, concurrency — is written straight onto the endpoint or profile,
-// the way the Pricing tab writes it, because nothing stages those.
-const presets = computed(() => presetsOf(props.u.kind));
-const PRESET_OPTIONS = computed(() => [
-  { value: "", label: "Start from a preset…", hint: "leaves every field as it is" },
-  ...presets.value.map((p) => ({ value: p.id, label: p.label, hint: p.hint, group: p.group })),
-]);
-const presetId = ref("");
-const presetById = (id: string) => presets.value.find((p) => p.id === id);
+// A preset is staged like any other edit: the connection half fills the form, and the rest —
+// billing or token prices, limits, concurrency — waits in the same draft, so Save applies all of it
+// and Discard drops all of it. This tab is not remounted per endpoint, so the chosen preset and its
+// note are forgotten when another endpoint is selected.
+const {
+  options: presetOptions,
+  presetId,
+  note: presetNote,
+  choose: choosePreset,
+} = usePresetPicker({
+  kind: () => props.u.kind,
+  endpoint: () => props.u.key,
+  fill: (fields, preset) => stagePreset(props.u, preset.label, fields),
+  next: "Review it below, then Save — its prices and limits go on with it. Discard puts everything back.",
+});
 /** Where a request actually goes. Fish Audio serves /tts, not the OpenAI-style /audio/speech, so
  *  this follows the draft and updates the moment a preset or a hand-typed base URL changes it. */
 const path = computed(() =>
   props.u.kind === "tts" ? ttsRequestPath(draft.value) : KIND_PATH[props.u.kind],
 );
-const presetNote = computed(() => (presetId.value ? presetById(presetId.value)?.note : undefined));
-
-function usePreset(id: string | number | null) {
-  const preset = presetById(String(id ?? ""));
-  presetId.value = preset?.id ?? "";
-  if (!preset) return;
-  // a copy: a preset's billing or pricing object must not become the endpoint's own, or editing
-  // prices on one endpoint would change the preset and every endpoint made from it after
-  const { name, model, baseUrl, needsKey, ...rest } = clone(preset.apply);
-  if (name !== undefined) draft.value.name = name;
-  if (model !== undefined) draft.value.model = model;
-  if (baseUrl !== undefined) draft.value.baseUrl = baseUrl;
-  if (needsKey !== undefined) draft.value.needsKey = needsKey;
-  const target =
-    props.u.kind === "scripting"
-      ? endpointsStore.profiles.find((p) => p.id === props.u.id)
-      : endpointsStore.endpoints.find((e) => e.id === props.u.id);
-  if (target) Object.assign(target, rest);
-  uiStore.toast(`${preset.label} defaults filled in`, {
-    kind: "success",
-    description: "Review the connection below, then Save. Nothing is dispatched until you do.",
-  });
-}
+/** The staged changes as the banner lists them; a preset's prices and limits are one of them. */
+const changeList = computed(() =>
+  changes.value
+    .map((c) => (c === "preset" ? `prices and limits from ${draft.value.preset?.label}` : c))
+    .join(", "),
+);
 
 function newCredential() {
   const id = addCredential(draft.value.name || "New credential");
@@ -205,7 +193,7 @@ function newCredential() {
       <div class="flex flex-wrap items-center gap-2">
         <b class="text-violet-700 dark:text-violet-300">Unsaved changes</b>
         <span class="text-zinc-600 dark:text-zinc-300"
-          >{{ changes.join(", ") }} — nothing is using these yet.</span
+          >{{ changeList }} — nothing is using these yet.</span
         >
         <span class="ml-auto flex gap-2">
           <button class="btn-ghost btn-xs" @click="discard">Discard</button>
@@ -231,10 +219,10 @@ function newCredential() {
       <div class="flex flex-wrap items-center gap-2">
         <UiSelect
           :model-value="presetId"
-          :options="PRESET_OPTIONS"
+          :options="presetOptions"
           class="w-72"
           aria-label="Start from a provider preset"
-          @update:model-value="usePreset"
+          @update:model-value="choosePreset"
         />
         <span class="text-[11px] text-zinc-500">
           Fills in the base URL, model and
@@ -489,8 +477,8 @@ function newCredential() {
         v-if="onServer && changes.length"
         class="mt-2 rounded bg-violet-50 px-2 py-1 text-[11px] text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
       >
-        This tests the saved settings. The unsaved changes above ({{ changes.join(", ") }}) are not
-        part of it — save them first to test them.
+        This tests the saved settings. The unsaved changes above ({{ changeList }}) are not part of
+        it — save them first to test them.
       </p>
       <p
         v-if="onServer"

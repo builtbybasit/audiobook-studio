@@ -24,8 +24,7 @@ import {
   ArrowUpRight as ArrowIcon,
 } from "@lucide/vue";
 import { profileErrors, scriptParts, tokenEstimate, scriptingHealth } from "@/lib/scripting";
-import { SCRIPTING_PRESETS, scriptingPresetById } from "@/lib/endpoints";
-import { clone } from "@/lib/utils";
+import { usePresetPicker } from "@/composables/usePresetPicker";
 import { TabsRoot, TabsList, TabsTrigger, TabsContent } from "reka-ui";
 import EndpointActivity from "@/views/scripting/EndpointActivity.vue";
 import type { Profile, SettingsFile } from "@/types";
@@ -118,25 +117,17 @@ async function importSettings(event: Event) {
 // ---------- presets ----------
 // The provider presets the Endpoints page offers. Every field here binds straight onto the profile,
 // so a preset is written onto it the same way — a copy, so no two profiles share a rate card.
-const PRESET_OPTIONS = [
-  { value: "", label: "Start from a preset…", hint: "leaves every field as it is" },
-  ...SCRIPTING_PRESETS.map((x) => ({ value: x.id, label: x.label, hint: x.hint, group: x.group })),
-];
-const presetId = ref("");
-watch(selectedId, () => (presetId.value = ""));
-const presetNote = computed(() =>
-  presetId.value ? scriptingPresetById(presetId.value)?.note : undefined,
-);
-function usePreset(id: string | number | null) {
-  const preset = scriptingPresetById(String(id ?? ""));
-  presetId.value = preset?.id ?? "";
-  if (!preset || !p.value) return;
-  Object.assign(p.value, clone(preset.apply));
-  uiStore.toast(`${preset.label} defaults filled in`, {
-    kind: "success",
-    description: "Check the model and prices, and add the key if it needs one.",
-  });
-}
+const {
+  options: presetOptions,
+  presetId,
+  note: presetNote,
+  choose: choosePreset,
+} = usePresetPicker({
+  kind: "scripting",
+  endpoint: selectedId,
+  fill: (fields) => (p.value ? void Object.assign(p.value, fields) : false),
+  next: "Check the model and prices, and add the key if it needs one.",
+});
 
 function add() {
   selectedId.value = endpointsStore.addScriptProfile();
@@ -305,10 +296,10 @@ function remove() {
             <div class="flex flex-wrap items-center gap-2">
               <UiSelect
                 :model-value="presetId"
-                :options="PRESET_OPTIONS"
+                :options="presetOptions"
                 class="w-72"
                 aria-label="Start from a provider preset"
-                @update:model-value="usePreset"
+                @update:model-value="choosePreset"
               />
               <span class="text-[11px] text-zinc-500">
                 Fills in the base URL, model and token prices. Every field stays editable.

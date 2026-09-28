@@ -10,7 +10,14 @@ import { onDemoReset } from "@/lib/pageState";
 import { opsOf } from "@/lib/endpoints";
 import { encodingChanged, repairEncoding } from "@/lib/audioFormat";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
-import type { ConnectionTest, EndpointKind, RangeKey, RequestStatus } from "@/types";
+import type {
+  ConnectionTest,
+  Endpoint,
+  EndpointKind,
+  Profile,
+  RangeKey,
+  RequestStatus,
+} from "@/types";
 
 export type TabId =
   | "overview"
@@ -48,6 +55,15 @@ export interface ConnectionDraft {
   needsKey: boolean;
   credentialId: string | null;
   quotaGroup: string;
+  /** what a preset filled in beyond the connection — billing or token prices, limits, concurrency —
+   *  held here with the rest, so Save applies it and Discard drops it */
+  preset: StagedPreset | null;
+}
+
+/** A preset's other fields, waiting for Save. `fields` is a copy, never the preset's own objects. */
+export interface StagedPreset {
+  label: string;
+  fields: Record<string, unknown>;
 }
 
 export interface ActivityFilter {
@@ -116,7 +132,27 @@ export function draftFor(u: UnifiedEndpoint): ConnectionDraft {
     needsKey: u.needsKey,
     credentialId: opsOf(u).credentialId,
     quotaGroup: opsOf(u).quotaGroup ?? "",
+    preset: null,
   });
+}
+
+/**
+ * Stage a preset on this endpoint's draft. The connection half goes into the fields the form edits;
+ * the rest waits beside them until Save, which is what the page promises — nothing a preset fills
+ * in reaches the endpoint, or the server behind it, before then. `fields` must be a copy.
+ */
+export function stagePreset(
+  u: UnifiedEndpoint,
+  label: string,
+  fields: Partial<Profile> | Partial<Endpoint>,
+): void {
+  const d = draftFor(u);
+  const { name, model, baseUrl, needsKey, ...rest } = fields;
+  if (name !== undefined) d.name = name;
+  if (model !== undefined) d.model = model;
+  if (baseUrl !== undefined) d.baseUrl = baseUrl;
+  if (needsKey !== undefined) d.needsKey = needsKey;
+  d.preset = Object.keys(rest).length ? { label, fields: rest } : null;
 }
 
 /** Fields that identify *which provider* this configuration talks to. */
@@ -132,6 +168,7 @@ export function draftChanges(u: UnifiedEndpoint): (keyof ConnectionDraft)[] {
     needsKey: u.needsKey,
     credentialId: ops.credentialId,
     quotaGroup: ops.quotaGroup ?? "",
+    preset: null,
   };
   return (Object.keys(current) as (keyof ConnectionDraft)[]).filter((k) => d[k] !== current[k]);
 }
@@ -142,11 +179,13 @@ export const draftDirty = (u: UnifiedEndpoint): boolean => draftChanges(u).lengt
  * Write the draft onto the configuration. Returns what had to be put back so the audio choice still
  * fits: a new base URL can speak another API (Fish Audio's formats and rates are not OpenAI's), and
  * a format or rate the new one lacks goes back to the provider's default here, in the same write,
- * rather than being left for the server to refuse the next line with.
+ * rather than being left for the server to refuse the next line with. A staged preset's prices and
+ * limits are written in the same go.
  */
 export function applyDraft(u: UnifiedEndpoint): string[] {
   const d = draftFor(u);
   const target = (u.profile ?? u.endpoint) as unknown as Record<string, unknown>;
+  if (d.preset) Object.assign(target, d.preset.fields);
   target.name = d.name.trim();
   target.model = d.model.trim();
   target.baseUrl = d.baseUrl.trim();
@@ -173,6 +212,7 @@ export function applyDraft(u: UnifiedEndpoint): string[] {
     needsKey: d.needsKey,
     credentialId: d.credentialId,
     quotaGroup: d.quotaGroup.trim(),
+    preset: null,
   };
   return notes;
 }

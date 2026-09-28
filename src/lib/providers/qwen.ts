@@ -60,9 +60,11 @@ export const qwen: SpeechProviderShape = {
   // 10 to 20 seconds recommended and 60 at most, mono at 24 kHz or more. The limit is on the file;
   // the request carries it as base64, a third larger again.
   cloning: {
-    maxClips: 1,
-    maxClipBytes: 10 * 1024 * 1024,
+    maxSamples: 1,
+    maxSampleBytes: 10 * 1024 * 1024,
     formats: ["wav", "mp3", "m4a"],
+    // Qwen-Audio 3.0 enrols only from a public URL, which a file picked here does not have
+    models: QWEN_CLONE_MODELS,
     advice:
       "Model Studio makes a voice from one recording of 10–20 seconds (60 at most): mono, " +
       "24 kHz or better, one speaker in complete sentences with no music or noise. The voice " +
@@ -71,6 +73,7 @@ export const qwen: SpeechProviderShape = {
     cost:
       "Model Studio charges $0.01 for each voice made, and nothing for one it failed to make; " +
       "in Singapore the first 1,000 in your first 90 days are free.",
+    fee: { usd: 0.01, when: "made", said: "$0.01 a voice" },
   },
   models: ["qwen-audio-3.0-tts-flash", "qwen-audio-3.0-tts-plus", ...QWEN_CLONE_MODELS],
 };

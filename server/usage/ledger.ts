@@ -10,6 +10,7 @@
 // shows is a second opinion about what was spent.
 import { and, desc, eq, gte, isNull, sql, sum } from "drizzle-orm";
 
+import type { CloneFee } from "@/lib/providers";
 import type {
   BookSpend,
   Endpoint,
@@ -31,7 +32,7 @@ import {
 } from "@/lib/pricing";
 import type { Db, Tx } from "~/db/client";
 import { toRequestRecord, requestValues } from "~/db/rows/usage";
-import { chapters, jobs, openingSpend, requests } from "~/db/schema";
+import { chapters, cloneFees, jobs, openingSpend, requests } from "~/db/schema";
 import type { SentScript, SentSpeech } from "~/providers/sent";
 
 /** Which work a request was for. The chapter by its uid, which a renumbering never moves. */
@@ -43,6 +44,11 @@ export interface RequestFor {
   label: string;
   /** when the work was asked for; the request's own start when it went straight out */
   queuedAt?: number;
+  /**
+   * The voice a speech request was spoken in, as `<endpoint id>/<voice id>`: the first billed one
+   * spoken in a cloned voice whose provider charges at first use settles that fee too.
+   */
+  voiceRef?: string;
 }
 
 const errorOf = (sent: SentScript | SentSpeech): ReqError | undefined =>
@@ -148,6 +154,8 @@ export function settleSpeech(
   });
   const charge = sent.billed ? priced : unbilled(priced);
   const error = errorOf(sent);
+  if (sent.billed && sent.status === "done" && work.voiceRef)
+    settleFirstUse(db, endpoint, work.voiceRef, sent.finishedAt);
   return append(
     db,
     {
@@ -176,6 +184,83 @@ export function settleSpeech(
     },
     work.chapterUid,
   );
+}
+
+// ---------- what a cloned voice costs ----------
+
+/** The ledger row a clone's fee is: the endpoint's, not a book's, like a voice sample on its tab. */
+function appendFee(
+  db: Db | Tx,
+  endpoint: Pick<Endpoint, "id">,
+  fee: Pick<CloneFee, "usd" | "said">,
+  label: string,
+  at: number,
+): RequestRecord {
+  return append(
+    db,
+    {
+      endpointId: endpoint.id,
+      kind: "tts",
+      bookId: null,
+      label: `${label} · ${fee.said}`,
+      status: "done",
+      attempts: 1,
+      queuedAt: at,
+      startedAt: at,
+      finishedAt: at,
+      queueMs: 0,
+      responseMs: 0,
+      usage: {},
+      // credits the plan prices are a charge this ledger cannot put a figure on, and says so
+      cost: fee.usd,
+      costBasis: fee.usd == null ? "unknown" : "calculated",
+      simulated: false,
+    },
+    null,
+  );
+}
+
+/**
+ * What making a voice costs, as its provider's `cloning.fee` says: appended now when the provider
+ * charges as the voice is made, or set aside for the first line spoken in it when it charges then.
+ * Nothing when it charges nothing.
+ */
+export function settleClone(
+  db: Db,
+  endpoint: Pick<Endpoint, "id">,
+  voice: { id: string; title: string },
+  fee: CloneFee | null,
+  at = Date.now(),
+): void {
+  if (!fee) return;
+  if (fee.when === "made") {
+    appendFee(db, endpoint, fee, `Voice made · ${voice.title}`, at);
+    return;
+  }
+  db.insert(cloneFees)
+    .values({
+      endpointId: endpoint.id,
+      voiceId: voice.id,
+      title: voice.title,
+      usd: fee.usd,
+      said: fee.said,
+      madeAt: at,
+    })
+    .onConflictDoNothing()
+    .run();
+}
+
+/** A fee waiting on the first line spoken in this voice, charged now and once. */
+function settleFirstUse(db: Db | Tx, endpoint: Endpoint, voiceRef: string, at: number): void {
+  const prefix = `${endpoint.id}/`;
+  if (!voiceRef.startsWith(prefix)) return;
+  const voiceId = voiceRef.slice(prefix.length);
+  const where = and(eq(cloneFees.endpointId, endpoint.id), eq(cloneFees.voiceId, voiceId));
+  // taken and charged together, so two lines settling at once charge it once between them
+  db.transaction((tx) => {
+    const waiting = tx.delete(cloneFees).where(where).returning().get();
+    if (waiting) appendFee(tx, endpoint, waiting, `Voice first spoken · ${waiting.title}`, at);
+  });
 }
 
 /** What a receipt says of a request the provider does not charge for. */

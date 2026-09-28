@@ -19,7 +19,13 @@ export interface FoundVoice extends Voice {
 }
 
 /** A voice made here from recordings, as the provider answered; `samplesKept` says whether they were. */
-export interface ClonedVoice extends Voice {
+/** A voice a provider has just made from samples, and anything it said to do before using it. */
+export interface MadeVoice extends Voice {
+  /** what the person must do before a line is spoken with it — verify it on the provider, say */
+  warning?: string;
+}
+
+export interface ClonedVoice extends MadeVoice {
   samplesKept: boolean;
 }
 

@@ -4,15 +4,15 @@
 // **Held to the clone route's own limits.** These recordings exist to be cloned from, and the clone
 // route refuses more than it takes (`server/routes/endpoints.ts`); a folder it would refuse is one
 // that could never become a voice, so it is refused here, before a byte of it is kept. Every file
-// is checked by its first bytes (`sniffRecording`) — a name ending `.wav` is a claim, not a format.
+// is checked by its first bytes (`sniffSample`) — a name ending `.wav` is a claim, not a format.
 //
 // **Refused whole, and alone.** One file that is not audio, or one too many, refuses that voice's
 // recordings and nothing else: the lines, the cast and every other voice still import.
 import * as v from "valibot";
 
 import type { ScriptFileVoice, VoiceRowSamples } from "@/types";
-import { MAX_CLONE_CLIPS } from "@/lib/endpointShapes";
-import { sniffRecording, type RecordingFormat } from "~/providers/clone";
+import { MAX_VOICE_SAMPLES } from "@/lib/voiceSamples";
+import { sniffSample, type SampleFormat } from "~/providers/clone";
 
 const MB = 1024 * 1024;
 
@@ -25,11 +25,11 @@ export interface SampleLimits {
   clips: number;
 }
 
-/** The clone route's: 20 MB a recording, 100 MB a voice, and `MAX_CLONE_CLIPS` of them. */
+/** The clone route's: 20 MB a recording, 100 MB a voice, and `MAX_VOICE_SAMPLES` of them. */
 export const SAMPLE_LIMITS: SampleLimits = {
   clip: 20 * MB,
   voice: 100 * MB,
-  clips: MAX_CLONE_CLIPS,
+  clips: MAX_VOICE_SAMPLES,
 };
 
 export const VOICE_SAMPLES_FORMAT = "audiobook-studio/voice-samples";
@@ -68,7 +68,7 @@ export interface FolderEntry {
 /** A recording that passed, as it will be kept — or, from a read that held only heads, judged. */
 export interface JudgedClip {
   name: string;
-  format: RecordingFormat;
+  format: SampleFormat;
   bytes: Uint8Array;
   /** only the head of the recording is in `bytes`: judged, and not to be kept */
   partial?: boolean;
@@ -137,7 +137,7 @@ export function judgeVoiceFolder(
     if (total > limits.voice)
       return refused(`the recordings come to over ${mb(limits.voice)}, the limit for one voice`);
     if (!entry.bytes) return refused(`${s.file} could not be unzipped`);
-    const format = sniffRecording(entry.bytes.subarray(0, 512));
+    const format = sniffSample(entry.bytes.subarray(0, 512));
     if (!format) return refused(`${s.file} is not a WAV, MP3, M4A, Opus or FLAC recording`);
     clips.push({
       name: s.name || s.file,

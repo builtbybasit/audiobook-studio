@@ -11,7 +11,7 @@
 // against what was saved: see `reconcileClones` in `server/db/voiceSamples.ts`.
 import { foreignKey, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-import type { RecordingFormat } from "~/providers/clone";
+import type { SampleFormat } from "~/providers/clone";
 
 /**
  * A voice whose recordings are kept: one made here, or one made before recordings were kept and
@@ -61,7 +61,7 @@ export const voiceSamples = sqliteTable(
     /** the name the person's file had, for showing */
     name: text("name").notNull(),
     /** what the bytes say they are, which is what they are served as */
-    format: text("format").$type<RecordingFormat>().notNull(),
+    format: text("format").$type<SampleFormat>().notNull(),
     bytes: integer("bytes").notNull(),
     position: integer("position").notNull().default(0),
   },

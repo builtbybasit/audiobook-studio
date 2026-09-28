@@ -63,13 +63,11 @@ export function elevenLabsHeaders(target: ProviderTarget): Record<string, string
 }
 
 /**
- * What a cloned voice is called on the endpoint: its name, and — when the provider says it must be
- * verified before it speaks — what the person has to do first, so a line that fails on it is no
- * surprise. The name can be changed on the endpoint once it is verified.
+ * What the person must do before a cloned voice speaks, when the provider says it must be verified
+ * first — said beside the voice rather than in its name, so a line that fails on it is no surprise.
  */
-export function clonedLabel(target: ProviderTarget, title: string, unverified: boolean): string {
-  return unverified ? `${title} (verify it on ${target.name} first)` : title;
-}
+export const verifyFirst = (target: ProviderTarget): string =>
+  `Verify this voice on ${target.name} before a line is spoken with it.`;
 
 /** The `output_format` a line is asked for, from the endpoint's format, rate and bitrate. */
 export function elevenLabsOutputFormat(
@@ -163,7 +161,7 @@ export const elevenLabsWire: SpeechWire = {
   async clone(target, request, signal, options) {
     const form = new FormData();
     form.set("name", request.title);
-    for (const clip of request.clips) form.append("files", clip.blob, clip.name);
+    for (const sample of request.samples) form.append("files", sample.blob, sample.name);
     const res = await call(
       target,
       `${elevenLabsRoot(target.baseUrl)}/voices/add`,
@@ -183,8 +181,9 @@ export const elevenLabsWire: SpeechWire = {
       );
     return {
       id: body.voice_id,
-      label: clonedLabel(target, request.title, body.requires_verification === true),
+      label: request.title,
       gender: "?",
+      ...(body.requires_verification === true ? { warning: verifyFirst(target) } : {}),
     };
   },
 

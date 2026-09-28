@@ -7,11 +7,11 @@
 // bytes can never change is one a browser may cache for good.
 //
 // Nothing is re-encoded: a recording is kept exactly as it was picked, and its format is what its
-// first bytes said it was when the route read it (`sniffRecording`).
+// first bytes said it was when the route read it (`sniffSample`).
 import { mkdir, rm, rmdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { RecordingFormat } from "~/providers/clone";
+import type { SampleFormat } from "~/providers/clone";
 
 const FILE = /^[a-f0-9]{32}\.(wav|mp3|m4a|opus|flac)$/;
 
@@ -30,7 +30,7 @@ export interface VoiceFiles {
     endpointId: string,
     voiceId: string,
     bytes: Uint8Array,
-    format: RecordingFormat,
+    format: SampleFormat,
   ): Promise<string>;
   /** The path a request names, or null when it names something that cannot be a recording. */
   path(endpointId: string, voiceId: string, file: string): string | null;

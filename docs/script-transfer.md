@@ -323,7 +323,7 @@ Voices tab asks once per endpoint rather than once per voice.
 
 Today a clone is made in a single request. The route reads the recordings (`server/routes/endpoints.ts:106-164`), hands them to Fish once (`server/providers/clone.ts:120-157`), and the only record it keeps is a log line (`routes/endpoints.ts:159-164`). The route's own comment says "nothing is kept on this server" (`:98-99`), and so does the Voices tab (`src/views/endpoints/VoicesTab.vue:175-178`). Slice 3 can't export samples the server threw away, so this slice keeps them with the voice they made. Cloning stays Fish-only (`src/lib/endpointShapes.ts:244`). A sample is any audio the person picks, recorded or downloaded.
 
-**Kept where the bytes already are.** The route already holds each recording as a parsed `File`, sniffed and re-typed by its bytes (`routes/endpoints.ts:135-157`). Once Fish answers with the new voice's id, the route writes those same bytes to disk. Nothing is re-encoded and nothing is renamed: the format stays the one `sniffRecording` found (`clone.ts:81`), and the file keeps the name the person gave it for display. It is written only after Fish answers, because the voice's id is the key, so a failed clone keeps nothing. If the clone succeeds but the samples can't be kept, the route still answers `201`, with `samplesKept: false`, and the toast says so. The voice already exists on the account, so failing the request would be wrong.
+**Kept where the bytes already are.** The route already holds each recording as a parsed `File`, sniffed and re-typed by its bytes (`routes/endpoints.ts:135-157`). Once Fish answers with the new voice's id, the route writes those same bytes to disk. Nothing is re-encoded and nothing is renamed: the format stays the one `sniffSample` found (`clone.ts:81`), and the file keeps the name the person gave it for display. It is written only after Fish answers, because the voice's id is the key, so a failed clone keeps nothing. If the clone succeeds but the samples can't be kept, the route still answers `201`, with `samplesKept: false`, and the toast says so. The voice already exists on the account, so failing the request would be wrong.
 
 **On disk, beside the other data.** There's a new `VOICE_DIR` (default `./data/voices`) next to `AUDIO_DIR` and `EXPORT_DIR` (`server/env.ts:89,111`), so voice samples can be measured, backed up and cleared on their own. Files live at `<VOICE_DIR>/<key>/<sha>.<ext>`. `<key>` is a hash of endpoint id plus voice id, because a Fish id is not a safe directory name we control. `<sha>` is a hash of the bytes, the way covers are named (`server/covers/files.ts:1-6`), so the same file picked twice is stored once and a url can never climb out of its directory.
 
@@ -349,12 +349,12 @@ Files are removed after the commit without waiting, with `inBackground` (`server
 
 **Older clones can be given samples, and I recommend allowing it.** A voice cloned before this slice has no row, and the server can't tell it apart from any other voice. Fetch lists the account's own library with `self=true` (`server/providers/speech/fish.ts:33,154`), and a `Voice` carries only an id, a label and a gender, with nothing marking it as a clone. So a voice row with kept samples shows _"3 samples kept"_. Any other voice on a clonable endpoint offers **Keep its samples…**, which takes the same picker, the same limits and the same consent tick as cloning, and sends nothing to Fish. Otherwise the only way to make an older voice exportable is to re-clone it, which leaves a duplicate private voice on the account.
 
-**The limits are the clone's.** At most `MAX_CLONE_CLIPS` (20) files per voice (`endpointShapes.ts:250`), `MAX_CLIP_BYTES` (20 MB) each and 100 MB in all (`routes/endpoints.ts:39-46`). Attaching samples uses the same body limit and the same refusals. It can replace a voice's kept samples, but never adds to them past 20.
+**The limits are the clone's.** At most `MAX_VOICE_SAMPLES` (20) files per voice (`endpointShapes.ts:250`), `MAX_SAMPLE_BYTES` (20 MB) each and 100 MB in all (`routes/endpoints.ts:39-46`). Attaching samples uses the same body limit and the same refusals. It can replace a voice's kept samples, but never adds to them past 20.
 
 **Routes slice 3 needs.** Each works on a saved endpoint's voice, and the voice id is URL-encoded in the path:
 
 - `GET /api/endpoints/:id/voices/:voice/samples` returns the sample list and `consentAt`.
-- `GET …/samples/:file` returns the bytes with the format's media type (`RECORDING_MIME`, `clone.ts:55`) and an immutable cache header, since the name is the content. A `:file` that isn't `<sha>.<ext>` is a 404.
+- `GET …/samples/:file` returns the bytes with the format's media type (`SAMPLE_MIME`, `clone.ts:55`) and an immutable cache header, since the name is the content. A `:file` that isn't `<sha>.<ext>` is a 404.
 - `POST …/samples` is a multipart form with `consent` and `clips`, and replaces the kept samples.
 - `DELETE …/samples` forgets the samples and keeps the voice. A forget hides them at once and is final only after a day, so the Voices tab's toast offers Undo.
 - `POST …/samples/restore` takes a forget back, while no save has made it final.
@@ -442,7 +442,7 @@ only if the speaker's voice is still what it was when the link opened. A toast o
 **Audio has its own limits inside the zip.** The shared zip guard from slice 1 treats `voices/**`
 entries as carried rather than parsed. They are held to the clone route's own limits: 20 MB per
 recording, at most 20 per voice, 100 MB per voice (`server/routes/endpoints.ts:39-40`,
-`MAX_CLONE_CLIPS`). Each is checked with `sniffRecording` (`clone.ts:83`). A file that isn't
+`MAX_VOICE_SAMPLES`). Each is checked with `sniffSample` (`clone.ts:83`). A file that isn't
 recognised audio is refused, and so is a voice over its limits: the report names it, and the lines and
 cast still import. Audio barely compresses, so the script import needs an upload ceiling of its own,
 separate from the EPUB's `MAX_UPLOAD_MB` of 64 (`server/env.ts:40`). I suggest `MAX_SCRIPT_UPLOAD_MB`

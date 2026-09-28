@@ -49,15 +49,15 @@ import {
 import { UiCheckbox, UiSelect, UiTooltip } from "@/ui";
 import { isFishAudio } from "@/lib/endpoints";
 import { CLONE_CONSENT, VOICE_SAMPLE } from "@/lib/endpointShapes";
-import { cloningOf, speechProviderOf } from "@/lib/providers";
+import { cloneModelsFor, cloningOf, speechProviderOf } from "@/lib/providers";
 import {
   acceptOf,
   leftOutSaid,
   limitsSaid,
-  maxClipsOf,
   pickOf,
   pickProblem,
 } from "@/views/endpoints/cloneForm";
+import { maxSamplesOf } from "@/lib/voiceSamples";
 import type {
   Endpoint,
   FoundVoice,
@@ -207,35 +207,39 @@ const has = (v: Voice) => props.endpoint.voices.some((x) => x.id === v.id);
 const cloning = computed(() => cloningOf(props.endpoint));
 const provider = computed(() => speechProviderOf(props.endpoint).label);
 const clonable = computed(() => !!cloning.value && !!activeEndpointSettingsService());
+// a provider that clones only for some of its models (Qwen) says which, where this one does not
+const cloneModels = computed(() =>
+  activeEndpointSettingsService() ? cloneModelsFor(props.endpoint) : [],
+);
 const clone = reactive({
   title: "",
-  clips: [] as File[],
+  samples: [] as File[],
   /** how many picked samples were left out, past the most one voice is made from */
   leftOut: 0,
   consent: false,
   busy: false,
 });
-const clipsInput = ref<HTMLInputElement | null>(null);
-const clipsSize = computed(() => clone.clips.reduce((n, f) => n + f.size, 0));
+const samplesInput = ref<HTMLInputElement | null>(null);
+const samplesSize = computed(() => clone.samples.reduce((n, f) => n + f.size, 0));
 /** Why the picked samples cannot be sent, naming the file; null when nothing stops them. */
-const problemOf = (clips: File[]) =>
-  cloning.value ? pickProblem(clips, cloning.value, provider.value) : null;
-const cloneProblem = computed(() => problemOf(clone.clips));
+const problemOf = (samples: File[]) =>
+  cloning.value ? pickProblem(samples, cloning.value, provider.value) : null;
+const cloneProblem = computed(() => problemOf(clone.samples));
 const cloneBlocked = computed(
   () =>
     !clone.title.trim() ||
-    !clone.clips.length ||
+    !clone.samples.length ||
     !!cloneProblem.value ||
     !clone.consent ||
     clone.busy ||
     needsKeyFirst.value,
 );
 /** The samples a file input holds, up to the most one voice is made from, and how many were not. */
-function picked(e: Event): { clips: File[]; leftOut: number } {
+function picked(e: Event): { samples: File[]; leftOut: number } {
   const all = [...((e.target as HTMLInputElement).files ?? [])];
-  return cloning.value ? pickOf(all, cloning.value) : { clips: [], leftOut: all.length };
+  return cloning.value ? pickOf(all, cloning.value) : { samples: [], leftOut: all.length };
 }
-function pickClips(e: Event) {
+function pickSamples(e: Event) {
   Object.assign(clone, picked(e));
   // samples picked by hand are not the ones the link brought, so the voice is not theirs to assign
   from.value = null;
@@ -266,8 +270,8 @@ async function prefill() {
     });
     return;
   }
-  const clips = await samplesStore.files(bookId, sample);
-  if (!clips) return;
+  const samples = await samplesStore.files(bookId, sample);
+  if (!samples) return;
   from.value = {
     bookId,
     sampleId,
@@ -279,10 +283,10 @@ async function prefill() {
   // held to this provider like a pick by hand: a script file may carry more samples than it takes
   Object.assign(clone, {
     title: sample.title,
-    ...(cloning.value ? pickOf(clips, cloning.value) : { clips: [], leftOut: clips.length }),
+    ...(cloning.value ? pickOf(samples, cloning.value) : { samples: [], leftOut: samples.length }),
     consent: false,
   });
-  if (clipsInput.value) clipsInput.value.value = "";
+  if (samplesInput.value) samplesInput.value.value = "";
 }
 watch(
   () => [route.query.book, route.query.samples, props.endpoint.id, clonable.value],
@@ -296,7 +300,7 @@ function forgetLink() {
 }
 function putAside() {
   from.value = null;
-  Object.assign(clone, { title: "", clips: [], leftOut: 0, consent: false });
+  Object.assign(clone, { title: "", samples: [], leftOut: 0, consent: false });
   forgetLink();
 }
 async function makeVoice() {
@@ -305,7 +309,7 @@ async function makeVoice() {
   try {
     const voice = await endpointsStore.cloneVoice(props.endpoint, {
       title: clone.title,
-      clips: clone.clips,
+      samples: clone.samples,
       consent: clone.consent,
     });
     if (voice) {
@@ -316,10 +320,10 @@ async function makeVoice() {
         void samplesStore.afterClone(made, `${props.endpoint.id}/${voice.id}`);
       }
       clone.title = "";
-      clone.clips = [];
+      clone.samples = [];
       clone.leftOut = 0;
       clone.consent = false;
-      if (clipsInput.value) clipsInput.value.value = "";
+      if (samplesInput.value) samplesInput.value.value = "";
       void loadKept();
     }
   } finally {
@@ -351,18 +355,18 @@ const keptTitle = (k: KeptVoiceSamples) =>
 
 const keep = reactive({
   voiceId: null as string | null,
-  clips: [] as File[],
+  samples: [] as File[],
   leftOut: 0,
   consent: false,
   busy: false,
 });
 const keepVoice = computed(() => props.endpoint.voices.find((v) => v.id === keep.voiceId));
-const keepProblem = computed(() => problemOf(keep.clips));
+const keepProblem = computed(() => problemOf(keep.samples));
 const keepBlocked = computed(
-  () => !keep.clips.length || !!keepProblem.value || !keep.consent || keep.busy,
+  () => !keep.samples.length || !!keepProblem.value || !keep.consent || keep.busy,
 );
 function openKeep(v: Voice) {
-  Object.assign(keep, { voiceId: keep.voiceId === v.id ? null : v.id, clips: [], leftOut: 0 });
+  Object.assign(keep, { voiceId: keep.voiceId === v.id ? null : v.id, samples: [], leftOut: 0 });
   keep.consent = false;
 }
 function pickKept(e: Event) {
@@ -373,7 +377,7 @@ async function keepSamples() {
   keep.busy = true;
   try {
     const k = await endpointsStore.keepVoiceSamples(props.endpoint, keep.voiceId, {
-      clips: keep.clips,
+      samples: keep.samples,
       consent: keep.consent,
     });
     if (k) {
@@ -697,18 +701,18 @@ async function playFound(v: FoundVoice) {
               placeholder="Narrator — Mara"
           /></label>
           <label class="space-y-1 text-xs font-medium"
-            ><span>{{ maxClipsOf(cloning) === 1 ? "Sample" : "Samples" }}</span
+            ><span>{{ maxSamplesOf(cloning) === 1 ? "Sample" : "Samples" }}</span
             ><input
-              ref="clipsInput"
+              ref="samplesInput"
               type="file"
               :accept="acceptOf(cloning)"
-              :multiple="maxClipsOf(cloning) > 1"
+              :multiple="maxSamplesOf(cloning) > 1"
               class="block text-xs"
-              @change="pickClips"
+              @change="pickSamples"
           /></label>
-          <span v-if="clone.clips.length" class="text-[11px] text-zinc-500">
-            {{ clone.clips.length }} sample{{ clone.clips.length === 1 ? "" : "s" }},
-            {{ sizeLabel(clipsSize) }}
+          <span v-if="clone.samples.length" class="text-[11px] text-zinc-500">
+            {{ clone.samples.length }} sample{{ clone.samples.length === 1 ? "" : "s" }},
+            {{ sizeLabel(samplesSize) }}
           </span>
           <span v-if="clone.leftOut" class="text-[11px] text-amber-600 dark:text-amber-400">
             {{ leftOutSaid(clone.leftOut, cloning) }}
@@ -734,6 +738,14 @@ async function playFound(v: FoundVoice) {
           >
         </div>
       </form>
+    </section>
+    <section v-else-if="cloneModels.length" class="card p-3">
+      <h3 class="label mb-1"><CloneIcon class="icon-sm" /> Clone a voice</h3>
+      <p class="text-[11px] leading-relaxed text-zinc-500">
+        {{ provider }} makes a voice from a sample only for <code>{{ cloneModels.join(", ") }}</code
+        >, and the voice then speaks only with that model. Change this endpoint's model on the
+        Connection tab to clone one here.
+      </p>
     </section>
 
     <section class="card p-3">
@@ -873,17 +885,17 @@ async function playFound(v: FoundVoice) {
         </p>
         <div class="flex flex-wrap items-end gap-2">
           <label class="space-y-1 text-xs font-medium"
-            ><span>{{ maxClipsOf(cloning) === 1 ? "Sample" : "Samples" }}</span
+            ><span>{{ maxSamplesOf(cloning) === 1 ? "Sample" : "Samples" }}</span
             ><input
               type="file"
               :accept="acceptOf(cloning)"
-              :multiple="maxClipsOf(cloning) > 1"
+              :multiple="maxSamplesOf(cloning) > 1"
               class="block text-xs"
               @change="pickKept"
           /></label>
-          <span v-if="keep.clips.length" class="text-[11px] text-zinc-500">
-            {{ keep.clips.length }} sample{{ keep.clips.length === 1 ? "" : "s" }},
-            {{ sizeLabel(keep.clips.reduce((n, f) => n + f.size, 0)) }}
+          <span v-if="keep.samples.length" class="text-[11px] text-zinc-500">
+            {{ keep.samples.length }} sample{{ keep.samples.length === 1 ? "" : "s" }},
+            {{ sizeLabel(keep.samples.reduce((n, f) => n + f.size, 0)) }}
           </span>
           <span v-if="keep.leftOut" class="text-[11px] text-amber-600 dark:text-amber-400">
             {{ leftOutSaid(keep.leftOut, cloning) }}

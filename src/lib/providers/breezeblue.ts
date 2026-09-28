@@ -50,14 +50,16 @@ export const breezeblue: SpeechProviderShape = {
   // clone generation, regardless of sample or preview text length"; saving the voice costs no more,
   // but "saving consumes a voice slot".
   cloning: {
-    maxClips: 1,
-    maxClipBytes: 5 * 1024 * 1024,
+    maxSamples: 1,
+    maxSampleBytes: 5 * 1024 * 1024,
     formats: ["wav", "mp3"],
     advice:
       "BreezeBlue makes a voice from one clip of at least 3 seconds: one speaker, no music or " +
       "background noise. It listens to the first minute and keeps up to 30 seconds of it, so put " +
       "the voice you want at the start.",
     cost: "100 credits a voice, however long the sample; the voice takes one of the plan's voice slots.",
+    // charged for the preview, as it is made; credits are priced by the plan, not in dollars
+    fee: { usd: null, when: "made", said: "100 credits a voice" },
   },
   models: ["breeze-tts-2", "breeze-tts-2-multilingual"],
 };

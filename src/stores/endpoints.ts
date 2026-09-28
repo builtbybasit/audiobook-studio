@@ -677,13 +677,16 @@ export const useEndpointsStore = defineStore("endpoints", {
       const uiStore = useUiStore();
       try {
         await this.flushWrites();
-        const { samplesKept, ...voice } = await svc.cloneVoice(ep.id, request);
+        const { samplesKept, warning, ...voice } = await svc.cloneVoice(ep.id, request);
         this.addVoice(ep, voice);
+        // what the provider said to do before the voice speaks comes first: a line spoken with it
+        // before then fails
+        const said = samplesKept
+          ? "It is private to your account, and on this endpoint's list now. Its samples are kept here with it."
+          : "It is private to your account, and on this endpoint's list now — but its samples could not be kept here. Keep them from the voice's row to let it travel with a script.";
         uiStore.toast(`Made the voice ${voice.label} on ${ep.name}`, {
-          kind: samplesKept ? "success" : "warn",
-          description: samplesKept
-            ? "It is private to your account, and on this endpoint's list now. Its samples are kept here with it."
-            : "It is private to your account, and on this endpoint's list now — but its samples could not be kept here. Keep them from the voice's row to let it travel with a script.",
+          kind: samplesKept && !warning ? "success" : "warn",
+          description: warning ? `${warning} ${said}` : said,
         });
         return voice;
       } catch (cause) {

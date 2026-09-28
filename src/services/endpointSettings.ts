@@ -138,7 +138,7 @@ export interface EndpointSettingsService {
 /** What a voice is made from: a name, the recordings, and the person's say-so. */
 export interface VoiceCloneRequest {
   title: string;
-  clips: File[];
+  samples: File[];
   consent: boolean;
 }
 
@@ -213,7 +213,7 @@ function recordingsForm(request: Omit<VoiceCloneRequest, "title">): FormData {
     form.set("consent", "yes");
     form.set("consentText", CLONE_CONSENT);
   }
-  for (const clip of request.clips) form.append("clips", clip, clip.name);
+  for (const sample of request.samples) form.append("samples", sample, sample.name);
   return form;
 }
 

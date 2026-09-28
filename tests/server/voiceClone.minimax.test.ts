@@ -37,7 +37,7 @@ const target: ProviderTarget = {
 
 const request: CloneRequest = {
   title: "Narrator — Mara",
-  clips: [
+  samples: [
     {
       name: "mara.m4a",
       format: "m4a",
@@ -236,7 +236,11 @@ describe("the MiniMax cloner", () => {
   test("more than one sample is refused before any request", async () => {
     const f = miniMaxAnswering(() => uploaded());
     await expect(
-      f.cloner.clone(target, { ...request, clips: [...request.clips, ...request.clips] }, signal()),
+      f.cloner.clone(
+        target,
+        { ...request, samples: [...request.samples, ...request.samples] },
+        signal(),
+      ),
     ).rejects.toThrow("MiniMax makes a voice from exactly one sample");
     expect(f.sent).toEqual([]);
   });
@@ -263,10 +267,10 @@ const clip = (name: string, head: Uint8Array, size = 1024) => {
   return new File([body], name, { type: "application/octet-stream" });
 };
 
-function form(fields: Record<string, string>, clips: File[]): FormData {
+function form(fields: Record<string, string>, samples: File[]): FormData {
   const f = new FormData();
   for (const [k, v] of Object.entries(fields)) f.set(k, v);
-  for (const c of clips) f.append("clips", c, c.name);
+  for (const c of samples) f.append("samples", c, c.name);
   return f;
 }
 
@@ -301,17 +305,17 @@ async function routeWith(cloner: VoiceCloner): Promise<TestApi> {
   return api;
 }
 
-const post = (api: TestApi, clips: File[]) =>
+const post = (api: TestApi, samples: File[]) =>
   api.request<ClonedVoice & { error?: { message: string } }>("/api/endpoints/voices/clone", {
     method: "POST",
-    body: form({ id: "minimax", title: "Mara", consent: "yes" }, clips),
+    body: form({ id: "minimax", title: "Mara", consent: "yes" }, samples),
   });
 
 describe("a MiniMax clone, through the route", () => {
   test("MiniMax's limits are its docs': one sample of MP3, M4A or WAV, up to 20 MB", () => {
     expect(minimax.cloning).toMatchObject({
-      maxClips: 1,
-      maxClipBytes: 20 * 1024 * 1024,
+      maxSamples: 1,
+      maxSampleBytes: 20 * 1024 * 1024,
       formats: ["wav", "mp3", "m4a"],
     });
   });

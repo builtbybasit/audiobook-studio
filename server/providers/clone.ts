@@ -18,20 +18,20 @@
 // (`covers/files.ts`), rather than from its name or the type the browser guessed: a clip
 // downloaded from the web is as good as one recorded, whatever it was saved as. The sniffer knows
 // WAV, MP3, M4A, Opus and FLAC; each provider's `cloning.formats` says which of those it takes.
-import type { Voice } from "@/types";
-import { speechProviderOf, type RecordingFormat } from "@/lib/providers";
+import type { MadeVoice } from "@/types";
+import { speechProviderOf, type SampleFormat } from "@/lib/providers";
 import { ProviderError, requireKey, type CallOptions } from "~/providers/http";
 import { SPEECH_WIRES } from "~/providers/speech/registry";
 import type { ProviderTarget } from "~/providers/target";
 
-export type { RecordingFormat } from "@/lib/providers";
+export type { SampleFormat } from "@/lib/providers";
 
 /** One sample to make the voice from. */
-export interface CloneClip {
+export interface SampleUpload {
   /** the file's name as the person picked it, for display and for a provider that wants one */
   name: string;
   /** what its first bytes say it is — one of the provider's `cloning.formats` */
-  format: RecordingFormat;
+  format: SampleFormat;
   /**
    * The recording as the form parser holds it, typed by what its bytes say it is — handed to the
    * provider's form as it stands, so the upload is kept in memory once rather than copied again.
@@ -42,18 +42,18 @@ export interface CloneClip {
 export interface CloneRequest {
   /** what the voice is called, on the provider and on the endpoint */
   title: string;
-  clips: CloneClip[];
+  samples: SampleUpload[];
 }
 
 /** The port the route clones through; a test hands over one that answers from memory. */
 export interface VoiceCloner {
-  clone(target: ProviderTarget, request: CloneRequest, signal: AbortSignal): Promise<Voice>;
+  clone(target: ProviderTarget, request: CloneRequest, signal: AbortSignal): Promise<MadeVoice>;
 }
 
 // ---------- what a sample is ----------
 
 /** The media type each format is sent to the provider as, whatever the browser called it. */
-export const RECORDING_MIME: Record<RecordingFormat, string> = {
+export const SAMPLE_MIME: Record<SampleFormat, string> = {
   wav: "audio/wav",
   mp3: "audio/mpeg",
   m4a: "audio/mp4",
@@ -62,10 +62,10 @@ export const RECORDING_MIME: Record<RecordingFormat, string> = {
 };
 
 /**
- * How much of a file's start `sniffRecording` needs: an Ogg page header of 27 bytes and up to 255
+ * How much of a file's start `sniffSample` needs: an Ogg page header of 27 bytes and up to 255
  * segment sizes before the first packet's `OpusHead`, with room to spare.
  */
-export const RECORDING_HEAD_BYTES = 512;
+export const SAMPLE_HEAD_BYTES = 512;
 
 /**
  * The brands an MP4 file names in its `ftyp` that are audio a phone or an encoder writes: an
@@ -78,7 +78,7 @@ const says = (b: Uint8Array, at: number, text: string): boolean =>
   b.length >= at + text.length && [...text].every((ch, i) => b[at + i] === ch.charCodeAt(0));
 
 /** What a file's first bytes say it is, or null when they say none of the formats the sniffer knows. */
-export function sniffRecording(b: Uint8Array): RecordingFormat | null {
+export function sniffSample(b: Uint8Array): SampleFormat | null {
   if (says(b, 0, "RIFF") && says(b, 8, "WAVE")) return "wav";
   if (says(b, 0, "fLaC")) return "flac";
   if (says(b, 4, "ftyp") && M4A_BRANDS.test(String.fromCharCode(...b.subarray(8, 12))))

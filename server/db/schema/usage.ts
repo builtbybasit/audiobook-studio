@@ -135,3 +135,31 @@ export const openingSpend = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.bookId] })],
 );
+
+/**
+ * A charge a provider makes for a cloned voice the first time a line is spoken with it (MiniMax:
+ * `cloning.fee.when === "first-use"`), waiting for that line.
+ *
+ * The fee is read off the provider's description when the voice is made and kept here, so a later
+ * change to the description does not re-price a voice already made. The first billed request spoken
+ * with the voice appends the fee to `requests` and removes this row, in one transaction, so it is
+ * charged once. A voice never spoken with is never charged for, and its row stays: tied to the
+ * voice by value, as `cloned_voices` is, because a save of the endpoints lays every voice row down
+ * again.
+ */
+export const cloneFees = sqliteTable(
+  "clone_fees",
+  {
+    endpointId: text("endpoint_id").notNull(),
+    voiceId: text("voice_id").notNull(),
+    /** what the voice was called when it was made, for the ledger row's label */
+    title: text("title").notNull(),
+    /** in US dollars; null when the provider prices it in credits */
+    usd: real("usd"),
+    /** the fee in the provider's docs' words */
+    said: text("said").notNull(),
+    /** epoch ms the voice was made */
+    madeAt: integer("made_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.endpointId, t.voiceId] })],
+);

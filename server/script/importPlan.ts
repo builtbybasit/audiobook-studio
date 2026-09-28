@@ -142,13 +142,13 @@ export interface ReadFile {
 
 /**
  * How much of each recording a read holds. A plan needs to know what a recording is, not to hold
- * it, so by default only its first bytes are kept — enough for `sniffRecording` — and its size is
+ * it, so by default only its first bytes are kept — enough for `sniffSample` — and its size is
  * the one the zip guard measured. Keeping recordings is the voice samples' route's job, and it
  * asks for whole ones only in the folders it is keeping, named by their path in the zip.
  */
 export type RecordingReads = "head" | { whole(path: string): boolean };
 
-/** What `sniffRecording` reads of a recording; comfortably more than any header it looks for. */
+/** What `sniffSample` reads of a recording; comfortably more than any header it looks for. */
 export const SNIFF_BYTES = 4096;
 
 const refuse = (message: string, detail?: string): AppError => new AppError(400, message, detail);

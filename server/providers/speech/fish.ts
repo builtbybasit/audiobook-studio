@@ -101,7 +101,7 @@ export const fishWire: SpeechWire = {
     form.set("title", request.title);
     form.set("train_mode", "fast");
     form.set("visibility", "private");
-    for (const clip of request.clips) form.append("voices", clip.blob, clip.name);
+    for (const sample of request.samples) form.append("voices", sample.blob, sample.name);
     const res = await call(
       target,
       `${fishApiRoot(target.baseUrl)}/model`,

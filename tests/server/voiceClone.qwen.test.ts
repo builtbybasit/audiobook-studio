@@ -52,7 +52,9 @@ const signal = () => new AbortController().signal;
 const recording = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 250]);
 const request: CloneRequest = {
   title: "Narrator — Mara",
-  clips: [{ name: "mara.wav", format: "wav", blob: new Blob([recording], { type: "audio/wav" }) }],
+  samples: [
+    { name: "mara.wav", format: "wav", blob: new Blob([recording], { type: "audio/wav" }) },
+  ],
 };
 
 describe("the Model Studio cloner", () => {
@@ -285,10 +287,10 @@ const clip = (
   return new File([body], name, { type });
 };
 
-function form(fields: Record<string, string>, clips: File[]): FormData {
+function form(fields: Record<string, string>, samples: File[]): FormData {
   const f = new FormData();
   for (const [k, v] of Object.entries(fields)) f.set(k, v);
-  for (const c of clips) f.append("clips", c, c.name);
+  for (const c of samples) f.append("samples", c, c.name);
   return f;
 }
 
@@ -323,8 +325,8 @@ describe("the clone route, for Model Studio", () => {
     const q = qwenAnswering(() => Response.json({ output: { voice: "v" } }));
     const api = testApi({ cloner: q.cloner });
     await saved(api, qwenEndpoint());
-    const refused = async (clips: File[]) => {
-      const { status, body } = await post(api, form(agreed, clips));
+    const refused = async (samples: File[]) => {
+      const { status, body } = await post(api, form(agreed, samples));
       return [status, body.error?.message];
     };
     expect(await refused([clip("a.wav"), clip("b.wav")])).toEqual([
@@ -340,7 +342,7 @@ describe("the clone route, for Model Studio", () => {
       "master.flac is FLAC audio, which this provider does not make a voice from",
     ]);
     expect(await refused([clip("long.wav", HEADS.wav, "audio/wav", 10 * 1024 * 1024 + 1)])).toEqual(
-      [413, "long.wav is larger than 10 MB"],
+      [413, "long.wav is larger than 10 MB, the most this provider takes for one sample"],
     );
     expect(q.sent).toEqual([]);
   });
@@ -351,7 +353,9 @@ describe("the clone route, for Model Studio", () => {
     await saved(api, qwenEndpoint({ model: "qwen-audio-3.0-tts-flash" }));
     const { status, body } = await post(api, form(agreed, [clip()]));
     expect(status).toBe(400);
-    expect(body.error?.message).toContain("cannot make a voice from a file");
+    expect(body.error?.message).toBe(
+      "Qwen VC cannot make a voice with the model qwen-audio-3.0-tts-flash; change its model to qwen3-tts-vc-2026-01-22 first",
+    );
     expect(q.sent).toEqual([]);
   });
 });

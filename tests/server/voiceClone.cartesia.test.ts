@@ -55,7 +55,7 @@ const made = (over: Record<string, unknown> = {}) =>
 
 const request: CloneRequest = {
   title: "Mara",
-  clips: [
+  samples: [
     {
       name: "take-1.wav",
       format: "wav",
@@ -229,10 +229,10 @@ const clip = (
   return new File([body], name, { type });
 };
 
-function form(fields: Record<string, string>, clips: File[]): FormData {
+function form(fields: Record<string, string>, samples: File[]): FormData {
   const f = new FormData();
   for (const [k, v] of Object.entries(fields)) f.set(k, v);
-  for (const c of clips) f.append("clips", c, c.name);
+  for (const c of samples) f.append("samples", c, c.name);
   return f;
 }
 
@@ -245,11 +245,11 @@ const post = (api: TestApi, body: FormData) =>
 const agreed = { id: "cartesia", title: "Mara", consent: "yes" };
 
 describe("a Cartesia clone, through the route", () => {
-  async function cloningAgainst(answer: () => Response | Promise<Response>, clips: File[]) {
+  async function cloningAgainst(answer: () => Response | Promise<Response>, samples: File[]) {
     const f = cartesiaAnswering(answer);
     const api = testApi({ cloner: f.cloner });
     await saved(api, cartesiaEndpoint());
-    const { status, body } = await post(api, form(agreed, clips));
+    const { status, body } = await post(api, form(agreed, samples));
     return { status, body, message: body.error?.message ?? "", sent: f.sent };
   }
 
@@ -289,7 +289,10 @@ describe("a Cartesia clone, through the route", () => {
       () => made(),
       [clip("long.wav", HEADS.wav, "audio/wav", 16 * 1024 * 1024 + 1)],
     );
-    expect([status, message]).toEqual([413, "long.wav is larger than 16 MB"]);
+    expect([status, message]).toEqual([
+      413,
+      "long.wav is larger than 16 MB, the most this provider takes for one sample",
+    ]);
     expect(sent).toEqual([]);
   });
 

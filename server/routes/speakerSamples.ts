@@ -12,7 +12,7 @@ import { fail, notFound } from "~/lib/errors";
 import { IdParam } from "~/lib/http";
 import { fileResponse } from "~/lib/serve";
 import { validate } from "~/lib/validate";
-import { RECORDING_MIME } from "~/providers/clone";
+import { SAMPLE_MIME } from "~/providers/clone";
 import { speakerSampleFiles } from "~/speakerSamples/files";
 import * as store from "~/speakerSamples/store";
 
@@ -93,7 +93,7 @@ export function speakerSampleRoutes(
     const found = Bun.file(path);
     if (!(await found.exists())) throw notFound("There is no recording by that name");
     return fileResponse(c.req.raw, found, {
-      "content-type": RECORDING_MIME[format],
+      "content-type": SAMPLE_MIME[format],
       // the name is the bytes' hash, so what it names can never change
       "cache-control": "private, max-age=31536000, immutable",
     });

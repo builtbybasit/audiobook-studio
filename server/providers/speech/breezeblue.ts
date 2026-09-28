@@ -23,7 +23,7 @@ import type { Voice } from "@/types";
 import { BREEZE_INSTRUCTION_CHARS } from "@/lib/providers/breezeblue";
 import { call, ProviderError } from "~/providers/http";
 import {
-  clonedLabel,
+  verifyFirst,
   elevenLabsHeaders,
   elevenLabsKeyHeader,
   elevenLabsRequest,
@@ -51,7 +51,7 @@ export const breezeBlueWire: SpeechWire = {
     const root = elevenLabsRoot(target.baseUrl);
     const form = new FormData();
     form.set("name", request.title);
-    for (const clip of request.clips) form.append("files", clip.blob, clip.name);
+    for (const sample of request.samples) form.append("files", sample.blob, sample.name);
     const made = await call(
       target,
       `${root}/voice-previews/clone`,
@@ -107,8 +107,9 @@ export const breezeBlueWire: SpeechWire = {
     const gender = String(voice.gender ?? "").toLowerCase();
     return {
       id: voice.voice_id,
-      label: clonedLabel(target, name, preview?.requires_verification === true),
+      label: name,
       gender: gender === "male" ? "m" : gender === "female" ? "f" : "?",
+      ...(preview?.requires_verification === true ? { warning: verifyFirst(target) } : {}),
     };
   },
 

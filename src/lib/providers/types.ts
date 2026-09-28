@@ -85,22 +85,27 @@ export interface SpeechProviderShape {
 // ---------- voice cloning ----------
 
 /**
- * What a voice sample can be, read from its first bytes (`sniffRecording` on the server) rather
+ * What a voice sample can be, read from its first bytes (`sniffSample` on the server) rather
  * than from its name. A sample is any audio of the person speaking: recorded, or downloaded.
  */
-export type RecordingFormat = "wav" | "mp3" | "m4a" | "opus" | "flac";
+export type SampleFormat = "wav" | "mp3" | "m4a" | "opus" | "flac";
 
 /**
  * What the provider's docs allow a clone to be made from. The server refuses anything outside it
  * before a request, with the file's own name, and the Voices tab says it above the picker.
  */
 export interface CloneSupport {
-  /** the most samples one voice is made from; never more than `MAX_CLONE_CLIPS` */
-  maxClips: number;
+  /** the most samples one voice is made from; never more than `MAX_VOICE_SAMPLES` */
+  maxSamples: number;
   /** the most one sample may be, in bytes; never more than the server's own 20 MB */
-  maxClipBytes: number;
+  maxSampleBytes: number;
   /** the formats the provider documents for a sample, a subset of what the sniffer knows */
-  formats: readonly RecordingFormat[];
+  formats: readonly SampleFormat[];
+  /**
+   * The only models a voice can be cloned for, when the provider clones for some of its models and
+   * not others — a Qwen voice is made for one model and spoken only with it. Absent: any model.
+   */
+  models?: readonly string[];
   /**
    * The provider's own advice on samples, a sentence or two for the Voices tab: how long, how
    * many, what kind of audio. From its docs, not invented.
@@ -111,6 +116,24 @@ export interface CloneSupport {
    * sentence for the Voices tab — or null when the docs say it is free or say nothing.
    */
   cost: string | null;
+  /**
+   * What the provider charges for a voice, for the usage ledger — or null when its docs say it
+   * charges nothing for one, or say nothing (a plan's slots are not a charge).
+   */
+  fee: CloneFee | null;
+}
+
+/** A charge for making a voice, as the provider's docs give it. */
+export interface CloneFee {
+  /** in US dollars; null when the docs price it in the provider's own credits, which a plan prices */
+  usd: number | null;
+  /**
+   * When it is charged: as the voice is made, or the first time a line is spoken with it — a voice
+   * never spoken with is never charged for.
+   */
+  when: "made" | "first-use";
+  /** the fee in the docs' own words, for the ledger row: "$0.01 a voice", "100 credits a voice" */
+  said: string;
 }
 
 // ---------- tag shapes several providers share ----------

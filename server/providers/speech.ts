@@ -75,12 +75,60 @@ export interface RenderedClip {
   voice: string | null;
 }
 
+/**
+ * How much one batch may carry, as the endpoint says (`docs/speech-batch-api.md`). A null is no
+ * limit of that kind.
+ */
+export interface BatchLimits {
+  /** lines in one request */
+  maxItems: number | null;
+  /** characters of text across every line of one request */
+  maxInputChars: number | null;
+  /** characters in one line; a longer one is sent as parts, each its own item */
+  maxItemChars: number | null;
+}
+
+/** How one line of a batch ended: its clip, or why it has none. */
+export type BatchOutcome = { clip: RenderedClip } | { error: Error };
+
+/**
+ * Several lines for one endpoint in one request. Every item is a whole `SpeechInput` — its own
+ * text, voice, instructions and `sent`, which the provider reports it through as if it had gone
+ * alone — and they share the endpoint, and so the format and the rate, the target and the signal.
+ */
+export interface SpeechBatch {
+  target: ProviderTarget;
+  items: SpeechInput[];
+  /** the job's: a cancel closes the request, and the items not yet answered are not reported */
+  signal: AbortSignal;
+  /**
+   * Told once for each item as it is answered, in whatever order the server finishes them. A
+   * failure whose `ProviderError` is `retryable` may go differently in a later batch.
+   */
+  answered(index: number, outcome: BatchOutcome): void;
+  /** as `SpeechInput.rateLimited`, for a refusal of the whole batch */
+  rateLimited?(waitMs: number): void;
+}
+
 export interface SpeechProvider {
   /** what the Queue page names, and the log */
   readonly name: string;
   speak(input: SpeechInput): Promise<RenderedClip>;
   /** one small request to see the endpoint answers — the Test button; absent, it cannot be tested */
   probe?(target: ProviderTarget, signal: AbortSignal): Promise<ProbeResult>;
+  /**
+   * Whether the endpoint takes lines in batches, and how many; null when it takes one at a time.
+   * Asked before a run sends to the endpoint, and cheap to ask again: a provider remembers the
+   * answer for a while. Absent, a provider never batches.
+   */
+  batchLimits?(target: ProviderTarget, signal: AbortSignal): Promise<BatchLimits | null>;
+  /**
+   * Send a batch the endpoint said it takes. Resolves once every item has been `answered`; throws
+   * when the batch as a whole went wrong — refused after the endpoint's retries, or cut off part
+   * way — and the items not yet answered are then the caller's to fail or send again, with what
+   * it threw. A cancel throws the signal's reason. Present exactly when `batchLimits` is.
+   */
+  speakBatch?(batch: SpeechBatch): Promise<void>;
 }
 
 /** Which provider a server is started with; see `env.ts`. */

@@ -66,8 +66,8 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   the top of OpenRouter's Artificial Analysis Intelligence Index list on 28 September (Claude
   Opus 5.5, GPT-6 Astra and Sol, Grok 4.7, Qwen3.8 Max, MiMo-V2.6-Pro) at OpenRouter's listed
   rates — which need not be the provider's own card, nor what a request is charged, since
-  OpenRouter bills at whichever of its providers serves it and reports that cost with each answer
-  (Grok 4.7 is listed at $1.60 / $4.80 against xAI's $2 / $6, and was served that day only at
+  OpenRouter bills at whichever of its providers serves it and reports that cost with each answer,
+  which is the cost the ledger records (Grok 4.7 is listed at $1.60 / $4.80 against xAI's $2 / $6, and was served that day only at
   $3.20 / $9.60); and Ollama and LM Studio on your own machine. A preset fills in the base URL,
   model and prices, and every field stays editable. The rates are the providers' published cards
   on 28 September 2026, read in UTC, in `SCRIPTING_PRESETS` and `TTS_PRESETS` in

@@ -44,7 +44,8 @@ const GEMINI_FLASH_2026 = {
  * A model through OpenRouter, one key for all of them. Its rates are OpenRouter's listing for the
  * model (`GET /api/v1/models`), standard tier. That is not always the provider's own card, nor what
  * a request is charged: OpenRouter bills at the rate of whichever of its providers serves it, and
- * reports that charge with each answer as `usage.cost`, which the ledger keeps beside its own figure.
+ * reports that charge with each answer as `usage.cost`, which is what the ledger records the
+ * request as costing, with the figure worked out from these rates kept beside it.
  */
 function openRouter(
   id: string,
@@ -62,10 +63,10 @@ function openRouter(
       "Through OpenRouter, at its listed rates for the model. A listing need not match the " +
       "provider's own card, and a request is billed at whichever provider serves it: Grok 4.7 is " +
       "listed at $1.60 / $4.80 against xAI's own $2 / $6, and the only provider serving it on 28 " +
-      "September charged $3.20 / $9.60. OpenRouter reports what each request cost, which the " +
-      "ledger records beside the figure worked out here. Buying credits adds OpenRouter's fee " +
-      "(5.5%, at least $0.80), which these rates leave out. One of the top models on OpenRouter's " +
-      "Artificial Analysis Intelligence Index list on 28 September 2026. " +
+      "September charged $3.20 / $9.60. OpenRouter reports what each request cost, and that is " +
+      "the cost recorded; these rates price estimates and budgets. Buying credits adds " +
+      "OpenRouter's fee (5.5%, at least $0.80), which these rates leave out. One of the top " +
+      "models on OpenRouter's Artificial Analysis Intelligence Index list on 28 September 2026. " +
       PRICES_AS_OF,
     apply: {
       name: `OpenRouter · ${label}`,

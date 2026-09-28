@@ -57,6 +57,31 @@ describe("token accounting", () => {
     expect(priced.basis).toBe("calculated");
   });
 
+  test("cache writes reported OpenAI-shaped, as OpenRouter does, are a slice of the input too", () => {
+    const usage = normalizeUsage(
+      {
+        prompt_tokens: 10_000,
+        completion_tokens: 2_000,
+        prompt_tokens_details: { cached_tokens: 3_000, cache_write_tokens: 5_000 },
+      },
+      "openai",
+    );
+    expect([usage.inputTokens, usage.cachedInput, usage.cacheWrite]).toEqual([
+      10_000, 3_000, 5_000,
+    ]);
+    expect(uncachedInput(usage)).toBe(2_000);
+    const priced = priceRequest(card({ cachedInput: 0.25, cacheWrite: 1.25 }), config(), usage, {
+      at: utc(THU, "12:00"),
+    });
+    // 2,000 @ $1 + 3,000 @ $0.25 + 5,000 @ $1.25 + 2,000 @ $4, all per 1M
+    expect(priced.total).toBeCloseTo((2000 + 3000 * 0.25 + 5000 * 1.25 + 2000 * 4) / 1e6, 12);
+    // OpenAI itself sends no cache writes, which stays "none reported" rather than zero
+    expect(
+      normalizeUsage({ prompt_tokens: 1, prompt_tokens_details: { cached_tokens: 0 } }, "openai")
+        .cacheWrite,
+    ).toBeNull();
+  });
+
   test("the two provider shapes disagree about the input total, and normalizing settles it", () => {
     // OpenAI: prompt_tokens INCLUDES the cached tokens
     const openai = normalizeUsage(

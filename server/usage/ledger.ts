@@ -73,7 +73,9 @@ function timing(sent: SentScript | SentSpeech, work: RequestFor) {
 /**
  * Price one scripting request against `profile`'s card and append it. A request that reported no
  * usage — it failed before the provider counted anything — costs nothing and says so: no chat
- * completion is billed for an error.
+ * completion is billed for an error. A provider that says what the request cost — OpenRouter does,
+ * at whichever of its providers served it — is taken at its word; the figure worked out from the
+ * card is kept on the receipt beside it.
  */
 export function settleScript(
   db: Db | Tx,
@@ -85,6 +87,7 @@ export function settleScript(
     ? priceRequest(baseRates(profile), readPricing(profile), sent.usage, {
         at: sent.finishedAt,
         rule: PRICING_RULE,
+        preferReported: sent.usage.reportedCost != null,
       })
     : undefined;
   const usage: RequestUsage = sent.usage

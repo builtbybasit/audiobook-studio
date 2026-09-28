@@ -956,7 +956,7 @@ export const USAGE_FORMATS: { value: UsageFormat; label: string; hint: string }[
   {
     value: "openai",
     label: "OpenAI-shaped",
-    hint: "prompt_tokens includes prompt_tokens_details.cached_tokens",
+    hint: "prompt_tokens includes prompt_tokens_details.cached_tokens and cache_write_tokens",
   },
   {
     value: "anthropic",
@@ -993,7 +993,8 @@ export function normalizeUsage(raw: Record<string, unknown>, format: UsageFormat
     const details = raw.prompt_tokens_details as Record<string, unknown> | undefined;
     inputTotal = num(raw.prompt_tokens);
     cachedInput = details ? num(details.cached_tokens) : null;
-    cacheWrite = null;
+    // OpenAI reports no cache writes; OpenRouter does, as another slice of prompt_tokens
+    cacheWrite = details ? num(details.cache_write_tokens) : null;
     output = num(raw.completion_tokens);
   } else if (format === "anthropic") {
     const uncached = num(raw.input_tokens);

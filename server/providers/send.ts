@@ -105,6 +105,7 @@ export async function sendSpeech(
     res = await call(target, request.url, request.init, {
       signal,
       stats,
+      rateLimited: input.rateLimited,
       ...inject,
       ...(request.check ? { check: request.check } : {}),
     });
@@ -117,7 +118,12 @@ export async function sendSpeech(
     async call(further, url, init) {
       const counted: CallStats = { attempts: 0, rateLimited: false };
       try {
-        return await call(further, url, init, { signal, stats: counted, ...inject });
+        return await call(further, url, init, {
+          signal,
+          stats: counted,
+          rateLimited: input.rateLimited,
+          ...inject,
+        });
       } finally {
         more.attempts += counted.attempts;
         more.rateLimited ||= counted.rateLimited;

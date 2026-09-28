@@ -64,6 +64,7 @@ import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { locate } from "~/jobs/scripting";
 import { conflict, notFound } from "~/lib/errors";
 import { deliveryFor, lineWorstCase, narrationCost, type NarrationCost } from "~/narration/cost";
+import { createSpeechGate, type SpeechGate } from "~/providers/gate";
 import type { SentSpeech } from "~/providers/sent";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 import { speechTarget } from "~/providers/target";
@@ -262,7 +263,11 @@ async function speakInParts(
   };
 }
 
-export function narrationHandler(provider: SpeechProvider, files: AudioFiles): JobHandler {
+export function narrationHandler(
+  provider: SpeechProvider,
+  files: AudioFiles,
+  gate: SpeechGate = createSpeechGate(),
+): JobHandler {
   return {
     async run(ctx: JobContext): Promise<void> {
       const { job, db, signal } = ctx;

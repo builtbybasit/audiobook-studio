@@ -52,6 +52,11 @@ export interface SpeechInput {
   signal: AbortSignal;
   /** called once for every request that reached the wire, answered or not; see `sent.ts` */
   sent?(request: SentSpeech): void;
+  /**
+   * Called each time the endpoint refuses a request as rate limited, with how long the request
+   * will wait before trying again — so the job can hold its other lines for as long (`gate.ts`).
+   */
+  rateLimited?(waitMs: number): void;
 }
 
 export interface RenderedClip {

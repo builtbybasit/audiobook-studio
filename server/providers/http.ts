@@ -106,6 +106,13 @@ export interface CallOptions {
    * `cooldownSec` when it is `rateLimited` — and thrown once the retries run out.
    */
   check?(res: Response): Promise<ProviderError | null>;
+  /**
+   * Told each time an attempt is refused as rate limited — a 429, or a `check` that says so — with
+   * how long this call will wait before its next attempt: the `Retry-After`, or `cooldownSec`. The
+   * narration job hands it to the speech gate, which holds every other line for the endpoint as
+   * long (`gate.ts`). Told even when no attempt is left, because the endpoint is limited either way.
+   */
+  rateLimited?(waitMs: number): void;
 }
 
 /** What one `call` did on the wire; see `CallOptions.stats`. */
@@ -147,6 +154,7 @@ export async function call(
         if (refused.rateLimited) {
           if (options.stats) options.stats.rateLimited = true;
           wait = target.cooldownSec * 1000;
+          options.rateLimited?.(wait);
         }
       } else {
         if (res.status === 429 && options.stats) options.stats.rateLimited = true;
@@ -157,7 +165,10 @@ export async function call(
           RETRYABLE.has(res.status),
         );
         wait = retryAfterMs(res.headers.get("retry-after"));
-        if (res.status === 429 && wait === undefined) wait = target.cooldownSec * 1000;
+        if (res.status === 429) {
+          wait ??= target.cooldownSec * 1000;
+          options.rateLimited?.(wait);
+        }
       }
     } catch (e) {
       if (signal.aborted) throw signal.reason;

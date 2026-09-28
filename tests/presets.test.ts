@@ -7,7 +7,7 @@
 // endpoint made from that preset afterwards would start from the edited rates.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { baseRates, effectiveRates, pricingProblems } from "@/lib/pricing";
+import { baseRates, effectiveRates, pricingProblems, speechRates } from "@/lib/pricing";
 import { presetsOf, SCRIPTING_PRESETS, scriptingPresetById, TTS_PRESETS } from "@/lib/endpoints";
 import { newProfile, profileErrors } from "@/lib/scripting";
 import { clone } from "@/lib/utils";
@@ -91,6 +91,30 @@ describe("a preset's rate card over time", () => {
   test("Gemini 3.8 Flash is its 2026 price until the year ends, and double from 2027", () => {
     expect(ratesAt("gemini-flash", Date.UTC(2026, 11, 31, 23, 0))).toEqual([0.75, 3.75]);
     expect(ratesAt("gemini-flash", Date.UTC(2027, 0, 1, 1, 0))).toEqual([1.5, 7.5]);
+  });
+});
+
+describe("speech presets", () => {
+  /** What a TTS preset charges per million input text tokens and output audio tokens at `at`. */
+  function speechAt(presetId: string, at: number): [number | null, number | null] {
+    const { apply } = TTS_PRESETS.find((p) => p.id === presetId)!;
+    const { components } = effectiveRates(speechRates(apply.billing!), apply.pricing!, at);
+    return [components.textTokens.rate, components.audioTokens.rate];
+  }
+
+  test("Gemini 3.8 Flash and Flash-Lite TTS are half price until 2027, then their cards", () => {
+    expect(speechAt("gemini-3.8-flash-tts", Date.UTC(2026, 11, 31, 23, 0))).toEqual([0.5, 9]);
+    expect(speechAt("gemini-3.8-flash-tts", Date.UTC(2027, 0, 1, 1, 0))).toEqual([1, 18]);
+    expect(speechAt("gemini-3.8-flash-lite-tts", Date.UTC(2026, 11, 31, 23, 0))).toEqual([0.5, 6]);
+    expect(speechAt("gemini-3.8-flash-lite-tts", Date.UTC(2027, 0, 1, 1, 0))).toEqual([1, 12]);
+  });
+
+  test("each has a rate card that reads, and ids are unique", () => {
+    const ids = TTS_PRESETS.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const { id, apply } of TTS_PRESETS)
+      if (apply.pricing)
+        expect({ id, problems: pricingProblems(apply.pricing) }).toEqual({ id, problems: [] });
   });
 });
 

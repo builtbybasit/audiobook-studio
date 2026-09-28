@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { baseRates, effectiveRates, pricingProblems, speechRates } from "@/lib/pricing";
 import { presetsOf, SCRIPTING_PRESETS, scriptingPresetById, TTS_PRESETS } from "@/lib/endpoints";
-import { expressionSupport } from "@/lib/expressions";
+import { configErrors, expressionSupport } from "@/lib/expressions";
 import { newProfile, profileErrors } from "@/lib/scripting";
 import { clone } from "@/lib/utils";
 import { useEndpointsStore } from "@/stores/endpoints";
@@ -145,6 +145,12 @@ describe("what a preset says and sets", () => {
         dated: true,
       });
     }
+  });
+
+  test("a preset's seeded tags are ones its own provider takes", () => {
+    const seeded = TTS_PRESETS.filter((p) => p.apply.expressions);
+    expect(seeded.length).toBeGreaterThan(0);
+    for (const p of seeded) expect([p.id, configErrors(p.apply.expressions!)]).toEqual([p.id, []]);
   });
 
   test("Gemini 3.8's speech presets start with Google's vocal tags, for their own model", () => {

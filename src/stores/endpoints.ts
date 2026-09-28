@@ -404,7 +404,11 @@ export const useEndpointsStore = defineStore("endpoints", {
       const uiStore = useUiStore();
 
       const ep = this.endpoints.find((e) => e.id === id);
-      if (!ep || configErrors(config).length) return false;
+      // checked as it is about to be saved — for the endpoint's model and address now, not those
+      // the draft was opened with: which tags are allowed is the provider's, and the model may have
+      // changed on the Connection tab since
+      if (!ep || configErrors({ ...config, model: ep.model, baseUrl: ep.baseUrl }).length)
+        return false;
       const previous = ep.expressions ? clone(ep.expressions) : undefined;
       ep.expressions = clone({
         ...config,

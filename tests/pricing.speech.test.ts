@@ -185,6 +185,22 @@ describe("speech endpoints", () => {
     expect(e.cautions.join(" ")).toContain("Budget checks use");
   });
 
+  test("a speech window that raises the rate raises the budget figure, even outside it", () => {
+    // a peak hour at twice the card; the estimate is made off-peak
+    const cfg = config({
+      windows: [{ id: "peak", label: "Peak", days: [], from: 60, to: 240, rates: { speech: 24 } }],
+    });
+    const e = estimateSpeech(
+      speechCard(),
+      cfg,
+      { chars: 1_000_000, audioSeconds: 600, requests: 4 },
+      utc(THU, "12:00"),
+    );
+    expect(e.cost).toBeCloseTo(12, 12);
+    expect(e.withoutPromotions).toBeCloseTo(24, 12);
+    expect(e.cautions.join(" ")).toContain("dearest hours");
+  });
+
   test("both kinds of receipt render through the same charge lines", () => {
     const usage = normalizeUsage(
       {

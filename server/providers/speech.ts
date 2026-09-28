@@ -8,8 +8,8 @@
 // provider from the server's own environment and never leaves the process — see `docs/backend.md`.
 //
 // Two implementations: the fake, which renders a tone and never the network, and the one that
-// calls the endpoint a line's voice belongs to (`SPEECH_PROVIDER=endpoints`) — Fish Audio when its
-// base URL is Fish's, OpenAI's `/audio/speech` shape otherwise.
+// calls the endpoint a line's voice belongs to (`SPEECH_PROVIDER=endpoints`), in whichever
+// provider's shape its base URL speaks (`endpointSpeech.ts`).
 //
 // A line is asked for in the endpoint's format — WAV, MP3 or Opus — and the clip says which format
 // it really came back in, because that is what it is kept as and served as. The fake answers WAV

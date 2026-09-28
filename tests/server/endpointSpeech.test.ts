@@ -1,6 +1,6 @@
 // The real speech provider against an injected `fetch`: what it sends to Fish Audio and to an
 // OpenAI-shaped server, what it makes of the answer, what it refuses before sending anything, and
-// what it reports to the ledger about each request that went out.
+// what it reports to the ledger about each request that went out — billed or not.
 import { describe, expect, test } from "bun:test";
 
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
@@ -141,6 +141,16 @@ describe("Fish Audio", () => {
     expect(clip.duration).toBeCloseTo(0.5);
   });
 
+  test("a model Fish does not document is refused before a request, since Fish would bill it as s2.1-pro", async () => {
+    const f = scripted(audio);
+    const r = reports();
+    await expect(
+      provider(f.fetch).speak(line({ ...fish, model: "s2.1-pro-fre" }, { sent: r.sent })),
+    ).rejects.toThrow("“s2.1-pro-fre” is not a model Fish Audio documents");
+    expect(f.sent).toHaveLength(0);
+    expect(r.got).toEqual([]);
+  });
+
   test("a rate Fish does not render WAV at is refused before a request", async () => {
     const f = scripted(audio);
     const speaking = provider(f.fetch).speak(line(fish, { sampleRate: 22050 }));
@@ -182,11 +192,18 @@ describe("an OpenAI-shaped server", () => {
     ]);
   });
 
+  test("a voice made from the account's own recording is sent as the object OpenAI asks for", async () => {
+    const f = scripted(audio);
+    await provider(f.fetch).speak(line(openai, { voiceRef: "openai/voice_123abc" }));
+    expect(f.body().voice).toEqual({ id: "voice_123abc" });
+  });
+
   test("a local server without a key is sent none, and tts-1 no instructions", async () => {
     const local = {
       ...openai,
       baseUrl: "http://127.0.0.1:8880/v1",
-      model: "tts-1",
+      // however it was typed
+      model: " TTS-1 ",
       apiKey: null,
       needsKey: false,
     };
@@ -215,14 +232,27 @@ describe("what comes back", () => {
     await expect(provider(f.fetch).speak(line(fish, { sent: r.sent }))).rejects.toThrow(
       /answered 200 but sent no audio.*voice not found/,
     );
-    // it was asked, and answered, so it is still a request the ledger keeps
+    // it was asked, and answered with a 200, so it was billed and the ledger keeps it
     expect(r.got).toEqual([
       expect.objectContaining({
         status: "failed",
+        billed: true,
         audioSeconds: 0,
         error: { code: 200, message: expect.stringMatching(/voice not found/) },
       }),
     ]);
+  });
+
+  test("a body the clock cuts off says it timed out", async () => {
+    const stalled = new ReadableStream({
+      pull(controller) {
+        controller.error(new DOMException("The operation timed out.", "TimeoutError"));
+      },
+    });
+    const f = scripted(() => new Response(stalled, { headers: { "content-type": "audio/wav" } }));
+    await expect(provider(f.fetch).speak(line(fish))).rejects.toThrow(
+      "Fish Audio (free) answered 200 but did not finish sending the audio within 5 s",
+    );
   });
 
   test("an empty body, or one that is not a WAV, is a failure", async () => {
@@ -240,10 +270,13 @@ describe("what comes back", () => {
     const refused = scripted(() =>
       Response.json({ message: "Invalid token", status: 401 }, { status: 401 }),
     );
-    await expect(provider(refused.fetch).speak(line(fish))).rejects.toThrow(
+    const r = reports();
+    await expect(provider(refused.fetch).speak(line(fish, { sent: r.sent }))).rejects.toThrow(
       "Fish Audio (free) answered 401: Invalid token",
     );
     expect(refused.sent).toHaveLength(1);
+    // refused, so nothing was generated and nothing billed
+    expect(r.got).toEqual([expect.objectContaining({ status: "failed", billed: false })]);
 
     const busy = scripted(
       () => new Response("slow down", { status: 429, headers: { "retry-after": "0" } }),
@@ -267,7 +300,31 @@ describe("what comes back", () => {
         attempts: 1 + openai.maxRetries,
         rateLimited: false,
         audioSeconds: 0,
+        billed: false,
         error: { code: 500, message: "OpenAI answered 500: upstream fell over" },
+      }),
+    ]);
+  });
+
+  test("a 409 is not tried again: a conflict is the same the second time", async () => {
+    const f = scripted(() => new Response("busy with another", { status: 409 }));
+    await expect(provider(f.fetch).speak(line(openai))).rejects.toThrow("answered 409");
+    expect(f.sent).toHaveLength(1);
+  });
+
+  test("no answer at all is reported failed, and not billed", async () => {
+    const fetch = (async () => {
+      throw new TypeError("fetch failed");
+    }) as unknown as typeof globalThis.fetch;
+    const r = reports();
+    await expect(provider(fetch).speak(line(fish, { sent: r.sent }))).rejects.toThrow(
+      "could not be reached: fetch failed",
+    );
+    expect(r.got).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        billed: false,
+        error: expect.objectContaining({ code: 0 }),
       }),
     ]);
   });
@@ -320,6 +377,20 @@ describe("the Test button", () => {
     expect(f.sent[0].url).toBe("https://api.fish.audio/model?self=true&page_size=100");
     expect(headersOf(f.sent[0].init).get("authorization")).toBe("Bearer sk-fish");
     expect(found).toMatchObject({ ok: true, message: expect.stringMatching(/3 voices/) });
+  });
+
+  test("Fish's answer says so when the model is not one Fish documents", async () => {
+    const f = scripted(() => Response.json({ total: 3, items: [] }));
+    const found = await provider(f.fetch).probe!(
+      { ...fish, model: "s2-free" },
+      new AbortController().signal,
+    );
+    expect(found).toMatchObject({
+      ok: false,
+      message: expect.stringMatching(
+        /key was accepted, but “s2-free” is not a model Fish Audio documents/,
+      ),
+    });
   });
 
   test("an OpenAI-shaped server is asked for its models, and a refusal is an answer", async () => {

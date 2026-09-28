@@ -136,8 +136,11 @@ describe("what a narration run spends", () => {
     await api.runner.idle();
     const rows = ledger(api).filter((r) => r.label === `Line ${split.id} · ${split.speaker}`);
     expect(rows.map((r) => r.status).sort()).toEqual(["done", "failed"]);
-    // a failed request is still charged for what it sent on a per-character endpoint
-    expect(rows.every((r) => (r.cost ?? 0) > 0)).toBe(true);
+    // the part that went through is charged; the one refused is a row that costs nothing
+    expect(Object.fromEntries(rows.map((r) => [r.status, (r.cost ?? 0) > 0]))).toEqual({
+      done: true,
+      failed: false,
+    });
     expect((await linesOf(api, id)).find((s) => s.id === split.id)?.audio.status).toBe("failed");
   });
 });

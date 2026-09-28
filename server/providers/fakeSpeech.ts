@@ -22,7 +22,8 @@
 // It reports every line it is asked for through `sent`, as a real provider reports a request,
 // marked `simulated` so nobody reads the row as a bill: that is what lets a run against a priced
 // endpoint be metered and held to a cap without spending anything. A line it was told to fail is
-// reported failed, the way a request refused on the wire is; a cancel reports nothing.
+// reported failed and not billed, the way a request refused on the wire is; a cancel reports
+// nothing.
 import { sleep } from "~/providers/fake";
 import type { SentSpeech } from "~/providers/sent";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
@@ -99,7 +100,9 @@ export function fakeSpeechProvider(options: FakeSpeechOptions = {}): SpeechProvi
       const startedAt = Date.now();
       if (options.delayMs) await sleep(options.delayMs, signal);
       if (signal.aborted) throw signal.reason;
-      const report = (rest: Pick<SentSpeech, "status" | "audioSeconds" | "error">): void =>
+      const report = (
+        rest: Pick<SentSpeech, "status" | "audioSeconds" | "error" | "billed">,
+      ): void =>
         sent?.({
           startedAt,
           finishedAt: Date.now(),
@@ -115,11 +118,16 @@ export function fakeSpeechProvider(options: FakeSpeechOptions = {}): SpeechProvi
         options.failWith ??
         (options.failLines?.(text) ? `The fake could not render “${text}”` : null);
       if (failure) {
-        report({ status: "failed", audioSeconds: 0, error: { code: 0, message: failure } });
+        report({
+          status: "failed",
+          audioSeconds: 0,
+          error: { code: 0, message: failure },
+          billed: false,
+        });
         throw new Error(failure);
       }
       const duration = fakeDuration(text);
-      report({ status: "done", audioSeconds: duration });
+      report({ status: "done", audioSeconds: duration, billed: true });
       return {
         bytes: toneWav(toneOf(speaker), duration, sampleRate ?? SAMPLE_RATE),
         format: "wav",

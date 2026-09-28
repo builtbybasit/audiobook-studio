@@ -1,13 +1,15 @@
-// Gemini and ElevenLabs through the real speech provider, against an injected `fetch`: what each is
-// sent — its own path, key header and body, shaped as its docs give them — what is made of the
-// answer, what either refuses before sending anything, and what reaches the ledger. Fish Audio and
-// the OpenAI shape are `endpointSpeech.test.ts`.
+// Gemini, ElevenLabs, BreezeBlue, MiniMax, Cartesia and Qwen through the real speech provider,
+// against an injected `fetch` whose answers are built from each provider's docs: what each is sent
+// — its own path, key header and body — what is made of the answer, what each refuses before
+// sending anything, and what reaches the ledger: whether the request was billed, and the usage the
+// answer reported even when what came with it proved unusable. Fish Audio and the OpenAI shape are
+// `endpointSpeech.test.ts`.
 import { describe, expect, test } from "bun:test";
 
 import { encodingProblems, isElevenLabs, isGemini, ttsRequestPath } from "@/lib/endpointShapes";
-import { elevenLabsOutputFormat } from "~/providers/elevenLabsSpeech";
+import { elevenLabsOutputFormat } from "~/providers/speech/elevenlabs";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
-import { isLegacyGeminiSpeech } from "~/providers/geminiSpeech";
+import { isLegacyGeminiSpeech } from "@/lib/providers/gemini";
 import type { SentSpeech } from "~/providers/sent";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
@@ -75,18 +77,31 @@ function wav(rate: number, frames: number): Uint8Array {
   return bytes;
 }
 
-/** Gemini's answer: the audio base64 in the first candidate, and what it counted. */
-const geminiAnswer = (bytes: Uint8Array, mimeType: string, usage?: Record<string, unknown>) =>
+/** Gemini's answer: the audio base64 in the first candidate, why it stopped, and what it counted. */
+const geminiAnswer = (
+  bytes: Uint8Array,
+  mimeType: string,
+  usage?: Record<string, unknown>,
+  finishReason = "STOP",
+) =>
   Response.json({
     candidates: [
       {
         content: {
           parts: [{ inlineData: { mimeType, data: Buffer.from(bytes).toString("base64") } }],
         },
+        finishReason,
       },
     ],
     ...(usage ? { usageMetadata: usage } : {}),
   });
+
+/** What Google counts for a line: its text tokens in, its audio tokens out. */
+const counted = {
+  promptTokenCount: 9,
+  candidatesTokenCount: 13,
+  candidatesTokensDetails: [{ modality: "AUDIO", tokenCount: 13 }],
+};
 
 /** A fetch that answers from a list in turn, and remembers what it was sent. */
 function scripted(...answers: (() => Response)[]) {
@@ -139,13 +154,7 @@ describe("which API a base URL speaks", () => {
 
 describe("Gemini 3.8", () => {
   test("is asked for WAV in one voice, with the line's instructions as its style, not its text", async () => {
-    const f = scripted(() =>
-      geminiAnswer(wav(24000, 12000), "audio/wav", {
-        promptTokenCount: 9,
-        candidatesTokenCount: 13,
-        candidatesTokensDetails: [{ modality: "AUDIO", tokenCount: 13 }],
-      }),
-    );
+    const f = scripted(() => geminiAnswer(wav(24000, 12000), "audio/wav", counted));
     const r = reports();
     const clip = await provider(f.fetch).speak(
       line(gemini, { sampleRate: 24000, instructions: "Warm, unhurried.", sent: r.sent }),
@@ -165,7 +174,7 @@ describe("Gemini 3.8", () => {
       ],
       generationConfig: {
         responseModalities: ["AUDIO"],
-        responseFormat: { audio: { mimeType: "AUDIO_WAV", sampleRate: 24000 } },
+        responseFormat: { audio: { mimeType: "AUDIO_WAV", delivery: "INLINE", sampleRate: 24000 } },
         speechConfig: { voiceConfig: { voice: "Kore" } },
       },
     });
@@ -173,25 +182,84 @@ describe("Gemini 3.8", () => {
     expect(clip.duration).toBeCloseTo(0.5);
     // what Google counted reaches the ledger, beside the style that was sent
     expect(r.got).toHaveLength(1);
-    expect(r.got[0]).toMatchObject({ status: "done", instructions: "Warm, unhurried." });
+    expect(r.got[0]).toMatchObject({
+      status: "done",
+      billed: true,
+      instructions: "Warm, unhurried.",
+    });
     expect(r.got[0].reported).toMatchObject({ textTokens: 9, audioTokens: 13 });
+  });
+
+  test("a model saved as `models/…` is asked for without the prefix doubled", async () => {
+    const f = scripted(() => geminiAnswer(wav(24000, 2400), "audio/wav"));
+    const listed = { ...gemini, model: "models/gemini-3.8-flash-tts" };
+    await provider(f.fetch).speak(line(listed));
+    expect(f.sent[0].url).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent",
+    );
+    expect(ttsRequestPath(listed)).toBe("/models/gemini-3.8-flash-tts:generateContent");
+  });
+
+  test("an answer cut off at MAX_TOKENS fails, billed, with what Google counted kept", async () => {
+    const f = scripted(() => geminiAnswer(wav(24000, 2400), "audio/wav", counted, "MAX_TOKENS"));
+    const r = reports();
+    await expect(provider(f.fetch).speak(line(gemini, { sent: r.sent }))).rejects.toThrow(
+      "cut the line short: it finished with MAX_TOKENS",
+    );
+    expect(f.sent).toHaveLength(1);
+    expect(r.got).toEqual([
+      expect.objectContaining({ status: "failed", billed: true, error: expect.anything() }),
+    ]);
+    expect(r.got[0].reported).toMatchObject({ textTokens: 9, audioTokens: 13 });
+  });
+
+  test("an answer at another rate than the one asked for fails", async () => {
+    const f = scripted(() => geminiAnswer(wav(24000, 2400), "audio/wav", counted));
+    await expect(provider(f.fetch).speak(line(gemini, { sampleRate: 16000 }))).rejects.toThrow(
+      "was asked for 16 kHz and answered at 24 kHz",
+    );
+  });
+
+  test("a refusal is reported failed and not billed", async () => {
+    const f = scripted(() =>
+      Response.json(
+        { error: { code: 400, message: "API key not valid.", status: "INVALID_ARGUMENT" } },
+        { status: 400 },
+      ),
+    );
+    const r = reports();
+    await expect(provider(f.fetch).speak(line(gemini, { sent: r.sent }))).rejects.toThrow(
+      "answered 400: API key not valid.",
+    );
+    expect(r.got).toEqual([
+      expect.objectContaining({ status: "failed", billed: false, reported: null }),
+    ]);
   });
 
   test("with no rate set, none is named, and no style is sent when there is none", async () => {
     const f = scripted(() => geminiAnswer(wav(24000, 2400), "audio/wav"));
     await provider(f.fetch).speak(line(gemini));
-    expect(f.body().generationConfig.responseFormat).toEqual({ audio: { mimeType: "AUDIO_WAV" } });
+    expect(f.body().generationConfig.responseFormat).toEqual({
+      audio: { mimeType: "AUDIO_WAV", delivery: "INLINE" },
+    });
     expect(f.body().contents[0].parts[0]).toEqual({ text: "Come in." });
   });
 
   test("an answer with no audio says why, and is not tried again", async () => {
-    const f = scripted(() => Response.json({ promptFeedback: { blockReason: "SAFETY" } }));
+    const f = scripted(() =>
+      Response.json({
+        promptFeedback: { blockReason: "SAFETY" },
+        usageMetadata: { promptTokenCount: 9 },
+      }),
+    );
     const r = reports();
     await expect(provider(f.fetch).speak(line(gemini, { sent: r.sent }))).rejects.toThrow(
       "the prompt was blocked (SAFETY)",
     );
     expect(f.sent).toHaveLength(1);
-    expect(r.got[0].status).toBe("failed");
+    // answered with a 200, so billed — for the prompt Google says it read
+    expect(r.got[0]).toMatchObject({ status: "failed", billed: true });
+    expect(r.got[0].reported).toMatchObject({ textTokens: 9 });
   });
 
   test("MP3 is refused before a request", async () => {
@@ -258,6 +326,44 @@ describe("ElevenLabs", () => {
     expect(r.got[0].reported).toMatchObject({ chars: 8 });
   });
 
+  test.each([
+    ["empty", ""],
+    ["not a count", "8.5"],
+    ["zero", "0"],
+  ])(
+    "a character-cost header that is %s is ignored, and the ledger counts what was sent",
+    async (_, cost) => {
+      const f = scripted(
+        () =>
+          new Response(wav(24000, 600), {
+            headers: { "content-type": "audio/wav", "character-cost": cost },
+          }),
+      );
+      const r = reports();
+      await provider(f.fetch).speak(line(eleven, { sent: r.sent }));
+      expect(r.got[0].reported).toBeNull();
+    },
+  );
+
+  test("an absent character-cost header reports nothing", async () => {
+    const f = scripted(() => wavResponse(wav(24000, 600)));
+    const r = reports();
+    await provider(f.fetch).speak(line(eleven, { sent: r.sent }));
+    expect(r.got[0].reported).toBeNull();
+  });
+
+  test("a 200 that is not audio fails billed, with its character count kept", async () => {
+    const f = scripted(() =>
+      Response.json({ detail: "queued" }, { headers: { "character-cost": "8" } }),
+    );
+    const r = reports();
+    await expect(provider(f.fetch).speak(line(eleven, { sent: r.sent }))).rejects.toThrow(
+      "sent no audio",
+    );
+    expect(r.got[0]).toMatchObject({ status: "failed", billed: true });
+    expect(r.got[0].reported).toMatchObject({ chars: 8 });
+  });
+
   test("an MP3 is asked for by rate and bitrate, and kept as it came", async () => {
     const mp3 = silentMp3(38, { kbps: 192 });
     const f = scripted(() => new Response(mp3, { headers: { "content-type": "audio/mpeg" } }));
@@ -292,8 +398,33 @@ describe("ElevenLabs", () => {
         { status: 401 },
       ),
     );
-    await expect(provider(f.fetch).speak(line(eleven))).rejects.toThrow("ElevenLabs answered 401");
+    const r = reports();
+    await expect(provider(f.fetch).speak(line(eleven, { sent: r.sent }))).rejects.toThrow(
+      "ElevenLabs answered 401: Invalid API key",
+    );
     expect(f.sent).toHaveLength(1);
+    expect(r.got[0]).toMatchObject({ status: "failed", billed: false, error: { code: 401 } });
+  });
+
+  test("a request it cannot validate says which fields, from its 422 list", async () => {
+    const f = scripted(() =>
+      Response.json(
+        {
+          detail: [
+            { loc: ["body", "text"], msg: "Field required", type: "missing" },
+            {
+              loc: ["query", "output_format"],
+              msg: "Input should be a valid format",
+              type: "enum",
+            },
+          ],
+        },
+        { status: 422 },
+      ),
+    );
+    await expect(provider(f.fetch).speak(line(eleven))).rejects.toThrow(
+      "ElevenLabs answered 422: Field required; Input should be a valid format",
+    );
   });
 });
 
@@ -414,11 +545,49 @@ describe("BreezeBlue", () => {
     expect(r.got[0].instructions).toBe("Softly.");
   });
 
-  test("its Test button accepts a model list wrapped in `models`", async () => {
-    const f = scripted(() => Response.json({ models: [{ model_id: "breeze-tts-2" }] }));
+  test("instructions past its 1,000 characters are refused before a request", async () => {
+    const f = scripted(() => wavResponse(wav(24000, 2400)));
+    const r = reports();
+    await expect(
+      provider(f.fetch).speak(line(breeze, { instructions: "é".repeat(1001), sent: r.sent })),
+    ).rejects.toThrow(
+      "takes up to 1,000 characters of instructions, and this line's style and direction run to 1,001",
+    );
+    expect(f.sent).toEqual([]);
+    expect(r.got).toEqual([]);
+  });
+
+  test("a refusal in its error envelope is read out, and not billed", async () => {
+    const f = scripted(() =>
+      Response.json(
+        { ok: false, code: "INSUFFICIENT_CREDITS", error: "Not enough credits." },
+        { status: 402 },
+      ),
+    );
+    const r = reports();
+    await expect(provider(f.fetch).speak(line(breeze, { sent: r.sent }))).rejects.toThrow(
+      "Breeze TTS 2 answered 402: Not enough credits.",
+    );
+    expect(r.got[0]).toMatchObject({ status: "failed", billed: false });
+  });
+
+  test("its Test button reads the bare list GET /v1/models answers", async () => {
+    const f = scripted(() =>
+      Response.json([
+        {
+          model_id: "breeze-tts-2",
+          name: "Breeze TTS 2",
+          languages: [{ language_id: "en", name: "English" }],
+          description: "English speech.",
+        },
+      ]),
+    );
     const result = await provider(f.fetch).probe!(breeze, new AbortController().signal);
     expect(f.sent[0].url).toBe("https://api.breeze.blue/v1/models");
-    expect(result).toMatchObject({ ok: true });
+    expect(result).toMatchObject({
+      ok: true,
+      message: expect.stringMatching(/lists “breeze-tts-2”/),
+    });
   });
 });
 
@@ -465,20 +634,62 @@ describe("MiniMax", () => {
     });
   });
 
-  test("a refusal inside a 200 is a failure that says so, and a rate limit is marked retryable", async () => {
-    const refused = (code: number, msg: string) => () =>
-      Response.json({ data: null, base_resp: { status_code: code, status_msg: msg } });
+  const refused = (code: number, msg: string) => () =>
+    Response.json({ data: null, base_resp: { status_code: code, status_msg: msg } });
+
+  test("a refusal inside a 200 fails at once with MiniMax's code, and is not billed", async () => {
+    const f = scripted(refused(1004, "auth failed"));
     const r = reports();
-    await expect(
-      provider(scripted(refused(1004, "auth failed")).fetch).speak(line(minimax, { sent: r.sent })),
-    ).rejects.toMatchObject({
-      message: "MiniMax refused the request (1004: auth failed)",
-      retryable: false,
-    });
-    await expect(
-      provider(scripted(refused(1002, "rate limit")).fetch).speak(line(minimax)),
-    ).rejects.toMatchObject({ retryable: true });
-    expect(r.got[0].status).toBe("failed");
+    await expect(provider(f.fetch).speak(line(minimax, { sent: r.sent }))).rejects.toThrow(
+      "MiniMax refused the request (1004: auth failed)",
+    );
+    expect(f.sent).toHaveLength(1);
+    expect(r.got).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        billed: false,
+        attempts: 1,
+        error: { code: 1004, message: "MiniMax refused the request (1004: auth failed)" },
+      }),
+    ]);
+  });
+
+  test("a rate limit inside a 200 is sent again, and the answer after it kept", async () => {
+    const f = scripted(refused(1002, "rate limit"), () => answer(wav(32000, 3200)));
+    const r = reports();
+    const clip = await provider(f.fetch).speak(line(minimax, { sent: r.sent }));
+    expect(f.sent).toHaveLength(2);
+    expect(f.body(1)).toEqual(f.body(0));
+    expect(clip.duration).toBeCloseTo(0.1);
+    expect(r.got).toEqual([
+      expect.objectContaining({ status: "done", billed: true, attempts: 2, rateLimited: true }),
+    ]);
+  });
+
+  test("a fault inside a 200 that outlasts the retries is one failed request", async () => {
+    const f = scripted(refused(1024, "internal error"));
+    const r = reports();
+    await expect(provider(f.fetch).speak(line(minimax, { sent: r.sent }))).rejects.toThrow(
+      "(1024: internal error)",
+    );
+    expect(f.sent).toHaveLength(1 + minimax.maxRetries);
+    expect(r.got[0]).toMatchObject({ attempts: 3, rateLimited: false, billed: false });
+  });
+
+  test("audio that is not whole hex fails, billed, with its character count kept", async () => {
+    const f = scripted(() =>
+      Response.json({
+        data: { audio: "52494646zz", status: 2 },
+        extra_info: { usage_characters: 8 },
+        base_resp: { status_code: 0, status_msg: "success" },
+      }),
+    );
+    const r = reports();
+    await expect(provider(f.fetch).speak(line(minimax, { sent: r.sent }))).rejects.toThrow(
+      "not whole hex",
+    );
+    expect(r.got[0]).toMatchObject({ status: "failed", billed: true });
+    expect(r.got[0].reported).toMatchObject({ chars: 8 });
   });
 });
 
@@ -516,6 +727,17 @@ describe("Cartesia", () => {
     });
   });
 
+  test("an error is read out and not billed: its errors consume no credits", async () => {
+    const f = scripted(() => new Response("Voice db6b0ed5 not found", { status: 404 }));
+    const r = reports();
+    await expect(provider(f.fetch).speak(line(cartesia, { sent: r.sent }))).rejects.toThrow(
+      "Cartesia answered 404: Voice db6b0ed5 not found",
+    );
+    expect(r.got).toEqual([
+      expect.objectContaining({ status: "failed", billed: false, error: expect.anything() }),
+    ]);
+  });
+
   test("its Test button reads one voice", async () => {
     const f = scripted(() =>
       Response.json({ data: [{ id: "v1", name: "Katie" }], has_more: true }),
@@ -529,7 +751,18 @@ describe("Cartesia", () => {
 describe("Qwen-Audio 3.0", () => {
   test("is sent Model Studio's body, and the audio is fetched from the link it answers with", async () => {
     const f = scripted(
-      () => Response.json({ output: { audio: { url: "http://oss.example/a.wav", data: "" } } }),
+      () =>
+        Response.json({
+          status_code: 200,
+          request_id: "5c63c65c",
+          code: "",
+          message: "",
+          output: {
+            finish_reason: "stop",
+            audio: { url: "http://oss.example/a.wav", data: "", expires_at: 1766113409 },
+          },
+          usage: { input_tokens: 0, output_tokens: 0, characters: 8 },
+        }),
       () => wavResponse(wav(24000, 24000)),
     );
     const r = reports();
@@ -548,8 +781,34 @@ describe("Qwen-Audio 3.0", () => {
     expect(f.sent[1].url).toBe("http://oss.example/a.wav");
     expect(headersOf(f.sent[1].init).has("authorization")).toBe(false);
     expect(clip.duration).toBeCloseTo(1);
-    expect(r.got).toHaveLength(1);
-    expect(r.got[0].status).toBe("done");
+    // one request, the download counted among its attempts, and the characters it billed
+    expect(r.got).toEqual([expect.objectContaining({ status: "done", billed: true, attempts: 2 })]);
+    expect(r.got[0].reported).toMatchObject({ chars: 8 });
+  });
+
+  test("a download that fails is the request failing, billed, its attempts counted", async () => {
+    const f = scripted(
+      () =>
+        Response.json({
+          output: { audio: { url: "http://oss.example/a.wav" } },
+          usage: { characters: 8 },
+        }),
+      () => new Response("upstream fell over", { status: 503 }),
+    );
+    const r = reports();
+    await expect(provider(f.fetch).speak(line(qwen, { sent: r.sent }))).rejects.toThrow(
+      "answered 503: upstream fell over",
+    );
+    // the synthesis once, the download 1 + its retries
+    expect(f.sent).toHaveLength(1 + 1 + qwen.maxRetries);
+    expect(r.got).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        billed: true,
+        attempts: 1 + 1 + qwen.maxRetries,
+      }),
+    ]);
+    expect(r.got[0].reported).toMatchObject({ chars: 8 });
   });
 
   test("an answer with no link says what Model Studio said", async () => {
@@ -559,5 +818,53 @@ describe("Qwen-Audio 3.0", () => {
     await expect(provider(f.fetch).speak(line(qwen))).rejects.toThrow(
       "no audio link: InvalidParameter, voice not found",
     );
+  });
+});
+
+// ---------- what every adapter reports ----------
+
+describe("what reaches the ledger from every adapter", () => {
+  const fish: ProviderTarget = {
+    ...gemini,
+    id: "fish",
+    name: "Fish Audio",
+    baseUrl: "https://api.fish.audio/v1",
+    model: "s2.1-pro",
+  };
+  const openai: ProviderTarget = {
+    ...gemini,
+    id: "openai",
+    name: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o-mini-tts",
+  };
+  const every = [fish, openai, gemini, eleven, breeze, minimax, cartesia, qwen].map(
+    (t) => [t.name, t] as const,
+  );
+
+  test.each(every)("%s: a 200 with no audio in it is a failure it billed", async (_, target) => {
+    const f = scripted(() => Response.json({ message: "nothing to say" }));
+    const r = reports();
+    await expect(provider(f.fetch).speak(line(target, { sent: r.sent }))).rejects.toThrow();
+    expect(r.got).toEqual([
+      expect.objectContaining({ status: "failed", billed: true, audioSeconds: 0 }),
+    ]);
+  });
+
+  test.each(every)("%s: a refusal is a failure it did not bill", async (_, target) => {
+    const f = scripted(() => Response.json({ message: "forbidden" }, { status: 403 }));
+    const r = reports();
+    await expect(provider(f.fetch).speak(line(target, { sent: r.sent }))).rejects.toThrow(
+      "answered 403: forbidden",
+    );
+    expect(f.sent).toHaveLength(1);
+    expect(r.got).toEqual([
+      expect.objectContaining({
+        status: "failed",
+        billed: false,
+        reported: null,
+        error: { code: 403, message: expect.stringContaining("forbidden") },
+      }),
+    ]);
   });
 });

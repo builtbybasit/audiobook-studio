@@ -1,45 +1,22 @@
 // What voices a speech endpoint offers, asked of the endpoint itself.
 //
-// Two catalogues, because Fish Audio has two: the account's own library (`self=true`), which is
-// what "Fetch from server" merges in, and the public catalogue anyone's voice can be picked from,
-// which the Voices tab searches a page at a time. A Fish voice's id is the model's `_id` — the
-// `reference_id` a line is spoken with — so a voice found either way is ready to use.
-//
-// Gemini's prebuilt voices are written down in its speech guide, so they are answered without a
-// request; ElevenLabs lists an account's voices at `GET /v2/voices` and BreezeBlue at
-// `GET /v1/voices`, a page at a time; MiniMax at `POST /v1/get_voice`, all at once; Cartesia at
-// `GET /voices`, a page after the last voice of the one before.
-//
-// An OpenAI-shaped endpoint has no standard way to say what voices it has. OpenAI itself lists its
-// built-in voices only in its documentation, so for `api.openai.com` the list is that one, written
-// down here. The local servers that copy OpenAI's API mostly answer `GET /audio/voices`
-// (Kokoro-FastAPI does), so anything else is asked that, and a server that does not answer it is
-// said to have no list rather than to have none.
+// Each provider lists its voices its own way, and its wire module (`speech/`) says how: Fish's
+// library a hundred models a page, ElevenLabs' at `GET /v2/voices` and BreezeBlue's at
+// `GET /v1/voices` a page at a time, MiniMax's at `POST /v1/get_voice` all at once, Cartesia's a
+// page after the last voice of the one before. Gemini's prebuilt voices, OpenAI's built-in ones and
+// each Qwen model's system voices are written down in their docs, so they are answered without a
+// request; any other OpenAI-shaped server is asked `GET /audio/voices`. Fish also has a public
+// catalogue, searched a page at a time, and is the only provider that has one.
 //
 // Listing spends nothing and changes nothing, which is why the route calls this whatever
 // `SPEECH_PROVIDER` says: the fakes stand in for requests that cost money, and this is not one.
-import {
-  fishApiRoot,
-  fishSampleOf,
-  fishVoiceLabel,
-  isBreezeBlue,
-  isCartesia,
-  isElevenLabs,
-  isFishAudio,
-  isGemini,
-  isMiniMax,
-  isQwen,
-  voicesFromFishModels,
-  type FishModel,
-} from "@/lib/endpointShapes";
-import type { FoundVoice, Gender, Voice } from "@/types";
-import { cartesiaVoicePage } from "~/providers/cartesiaSpeech";
-import { elevenLabsHeaders, elevenLabsRoot } from "~/providers/elevenLabsSpeech";
-import { GEMINI_VOICES } from "~/providers/geminiSpeech";
-import { miniMaxVoices } from "~/providers/miniMaxSpeech";
-import { QWEN_VOICES } from "~/providers/qwenSpeech";
-import { call, jsonHeaders, ProviderError, requireKey, type CallOptions } from "~/providers/http";
+import type { FoundVoice } from "@/types";
+import { ProviderError, requireKey, type CallOptions } from "~/providers/http";
+import { wireOf } from "~/providers/speech/registry";
 import type { ProviderTarget } from "~/providers/target";
+
+export { PUBLIC_PAGE } from "~/providers/speech/fish";
+export { OPENAI_VOICES } from "~/providers/speech/openai";
 
 /** Which catalogue to read, and for the public one what to look for. */
 export interface VoiceQuery {
@@ -68,343 +45,21 @@ export interface VoiceLister {
   list(target: ProviderTarget, query: VoiceQuery, signal: AbortSignal): Promise<VoicePage>;
 }
 
-/** What Fish's `GET /model` answers; see `fish-models` in the docs. */
-interface FishModelList {
-  total: number;
-  items: FishModel[];
-  has_more?: boolean | null;
-}
-
-/** Fish takes up to 100 a page. A library is read whole, up to this many pages. */
-const LIBRARY_PAGE = 100;
-const LIBRARY_PAGES = 10;
-/** A page of public results: enough to scroll, few enough to read. */
-export const PUBLIC_PAGE = 30;
-
-/** A Fish model id: 32 hex characters. Pasted into the search, it asks for that one voice. */
-const FISH_ID = /^[0-9a-f]{32}$/i;
-
-/**
- * OpenAI's built-in voices, from the `voice` parameter of
- * https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create —
- * there is no endpoint that lists them. OpenAI gives none of them a gender.
- */
-export const OPENAI_VOICES: readonly string[] = [
-  "alloy",
-  "ash",
-  "ballad",
-  "coral",
-  "echo",
-  "fable",
-  "onyx",
-  "nova",
-  "sage",
-  "shimmer",
-  "verse",
-  "marin",
-  "cedar",
-];
-
-const isOpenAi = (t: ProviderTarget): boolean =>
-  /(^|\/\/)api\.openai\.com(\/|:|$)/i.test(t.baseUrl);
-
-export function endpointVoiceLister(options: Omit<CallOptions, "signal"> = {}): VoiceLister {
-  const get = async <T>(target: ProviderTarget, url: string, signal: AbortSignal): Promise<T> => {
-    const res = await call(
-      target,
-      url,
-      { method: "GET", headers: jsonHeaders(target) },
-      { signal, ...options },
-    );
-    try {
-      return (await res.json()) as T;
-    } catch {
-      throw new ProviderError(
-        `${target.name} answered ${url} with something that is not JSON`,
-        res.status,
-        false,
-      );
-    }
-  };
-
-  async function fishLibrary(target: ProviderTarget, signal: AbortSignal): Promise<VoicePage> {
-    const root = fishApiRoot(target.baseUrl);
-    const models: FishModel[] = [];
-    let more = true;
-    for (let page = 1; more && page <= LIBRARY_PAGES; page++) {
-      const q = new URLSearchParams({
-        self: "true",
-        page_size: String(LIBRARY_PAGE),
-        page_number: String(page),
-      });
-      const body = await get<FishModelList>(target, `${root}/model?${q}`, signal);
-      const items = body.items ?? [];
-      models.push(...items);
-      // `has_more` may be null; then a full page is the only hint that another follows
-      more = (body.has_more ?? items.length === LIBRARY_PAGE) && items.length > 0;
-    }
-    const voices = voicesFromFishModels(models, fishVoiceLabel);
-    // `hasMore` here means the cap was reached with the library still going
-    return { voices, total: voices.length, page: 1, hasMore: more };
-  }
-
-  /** Public voices, each with Fish's own recording of it where there is one — free to play. */
-  const publicVoices = (models: FishModel[]): FoundVoice[] => {
-    const byId = new Map(models.map((m) => [m._id, m]));
-    return voicesFromFishModels(models, fishVoiceLabel).map((v) => {
-      const sample = fishSampleOf(byId.get(v.id)!);
-      return sample ? { ...v, sample } : v;
-    });
-  };
-
-  async function fishPublic(
-    target: ProviderTarget,
-    query: VoiceQuery,
-    signal: AbortSignal,
-  ): Promise<VoicePage> {
-    const root = fishApiRoot(target.baseUrl);
-    const words = query.query?.trim() ?? "";
-    if (FISH_ID.test(words)) {
-      // An id is not a title, and the search would not find it; ask for the model itself.
-      try {
-        const model = await get<FishModel>(target, `${root}/model/${words.toLowerCase()}`, signal);
-        const voices = publicVoices([model]);
-        return { voices, total: voices.length, page: 1, hasMore: false };
-      } catch (e) {
-        if (e instanceof ProviderError && e.status === 404)
-          return { voices: [], total: 0, page: 1, hasMore: false };
-        throw e;
-      }
-    }
-    const page = Math.max(1, Math.floor(query.page ?? 1));
-    const q = new URLSearchParams({
-      page_size: String(PUBLIC_PAGE),
-      page_number: String(page),
-      sort_by: "score",
-    });
-    if (words) q.set("title", words);
-    if (query.language?.trim()) q.set("language", query.language.trim());
-    const body = await get<FishModelList>(target, `${root}/model?${q}`, signal);
-    const items = body.items ?? [];
-    return {
-      // Fish cannot be asked for TTS models only, so the others are dropped from each page
-      voices: publicVoices(items),
-      total: body.total ?? items.length,
-      page,
-      hasMore: body.has_more ?? page * PUBLIC_PAGE < (body.total ?? 0),
-    };
-  }
-
-  /**
-   * An ElevenLabs account's voices — premade, cloned, designed and those saved from its library —
-   * a hundred a page, up to ten pages. Gender is one of a voice's free-form labels, when it has it.
-   */
-  async function elevenLabsVoices(target: ProviderTarget, signal: AbortSignal): Promise<VoicePage> {
-    const voices: Voice[] = [];
-    let token: string | null = null;
-    let more = true;
-    for (let page = 1; more && page <= LIBRARY_PAGES; page++) {
-      const q = new URLSearchParams({ page_size: String(LIBRARY_PAGE) });
-      if (token) q.set("next_page_token", token);
-      const res = await call(
-        target,
-        `${new URL(elevenLabsRoot(target.baseUrl)).origin}/v2/voices?${q}`,
-        { method: "GET", headers: elevenLabsHeaders(target) },
-        { signal, ...options },
-      );
-      const body = (await res.json().catch(() => null)) as {
-        voices?: { voice_id?: unknown; name?: unknown; labels?: Record<string, unknown> }[];
-        has_more?: unknown;
-        next_page_token?: unknown;
-      } | null;
-      for (const v of body?.voices ?? []) {
-        if (typeof v.voice_id !== "string" || !v.voice_id) continue;
-        const gender = String(v.labels?.gender ?? "").toLowerCase();
-        voices.push({
-          id: v.voice_id,
-          label: typeof v.name === "string" && v.name.trim() ? v.name.trim() : v.voice_id,
-          gender: gender === "male" ? "m" : gender === "female" ? "f" : "?",
-        });
-      }
-      token = typeof body?.next_page_token === "string" ? body.next_page_token : null;
-      more = body?.has_more === true && !!token;
-    }
-    return { voices, total: voices.length, page: 1, hasMore: more };
-  }
-
-  /**
-   * A BreezeBlue account's voices, `GET /v1/voices` a page at a time, up to ten pages. Unlike
-   * ElevenLabs it gives a voice's gender as a field of its own.
-   */
-  async function breezeVoices(target: ProviderTarget, signal: AbortSignal): Promise<VoicePage> {
-    const voices: Voice[] = [];
-    let token: string | null = null;
-    let more = true;
-    for (let page = 1; more && page <= LIBRARY_PAGES; page++) {
-      const q = token ? `?${new URLSearchParams({ next_page_token: token })}` : "";
-      const res = await call(
-        target,
-        `${elevenLabsRoot(target.baseUrl)}/voices${q}`,
-        { method: "GET", headers: elevenLabsHeaders(target) },
-        { signal, ...options },
-      );
-      const body = (await res.json().catch(() => null)) as {
-        voices?: { voice_id?: unknown; name?: unknown; gender?: unknown }[];
-        has_more?: unknown;
-        next_page_token?: unknown;
-      } | null;
-      for (const v of body?.voices ?? []) {
-        if (typeof v.voice_id !== "string" || !v.voice_id) continue;
-        const gender = String(v.gender ?? "").toLowerCase();
-        voices.push({
-          id: v.voice_id,
-          label: typeof v.name === "string" && v.name.trim() ? v.name.trim() : v.voice_id,
-          gender: gender.startsWith("m") ? "m" : gender.startsWith("f") ? "f" : "?",
-        });
-      }
-      token = typeof body?.next_page_token === "string" ? body.next_page_token : null;
-      more = body?.has_more === true && !!token;
-    }
-    return { voices, total: voices.length, page: 1, hasMore: more };
-  }
-
-  /**
-   * Cartesia's voices and the account's own, a hundred a page up to ten pages, each page after the
-   * last voice of the one before. Its gender is `masculine`, `feminine` or `gender_neutral`.
-   */
-  async function cartesiaVoices(target: ProviderTarget, signal: AbortSignal): Promise<VoicePage> {
-    const voices: Voice[] = [];
-    let more = true;
-    for (let page = 1; more && page <= LIBRARY_PAGES; page++) {
-      const found = await cartesiaVoicePage(
-        target,
-        signal,
-        options,
-        LIBRARY_PAGE,
-        voices.at(-1)?.id,
-      );
-      for (const v of found.voices)
-        voices.push({
-          id: v.id,
-          label: v.name,
-          gender:
-            v.gender === "masculine"
-              ? "m"
-              : v.gender === "feminine"
-                ? "f"
-                : v.gender === "gender_neutral"
-                  ? "n"
-                  : "?",
-        });
-      more = found.hasMore && found.voices.length > 0;
-    }
-    return { voices, total: voices.length, page: 1, hasMore: more };
-  }
-
-  async function openAiShaped(target: ProviderTarget, signal: AbortSignal): Promise<VoicePage> {
-    if (isOpenAi(target)) {
-      const voices = OPENAI_VOICES.map((id) => ({
-        id,
-        label: titleCase(id),
-        gender: "?" as const,
-      }));
-      return { voices, total: voices.length, page: 1, hasMore: false };
-    }
-    const url = `${target.baseUrl}/audio/voices`;
-    let body: unknown;
-    try {
-      body = await get<unknown>(target, url, signal);
-    } catch (e) {
-      if (e instanceof ProviderError && [404, 405, 501].includes(e.status))
-        throw new ProviderError(
-          `${target.name} has no voice list: GET ${url} answered ${e.status}. ` +
-            "Add its voices by id instead.",
-          e.status,
-          false,
-        );
-      throw e;
-    }
-    const voices = voicesFromList(body);
-    if (!voices)
-      throw new ProviderError(
-        `${target.name} answered GET ${url}, but not with a list of voices this app can read. ` +
-          "Add its voices by id instead.",
-        200,
-        false,
-      );
-    return { voices, total: voices.length, page: 1, hasMore: false };
-  }
-
+export function endpointVoiceLister(
+  options: Pick<CallOptions, "fetch" | "backoffMs"> = {},
+): VoiceLister {
   return {
     async list(target, query, signal) {
       requireKey(target);
-      const fish = isFishAudio(target);
-      if (query.source === "public") {
-        if (!fish)
-          throw new ProviderError(
-            `${target.name} has no public voice catalogue to search; only Fish Audio has one.`,
-            0,
-            false,
-          );
-        return fishPublic(target, query, signal);
-      }
-      if (fish) return fishLibrary(target, signal);
-      if (isGemini(target)) {
-        // the prebuilt voices, written down in Google's guide: nothing to ask for
-        const voices = GEMINI_VOICES.map((id) => ({ id, label: id, gender: "?" as const }));
-        return { voices, total: voices.length, page: 1, hasMore: false };
-      }
-      if (isElevenLabs(target)) return elevenLabsVoices(target, signal);
-      if (isBreezeBlue(target)) return breezeVoices(target, signal);
-      if (isCartesia(target)) return cartesiaVoices(target, signal);
-      if (isQwen(target)) {
-        // each model's system voices, written down in Alibaba's voice list: nothing to ask for
-        const voices = [...(QWEN_VOICES[target.model] ?? [])];
-        return { voices, total: voices.length, page: 1, hasMore: false };
-      }
-      if (isMiniMax(target)) {
-        // every voice the key can use, MiniMax's own and those made on it; none has a gender field
-        const found = await miniMaxVoices(target, signal, options);
-        const voices = found.map((v) => ({ ...v, gender: "?" as const }));
-        return { voices, total: voices.length, page: 1, hasMore: false };
-      }
-      return openAiShaped(target, signal);
+      const { wire } = wireOf(target);
+      if (query.source === "library") return wire.voices(target, signal, options);
+      if (!wire.search)
+        throw new ProviderError(
+          `${target.name} has no public voice catalogue to search; only Fish Audio has one.`,
+          0,
+          false,
+        );
+      return wire.search(target, query, signal, options);
     },
   };
-}
-
-const titleCase = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
-
-/**
- * Kokoro names a voice by accent and gender, `af_bella` being an American woman, and that second
- * letter is the only gender these servers give. A name in any other form says nothing.
- */
-function genderOfName(id: string): Gender {
-  const m = /^[a-z]([fm])_/i.exec(id);
-  return m ? (m[1].toLowerCase() as Gender) : "?";
-}
-
-/**
- * A voice list in the shapes the OpenAI-compatible servers answer with: `{voices: [...]}` or a bare
- * array, of names or of objects naming themselves `id`, `voice_id` or `name`. Null when it is none
- * of those.
- */
-function voicesFromList(body: unknown): Voice[] | null {
-  const list = Array.isArray(body)
-    ? body
-    : body && typeof body === "object" && Array.isArray((body as { voices?: unknown }).voices)
-      ? (body as { voices: unknown[] }).voices
-      : body && typeof body === "object" && Array.isArray((body as { data?: unknown }).data)
-        ? (body as { data: unknown[] }).data
-        : null;
-  if (!list) return null;
-  const voices: Voice[] = [];
-  for (const entry of list) {
-    const rec = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
-    const id = typeof entry === "string" ? entry : (rec?.id ?? rec?.voice_id ?? rec?.name);
-    if (typeof id !== "string" || !id.trim()) continue;
-    const name = typeof rec?.name === "string" && rec.name.trim() ? rec.name.trim() : id;
-    voices.push({ id: id.trim(), label: name, gender: genderOfName(id) });
-  }
-  return voices;
 }

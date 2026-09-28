@@ -181,7 +181,8 @@ describe("the budget", () => {
   test("lowered mid-run stops the job before its next line, and keeps the clip that landed", async () => {
     const gate = gatedSpeechProvider();
     const api = testApi({ speech: gate.provider });
-    const id = await voiced(api);
+    // one line out at a time, so "the next line" is every line after the first
+    const id = await voiced(api, speech({ concurrency: 1 }));
     const { body } = await narrate(api, id);
     await gate.started;
     await budget(api, id, { cap: 0.000001, paused: false });
@@ -196,5 +197,31 @@ describe("the budget", () => {
     // the rest were never sent, so they are neither rendered nor failed
     expect(rest.map((s) => s.audio.status)).toEqual(rest.map(() => "none"));
     expect(ledger(api)).toHaveLength(1);
+  });
+
+  test("lowered mid-run lets the lines already out land and be charged, and sends no more", async () => {
+    const gate = gatedSpeechProvider();
+    const api = testApi({ speech: gate.provider });
+    const id = await voiced(api, speech({ concurrency: 2 }));
+    const { body } = await narrate(api, id);
+    await gate.started;
+    // both slots taken before the cap drops: the second line is out as surely as the first
+    for (let i = 0; i < 50; i++) {
+      const out = (await linesOf(api, id)).filter((s) => s.audio.status === "generating");
+      if (out.length === 2) break;
+      await Bun.sleep(5);
+    }
+    await budget(api, id, { cap: 0.000001, paused: false });
+    gate.release();
+    await api.runner.idle();
+
+    const job = await jobById(api, (body as Queued).jobs[0].id);
+    expect(job.status).toBe("failed");
+    expect(job.activity?.at(-1)?.detail?.error).toMatch(/^Over the book's .* for the next line/);
+    const statuses = (await linesOf(api, id)).map((s) => s.audio.status);
+    expect(statuses.slice(0, 2)).toEqual(["done", "done"]);
+    expect(statuses.slice(2)).toEqual(statuses.slice(2).map(() => "none"));
+    expect(ledger(api)).toHaveLength(2);
+    expect(bookSpend(api.db, id).reserved).toBe(0);
   });
 });

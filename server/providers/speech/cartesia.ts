@@ -12,9 +12,17 @@
 // `<emotion value="calm"/>` — which is what the endpoint's Expressions tab is for.
 //
 // Voices are Cartesia's own and the account's, `GET /voices` a hundred a page, each page after
-// the last voice of the one before.
+// the last voice of the one before. Cartesia's own run to several hundred, so a list cut off at the
+// cap is followed by the account's alone (`is_owner=true`): a voice cloned here is never lost behind
+// the catalogue.
+//
+// A voice is cloned with `POST /voices/clone` (https://docs.cartesia.ai/api-reference/voices/clone),
+// as multipart under the same key and version: one `clip`, a `name`, the `language` it was recorded
+// in — English, the only language this app's books are in — and `access=private`, the default, set
+// so it cannot drift. The answer is the new voice, whose `id` is what a line is spoken with; it
+// says nothing of gender.
 import type { Voice } from "@/types";
-import { call, jsonHeaders } from "~/providers/http";
+import { authHeaders, call, jsonHeaders, ProviderError } from "~/providers/http";
 import type { SpeechCallOptions } from "~/providers/send";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
@@ -64,12 +72,14 @@ async function voicePage(
   options: SpeechCallOptions,
   limit: number,
   after?: string,
+  owned = false,
 ): Promise<{
   voices: { id: string; name: string; gender: string }[];
   hasMore: boolean;
 }> {
   const q = new URLSearchParams({ limit: String(limit) });
   if (after) q.set("starting_after", after);
+  if (owned) q.set("is_owner", "true");
   const res = await call(
     target,
     `${cartesiaRoot(target.baseUrl)}/voices?${q}`,
@@ -90,7 +100,66 @@ async function voicePage(
   return { voices, hasMore: body?.has_more === true };
 }
 
+/** Its gender is `masculine`, `feminine` or `gender_neutral`. */
+const genderOf = (gender: string): Voice["gender"] =>
+  gender === "masculine"
+    ? "m"
+    : gender === "feminine"
+      ? "f"
+      : gender === "gender_neutral"
+        ? "n"
+        : "?";
+
+/** Every voice `GET /voices` answers, page after page up to the cap; `more` when it was reached. */
+async function voicesListed(
+  target: ProviderTarget,
+  signal: AbortSignal,
+  options: SpeechCallOptions,
+  owned: boolean,
+): Promise<{ voices: Voice[]; more: boolean }> {
+  const voices: Voice[] = [];
+  let more = true;
+  for (let page = 1; more && page <= VOICE_PAGES; page++) {
+    const found = await voicePage(target, signal, options, VOICE_PAGE, voices.at(-1)?.id, owned);
+    for (const v of found.voices)
+      voices.push({ id: v.id, label: v.name, gender: genderOf(v.gender) });
+    more = found.hasMore && found.voices.length > 0;
+  }
+  return { voices, more };
+}
+
 export const cartesiaWire: SpeechWire = {
+  async clone(target, request, signal, options) {
+    const form = new FormData();
+    form.set("name", request.title);
+    form.set("language", "en");
+    form.set("access", "private");
+    // one clip: the route holds a clone to `cloning.maxClips` before it gets here
+    const [clip] = request.clips;
+    form.set("clip", clip.blob, clip.name);
+    const res = await call(
+      target,
+      `${cartesiaRoot(target.baseUrl)}/voices/clone`,
+      // no content-type: the multipart boundary is the form's to write
+      {
+        method: "POST",
+        headers: { ...authHeaders(target), "cartesia-version": CARTESIA_VERSION },
+        body: form,
+      },
+      { signal, ...options },
+    );
+    const body = (await res.json().catch(() => null)) as { id?: unknown; name?: unknown } | null;
+    if (typeof body?.id !== "string" || !body.id)
+      throw new ProviderError(
+        `${target.name} answered ${res.status} without the new voice's id`,
+        res.status,
+        false,
+      );
+    const name =
+      typeof body.name === "string" && body.name.trim() ? body.name.trim() : request.title;
+    return { id: body.id, label: name, gender: "?" };
+  },
+
   request(input, target, voice) {
     return {
       url: `${cartesiaRoot(target.baseUrl)}/tts/bytes`,
@@ -114,27 +183,13 @@ export const cartesiaWire: SpeechWire = {
     return { ok: true, message: `Answered in ${ms} ms; the key was accepted`, ms };
   },
 
-  /** Its gender is `masculine`, `feminine` or `gender_neutral`. */
   async voices(target, signal, options) {
-    const voices: Voice[] = [];
-    let more = true;
-    for (let page = 1; more && page <= VOICE_PAGES; page++) {
-      const found = await voicePage(target, signal, options, VOICE_PAGE, voices.at(-1)?.id);
-      for (const v of found.voices)
-        voices.push({
-          id: v.id,
-          label: v.name,
-          gender:
-            v.gender === "masculine"
-              ? "m"
-              : v.gender === "feminine"
-                ? "f"
-                : v.gender === "gender_neutral"
-                  ? "n"
-                  : "?",
-        });
-      more = found.hasMore && found.voices.length > 0;
-    }
-    return { voices, total: voices.length, page: 1, hasMore: more };
+    const all = await voicesListed(target, signal, options, false);
+    if (!all.more) return { voices: all.voices, total: all.voices.length, page: 1, hasMore: false };
+    // cut off at the cap: the account's own, which is where a clone of this app's is, come too
+    const listed = new Set(all.voices.map((v) => v.id));
+    const own = await voicesListed(target, signal, options, true);
+    const voices = [...all.voices, ...own.voices.filter((v) => !listed.has(v.id))];
+    return { voices, total: voices.length, page: 1, hasMore: true };
   },
 };

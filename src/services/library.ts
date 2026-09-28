@@ -14,11 +14,14 @@ import type {
   ChapterHistory,
   Character,
   ExportItem,
+  KeptSample,
   LexEntry,
   Pacing,
+  ScriptExportSamples,
   ScriptImportPlan,
   ScriptVersion,
   Segment,
+  SpeakerSamples,
   VersionOrigin,
 } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
@@ -222,6 +225,22 @@ export interface LibraryService {
    * applying the plan is the store's, through the same edits a restore makes.
    */
   planScriptImport(bookId: string, file: File): Promise<ScriptImportPlan>;
+  /** What ticking "Include voice samples" would add to this book's export: one entry per speaker. */
+  scriptExportSamples(bookId: string): Promise<ScriptExportSamples>;
+
+  // ---------- voice samples waiting with a speaker ----------
+  /**
+   * Keep the recordings `file` carries for these speakers, to wait with them until someone clones
+   * them. The server reads them from the file again; answers with what it kept.
+   */
+  storeSpeakerSamples(bookId: string, file: File, speakers: string[]): Promise<SpeakerSamples[]>;
+  speakerSamples(bookId: string): Promise<SpeakerSamples[]>;
+  /** One kept recording, as a file the clone form can send on. */
+  speakerSampleFile(bookId: string, sampleId: number, sample: KeptSample): Promise<File>;
+  /** Put a speaker's recordings aside: hidden at once, gone for good a day later. */
+  discardSpeakerSamples(bookId: string, sampleId: number): Promise<void>;
+  /** Bring back recordings put aside, while the server still holds them. */
+  restoreSpeakerSamples(bookId: string, sampleId: number): Promise<SpeakerSamples>;
 }
 
 export class HttpLibraryService implements LibraryService {
@@ -421,14 +440,59 @@ export class HttpLibraryService implements LibraryService {
   planScriptImport(bookId: string, file: File): Promise<ScriptImportPlan> {
     return this.http.postForm<ScriptImportPlan>(`/books/${seg(bookId)}/script-import`, file, {});
   }
+
+  scriptExportSamples(bookId: string): Promise<ScriptExportSamples> {
+    return this.http.get<ScriptExportSamples>(`/books/${seg(bookId)}/script-export/samples`);
+  }
+
+  async storeSpeakerSamples(
+    bookId: string,
+    file: File,
+    speakers: string[],
+  ): Promise<SpeakerSamples[]> {
+    const form = new FormData();
+    form.set("file", file);
+    form.set("speakers", JSON.stringify(speakers));
+    return (
+      await this.http.postFormData<{ stored: SpeakerSamples[] }>(
+        `/books/${seg(bookId)}/speaker-samples`,
+        form,
+      )
+    ).stored;
+  }
+
+  async speakerSamples(bookId: string): Promise<SpeakerSamples[]> {
+    return (
+      await this.http.get<{ samples: SpeakerSamples[] }>(`/books/${seg(bookId)}/speaker-samples`)
+    ).samples;
+  }
+
+  async speakerSampleFile(bookId: string, sampleId: number, sample: KeptSample): Promise<File> {
+    const blob = await this.http.getBlob(
+      `/books/${seg(bookId)}/speaker-samples/${sampleId}/files/${seg(sample.file)}`,
+    );
+    return new File([blob], sample.name, { type: blob.type });
+  }
+
+  async discardSpeakerSamples(bookId: string, sampleId: number): Promise<void> {
+    await this.http.delete<{ id: number }>(`/books/${seg(bookId)}/speaker-samples/${sampleId}`);
+  }
+
+  async restoreSpeakerSamples(bookId: string, sampleId: number): Promise<SpeakerSamples> {
+    return (
+      await this.http.post<{ sample: SpeakerSamples }>(
+        `/books/${seg(bookId)}/speaker-samples/${sampleId}/restore`,
+      )
+    ).sample;
+  }
 }
 
 /**
  * Where a book's script is downloaded from, as `<book>.script.zip`. A URL rather than a request:
  * the browser follows it and saves what comes back, the way a built audiobook is downloaded.
  */
-export function scriptExportUrl(bookId: string): string {
-  return `/api/books/${seg(bookId)}/script-export`;
+export function scriptExportUrl(bookId: string, samples = false): string {
+  return `/api/books/${seg(bookId)}/script-export${samples ? "?samples=1" : ""}`;
 }
 
 let service: LibraryService | null = null;

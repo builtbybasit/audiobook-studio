@@ -2,6 +2,7 @@
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
+import { megabytes, useSpeakerSamplesStore } from "@/stores/speakerSamples";
 
 // Book-wide cast, and the one place every field of a speaker can be edited.
 //
@@ -37,6 +38,7 @@ const castOpts = computed(() =>
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
+const samplesStore = useSpeakerSamplesStore();
 const voiceOpts = computed(() => endpointsStore.voiceOptions);
 const bookId = useBookId();
 // the cast: read from the server when the page opens, or the seeded world's
@@ -175,6 +177,15 @@ function revealFromQuery() {
 // scroll to is not in the document yet, so the record opened and the page stayed at the top.
 onMounted(revealFromQuery);
 watch(() => route.query.speaker, revealFromQuery);
+
+// Voice samples a script file brought for a speaker whose voice this install cannot reach: they
+// wait on the speaker's record, with the way to clone them and the way to let them go.
+void samplesStore.load(bookId);
+/** A speaker's waiting samples as a list of none or one, for the template to loop over. */
+const waiting = (name: string) => {
+  const w = samplesStore.waitingFor(bookId, name);
+  return w ? [w] : [];
+};
 
 // `?only=new` — the review inbox sends you here to work through the speakers a re-script brought
 // in, so the page arrives narrowed to them rather than showing all twenty-two names. Setting a ref
@@ -533,6 +544,36 @@ const duplicate = computed(
                       ><span>Voice</span>
                       <VoicePicker v-model="c.voice" :book-id="bookId" :speaker="c.name" block
                     /></label>
+                    <div
+                      v-for="w in waiting(c.name)"
+                      :key="w.id"
+                      class="rounded border border-violet-200 bg-violet-50 px-2 py-1.5 text-[11px] dark:border-violet-500/30 dark:bg-violet-500/10"
+                    >
+                      <div class="font-medium">Samples waiting</div>
+                      <div class="text-zinc-500">
+                        {{ w.samples.length }} recording{{ w.samples.length === 1 ? "" : "s" }} of
+                        “{{ w.title }}”,
+                        {{ megabytes(w.samples.reduce((n, x) => n + x.bytes, 0)) }} · from
+                        {{ w.source }}
+                      </div>
+                      <div class="mt-1 flex flex-wrap items-center gap-3">
+                        <RouterLink
+                          v-if="samplesStore.cloneLink(bookId, w)"
+                          :to="samplesStore.cloneLink(bookId, w)!"
+                          class="text-violet-700 hover:underline dark:text-violet-300"
+                          >Clone on the Voices tab →</RouterLink
+                        >
+                        <RouterLink v-else to="/endpoints" class="text-zinc-500 hover:underline"
+                          >Add a Fish endpoint to clone this voice</RouterLink
+                        >
+                        <button
+                          class="text-zinc-500 hover:text-red-600"
+                          @click="samplesStore.discard(bookId, w)"
+                        >
+                          Discard samples
+                        </button>
+                      </div>
+                    </div>
                     <label class="block space-y-1 text-xs font-medium"
                       ><span>Delivery style</span
                       ><input

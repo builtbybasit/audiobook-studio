@@ -8,6 +8,8 @@ import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useTransferStore } from "@/stores/transfer";
+import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
+import type { LibraryService } from "@/services/library";
 import { useUiStore } from "@/stores/ui";
 // Chapter script history: the versions a chapter's script has been through, and restoring one.
 //
@@ -30,7 +32,7 @@ import { readinessOf } from "@/lib/exports";
 import { keyring } from "@/lib/keyring";
 import { newProfile } from "@/lib/scripting";
 import { SEEDED_KEYS } from "@/mock";
-import type { ImportChapter, ScriptImportPlan, Segment } from "@/types";
+import type { ImportChapter, ScriptImportPlan, Segment, SpeakerSamples, VoiceRow } from "@/types";
 
 let timers = new Map<number, { fn: () => void; repeat: boolean }>();
 let clock = 1_000_000;
@@ -45,6 +47,7 @@ let narrationStore: ReturnType<typeof useNarrationStore>;
 let scriptingStore: ReturnType<typeof useScriptingStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
 let transferStore: ReturnType<typeof useTransferStore>;
+let samplesStore: ReturnType<typeof useSpeakerSamplesStore>;
 let uiStore: ReturnType<typeof useUiStore>;
 /** every undo a toast was given, in order */
 let undos: (() => void)[] = [];
@@ -78,6 +81,7 @@ beforeEach(() => {
   scriptingStore = useScriptingStore();
   scriptsStore = useScriptsStore();
   transferStore = useTransferStore();
+  samplesStore = useSpeakerSamplesStore();
   uiStore = useUiStore();
   // the real toast needs a DOM; this stub also keeps the last undo it was offered, which is how the
   // tests below take back a batch or a restore exactly as the toast's Undo button would
@@ -801,6 +805,136 @@ describe("importing a script file", () => {
     expect(castStore.lexiconOf("cliche")[0].say).toBe("Jih Ning");
     undoLast();
     expect(castStore.lexiconOf("cliche")[0].say).toBe(was);
+  });
+});
+
+describe("voice samples a script file carries", () => {
+  // The rest of the app stays in demo mode; only the samples store is handed a server, which answers
+  // from memory and writes down what it was asked.
+  const calls: string[] = [];
+  let held: SpeakerSamples[] = [];
+  const waiting = (id: number, speaker: string): SpeakerSamples => ({
+    id,
+    speaker,
+    title: `${speaker} (cloned)`,
+    consentAt: 1_700_000_000_000,
+    consentText: "This is my voice.",
+    source: "The Cliche.script.zip",
+    samples: [{ file: "a".repeat(32) + ".wav", name: "one.wav", format: "wav", bytes: 2048 }],
+  });
+  const server = {
+    storeSpeakerSamples: async (_book: string, _file: File, speakers: string[]) => {
+      calls.push(`store ${speakers.join(",")}`);
+      return speakers.map((s, i) => waiting(i + 1, s));
+    },
+    discardSpeakerSamples: async (_book: string, id: number) => {
+      calls.push(`discard ${id}`);
+    },
+    restoreSpeakerSamples: async (_book: string, id: number) => {
+      calls.push(`restore ${id}`);
+      return held.find((x) => x.id === id)!;
+    },
+  } as unknown as LibraryService;
+  /** Let the requests this store sent settle; the clock and its timers are the tests' own. */
+  const settle = async () => {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  };
+  beforeEach(() => {
+    calls.length = 0;
+    held = [];
+    samplesStore._service = () => server;
+  });
+  const row = (speaker: string, match: VoiceRow["match"]): VoiceRow => ({
+    speaker,
+    isNew: false,
+    current: null,
+    hint: { endpoint: "Fish", provider: "api.fish.audio", voiceId: "v", voiceLabel: "Theirs" },
+    match,
+    ticked: false,
+    samples: {
+      kind: "ok",
+      count: 1,
+      bytes: 2048,
+      consentAt: "2026-09-12T10:00:00Z",
+      consentText: "This is my voice.",
+    },
+  });
+
+  test("they wait with a speaker whose voice is private, and the import's Undo lets them go", async () => {
+    const chapter = segments(1).map((x, i) => ({ ...x, id: i + 1 }));
+    const narrator = chapter.find((x) => x.type === "narration")!;
+    narrator.direction = "slowly";
+    const speaker = chapter.find((x) => x.type === "dialogue")!.speaker;
+    const title = libraryStore.chapter("cliche", 1)!.title;
+    transferStore.plans.cliche = {
+      title: "The Cliche",
+      author: "",
+      name: "The Cliche.script.zip",
+      chapters: [{ chapterId: 1, title, fileTitle: title, file: "c/1.json", segments: chapter }],
+      refused: [],
+      ignored: [],
+      cast: { add: [], differ: [], aliases: [] },
+      lexicon: { add: [], differ: [] },
+      voices: [
+        row(speaker, { kind: "private" }),
+        // reachable here, so nothing waits: the voice itself can be used
+        row("Narrator", { kind: "here", options: [] }),
+        // no such speaker in the book: a sample has no one to wait with
+        row("Nobody Here", { kind: "unchecked", reason: "timed out" }),
+      ],
+    };
+    transferStore._hold("cliche", new File(["zip"], "The Cliche.script.zip"));
+
+    const report = transferStore.apply("cliche", [1])!;
+    expect(report.samples).toEqual([speaker]);
+    await settle();
+    expect(calls).toEqual([`store ${speaker}`]);
+    expect(samplesStore.waitingFor("cliche", speaker)?.id).toBe(1);
+
+    undoLast();
+    await settle();
+    expect(calls).toEqual([`store ${speaker}`, "discard 1"]);
+    expect(samplesStore.waitingOf("cliche")).toEqual([]);
+  });
+
+  test("a voice made from them goes to the speaker only if their voice has not moved since", async () => {
+    const [mo, lan] = castStore.charactersOf("cliche");
+    const was = mo.voice;
+    samplesStore.waiting.cliche = [waiting(1, mo.name), waiting(2, lan.name)];
+
+    expect(
+      await samplesStore.afterClone(
+        { bookId: "cliche", sampleId: 1, speaker: mo.name, was },
+        "fish/new-voice",
+      ),
+    ).toBe("assigned");
+    expect(mo.voice).toBe("fish/new-voice");
+    undoLast();
+    expect(mo.voice).toBe(was);
+
+    // chosen on the Cast page after the link was opened: left as chosen
+    lan.voice = "fish/picked-meanwhile";
+    expect(
+      await samplesStore.afterClone(
+        { bookId: "cliche", sampleId: 2, speaker: lan.name, was: null },
+        "fish/other-voice",
+      ),
+    ).toBe("kept");
+    expect(lan.voice).toBe("fish/picked-meanwhile");
+    // either way the recordings stop waiting: the voice keeps them now
+    expect(calls).toEqual(["discard 1", "discard 2"]);
+    expect(samplesStore.waitingOf("cliche")).toEqual([]);
+  });
+
+  test("discarded samples come back with Undo", async () => {
+    held = [waiting(7, "Elder Mo")];
+    samplesStore.waiting.cliche = [...held];
+    expect(await samplesStore.discard("cliche", held[0])).toBe(true);
+    expect(samplesStore.waitingOf("cliche")).toEqual([]);
+    undoLast();
+    await settle();
+    expect(calls).toEqual(["discard 7", "restore 7"]);
+    expect(samplesStore.waitingFor("cliche", "Elder Mo")?.id).toBe(7);
   });
 });
 

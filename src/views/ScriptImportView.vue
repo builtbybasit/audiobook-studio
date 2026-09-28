@@ -16,17 +16,26 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useHistoryStore } from "@/stores/history";
 import { useLibraryStore } from "@/stores/library";
 import { useTransferStore, type VoicePick } from "@/stores/transfer";
+import { megabytes, useSpeakerSamplesStore } from "@/stores/speakerSamples";
 import VoicePicker from "@/components/VoicePicker.vue";
 import { UiCheckbox } from "@/ui";
 import { plural } from "@/views/library/shared";
 import { FileUp as FileIcon, X as ClearIcon } from "@lucide/vue";
-import type { ImportChapter, RefusalReason, RestorePlan, VoiceRef, VoiceRow } from "@/types";
+import type {
+  ImportChapter,
+  RefusalReason,
+  RestorePlan,
+  VoiceRef,
+  VoiceRow,
+  VoiceRowSamples,
+} from "@/types";
 
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const historyStore = useHistoryStore();
 const libraryStore = useLibraryStore();
 const transferStore = useTransferStore();
+const samplesStore = useSpeakerSamplesStore();
 const bookId = useBookId();
 useCast(bookId);
 
@@ -191,7 +200,23 @@ function apply() {
   transferStore.apply(bookId, toApply.value, picks.value);
 }
 
+/** The line a private voice's row gives the recordings the file carries for it. */
+function samplesLine(s: VoiceRowSamples): string {
+  if (s.kind === "refused") return `Samples not kept: ${s.reason}`;
+  return (
+    `Samples included · ${plural(s.count, "recording")}, ${megabytes(s.bytes)} · ` +
+    `consent recorded ${new Date(s.consentAt).toLocaleDateString()}: “${s.consentText}”`
+  );
+}
+
 // ---------- the report ----------
+/** Each speaker whose samples the import kept, and where they can be cloned — once they are kept. */
+const keptSamples = computed(() =>
+  (report.value?.samples ?? []).map((speaker) => {
+    const waiting = samplesStore.waitingFor(bookId, speaker);
+    return { speaker, waiting, link: waiting ? samplesStore.cloneLink(bookId, waiting) : null };
+  }),
+);
 const castNow = computed(() => castStore.charactersOf(bookId));
 const lexNow = computed(() => castStore.lexiconOf(bookId));
 /** The differences that still stand: one taken from the file drops off the list. */
@@ -323,6 +348,38 @@ const SKIPPED = {
             <p v-if="report.voices" class="mt-1 text-xs">
               {{ plural(report.voices, "voice") }} set
             </p>
+          </section>
+
+          <section v-if="keptSamples.length" class="card p-4">
+            <h2 class="text-sm font-semibold">Voice samples waiting</h2>
+            <p class="mt-1 text-xs text-zinc-500">
+              The file carried the recordings these private voices were made from. They wait with
+              the speaker until you clone them — nothing is cloned for you, and cloning asks for
+              your own consent.
+            </p>
+            <div
+              v-for="k in keptSamples"
+              :key="k.speaker"
+              class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-zinc-100 pt-2 text-xs dark:border-zinc-800"
+            >
+              <span class="font-medium">{{ k.speaker }}</span>
+              <span v-if="!k.waiting" class="text-zinc-500">keeping…</span>
+              <template v-else>
+                <span class="text-zinc-500"
+                  >{{ plural(k.waiting.samples.length, "recording") }},
+                  {{ megabytes(k.waiting.samples.reduce((n, x) => n + x.bytes, 0)) }}</span
+                >
+                <RouterLink
+                  v-if="k.link"
+                  :to="k.link"
+                  class="ml-auto text-violet-700 hover:underline dark:text-violet-300"
+                  >Clone on the Voices tab →</RouterLink
+                >
+                <RouterLink v-else to="/endpoints" class="ml-auto text-zinc-500 hover:underline"
+                  >Add a Fish endpoint to clone this voice</RouterLink
+                >
+              </template>
+            </div>
           </section>
 
           <section v-if="plan.refused.length || plan.ignored.length" class="card p-4">
@@ -542,6 +599,17 @@ const SKIPPED = {
                   </div>
                   <div v-else class="text-zinc-500">
                     {{ row.hint.voiceLabel }} — a private voice on another account
+                  </div>
+                  <div
+                    v-if="row.samples"
+                    class="mt-0.5 text-[11px]"
+                    :class="
+                      row.samples.kind === 'refused'
+                        ? 'text-amber-700 dark:text-amber-400'
+                        : 'text-zinc-500'
+                    "
+                  >
+                    {{ samplesLine(row.samples) }}
                   </div>
                   <div class="mt-1 flex flex-wrap items-center gap-2">
                     <button

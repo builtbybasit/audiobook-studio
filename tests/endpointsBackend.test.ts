@@ -581,6 +581,22 @@ describe("voices with a server answering", () => {
     ]);
   });
 
+  test("a found voice added to the endpoint keeps only the voice, not Fish's recording of it", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    const found = {
+      id: "f1",
+      label: "Narrator",
+      gender: "m" as const,
+      sample: { url: "https://platform.r2.fish.audio/task/x.mp3", text: "Hello." },
+    };
+    expect(endpointsStore.addVoice(ep, found)).toBe(true);
+    expect(ep.voices.at(-1)).toEqual({ id: "f1", label: "Narrator", gender: "m" });
+    await settle();
+    expect(JSON.stringify(svc.puts.at(-1))).not.toContain("r2.fish.audio");
+  });
+
   test("a public search asks the server for that page and adds nothing by itself", async () => {
     svc.held = server();
     await endpointsStore.load();

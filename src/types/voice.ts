@@ -9,6 +9,15 @@ export interface Voice {
   label: string;
 }
 
+/**
+ * A voice a provider's catalogue answered with, before anyone adds it to an endpoint. Fish Audio's
+ * public voices come with a recording of their own; adding one keeps only the `Voice`.
+ */
+export interface FoundVoice extends Voice {
+  /** the provider's own recording of this voice — free to play, nothing is rendered */
+  sample?: { url: string; text: string };
+}
+
 /** One option row in the voice pickers. */
 export interface VoiceOption {
   value: VoiceRef;

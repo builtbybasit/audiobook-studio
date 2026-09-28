@@ -15,12 +15,13 @@
 // `SPEECH_PROVIDER` says: the fakes stand in for requests that cost money, and this is not one.
 import {
   fishApiRoot,
+  fishSampleOf,
   fishVoiceLabel,
   isFishAudio,
   voicesFromFishModels,
   type FishModel,
 } from "@/lib/endpointShapes";
-import type { Gender, Voice } from "@/types";
+import type { FoundVoice, Gender, Voice } from "@/types";
 import { call, jsonHeaders, ProviderError, requireKey, type CallOptions } from "~/providers/http";
 import type { ProviderTarget } from "~/providers/target";
 
@@ -38,7 +39,8 @@ export interface VoiceQuery {
 
 /** One answer: the voices, and where they sit in the whole list. */
 export interface VoicePage {
-  voices: Voice[];
+  /** a public Fish voice carries Fish's own recording of it, when it has one */
+  voices: FoundVoice[];
   /** how many the provider says match, which may count some that are not voices */
   total: number;
   page: number;
@@ -130,6 +132,15 @@ export function endpointVoiceLister(options: Omit<CallOptions, "signal"> = {}): 
     return { voices, total: voices.length, page: 1, hasMore: more };
   }
 
+  /** Public voices, each with Fish's own recording of it where there is one — free to play. */
+  const publicVoices = (models: FishModel[]): FoundVoice[] => {
+    const byId = new Map(models.map((m) => [m._id, m]));
+    return voicesFromFishModels(models, fishVoiceLabel).map((v) => {
+      const sample = fishSampleOf(byId.get(v.id)!);
+      return sample ? { ...v, sample } : v;
+    });
+  };
+
   async function fishPublic(
     target: ProviderTarget,
     query: VoiceQuery,
@@ -141,7 +152,7 @@ export function endpointVoiceLister(options: Omit<CallOptions, "signal"> = {}): 
       // An id is not a title, and the search would not find it; ask for the model itself.
       try {
         const model = await get<FishModel>(target, `${root}/model/${words.toLowerCase()}`, signal);
-        const voices = voicesFromFishModels([model], fishVoiceLabel);
+        const voices = publicVoices([model]);
         return { voices, total: voices.length, page: 1, hasMore: false };
       } catch (e) {
         if (e instanceof ProviderError && e.status === 404)
@@ -161,7 +172,7 @@ export function endpointVoiceLister(options: Omit<CallOptions, "signal"> = {}): 
     const items = body.items ?? [];
     return {
       // Fish cannot be asked for TTS models only, so the others are dropped from each page
-      voices: voicesFromFishModels(items, fishVoiceLabel),
+      voices: publicVoices(items),
       total: body.total ?? items.length,
       page,
       hasMore: body.has_more ?? page * PUBLIC_PAGE < (body.total ?? 0),

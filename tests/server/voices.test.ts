@@ -152,6 +152,34 @@ describe("a Fish public search", () => {
     });
   });
 
+  test("a voice carries Fish's own recording of it, and a library voice or a non-https link does not", async () => {
+    const recording = (audio: string, text = "Choose your fighter!") => ({
+      samples: [{ title: "Default Sample", text, task_id: "t", audio }],
+    });
+    const cdn = "https://platform.r2.fish.audio/task/265105e4556b4c0f906b0f426de988da.mp3";
+    const { api: t } = await api(() =>
+      json({
+        total: 4,
+        items: [
+          model("rec", recording(cdn)),
+          model("plain", recording("http://example.test/a.mp3")),
+          model("odd", recording("javascript:alert(1)")),
+          model("none"),
+        ],
+      }),
+    );
+    const found = await list(t, { source: "public", query: "voice" });
+    expect(found.body.voices.map((v) => [v.id, v.sample ?? null])).toEqual([
+      ["rec", { url: cdn, text: "Choose your fighter!" }],
+      ["plain", null],
+      ["odd", null],
+      ["none", null],
+    ]);
+    // what "Fetch" merges into the endpoint is only ever the voice
+    const library = await list(t, { source: "library" });
+    expect(library.body.voices.every((v) => !("sample" in v))).toBe(true);
+  });
+
   test("a pasted id asks for that one model, and an unknown one finds nothing", async () => {
     const id = "933563129e564b19a115bedd57b7406a";
     const { api: t, seen } = await api((url) =>

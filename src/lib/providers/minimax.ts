@@ -55,7 +55,24 @@ export const minimax: SpeechProviderShape = {
         },
   // Its error codes are refusals to retry or fix; nothing in its docs says one is charged.
   billsFailures: false,
-  cloning: null,
+  // https://platform.minimax.io/docs/api-reference/voice-cloning-clone and the guide beside it,
+  // https://platform.minimax.io/docs/guides/speech-voice-clone: one file, uploaded for
+  // `voice_clone`, in MP3, M4A or WAV, of 10 seconds to 5 minutes and up to 20 MB. The fee is on
+  // https://platform.minimax.io/docs/guides/pricing-paygo (rapid voice cloning), and the deletion
+  // of a voice left unused is the first line of the clone reference. `get_voice`
+  // (https://platform.minimax.io/docs/api-reference/voice-management-get) lists a cloned voice
+  // "only after first use", so a new one is not in "Fetch from server" until it has spoken.
+  cloning: {
+    maxClips: 1,
+    maxClipBytes: 20 * 1024 * 1024,
+    formats: ["wav", "mp3", "m4a"],
+    advice:
+      "MiniMax makes a voice from one clip of 10 seconds to 5 minutes. " +
+      "It shows under Fetch from server once a line has been spoken with it.",
+    cost:
+      "MiniMax charges $1.50 a voice the first time a line is spoken with it, not when it is " +
+      "made, and deletes a voice that is not used within 7 days.",
+  },
   models: [
     "speech-2.8-hd",
     "speech-2.8-turbo",

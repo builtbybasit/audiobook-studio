@@ -15,10 +15,24 @@
 //
 // Only the words are sent. MiniMax takes delivery as interjections in the text — `(laughs)`,
 // `(sighs)` — and pauses as `<#0.5#>`, which is what the endpoint's Expressions tab is for.
-import type { SpeechUsage } from "@/types";
+//
+// A voice is cloned in two requests (https://platform.minimax.io/docs/guides/speech-voice-clone):
+// the sample goes up to `POST /v1/files/upload` as multipart with `purpose=voice_clone`
+// (https://platform.minimax.io/docs/api-reference/file-management-upload), which answers with a
+// `file_id`; then `POST /v1/voice_clone`
+// (https://platform.minimax.io/docs/api-reference/voice-cloning-clone) makes the voice from that
+// file under a `voice_id` the caller chooses, and answers with no id of its own. Only the two
+// required fields are sent: a preview `text` is billed per character, and noise reduction and
+// volume normalisation are left at MiniMax's default, off, so the voice is made from the sample as
+// it was picked. Each request goes out once, and a failure says which of the two it was: a failed
+// upload never reaches the clone. A clone that timed out may still have made its voice; since
+// MiniMax charges a voice on its first use and deletes one unused for 7 days, that one costs
+// nothing, and the next attempt's random `voice_id` cannot collide with it.
+import type { SpeechUsage, Voice } from "@/types";
 import { normalizeSpeechUsage } from "@/lib/pricing";
 import { audioAnswer, jsonAnswer } from "~/providers/answer";
-import { call, jsonHeaders, ProviderError } from "~/providers/http";
+import type { CloneRequest } from "~/providers/clone";
+import { authHeaders, call, jsonHeaders, ProviderError } from "~/providers/http";
 import type { SpeechCallOptions } from "~/providers/send";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
@@ -126,7 +140,120 @@ export async function miniMaxVoices(
   return out;
 }
 
+// ---------- cloning ----------
+
+/**
+ * The `voice_id` a clone is made under, from its title: MiniMax's rules are 8 to 256 characters,
+ * an English letter first, only letters, digits, `-` and `_`, not ending in `-` or `_`, and not an
+ * id the account already has. So the title is folded to plain letters and digits joined by `-`,
+ * led by a letter (`voice` in front when it would not be), and ends in random hex — a second
+ * clone with the same title is a second voice rather than a refusal. `random` is for the tests.
+ */
+export function miniMaxVoiceId(
+  title: string,
+  random: () => string = () => crypto.randomUUID().replaceAll("-", "").slice(0, 10),
+): string {
+  const words = title
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .replace(/[^A-Za-z0-9]+/g, "-")
+    .slice(0, 40)
+    .replace(/^-+|-+$/g, "");
+  const lead = /^[A-Za-z]/.test(words) ? words : `voice${words ? `-${words}` : ""}`;
+  return `${lead}-${random()}`;
+}
+
+/**
+ * The upload's `file.file_id`, as the digits MiniMax sent. It is an int64, which a JavaScript
+ * number holds exactly only up to 2^53, so an id past that is taken from the answer's own text
+ * rather than from the number `JSON.parse` rounded it to. Null when there is none.
+ */
+function fileIdIn(text: string): string | null {
+  let id: unknown;
+  try {
+    id = (JSON.parse(text) as { file?: { file_id?: unknown } } | null)?.file?.file_id;
+  } catch {
+    return null;
+  }
+  if (typeof id === "string") return /^\d+$/.test(id) ? id : null;
+  if (typeof id !== "number" || !Number.isInteger(id) || id < 0) return null;
+  if (Number.isSafeInteger(id)) return String(id);
+  return /"file_id"\s*:\s*(\d+)/.exec(text)?.[1] ?? null;
+}
+
+/**
+ * One step of a clone, sent once (the target has no retries), its failure put in words that say
+ * which step it was. A cancel is the job's own, and passes through as it is.
+ */
+async function step<T>(doing: string, send: () => Promise<T>): Promise<T> {
+  try {
+    return await send();
+  } catch (e) {
+    if (!(e instanceof ProviderError)) throw e;
+    throw new ProviderError(`${doing}: ${e.message}`, e.status, e.retryable, e.rateLimited);
+  }
+}
+
+/** The upload, then the clone; see the top of this file. */
+async function miniMaxClone(
+  target: ProviderTarget,
+  request: CloneRequest,
+  signal: AbortSignal,
+  options: SpeechCallOptions,
+): Promise<Voice> {
+  // the route holds a clone to `cloning.maxClips`, which is 1; this is its guard, not the rule
+  const [clip] = request.clips;
+  if (!clip || request.clips.length > 1)
+    throw new ProviderError(`${target.name} makes a voice from exactly one sample`, 0, false);
+  const root = miniMaxRoot(target.baseUrl);
+  const check = checkOf(target);
+
+  const uploading = `Uploading ${clip.name} to ${target.name} failed`;
+  const fileId = await step(uploading, async () => {
+    const form = new FormData();
+    form.set("purpose", "voice_clone");
+    form.set("file", clip.blob, clip.name);
+    const res = await call(
+      target,
+      `${root}/files/upload`,
+      // no content-type: the multipart boundary is the form's to write
+      { method: "POST", headers: authHeaders(target), body: form },
+      { signal, ...options, check },
+    );
+    const id = fileIdIn(await res.text().catch(() => ""));
+    if (!id)
+      throw new ProviderError(`${target.name} answered without the file's id`, res.status, false);
+    return id;
+  });
+
+  const voiceId = miniMaxVoiceId(request.title);
+  await step(`${clip.name} was uploaded, but making the voice from it failed`, async () => {
+    const res = await call(
+      target,
+      `${root}/voice_clone`,
+      {
+        method: "POST",
+        headers: jsonHeaders(target),
+        // the file id written as MiniMax sent it, digits and not a string: see `fileIdIn`
+        body: `{"file_id":${fileId},"voice_id":${JSON.stringify(voiceId)}}`,
+      },
+      { signal, ...options, check },
+    );
+    // `check` has turned away a refusal; what is left must say it succeeded, and not by silence
+    const body = (await res.json().catch(() => null)) as BaseResp | null;
+    if (body?.base_resp?.status_code !== 0)
+      throw new ProviderError(
+        `${target.name} answered ${res.status} without saying the voice was made`,
+        res.status,
+        false,
+      );
+  });
+  return { id: voiceId, label: request.title, gender: "?" };
+}
+
 export const miniMaxWire: SpeechWire = {
+  clone: miniMaxClone,
+
   request(input, target, voice) {
     const { format } = input.encoding;
     return {

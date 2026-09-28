@@ -17,6 +17,7 @@ import type {
   ClonedVoice,
   Endpoint,
   EndpointKind,
+  EndpointLive,
   FoundVoice,
   KeptVoiceSamples,
   Profile,
@@ -25,9 +26,9 @@ import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { isBackend } from "@/services/mode";
 
 /**
- * The parts of an endpoint that are this browser's record of its requests rather than its
- * configuration. The server keeps none of them: it answers with them empty and ignores them in a
- * write.
+ * The parts of an endpoint that are a record of its requests rather than its configuration. The
+ * server stores none of them: it answers with them empty and ignores them in a write. The rate
+ * limits and the cooldown are filled in from what its process has seen (`live`) instead.
  */
 export const ENDPOINT_TELEMETRY = [
   "history",
@@ -133,6 +134,13 @@ export interface EndpointSettingsService {
   forgetSamples(id: string, voice: string): Promise<void>;
   /** Take back a forget no save has made final yet; answers with the recordings. */
   restoreSamples(id: string, voice: string): Promise<KeptVoiceSamples>;
+  /**
+   * What the server's process has seen of each speech endpoint it has sent to: lines out and held,
+   * rate limits, the end of a cooldown. Not configuration, but the telemetry the configuration
+   * comes back without, which is why it is asked for here. An endpoint absent from the answer has
+   * had nothing sent to it since the server started.
+   */
+  live(): Promise<Record<string, EndpointLive>>;
 }
 
 /** What a voice is made from: a name, the recordings, and the person's say-so. */
@@ -192,6 +200,11 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
 
   restoreSamples(id: string, voice: string): Promise<KeptVoiceSamples> {
     return this.http.post<KeptVoiceSamples>(`${samplesPath(id, voice)}/restore`);
+  }
+
+  async live(): Promise<Record<string, EndpointLive>> {
+    return (await this.http.get<{ endpoints: Record<string, EndpointLive> }>("/endpoints/live"))
+      .endpoints;
   }
 
   async sampleVoice(id: string, voice: string): Promise<VoiceSample> {

@@ -11,9 +11,12 @@
 // the whole of it. What the server answers is what the store then holds. Demo mode has no server
 // and none of this runs; the seeded configuration is simply what the page edits.
 //
-// The request history, failure counts and back-off on each endpoint are not configuration. They
-// are this browser's record of what it sent, the server never stores them, and neither sending nor
-// installing a configuration touches them.
+// The request history, failure counts and back-off on each endpoint are not configuration. The
+// server never stores them, and neither sending nor installing a configuration touches them. In the
+// demo they are the simulator's record of what it sent; with a server answering, the rate limits
+// and the cooldown are the server's gate's (`_installLive`), read while narration is running, and
+// the lines each endpoint has out and held sit beside the endpoints in `live` rather than on them.
+// Either way they are left out of what the write-behind watches, so a poll never sends a save.
 import { watch } from "vue";
 import { credentials } from "@/lib/credentials";
 import { isFishAudio, presetById } from "@/lib/endpoints";
@@ -42,6 +45,7 @@ import type {
   ConnectionTest,
   Endpoint,
   EndpointKind,
+  EndpointLive,
   ExpressionConfig,
   KeptVoiceSamples,
   Profile,
@@ -64,7 +68,15 @@ interface EndpointsState {
   profiles: Profile[];
   /** Backend mode: whether the configuration has been read from the server yet. */
   loaded: boolean;
+  /**
+   * Backend mode: what the server's process last said of each speech endpoint it has sent to, by
+   * id (`GET /api/endpoints/live`). Empty in the demo, and until narration first runs.
+   */
+  live: Record<string, EndpointLive>;
 }
+
+/** An endpoint the server has sent nothing to: nothing out, nothing held. */
+const IDLE: EndpointLive = { active: 0, waiting: 0, rateLimits: 0, backoffUntil: 0 };
 
 /** How long the configuration has to sit still before it is sent. A number box sends nothing
  *  per keystroke; a pause sends the value typed. */
@@ -145,8 +157,18 @@ export const useEndpointsStore = defineStore("endpoints", {
       ? { endpoints: [], profiles: [] }
       : seedState("endpoints", "profiles")),
     loaded: false,
+    live: {},
   }),
   getters: {
+    /**
+     * Lines out at a speech endpoint and lines held for it, across every job, as the server counts
+     * them — or null in the demo, whose counts are derived from the clips the simulator is moving.
+     * The server's are the truth with one answering: the clips the browser has loaded are only
+     * those of the chapters it has opened, and the gate counts every job's lines.
+     */
+    serverLoad(s): (id: string) => EndpointLive | null {
+      return (id) => (activeEndpointSettingsService() ? (s.live[id] ?? IDLE) : null);
+    },
     enabledEndpoints(s): Endpoint[] {
       return s.endpoints.filter((e) => e.enabled);
     },
@@ -222,6 +244,20 @@ export const useEndpointsStore = defineStore("endpoints", {
       credentials.splice(0, credentials.length, ...answer.credentials);
       // What the watch will see next is the answer, and the answer is not a change to send.
       held = JSON.stringify(this._config());
+    },
+    /**
+     * Hold what the server's process last said of its speech endpoints, and put each one's rate
+     * limits and cooldown on the endpoint, where the wait reasons and the effective limit read
+     * them. An endpoint the answer leaves out has had nothing sent to it, so it is not cooling
+     * down. Both fields are telemetry, which the write-behind never sees, so this sends nothing.
+     */
+    _installLive(live: Record<string, EndpointLive>): void {
+      this.live = live;
+      for (const ep of this.endpoints) {
+        const seen = live[ep.id] ?? IDLE;
+        ep.rateLimits = seen.rateLimits;
+        ep.backoffUntil = seen.backoffUntil;
+      }
     },
     /**
      * Read the configuration from the server. Demo mode is already holding one.

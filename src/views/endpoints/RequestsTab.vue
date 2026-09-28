@@ -259,7 +259,17 @@ const limitNote = computed(() => {
               label="Rate-limit cooldown in seconds"
           /></label>
         </div>
-        <p class="mt-2 text-[11px] leading-relaxed text-zinc-500">
+        <p
+          v-if="isBackend && u.kind === 'tts'"
+          class="mt-2 text-[11px] leading-relaxed text-zinc-500"
+        >
+          The server uses all three from the next request. A rate limit holds every line for this
+          endpoint until the cooldown ends, not only the one refused.
+        </p>
+        <p v-else-if="isBackend" class="mt-2 text-[11px] leading-relaxed text-zinc-500">
+          The server uses all three; a run keeps the ones it was queued with.
+        </p>
+        <p v-else class="mt-2 text-[11px] leading-relaxed text-zinc-500">
           The cooldown is live: the simulated transport uses it the next time this endpoint is rate
           limited. The timeout and retry limit are recorded and exported with your settings, but the
           prototype’s transport doesn’t enforce them — a backend would.
@@ -464,7 +474,11 @@ const limitNote = computed(() => {
           <dt class="w-24 shrink-0 font-medium text-emerald-600 dark:text-emerald-400">
             Immediately
           </dt>
-          <dd class="text-zinc-500">
+          <dd v-if="isBackend && u.kind === 'scripting'" class="text-zinc-500">
+            Pause and resume: a paused endpoint can’t start a run. One already queued or going
+            carries on.
+          </dd>
+          <dd v-else class="text-zinc-500">
             Pause and resume, and concurrency — the dispatcher reads them before every request, so
             lowering concurrency mid-run just narrows the next batch.
             <template v-if="u.kind === 'tts'">
@@ -476,9 +490,10 @@ const limitNote = computed(() => {
           <dt class="w-24 shrink-0 font-medium text-violet-600 dark:text-violet-400">Next job</dt>
           <dd class="text-zinc-500">
             <template v-if="u.kind === 'scripting'"
-              >Base URL, model, chunking, output ceiling and prices. A queued job carries a snapshot
-              of all of these, so a run finishes on the settings it started with and its recorded
-              cost stays honest.</template
+              >Base URL, model, chunking, output ceiling and prices<template v-if="isBackend"
+                >, and concurrency, timeouts and retries</template
+              >. A queued job carries a snapshot of all of these, so a run finishes on the settings
+              it started with and its recorded cost stays honest.</template
             >
             <template v-else
               >Base URL, model, audio format, sample rate and prices. Clips already rendered keep
@@ -488,7 +503,8 @@ const limitNote = computed(() => {
         </div>
       </dl>
       <p v-if="isBackend" class="mt-2 text-[11px] text-zinc-500">
-        Saved to the server a moment after each change, and read by the next line it sends.
+        Saved to the server a moment after each change, and read by the next
+        {{ u.kind === "tts" ? "line" : "run" }} it sends.
       </p>
       <p v-else class="mt-2 flex items-center gap-1.5 text-[11px] text-zinc-500">
         <UiTooltip

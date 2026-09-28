@@ -486,7 +486,9 @@ function remove() {
       <div
         class="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800"
       >
-        <span class="text-[11px] text-zinc-500"
+        <span v-if="onServer" class="text-[11px] text-zinc-500"
+          >Changes apply to new runs; a paused endpoint can’t start one.</span
+        ><span v-else class="text-[11px] text-zinc-500"
           >Changes apply to new jobs. Enable/pause and concurrency apply live.</span
         ><button class="text-xs text-red-600 hover:underline dark:text-red-400" @click="remove">
           Remove endpoint

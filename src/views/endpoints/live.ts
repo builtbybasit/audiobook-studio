@@ -11,12 +11,18 @@
 //
 // All of it is make-believe in the sense that no provider is called; the flag separates "made up
 // before you got here" from "you did this", and the list labels each.
+//
+// With a server answering, a speech endpoint's busy and waiting counts are the server's gate's
+// (`endpointsStore.serverLoad`, read by `useEndpointLive`), across every job and every chapter
+// rather than the chapters this browser has open, and its cooldown is the gate's too — so the wait
+// reasons and the effective limit say what the server is actually holding the lines for.
 import { keyInPlace } from "@/services/endpointSettings";
 import type { Job, RequestRecord, WaitReason } from "@/types";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 
 import { useScriptsStore } from "@/stores/scripts";
 import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 
@@ -36,8 +42,14 @@ export function useEndpointActivity() {
   const castStore = useCastStore();
   const jobsStore = useJobsStore();
   const libraryStore = useLibraryStore();
-  /** Segments routed to this TTS endpoint, by the voice their speaker resolves to. */
+  const endpointsStore = useEndpointsStore();
+  /**
+   * Lines out at this TTS endpoint and lines waiting for it: the server's gate's counts with one
+   * answering, otherwise the segments routed here, by the voice their speaker resolves to.
+   */
   function ttsCounts(u: UnifiedEndpoint): { active: number; queued: number } {
+    const server = endpointsStore.serverLoad(u.id);
+    if (server) return { active: server.active, queued: server.waiting };
     let active = 0;
     let queued = 0;
     for (const [k, segs] of Object.entries(scriptsStore.segments)) {

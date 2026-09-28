@@ -13,6 +13,7 @@ import { useScriptsStore } from "@/stores/scripts";
 // and which of them can't currently render.
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { keyInPlace } from "@/services/endpointSettings";
+import { useEndpointLive } from "@/queries";
 import {
   ArrowUpRight as ArrowIcon,
   Server as EndpointIcon,
@@ -35,6 +36,8 @@ onMounted(() => {
   clock = setInterval(() => (now.value = Date.now()), 1000);
 });
 onUnmounted(() => clearInterval(clock));
+// a cooldown on the server is the gate's, read while narration runs
+useEndpointLive();
 
 /** Deep link to the one page that edits endpoints, landing on the tab that fixes this. */
 const settingsLink = (e: Endpoint, tab = "overview") =>

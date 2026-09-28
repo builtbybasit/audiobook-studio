@@ -12,6 +12,7 @@ import { makeJobHistory } from "@/mock";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { ApiError } from "@/services/http";
+import { activeEndpointSettingsService } from "@/services/endpointSettings";
 import { activeJobsService, type JobsService } from "@/services/jobs";
 import { activeUsageService } from "@/services/usage";
 import type {
@@ -65,6 +66,11 @@ export const useJobsStore = defineStore("jobs", {
     activeJobs(s): Job[] {
       return s.jobs.filter((j) => j.status === "running" || j.status === "queued");
     },
+    /**
+     * Each speech endpoint's busy slots, and the clips it has done and failed in the chapters this
+     * browser has loaded. With a server answering the busy count is the server's gate's, which
+     * counts every job's lines; the demo's is its clips that are rendering.
+     */
     endpointLoad(): Record<string, EndpointLoad> {
       const endpointsStore = useEndpointsStore();
       const scriptsStore = useScriptsStore();
@@ -72,15 +78,22 @@ export const useJobsStore = defineStore("jobs", {
       const load: Record<string, EndpointLoad> = Object.fromEntries(
         endpointsStore.endpoints.map((e) => [
           e.id,
-          { active: 0, done: 0, failed: 0, backoff: e.backoffUntil > Date.now() },
+          {
+            active: endpointsStore.serverLoad(e.id)?.active ?? 0,
+            done: 0,
+            failed: 0,
+            backoff: e.backoffUntil > Date.now(),
+          },
         ]),
       );
+      const counting = !activeEndpointSettingsService();
       for (const segs of Object.values(scriptsStore.segments))
         for (const seg of segs) {
           const l = seg.audio.endpoint ? load[seg.audio.endpoint] : undefined;
           if (!l) continue;
-          if (seg.audio.status === "generating") l.active++;
-          else if (seg.audio.status === "done") l.done++;
+          if (seg.audio.status === "generating") {
+            if (counting) l.active++;
+          } else if (seg.audio.status === "done") l.done++;
           else if (seg.audio.status === "failed") l.failed++;
         }
       return load;

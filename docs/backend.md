@@ -1040,8 +1040,24 @@ endpoint's per-line timeout — 100 MB over a slow uplink and Fish's transcripti
 route lifts Bun's ten-second idle limit for this one request, which would otherwise close it while
 Fish works. Fish's refusals are split as the voice list's are. The server's own body ceiling
 (`maxRequestBodySize`) sits above both this route's limit and the import's. The recordings pass
-through, held once — the parsed form's files are what is sent on — and nothing of them is kept on
-this server.
+through, held once — the parsed form's files are what is sent on.
+
+**The recordings are kept once Fish has answered**, never before, so a failed clone keeps nothing:
+the bytes as they were picked, named by their hash, under `VOICE_DIR` (`./data/voices`) in one
+directory per voice ([voices/files.ts](../server/voices/files.ts)), and a `cloned_voices` row with
+the time the box was ticked and the sentence it said (`consent_at`, `consent_text`) beside a
+`voice_samples` row per recording. The voice already exists on the account by then, so a failure to
+keep them answers `201` with `samplesKept: false` rather than failing the clone. Neither table
+points at `voices`, because a save of the endpoints replaces every voice row and a cascade would
+empty them on every save; `saveEndpoints` reconciles them in the same transaction instead
+([voiceSamples.ts](../server/db/voiceSamples.ts)): a voice the saved configuration holds is
+attached, an attached voice it no longer holds loses its recordings, and a clone the page has not
+saved yet is spared for a day, since the clone answers before the page adds its voice. Files go
+after the commit, in the background. `GET /api/endpoints/:id/samples` lists an endpoint's voices
+with kept recordings; under `/api/endpoints/:id/voices/:voice/samples`, `GET` is one voice's list
+and consent, `GET …/:file` one recording as it was picked (immutable, named by its bytes), `POST`
+keeps recordings for a voice already saved — the clone's form, limits and consent, nothing sent to
+Fish — and `DELETE` forgets them and keeps the voice.
 
 **Test connection** is `POST /api/endpoints/test` `{ kind, id }`, answering `{ ok, message, ms }`:
 one small request to the **saved** endpoint with its saved key, through the provider the server
@@ -1597,7 +1613,8 @@ and applied in order at boot; `0001` added the script revision and the queue's d
 the version an open editing session preserved, and `0003` what a build writes — the file each
 output landed in, the span each chapter occupies inside it, and which encoder wrote it; `0004` an
 endpoint's sample rate and the rate each clip came back at; `0005` a book's cover image; `0006` an
-endpoint's key; `0007` an endpoint's audio format and bitrate.
+endpoint's key; `0007` an endpoint's audio format and bitrate; `0008` the recordings a cloned
+voice was made from, and the consent they were kept under.
 
 **Foreign keys are off while migrations run.** A change drizzle-kit cannot write as `ALTER TABLE` is
 written as a rebuild — new table, copy, `DROP` the old one, rename — and with foreign keys on, that

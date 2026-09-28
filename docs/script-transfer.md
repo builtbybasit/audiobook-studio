@@ -316,6 +316,11 @@ and 3); cloning on providers other than Fish; importing into a book that does no
 
 ## Slice 2: cloning keeps its samples
 
+**Status: built.** The routes and tables are as below; see
+[endpoints](endpoints.md) and [backend](backend.md#the-providers-and-where-a-key-lives) for how
+they read now. `GET /api/endpoints/:id/samples` was added beside the per-voice routes, so the
+Voices tab asks once per endpoint rather than once per voice.
+
 Today a clone is made in a single request. The route reads the recordings (`server/routes/endpoints.ts:106-164`), hands them to Fish once (`server/providers/clone.ts:120-157`), and the only record it keeps is a log line (`routes/endpoints.ts:159-164`). The route's own comment says "nothing is kept on this server" (`:98-99`), and so does the Voices tab (`src/views/endpoints/VoicesTab.vue:175-178`). Slice 3 can't export samples the server threw away, so this slice keeps them with the voice they made. Cloning stays Fish-only (`src/lib/endpointShapes.ts:244`). A sample is any audio the person picks, recorded or downloaded.
 
 **Kept where the bytes already are.** The route already holds each recording as a parsed `File`, sniffed and re-typed by its bytes (`routes/endpoints.ts:135-157`). Once Fish answers with the new voice's id, the route writes those same bytes to disk. Nothing is re-encoded and nothing is renamed: the format stays the one `sniffRecording` found (`clone.ts:81`), and the file keeps the name the person gave it for display. It is written only after Fish answers, because the voice's id is the key, so a failed clone keeps nothing. If the clone succeeds but the samples can't be kept, the route still answers `201`, with `samplesKept: false`, and the toast says so. The voice already exists on the account, so failing the request would be wrong.

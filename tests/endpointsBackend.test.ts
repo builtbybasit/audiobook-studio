@@ -31,7 +31,7 @@ import {
 import { useEndpointsStore, WRITE_DELAY_MS } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 import { clone } from "@/lib/utils";
-import type { Endpoint, EndpointKind, Voice } from "@/types";
+import type { ClonedVoice, Endpoint, EndpointKind, KeptVoiceSamples } from "@/types";
 import { testPinia, type TestPinia } from "./support/pinia";
 
 const TELEMETRY = ["history", "failures", "rateLimits", "backoffUntil", "lastError", "fetching"];
@@ -115,8 +115,13 @@ class FakeService implements EndpointSettingsService {
   };
   /** what each clone was asked, with how many writes had gone out by then */
   cloned: { id: string; title: string; clips: number; consent: boolean; puts: number }[] = [];
-  cloneAnswer: Voice | ApiError = { id: "cloned-1", label: "Mara", gender: "?" };
-  async cloneVoice(id: string, request: VoiceCloneRequest): Promise<Voice> {
+  cloneAnswer: ClonedVoice | ApiError = {
+    id: "cloned-1",
+    label: "Mara",
+    gender: "?",
+    samplesKept: true,
+  };
+  async cloneVoice(id: string, request: VoiceCloneRequest): Promise<ClonedVoice> {
     this.cloned.push({
       id,
       title: request.title,
@@ -127,6 +132,13 @@ class FakeService implements EndpointSettingsService {
     if (this.cloneAnswer instanceof ApiError) throw this.cloneAnswer;
     return this.cloneAnswer;
   }
+  async keptSamples(): Promise<KeptVoiceSamples[]> {
+    return [];
+  }
+  async keepSamples(): Promise<KeptVoiceSamples> {
+    throw new ApiError("not used here", 500);
+  }
+  async forgetSamples(): Promise<void> {}
   async sampleVoice(id: string, voice: string): Promise<VoiceSample> {
     this.sampled.push({ id, voice, puts: this.puts.length });
     if (this.sampleAnswer instanceof ApiError) throw this.sampleAnswer;
@@ -732,6 +744,12 @@ describe("cloning a voice with a server answering", () => {
     // the new voice is saved like any other
     await settle();
     expect(svc.puts.at(-1)!.endpoints[0].voices.map((v) => v.id)).toContain("cloned-1");
+
+    // a voice made whose recordings the server could not keep is still made, and the page says so
+    svc.cloneAnswer = { id: "cloned-2", label: "Kael", gender: "?", samplesKept: false };
+    await endpointsStore.cloneVoice(ep, { title: "Kael", clips: [recording()], consent: true });
+    expect(ep.voices.at(-1)).toEqual({ id: "cloned-2", label: "Kael", gender: "?" });
+    expect(toasts.at(-1)).toMatchObject({ kind: "warn" });
   });
 
   test("a refusal is said, and nothing is added", async () => {

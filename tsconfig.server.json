@@ -30,6 +30,7 @@
     "tests/support/images.ts",
     "tests/support/encoded.ts",
     "tests/support/cloning.ts",
+    "tests/support/batchServer.ts",
     "src/types/**/*.ts",
     "src/lib/**/*.ts",
     "src/ui/types.ts",

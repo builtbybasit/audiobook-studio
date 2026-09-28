@@ -20,10 +20,17 @@
 // reference, and answered from here. The local servers that copy its API mostly answer
 // `GET /audio/voices` (Kokoro-FastAPI does), so any other server is asked that, and one that does
 // not answer it is said to have no list rather than to have no voices.
+//
+// Batches: a compatible server may also speak the batch speech API this app wrote down for local
+// servers (`docs/speech-batch-api.md`), and then a run sends it many lines per request (`batch.ts`).
+// OpenAI itself has no such route, so its wire has neither member. The Test button asks a
+// compatible server's capabilities too and says when it takes batches; a server that cannot say
+// has still passed the test, which was about the address and the key.
 import type { Gender, Voice } from "@/types";
 import { call, jsonHeaders, ProviderError } from "~/providers/http";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
+import { batchCapabilities, sendBatch, takesBatches } from "~/providers/speech/batch";
 import { getJson, onePage, type SpeechWire } from "~/providers/speech/wire";
 
 /** The models OpenAI says take no `instructions`. */
@@ -151,9 +158,15 @@ function openaiShaped(hosted: boolean): SpeechWire {
           message: `Answered in ${ms} ms, but “${target.model}” is not among the ${ids.length} models it lists`,
           ms,
         };
+      const batches = hosted
+        ? null
+        : await batchCapabilities(target, signal, options).catch(() => null);
       return {
         ok: true,
-        message: `Answered in ${ms} ms` + (ids.length ? ` and lists “${target.model}”` : ""),
+        message:
+          `Answered in ${ms} ms` +
+          (ids.length ? ` and lists “${target.model}”` : "") +
+          (batches ? ` · ${takesBatches(batches)}` : ""),
         ms,
       };
     },
@@ -191,4 +204,8 @@ function openaiShaped(hosted: boolean): SpeechWire {
 }
 
 export const openaiWire = openaiShaped(true);
-export const compatibleWire = openaiShaped(false);
+export const compatibleWire: SpeechWire = {
+  ...openaiShaped(false),
+  batchLimits: batchCapabilities,
+  speakBatch: sendBatch,
+};

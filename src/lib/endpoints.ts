@@ -136,6 +136,59 @@ export type TtsPreset = Preset<Endpoint>;
  *  `/chat/completions`, which is the only request shape the scripting provider makes. */
 export type ScriptingPreset = Preset<Profile>;
 
+/**
+ * One of the Gemini 3.8 speech models, released on 22 September 2026. Billed like 3.1 — input text
+ * tokens and output audio tokens, 25 audio tokens a second — at $1 in and `audioRate` out from
+ * 2027; until then Google charges half, which a promotion holds so the card turns over by itself.
+ */
+function gemini38Tts(
+  id: string,
+  label: string,
+  hint: string,
+  model: string,
+  audioRate: number,
+  about: string,
+): TtsPreset {
+  return {
+    id,
+    label,
+    hint,
+    note:
+      `${about} $${audioRate / 2} per million output audio tokens and $0.50 per million input ` +
+      `text tokens until the end of 2026, then $${audioRate} and $1: the card is the 2027 rate ` +
+      "and a promotion on the Pricing tab holds the 2026 one until it ends. A request takes up " +
+      "to 8,192 input tokens. Narrating through Gemini needs a speech adapter the server does " +
+      "not have yet, so a run on this endpoint fails until it does. " +
+      "Rates as published on 28 September 2026.",
+    apply: {
+      name: label,
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      model,
+      needsKey: true,
+      price: 0,
+      billing: { unit: "audio-tokens", rate: 1, audioRate, audioTokensPerSecond: 25 },
+      pricing: newPricing({
+        promotions: [
+          {
+            id: "gemini-tts-2026",
+            label: "2026 price",
+            from: null,
+            until: Date.UTC(2027, 0, 1),
+            scope: ["speech"],
+            percent: 50,
+            note: `Google's published 2026 rate for ${model}; the card rate applies from 1 January 2027.`,
+          },
+        ],
+      }),
+      maxChars: 5000,
+      splitAt: "sentence",
+      concurrency: 2,
+      latency: 1800,
+      failRate: 0.015,
+    },
+  };
+}
+
 export const TTS_PRESETS: TtsPreset[] = [
   {
     id: "fish-free",
@@ -203,11 +256,30 @@ export const TTS_PRESETS: TtsPreset[] = [
       failRate: 0.01,
     },
   },
+  gemini38Tts(
+    "gemini-3.8-flash-tts",
+    "Gemini 3.8 Flash TTS",
+    "flagship, made for audiobooks",
+    "gemini-3.8-flash-tts",
+    18,
+    "Google's flagship speech model, pitched at audiobooks, multi-speaker scenes and dialects, " +
+      "in 130 languages.",
+  ),
+  gemini38Tts(
+    "gemini-3.8-flash-lite-tts",
+    "Gemini 3.8 Flash-Lite TTS",
+    "cheaper, replaces 3.1 Flash TTS",
+    "gemini-3.8-flash-lite-tts",
+    12,
+    "Google's cheaper speech model, built to replace 3.1 Flash TTS, in 101 languages.",
+  ),
   {
     id: "gemini-tts",
-    label: "Gemini 3.1 Flash TTS Preview",
-    hint: "input text tokens + output audio tokens",
+    label: "Gemini 3.1 Flash TTS (legacy)",
+    hint: "preview Google now calls legacy — use 3.8 Flash-Lite",
     note:
+      "Google now lists this preview as legacy and points to 3.8 Flash-Lite TTS, which costs less; " +
+      "no shutdown date is announced. " +
       "Two rates, priced separately: $1 per million input text tokens and $20 per million output " +
       "audio tokens. The audio side is the one that dominates a bill, and it does not follow from " +
       "the text — an estimate has to go through the audio's expected length and a tokens-per-second " +

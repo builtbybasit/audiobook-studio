@@ -1437,9 +1437,11 @@ each because a route or a table's writer is missing rather than by oversight:
   for it.
 - **The opening balance has no writer.** `opening_spend` is summed into a book's spending, but only
   the seeded world has one; a book imported on the server starts at zero.
-- **Gemini's speech API has no adapter.** Its preset's base URL is neither Fish's nor OpenAI's
+- **Gemini's speech API has no adapter.** Its presets' base URL is neither Fish's nor OpenAI's
   shape, so it is offered the OpenAI table and a request would go to `/audio/speech`, which it does
-  not serve. It needs a `generateContent` request and a raw-PCM answer before it can be called.
+  not serve. It needs a `generateContent` (or `interactions`) request before it can be called. The
+  3.8 models (Flash TTS, Flash-Lite TTS) answer a unary request with WAV — 24 kHz, 16-bit mono —
+  where the legacy 3.1 preview answered raw PCM, so an adapter for 3.8 keeps the file as it comes.
 - **Undoing an endpoint's removal brings it back without its key**, since the save removed the row
   the key was on.
 - **An update under ffmpeg re-encodes everything.** Carrying a chapter over is real under the

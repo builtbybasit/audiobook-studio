@@ -163,11 +163,15 @@ export interface TermDiff {
  *            several endpoints can offer it
  *   public   not here yet, but the provider can hand it over: add `voice` to `endpointId` and use it
  *   private  a clone on someone else's account; only Keep or Replace…
+ *   unchecked  the provider could not be asked in time, so whether it can hand the voice over is
+ *              not known; Keep or Replace…, and the row says the lookup failed rather than calling
+ *              the voice private
  */
 export type VoiceMatch =
   | { kind: "here"; options: { endpointId: string; endpointName: string; ref: VoiceRef }[] }
   | { kind: "public"; endpointId: string; endpointName: string; voice: Voice }
-  | { kind: "private" };
+  | { kind: "private" }
+  | { kind: "unchecked"; reason: string };
 
 export interface VoiceRow {
   speaker: string;

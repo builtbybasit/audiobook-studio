@@ -11,6 +11,7 @@ import type { Db, Tx } from "~/db/client";
 import { readEndpointKey } from "~/db/endpoints";
 import type { ScriptTarget, ScriptingProvider } from "~/providers/scripting";
 import type { SpeechProvider } from "~/providers/speech";
+import type { VoiceCloner } from "~/providers/clone";
 import type { VoiceLister } from "~/providers/voices";
 
 /** The pair a server is started with: what scripting and narration send their work to. */
@@ -30,6 +31,11 @@ export interface Providers {
    * ledger like any other, and only a test hands over another.
    */
   samples?: SpeechProvider;
+  /**
+   * What makes a voice from recordings on the Voices tab. Real by default, like the two above: it
+   * is a click that asks for exactly this, and only a test hands over another.
+   */
+  cloner?: VoiceCloner;
 }
 
 export interface ProviderTarget {

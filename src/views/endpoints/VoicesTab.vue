@@ -30,6 +30,7 @@ import {
   ChevronRight as NextIcon,
   Dot as NeutralIcon,
   Globe as PublicIcon,
+  Mic as CloneIcon,
   LoaderCircle as BusyIcon,
   Pause as PauseIcon,
   Mars as MaleIcon,
@@ -41,8 +42,9 @@ import {
   Venus as FemaleIcon,
   X as RemoveIcon,
 } from "@lucide/vue";
-import { UiSelect, UiTooltip } from "@/ui";
+import { UiCheckbox, UiSelect, UiTooltip } from "@/ui";
 import { isFishAudio } from "@/lib/endpoints";
+import { canCloneVoices } from "@/lib/endpointShapes";
 import type { Endpoint, FoundVoice, Gender, Voice } from "@/types";
 
 const props = defineProps<{ endpoint: Endpoint }>();
@@ -167,6 +169,49 @@ async function runSearch(page = 1) {
   }
 }
 const has = (v: Voice) => props.endpoint.voices.some((x) => x.id === v.id);
+
+// ---------- cloning ----------
+// A voice made from someone's recordings, kept by the provider as a private voice on the account
+// and added to this endpoint like any other. Only where the provider keeps one (`canCloneVoices`)
+// and a server is answering: the recordings go to the provider through it, with the saved key, and
+// nothing of them is kept here.
+const MAX_CLIPS = 20;
+const clonable = computed(
+  () => canCloneVoices(props.endpoint) && !!activeEndpointSettingsService(),
+);
+const clone = reactive({ title: "", clips: [] as File[], consent: false, busy: false });
+const clipsInput = ref<HTMLInputElement | null>(null);
+const clipsSize = computed(() => clone.clips.reduce((n, f) => n + f.size, 0));
+const cloneBlocked = computed(
+  () =>
+    !clone.title.trim() ||
+    !clone.clips.length ||
+    !clone.consent ||
+    clone.busy ||
+    needsKeyFirst.value,
+);
+function pickClips(e: Event) {
+  clone.clips = [...((e.target as HTMLInputElement).files ?? [])].slice(0, MAX_CLIPS);
+}
+async function makeVoice() {
+  if (cloneBlocked.value) return;
+  clone.busy = true;
+  try {
+    const voice = await endpointsStore.cloneVoice(props.endpoint, {
+      title: clone.title,
+      clips: clone.clips,
+      consent: clone.consent,
+    });
+    if (voice) {
+      clone.title = "";
+      clone.clips = [];
+      clone.consent = false;
+      if (clipsInput.value) clipsInput.value.value = "";
+    }
+  } finally {
+    clone.busy = false;
+  }
+}
 
 // ---------- samples ----------
 // With a server answering, play is the saved endpoint saying a sentence in that voice: a real,
@@ -424,6 +469,57 @@ async function playFound(v: FoundVoice) {
           </button>
         </div>
       </template>
+    </section>
+
+    <section v-if="clonable" class="card p-3">
+      <h3 class="label mb-1"><CloneIcon class="icon-sm" /> Clone a voice</h3>
+      <p class="text-[11px] leading-relaxed text-zinc-500">
+        Make a voice from recordings of one person speaking. {{ endpoint.name }} keeps it as a
+        private voice on your account, and it is added to this list. Fish recommends two or three
+        clips of 15–20 seconds each, at least 10 seconds in all: one speaker, a quiet room, an even
+        tone. It transcribes them itself.
+      </p>
+      <form class="mt-2 space-y-2" @submit.prevent="makeVoice">
+        <div class="flex flex-wrap items-end gap-2">
+          <label class="space-y-1 text-xs font-medium"
+            ><span>Name</span
+            ><input
+              v-model="clone.title"
+              class="input w-56"
+              maxlength="100"
+              placeholder="Narrator — Mara"
+          /></label>
+          <label class="space-y-1 text-xs font-medium"
+            ><span>Recordings</span
+            ><input
+              ref="clipsInput"
+              type="file"
+              accept="audio/*"
+              multiple
+              class="block text-xs"
+              @change="pickClips"
+          /></label>
+          <span v-if="clone.clips.length" class="text-[11px] text-zinc-500">
+            {{ clone.clips.length }} recording{{ clone.clips.length === 1 ? "" : "s" }},
+            {{ (clipsSize / 1024 / 1024).toFixed(1) }} MB
+          </span>
+        </div>
+        <label class="flex items-start gap-2 text-xs">
+          <UiCheckbox v-model="clone.consent" />
+          <span
+            >This is my voice, or the person whose voice it is has agreed to it being cloned for
+            this use.</span
+          >
+        </label>
+        <div class="flex items-center gap-2">
+          <button class="btn-primary btn-xs" type="submit" :disabled="cloneBlocked">
+            <CloneIcon class="icon-sm" /> {{ clone.busy ? "Making the voice…" : "Make voice" }}
+          </button>
+          <span v-if="needsKeyFirst" class="text-[11px] text-amber-600 dark:text-amber-400"
+            >Save a key for this endpoint first.</span
+          >
+        </div>
+      </form>
     </section>
 
     <section class="card p-3">

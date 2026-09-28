@@ -20,6 +20,7 @@ import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import { wavEncoders } from "~/providers/wavEncoder";
 import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
+import type { VoiceCloner } from "~/providers/clone";
 import type { VoiceLister } from "~/providers/voices";
 import type { FetchLike } from "@/services/http";
 
@@ -55,6 +56,8 @@ export interface TestApiOptions {
   voices?: VoiceLister;
   /** what renders the Voices tab's samples; the real provider, over the network, by default */
   samples?: SpeechProvider;
+  /** what makes a voice from recordings; the real cloner, over the network, by default */
+  cloner?: VoiceCloner;
   /** where clips are written; a fresh temporary directory by default */
   audioDir?: string;
   /** where built audiobooks are written; a fresh temporary directory by default */
@@ -132,6 +135,7 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     speech: options.speech ?? fakeSpeechProvider(),
     ...(options.voices ? { voices: options.voices } : {}),
     ...(options.samples ? { samples: options.samples } : {}),
+    ...(options.cloner ? { cloner: options.cloner } : {}),
   };
   const app = createApp(db, { log, runner, files, exports, providers });
 

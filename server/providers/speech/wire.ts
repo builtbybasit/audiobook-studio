@@ -8,7 +8,7 @@ import { call, ProviderError } from "~/providers/http";
 import type { MadeVoice } from "@/types";
 import type { CloneRequest } from "~/providers/clone";
 import type { SpeechCallOptions, SpeechRequest } from "~/providers/send";
-import type { SpeechInput } from "~/providers/speech";
+import type { BatchLimits, SpeechBatch, SpeechInput } from "~/providers/speech";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
 import type { VoicePage, VoiceQuery } from "~/providers/voices";
 
@@ -47,6 +47,27 @@ export interface SpeechWire {
     signal: AbortSignal,
     options: SpeechCallOptions,
   ): Promise<MadeVoice>;
+  /**
+   * Whether the endpoint's model takes lines in batches, asked of the server afresh — the provider
+   * remembers the answer. Only a server that speaks the batch speech API has it, and so only the
+   * compatible shape's wire (`batch.ts`): no hosted provider has the route. Present exactly when
+   * `speakBatch` is.
+   */
+  batchLimits?(
+    target: ProviderTarget,
+    signal: AbortSignal,
+    options: SpeechCallOptions,
+  ): Promise<BatchLimits | null>;
+  /**
+   * A batch sent in one request, each item told and reported as it is answered (`batch.ts`).
+   * `voices[i]` is item `i`'s voice id; every item has been through the checks a line gets before
+   * any request, and `billsFailures` is the provider's.
+   */
+  speakBatch?(
+    batch: SpeechBatch,
+    voices: string[],
+    options: SpeechCallOptions & { billsFailures: boolean },
+  ): Promise<void>;
   /** One page of the provider's public catalogue, for the one provider that has one (Fish). */
   search?(
     target: ProviderTarget,

@@ -113,6 +113,13 @@ export interface CallOptions {
    * long (`gate.ts`). Told even when no attempt is left, because the endpoint is limited either way.
    */
   rateLimited?(waitMs: number): void;
+  /**
+   * The attempt's clock stops once the answer's headers are in, rather than running on over its
+   * body — for an answer read as a long stream, whose reader keeps its own clock between the parts
+   * that arrive (`speech/batch.ts`). Otherwise the clock covers the body too, so a body that stalls
+   * is cut off like an answer that never came.
+   */
+  headersOnly?: boolean;
 }
 
 /** What one `call` did on the wire; see `CallOptions.stats`. */
@@ -144,14 +151,25 @@ export async function call(
     if (signal.aborted) throw signal.reason;
     if (options.stats) options.stats.attempts = attempt;
     const clock = AbortSignal.timeout(target.timeoutSec * 1000);
+    // for `headersOnly`, what the request is sent under: the clock, until it is cut loose below
+    const untilHeaders = options.headersOnly ? new AbortController() : null;
+    const expire = (): void => untilHeaders?.abort(clock.reason);
+    if (untilHeaders) clock.addEventListener("abort", expire, { once: true });
     let wait: number | undefined;
     /** the wait a rate limit asked for, told after the attempt so a listener's throw is its own */
     let limited: number | undefined;
     try {
-      const res = await send(url, { ...init, signal: AbortSignal.any([signal, clock]) });
+      const res = await send(url, {
+        ...init,
+        signal: AbortSignal.any([signal, untilHeaders?.signal ?? clock]),
+      });
       if (res.ok) {
         const refused = options.check ? await options.check(res.clone() as Response) : null;
-        if (!refused) return res;
+        if (!refused) {
+          // accepted: a refusal's body is read under the clock, an accepted one's the caller's to time
+          clock.removeEventListener("abort", expire);
+          return res;
+        }
         last = refused;
         if (refused.rateLimited) {
           if (options.stats) options.stats.rateLimited = true;

@@ -98,12 +98,23 @@ export async function audioAnswer(
       false,
     );
   }
+  return audioClip(target, bytes, format, res.status);
+}
+
+/**
+ * Bytes a provider answered as audio, held to the format they were asked in: a WAV under a plain
+ * header, an MP3 or an Opus file kept as it is once `probeClip` has read it. `status` is what the
+ * answer that carried them said, for the message; the bytes may have come in the body itself or
+ * inside JSON (a batch's item, `speech/batch.ts`). Neither failure is retried.
+ */
+export async function audioClip(
+  target: ProviderTarget,
+  bytes: Uint8Array,
+  format: AudioFormat,
+  status: number,
+): Promise<AnsweredAudio> {
   if (!bytes.byteLength)
-    throw new ProviderError(
-      `${target.name} answered ${res.status} with nothing in it`,
-      res.status,
-      false,
-    );
+    throw new ProviderError(`${target.name} answered ${status} with nothing in it`, status, false);
   try {
     if (format === "wav") {
       const wav = plainWav(bytes);
@@ -114,7 +125,7 @@ export async function audioAnswer(
   } catch (e) {
     throw new ProviderError(
       `${target.name} answered with something that is not ${format === "wav" ? "a WAV" : `an ${FORMAT_LABEL[format]} file`} this server can read: ${(e as Error).message}`,
-      res.status,
+      status,
       false,
     );
   }

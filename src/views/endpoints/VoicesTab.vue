@@ -44,7 +44,7 @@ import {
 } from "@lucide/vue";
 import { UiCheckbox, UiSelect, UiTooltip } from "@/ui";
 import { isFishAudio } from "@/lib/endpoints";
-import { canCloneVoices } from "@/lib/endpointShapes";
+import { canCloneVoices, MAX_CLONE_CLIPS, VOICE_SAMPLE } from "@/lib/endpointShapes";
 import type { Endpoint, FoundVoice, Gender, Voice } from "@/types";
 
 const props = defineProps<{ endpoint: Endpoint }>();
@@ -175,11 +175,21 @@ const has = (v: Voice) => props.endpoint.voices.some((x) => x.id === v.id);
 // and added to this endpoint like any other. Only where the provider keeps one (`canCloneVoices`)
 // and a server is answering: the recordings go to the provider through it, with the saved key, and
 // nothing of them is kept here.
-const MAX_CLIPS = 20;
+//
+// The picker offers the formats Fish documents for a voice sample, and the server decides by each
+// file's first bytes rather than its name, so a renamed file is refused there with its name.
+const CLIP_TYPES = ".wav,.mp3,.m4a,.opus,.ogg,.flac";
 const clonable = computed(
   () => canCloneVoices(props.endpoint) && !!activeEndpointSettingsService(),
 );
-const clone = reactive({ title: "", clips: [] as File[], consent: false, busy: false });
+const clone = reactive({
+  title: "",
+  clips: [] as File[],
+  /** how many picked recordings were left out, past the most one voice is made from */
+  leftOut: 0,
+  consent: false,
+  busy: false,
+});
 const clipsInput = ref<HTMLInputElement | null>(null);
 const clipsSize = computed(() => clone.clips.reduce((n, f) => n + f.size, 0));
 const cloneBlocked = computed(
@@ -191,7 +201,9 @@ const cloneBlocked = computed(
     needsKeyFirst.value,
 );
 function pickClips(e: Event) {
-  clone.clips = [...((e.target as HTMLInputElement).files ?? [])].slice(0, MAX_CLIPS);
+  const picked = [...((e.target as HTMLInputElement).files ?? [])];
+  clone.clips = picked.slice(0, MAX_CLONE_CLIPS);
+  clone.leftOut = picked.length - clone.clips.length;
 }
 async function makeVoice() {
   if (cloneBlocked.value) return;
@@ -205,6 +217,7 @@ async function makeVoice() {
     if (voice) {
       clone.title = "";
       clone.clips = [];
+      clone.leftOut = 0;
       clone.consent = false;
       if (clipsInput.value) clipsInput.value.value = "";
     }
@@ -217,7 +230,6 @@ async function makeVoice() {
 // With a server answering, play is the saved endpoint saying a sentence in that voice: a real,
 // priced request, heard once and replayed from then on (`endpointsStore.sampleVoice`). The demo
 // has no provider to ask, so it falls back on the browser's own voice.
-const SAMPLE = "The mountain mist thinned as dawn crept over the outer sect grounds.";
 const player = usePlayer();
 const onServer = !!activeEndpointSettingsService();
 const sampling = ref<string | null>(null);
@@ -231,7 +243,7 @@ const sampleTitle = computed(() =>
       : "Hear this voice from the provider — a real request, billed once and replayed after",
 );
 async function playSample(v: Voice) {
-  if (!onServer) return speak(SAMPLE, v.id);
+  if (!onServer) return speak(VOICE_SAMPLE, v.id);
   if (sampling.value) return;
   sampling.value = v.id;
   try {
@@ -477,7 +489,8 @@ async function playFound(v: FoundVoice) {
         Make a voice from recordings of one person speaking. {{ endpoint.name }} keeps it as a
         private voice on your account, and it is added to this list. Fish recommends two or three
         clips of 15–20 seconds each, at least 10 seconds in all: one speaker, a quiet room, an even
-        tone. It transcribes them itself.
+        tone. It transcribes them itself. WAV, MP3, M4A, Opus or FLAC; up to
+        {{ MAX_CLONE_CLIPS }} recordings.
       </p>
       <form class="mt-2 space-y-2" @submit.prevent="makeVoice">
         <div class="flex flex-wrap items-end gap-2">
@@ -494,7 +507,7 @@ async function playFound(v: FoundVoice) {
             ><input
               ref="clipsInput"
               type="file"
-              accept="audio/*"
+              :accept="CLIP_TYPES"
               multiple
               class="block text-xs"
               @change="pickClips"
@@ -502,6 +515,9 @@ async function playFound(v: FoundVoice) {
           <span v-if="clone.clips.length" class="text-[11px] text-zinc-500">
             {{ clone.clips.length }} recording{{ clone.clips.length === 1 ? "" : "s" }},
             {{ (clipsSize / 1024 / 1024).toFixed(1) }} MB
+          </span>
+          <span v-if="clone.leftOut" class="text-[11px] text-amber-600 dark:text-amber-400">
+            Only the first {{ MAX_CLONE_CLIPS }} are used: {{ clone.leftOut }} left out.
           </span>
         </div>
         <label class="flex items-start gap-2 text-xs">

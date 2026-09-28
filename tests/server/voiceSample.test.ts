@@ -8,7 +8,8 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint, RequestRecord } from "@/types";
-import { VOICE_SAMPLE } from "~/endpoints/ops";
+import { VOICE_SAMPLE } from "@/lib/endpointShapes";
+import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { SpeechInput, SpeechProvider } from "~/providers/speech";
 import { readWavHeader } from "~/providers/wavEncoder";
@@ -105,7 +106,7 @@ describe("a voice sample", () => {
 
   test("of an endpoint that needs a key and has none is refused before any request", async () => {
     // the real provider, which refuses before reaching the network
-    const api = testApi();
+    const api = testApi({ samples: endpointSpeechProvider() });
     await saved(api, speech({ needsKey: true }));
     const res = await sample(api, "studio", "ash");
     expect(res.status).toBe(400);

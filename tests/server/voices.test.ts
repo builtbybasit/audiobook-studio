@@ -350,10 +350,10 @@ describe("listing refusals", () => {
     expect(seen).toEqual([]);
   });
 
-  test("what the provider said is passed on", async () => {
+  test("what the provider said is passed on, and a 4xx is the request's to fix", async () => {
     const { api: t } = await api(() => json({ message: "Invalid token" }, 401));
     const { status, body } = await list(t, { source: "library" });
-    expect(status).toBe(502);
+    expect(status).toBe(400);
     expect(body.error?.message).toBe("Fish Audio answered 401: Invalid token");
   });
 
@@ -401,7 +401,7 @@ describe("an OpenAI-shaped endpoint's list", () => {
       speech({ baseUrl: "http://localhost:8880/v1", needsKey: false }),
     );
     const { status, body } = await list(t, { source: "library" });
-    expect(status).toBe(502);
+    expect(status).toBe(400);
     expect(body.error?.message).toBe(
       "Fish Audio has no voice list: GET http://localhost:8880/v1/audio/voices answered 404. " +
         "Add its voices by id instead.",

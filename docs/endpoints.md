@@ -92,9 +92,11 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   a file on Fish's CDN that costs nothing (a voice with none is rendered like a listed one). A Fish
   voice is a `reference_id`, public or your own.
   On a Fish Audio endpoint with a server, **Clone a voice** makes a voice from recordings of one
-  person — a name, the clips (Fish suggests two or three of 15–20 seconds), and a box saying the
-  voice is yours or its owner agreed, without which nothing is sent. Fish keeps it as a private
-  voice on the account and it is added to the list; see
+  person — a name, up to 20 clips in WAV, MP3, M4A, Opus or FLAC (Fish suggests two or three of
+  15–20 seconds; picking more than 20 keeps the first 20 and says so), and a box saying the voice
+  is yours or its owner agreed, without which nothing is sent. It is sent once and not retried,
+  so a failure never leaves a second copy on the account. Fish keeps it as a private voice on the
+  account and it is added to the list; see
   [the providers](backend.md#the-providers-and-where-a-key-lives).
   With a server, a voice's ▶ has the saved endpoint say a sentence in it — a real request, billed
   and listed under Activity, heard once and replayed from then on; see

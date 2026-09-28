@@ -9,7 +9,7 @@
 // not in the registry being saved with it.
 import type { Voice } from "@/types";
 import type { Credential } from "@/lib/credentials";
-import { canCloneVoices, encodingOf } from "@/lib/endpointShapes";
+import { encodingOf, VOICE_SAMPLE } from "@/lib/endpointShapes";
 import type { Db } from "~/db/client";
 import {
   endpointsSaved,
@@ -20,11 +20,11 @@ import {
   type EndpointConfig,
 } from "~/db/endpoints";
 import { AppError, badRequest, notFound } from "~/lib/errors";
+import { endpointVoiceCloner, type CloneRequest } from "~/providers/clone";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { ProviderError } from "~/providers/http";
 import type { RenderedClip } from "~/providers/speech";
 import { scriptTarget, speechTarget, type ProbeResult, type Providers } from "~/providers/target";
-import { endpointVoiceCloner, type CloneRequest } from "~/providers/clone";
 import { endpointVoiceLister, type VoicePage, type VoiceQuery } from "~/providers/voices";
 import { settleSpeech } from "~/usage/ledger";
 
@@ -139,6 +139,27 @@ const untestable = (name: string): ProbeResult => ({
 });
 
 /**
+ * A provider's failure, as the answer to the page that asked on its behalf. Whose it is to fix
+ * decides the status:
+ *
+ * - refused before any request (status 0, not retryable) — no key, a provider that cannot do this —
+ *   is the request's, a `400`;
+ * - a 4xx the provider answered, other than a timeout (408) or a rate limit (429), is the request's
+ *   too — a key Fish does not know, a recording it cannot read, a title it will not take — and the
+ *   provider's own words are passed on as a `400`, since trying again unchanged will not help;
+ * - anything else — a 429, a 5xx, no answer at all, an answer that made no sense — is the
+ *   provider's, a `502`.
+ *
+ * The message is the `ProviderError`'s, which names the provider and what it said and never
+ * carries the key.
+ */
+export function providerFailure(e: ProviderError): AppError {
+  const refusedHere = e.status === 0 && !e.retryable;
+  const refusedThere = e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429;
+  return new AppError(refusedHere || refusedThere ? 400 : 502, e.message);
+}
+
+/**
  * The voices a saved speech endpoint offers, asked with its saved key.
  *
  * Always of the real endpoint, whichever provider the server was started with: the fakes are there
@@ -159,18 +180,13 @@ export async function listVoices(
   try {
     return await lister.list(speechTarget(db, ep), query, signal);
   } catch (e) {
-    if (!(e instanceof ProviderError)) throw e;
-    // Refused before any request — no key, nothing to search — is the request's to fix; anything
-    // the provider answered, or failed to, is the provider's.
-    throw new AppError(e.status === 0 && !e.retryable ? 400 : 502, e.message);
+    throw e instanceof ProviderError ? providerFailure(e) : e;
   }
 }
 
-/** What a voice sample says: one ordinary sentence of narration, the same for every voice. */
-export const VOICE_SAMPLE = "The mountain mist thinned as dawn crept over the outer sect grounds.";
-
 /**
- * One voice of a saved speech endpoint saying `VOICE_SAMPLE`, asked for with its saved key.
+ * One voice of a saved speech endpoint saying the sample sentence (`VOICE_SAMPLE`), asked for with
+ * its saved key.
  *
  * Always of the real endpoint, like `listVoices` and for the opposite reason: a sample is not free,
  * but it is a click that asks to hear this voice, and a tone from the fakes would not be it. It is
@@ -211,16 +227,14 @@ export async function sampleVoice(
         ),
     });
   } catch (e) {
-    if (!(e instanceof ProviderError)) throw e;
-    // the same split as `listVoices`: refused before any request is the request's to fix
-    throw new AppError(e.status === 0 && !e.retryable ? 400 : 502, e.message);
+    throw e instanceof ProviderError ? providerFailure(e) : e;
   }
 }
 
 /**
  * A voice made from recordings on a saved speech endpoint's provider, with its saved key, and
- * answered as a voice the page then adds to the endpoint. Only an endpoint whose provider keeps a
- * cloned voice (`canCloneVoices`) is asked; any other is refused before a request.
+ * answered as a voice the page then adds to the endpoint. The cloner itself refuses, before any
+ * request, an endpoint whose provider keeps no cloned voice (`canCloneVoices`) — a `400` here.
  */
 export async function cloneVoice(
   db: Db,
@@ -231,14 +245,10 @@ export async function cloneVoice(
 ): Promise<Voice> {
   const ep = readEndpoint(db, id);
   if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
-  if (!canCloneVoices(ep))
-    throw badRequest(`${ep.name} cannot make a voice from recordings; only Fish Audio can, so far`);
   const cloner = providers.cloner ?? endpointVoiceCloner();
   try {
     return await cloner.clone(speechTarget(db, ep), request, signal);
   } catch (e) {
-    if (!(e instanceof ProviderError)) throw e;
-    // the same split as `listVoices`: refused before any request is the request's to fix
-    throw new AppError(e.status === 0 && !e.retryable ? 400 : 502, e.message);
+    throw e instanceof ProviderError ? providerFailure(e) : e;
   }
 }

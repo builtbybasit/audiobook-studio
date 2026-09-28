@@ -949,31 +949,52 @@ public catalogue by title and language, TTS models only; a pasted 32-character i
 directly. A public voice carries Fish's own recording of it as `sample: { url, text }` when the
 model has one at an `https` link — the Voices tab plays it straight from Fish's CDN, free — and adding
 the voice keeps only its id, label and gender. OpenAI has no voice-list API, so its documented voices are answered without a request;
-any other OpenAI-shaped server is asked `GET /audio/voices`. A provider's refusal is a `502` with
-the code `upstream` and what it said.
+any other OpenAI-shaped server is asked `GET /audio/voices`. A provider's failure is answered as
+the voice sample's and a clone's are, by one rule (`providerFailure` in
+[ops.ts](../server/endpoints/ops.ts)): refused before any request — no key, a provider that cannot
+do this — is a `400`; a 4xx the provider answered, other than a timeout (408) or a rate limit
+(429), is the request's to fix too — a key it does not know, a recording it cannot read — and is a
+`400` carrying what it said; a rate limit, a fault on its side or no answer at all is a `502` with
+the code `upstream` and what it said. None of these messages carries the key.
 
 **A voice sample** is `POST /api/endpoints/sample` `{ id, voice }`, answering the audio itself —
 `content-type` the format it came back in, `x-audio-duration` its length in seconds. The **saved**
-endpoint says one fixed sentence (`VOICE_SAMPLE` in [ops.ts](../server/endpoints/ops.ts)) in that
+endpoint says one fixed sentence (`VOICE_SAMPLE` in [endpointShapes.ts](../src/lib/endpointShapes.ts),
+which the demo's browser voice reads too) in that
 voice with its saved key, asked for the way a line is — the endpoint's format and sample rate, no
 instructions — and tried once, like a connection test. Like the voice list it goes to the real
 endpoint **whatever `SPEECH_PROVIDER` says**, but unlike it, it is billed: a click on ▶ asks to
 hear the voice, and the fake's tone is not it. So the request is priced into the ledger like any
 other, against the endpoint with no book (`Voice sample · <label>` in its Activity list). A missing
-key is a `400` before any request; a provider's refusal a `502`. The browser keeps each sample it
+key is a `400` before any request, and the provider's failures are split as the voice list's are.
+The browser keeps each sample it
 has heard for the session, so pressing ▶ again replays it rather than paying again, until the
 endpoint's base URL, model, format or rate changes.
 
 **Cloning a voice** is `POST /api/endpoints/voices/clone`, a multipart form of the endpoint's `id`,
 the voice's `title`, 1 to 20 recordings under `clips` (up to 20 MB each, 100 MB in all) and
 `consent=yes`, which says the person has the right to clone the voice in them; without it nothing
-is sent. Only an endpoint whose provider keeps a cloned voice is asked (`canCloneVoices`: Fish
-Audio, so far) — any other is a `400` before a request. For Fish it is `POST /model` on the API's
-host ([clone.ts](../server/providers/clone.ts)): `type=tts`, the title, `train_mode=fast` so the
-voice is usable at once, `visibility=private`, and the recordings under `voices`; Fish transcribes
-them itself. The answer is the new model, and the route answers `201` with it as a voice, which the
-page adds to the endpoint and the write-behind saves. The recordings pass through: nothing of them
-is kept on this server.
+is sent. The `voice cloned` log line is the record that it was given: the endpoint, the new
+voice's id, its title, how many recordings and `consent: true`. A recording is what its first bytes
+say (`sniffRecording`), never its name or the type the browser gave it, and only the formats Fish
+documents for a voice sample are taken — WAV, MP3, M4A, Ogg Opus and FLAC; anything else, an Ogg
+Vorbis, AAC or WebM file among them, is a `415` naming the file. Only an endpoint whose provider
+keeps a cloned voice is asked (`canCloneVoices`: Fish Audio, so far) — the cloner refuses any other
+before a request, a `400`. For Fish it is `POST /model` on the API's host
+([clone.ts](../server/providers/clone.ts)): `type=tts`, the title, `train_mode=fast` so the voice is
+usable at once, `visibility=private`, and the recordings under `voices`; Fish transcribes them
+itself. The answer is the new model, and the route answers `201` with it as a voice, which the page
+adds to the endpoint and the write-behind saves.
+
+Making a model is not idempotent, so the request goes out **once**, whatever the endpoint's
+`maxRetries`: an upload that timed out or met a 5xx may still have made the voice, and a second
+attempt would make a second, private and duplicate. Its clock is ten minutes rather than the
+endpoint's per-line timeout — 100 MB over a slow uplink and Fish's transcription after it — and the
+route lifts Bun's ten-second idle limit for this one request, which would otherwise close it while
+Fish works. Fish's refusals are split as the voice list's are. The server's own body ceiling
+(`maxRequestBodySize`) sits above both this route's limit and the import's. The recordings pass
+through, held once — the parsed form's files are what is sent on — and nothing of them is kept on
+this server.
 
 **Test connection** is `POST /api/endpoints/test` `{ kind, id }`, answering `{ ok, message, ms }`:
 one small request to the **saved** endpoint with its saved key, through the provider the server

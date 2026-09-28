@@ -461,3 +461,17 @@ export const fishApiRoot = (baseUrl: string): string =>
  * more voice on the account. Only Fish Audio, so far; the Voices tab offers cloning only here.
  */
 export const canCloneVoices = (e: Pick<Endpoint, "baseUrl">): boolean => isFishAudio(e);
+
+/**
+ * The most recordings one voice is made from. Fish takes up to twenty; the server refuses more, and
+ * the Voices tab keeps the first twenty picked and says so.
+ */
+export const MAX_CLONE_CLIPS = 20;
+
+// ---------- voice samples ----------
+
+/**
+ * What a voice sample says: one ordinary sentence of narration, the same for every voice. The
+ * server has the saved endpoint say it, and the demo has the browser's own voice read it.
+ */
+export const VOICE_SAMPLE = "The mountain mist thinned as dawn crept over the outer sect grounds.";

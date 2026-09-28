@@ -54,9 +54,13 @@ export interface TestApiOptions {
   speech?: SpeechProvider;
   /** where the Voices tab's lists come from; the real lister, over the network, by default */
   voices?: VoiceLister;
-  /** what renders the Voices tab's samples; the real provider, over the network, by default */
+  /**
+   * What renders the Voices tab's samples. The server's own default is the real provider, over the
+   * network; here it is one that fails the test saying none was given, so no test pays for a
+   * request it forgot to fake.
+   */
   samples?: SpeechProvider;
-  /** what makes a voice from recordings; the real cloner, over the network, by default */
+  /** what makes a voice from recordings; like `samples`, one that fails the test by default */
   cloner?: VoiceCloner;
   /** where clips are written; a fresh temporary directory by default */
   audioDir?: string;
@@ -101,6 +105,21 @@ export function collectingLogger(): { log: Logger; lines: Record<string, unknown
   return { log, lines };
 }
 
+/** The error a test meets when it reaches a real provider it was never given a fake for. */
+const noFake = (what: string): Error =>
+  new Error(`this test gave no ${what}, and will not reach a real provider without one`);
+
+/** Stands in for `samples` when a test gives none: see `TestApiOptions.samples`. */
+const noSamples: SpeechProvider = {
+  name: "No samples provider (test)",
+  speak: () => Promise.reject(noFake("samples provider")),
+};
+
+/** Stands in for `cloner` when a test gives none. */
+const noCloner: VoiceCloner = {
+  clone: () => Promise.reject(noFake("cloner")),
+};
+
 /** A private database with the schema applied. */
 export function testDb(): Db {
   const db = openDb(":memory:");
@@ -134,8 +153,8 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     scripting: options.scripting ?? fakeScriptingProvider(),
     speech: options.speech ?? fakeSpeechProvider(),
     ...(options.voices ? { voices: options.voices } : {}),
-    ...(options.samples ? { samples: options.samples } : {}),
-    ...(options.cloner ? { cloner: options.cloner } : {}),
+    samples: options.samples ?? noSamples,
+    cloner: options.cloner ?? noCloner,
   };
   const app = createApp(db, { log, runner, files, exports, providers });
 

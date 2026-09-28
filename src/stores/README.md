@@ -4,22 +4,23 @@
 
 This is a frontend prototype. Keep fixtures, scenarios and simulated endpoint work in [src/mock/](../../src/mock/); stores own reactive state and user actions. No persistence or real provider integration is introduced here.
 
-| Store          | Owns                                                                                                                   |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `library.ts`   | Books, chapters, volumes, book settings and library removal/undo; chapter counts a shelf reads before a book is opened |
-| `scripts.ts`   | Script segments, previous revisions, edits and bulk corrections                                                        |
-| `history.ts`   | A chapter's script versions, editing sessions, checkpoints and restoring one                                           |
-| `transfer.ts`  | A script file read in: the plan the server answered with, applying it and the report of what it did                    |
-| `cast.ts`      | Characters, dictionary, voice routing and pronunciation actions                                                        |
-| `endpoints.ts` | TTS endpoints, scripting profiles, their rate cards and endpoint configuration; the server's in backend mode           |
-| `jobs.ts`      | Queue/history, telemetry, budget reservations and shared job lifecycle                                                 |
-| `usage.ts`     | The append-only ledger of every request this session settled, and what each one cost                                   |
-| `scripting.ts` | Scripting settings and simulated scripting runs                                                                        |
-| `narration.ts` | Expression review, narration runs, flags and retakes                                                                   |
-| `exports.ts`   | Export drafts, deliverables and builds — a request the server runs, or the demo's simulated one                        |
-| `ui.ts`        | Current book, theme, notifications and undo                                                                            |
-| `demo.ts`      | Demo startup, the scenario catalogue, reset orchestration and the world generation simulated runs belong to            |
-| `reader.ts`    | Reader preferences                                                                                                     |
+| Store               | Owns                                                                                                                               |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `library.ts`        | Books, chapters, volumes, book settings and library removal/undo; chapter counts a shelf reads before a book is opened             |
+| `scripts.ts`        | Script segments, previous revisions, edits and bulk corrections                                                                    |
+| `history.ts`        | A chapter's script versions, editing sessions, checkpoints and restoring one                                                       |
+| `transfer.ts`       | A script file read in: the plan the server answered with, applying it and the report of what it did                                |
+| `speakerSamples.ts` | Voice samples a script file brought, waiting with a speaker: discarding them, and giving the voice cloned from them to the speaker |
+| `cast.ts`           | Characters, dictionary, voice routing and pronunciation actions                                                                    |
+| `endpoints.ts`      | TTS endpoints, scripting profiles, their rate cards and endpoint configuration; the server's in backend mode                       |
+| `jobs.ts`           | Queue/history, telemetry, budget reservations and shared job lifecycle                                                             |
+| `usage.ts`          | The append-only ledger of every request this session settled, and what each one cost                                               |
+| `scripting.ts`      | Scripting settings and simulated scripting runs                                                                                    |
+| `narration.ts`      | Expression review, narration runs, flags and retakes                                                                               |
+| `exports.ts`        | Export drafts, deliverables and builds — a request the server runs, or the demo's simulated one                                    |
+| `ui.ts`             | Current book, theme, notifications and undo                                                                                        |
+| `demo.ts`           | Demo startup, the scenario catalogue, reset orchestration and the world generation simulated runs belong to                        |
+| `reader.ts`         | Reader preferences                                                                                                                 |
 
 ## Adding or changing behavior
 

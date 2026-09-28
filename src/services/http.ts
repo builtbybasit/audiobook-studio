@@ -115,6 +115,13 @@ export class HttpClient {
     return this.send<T>(path);
   }
 
+  /** GET a file rather than JSON: its bytes. A refusal is still the API's JSON error. */
+  async getBlob(path: string): Promise<Blob> {
+    const res = await this.reach(path);
+    if (!res.ok) throw refusal(res, await res.text());
+    return res.blob();
+  }
+
   post<T>(path: string, body?: unknown): Promise<T> {
     return this.send<T>(path, {
       method: "POST",

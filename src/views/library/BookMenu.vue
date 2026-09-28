@@ -3,7 +3,10 @@
 // volume, and Remove from library.
 //
 // The script travels as a file from here too: **Export script** downloads it, **Import script…**
-// opens the page that reads one in. Both are the server's, so the demo says so on the item.
+// opens the page that reads one in. Both are the server's, so the demo says so on the item. When
+// some speaker's voice keeps the recordings it was cloned from, Export asks first, on the item
+// itself: **Include voice samples**, unticked every time — recordings of a person are handed over
+// only when asked for, never because they were last time.
 //
 // Removing acts at once and offers the usual Undo toast — the app's one rule for danger, see
 // `src/stores/README.md`. It used to ask first as well, which said nothing Undo did not already
@@ -13,12 +16,15 @@
 // click on the item itself, and says it cannot be undone.
 import { useLibraryStore } from "@/stores/library";
 
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { plural } from "@/views/library/shared";
 import type { Book } from "@/types";
 import { pickedFrom, type PickedFile } from "@/components/addEpub";
-import { scriptExportUrl } from "@/services/library";
+import { activeLibraryService, scriptExportUrl } from "@/services/library";
+import { megabytes } from "@/stores/speakerSamples";
+import { UiCheckbox } from "@/ui";
+import type { ScriptExportSamples } from "@/types";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import {
   Download as ExportIcon,
@@ -41,6 +47,33 @@ const asksFirst = computed(() => !!libraryStore._service());
 const NEEDS_SERVER = "Needs the server — start the app with pnpm dev";
 const scriptFiles = computed(() => !!libraryStore._service());
 const confirming = ref(false);
+
+// ---------- export, and the voice samples it can carry ----------
+const samples = ref<ScriptExportSamples | null>(null);
+/** Export is asking whether to include the samples: the item opened into its second step. */
+const exporting = ref(false);
+const withSamples = ref(false);
+watch(menu, async (open) => {
+  exporting.value = false;
+  withSamples.value = false;
+  samples.value = null;
+  const svc = activeLibraryService();
+  if (!open || !svc) return;
+  try {
+    samples.value = await svc.scriptExportSamples(props.book.id);
+  } catch {
+    // no answer is no samples: the export still downloads, as it always did
+  }
+});
+const sampleVoices = computed(() => samples.value?.voices ?? []);
+const samplesNote = computed(() => {
+  const v = sampleVoices.value;
+  const bytes = v.reduce((n, x) => n + x.bytes, 0);
+  return (
+    `Recordings of ${plural(v.length, "voice")} (${v.map((x) => x.speaker).join(", ")}) · ` +
+    `${megabytes(bytes)}. Share them only with someone the voice's owner agreed to.`
+  );
+});
 /** What the item is about to take, in the menu's own words. */
 const removeWarning = computed(
   () =>
@@ -105,8 +138,35 @@ async function remove() {
           <AddIcon class="mr-1 icon-sm" /> Add a volume…
           <input type="file" accept=".epub" class="hidden" @change="addVolume" />
         </label>
+        <template v-if="scriptFiles && sampleVoices.length">
+          <button
+            class="ui-item w-full hover:bg-violet-50 dark:hover:bg-violet-500/15"
+            :aria-expanded="exporting"
+            title="The whole book's script, cast and dictionary as a .script.zip"
+            @click="exporting = !exporting"
+          >
+            <ExportIcon class="mr-1 icon-sm" /> Export script…
+          </button>
+          <div
+            v-if="exporting"
+            class="mx-1 mb-1 space-y-1.5 rounded bg-zinc-50 p-2 dark:bg-zinc-800/60"
+          >
+            <label class="flex items-center gap-2 font-medium">
+              <UiCheckbox v-model="withSamples" size="xs" /> Include voice samples
+            </label>
+            <p class="text-[10px] leading-snug text-zinc-500">{{ samplesNote }}</p>
+            <a
+              class="btn-primary btn-xs w-full justify-center"
+              :href="scriptExportUrl(book.id, withSamples)"
+              download
+              @click="menu = false"
+            >
+              Download{{ withSamples ? " with samples" : "" }}
+            </a>
+          </div>
+        </template>
         <a
-          v-if="scriptFiles"
+          v-else-if="scriptFiles"
           class="ui-item w-full hover:bg-violet-50 dark:hover:bg-violet-500/15"
           :href="scriptExportUrl(book.id)"
           download

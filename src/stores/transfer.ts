@@ -34,6 +34,7 @@ import { useHistoryStore } from "@/stores/history";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
+import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 import { useUiStore } from "@/stores/ui";
 
 /** A voice the person chose for a speaker: one this install has, or a public one to add first. */
@@ -56,6 +57,12 @@ export interface ImportReport {
   unused: string[];
   terms: number;
   voices: number;
+  /**
+   * Speakers whose voice samples the file carried and this import keeps, to wait with them until
+   * someone clones them. Kept once the speakers are on the server, so the page reads which were
+   * kept from the samples store rather than from here.
+   */
+  samples: string[];
 }
 
 interface TransferState {
@@ -68,6 +75,12 @@ interface TransferState {
 }
 
 const n = (count: number, one: string, many = one + "s") => `${count} ${count === 1 ? one : many}`;
+
+/**
+ * The file each book's plan was read from. Applying sends it back so the server can keep the voice
+ * samples it carries; held outside the state because a `File` is not something to make reactive.
+ */
+const files = new Map<string, File>();
 
 /**
  * What writing `imported` over `current` does: a restore's plan, with one difference.
@@ -160,6 +173,7 @@ export const useTransferStore = defineStore("transfer", {
         return null;
       }
       this.plans[bookId] = plan;
+      this._hold(bookId, file);
       delete this.reports[bookId];
       await this._loadScripts(
         bookId,
@@ -167,8 +181,13 @@ export const useTransferStore = defineStore("transfer", {
       );
       return plan;
     },
+    /** Keep the file a plan was read from, for applying it to send back. */
+    _hold(bookId: string, file: File): void {
+      files.set(bookId, file);
+    },
     /** Put the file aside, and the report of it with it. */
     forget(bookId: string): void {
+      files.delete(bookId);
       delete this.plans[bookId];
       delete this.reports[bookId];
     },
@@ -206,6 +225,7 @@ export const useTransferStore = defineStore("transfer", {
       const endpointsStore = useEndpointsStore();
       const historyStore = useHistoryStore();
       const libraryStore = useLibraryStore();
+      const samplesStore = useSpeakerSamplesStore();
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
@@ -219,6 +239,7 @@ export const useTransferStore = defineStore("transfer", {
         unused: [],
         terms: 0,
         voices: 0,
+        samples: [],
       };
       // ---- the scripts, worked out before anything changes, so a skipped chapter changes nothing
       const writes: { chapter: ImportChapter; restore: RestorePlan }[] = [];
@@ -315,8 +336,9 @@ export const useTransferStore = defineStore("transfer", {
         });
       }
       report.speakers = [...added, ...absorbed];
-      for (const name of new Set([...added, ...absorbed, ...aliased]))
-        void castStore._push(bookId, name);
+      const pushed = [...new Set([...added, ...absorbed, ...aliased])].map((name) =>
+        castStore._push(bookId, name),
+      );
 
       // ---- the dictionary: terms the book lacks
       const lexicon = (castStore.lexicon[bookId] ??= []);
@@ -359,8 +381,33 @@ export const useTransferStore = defineStore("transfer", {
         void castStore._push(bookId, c.name);
       }
 
+      // ---- the voice samples the file carries for a private voice this install cannot reach: they
+      // wait with the speaker, whatever voice the speaker was given here, until someone clones them
+      const file = files.get(bookId);
+      report.samples = file
+        ? (plan.voices ?? [])
+            .filter(
+              (row) =>
+                row.samples?.kind === "ok" &&
+                (row.match.kind === "private" || row.match.kind === "unchecked") &&
+                cast.some((c) => c.name === row.speaker),
+            )
+            .map((row) => row.speaker)
+        : [];
+      // after the speakers are on the server: a sample waits with a speaker the server must know
+      const storing =
+        file && report.samples.length
+          ? Promise.all(pushed).then(() => samplesStore._store(bookId, file, report.samples))
+          : Promise.resolve([]);
+
       this.reports[bookId] = report;
-      if (!report.applied.length && !report.terms && !report.voices && !aliased.length) {
+      if (
+        !report.applied.length &&
+        !report.terms &&
+        !report.voices &&
+        !aliased.length &&
+        !report.samples.length
+      ) {
         uiStore.toast("Nothing to import", {
           kind: "info",
           description: report.skipped.length
@@ -375,6 +422,7 @@ export const useTransferStore = defineStore("transfer", {
         report.speakers.length && n(report.speakers.length, "speaker") + " added",
         report.terms && n(report.terms, "dictionary term") + " added",
         report.voices && n(report.voices, "voice") + " set",
+        report.samples.length && "voice samples kept for " + n(report.samples.length, "speaker"),
       ].filter(Boolean);
       uiStore.toast(`Imported ${plan.name}`, {
         kind: "success",
@@ -409,6 +457,12 @@ export const useTransferStore = defineStore("transfer", {
             });
           };
           delete this.reports[bookId];
+          void storing.then((stored) =>
+            samplesStore._drop(
+              bookId,
+              stored.map((x) => x.id),
+            ),
+          );
           const speakers = report.speakers;
           if (!activeLibraryService()) {
             castStore._dropSpeakers(bookId, speakers);

@@ -3,6 +3,7 @@ import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
+import { useSpeakerSamplesStore, type CloneFromSamples } from "@/stores/speakerSamples";
 
 // The voice catalogue of one speech endpoint — the only place voices are added, edited or removed.
 //
@@ -16,6 +17,7 @@ import { useUiStore } from "@/stores/ui";
 // list endpoint at all. With a server answering, a Fish endpoint has a third: search Fish's public
 // catalogue and add a voice from the results.
 import { computed, reactive, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import {
   activeEndpointSettingsService,
   keyInPlace,
@@ -46,13 +48,23 @@ import {
 import { UiCheckbox, UiSelect, UiTooltip } from "@/ui";
 import { isFishAudio } from "@/lib/endpoints";
 import { canCloneVoices, CLONE_CONSENT, MAX_CLONE_CLIPS, VOICE_SAMPLE } from "@/lib/endpointShapes";
-import type { Endpoint, FoundVoice, Gender, KeptVoiceSamples, Voice } from "@/types";
+import type {
+  Endpoint,
+  FoundVoice,
+  Gender,
+  KeptVoiceSamples,
+  SpeakerSamples,
+  Voice,
+} from "@/types";
 
 const props = defineProps<{ endpoint: Endpoint }>();
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const uiStore = useUiStore();
+const samplesStore = useSpeakerSamplesStore();
+const route = useRoute();
+const router = useRouter();
 
 const GENDERS: { value: Gender; label: string }[] = [
   { value: "f", label: "female" },
@@ -210,6 +222,66 @@ function picked(e: Event): { clips: File[]; leftOut: number } {
 }
 function pickClips(e: Event) {
   Object.assign(clone, picked(e));
+  // recordings picked by hand are not the ones the link brought, so the voice is not theirs to assign
+  from.value = null;
+}
+
+// ---------- cloning from samples a script file brought ----------
+// The Cast page and the import report link here with `?book=…&samples=…&speaker=…&was=…` when a
+// script file carried the recordings of a private voice. The form is filled with them and nothing
+// more: the file's consent record is shown as what someone else agreed to, the box stays unticked
+// for this person's own, and the button is theirs to press. A voice made from them goes to the
+// speaker only if the speaker's voice is still `was` — see `afterClone`.
+const from = ref<(CloneFromSamples & { sample: SpeakerSamples }) | null>(null);
+const query = (k: string): string => {
+  const v = route.query[k];
+  return typeof v === "string" ? v : "";
+};
+async function prefill() {
+  const bookId = query("book");
+  const sampleId = Number(query("samples"));
+  if (query("endpoint") !== `tts:${props.endpoint.id}` || !bookId || !sampleId || !clonable.value)
+    return;
+  if (from.value?.bookId === bookId && from.value.sampleId === sampleId) return;
+  const sample = (await samplesStore.load(bookId)).find((x) => x.id === sampleId);
+  if (!sample) {
+    uiStore.toast("Those voice samples are no longer waiting", {
+      kind: "info",
+      description: "They were cloned or discarded after the link was made.",
+    });
+    return;
+  }
+  const clips = await samplesStore.files(bookId, sample);
+  if (!clips) return;
+  from.value = {
+    bookId,
+    sampleId,
+    speaker: query("speaker") || sample.speaker,
+    was: query("was") || null,
+    sample,
+  };
+  Object.assign(clone, {
+    title: sample.title,
+    clips: clips.slice(0, MAX_CLONE_CLIPS),
+    leftOut: Math.max(0, clips.length - MAX_CLONE_CLIPS),
+    consent: false,
+  });
+  if (clipsInput.value) clipsInput.value.value = "";
+}
+watch(
+  () => [route.query.book, route.query.samples, props.endpoint.id, clonable.value],
+  () => void prefill(),
+  { immediate: true },
+);
+/** Leave the link behind: the form empties, and the address stops asking for it again. */
+function forgetLink() {
+  const { book: _b, samples: _s, speaker: _p, was: _w, ...rest } = route.query;
+  void router.replace({ query: rest });
+}
+function putAside() {
+  from.value = null;
+  Object.assign(clone, { title: "", clips: [], leftOut: 0, consent: false });
+  forgetLink();
 }
 async function makeVoice() {
   if (cloneBlocked.value) return;
@@ -221,6 +293,12 @@ async function makeVoice() {
       consent: clone.consent,
     });
     if (voice) {
+      if (from.value) {
+        const made = from.value;
+        from.value = null;
+        forgetLink();
+        void samplesStore.afterClone(made, `${props.endpoint.id}/${voice.id}`);
+      }
       clone.title = "";
       clone.clips = [];
       clone.leftOut = 0;
@@ -564,6 +642,24 @@ async function playFound(v: FoundVoice) {
         at least 10 seconds in all: one speaker, a quiet room, an even tone. It transcribes them
         itself. WAV, MP3, M4A, Opus or FLAC; up to {{ MAX_CLONE_CLIPS }} recordings.
       </p>
+      <div
+        v-if="from"
+        class="mt-2 rounded border border-violet-200 bg-violet-50 px-2.5 py-2 text-[11px] leading-relaxed dark:border-violet-500/30 dark:bg-violet-500/10"
+      >
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <span class="font-medium"
+            >Recordings for {{ from.speaker }}, from {{ from.sample.source }}</span
+          >
+          <button type="button" class="btn-ghost btn-xs" @click="putAside">Put them aside</button>
+        </div>
+        <p class="text-zinc-600 dark:text-zinc-400">
+          Consent recorded {{ new Date(from.sample.consentAt).toLocaleDateString() }}: “{{
+            from.sample.consentText
+          }}” That is someone else's record, not yours — tick the box below only if it holds for you
+          too. A voice made here goes to {{ from.speaker }} if their voice has not changed since the
+          link was opened.
+        </p>
+      </div>
       <form class="mt-2 space-y-2" @submit.prevent="makeVoice">
         <div class="flex flex-wrap items-end gap-2">
           <label class="space-y-1 text-xs font-medium"

@@ -12,7 +12,9 @@ import type {
   Endpoint,
   EndpointKind,
   EndpointOps,
+  ExpressionTag,
   MetricTotals,
+  PricingConfig,
   Profile,
   TtsBilling,
   WaitReason,
@@ -143,6 +145,11 @@ export type TtsPreset = Preset<Endpoint>;
  *  `/chat/completions`, which is the only request shape the scripting provider makes. */
 export type ScriptingPreset = Preset<Profile>;
 
+/** A preset's rate card. Its windows and dates are read in UTC, and a card with none records UTC
+ *  too, rather than the timezone of whichever machine happened to load the catalogue. */
+const presetPricing = (over: Partial<PricingConfig> = {}): PricingConfig =>
+  newPricing({ timezone: "UTC", ...over });
+
 /**
  * OpenAI's first two speech models, still offered: billed per character of input, so a line's cost
  * is exact rather than estimated, at up to 4,096 characters a request. They take no instructions,
@@ -193,8 +200,9 @@ function elevenLabs(
     hint,
     note:
       `$${rate / 1000} per thousand characters, up to ${maxChars.toLocaleString("en")} a request. ` +
-      "A voice is a voice_id from your ElevenLabs account; Fetch lists them. WAV at 44.1 or " +
-      "48 kHz needs a Pro plan, and 192 kbps MP3 a Creator plan. " +
+      "A voice is a voice_id from your ElevenLabs account; Fetch lists them. ElevenLabs says " +
+      "44.1 kHz PCM needs a Pro plan and 192 kbps MP3 a Creator plan; it names no plan for " +
+      "other rates. " +
       (model === "eleven_v3"
         ? "Delivery goes in the text as audio tags such as [whispers] or [laughs], set up on the " +
           "Expressions tab. "
@@ -219,9 +227,10 @@ function elevenLabs(
 const RATES_AS_OF = "Rates as published on 28 September 2026.";
 
 /**
- * A BreezeBlue model through its hosted API, shaped like ElevenLabs'. Billed per character — a
- * Chinese, Japanese or Korean one counts twice — at $40 a million on the free plan and less on
- * paid ones, up to 1,000 characters a request unless BreezeBlue raises it.
+ * A BreezeBlue model through its hosted API, shaped like ElevenLabs'. Billed per character of the
+ * request text alone — a Chinese, Japanese or Korean one counts twice, and the instructions beside
+ * it are free — at $40 a million on the free plan and less on paid ones, up to 1,000 characters a
+ * request unless BreezeBlue raises it.
  */
 function breezeTts(model: string, label: string, hint: string, languages: string): TtsPreset {
   return {
@@ -232,8 +241,9 @@ function breezeTts(model: string, label: string, hint: string, languages: string
     note:
       `${languages} $40 per million characters on the free plan — $36, $32 and $28 on Starter, ` +
       "Creator and Pro — with a Chinese, Japanese or Korean character counting as two; set the " +
-      "rate to your plan's. Up to 1,000 characters a request. A line's style and direction go as " +
-      "its instructions; sound tags such as (laughs) or (pause) go in the text, from the " +
+      "rate to your plan's. Only the text is billed, not the instructions beside it. Up to 1,000 " +
+      "characters a request. A line's style and direction go as its instructions; sound tags " +
+      "such as (laughs) or (pause) go in the text, from the " +
       "Expressions tab. Commercial use needs a paid plan. " +
       RATES_AS_OF,
     apply: {
@@ -242,7 +252,7 @@ function breezeTts(model: string, label: string, hint: string, languages: string
       model,
       needsKey: true,
       price: 40,
-      billing: { unit: "chars", rate: 40 },
+      billing: { unit: "chars", rate: 40, billsInstructions: false },
       maxChars: 1000,
       splitAt: "sentence",
       concurrency: 2,
@@ -252,7 +262,12 @@ function breezeTts(model: string, label: string, hint: string, languages: string
   };
 }
 
-/** A MiniMax speech model: billed per character at `rate` dollars a million, under 10,000 a request. */
+/**
+ * A MiniMax speech model: billed per character at `rate` dollars a million. MiniMax takes under
+ * 10,000 characters a request, but recommends streaming above 3,000, and its answer is the audio
+ * as hex inside one JSON body — about 80 MB for a 10,000-character line — so requests are kept to
+ * 3,000.
+ */
 function miniMax(model: string, label: string, hint: string, rate: number): TtsPreset {
   return {
     id: `minimax-${model}`,
@@ -260,8 +275,9 @@ function miniMax(model: string, label: string, hint: string, rate: number): TtsP
     label,
     hint,
     note:
-      `$${rate} per million characters, under 10,000 a request; MiniMax reports the characters it ` +
-      "billed, which the ledger keeps. A voice is a voice_id such as English_expressive_narrator; " +
+      `$${rate} per million characters. Requests are kept to 3,000 characters: MiniMax takes up ` +
+      "to 9,999 but recommends streaming above 3,000, and a longer answer is tens of megabytes " +
+      "of hex. MiniMax reports the characters it billed, which the ledger keeps. A voice is a voice_id such as English_expressive_narrator; " +
       "Fetch lists the system voices and any you cloned or designed. Pauses go in the text as " +
       "<#0.5#> and sounds as (laughs) or (sighs), from the Expressions tab. " +
       RATES_AS_OF,
@@ -272,7 +288,7 @@ function miniMax(model: string, label: string, hint: string, rate: number): TtsP
       needsKey: true,
       price: rate,
       billing: { unit: "chars", rate },
-      maxChars: 9999,
+      maxChars: 3000,
       splitAt: "sentence",
       concurrency: 2,
       latency: 1500,
@@ -292,12 +308,13 @@ function qwenTts(model: string, label: string, hint: string, rate: number): TtsP
     label,
     hint,
     note:
-      `$${rate / 100} per 10,000 characters, a Chinese character counting as two; the first ` +
+      `$${(rate / 100).toFixed(2)} per 10,000 characters, a Chinese character counting as two; the first ` +
       "10,000 are free for 90 days. Each model has its own voices — Fetch lists this one's system " +
       "voices, and its 500 base voices can be added by id. WAV at 24 kHz. Requests are kept to 600 " +
       "characters: Alibaba publishes no limit for these models, and 600 is the one it gives for " +
-      "its other speech models. The base URL may be your workspace's own " +
-      "(https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com), which Alibaba recommends. " +
+      "its other speech models. The default base URL is the shared DashScope host, which Alibaba " +
+      "puts into maintenance mode on 30 September 2026; it recommends your workspace's own " +
+      "(https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com) instead. " +
       RATES_AS_OF,
     apply: {
       name: label,
@@ -316,9 +333,34 @@ function qwenTts(model: string, label: string, hint: string, rate: number): TtsP
 }
 
 /**
+ * The vocal sounds Google recommends for its 3.8 speech models, written inline in angle brackets
+ * where the sound should fall ("Vocal bursts and non-speech sounds" in its speech-generation
+ * guide). Delivery — whispering, a tone, a pace — is not here: 3.8 takes that as the line's style,
+ * beside the text. Ids are the shared names the demo's tags use, so an annotation made for one
+ * model's "Sighs" is the same expression on this one.
+ */
+const GEMINI_VOCAL_TAGS: ExpressionTag[] = [
+  { id: "laughs", label: "Laughs", token: "<laugh>", kind: "sound" },
+  { id: "chuckles", label: "Chuckles", token: "<chuckle>", kind: "sound" },
+  { id: "sighs", label: "Sighs", token: "<sigh>", kind: "sound" },
+  { id: "gasps", label: "Gasps", token: "<gasp>", kind: "sound" },
+  { id: "breathes", label: "Breathes", token: "<breath>", kind: "sound" },
+  { id: "coughs", label: "Coughs", token: "<cough>", kind: "sound" },
+  { id: "clears throat", label: "Clears throat", token: "<throat-clearing>", kind: "sound" },
+  { id: "sobs", label: "Sobs", token: "<sob>", kind: "sound" },
+  { id: "yawns", label: "Yawns", token: "<yawn>", kind: "sound" },
+  { id: "groans", label: "Groans", token: "<groan>", kind: "sound" },
+  { id: "pause", label: "Pause", token: "<short pause>", kind: "sound" },
+  { id: "long pause", label: "Long pause", token: "<long pause>", kind: "sound" },
+];
+
+const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+
+/**
  * One of the Gemini 3.8 speech models, released on 22 September 2026. Billed like 3.1 — input text
  * tokens and output audio tokens, 25 audio tokens a second — at $1 in and `audioRate` out from
  * 2027; until then Google charges half, which a promotion holds so the card turns over by itself.
+ * Its expression tags start as Google's recommended vocal sounds.
  */
 function gemini38Tts(
   id: string,
@@ -338,16 +380,18 @@ function gemini38Tts(
       `text tokens until the end of 2026, then $${audioRate} and $1: the card is the 2027 rate ` +
       "and a promotion on the Pricing tab holds the 2026 one until it ends. A request takes up " +
       "to 8,192 input tokens. A line's style and direction go beside it as its style rather " +
-      "than into the text, which 3.8 reads aloud word for word. " +
-      "Rates as published on 28 September 2026.",
+      "than into the text, which 3.8 reads aloud word for word. Sounds such as <laugh>, <sigh> " +
+      "or <short pause> go in the text; the Expressions tab starts with the ones Google " +
+      "recommends. " +
+      RATES_AS_OF,
     apply: {
       name: label,
-      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      baseUrl: GEMINI_BASE_URL,
       model,
       needsKey: true,
       price: 0,
       billing: { unit: "audio-tokens", rate: 1, audioRate, audioTokensPerSecond: 25 },
-      pricing: newPricing({
+      pricing: presetPricing({
         promotions: [
           {
             id: "gemini-tts-2026",
@@ -365,6 +409,12 @@ function gemini38Tts(
       concurrency: 2,
       latency: 1800,
       failRate: 0.015,
+      expressions: {
+        status: "supported",
+        model,
+        baseUrl: GEMINI_BASE_URL,
+        tags: GEMINI_VOCAL_TAGS.map((t) => ({ ...t })),
+      },
     },
   };
 }
@@ -379,7 +429,8 @@ export const TTS_PRESETS: TtsPreset[] = [
       "Free through 30 November 2026 under Fish Audio's fair-use policy, with no SLA and " +
       "best-effort latency. Requests may be used to improve their model, and products over " +
       "$1M ARR are asked to contact them first. A voice is a reference_id from your Fish Audio " +
-      "library, not a named voice.",
+      "library, not a named voice. " +
+      RATES_AS_OF,
     apply: {
       name: "Fish Audio (free)",
       baseUrl: "https://api.fish.audio/v1",
@@ -405,7 +456,8 @@ export const TTS_PRESETS: TtsPreset[] = [
       "per million **UTF-8 bytes**: Fish's price list talks about characters, but the quantity it " +
       "meters is bytes, so a chapter of Mandarin costs about three times what a character count " +
       "suggests and an accented Latin name a little more than it looks. $15 per million is their " +
-      "published figure — check it against your own plan.",
+      "published figure — check it against your own plan. " +
+      RATES_AS_OF,
     apply: {
       name: "Fish Audio",
       baseUrl: "https://api.fish.audio/v1",
@@ -429,16 +481,19 @@ export const TTS_PRESETS: TtsPreset[] = [
       "Billed $0.60 per million input text tokens and $12 per million output audio tokens. " +
       "OpenAI does not publish how many audio tokens a second of speech is, and its speech " +
       "endpoint reports no usage, so the audio half is worked out at this endpoint's " +
-      "tokens-per-second setting on the Pricing tab — an assumption, marked as one wherever it is " +
-      "used. Rates as published on 28 September 2026.",
+      "tokens-per-second setting on the Pricing tab — 25 here, Gemini's published figure, which " +
+      "is an assumption for OpenAI and marked as one wherever it is used. Requests are kept to " +
+      "1,500 characters: the endpoint takes 4,096, but the model reads at most 2,000 input " +
+      "tokens, instructions included. " +
+      RATES_AS_OF,
     apply: {
       name: "OpenAI · gpt-4o-mini-tts",
       baseUrl: "https://api.openai.com/v1",
       model: "gpt-4o-mini-tts",
       needsKey: true,
       price: 0,
-      billing: { unit: "audio-tokens", rate: 0.6, audioRate: 12 },
-      maxChars: 4096,
+      billing: { unit: "audio-tokens", rate: 0.6, audioRate: 12, audioTokensPerSecond: 25 },
+      maxChars: 1500,
       splitAt: "sentence",
       concurrency: 3,
       latency: 1400,
@@ -476,10 +531,12 @@ export const TTS_PRESETS: TtsPreset[] = [
       "audio tokens. The audio side is the one that dominates a bill, and it does not follow from " +
       "the text — an estimate has to go through the audio's expected length and a tokens-per-second " +
       "figure, which is editable on the Pricing tab because it is an assumption about the " +
-      "provider's tokeniser rather than something this app can measure.",
+      "provider's tokeniser rather than something this app can measure. A preview has no field " +
+      "for a line's style or direction, so neither is sent. " +
+      RATES_AS_OF,
     apply: {
       name: "Gemini 3.1 Flash TTS",
-      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      baseUrl: GEMINI_BASE_URL,
       model: "gemini-3.1-flash-tts-preview",
       needsKey: true,
       price: 0,
@@ -649,7 +706,9 @@ const GEMINI_FLASH_2026 = {
 
 /**
  * A model through OpenRouter, one key for all of them. Its rates are OpenRouter's listing for the
- * model (`GET /api/v1/models`), standard tier — the underlying provider's price passed through.
+ * model (`GET /api/v1/models`), standard tier. That is not always the provider's own card, nor what
+ * a request is charged: OpenRouter bills at the rate of whichever of its providers serves it, and
+ * reports that charge with each answer as `usage.cost`, which the ledger keeps beside its own figure.
  */
 function openRouter(
   id: string,
@@ -664,9 +723,13 @@ function openRouter(
     label: `OpenRouter · ${label}`,
     hint,
     note:
-      "Through OpenRouter, which passes the model's own price through; buying credits adds " +
-      "OpenRouter's fee (5.5%, at least $0.80), which these rates leave out. One of the most-used " +
-      "models on OpenRouter in the week to 27 September 2026. " +
+      "Through OpenRouter, at its listed rates for the model. A listing need not match the " +
+      "provider's own card, and a request is billed at whichever provider serves it: Grok 4.7 is " +
+      "listed at $1.60 / $4.80 against xAI's own $2 / $6, and the only provider serving it on 28 " +
+      "September charged $3.20 / $9.60. OpenRouter reports what each request cost, which the " +
+      "ledger records beside the figure worked out here. Buying credits adds OpenRouter's fee " +
+      "(5.5%, at least $0.80), which these rates leave out. One of the top models on OpenRouter's " +
+      "Artificial Analysis Intelligence Index list on 28 September 2026. " +
       PRICES_AS_OF,
     apply: {
       name: `OpenRouter · ${label}`,
@@ -675,7 +738,7 @@ function openRouter(
       needsKey: true,
       inPrice: rates.input,
       outPrice: rates.output,
-      pricing: newPricing({ cachedInput: rates.cachedInput, cacheWrite: rates.cacheWrite }),
+      pricing: presetPricing({ cachedInput: rates.cachedInput, cacheWrite: rates.cacheWrite }),
     },
   };
 }
@@ -697,7 +760,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: true,
       inPrice: 0.1,
       outPrice: 0.5,
-      pricing: newPricing({ cachedInput: 0.01, cacheWrite: 0.125 }),
+      pricing: presetPricing({ cachedInput: 0.01, cacheWrite: 0.125 }),
     },
   },
   {
@@ -716,7 +779,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: true,
       inPrice: 2,
       outPrice: 10,
-      pricing: newPricing({ cachedInput: 0.2, cacheWrite: 2.5 }),
+      pricing: presetPricing({ cachedInput: 0.2, cacheWrite: 2.5 }),
     },
   },
   {
@@ -732,7 +795,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: true,
       inPrice: 10,
       outPrice: 50,
-      pricing: newPricing({ cachedInput: 1, cacheWrite: 12.5 }),
+      pricing: presetPricing({ cachedInput: 1, cacheWrite: 12.5 }),
     },
   },
   {
@@ -752,7 +815,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: true,
       inPrice: 0.15,
       outPrice: 0.6,
-      pricing: newPricing({
+      pricing: presetPricing({
         cachedInput: 0.003,
         cacheWrite: null,
         timezone: "UTC",
@@ -778,7 +841,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: true,
       inPrice: 1.5,
       outPrice: 7.5,
-      pricing: newPricing({
+      pricing: presetPricing({
         cachedInput: 0.15,
         cacheWrite: null,
         promotions: [GEMINI_FLASH_2026],
@@ -801,7 +864,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: true,
       inPrice: 2,
       outPrice: 12,
-      pricing: newPricing({ cachedInput: 0.2, cacheWrite: null }),
+      pricing: presetPricing({ cachedInput: 0.2, cacheWrite: null }),
     },
   },
   {
@@ -810,7 +873,8 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
     label: "Anthropic · Claude Opus 5.5",
     hint: "claude-opus-5-5, through its OpenAI compatibility layer",
     note:
-      "Anthropic's most capable model, at twice Sonnet's price. The same caveat as Sonnet: " +
+      "The model Anthropic suggests starting with for most work, at twice Sonnet's price. The " +
+      "same caveat as Sonnet: " +
       "Anthropic describes its OpenAI compatibility layer as meant for testing and comparing " +
       "models, and prompt caching is not available through it. " +
       PRICES_AS_OF,
@@ -821,7 +885,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: true,
       inPrice: 4,
       outPrice: 20,
-      pricing: newPricing(),
+      pricing: presetPricing(),
     },
   },
   {
@@ -841,7 +905,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: true,
       inPrice: 2,
       outPrice: 10,
-      pricing: newPricing(),
+      pricing: presetPricing(),
     },
   },
   {
@@ -859,7 +923,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: true,
       inPrice: 1,
       outPrice: 5,
-      pricing: newPricing(),
+      pricing: presetPricing(),
     },
   },
   {
@@ -879,7 +943,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: true,
       inPrice: 2,
       outPrice: 6,
-      pricing: newPricing({ cachedInput: 0.5, cacheWrite: null }),
+      pricing: presetPricing({ cachedInput: 0.5, cacheWrite: null }),
     },
   },
   {
@@ -898,7 +962,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: true,
       inPrice: 1.25,
       outPrice: 2.5,
-      pricing: newPricing({ cachedInput: 0.2, cacheWrite: null }),
+      pricing: presetPricing({ cachedInput: 0.2, cacheWrite: null }),
     },
   },
   openRouter(
@@ -911,18 +975,6 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       output: 20,
       cachedInput: 0.2,
       cacheWrite: 5,
-    },
-  ),
-  openRouter(
-    "claude-fable-5.1",
-    "Claude Fable 5.1",
-    "anthropic/claude-fable-5.1",
-    "anthropic/claude-fable-5.1",
-    {
-      input: 10,
-      output: 50,
-      cachedInput: 0.25,
-      cacheWrite: 12.5,
     },
   ),
   openRouter("gpt-6-astra", "GPT-6 Astra", "openai/gpt-6-astra", "openai/gpt-6-astra", {
@@ -976,7 +1028,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: false,
       inPrice: 0,
       outPrice: 0,
-      pricing: newPricing(),
+      pricing: presetPricing(),
     },
   },
   {
@@ -994,7 +1046,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: false,
       inPrice: 0,
       outPrice: 0,
-      pricing: newPricing(),
+      pricing: presetPricing(),
     },
   },
 ];

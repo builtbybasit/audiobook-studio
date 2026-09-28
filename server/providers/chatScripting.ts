@@ -167,6 +167,10 @@ const Completion = v.object({
 /**
  * The `usage` block of a completion, read on its own: a gateway that sends a malformed one must not
  * cost a good script, so it is checked apart from the answer and simply read as not reported.
+ *
+ * It is a loose object on purpose. OpenRouter adds `usage.cost` to every answer, unasked — what the
+ * request was charged, in its credits, which are US dollars, at whichever provider served it — and
+ * that rides through to `normalizeUsage`, which keeps it as the reported cost beside the tokens.
  */
 const Metered = v.looseObject({
   usage: v.looseObject({

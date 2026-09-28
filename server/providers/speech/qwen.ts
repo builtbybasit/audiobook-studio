@@ -14,12 +14,31 @@
 // first remains fully functional. Only the words are sent. Alibaba's realtime guide says these
 // models take instructions, through the realtime API's `instruction`; the HTTP API's reference
 // documents no such field for them, so none is sent and none is billed.
+//
+// A model of the Qwen-TTS family (`qwen3-tts-*`) is spoken at `POST {host}/api/v1/services/aigc/
+// multimodal-generation/generation` instead (https://www.alibabacloud.com/help/en/model-studio/qwen-tts-api),
+// with only the words and the voice: that API takes no format or rate, and answers WAV at 24 kHz
+// with the same link and the same character count. It is here for the one voice-cloning model
+// this app speaks, `qwen3-tts-vc-2026-01-22`.
+//
+// A voice is cloned for it with `POST {host}/api/v1/services/audio/tts/customization`
+// (https://www.alibabacloud.com/help/en/model-studio/voice-cloning-user-guide, and the HTTP
+// reference https://www.alibabacloud.com/help/doc-detail/3027318.html): model
+// `qwen-voice-enrollment`, action `create`, the endpoint's model as `target_model` — the voice
+// works with that model and no other — a `preferred_name` made from the title, and the recording
+// itself as a base64 data URL under `audio.data`. The answer's `output.voice` is the id a line is
+// spoken with. The Qwen-Audio 3.0 models are cloned for through the older `voice-enrollment`, which
+// takes a recording only as a public link, so for them the clone is refused before anything is
+// sent. The recording's language is sent as English: Model Studio assumes Chinese when none is
+// named, and the books this app reads are English.
 import type { SpeechUsage } from "@/types";
 import { AUDIO_MIME } from "@/lib/endpointShapes";
 import { normalizeSpeechUsage } from "@/lib/pricing";
+import { isQwenTts, qwen, QWEN_CLONE_MODELS } from "@/lib/providers/qwen";
 import { audioAnswer, jsonAnswer } from "~/providers/answer";
 import { call, jsonHeaders, ProviderError } from "~/providers/http";
 import type { SpeechInput } from "~/providers/speech";
+import type { ProviderTarget } from "~/providers/target";
 import { onePage, type SpeechWire } from "~/providers/speech/wire";
 
 /** The rate Alibaba's own example asks for, and the only one offered until others are tried. */
@@ -27,17 +46,59 @@ const RATE = 24000;
 
 const apiRoot = (baseUrl: string): string => `${new URL(baseUrl).origin}/api/v1`;
 
+/** Where voices are made, listed and removed, for every model family. */
+const customizationUrl = (baseUrl: string): string =>
+  `${apiRoot(baseUrl)}/services/audio/tts/customization`;
+
 /** The request body for one line. Exported for the tests, which check it against the docs. */
 export function qwenBody(
   input: Pick<SpeechInput, "text" | "sampleRate">,
   model: string,
   voice: string,
 ): Record<string, unknown> {
+  // the Qwen-TTS API takes the words and the voice, and answers at its own format and rate
+  if (isQwenTts(model)) return { model, input: { text: input.text, voice } };
   return {
     model,
     input: { text: input.text, voice, format: "wav", sample_rate: input.sampleRate ?? RATE },
   };
 }
+
+/**
+ * What a voice is asked for as: letters, digits and underscores, at most 16 — the rule the HTTP
+ * reference gives `preferred_name`, which it calls a prefix for the voice's name: the id itself is
+ * Model Studio's, and comes back in the answer. The title stays the voice's label here.
+ */
+export function qwenPreferredName(title: string): string {
+  const name = title
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 16)
+    .replace(/_+$/, "");
+  return name || "voice";
+}
+
+/** Why a voice cannot be cloned for the endpoint's model; empty when it can. */
+function uncloneableModel(target: ProviderTarget): string {
+  if ((QWEN_CLONE_MODELS as readonly string[]).includes(target.model)) return "";
+  return (
+    `${target.name} cannot make a voice from a file for “${target.model}”: Model Studio takes a ` +
+    `file to clone from only for ${QWEN_CLONE_MODELS.join(", ")}, and a voice works only with the ` +
+    "model it was made for. Set the endpoint's model to that on the Endpoints page, then clone."
+  );
+}
+
+/** A voice in `qwen-voice-enrollment`'s `list` answer. */
+interface EnrolledVoice {
+  voice?: unknown;
+  target_model?: unknown;
+}
+
+/** The HTTP reference's own page size; it documents no larger one. A list is read up to a cap. */
+const ENROLLED_PAGE = 10;
+const ENROLLED_PAGES = 30;
 
 interface QwenAnswer {
   output?: { audio?: { url?: string } };
@@ -75,9 +136,53 @@ export const QWEN_VOICES: Record<
 };
 
 export const qwenWire: SpeechWire = {
+  async clone(target, request, signal, options) {
+    const problem = uncloneableModel(target);
+    if (problem) throw new ProviderError(problem, 0, false);
+    // one recording: the route holds a clone to `cloning.maxClips`, which is 1
+    const [clip] = request.clips;
+    const data = Buffer.from(await clip.blob.arrayBuffer()).toString("base64");
+    const res = await call(
+      target,
+      customizationUrl(target.baseUrl),
+      {
+        method: "POST",
+        headers: jsonHeaders(target),
+        body: JSON.stringify({
+          model: "qwen-voice-enrollment",
+          input: {
+            action: "create",
+            target_model: target.model,
+            preferred_name: qwenPreferredName(request.title),
+            // the blob is typed by its bytes: audio/wav, audio/mpeg or audio/mp4, as the docs list
+            audio: { data: `data:${clip.blob.type};base64,${data}` },
+            language: "en",
+          },
+        }),
+      },
+      { signal, ...options },
+    );
+    const body = (await res.json().catch(() => null)) as {
+      output?: { voice?: unknown };
+      code?: unknown;
+      message?: unknown;
+    } | null;
+    const voice = body?.output?.voice;
+    if (typeof voice !== "string" || !voice)
+      throw new ProviderError(
+        `${target.name} answered ${res.status} without the new voice's id` +
+          (typeof body?.message === "string" && body.message
+            ? `: ${typeof body.code === "string" && body.code ? `${body.code}, ` : ""}${body.message}`
+            : ""),
+        res.status,
+        false,
+      );
+    return { id: voice, label: request.title, gender: "?" };
+  },
+
   request(input, target, voice) {
     return {
-      url: `${apiRoot(target.baseUrl)}/services/audio/tts/SpeechSynthesizer`,
+      url: `${apiRoot(target.baseUrl)}${qwen.requestPath(target.model)}`,
       init: {
         method: "POST",
         headers: jsonHeaders(target),
@@ -122,7 +227,7 @@ export const qwenWire: SpeechWire = {
     const started = Date.now();
     await call(
       target,
-      `${apiRoot(target.baseUrl)}/services/audio/tts/customization`,
+      customizationUrl(target.baseUrl),
       {
         method: "POST",
         headers: jsonHeaders(target),
@@ -137,6 +242,45 @@ export const qwenWire: SpeechWire = {
     return { ok: true, message: `Answered in ${ms} ms; the key was accepted`, ms };
   },
 
-  // each model's system voices, written down in Alibaba's voice list: nothing to ask for
-  voices: async (target) => onePage([...(QWEN_VOICES[target.model] ?? [])]),
+  /**
+   * A Qwen-Audio model's system voices, written down in Alibaba's voice list: nothing to ask for.
+   * A voice-cloning model has none, only the voices made for it, which are asked of
+   * `qwen-voice-enrollment` a page at a time and kept to those made for this model — another
+   * model cannot speak them. The list names each by its id alone, so that is its label too.
+   */
+  async voices(target, signal, options) {
+    if (!isQwenTts(target.model)) return onePage([...(QWEN_VOICES[target.model] ?? [])]);
+    const voices: { id: string; label: string; gender: "?" }[] = [];
+    let more = true;
+    for (let page = 0; more && page < ENROLLED_PAGES; page++) {
+      const res = await call(
+        target,
+        customizationUrl(target.baseUrl),
+        {
+          method: "POST",
+          headers: jsonHeaders(target),
+          body: JSON.stringify({
+            model: "qwen-voice-enrollment",
+            input: { action: "list", page_size: ENROLLED_PAGE, page_index: page },
+          }),
+        },
+        { signal, ...options },
+      );
+      const body = await jsonAnswer<{
+        output?: { voice_list?: EnrolledVoice[]; total_count?: unknown };
+      }>(target, res, signal);
+      const items = body.output?.voice_list ?? [];
+      for (const v of items)
+        if (typeof v.voice === "string" && v.voice && v.target_model === target.model)
+          voices.push({ id: v.voice, label: v.voice, gender: "?" });
+      const total = body.output?.total_count;
+      more =
+        items.length > 0 &&
+        (typeof total === "number"
+          ? (page + 1) * ENROLLED_PAGE < total
+          : items.length === ENROLLED_PAGE);
+    }
+    // `hasMore` here means the cap was reached with the list still going
+    return { voices, total: voices.length, page: 1, hasMore: more };
+  },
 };

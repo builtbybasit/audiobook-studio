@@ -3,7 +3,7 @@
 // The configuration — speech endpoints, scripting profiles, the credential registry — is the
 // server's in backend mode, and the page edits it by binding fields straight onto the objects. So
 // what these guard is the write-behind: that the store reads the server's configuration and holds
-// it, that a server nobody has configured is given the seeded one exactly once, that an edit
+// it, that a server nobody has configured is left with none rather than given the seeded one, that an edit
 // becomes one whole-document write a moment later with the browser's telemetry left out, that the
 // server's answer being installed is not mistaken for an edit and sent back, and that a refused
 // write puts back what the server actually holds.
@@ -202,34 +202,33 @@ describe("the endpoints store with a server answering", () => {
   });
 
   test("an endpoint that survives a load keeps its object and its telemetry", async () => {
-    const seeded = endpointsStore.endpoints[0];
-    seeded.history = [{ t: 1, ms: 100, ok: true }];
-    seeded.failures = 2;
-    const cfg = server();
-    cfg.endpoints[0] = { ...cfg.endpoints[0], id: seeded.id };
-    svc.held = cfg;
+    svc.held = server();
     await endpointsStore.load();
-    expect(endpointsStore.endpoints[0]).toBe(seeded);
-    expect(seeded.name).toBe("Server speech");
-    expect(seeded.history).toEqual([{ t: 1, ms: 100, ok: true }]);
-    expect(seeded.failures).toBe(2);
+    const held = endpointsStore.endpoints[0];
+    held.history = [{ t: 1, ms: 100, ok: true }];
+    held.failures = 2;
+    const cfg = server();
+    cfg.endpoints[0] = { ...cfg.endpoints[0], name: "Renamed on the server" };
+    svc.held = cfg;
+    await endpointsStore.load(true);
+    expect(endpointsStore.endpoints[0]).toBe(held);
+    expect(held.name).toBe("Renamed on the server");
+    expect(held.history).toEqual([{ t: 1, ms: 100, ok: true }]);
+    expect(held.failures).toBe(2);
   });
 
-  test("a server nobody has configured is given the seeded configuration, once", async () => {
-    const seeded = endpointsStore.endpoints.map((e) => e.id);
-    const seededProfiles = endpointsStore.profiles.map((p) => p.id);
-    const seededCredentials = credentials.map((c) => c.id);
+  test("a server nobody has configured is given nothing, and the page shows none", async () => {
+    // the store never starts on the seeded configuration, so there is nothing to hand over
+    expect(endpointsStore.endpoints).toEqual([]);
+    expect(endpointsStore.profiles).toEqual([]);
     await endpointsStore.load();
-    expect(svc.puts).toHaveLength(1);
-    expect(svc.puts[0].endpoints.map((e) => e.id)).toEqual(seeded);
-    expect(svc.puts[0].profiles.map((p) => p.id)).toEqual(seededProfiles);
-    expect(svc.puts[0].credentials.map((c) => c.id)).toEqual(seededCredentials);
-    for (const e of svc.puts[0].endpoints)
-      for (const k of TELEMETRY) expect(e).not.toHaveProperty(k);
-    // the answer is what the store now holds, and installing it is not an edit to send back
-    expect(endpointsStore.endpoints.map((e) => e.id)).toEqual(seeded);
+    expect(svc.puts).toHaveLength(0);
+    expect(endpointsStore.loaded).toBe(true);
+    expect(endpointsStore.endpoints).toEqual([]);
+    expect(endpointsStore.profiles).toEqual([]);
+    expect(credentials).toEqual([]);
     await settle();
-    expect(svc.puts).toHaveLength(1);
+    expect(svc.puts).toHaveLength(0);
   });
 
   test("edits become one debounced write of the whole configuration, telemetry left out", async () => {
@@ -364,7 +363,10 @@ describe("the endpoints store with a server answering", () => {
 describe("the endpoints store in the demo", () => {
   test("reads nothing and writes nothing", async () => {
     setEndpointSettingsService(null);
+    // the store was made with a server answering; made again without one, it holds the seeded world
+    endpointsStore.$reset();
     const before = endpointsStore.endpoints.map((e) => e.id);
+    expect(before.length).toBeGreaterThan(0);
     await endpointsStore.load();
     endpointsStore.endpoints[0].concurrency = 11;
     await settle();

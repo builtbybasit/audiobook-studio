@@ -123,10 +123,15 @@ function cancelTimer(): void {
 }
 
 export const useEndpointsStore = defineStore("endpoints", {
-  // Backend mode starts from the seeded configuration too, but only for as long as it takes to
-  // read the server's: `load` replaces it, and a server that has never been given one is given
-  // this one — which is how a first run adopts the demo's endpoints rather than starting on none.
-  state: (): EndpointsState => ({ ...seedState("endpoints", "profiles"), loaded: false }),
+  // With a server answering, the configuration is only ever the server's: the store starts on none
+  // and `load` installs what the server holds. A server nobody has configured has no endpoints,
+  // and the seeded ones stay the demo's rather than being handed over as if someone had made them.
+  state: (): EndpointsState => ({
+    ...(activeEndpointSettingsService()
+      ? { endpoints: [], profiles: [] }
+      : seedState("endpoints", "profiles")),
+    loaded: false,
+  }),
   getters: {
     enabledEndpoints(s): Endpoint[] {
       return s.endpoints.filter((e) => e.enabled);
@@ -209,15 +214,14 @@ export const useEndpointsStore = defineStore("endpoints", {
      *
      * Called once when the app starts in backend mode; `force` reads it again, which is what a
      * refused write does to put back what the server actually holds. A server that has never been
-     * given a configuration is given the one this store started with.
+     * given a configuration answers with none, and none is what the page then shows.
      */
     async load(force = false): Promise<void> {
       const svc = this._service();
       if (!svc || (this.loaded && !force)) return;
       const before = edits;
       try {
-        let answer = await svc.getSettings();
-        if (!answer.saved) answer = await svc.putSettings(this._config());
+        const answer = await svc.getSettings();
         // Something was typed while the read was out: that is newer than what it read, and its
         // own write is already on its way.
         if (this.loaded && edits !== before) return;

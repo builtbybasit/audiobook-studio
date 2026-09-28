@@ -27,6 +27,7 @@ import { AppError } from "~/lib/errors";
 import type { VoiceLister, VoiceQuery } from "~/providers/voices";
 import { planScriptImport, type ImportPorts } from "~/script/importPlan";
 import { sourceHash } from "~/script/transfer";
+import { SAMPLE_LIMITS } from "~/speakerSamples/folder";
 import { epubFile } from "../support/epub";
 import { jsonBody, testApi, type TestApi } from "../support/server";
 
@@ -533,5 +534,126 @@ describe("voices", () => {
       ["Tobin", true, null, true],
       ["Vex", true, null, false],
     ]);
+  });
+});
+
+describe("voice samples in the file", () => {
+  // a WAV header is all a recording needs to be here: it is sniffed, never decoded
+  const wav = (tag: string) =>
+    new Uint8Array([...`RIFF\0\0\0\0WAVEfmt ${tag}`].map((c) => c.charCodeAt(0)));
+  const CONSENT_AT = "2026-09-12T10:00:00.000Z";
+  const consent = (
+    samples = [{ file: "sample-1.wav", name: "take-1.wav", format: "wav" }],
+    over: Record<string, unknown> = {},
+  ) =>
+    JSON.stringify({
+      format: "audiobook-studio/voice-samples",
+      version: 1,
+      title: "Vex (clone)",
+      consentAt: CONSENT_AT,
+      consentText: "This is my voice.",
+      samples,
+      ...over,
+    });
+  const vex: ScriptFileSpeaker = {
+    name: "Vex",
+    aliases: [],
+    gender: "f",
+    description: "",
+    style: "",
+    voice: {
+      endpoint: "Fish Audio",
+      provider: "api.fish.audio",
+      voiceId: "clone",
+      voiceLabel: "Vex (clone)",
+    },
+    samples: "voices/vex/",
+  };
+  const one = { "voices/vex/consent.json": consent(), "voices/vex/sample-1.wav": wav("one") };
+
+  test("a voice whose recordings come with it says how many, how big, and under what consent", async () => {
+    const got = await plan(
+      await zipOf({
+        chapters: [chapterOf(1)],
+        cast: [vex],
+        wrap: "Ledger/",
+        extra: {
+          "Ledger/voices/vex/consent.json": consent(),
+          "Ledger/voices/vex/sample-1.wav": wav("one"),
+        },
+      }),
+    );
+    expect(got.voices).toHaveLength(1);
+    expect(got.voices[0]).toMatchObject({
+      speaker: "Vex",
+      match: { kind: "private" },
+      samples: {
+        kind: "ok",
+        count: 1,
+        bytes: wav("one").length,
+        consentAt: CONSENT_AT,
+        consentText: "This is my voice.",
+      },
+    });
+    expect(got.ignored).toEqual([]);
+  });
+
+  test.each<[string, Record<string, string | Uint8Array>, Partial<typeof SAMPLE_LIMITS>, RegExp]>([
+    [
+      "a recording that is not audio",
+      { ...one, "voices/vex/sample-1.wav": "not a recording" },
+      {},
+      /sample-1\.wav is not a WAV/,
+    ],
+    ["no consent record", { "voices/vex/sample-1.wav": wav("one") }, {}, /no consent\.json/],
+    [
+      "a consent record with no consent in it",
+      { ...one, "voices/vex/consent.json": consent(undefined, { consentText: " " }) },
+      {},
+      /consentText/,
+    ],
+    [
+      "a recording named but not in the folder",
+      { "voices/vex/consent.json": consent([{ file: "gone.wav", name: "", format: "wav" }]) },
+      {},
+      /gone\.wav is named in consent\.json but is not in voices\/vex\//,
+    ],
+    ["a recording over the limit on one", one, { clip: 8 }, /over the 0\.0 MB limit on one/],
+    [
+      "more recordings than a voice is cloned from",
+      {
+        "voices/vex/consent.json": consent([
+          { file: "a.wav", name: "", format: "wav" },
+          { file: "b.wav", name: "", format: "wav" },
+        ]),
+        "voices/vex/a.wav": wav("a"),
+        "voices/vex/b.wav": wav("b"),
+      },
+      { clips: 1 },
+      /2 recordings, over the 1/,
+    ],
+    [
+      "recordings over the limit for one voice",
+      one,
+      { voice: 8 },
+      /over 0\.0 MB, the limit for one voice/,
+    ],
+  ])("%s refuses that voice's recordings, and nothing else", async (_, extra, limits, reason) => {
+    const got = await plan(await zipOf({ chapters: [chapterOf(1)], cast: [vex], extra }), {
+      sampleLimits: { ...SAMPLE_LIMITS, ...limits },
+    });
+    expect(got.voices[0].samples).toEqual({
+      kind: "refused",
+      reason: expect.stringMatching(reason),
+    });
+    expect(got.chapters.map((c) => c.chapterId)).toEqual([1]);
+    expect(got.refused).toEqual([]);
+    expect(got.cast.add.map((c) => c.name)).toEqual(["Vex"]);
+  });
+
+  test("a folder of recordings no speaker names is a stray, listed as ignored", async () => {
+    const got = await plan(await zipOf({ cast: [{ ...vex, samples: undefined }], extra: one }));
+    expect(got.voices[0].samples).toBeUndefined();
+    expect(got.ignored).toEqual(["voices/vex/consent.json", "voices/vex/sample-1.wav"]);
   });
 });

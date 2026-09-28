@@ -237,13 +237,19 @@ async function makeVoice() {
 // Which voices here have the recordings they were made from kept on the server. A voice cloned
 // before recordings were kept has none, and the server cannot tell it from any other voice on the
 // account — so every voice without them offers to keep them, under the same consent as a clone.
-// Removing a voice from this list takes its recordings with it on the next save.
+// Removing a voice from this list keeps its recordings for a day, so the removal's Undo brings them
+// back with it; a save after that takes them. The list is asked again whenever the voices change,
+// which is how a voice put back by an Undo shows its recordings again.
 const kept = ref<Record<string, KeptVoiceSamples>>({});
 async function loadKept() {
   const list = clonable.value ? await endpointsStore.keptSamples(props.endpoint) : [];
   kept.value = Object.fromEntries(list.map((k) => [k.voiceId, k]));
 }
-watch(() => [props.endpoint.id, clonable.value], loadKept, { immediate: true });
+watch(
+  () => [props.endpoint.id, clonable.value, props.endpoint.voices.map((v) => v.id).join("\0")],
+  loadKept,
+  { immediate: true },
+);
 const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const keptTitle = (k: KeptVoiceSamples) =>
   `${k.samples.length} recording${k.samples.length === 1 ? "" : "s"} kept on this server, ${megabytes(
@@ -283,7 +289,10 @@ async function keepSamples() {
   }
 }
 async function forgetKept(v: Voice) {
-  if (!(await endpointsStore.forgetVoiceSamples(props.endpoint, v.id))) return;
+  const k = kept.value[v.id];
+  if (!k) return;
+  const restored = (back: KeptVoiceSamples) => (kept.value = { ...kept.value, [v.id]: back });
+  if (!(await endpointsStore.forgetVoiceSamples(props.endpoint, k, restored))) return;
   const { [v.id]: _, ...rest } = kept.value;
   kept.value = rest;
 }

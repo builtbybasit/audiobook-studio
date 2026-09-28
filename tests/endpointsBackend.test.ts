@@ -37,6 +37,16 @@ import { testPinia, type TestPinia } from "./support/pinia";
 const TELEMETRY = ["history", "failures", "rateLimits", "backoffUntil", "lastError", "fetching"];
 
 /** What the server keeps, and every write it was sent. */
+/** What the server answers for one voice's kept recordings. */
+const keptOf = (voiceId: string): KeptVoiceSamples => ({
+  voiceId,
+  title: "Mara",
+  madeAt: 1,
+  consentAt: 1,
+  consentText: "yes",
+  samples: [{ file: `${"a".repeat(32)}.wav`, name: "take.wav", format: "wav", bytes: 8 }],
+});
+
 class FakeService implements EndpointSettingsService {
   held: EndpointConfig | null = null;
   puts: EndpointConfig[] = [];
@@ -138,7 +148,14 @@ class FakeService implements EndpointSettingsService {
   async keepSamples(): Promise<KeptVoiceSamples> {
     throw new ApiError("not used here", 500);
   }
-  async forgetSamples(): Promise<void> {}
+  forgot: string[] = [];
+  async forgetSamples(_id: string, voice: string): Promise<void> {
+    this.forgot.push(voice);
+  }
+  async restoreSamples(_id: string, voice: string): Promise<KeptVoiceSamples> {
+    this.forgot = this.forgot.filter((v) => v !== voice);
+    return keptOf(voice);
+  }
   async sampleVoice(id: string, voice: string): Promise<VoiceSample> {
     this.sampled.push({ id, voice, puts: this.puts.length });
     if (this.sampleAnswer instanceof ApiError) throw this.sampleAnswer;
@@ -765,6 +782,23 @@ describe("cloning a voice with a server answering", () => {
       { msg: "Confirm you have the right to clone this voice", kind: "error" },
     ]);
     expect(ep.voices).toHaveLength(before);
+  });
+
+  test("forgetting a voice's recordings can be undone, and the undo hands them back", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    let undo: (() => void) | null | undefined;
+    useUiStore().toast = (_msg, opts = {}) => ((undo = opts.undo), "");
+    const back: KeptVoiceSamples[] = [];
+    expect(await endpointsStore.forgetVoiceSamples(ep, keptOf("v1"), (k) => back.push(k))).toBe(
+      true,
+    );
+    expect(svc.forgot).toEqual(["v1"]);
+    undo!();
+    await drain();
+    expect(svc.forgot).toEqual([]);
+    expect(back).toEqual([keptOf("v1")]);
   });
 
   test("the demo asks nothing", async () => {

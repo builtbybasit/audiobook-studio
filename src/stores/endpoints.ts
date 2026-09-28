@@ -734,17 +734,33 @@ export const useEndpointsStore = defineStore("endpoints", {
         return null;
       }
     },
-    /** Forget the recordings kept for one voice of `ep`; the voice stays. False when that failed. */
-    async forgetVoiceSamples(ep: Endpoint, voiceId: string): Promise<boolean> {
+    /**
+     * Forget the recordings kept for one voice of `ep`; the voice stays. The server only hides them
+     * until a later save makes it final, so the toast's Undo brings them back, and `restored` hands
+     * them to whoever shows them. False when the forget failed.
+     */
+    async forgetVoiceSamples(
+      ep: Endpoint,
+      kept: KeptVoiceSamples,
+      restored: (k: KeptVoiceSamples) => void,
+    ): Promise<boolean> {
       const svc = this._service();
       if (!svc) return false;
+      const uiStore = useUiStore();
       try {
-        await svc.forgetSamples(ep.id, voiceId);
-        return true;
+        await svc.forgetSamples(ep.id, kept.voiceId);
       } catch (cause) {
         this._failed("forget the recordings", cause);
         return false;
       }
+      uiStore.toast(`Forgot the recordings of ${kept.title}`, {
+        description: "The voice stays. The recordings go from this server for good after a day.",
+        undo: () =>
+          void svc
+            .restoreSamples(ep.id, kept.voiceId)
+            .then(restored, (cause) => this._failed("bring the recordings back", cause)),
+      });
+      return true;
     },
     /**
      * One page of a public voice search on the server — Fish Audio's catalogue. The answer is only

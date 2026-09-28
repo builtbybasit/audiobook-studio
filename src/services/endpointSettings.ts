@@ -131,6 +131,8 @@ export interface EndpointSettingsService {
   ): Promise<KeptVoiceSamples>;
   /** Forget one voice's kept recordings; the voice stays. */
   forgetSamples(id: string, voice: string): Promise<void>;
+  /** Take back a forget no save has made final yet; answers with the recordings. */
+  restoreSamples(id: string, voice: string): Promise<KeptVoiceSamples>;
 }
 
 /** What a voice is made from: a name, the recordings, and the person's say-so. */
@@ -186,6 +188,10 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
 
   async forgetSamples(id: string, voice: string): Promise<void> {
     await this.http.delete<null>(samplesPath(id, voice));
+  }
+
+  restoreSamples(id: string, voice: string): Promise<KeptVoiceSamples> {
+    return this.http.post<KeptVoiceSamples>(`${samplesPath(id, voice)}/restore`);
   }
 
   async sampleVoice(id: string, voice: string): Promise<VoiceSample> {

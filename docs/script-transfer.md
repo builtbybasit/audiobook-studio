@@ -330,18 +330,20 @@ Today a clone is made in a single request. The route reads the recordings (`serv
 **Two tables, and neither points at `voices`.** Saving the endpoints clears every endpoint and voice row and lays the whole configuration down again (`server/db/endpoints.ts:4-9`, `replaceEndpoints` at `:178`). A foreign key with cascade to `voices` (`schema/endpoints.ts:148-160`) would therefore wipe every sample on every save. Instead:
 
 - `cloned_voices`: `(endpoint_id, voice_id)` as the key, plus the title, `made_at`, `consent_at`,
-  `consent_text` (the statement the form showed when it was ticked), and `attached`.
+  `consent_text` (the statement the form showed when it was ticked), `attached`, `missing_since`
+  and `forgotten_at`.
 - `voice_samples`: `(endpoint_id, voice_id, file)` as the key, plus `name`, `format`, `bytes` and `position`, cascading from `cloned_voices`.
 
-Both come in through one drizzle migration.
+They come in through two drizzle migrations: the tables, then the two removal columns.
 
 **Reconciled on save, not cascaded.** `saveEndpoints` (`server/endpoints/ops.ts:96-100`) reconciles inside the same transaction:
 
-- A saved configuration that includes a clone's voice marks that clone `attached`.
-- An attached clone whose voice has left the configuration is deleted.
+- A saved configuration that includes a clone's voice marks that clone `attached`, and no longer missing.
+- An attached clone whose voice has left the configuration is marked **missing** (`missing_since`), not deleted. Removing a voice or an endpoint on the page offers Undo, and the page saves 400 ms later; a settings import can drop a voice and bring it back. A missing clone whose voice returns is attached again with its recordings, and one still missing a day later goes on the next save.
 - An unattached clone is spared, because the page adds the voice and saves it a moment later (`src/stores/endpoints.ts:668-680`). Deleting it then would race that save. An unattached clone older than a day is a clone the page discarded, and it goes on the next save.
+- A forgotten clone goes on the first save a day after the forget.
 
-Files are removed after the commit without waiting, with `inBackground` (`server/lib/background.ts:14`), the way a removed book's clips are (`server/library/ops.ts:340`). Removing a voice removes its samples on purpose: keeping someone's voice after the voice itself is gone is exactly what the consent never covered.
+Files are removed after the commit without waiting, with `inBackground` (`server/lib/background.ts:14`), the way a removed book's clips are (`server/library/ops.ts:340`) — only the files the deleted rows named, never the voice's directory whole, so a keep writing into it at the same moment loses nothing; the directory goes once it is empty. Removing a voice removes its samples in the end on purpose: keeping someone's voice after the voice itself is gone is exactly what the consent never covered. A keep that fails part way takes back the files it wrote, except any a row already names.
 
 **Consent travels with the samples.** The form can't clone without `consent=yes` (`routes/endpoints.ts:126-131`). Today the only record of that is a log line, which a log rotation loses. `cloned_voices.consent_at` makes it a fact that stays with the bytes. Slice 3 exports it, and the importing side shows it.
 
@@ -354,7 +356,8 @@ Files are removed after the commit without waiting, with `inBackground` (`server
 - `GET /api/endpoints/:id/voices/:voice/samples` returns the sample list and `consentAt`.
 - `GET …/samples/:file` returns the bytes with the format's media type (`RECORDING_MIME`, `clone.ts:55`) and an immutable cache header, since the name is the content. A `:file` that isn't `<sha>.<ext>` is a 404.
 - `POST …/samples` is a multipart form with `consent` and `clips`, and replaces the kept samples.
-- `DELETE …/samples` forgets the samples and keeps the voice.
+- `DELETE …/samples` forgets the samples and keeps the voice. A forget hides them at once and is final only after a day, so the Voices tab's toast offers Undo.
+- `POST …/samples/restore` takes a forget back, while no save has made it final.
 
 **Tests,** on the fake cloner:
 

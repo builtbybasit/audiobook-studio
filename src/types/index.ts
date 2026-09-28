@@ -17,6 +17,7 @@ export type * from "@/types/narration";
 export type * from "@/types/run";
 export type * from "@/types/export";
 export type * from "@/types/bulk";
+export type * from "@/types/scriptFile";
 export type * from "@/types/ui";
 export type * from "@/types/demo";
 export type * from "@/types/world";

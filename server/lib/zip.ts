@@ -53,8 +53,13 @@ export interface ReadArchiveOptions {
   /** the entries parsed as a document rather than only carried, held to `limits.document` */
   document: RegExp;
   wording: ArchiveWording;
-  /** the entries whose bytes are handed back; the rest are inflated into nothing. None by default. */
-  keep?: (name: string) => boolean;
+  /**
+   * The entries whose bytes are handed back; the rest are inflated into nothing. None by default.
+   * Asked with the size the entry declares, so a caller can decline one too big for what it means
+   * to do with it — a recording over the clone limit — without inflating it into memory; the size
+   * is still held to the data, as every entry's is.
+   */
+  keep?: (name: string, size: number) => boolean;
 }
 
 /** One entry the caller asked to keep, as it unzipped. */
@@ -69,7 +74,8 @@ const mb = (bytes: number): string => `${(bytes / MB).toFixed(1)} MB`;
 
 /**
  * Refuse an upload that unzips to more than the limits, or that misstates what it unzips to, and
- * hand back the entries `keep` asked for — with the name of every file in it, kept or not.
+ * hand back the entries `keep` asked for — with the name and unzipped size of every file in it,
+ * kept or not.
  *
  * A file that is not a zip at all is thrown as `wording.notZip`. One that is a zip and is too big
  * is a 413; one that inflates past what it declared is a 415.
@@ -80,7 +86,12 @@ const mb = (bytes: number): string => `${(bytes / MB).toFixed(1)} MB`;
 export async function readArchive(
   bytes: ArrayBuffer | Uint8Array,
   { limits, document, wording, keep = () => false }: ReadArchiveOptions,
-): Promise<{ size: ArchiveSize; entries: ArchiveEntry[]; names: string[] }> {
+): Promise<{
+  size: ArchiveSize;
+  entries: ArchiveEntry[];
+  names: string[];
+  sizes: Map<string, number>;
+}> {
   const notZip = (e: unknown): Error =>
     wording.notZip(`This file is not a readable zip archive. ${reason(e)}`.trim());
   let zip;
@@ -100,6 +111,7 @@ export async function readArchive(
   let count = 0;
   const entries: ArchiveEntry[] = [];
   const names: string[] = [];
+  const sizes = new Map<string, number>();
   try {
     for await (const entry of zip.eachEntry()) {
       count++;
@@ -118,15 +130,16 @@ export async function readArchive(
         );
       if (entry.fileName.endsWith("/")) continue;
       names.push(entry.fileName);
+      sizes.set(entry.fileName, size);
       if (!entry.canDecodeFileData()) continue;
-      const kept = await inflate(zip, entry, wording, keep(entry.fileName));
+      const kept = await inflate(zip, entry, wording, keep(entry.fileName, size));
       if (kept) entries.push({ name: entry.fileName, bytes: kept });
     }
   } catch (e) {
     if (e instanceof AppError) throw e;
     throw notZip(e);
   }
-  return { size: { entries: count, bytes: total }, entries, names };
+  return { size: { entries: count, bytes: total }, entries, names, sizes };
 }
 
 /**

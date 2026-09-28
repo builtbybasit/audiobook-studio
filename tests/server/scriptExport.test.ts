@@ -2,6 +2,7 @@
 // the words of its source, and the file holds the script and nothing local to this install.
 // See docs/script-transfer.md#the-file-and-the-export.
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 import JSZip from "jszip";
 
 import type {
@@ -10,10 +11,16 @@ import type {
   Endpoint,
   ScriptFileChapter,
   ScriptFileSpeaker,
+  ScriptExportSamples,
   ScriptFileTerm,
+  ScriptFileVoice,
   ScriptManifest,
 } from "@/types";
+import { CLONE_CONSENT } from "@/lib/endpointShapes";
+import { clonedVoices } from "~/db/schema";
 import { sourceHash } from "~/script/transfer";
+import { keepClips } from "~/voices/ops";
+import { voiceFiles } from "~/voices/files";
 import { epubFile, story } from "../support/epub";
 import { jsonBody, testApi } from "../support/server";
 
@@ -127,4 +134,203 @@ test("the zip holds a manifest, the cast with voice hints, the dictionary and on
   expect(await read<ScriptFileTerm[]>("lexicon.json")).toEqual([
     { term: "Mara", say: "MAH-ra", enabled: true },
   ]);
+});
+
+describe("voice samples", () => {
+  const fish: Endpoint = {
+    ...studio,
+    id: "fish",
+    name: "Fish Audio",
+    baseUrl: "https://api.fish.audio",
+    voices: [{ id: "v1", gender: "f", label: "Mara (clone)" }],
+  };
+  // a WAV header is all a kept recording needs to be: nothing here decodes it
+  const wav = (tag: string) =>
+    new Uint8Array([...`RIFF\0\0\0\0WAVEfmt ${tag}`].map((c) => c.charCodeAt(0)));
+
+  /** A scripted book whose one speaker is voiced by a clone with two recordings kept. */
+  async function cloned() {
+    const api = testApi();
+    await api.request("/api/endpoints", {
+      ...jsonBody({ endpoints: [fish], profiles: [], credentials: [] }),
+      method: "PUT",
+    });
+    const { body } = await api.import<{ book: Book }>(
+      await epubFile({
+        title: "Moonlight Ledger",
+        chapters: [{ title: "One", paragraphs: ["“We are short again,” said Mara.", ...story(1)] }],
+      }),
+    );
+    const id = body.book.id;
+    await api.request(`/api/books/${id}/confirm`, { method: "POST" });
+    await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1] }));
+    await api.runner.idle();
+    const cast = (await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`)).body;
+    const mara = cast.characters.find((c) => c.name !== "Narrator")!;
+    await api.request(`/api/books/${id}/characters/${encodeURIComponent(mara.name)}`, {
+      ...jsonBody({ ...mara, voice: "fish/v1" }),
+      method: "PUT",
+    });
+    const recordings = [wav("one"), wav("two")];
+    await keepClips(api.db, voiceFiles(api.voiceDir), {
+      endpointId: "fish",
+      voiceId: "v1",
+      title: "Mara (clone)",
+      consentText: CLONE_CONSENT,
+      attached: true,
+      clips: recordings.map((r, i) => ({
+        name: `take-${i + 1}.wav`,
+        blob: new Blob([r]),
+        format: "wav" as const,
+      })),
+    });
+    const zipOf = async (query = "") =>
+      JSZip.loadAsync(
+        await (await api.fetch(`/api/books/${id}/script-export${query}`)).arrayBuffer(),
+      );
+    const summary = async () =>
+      (await api.request<ScriptExportSamples>(`/api/books/${id}/script-export/samples`)).body;
+    return { api, id, speaker: mara.name, recordings, zipOf, summary };
+  }
+
+  test("an export carries no recordings unless asked", async () => {
+    const { zipOf } = await cloned();
+    for (const query of ["", "?samples=0"]) {
+      const zip = await zipOf(query);
+      expect(Object.keys(zip.files).some((f) => f.startsWith("voices/"))).toBe(false);
+      const cast = JSON.parse(await zip.file("cast.json")!.async("string")) as ScriptFileSpeaker[];
+      expect(cast.every((c) => c.samples === undefined)).toBe(true);
+    }
+  });
+
+  test("asked, it carries the clone's recordings as they were kept, with the consent they came under", async () => {
+    const { api, speaker, recordings, zipOf, summary } = await cloned();
+    const zip = await zipOf("?samples=1");
+    const cast = JSON.parse(await zip.file("cast.json")!.async("string")) as ScriptFileSpeaker[];
+    const folder = cast.find((c) => c.name === speaker)!.samples!;
+    expect(folder).toMatch(/^voices\/[a-z0-9-]+\/$/);
+
+    const record = JSON.parse(
+      await zip.file(folder + "consent.json")!.async("string"),
+    ) as ScriptFileVoice;
+    const row = api.db.select().from(clonedVoices).get()!;
+    expect(record).toEqual({
+      format: "audiobook-studio/voice-samples",
+      version: 1,
+      title: "Mara (clone)",
+      consentAt: new Date(row.consentAt).toISOString(),
+      consentText: CLONE_CONSENT,
+      samples: [
+        { file: "sample-1.wav", name: "take-1.wav", format: "wav" },
+        { file: "sample-2.wav", name: "take-2.wav", format: "wav" },
+      ],
+    });
+    for (const [i, r] of recordings.entries())
+      expect(await zip.file(`${folder}sample-${i + 1}.wav`)!.async("uint8array")).toEqual(r);
+
+    expect(await summary()).toEqual({
+      voices: [
+        {
+          speaker,
+          title: "Mara (clone)",
+          count: 2,
+          bytes: recordings.reduce((n, r) => n + r.length, 0),
+        },
+      ],
+    });
+  });
+
+  test("recordings still waiting from an import go again, under the consent they came with", async () => {
+    const api = testApi();
+    const { body } = await api.import<{ book: Book }>(
+      await epubFile({ title: "Ledger", chapters: [{ title: "One", paragraphs: story(1) }] }),
+    );
+    const id = body.book.id;
+    await api.request(`/api/books/${id}/confirm`, { method: "POST" });
+    await api.request(`/api/books/${id}/characters/Vex`, {
+      ...jsonBody({
+        name: "Vex",
+        aliases: [],
+        gender: "f",
+        description: "",
+        voice: null,
+        style: "",
+        color: "#f472b6",
+        major: false,
+      }),
+      method: "PUT",
+    });
+    // the file they came in: Vex's clone lives on someone else's account, so only its recordings travel
+    const carried = new JSZip();
+    carried.file(
+      "manifest.json",
+      JSON.stringify({
+        format: "audiobook-studio/script",
+        version: 1,
+        title: "Ledger",
+        author: "",
+        chapters: [],
+      }),
+    );
+    carried.file(
+      "cast.json",
+      JSON.stringify([
+        {
+          name: "Vex",
+          aliases: [],
+          gender: "f",
+          description: "",
+          style: "",
+          samples: "voices/vex/",
+        },
+      ]),
+    );
+    const original: ScriptFileVoice = {
+      format: "audiobook-studio/voice-samples",
+      version: 1,
+      title: "Vex (clone)",
+      consentAt: "2026-09-12T10:00:00.000Z",
+      consentText: "Vex agreed.",
+      samples: [{ file: "take.wav", name: "take.wav", format: "wav" }],
+    };
+    carried.file("voices/vex/consent.json", JSON.stringify(original));
+    carried.file("voices/vex/take.wav", wav("vex"));
+    const form = new FormData();
+    form.set(
+      "file",
+      new File([await carried.generateAsync({ type: "uint8array" })], "Theirs.script.zip"),
+    );
+    form.set("speakers", JSON.stringify(["Vex"]));
+    expect(
+      (await api.request(`/api/books/${id}/speaker-samples`, { method: "POST", body: form }))
+        .status,
+    ).toBe(201);
+
+    const zip = await JSZip.loadAsync(
+      await (await api.fetch(`/api/books/${id}/script-export?samples=1`)).arrayBuffer(),
+    );
+    const cast = JSON.parse(await zip.file("cast.json")!.async("string")) as ScriptFileSpeaker[];
+    const folder = cast.find((c) => c.name === "Vex")!.samples!;
+    expect(JSON.parse(await zip.file(folder + "consent.json")!.async("string"))).toEqual({
+      ...original,
+      samples: [{ file: "sample-1.wav", name: "take.wav", format: "wav" }],
+    });
+    expect(await zip.file(`${folder}sample-1.wav`)!.async("uint8array")).toEqual(wav("vex"));
+    expect(
+      (await api.request<ScriptExportSamples>(`/api/books/${id}/script-export/samples`)).body,
+    ).toEqual({
+      voices: [{ speaker: "Vex", title: "Vex (clone)", count: 1, bytes: wav("vex").length }],
+    });
+  });
+
+  test.each([
+    ["forgotten", { forgottenAt: 1 }],
+    ["missing from the saved configuration", { missingSince: 1 }],
+  ])("a clone whose recordings are %s is left out", async (_, set) => {
+    const { api, zipOf, summary } = await cloned();
+    api.db.update(clonedVoices).set(set).where(eq(clonedVoices.voiceId, "v1")).run();
+    const zip = await zipOf("?samples=1");
+    expect(Object.keys(zip.files).some((f) => f.startsWith("voices/"))).toBe(false);
+    expect(await summary()).toEqual({ voices: [] });
+  });
 });

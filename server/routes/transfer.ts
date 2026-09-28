@@ -6,58 +6,85 @@ import { bodyLimit } from "hono/body-limit";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
+import type { AudioFiles } from "~/audio/files";
 import type { Db } from "~/db/client";
-import { env, importBodyBytes } from "~/env";
+import { env, scriptBodyBytes } from "~/env";
 import { fail } from "~/lib/errors";
 import { validate } from "~/lib/validate";
 import type { Providers } from "~/providers/target";
 import { planScriptImport } from "~/script/importPlan";
-import { buildScriptExport } from "~/script/transfer";
+import { buildScriptExport, exportSamples } from "~/script/transfer";
+import type { VoiceFiles } from "~/voices/files";
 
 const BookParam = v.object({ id: v.string() });
+/** `?samples=1` asks for the voice samples too; anything else, or nothing, leaves them out. */
+const ExportQuery = v.object({ samples: v.optional(v.string()) });
 const ImportForm = v.object({ file: v.instance(File) });
 
-export function transferRoutes(db: Db, providers: Providers): Hono<PinoEnv> {
+export function transferRoutes(
+  db: Db,
+  providers: Providers,
+  audio: AudioFiles,
+  voiceFiles?: VoiceFiles,
+): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
-  /** The whole book's script, as `<book>.script.zip`. Built on request: it is small, and never stale. */
-  app.get("/:id/script-export", validate("param", BookParam), async (c) => {
-    const { name, bytes } = await buildScriptExport(db, c.req.valid("param").id);
-    return c.body(bytes, 200, {
-      "content-type": "application/zip",
-      // `filename*` for a title a Latin-1 header cannot hold; see the audiobook download
-      "content-disposition": disposition(name),
-      "cache-control": "no-store",
-    });
-  });
+  /** Whose voice recordings "Include voice samples" would hand over, and how much, before it is ticked. */
+  app.get("/:id/script-export/samples", validate("param", BookParam), (c) =>
+    c.json(exportSamples(db, c.req.valid("param").id, audio.dir)),
+  );
+
+  /**
+   * The whole book's script, as `<book>.script.zip`. Built on request: it is small, and never stale.
+   * With `?samples=1` it carries the recordings of its speakers' cloned voices as well — asked for
+   * each time, because they are recordings of a person.
+   */
+  app.get(
+    "/:id/script-export",
+    validate("param", BookParam),
+    validate("query", ExportQuery),
+    async (c) => {
+      const withSamples = c.req.valid("query").samples === "1";
+      const { name, bytes } = await buildScriptExport(db, c.req.valid("param").id, {
+        samples: withSamples ? { voices: voiceFiles, audioDir: audio.dir } : undefined,
+      });
+      return c.body(bytes, 200, {
+        "content-type": "application/zip",
+        // `filename*` for a title a Latin-1 header cannot hold; see the audiobook download
+        "content-disposition": disposition(name),
+        "cache-control": "no-store",
+      });
+    },
+  );
 
   /**
    * What importing a script file into this book would do — and nothing more. The plan is the
    * answer; applying it is the page's, through the paths a restore already writes by, so this
    * route never writes a line.
    *
-   * Held to the EPUB's upload limit: a script without audio is text, and compresses like it.
+   * Held to a limit of its own, `MAX_SCRIPT_UPLOAD_MB`: a script without audio is text and nowhere
+   * near it, but one that carries voice samples is mostly recordings, which barely compress.
    */
   app.post(
     "/:id/script-import",
     bodyLimit({
-      maxSize: importBodyBytes(),
+      maxSize: scriptBodyBytes(),
       onError: () =>
         fail(
           413,
-          `That file is larger than the ${env.MAX_UPLOAD_MB} MB limit`,
-          "Raise MAX_UPLOAD_MB if this is a script you expect to import.",
+          `That file is larger than the ${env.MAX_SCRIPT_UPLOAD_MB} MB limit`,
+          "Raise MAX_SCRIPT_UPLOAD_MB if this is a script you expect to import.",
         ),
     }),
     validate("param", BookParam),
     validate("form", ImportForm),
     async (c) => {
       const { file } = c.req.valid("form");
-      if (file.size > env.MAX_UPLOAD_MB * 1024 * 1024)
+      if (file.size > env.MAX_SCRIPT_UPLOAD_MB * 1024 * 1024)
         fail(
           413,
-          `That file is larger than the ${env.MAX_UPLOAD_MB} MB limit`,
-          `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. Raise MAX_UPLOAD_MB if this is a script you expect to import.`,
+          `That file is larger than the ${env.MAX_SCRIPT_UPLOAD_MB} MB limit`,
+          `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. Raise MAX_SCRIPT_UPLOAD_MB if this is a script you expect to import.`,
         );
       if (!file.size) fail(400, "That file is empty");
       c.var.logger.assign({ name: "script-import", file: file.name, bytes: file.size });

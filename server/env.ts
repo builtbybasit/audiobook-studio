@@ -44,6 +44,18 @@ const Env = v.object({
     v.minValue(1),
   ),
   /**
+   * Hard ceiling on an uploaded script file, in megabytes. Apart from the EPUB's because a script
+   * can carry voice samples (docs/script-transfer.md, slice 3), and audio barely compresses: a
+   * few voices' recordings are hundreds of megabytes whatever the zip does. A script without them
+   * is text, and nowhere near either limit.
+   */
+  MAX_SCRIPT_UPLOAD_MB: v.pipe(
+    v.optional(v.string(), "512"),
+    v.transform(Number),
+    v.number(),
+    v.minValue(1),
+  ),
+  /**
    * Hard ceiling on what an uploaded EPUB unzips to, in megabytes, everything in it together.
    *
    * The upload limit is on the zip, and a zip can be a thousand times smaller than its contents.
@@ -135,3 +147,6 @@ export const env: Env = readEnv();
  * around it — the boundaries, the field names, a title — which a megabyte covers many times over.
  */
 export const importBodyBytes = (e: Env = env): number => (e.MAX_UPLOAD_MB + 1) * 1024 * 1024;
+
+/** The same for a script file, which may carry voice samples: see `MAX_SCRIPT_UPLOAD_MB`. */
+export const scriptBodyBytes = (e: Env = env): number => (e.MAX_SCRIPT_UPLOAD_MB + 1) * 1024 * 1024;

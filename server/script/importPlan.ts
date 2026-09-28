@@ -58,6 +58,14 @@ import { fidelity } from "~/providers/chatScripting";
 import { speechTarget } from "~/providers/target";
 import { endpointVoiceLister, type VoiceLister, type VoiceQuery } from "~/providers/voices";
 import { sourceHash } from "~/script/transfer";
+import {
+  folderOf,
+  judgeVoiceFolder,
+  rowSamples,
+  SAMPLE_LIMITS,
+  type FolderEntry,
+  type SampleLimits,
+} from "~/speakerSamples/folder";
 
 /** An uploaded script file: a `<book>.script.zip`, or one chapter's `.json` on its own. */
 export interface ScriptUpload {
@@ -76,6 +84,8 @@ export interface ImportPorts {
   signal?: AbortSignal;
   /** how long every voice lookup together may take; a test shortens it */
   lookupMs?: number;
+  /** what one voice's recordings may come to; the clone route's, unless a test lowers them */
+  sampleLimits?: SampleLimits;
 }
 
 /** Read, check and match `upload` against `bookId`'s chapters; the plan the import page shows. */
@@ -86,7 +96,8 @@ export async function planScriptImport(
   ports: ImportPorts = {},
 ): Promise<ScriptImportPlan> {
   if (!getBook(db, bookId)) throw notFound("There is no book by that id", `id: ${bookId}`);
-  const file = await readUpload(upload);
+  const limits = ports.sampleLimits ?? SAMPLE_LIMITS;
+  const file = await readScriptFile(upload, limits);
 
   const cast = readCast(db, bookId);
   const endpoints = readEndpoints(db);
@@ -105,13 +116,13 @@ export async function planScriptImport(
     ignored: file.ignored,
     cast: castDiff(cast, file.cast),
     lexicon: lexiconDiff(readLexicon(db, bookId), file.lexicon),
-    voices: await voiceRows(db, cast, endpoints, file.cast, ports),
+    voices: await voiceRows(db, cast, endpoints, file, ports, limits),
   };
 }
 
 // ---------- reading the file ----------
 
-interface ReadFile {
+export interface ReadFile {
   manifest?: ScriptManifest;
   /** the chapter files that parsed, in the order their names sort — the export numbers them */
   chapters: { file: string; chapter: ScriptFileChapter }[];
@@ -120,6 +131,11 @@ interface ReadFile {
   cast: ScriptFileSpeaker[];
   lexicon: ScriptFileTerm[];
   ignored: string[];
+  /**
+   * Every file under `voices/`, by its path relative to the manifest, with its size — and its bytes
+   * when it was small enough to be worth keeping. Judged a folder at a time by what the cast names.
+   */
+  voices: Map<string, FolderEntry>;
 }
 
 const refuse = (message: string, detail?: string): AppError => new AppError(400, message, detail);
@@ -127,10 +143,17 @@ const refuse = (message: string, detail?: string): AppError => new AppError(400,
 /** A zip starts with a local file header, `PK\x03\x04` — or `PK\x05\x06` when it is empty. */
 const isZip = (b: Uint8Array): boolean => b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b;
 
-async function readUpload(upload: ScriptUpload): Promise<ReadFile> {
+/**
+ * Read an upload into its parts, refusing what cannot be a script file. The voice samples' route
+ * reads the same file again when the import is applied, and comes through here too.
+ */
+export async function readScriptFile(
+  upload: ScriptUpload,
+  limits: SampleLimits = SAMPLE_LIMITS,
+): Promise<ReadFile> {
   if (!isZip(upload.bytes)) return readLoneChapter(upload);
 
-  const { entries, names } = await readArchive(upload.bytes, {
+  const { entries, names, sizes } = await readArchive(upload.bytes, {
     limits: {
       total: env.MAX_UNZIPPED_MB * 1024 * 1024,
       document: env.MAX_DOCUMENT_MB * 1024 * 1024,
@@ -142,14 +165,21 @@ async function readUpload(upload: ScriptUpload): Promise<ReadFile> {
       notZip: (message) =>
         new AppError(415, "That file could not be read as a script file", message),
     },
-    keep: (name) => !junk(name) && /\.json$/i.test(name),
+    // A recording over the limit on one is refused by its size alone, so it is never inflated
+    // into memory to be refused.
+    keep: (name, size) =>
+      !junk(name) && (/\.json$/i.test(name) || (VOICES.test(name) && size <= limits.clip)),
   });
   return readZip(
     entries,
     entries.map((e) => e.name),
     names.filter((n) => !junk(n)),
+    sizes,
   );
 }
+
+/** A file in a `voices/` folder, wherever the manifest sits. */
+const VOICES = /(^|\/)voices\//;
 
 /**
  * What a hand-made zip picks up on the way: Finder's `__MACOSX/` resource forks and `._` files,
@@ -165,6 +195,7 @@ function readZip(
   entries: { name: string; bytes: Uint8Array }[],
   kept: string[],
   all: string[],
+  sizes: ReadonlyMap<string, number>,
 ): ReadFile {
   // Finder's Compress wraps everything in a folder, so the manifest is wherever it is shallowest
   // and every other path is read from there.
@@ -203,14 +234,23 @@ function readZip(
     cast: [],
     lexicon: [],
     ignored: [],
+    voices: new Map(),
   };
 
   const castName = `${root}cast.json`;
   const lexiconName = `${root}lexicon.json`;
   const chapterDir = `${root}chapters/`;
+  const voiceDir = `${root}voices/`;
+  const voiceFiles: string[] = [];
   for (const name of [...all].sort()) {
     if (name === manifestName) continue;
     const bytes = bytesOf.get(name);
+    if (name.startsWith(voiceDir)) {
+      const at = name.slice(root.length);
+      read.voices.set(at, { size: sizes.get(name) ?? 0, ...(bytes ? { bytes } : {}) });
+      voiceFiles.push(at);
+      continue;
+    }
     if (name === castName && bytes) {
       read.cast = parseWhole(CastFileSchema, bytes, "cast.json");
       continue;
@@ -241,6 +281,11 @@ function readZip(
     }
     read.ignored.push(name.startsWith(root) ? name.slice(root.length) : name);
   }
+  // A voice's folder is read because the cast names it; one nobody names is a stray.
+  const named = read.cast.flatMap((c) => folderOf(c.samples) ?? []);
+  for (const at of voiceFiles)
+    if (!named.some((folder) => at.startsWith(folder))) read.ignored.push(at);
+  read.ignored.sort();
   return read;
 }
 
@@ -260,7 +305,14 @@ function readLoneChapter(upload: ScriptUpload): ReadFile {
       "Import a .script.zip exported from the book menu, or one chapter's .json from inside one.",
     );
   const chapter = parseChapter(upload.name, upload.bytes);
-  const read: ReadFile = { chapters: [], refused: [], cast: [], lexicon: [], ignored: [] };
+  const read: ReadFile = {
+    chapters: [],
+    refused: [],
+    cast: [],
+    lexicon: [],
+    ignored: [],
+    voices: new Map(),
+  };
   if ("reason" in chapter) read.refused.push(chapter);
   else read.chapters.push({ file: upload.name, chapter });
   return read;
@@ -498,8 +550,9 @@ async function voiceRows(
   db: Db,
   cast: Character[],
   endpoints: readonly Endpoint[],
-  file: ScriptFileSpeaker[],
+  read: ReadFile,
   ports: ImportPorts,
+  limits: SampleLimits,
 ): Promise<VoiceRow[]> {
   const enabled = endpoints.filter((e) => e.enabled);
   const lister = ports.voices ?? endpointVoiceLister();
@@ -517,7 +570,7 @@ async function voiceRows(
   };
 
   const rows = await Promise.all(
-    file.map(async (speaker): Promise<VoiceRow | null> => {
+    read.cast.map(async (speaker): Promise<VoiceRow | null> => {
       const hint = speaker.voice;
       if (!hint) return null;
       const have = cast.find((c) => c.name === speaker.name);
@@ -526,7 +579,7 @@ async function voiceRows(
       const same = enabled.filter((e) => hostOf(e.baseUrl) === hint.provider);
       const match = await matchVoice(hint, same, ask);
       const usable = match.kind === "here" || match.kind === "public";
-      return {
+      const row: VoiceRow = {
         speaker: speaker.name,
         isNew,
         current,
@@ -534,6 +587,11 @@ async function voiceRows(
         match,
         ticked: (isNew || current === null) && usable,
       };
+      // The recordings the file carries for this voice, when it carries any: what cloning it
+      // again would start from, for a voice this install cannot otherwise have.
+      const folder = folderOf(speaker.samples);
+      if (folder) row.samples = rowSamples(judgeVoiceFolder(folder, read.voices, limits));
+      return row;
     }),
   );
   return rows.filter((r): r is VoiceRow => r !== null);

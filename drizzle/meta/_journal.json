@@ -71,6 +71,13 @@
       "when": 1790610403272,
       "tag": "0009_bright_sabra",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1790611714984,
+      "tag": "0010_faulty_ted_forrester",
+      "breakpoints": true
     }
   ]
 }

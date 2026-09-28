@@ -35,7 +35,6 @@ interface Settings {
   endpoints: Endpoint[];
   profiles: Profile[];
   credentials: Credential[];
-  saved: boolean;
 }
 interface Failure {
   error: { code: string; message: string; detail?: string };
@@ -92,13 +91,8 @@ const save = <T = Settings>(
   });
 
 describe("the endpoints' configuration", () => {
-  test("a server nobody has saved endpoints to says so, and has none", async () => {
-    expect(await read(testApi())).toEqual({
-      endpoints: [],
-      profiles: [],
-      credentials: [],
-      saved: false,
-    });
+  test("a server nobody has saved endpoints to has none", async () => {
+    expect(await read(testApi())).toEqual({ endpoints: [], profiles: [], credentials: [] });
   });
 
   test("the seeded configuration is kept as it was sent, and read back without its telemetry", async () => {
@@ -109,7 +103,6 @@ describe("the endpoints' configuration", () => {
     const credentials = registry.map((c) => ({ ...c }));
     const { status, body } = await save(api, { endpoints, profiles, credentials });
     expect(status).toBe(200);
-    expect(body.saved).toBe(true);
     expect(await read(api)).toEqual(body);
 
     expect(body.credentials).toEqual(credentials);
@@ -140,7 +133,7 @@ describe("the endpoints' configuration", () => {
 
     await save(api, { endpoints: [] });
     back = await read(api);
-    expect(back).toEqual({ endpoints: [], profiles: [], credentials: [], saved: true });
+    expect(back).toEqual({ endpoints: [], profiles: [], credentials: [] });
   });
 
   test("a speech endpoint's sample rate is kept, and a scripting profile has none", async () => {
@@ -167,7 +160,7 @@ describe("the endpoints' configuration", () => {
       expect(status).toBe(400);
       expect(body.error.detail).toContain("sampleRate");
     }
-    expect((await read(api)).saved).toBe(false);
+    expect((await read(api)).endpoints).toEqual([]);
   });
 
   test("what the tables could not keep is refused whole, and nothing is written", async () => {

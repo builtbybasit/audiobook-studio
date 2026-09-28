@@ -619,7 +619,7 @@ service are both built on it, so that rule is written once.
 | `POST`   | `/api/books/:id/chapters/script`                 | Queue a scripting job per chapter, as one run (202)           |
 | `POST`   | `/api/books/:id/chapters/narrate`                | Queue a narration job per chapter, at a scope (202)           |
 | `GET`    | `/api/audio/:bookId/:file`                       | A rendered clip's audio                                       |
-| `GET`    | `/api/endpoints`                                 | Speech endpoints, scripting profiles, credentials; `saved`    |
+| `GET`    | `/api/endpoints`                                 | Speech endpoints, scripting profiles, credentials             |
 | `PUT`    | `/api/endpoints`                                 | The whole configuration, in place of what is stored           |
 | `POST`   | `/api/endpoints/test`                            | One small request to a saved endpoint with its saved key      |
 | `POST`   | `/api/endpoints/voices`                          | A saved endpoint's voices: its library, or a public search    |
@@ -1121,9 +1121,9 @@ back empty. It is refused whole when two endpoints of one kind share an id, one 
 voices, tags, windows or promotions under one id, or an endpoint names a credential that is not in
 the list. A speech endpoint and a scripting profile may share an id — the seeded `openai` is both —
 so a profile's row is kept under `scripting:<id>`; a speech endpoint keeps its bare id, because a
-voice names it. `GET` answers `saved: false` until the first save, which an empty table could not
-say — a server whose every endpoint was removed has none either. The browser hands nothing over
-either way: a first run starts with no endpoints, and the demo's seeded ones stay the demo's. Nothing already rendered is touched by a save: a clip
+voice names it. `GET` on a server nobody has saved to answers with empty lists, the same as one
+whose every endpoint was removed, and the browser hands nothing over either way: a first run
+starts with no endpoints, and the demo's seeded ones stay the demo's. Nothing already rendered is touched by a save: a clip
 records what it was rendered with, and the drift rule finds what a tag redefined or a rate changed
 reaches.
 

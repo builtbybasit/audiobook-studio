@@ -19,7 +19,6 @@ import {
   expressionTags,
   promotions,
   rateWindows,
-  settings,
   voices,
 } from "~/db/schema";
 
@@ -144,17 +143,6 @@ export function readCredentials(db: Db | Tx): Credential[] {
     .map((c) => ({ id: c.id, label: c.label, note: c.note }));
 }
 
-/**
- * Whether anybody has ever saved endpoints to this server.
- *
- * An empty table cannot say it: a fresh database has no endpoints, and neither does one whose
- * operator removed every one of them. The first is the browser's cue to hand over the
- * configuration it starts with; the second must stay empty. So the first save leaves a mark.
- */
-export function endpointsSaved(db: Db | Tx): boolean {
-  return !!db.select().from(settings).where(eq(settings.key, "endpoints")).get();
-}
-
 export function readEndpointConfig(db: Db | Tx): EndpointConfig {
   return {
     endpoints: readEndpoints(db),
@@ -206,8 +194,4 @@ export function replaceEndpoints(tx: Tx, config: EndpointConfig): void {
   config.profiles.forEach((p, i) =>
     writeProfile(tx, p, i, keyAfterSave(p.apiKey, kept.get(rows.profileKey(p.id)))),
   );
-  tx.insert(settings)
-    .values({ key: "endpoints", value: { savedAt: Date.now() } })
-    .onConflictDoUpdate({ target: settings.key, set: { value: { savedAt: Date.now() } } })
-    .run();
 }

@@ -305,8 +305,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       if (edits !== n) return;
       // The usual case: the server holds exactly what was sent, so there is nothing to put back on
       // the objects the page is editing.
-      const { saved: _saved, ...rest } = answer;
-      if (JSON.stringify({ ...rest, endpoints: rest.endpoints.map(storedOf) }) === sent)
+      if (JSON.stringify({ ...answer, endpoints: answer.endpoints.map(storedOf) }) === sent)
         held = sent;
       else this._install(answer);
     },
@@ -634,12 +633,6 @@ export const useEndpointsStore = defineStore("endpoints", {
       return added.length;
     },
     /**
-     * One page of a public voice search on the server — Fish Audio's catalogue. The answer is only
-     * shown: a voice joins the endpoint when the page adds it (`addVoice`), and the write-behind
-     * saves it. Throws the server's `ApiError`, which the search panel shows where it searched.
-     * Nothing is cached: a search is typed, read and moved past.
-     */
-    /**
      * One of `ep`'s voices saying the sample sentence, rendered by the saved endpoint with its saved
      * key — a real request, priced into the ledger — or the one already heard. Null when there is
      * no server to ask, or the request failed, which has been said.
@@ -690,6 +683,12 @@ export const useEndpointsStore = defineStore("endpoints", {
         return null;
       }
     },
+    /**
+     * One page of a public voice search on the server — Fish Audio's catalogue. The answer is only
+     * shown: a voice joins the endpoint when the page adds it (`addVoice`), and the write-behind
+     * saves it. Throws the server's `ApiError`, which the search panel shows where it searched.
+     * Nothing is cached: a search is typed, read and moved past.
+     */
     async searchVoices(
       ep: Endpoint,
       query: Omit<VoiceListQuery, "source">,

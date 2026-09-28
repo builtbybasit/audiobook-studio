@@ -65,7 +65,6 @@ class FakeService implements EndpointSettingsService {
         ...(this.keys.has("scripting:" + p.id) ? { hasKey: true } : {}),
       })),
       credentials: clone(held.credentials),
-      saved: this.held !== null,
     };
   }
   async getSettings(): Promise<EndpointSettings> {

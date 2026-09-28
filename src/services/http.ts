@@ -149,6 +149,11 @@ export class HttpClient {
     return this.send<T>(path, { method: "POST", body: form });
   }
 
+  /** `multipart/form-data` built by the caller — several files under one name, say. */
+  postFormData<T>(path: string, form: FormData): Promise<T> {
+    return this.send<T>(path, { method: "POST", body: form });
+  }
+
   delete<T>(path: string): Promise<T> {
     return this.send<T>(path, { method: "DELETE" });
   }

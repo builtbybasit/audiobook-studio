@@ -624,6 +624,7 @@ service are both built on it, so that rule is written once.
 | `POST`   | `/api/endpoints/test`                            | One small request to a saved endpoint with its saved key      |
 | `POST`   | `/api/endpoints/voices`                          | A saved endpoint's voices: its library, or a public search    |
 | `POST`   | `/api/endpoints/sample`                          | One saved voice saying the sample sentence: the audio itself  |
+| `POST`   | `/api/endpoints/voices/clone`                    | A voice made from recordings on the provider (multipart, 201) |
 | `GET`    | `/api/endpoints/requests`                        | One endpoint's requests, newest first; `?kind&id&range`       |
 | `GET`    | `/api/books/:id/spend`                           | What the book has spent, and what its unfinished work holds   |
 | `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                          |
@@ -962,6 +963,17 @@ other, against the endpoint with no book (`Voice sample · <label>` in its Activ
 key is a `400` before any request; a provider's refusal a `502`. The browser keeps each sample it
 has heard for the session, so pressing ▶ again replays it rather than paying again, until the
 endpoint's base URL, model, format or rate changes.
+
+**Cloning a voice** is `POST /api/endpoints/voices/clone`, a multipart form of the endpoint's `id`,
+the voice's `title`, 1 to 20 recordings under `clips` (up to 20 MB each, 100 MB in all) and
+`consent=yes`, which says the person has the right to clone the voice in them; without it nothing
+is sent. Only an endpoint whose provider keeps a cloned voice is asked (`canCloneVoices`: Fish
+Audio, so far) — any other is a `400` before a request. For Fish it is `POST /model` on the API's
+host ([clone.ts](../server/providers/clone.ts)): `type=tts`, the title, `train_mode=fast` so the
+voice is usable at once, `visibility=private`, and the recordings under `voices`; Fish transcribes
+them itself. The answer is the new model, and the route answers `201` with it as a voice, which the
+page adds to the endpoint and the write-behind saves. The recordings pass through: nothing of them
+is kept on this server.
 
 **Test connection** is `POST /api/endpoints/test` `{ kind, id }`, answering `{ ok, message, ms }`:
 one small request to the **saved** endpoint with its saved key, through the provider the server

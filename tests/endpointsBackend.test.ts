@@ -25,12 +25,13 @@ import {
   type EndpointSettingsService,
   type VoiceListPage,
   type VoiceListQuery,
+  type VoiceCloneRequest,
   type VoiceSample,
 } from "@/services/endpointSettings";
 import { useEndpointsStore, WRITE_DELAY_MS } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 import { clone } from "@/lib/utils";
-import type { Endpoint, EndpointKind } from "@/types";
+import type { Endpoint, EndpointKind, Voice } from "@/types";
 import { testPinia, type TestPinia } from "./support/pinia";
 
 const TELEMETRY = ["history", "failures", "rateLimits", "backoffUntil", "lastError", "fetching"];
@@ -113,6 +114,20 @@ class FakeService implements EndpointSettingsService {
     blob: new Blob([new Uint8Array([82, 73, 70, 70])], { type: "audio/wav" }),
     duration: 3.5,
   };
+  /** what each clone was asked, with how many writes had gone out by then */
+  cloned: { id: string; title: string; clips: number; consent: boolean; puts: number }[] = [];
+  cloneAnswer: Voice | ApiError = { id: "cloned-1", label: "Mara", gender: "?" };
+  async cloneVoice(id: string, request: VoiceCloneRequest): Promise<Voice> {
+    this.cloned.push({
+      id,
+      title: request.title,
+      clips: request.clips.length,
+      consent: request.consent,
+      puts: this.puts.length,
+    });
+    if (this.cloneAnswer instanceof ApiError) throw this.cloneAnswer;
+    return this.cloneAnswer;
+  }
   async sampleVoice(id: string, voice: string): Promise<VoiceSample> {
     this.sampled.push({ id, voice, puts: this.puts.length });
     if (this.sampleAnswer instanceof ApiError) throw this.sampleAnswer;
@@ -692,5 +707,59 @@ describe("voice samples with a server answering", () => {
     endpointsStore.$reset();
     expect(await endpointsStore.sampleVoice(endpointsStore.endpoints[0], "alloy")).toBeNull();
     expect(svc.sampled).toEqual([]);
+  });
+});
+
+describe("cloning a voice with a server answering", () => {
+  const recording = () => new File([new Uint8Array(8)], "take.wav", { type: "audio/wav" });
+
+  test("sends what is waiting, then adds the voice the server made to the endpoint", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    ep.concurrency = 5;
+    await drain();
+    const voice = await endpointsStore.cloneVoice(ep, {
+      title: "Mara",
+      clips: [recording(), recording()],
+      consent: true,
+    });
+    expect(voice).toEqual({ id: "cloned-1", label: "Mara", gender: "?" });
+    expect(svc.cloned).toEqual([
+      { id: "srv-tts", title: "Mara", clips: 2, consent: true, puts: 1 },
+    ]);
+    expect(ep.voices.at(-1)).toEqual({ id: "cloned-1", label: "Mara", gender: "?" });
+    expect(toasts.at(-1)).toMatchObject({ kind: "success" });
+    // the new voice is saved like any other
+    await settle();
+    expect(svc.puts.at(-1)!.endpoints[0].voices.map((v) => v.id)).toContain("cloned-1");
+  });
+
+  test("a refusal is said, and nothing is added", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    const before = ep.voices.length;
+    svc.cloneAnswer = new ApiError("Confirm you have the right to clone this voice", 400);
+    expect(
+      await endpointsStore.cloneVoice(ep, { title: "Mara", clips: [recording()], consent: false }),
+    ).toBeNull();
+    expect(toasts).toEqual([
+      { msg: "Confirm you have the right to clone this voice", kind: "error" },
+    ]);
+    expect(ep.voices).toHaveLength(before);
+  });
+
+  test("the demo asks nothing", async () => {
+    setEndpointSettingsService(null);
+    endpointsStore.$reset();
+    expect(
+      await endpointsStore.cloneVoice(endpointsStore.endpoints[0], {
+        title: "Mara",
+        clips: [recording()],
+        consent: true,
+      }),
+    ).toBeNull();
+    expect(svc.cloned).toEqual([]);
   });
 });

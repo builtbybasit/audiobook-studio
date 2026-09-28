@@ -30,6 +30,7 @@ import {
   type EndpointSettings,
   type EndpointSettingsService,
   type StoredEndpoint,
+  type VoiceCloneRequest,
   type VoiceListPage,
   type VoiceListQuery,
 } from "@/services/endpointSettings";
@@ -664,6 +665,29 @@ export const useEndpointsStore = defineStore("endpoints", {
       } finally {
         // answered or not, a request may have reached the provider, and it is a row on this page
         void invalidate({ key: keys.endpointRequests });
+      }
+    },
+    /**
+     * Make a voice from recordings on `ep`'s provider and add it to the endpoint, where the
+     * write-behind saves it like any other voice. Null when there is no server to ask, or the
+     * provider refused, which has been said.
+     */
+    async cloneVoice(ep: Endpoint, request: VoiceCloneRequest): Promise<Voice | null> {
+      const svc = this._service();
+      if (!svc) return null;
+      const uiStore = useUiStore();
+      try {
+        await this.flushWrites();
+        const voice = await svc.cloneVoice(ep.id, request);
+        this.addVoice(ep, voice);
+        uiStore.toast(`Made the voice ${voice.label} on ${ep.name}`, {
+          kind: "success",
+          description: "It is private to your account, and on this endpoint's list now.",
+        });
+        return voice;
+      } catch (cause) {
+        this._failed("make the voice", cause);
+        return null;
       }
     },
     async searchVoices(

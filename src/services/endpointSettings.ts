@@ -12,7 +12,7 @@
 // in the same body), which a partial write could not let it do.
 import type { Credential } from "@/lib/credentials";
 import { keyring } from "@/lib/keyring";
-import type { Endpoint, EndpointKind, FoundVoice, Profile } from "@/types";
+import type { Endpoint, EndpointKind, FoundVoice, Profile, Voice } from "@/types";
 import { HttpClient, type FetchLike } from "@/services/http";
 import { isBackend } from "@/services/mode";
 
@@ -105,6 +105,18 @@ export interface EndpointSettingsService {
   listVoices(id: string, query: VoiceListQuery): Promise<VoiceListPage>;
   /** Have the *saved* speech endpoint say a sentence in one voice. A real, priced request. */
   sampleVoice(id: string, voice: string): Promise<VoiceSample>;
+  /**
+   * Make a voice from recordings on the *saved* endpoint's provider, with the key the server holds.
+   * `consent` must be true: it says the person has the right to clone the voice in them.
+   */
+  cloneVoice(id: string, request: VoiceCloneRequest): Promise<Voice>;
+}
+
+/** What a voice is made from: a name, the recordings, and the person's say-so. */
+export interface VoiceCloneRequest {
+  title: string;
+  clips: File[];
+  consent: boolean;
 }
 
 export class HttpEndpointSettingsService implements EndpointSettingsService {
@@ -127,6 +139,15 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
 
   listVoices(id: string, query: VoiceListQuery): Promise<VoiceListPage> {
     return this.http.post<VoiceListPage>("/endpoints/voices", { id, ...query });
+  }
+
+  cloneVoice(id: string, request: VoiceCloneRequest): Promise<Voice> {
+    const form = new FormData();
+    form.set("id", id);
+    form.set("title", request.title.trim());
+    if (request.consent) form.set("consent", "yes");
+    for (const clip of request.clips) form.append("clips", clip, clip.name);
+    return this.http.postFormData<Voice>("/endpoints/voices/clone", form);
   }
 
   async sampleVoice(id: string, voice: string): Promise<VoiceSample> {

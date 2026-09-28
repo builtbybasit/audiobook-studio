@@ -1,11 +1,14 @@
 // The endpoints over HTTP: the configuration the Endpoints page edits, read whole and saved whole.
 // Both routes are one call on `server/endpoints/ops.ts`, where the rules are.
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
 import type { Db } from "~/db/client";
 import * as ops from "~/endpoints/ops";
+import { fail } from "~/lib/errors";
+import { MAX_CLONE_CLIPS, type CloneClip } from "~/providers/clone";
 import { CredentialSchema, EndpointSchema, ProfileSchema } from "~/lib/schemas";
 import { validate } from "~/lib/validate";
 import type { Providers } from "~/providers/target";
@@ -25,6 +28,11 @@ const Sample = v.object({
   id: v.pipe(v.string(), v.nonEmpty()),
   voice: v.pipe(v.string(), v.nonEmpty(), v.maxLength(200)),
 });
+
+/** The most one recording may be, and all of them together, in bytes. */
+export const MAX_CLIP_BYTES = 20 * 1024 * 1024;
+const MAX_CLONE_BYTES = 100 * 1024 * 1024;
+const AUDIO_NAME = /\.(wav|mp3|m4a|aac|ogg|opus|flac|webm)$/i;
 
 const VoiceList = v.object({
   id: v.pipe(v.string(), v.nonEmpty()),
@@ -72,6 +80,59 @@ export function endpointRoutes(db: Db, providers: Providers): Hono<PinoEnv> {
       "x-audio-duration": String(clip.duration),
     });
   });
+
+  /**
+   * A voice made from recordings, on a saved endpoint whose provider can keep one: a multipart form
+   * of the endpoint's `id`, the voice's `title`, 1 to 20 recordings under `clips`, and `consent`
+   * saying the person has the right to clone the voice in them. Answers with the new voice, which
+   * the page then adds to the endpoint. Only the recordings' way to the provider passes through here:
+   * nothing is kept on this server.
+   */
+  app.post(
+    "/voices/clone",
+    bodyLimit({
+      // a little over the limit, for the multipart envelope around the recordings
+      maxSize: MAX_CLONE_BYTES + 256 * 1024,
+      onError: () =>
+        fail(413, `The recordings come to more than ${MAX_CLONE_BYTES / 1024 / 1024} MB`),
+    }),
+    async (c) => {
+      const form = await c.req.formData().catch(() => fail(400, "The request was not a form"));
+      const id = String(form.get("id") ?? "").trim();
+      const title = String(form.get("title") ?? "").trim();
+      if (!id) fail(400, "Say which endpoint to make the voice on");
+      if (!title || title.length > 100) fail(400, "Give the voice a name of up to 100 characters");
+      if (form.get("consent") !== "yes")
+        fail(
+          400,
+          "Confirm you have the right to clone this voice",
+          "Cloning someone's voice needs their permission; the form has to say it was given.",
+        );
+      const files = form.getAll("clips").filter((f): f is File => f instanceof File);
+      if (!files.length) fail(400, "Add at least one recording of the voice");
+      if (files.length > MAX_CLONE_CLIPS) fail(400, `Use at most ${MAX_CLONE_CLIPS} recordings`);
+      const clips: CloneClip[] = [];
+      for (const f of files) {
+        if (!f.type.startsWith("audio/") && !AUDIO_NAME.test(f.name))
+          fail(
+            400,
+            `${f.name} is not a recording`,
+            "Use WAV, MP3, M4A, OGG, Opus, FLAC or WebM audio.",
+          );
+        if (f.size > MAX_CLIP_BYTES)
+          fail(413, `${f.name} is larger than ${MAX_CLIP_BYTES / 1024 / 1024} MB`);
+        if (!f.size) fail(400, `${f.name} is empty`);
+        clips.push({
+          name: f.name,
+          type: f.type || "application/octet-stream",
+          bytes: new Uint8Array(await f.arrayBuffer()),
+        });
+      }
+      const voice = await ops.cloneVoice(db, providers, id, { title, clips }, c.req.raw.signal);
+      c.var.logger.info({ id, voice: voice.id, clips: clips.length }, "voice cloned");
+      return c.json(voice, 201);
+    },
+  );
 
   /**
    * The voices a saved speech endpoint offers: its own library, or a page of a public search.

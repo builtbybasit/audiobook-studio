@@ -453,3 +453,11 @@ export const fishApiRoot = (baseUrl: string): string =>
     .trim()
     .replace(/\/+$/, "")
     .replace(/\/v\d+$/, "");
+
+// ---------- voice cloning ----------
+
+/**
+ * Whether this endpoint's provider can make a voice from someone's recordings and keep it as one
+ * more voice on the account. Only Fish Audio, so far; the Voices tab offers cloning only here.
+ */
+export const canCloneVoices = (e: Pick<Endpoint, "baseUrl">): boolean => isFishAudio(e);

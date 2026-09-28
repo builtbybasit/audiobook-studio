@@ -7,8 +7,9 @@
 // endpoint and a scripting profile may share one — the seeded world's `openai` is both), two
 // voices or tags under one id on one endpoint, and an endpoint pointing at a credential that is
 // not in the registry being saved with it.
+import type { Voice } from "@/types";
 import type { Credential } from "@/lib/credentials";
-import { encodingOf } from "@/lib/endpointShapes";
+import { canCloneVoices, encodingOf } from "@/lib/endpointShapes";
 import type { Db } from "~/db/client";
 import {
   endpointsSaved,
@@ -23,6 +24,7 @@ import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { ProviderError } from "~/providers/http";
 import type { RenderedClip } from "~/providers/speech";
 import { scriptTarget, speechTarget, type ProbeResult, type Providers } from "~/providers/target";
+import { endpointVoiceCloner, type CloneRequest } from "~/providers/clone";
 import { endpointVoiceLister, type VoicePage, type VoiceQuery } from "~/providers/voices";
 import { settleSpeech } from "~/usage/ledger";
 
@@ -208,6 +210,32 @@ export async function sampleVoice(
           request,
         ),
     });
+  } catch (e) {
+    if (!(e instanceof ProviderError)) throw e;
+    // the same split as `listVoices`: refused before any request is the request's to fix
+    throw new AppError(e.status === 0 && !e.retryable ? 400 : 502, e.message);
+  }
+}
+
+/**
+ * A voice made from recordings on a saved speech endpoint's provider, with its saved key, and
+ * answered as a voice the page then adds to the endpoint. Only an endpoint whose provider keeps a
+ * cloned voice (`canCloneVoices`) is asked; any other is refused before a request.
+ */
+export async function cloneVoice(
+  db: Db,
+  providers: Providers,
+  id: string,
+  request: CloneRequest,
+  signal: AbortSignal,
+): Promise<Voice> {
+  const ep = readEndpoint(db, id);
+  if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
+  if (!canCloneVoices(ep))
+    throw badRequest(`${ep.name} cannot make a voice from recordings; only Fish Audio can, so far`);
+  const cloner = providers.cloner ?? endpointVoiceCloner();
+  try {
+    return await cloner.clone(speechTarget(db, ep), request, signal);
   } catch (e) {
     if (!(e instanceof ProviderError)) throw e;
     // the same split as `listVoices`: refused before any request is the request's to fix

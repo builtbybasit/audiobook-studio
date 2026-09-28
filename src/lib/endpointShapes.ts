@@ -206,15 +206,26 @@ export function voicesFromFishModels(
 }
 
 /**
- * A Fish model's first recording, when it has one at an `https` link — the only kind the browser is
- * handed to play. Fish's public voices mostly have one; a voice still training has none.
+ * A Fish model's first recording, when it has one at an `https` link on Fish's own hosts — the only
+ * kind the browser is handed to play, so a catalogue entry cannot send the page to fetch from
+ * anywhere else. Fish serves them from `platform.r2.fish.audio` (seen on 28 September 2026). Fish's
+ * public voices mostly have one; a voice still training has none.
  */
 export function fishSampleOf(m: FishModel): { url: string; text: string } | null {
   for (const s of m.samples ?? []) {
     const url = s.audio?.trim() ?? "";
-    if (/^https:\/\//i.test(url)) return { url, text: s.text?.trim() ?? "" };
+    if (isFishHosted(url)) return { url, text: s.text?.trim() ?? "" };
   }
   return null;
+}
+
+function isFishHosted(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && /(^|\.)fish\.audio$/i.test(u.hostname);
+  } catch {
+    return false;
+  }
 }
 
 /** Where Fish keeps its model catalogue: the host root, without the `/v1` speech is under. */

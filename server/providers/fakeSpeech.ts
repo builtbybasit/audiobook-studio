@@ -26,7 +26,8 @@
 // nothing.
 import { sleep } from "~/providers/fake";
 import type { SentSpeech } from "~/providers/sent";
-import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
+import { ProviderError } from "~/providers/http";
+import type { BatchLimits, RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 
 export interface FakeSpeechOptions {
   /** a pause per line, so a test can cancel a run that is genuinely in flight */
@@ -35,6 +36,21 @@ export interface FakeSpeechOptions {
   failWith?: string;
   /** throw for the lines this says yes to, so a run can have one failure among successes */
   failLines?: (text: string) => boolean;
+  /**
+   * Take lines in batches of this size, as a server that answers `docs/speech-batch-api.md`
+   * would: each item rendered as a line is, and answered last first, so a caller that assumes
+   * the order it sent in is caught out.
+   */
+  batch?: BatchLimits;
+  /**
+   * In a batch, fail the items this says yes to as worth another try, the first time each is
+   * seen — a render that went wrong on the server, say.
+   */
+  retryLines?: (text: string) => boolean;
+  /** In a batch, answer this many items and then drop the connection, once. */
+  dropAfter?: number;
+  /** told of every batch as it is sent: how many items, and their texts */
+  batches?: string[][];
 }
 
 /** the rate it answers at when the request names none */
@@ -86,7 +102,9 @@ export function toneWav(hz: number, seconds: number, rate: number = SAMPLE_RATE)
 }
 
 export function fakeSpeechProvider(options: FakeSpeechOptions = {}): SpeechProvider {
-  return {
+  const retried = new Set<string>();
+  let dropped = false;
+  const provider: SpeechProvider = {
     name: "Fake speech (local)",
     async speak({
       text,
@@ -145,6 +163,37 @@ export function fakeSpeechProvider(options: FakeSpeechOptions = {}): SpeechProvi
         message: "The fake answers without a request: SPEECH_PROVIDER=fake",
         ms: 0,
       };
+    },
+  };
+  const { batch } = options;
+  if (!batch) return provider;
+  return {
+    ...provider,
+    batchLimits: async () => batch,
+    async speakBatch({ items, signal, answered }) {
+      options.batches?.push(items.map((i) => i.text));
+      if (options.delayMs) await sleep(options.delayMs, signal);
+      let told = 0;
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (signal.aborted) throw signal.reason;
+        if (options.dropAfter != null && !dropped && told === options.dropAfter) {
+          dropped = true;
+          throw new ProviderError("The fake dropped the connection part-way", 0, true);
+        }
+        const item = items[i];
+        told++;
+        if (options.retryLines?.(item.text) && !retried.has(item.text)) {
+          retried.add(item.text);
+          answered(i, { error: new ProviderError(`The fake fumbled “${item.text}”`, 0, true) });
+          continue;
+        }
+        try {
+          answered(i, { clip: await provider.speak({ ...item, signal }) });
+        } catch (e) {
+          if (signal.aborted) throw e;
+          answered(i, { error: e as Error });
+        }
+      }
     },
   };
 }

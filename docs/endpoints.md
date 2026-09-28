@@ -110,10 +110,11 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   [the providers](backend.md#the-providers-and-where-a-key-lives). The server keeps the
   recordings beside the voice, with the sentence that was agreed to and when, so the voice can go
   with a book's script ([script export](script-transfer.md#slice-2-cloning-keeps-its-samples)); a
-  voice's row then says **N samples kept**, and **Forget** drops them and keeps the voice. A voice
-  cloned before recordings were kept offers **Keep its samples…**: the same picker, limits and
-  consent box, and nothing is sent to Fish. Removing a voice from the list takes its recordings
-  with it on the next save.
+  voice's row then says **N samples kept**, and **Forget** drops them and keeps the voice, with
+  Undo. A voice cloned before recordings were kept offers **Keep its samples…**: the same picker,
+  limits and consent box, and nothing is sent to Fish. Removing a voice or its endpoint keeps the
+  recordings for a day, so the removal's Undo — or a settings import that brings the voice back —
+  finds them where they were; the first save after that removes them, as it does a forget's.
   With a server, a voice's ▶ has the saved endpoint say a sentence in it — a real request, billed
   and listed under Activity, heard once and replayed from then on; see
   [voice samples](backend.md#the-providers-and-where-a-key-lives). In the demo it is the browser's own voice.

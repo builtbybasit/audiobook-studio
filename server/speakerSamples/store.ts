@@ -319,6 +319,48 @@ export function discardSamples(
   return { id };
 }
 
+/**
+ * A merge folds one speaker into another: the lines go to them, and so do the recordings waiting
+ * for either — it is one person, cloned or not, and a cascade from the removed row would drop the
+ * rows and leave their files on disk with nothing naming them.
+ */
+export function moveSpeakerSamples(tx: Db | Tx, bookId: string, from: string, into: string): void {
+  tx.update(speakerSamples)
+    .set({ speaker: into })
+    .where(and(eq(speakerSamples.bookId, bookId), eq(speakerSamples.speaker, from)))
+    .run();
+}
+
+/**
+ * Taking a speaker off the cast leaves their recordings nobody to wait for. They are discarded the
+ * soft way — held by the Narrator's row only so the foreign key has somewhere to point, hidden at
+ * once, and purged with their files a day later — rather than cascaded away with their files left
+ * behind.
+ */
+export function discardSpeakerSamples(
+  tx: Db | Tx,
+  bookId: string,
+  name: string,
+  holder: string,
+  { now = Date.now }: SampleOptions = {},
+): void {
+  const at = now();
+  tx.update(speakerSamples)
+    .set({ speaker: holder, discardedAt: at })
+    .where(
+      and(
+        eq(speakerSamples.bookId, bookId),
+        eq(speakerSamples.speaker, name),
+        isNull(speakerSamples.discardedAt),
+      ),
+    )
+    .run();
+  tx.update(speakerSamples)
+    .set({ speaker: holder })
+    .where(and(eq(speakerSamples.bookId, bookId), eq(speakerSamples.speaker, name)))
+    .run();
+}
+
 /** Take back a discard; a row already removed by the purge is gone for good. */
 export function restoreSamples(db: Db, bookId: string, id: number): SpeakerSamples {
   requireBook(db, bookId);

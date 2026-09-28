@@ -7,7 +7,7 @@ import { join } from "node:path";
 import JSZip from "jszip";
 
 import type { Book, Character, ScriptFileSpeaker, SpeakerSamples } from "@/types";
-import { renameCharacter } from "~/cast/ops";
+import { deleteCharacter, mergeCharacter, renameCharacter } from "~/cast/ops";
 import { upsertCharacter } from "~/db/cast";
 import { speakerSamples } from "~/db/schema";
 import { GRACE_MS } from "~/db/voiceSamples";
@@ -193,6 +193,21 @@ describe("where they belong", () => {
     expect(api.db.select().from(speakerSamples).all()).toEqual([]);
     for (let i = 0; i < 50 && existsSync(file); i++) await Bun.sleep(5);
     expect(existsSync(file)).toBe(false);
+  });
+
+  test("a merge moves them to the speaker merged into; a removal discards them, files and all", async () => {
+    await store(await both(), ["Vex", "Ines"]);
+    mergeCharacter(api.db, id, "Vex", "Ines");
+    expect((await list()).map((s) => s.speaker)).toEqual(["Ines", "Ines"]);
+
+    deleteCharacter(api.db, id, "Ines");
+    expect(await list()).toEqual([]);
+    // hidden, not cascaded away: the rows stay for the purge, which removes their files with them
+    const rows = api.db.select().from(speakerSamples).all();
+    expect(rows.map((r) => [r.speaker, r.discardedAt != null])).toEqual([
+      ["Narrator", true],
+      ["Narrator", true],
+    ]);
   });
 
   test.each([

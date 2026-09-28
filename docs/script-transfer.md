@@ -380,6 +380,20 @@ Files are removed after the commit without waiting, with `inBackground` (`server
 
 ## Slice 3: the export carries voice samples
 
+**Built,** with these differences from the plan below. Samples wait in two tables of their own
+(`speaker_samples`, `speaker_sample_files`) keyed to the speaker, and **Discard samples** is a soft
+delete with a day to take it back, the way Forget is on the Voices tab — so a second import that
+carries the same speaker sets the earlier recordings aside rather than dropping them, and its Undo
+brings them back. A merge moves a speaker's waiting samples to the speaker merged into; removing a
+speaker discards them the same soft way. Planning an import reads only the first bytes of each
+recording, enough to know it is audio. The clone link takes its speaker from the server, so a
+rename after the link was made does not lose them. Routes: `GET …/script-export?samples=1`,
+`GET …/script-export/samples`, and `/api/books/:id/speaker-samples` with list, store, one file,
+discard and `/restore`. Tests: [tests/server/speakerSamples.test.ts](../tests/server/speakerSamples.test.ts),
+the sample cases in [tests/server/scriptExport.test.ts](../tests/server/scriptExport.test.ts) and
+[tests/server/scriptImport.test.ts](../tests/server/scriptImport.test.ts), and the store cases in
+[tests/history.test.ts](../tests/history.test.ts).
+
 A private clone exists only on the account that made it (`server/providers/clone.ts:10`), so in
 someone else's hands it's a name with nothing behind it. This slice lets the recordings slice 2 keeps
 travel with the script. Import still never clones: that's a one-shot upload that needs consent

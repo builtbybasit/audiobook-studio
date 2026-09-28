@@ -16,7 +16,8 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useHistoryStore } from "@/stores/history";
 import { useLibraryStore } from "@/stores/library";
 import { useTransferStore, type VoicePick } from "@/stores/transfer";
-import { megabytes, useSpeakerSamplesStore } from "@/stores/speakerSamples";
+import { sizeLabel } from "@/lib/audioFormat";
+import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 import VoicePicker from "@/components/VoicePicker.vue";
 import { UiCheckbox } from "@/ui";
 import { plural } from "@/views/library/shared";
@@ -204,7 +205,7 @@ function apply() {
 function samplesLine(s: VoiceRowSamples): string {
   if (s.kind === "refused") return `Samples not kept: ${s.reason}`;
   return (
-    `Samples included · ${plural(s.count, "recording")}, ${megabytes(s.bytes)} · ` +
+    `Samples included · ${plural(s.count, "recording")}, ${sizeLabel(s.bytes)} · ` +
     `consent recorded ${new Date(s.consentAt).toLocaleDateString()}: “${s.consentText}”`
   );
 }
@@ -367,7 +368,7 @@ const SKIPPED = {
               <template v-else>
                 <span class="text-zinc-500"
                   >{{ plural(k.waiting.samples.length, "recording") }},
-                  {{ megabytes(k.waiting.samples.reduce((n, x) => n + x.bytes, 0)) }}</span
+                  {{ sizeLabel(k.waiting.samples.reduce((n, x) => n + x.bytes, 0)) }}</span
                 >
                 <RouterLink
                   v-if="k.link"

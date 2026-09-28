@@ -2,7 +2,8 @@
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
-import { megabytes, useSpeakerSamplesStore } from "@/stores/speakerSamples";
+import { sizeLabel } from "@/lib/audioFormat";
+import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 
 // Book-wide cast, and the one place every field of a speaker can be edited.
 //
@@ -419,6 +420,12 @@ const duplicate = computed(
                     >new</span
                   >
                   <span
+                    v-if="waiting(c.name).length"
+                    class="rounded bg-violet-500/15 px-1 text-[10px] font-semibold text-violet-600 dark:text-violet-300"
+                    title="Voice samples from an imported script are waiting — open the speaker to clone or discard them"
+                    >samples</span
+                  >
+                  <span
                     v-if="!c.major && !c.isNew"
                     class="rounded bg-zinc-100 px-1 text-[10px] text-zinc-500 dark:bg-zinc-800"
                     >minor</span
@@ -553,7 +560,7 @@ const duplicate = computed(
                       <div class="text-zinc-500">
                         {{ w.samples.length }} recording{{ w.samples.length === 1 ? "" : "s" }} of
                         “{{ w.title }}”,
-                        {{ megabytes(w.samples.reduce((n, x) => n + x.bytes, 0)) }} · from
+                        {{ sizeLabel(w.samples.reduce((n, x) => n + x.bytes, 0)) }} · from
                         {{ w.source }}
                       </div>
                       <div class="mt-1 flex flex-wrap items-center gap-3">

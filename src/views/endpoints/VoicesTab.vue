@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { sizeLabel } from "@/lib/audioFormat";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
@@ -329,9 +330,8 @@ watch(
   loadKept,
   { immediate: true },
 );
-const megabytes = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const keptTitle = (k: KeptVoiceSamples) =>
-  `${k.samples.length} recording${k.samples.length === 1 ? "" : "s"} kept on this server, ${megabytes(
+  `${k.samples.length} recording${k.samples.length === 1 ? "" : "s"} kept on this server, ${sizeLabel(
     k.samples.reduce((n, x) => n + x.bytes, 0),
   )}. Consent given ${new Date(k.consentAt).toLocaleDateString()}: “${k.consentText}”`;
 
@@ -851,7 +851,7 @@ async function playFound(v: FoundVoice) {
           /></label>
           <span v-if="keep.clips.length" class="text-[11px] text-zinc-500">
             {{ keep.clips.length }} recording{{ keep.clips.length === 1 ? "" : "s" }},
-            {{ megabytes(keep.clips.reduce((n, f) => n + f.size, 0)) }}
+            {{ sizeLabel(keep.clips.reduce((n, f) => n + f.size, 0)) }}
           </span>
           <span v-if="keep.leftOut" class="text-[11px] text-amber-600 dark:text-amber-400">
             Only the first {{ MAX_CLONE_CLIPS }} are used: {{ keep.leftOut }} left out.

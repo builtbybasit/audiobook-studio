@@ -7,79 +7,30 @@
 // anything is sent. Fish's cloner, and the route's own rules, are `voiceClone.test.ts`'s.
 import { describe, expect, test } from "bun:test";
 
-import type { ClonedVoice, Endpoint } from "@/types";
-import { endpointVoiceCloner, type CloneRequest, type VoiceClonerOptions } from "~/providers/clone";
+import type { Endpoint } from "@/types";
+import type { CloneRequest } from "~/providers/clone";
 import type { ProviderTarget } from "~/providers/target";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import {
+  agreed,
+  answering,
+  cloneForm,
+  HEADS,
+  postClone,
+  sampleFile,
+  saved,
+  speechEndpoint,
+} from "../support/cloning";
+import { testApi } from "../support/server";
 
-// ---------- small helpers, as `voiceClone.test.ts` has them ----------
-
-const ascii = (text: string): number[] => [...text].map((ch) => ch.charCodeAt(0));
-const bytes = (...parts: (string | number[])[]): Uint8Array =>
-  new Uint8Array(parts.flatMap((p) => (typeof p === "string" ? ascii(p) : p)));
-
-const HEADS = {
-  wav: bytes("RIFF", [36, 0, 0, 0], "WAVEfmt "),
-  mp3Frame: bytes([0xff, 0xfb, 0x90, 0x64]),
-  m4a: bytes([0, 0, 0, 32], "ftypM4A ", [0, 0, 0, 0]),
-  opus: bytes("OggS", [0, 2, ...Array<number>(20).fill(0), 1, 19], "OpusHead"),
-  flac: bytes("fLaC", [0, 0, 0, 34]),
-};
-
-/** A file whose first bytes are `head`, padded to `size`. */
-const clip = (
-  name = "take-1.wav",
-  head: Uint8Array = HEADS.wav,
-  type = "audio/wav",
-  size = 1024,
-) => {
-  const body = new Uint8Array(Math.max(size, head.length)).fill(7);
-  body.set(head);
-  return new File([body], name, { type });
-};
-
-function form(fields: Record<string, string>, samples: File[]): FormData {
-  const f = new FormData();
-  for (const [k, v] of Object.entries(fields)) f.set(k, v);
-  for (const c of samples) f.append("samples", c, c.name);
-  return f;
-}
-
-const post = (api: TestApi, body: FormData) =>
-  api.request<ClonedVoice & { error?: { message: string } }>("/api/endpoints/voices/clone", {
-    method: "POST",
-    body,
+const endpoint = (over: Partial<Endpoint>): Endpoint =>
+  speechEndpoint({
+    id: "elevenlabs",
+    name: "ElevenLabs",
+    baseUrl: "https://api.elevenlabs.io/v1",
+    model: "eleven_multilingual_v2",
+    apiKey: "sk-eleven",
+    ...over,
   });
-
-async function saved(api: TestApi, ep: Endpoint): Promise<void> {
-  const { status } = await api.request("/api/endpoints", {
-    ...jsonBody({ endpoints: [ep], profiles: [], credentials: [] }),
-    method: "PUT",
-  });
-  expect(status).toBe(200);
-}
-
-const endpoint = (over: Partial<Endpoint>): Endpoint => ({
-  id: "elevenlabs",
-  name: "ElevenLabs",
-  baseUrl: "https://api.elevenlabs.io/v1",
-  model: "eleven_multilingual_v2",
-  concurrency: 1,
-  enabled: true,
-  latency: 0,
-  failRate: 0,
-  price: 0,
-  needsKey: true,
-  maxChars: 0,
-  splitAt: "sentence",
-  voices: [],
-  history: [],
-  failures: 0,
-  rateLimits: 0,
-  backoffUntil: 0,
-  apiKey: "sk-eleven",
-  ...over,
-});
 
 const target = (over: Partial<ProviderTarget> = {}): ProviderTarget => ({
   id: "elevenlabs",
@@ -104,19 +55,6 @@ const breeze = (over: Partial<ProviderTarget> = {}): ProviderTarget =>
     apiKey: "sk-breeze",
     ...over,
   });
-
-/** A `fetch` that remembers each request and answers the `n`th (0-based) with `answer`. */
-function answering(
-  answer: (n: number, init: RequestInit) => Response | Promise<Response>,
-  options: VoiceClonerOptions = {},
-) {
-  const sent: { url: string; init: RequestInit }[] = [];
-  const fetch = (async (url: string, init: RequestInit) => {
-    sent.push({ url: String(url), init });
-    return answer(sent.length - 1, init);
-  }) as unknown as typeof globalThis.fetch;
-  return { sent, cloner: endpointVoiceCloner({ fetch, backoffMs: () => 0, ...options }) };
-}
 
 const signal = () => new AbortController().signal;
 
@@ -249,7 +187,7 @@ describe("the BreezeBlue cloner", () => {
     Response.json({ voice_id: "voice_42", name: "Mara", gender: "female", language_code: "en" });
 
   test("makes a preview from the one sample, then saves it, as its voice-clone guide gives", async () => {
-    const f = answering((n) => (n === 0 ? previewed() : savedVoice()));
+    const f = answering((_, n) => (n === 1 ? previewed() : savedVoice()));
     const voice = await f.cloner.clone(breeze(), one, signal());
     expect(voice).toEqual({ id: "voice_42", label: "Mara", gender: "f" });
     expect(f.sent.map((s) => [s.init.method, s.url])).toEqual([
@@ -301,8 +239,8 @@ describe("the BreezeBlue cloner", () => {
   });
 
   test("a save that fails says the preview was made and paid for, and which it is", async () => {
-    const mismatch = answering((n) =>
-      n === 0
+    const mismatch = answering((_, n) =>
+      n === 1
         ? previewed()
         : Response.json(
             {
@@ -324,11 +262,11 @@ describe("the BreezeBlue cloner", () => {
     expect(mismatch.sent).toHaveLength(2);
 
     for (const [answer, said] of unlucky("BreezeBlue")) {
-      const f = answering((n) => (n === 0 ? previewed() : answer()));
+      const f = answering((_, n) => (n === 1 ? previewed() : answer()));
       await expect(f.cloner.clone(breeze(), one, signal())).rejects.toThrow(said);
       expect(f.sent).toHaveLength(2);
     }
-    const unsaved = answering((n) => (n === 0 ? previewed() : Response.json({ name: "Mara" })));
+    const unsaved = answering((_, n) => (n === 1 ? previewed() : Response.json({ name: "Mara" })));
     await expect(unsaved.cloner.clone(breeze(), one, signal())).rejects.toThrow(
       "did not save it: it answered 200 without the saved voice's id",
     );
@@ -338,13 +276,15 @@ describe("the BreezeBlue cloner", () => {
 // ---------- through the route ----------
 
 describe("what each provider takes, through the route", () => {
-  const agreed = { title: "Mara", consent: "yes" };
-
-  async function cloning(ep: Endpoint, samples: File[], answer: (n: number) => Response) {
+  async function cloning(
+    ep: Endpoint,
+    samples: File[],
+    answer: (init: RequestInit, n: number) => Response,
+  ) {
     const f = answering(answer);
     const api = testApi({ cloner: f.cloner });
     await saved(api, ep);
-    const { status, body } = await post(api, form({ ...agreed, id: ep.id }, samples));
+    const { status, body } = await postClone(api, cloneForm(agreed(ep.id), samples));
     return { status, message: body.error?.message ?? "", body, sent: f.sent };
   }
   const made = () => Response.json({ voice_id: "v1", requires_verification: false });
@@ -353,10 +293,10 @@ describe("what each provider takes, through the route", () => {
     const ok = await cloning(
       endpoint({}),
       [
-        clip("a.mp3", HEADS.mp3Frame, "audio/mpeg"),
-        clip("b.wav"),
-        clip("memo", HEADS.m4a, "application/octet-stream"),
-        clip("c.flac", HEADS.flac, "audio/x-flac"),
+        sampleFile("a.mp3", HEADS.mp3Frame, "audio/mpeg"),
+        sampleFile("b.wav"),
+        sampleFile("memo", HEADS.m4a, "application/octet-stream"),
+        sampleFile("c.flac", HEADS.flac, "audio/x-flac"),
       ],
       made,
     );
@@ -370,7 +310,11 @@ describe("what each provider takes, through the route", () => {
       "audio/flac",
     ]);
 
-    const opus = await cloning(endpoint({}), [clip("note.opus", HEADS.opus, "audio/ogg")], made);
+    const opus = await cloning(
+      endpoint({}),
+      [sampleFile("note.opus", HEADS.opus, "audio/ogg")],
+      made,
+    );
     expect([opus.status, opus.message]).toEqual([
       415,
       "note.opus is Opus audio, which this provider does not make a voice from",
@@ -379,7 +323,7 @@ describe("what each provider takes, through the route", () => {
 
     const big = await cloning(
       endpoint({}),
-      [clip("long.mp3", HEADS.mp3Frame, "audio/mpeg", 10 * 1024 * 1024 + 1)],
+      [sampleFile("long.mp3", HEADS.mp3Frame, "audio/mpeg", 10 * 1024 * 1024 + 1)],
       made,
     );
     expect([big.status, big.message]).toEqual([
@@ -396,19 +340,19 @@ describe("what each provider takes, through the route", () => {
       baseUrl: "https://api.breeze.blue/v1",
       model: "breeze-tts-2",
     });
-    const two = await cloning(ep, [clip("a.wav"), clip("b.wav")], made);
+    const two = await cloning(ep, [sampleFile("a.wav"), sampleFile("b.wav")], made);
     expect([two.status, two.message]).toEqual([
       400,
       "Use one sample: this provider makes a voice from a single file",
     ]);
-    const m4a = await cloning(ep, [clip("memo.m4a", HEADS.m4a, "audio/mp4")], made);
+    const m4a = await cloning(ep, [sampleFile("memo.m4a", HEADS.m4a, "audio/mp4")], made);
     expect([m4a.status, m4a.message]).toEqual([
       415,
       "memo.m4a is M4A audio, which this provider does not make a voice from",
     ]);
     const big = await cloning(
       ep,
-      [clip("long.wav", HEADS.wav, "audio/wav", 5 * 1024 * 1024 + 1)],
+      [sampleFile("long.wav", HEADS.wav, "audio/wav", 5 * 1024 * 1024 + 1)],
       made,
     );
     expect([big.status, big.message]).toEqual([
@@ -417,8 +361,8 @@ describe("what each provider takes, through the route", () => {
     ]);
     for (const refused of [two, m4a, big]) expect(refused.sent).toEqual([]);
 
-    const ok = await cloning(ep, [clip("take.mp3", HEADS.mp3Frame, "audio/mpeg")], (n) =>
-      n === 0
+    const ok = await cloning(ep, [sampleFile("take.mp3", HEADS.mp3Frame, "audio/mpeg")], (_, n) =>
+      n === 1
         ? Response.json({ generated_voice_id: "gvi_1" })
         : Response.json({ voice_id: "voice_1", name: "Mara", gender: "male" }),
     );

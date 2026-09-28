@@ -8,18 +8,22 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 
-import type { ClonedVoice, Endpoint } from "@/types";
 import { minimax } from "@/lib/providers/minimax";
 import { clonedVoices } from "~/db/schema";
-import {
-  endpointVoiceCloner,
-  type CloneRequest,
-  type VoiceCloner,
-  type VoiceClonerOptions,
-} from "~/providers/clone";
+import type { CloneRequest, VoiceCloner, VoiceClonerOptions } from "~/providers/clone";
 import { miniMaxVoiceId } from "~/providers/speech/minimax";
 import type { ProviderTarget } from "~/providers/target";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import {
+  agreed,
+  answering,
+  cloneForm,
+  HEADS,
+  postClone,
+  sampleFile,
+  saved,
+  speechEndpoint,
+} from "../support/cloning";
+import { testApi, type TestApi } from "../support/server";
 
 const target: ProviderTarget = {
   id: "minimax",
@@ -63,21 +67,14 @@ const uploaded = (fileId: number | string = 223409877880882) =>
 const cloned = () => Response.json({ input_sensitive: { type: 0 }, demo_audio: "", ...ok });
 
 /**
- * A `fetch` that remembers each request and answers the upload with `upload` and the clone with
- * `clone`, and a cloner over it.
+ * A `fetch` that remembers each request and answers the upload, the first, with `upload` and the
+ * clone with `clone`, and a cloner over it.
  */
-function miniMaxAnswering(
+const miniMaxAnswering = (
   upload: () => Response | Promise<Response>,
   clone: (init: RequestInit) => Response | Promise<Response> = cloned,
   options: VoiceClonerOptions = {},
-) {
-  const sent: { url: string; init: RequestInit }[] = [];
-  const fetch = (async (url: string, init: RequestInit) => {
-    sent.push({ url: String(url), init });
-    return String(url).endsWith("/files/upload") ? upload() : clone(init);
-  }) as unknown as typeof globalThis.fetch;
-  return { sent, cloner: endpointVoiceCloner({ fetch, backoffMs: () => 0, ...options }) };
-}
+) => answering((init, n) => (n === 1 ? upload() : clone(init)), options);
 
 /** MiniMax's rules for a `voice_id` it is asked to make a voice under. */
 const VOICE_ID = /^[A-Za-z][A-Za-z0-9_-]{6,254}[A-Za-z0-9]$/;
@@ -248,68 +245,26 @@ describe("the MiniMax cloner", () => {
 
 // ---------- the route ----------
 
-const ascii = (text: string): number[] => [...text].map((ch) => ch.charCodeAt(0));
-const bytes = (...parts: (string | number[])[]): Uint8Array =>
-  new Uint8Array(parts.flatMap((p) => (typeof p === "string" ? ascii(p) : p)));
-
-const HEADS = {
-  wav: bytes("RIFF", [36, 0, 0, 0], "WAVEfmt "),
-  mp3: bytes("ID3", [4, 0, 0, 0, 0, 0, 0]),
-  m4a: bytes([0, 0, 0, 32], "ftypM4A ", [0, 0, 0, 0]),
-  opus: bytes("OggS", [0, 2, ...Array<number>(20).fill(0), 1, 19], "OpusHead"),
-  flac: bytes("fLaC", [0, 0, 0, 34]),
-};
-
-/** A file whose first bytes are `head`, padded to `size`. */
-const clip = (name: string, head: Uint8Array, size = 1024) => {
-  const body = new Uint8Array(Math.max(size, head.length)).fill(7);
-  body.set(head);
-  return new File([body], name, { type: "application/octet-stream" });
-};
-
-function form(fields: Record<string, string>, samples: File[]): FormData {
-  const f = new FormData();
-  for (const [k, v] of Object.entries(fields)) f.set(k, v);
-  for (const c of samples) f.append("samples", c, c.name);
-  return f;
-}
-
-const miniMaxEndpoint: Endpoint = {
-  id: "minimax",
-  name: "MiniMax",
-  baseUrl: "https://api.minimax.io/v1",
-  model: "speech-2.8-hd",
-  concurrency: 1,
-  enabled: true,
-  latency: 0,
-  failRate: 0,
-  price: 0,
-  needsKey: true,
-  maxChars: 0,
-  splitAt: "sentence",
-  voices: [],
-  history: [],
-  failures: 0,
-  rateLimits: 0,
-  backoffUntil: 0,
-  apiKey: "sk-minimax",
-};
+/** A file whose first bytes are `head`, typed as nothing in particular. */
+const clip = (name: string, head: Uint8Array) => sampleFile(name, head, "application/octet-stream");
 
 async function routeWith(cloner: VoiceCloner): Promise<TestApi> {
   const api = testApi({ cloner });
-  const { status } = await api.request("/api/endpoints", {
-    ...jsonBody({ endpoints: [miniMaxEndpoint], profiles: [], credentials: [] }),
-    method: "PUT",
-  });
-  expect(status).toBe(200);
+  await saved(
+    api,
+    speechEndpoint({
+      id: "minimax",
+      name: "MiniMax",
+      baseUrl: "https://api.minimax.io/v1",
+      model: "speech-2.8-hd",
+      apiKey: "sk-minimax",
+    }),
+  );
   return api;
 }
 
 const post = (api: TestApi, samples: File[]) =>
-  api.request<ClonedVoice & { error?: { message: string } }>("/api/endpoints/voices/clone", {
-    method: "POST",
-    body: form({ id: "minimax", title: "Mara", consent: "yes" }, samples),
-  });
+  postClone(api, cloneForm(agreed("minimax"), samples));
 
 describe("a MiniMax clone, through the route", () => {
   test("MiniMax's limits are its docs': one sample of MP3, M4A or WAV, up to 20 MB", () => {
@@ -323,7 +278,7 @@ describe("a MiniMax clone, through the route", () => {
   test("one sample is sent, and the voice comes back", async () => {
     const f = miniMaxAnswering(() => uploaded());
     const api = await routeWith(f.cloner);
-    const { status, body } = await post(api, [clip("mara.mp3", HEADS.mp3)]);
+    const { status, body } = await post(api, [clip("mara.mp3", HEADS.mp3Tagged)]);
     expect(status).toBe(201);
     expect(body).toMatchObject({ label: "Mara", gender: "?", samplesKept: true });
     expect(body.id).toMatch(/^Mara-[0-9a-f]{10}$/);

@@ -104,7 +104,8 @@ export function saveEndpoints(
 ): EndpointConfig {
   check(config);
   // The kept recordings are lined up with the voices in the same transaction: a voice removed on
-  // the page takes the recordings it was made from with it, and never the other way round.
+  // the page takes the recordings it was made from with it once the removal has outlived its Undo,
+  // and never the other way round.
   const gone = db.transaction((tx) => {
     replaceEndpoints(tx, config);
     return reconcileClones(tx, config, Date.now());

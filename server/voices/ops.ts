@@ -7,7 +7,15 @@ import type { KeptSample, KeptVoiceSamples } from "@/types";
 import { canCloneVoices } from "@/lib/endpointShapes";
 import type { Db } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
-import { forgetSamples, keepSamples, readKept, readKeptFor } from "~/db/voiceSamples";
+import {
+  forgetSamples,
+  keepSamples,
+  readKept,
+  readKeptFor,
+  restoreSamples,
+  samplesOf,
+  type DroppedSamples,
+} from "~/db/voiceSamples";
 import { inBackground } from "~/lib/background";
 import { badRequest, notFound } from "~/lib/errors";
 import { RECORDING_MIME, type RecordingFormat } from "~/providers/clone";
@@ -30,25 +38,45 @@ export interface KeepRequest {
   attached: boolean;
 }
 
-/** Write the recordings, then the rows; the files a replacement left behind go afterwards. */
+/**
+ * Write the recordings, then the rows; the files a replacement left behind go afterwards. A keep
+ * that fails part way takes back the files it wrote, except any a row already names — the same
+ * bytes kept for this voice before are that row's, not this call's.
+ */
 export async function keepClips(db: Db, files: VoiceFiles, keep: KeepRequest): Promise<void> {
   const samples: KeptSample[] = [];
-  for (const clip of keep.clips) {
-    const bytes = new Uint8Array(await clip.blob.arrayBuffer());
-    const file = await files.write(keep.endpointId, keep.voiceId, bytes, clip.format);
-    samples.push({ file, name: clip.name, format: clip.format, bytes: bytes.length });
+  let left: string[];
+  try {
+    for (const clip of keep.clips) {
+      const bytes = new Uint8Array(await clip.blob.arrayBuffer());
+      const file = await files.write(keep.endpointId, keep.voiceId, bytes, clip.format);
+      samples.push({ file, name: clip.name, format: clip.format, bytes: bytes.length });
+    }
+    left = db.transaction((tx) =>
+      keepSamples(tx, {
+        endpointId: keep.endpointId,
+        voiceId: keep.voiceId,
+        title: keep.title,
+        at: Date.now(),
+        consentText: keep.consentText,
+        attached: keep.attached,
+        samples,
+      }),
+    );
+  } catch (cause) {
+    const named = new Set(samplesOf(db, keep.endpointId, keep.voiceId).map((s) => s.file));
+    const stray = samples.map((s) => s.file).filter((f) => !named.has(f));
+    if (stray.length)
+      inBackground(
+        files.remove(keep.endpointId, keep.voiceId, stray),
+        "voice samples left on disk",
+        {
+          endpointId: keep.endpointId,
+          voiceId: keep.voiceId,
+        },
+      );
+    throw cause;
   }
-  const left = db.transaction((tx) =>
-    keepSamples(tx, {
-      endpointId: keep.endpointId,
-      voiceId: keep.voiceId,
-      title: keep.title,
-      at: Date.now(),
-      consentText: keep.consentText,
-      attached: keep.attached,
-      samples,
-    }),
-  );
   if (left.length)
     inBackground(files.remove(keep.endpointId, keep.voiceId, left), "voice samples left on disk", {
       endpointId: keep.endpointId,
@@ -96,11 +124,20 @@ export async function replaceClips(
   return keptOf(db, request.endpointId, request.voiceId);
 }
 
-/** Forget one voice's recordings and keep the voice. */
-export function forgetClips(db: Db, files: VoiceFiles, id: string, voiceId: string): void {
-  if (!db.transaction((tx) => forgetSamples(tx, id, voiceId)))
+/**
+ * Forget one voice's recordings and keep the voice. They are hidden at once and removed by a save
+ * after the grace period, so the forget's Undo (`restoreClips`) can bring them back until then.
+ */
+export function forgetClips(db: Db, id: string, voiceId: string): void {
+  if (!db.transaction((tx) => forgetSamples(tx, id, voiceId, Date.now())))
     throw notFound("This voice has no recordings kept", `voice: ${voiceId}`);
-  inBackground(files.remove(id, voiceId), "voice samples left on disk", { id, voiceId });
+}
+
+/** Take back a forget; its recordings are answered as they were. */
+export function restoreClips(db: Db, id: string, voiceId: string): KeptVoiceSamples {
+  if (!db.transaction((tx) => restoreSamples(tx, id, voiceId)))
+    throw notFound("These recordings are gone for good", `voice: ${voiceId}`);
+  return keptOf(db, id, voiceId);
 }
 
 /** Where one kept recording is on disk, and what it is served as. */
@@ -117,11 +154,11 @@ export function sampleFile(
   return { path, type: RECORDING_MIME[sample.format] };
 }
 
-/** After a save: remove from disk the recordings of voices `reconcileClones` dropped. */
-export function removeDropped(
-  files: VoiceFiles,
-  gone: readonly { endpointId: string; voiceId: string }[],
-): void {
+/** After a save: remove from disk the recordings `reconcileClones` dropped — only those. */
+export function removeDropped(files: VoiceFiles, gone: readonly DroppedSamples[]): void {
   for (const g of gone)
-    inBackground(files.remove(g.endpointId, g.voiceId), "voice samples left on disk", g);
+    inBackground(files.remove(g.endpointId, g.voiceId, g.files), "voice samples left on disk", {
+      endpointId: g.endpointId,
+      voiceId: g.voiceId,
+    });
 }

@@ -24,6 +24,8 @@ import {
   type VoiceClonerOptions,
 } from "~/providers/clone";
 import type { ProviderTarget } from "~/providers/target";
+import { keepClips } from "~/voices/ops";
+import { voiceFiles, type VoiceFiles } from "~/voices/files";
 import { jsonBody, tempVoiceDir, testApi, type TestApi } from "../support/server";
 
 const fishEndpoint = (over: Partial<Endpoint> = {}): Endpoint => ({
@@ -518,31 +520,75 @@ describe("the recordings a voice was made from", () => {
     expect(api.logs.some((l) => l.msg === "cloned, but the recordings were not kept")).toBe(true);
   });
 
-  test("go with the voice when a save leaves it out, but not before the page has saved it", async () => {
+  test("outlast a removal the page can still undo, and go with the voice once it is final", async () => {
     const { cloner } = remembering();
     const api = testApi({ cloner });
     await saved(api, fishEndpoint());
     await post(api, form(agreed, [clip()]));
+    const save = (voices: Voice[]) => api.request("/api/endpoints", configWith(voices));
+    const aged = (set: Partial<typeof clonedVoices.$inferInsert>) =>
+      api.db.update(clonedVoices).set(set).where(eq(clonedVoices.voiceId, "new-voice-id")).run();
+    const dayAgo = Date.now() - 25 * 60 * 60 * 1000;
 
     // a save in the moment between the clone and the page adding its voice is not a removal
-    expect((await api.request("/api/endpoints", configWith([]))).status).toBe(200);
+    expect((await save([])).status).toBe(200);
     expect((await samplesOf(api)).status).toBe(200);
-    // once a save has held the voice, a save without it takes the recordings too
-    await api.request("/api/endpoints", configWith([made]));
-    await api.request("/api/endpoints", configWith([]));
+    // once a save has held the voice, a save without it only marks it missing: the removal's
+    // Undo, or a settings import that brings it back, finds its recordings where they were
+    await save([made]);
+    await save([]);
+    expect((await samplesOf(api)).status).toBe(200);
+    await save([made]);
+    await save([]);
+    await settled();
+    expect(readdirSync(api.voiceDir)).toHaveLength(1);
+    // a save after the grace period makes the removal final, recordings and all
+    aged({ missingSince: dayAgo });
+    await save([]);
     expect((await samplesOf(api)).status).toBe(404);
     await settled();
     expect(readdirSync(api.voiceDir)).toEqual([]);
 
     // a clone the page never saved is dropped by the first save after a day
     await post(api, form(agreed, [clip()]));
-    api.db
-      .update(clonedVoices)
-      .set({ madeAt: Date.now() - 25 * 60 * 60 * 1000 })
-      .where(eq(clonedVoices.voiceId, "new-voice-id"))
-      .run();
-    await api.request("/api/endpoints", configWith([]));
+    aged({ madeAt: dayAgo });
+    await save([]);
     expect((await samplesOf(api)).status).toBe(404);
+  });
+
+  test("a keep that fails part way takes back only the files it wrote", async () => {
+    const api = testApi();
+    const real = voiceFiles(api.voiceDir);
+    let writes = 0;
+    const failing = (at: number): VoiceFiles => ({
+      ...real,
+      write: (...args) => {
+        if (++writes === at) return Promise.reject(new Error("disk full"));
+        return real.write(...args);
+      },
+    });
+    const keep = (files: VoiceFiles, clips: File[]) =>
+      keepClips(api.db, files, {
+        endpointId: "fish",
+        voiceId: "v",
+        title: "Mara",
+        consentText: CLONE_CONSENT,
+        attached: true,
+        clips: clips.map((c) => ({ name: c.name, blob: c, format: "wav" as const })),
+      });
+    const a = clip("a.wav", HEADS.wav, "audio/wav", 1500);
+    const b = clip("b.wav", HEADS.wav, "audio/wav", 1600);
+    const c = clip("c.wav", HEADS.wav, "audio/wav", 1700);
+    await keep(real, [a]);
+    const onDisk = () => readdirSync(join(api.voiceDir, readdirSync(api.voiceDir)[0])).sort();
+    const kept = onDisk();
+
+    // a is written again (its row already names it, so it stays), b is written, c fails
+    writes = 0;
+    await expect(keep(failing(3), [a, b, c])).rejects.toThrow("disk full");
+    await settled();
+    expect(onDisk()).toEqual(kept);
+    expect((await samplesOf(api, "v")).body.samples.map((s) => s.name)).toEqual(["a.wav"]);
   });
 
   test("an older voice can be given its recordings, under the same consent and limits", async () => {
@@ -580,11 +626,30 @@ describe("the recordings a voice was made from", () => {
         404,
       );
 
-    const forgot = await api.request("/api/endpoints/fish/voices/old-voice/samples", {
-      method: "DELETE",
-    });
-    expect(forgot).toEqual({ status: 200, body: { voiceId: "old-voice" } });
+    const forget = () =>
+      api.request("/api/endpoints/fish/voices/old-voice/samples", { method: "DELETE" });
+    const restore = () =>
+      api.request<KeptVoiceSamples>("/api/endpoints/fish/voices/old-voice/samples/restore", {
+        method: "POST",
+      });
+    expect(await forget()).toEqual({ status: 200, body: { voiceId: "old-voice" } });
     expect((await samplesOf(api, "old-voice")).status).toBe(404);
+    // forgetting is hidden, not gone: its Undo brings the recordings back as they were
+    const back = await restore();
+    expect([back.status, back.body.samples]).toEqual([200, replaced.body.samples]);
+    expect((await restore()).status).toBe(404);
+    // and a save after the grace period makes a forget final
+    await forget();
+    api.db
+      .update(clonedVoices)
+      .set({ forgottenAt: Date.now() - 25 * 60 * 60 * 1000 })
+      .where(eq(clonedVoices.voiceId, "old-voice"))
+      .run();
+    await api.request("/api/endpoints", {
+      ...jsonBody({ endpoints: [fishEndpoint({ voices: [old] })], profiles: [], credentials: [] }),
+      method: "PUT",
+    });
+    expect((await restore()).status).toBe(404);
     await settled();
     expect(readdirSync(api.voiceDir)).toEqual([]);
     // and the voice itself stays

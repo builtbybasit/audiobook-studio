@@ -8,6 +8,8 @@
 // **A discard is undoable, the way a forget is.** Slice 2's forget hides a voice's recordings and
 // removes them a day later; a discard here does the same, so the toast's Undo can bring them back.
 // The removal happens on the next read of the book's samples after the grace period.
+import { existsSync } from "node:fs";
+
 import { and, asc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 
 import type { KeptSample, ScriptFileVoice, SpeakerSamples } from "@/types";
@@ -19,7 +21,7 @@ import { GRACE_MS } from "~/db/voiceSamples";
 import { inBackground } from "~/lib/background";
 import { fail, notFound } from "~/lib/errors";
 import type { RecordingFormat } from "~/providers/clone";
-import { readScriptFile, type ScriptUpload } from "~/script/importPlan";
+import { readScriptFile, type ReadFile, type ScriptUpload } from "~/script/importPlan";
 import { speakerSampleFiles, type SpeakerSampleFiles } from "~/speakerSamples/files";
 import {
   folderOf,
@@ -122,19 +124,23 @@ export function readSpeakerSamplesForExport(
   audioDir: string,
 ): WaitingVoice[] {
   const disk = speakerSampleFiles(audioDir);
-  return waitingSamples(db, bookId).map((w) => ({
-    speaker: w.speaker,
-    title: w.title,
-    consentAt: w.consentAt,
-    consentText: w.consentText,
-    samples: w.samples.flatMap((s) => {
-      const path = disk.path(bookId, s.file);
-      if (!path) return [];
-      return [
-        { name: s.name, format: s.format, bytes: s.bytes, read: () => Bun.file(path).bytes() },
-      ];
-    }),
-  }));
+  return waitingSamples(db, bookId)
+    .map((w) => ({
+      speaker: w.speaker,
+      title: w.title,
+      consentAt: w.consentAt,
+      consentText: w.consentText,
+      // A recording gone from disk — removed by hand, a folder cleared — is left out rather than
+      // failing the export, and a voice with none left is not carried at all.
+      samples: w.samples.flatMap((s) => {
+        const path = disk.path(bookId, s.file);
+        if (!path || !existsSync(path)) return [];
+        return [
+          { name: s.name, format: s.format, bytes: s.bytes, read: () => Bun.file(path).bytes() },
+        ];
+      }),
+    }))
+    .filter((w) => w.samples.length);
 }
 
 // ---------- the routes' operations ----------
@@ -196,7 +202,12 @@ export function purgeDiscarded(
  * Every speaker must be one this book has, and one whose recordings the file carries and the
  * judgement passes: this is the apply step of a plan the page already showed, so a speaker that
  * fails here is a request that does not match the plan, refused whole. A speaker who already has
- * recordings waiting has them replaced — the newer file is the one the person just applied.
+ * recordings waiting has them put aside the soft way — discarded, not deleted — so the import's
+ * Undo can bring them back; `replaced` names those rows.
+ *
+ * The file is read twice: once holding only the head of each recording, to learn from the cast
+ * which folders these speakers' recordings are in, and again holding whole recordings from those
+ * folders alone — so a file carrying twenty voices keeps in memory only the ones asked for.
  */
 export async function storeSamples(
   db: Db,
@@ -205,7 +216,7 @@ export async function storeSamples(
   upload: ScriptUpload,
   speakers: readonly string[],
   { now = Date.now, limits = SAMPLE_LIMITS }: SampleOptions = {},
-): Promise<SpeakerSamples[]> {
+): Promise<{ stored: SpeakerSamples[]; replaced: number[] }> {
   requireBook(db, bookId);
   const names = [...new Set(speakers)];
   if (!names.length) fail(400, "Name at least one speaker whose recordings to keep");
@@ -214,18 +225,27 @@ export async function storeSamples(
   if (missing.length)
     fail(400, "This book has no speaker by that name", `Not in the cast: ${missing.join(", ")}.`);
 
-  const read = await readScriptFile(upload, limits);
-  const judged: { speaker: string; voice: ScriptFileVoice; clips: JudgedClip[] }[] = [];
-  for (const speaker of names) {
-    const entry = read.cast.find((c) => c.name === speaker);
-    const folder = folderOf(entry?.samples);
-    if (!folder)
-      fail(400, "That file carries no recordings for this speaker", `Speaker: ${speaker}.`);
-    const verdict = judgeVoiceFolder(folder, read.voices, limits);
-    if (!verdict.ok)
-      fail(400, `The recordings for ${speaker} could not be kept`, `${verdict.reason}.`);
-    judged.push({ speaker, voice: verdict.voice, clips: verdict.clips });
-  }
+  const judge = (
+    read: ReadFile,
+  ): { speaker: string; folder: string; voice: ScriptFileVoice; clips: JudgedClip[] }[] =>
+    names.map((speaker) => {
+      const entry = read.cast.find((c) => c.name === speaker);
+      const folder = folderOf(entry?.samples);
+      if (!folder)
+        fail(400, "That file carries no recordings for this speaker", `Speaker: ${speaker}.`);
+      const verdict = judgeVoiceFolder(folder, read.voices, limits);
+      if (!verdict.ok)
+        fail(400, `The recordings for ${speaker} could not be kept`, `${verdict.reason}.`);
+      return { speaker, folder, voice: verdict.voice, clips: verdict.clips };
+    });
+  const heads = await readScriptFile(upload, limits);
+  const folders = judge(heads).map((j) => `${heads.root}${j.folder}`);
+  const whole = await readScriptFile(upload, limits, {
+    whole: (path) => folders.some((f) => path.startsWith(f)),
+  });
+  const judged = judge(whole);
+  if (judged.some((j) => j.clips.some((c) => c.partial)))
+    fail(500, "The recordings were not read whole", "This is a bug; nothing was kept.");
 
   // Written first, then named by rows in one transaction; a failure between leaves no file that
   // no row names — except one another row already named, which was never this call's to remove.
@@ -242,25 +262,28 @@ export async function storeSamples(
       }
       kept.push({ ...j, clips });
     }
-    const { stored, replaced } = db.transaction((tx) => {
-      const replaced: string[] = [];
+    return db.transaction((tx) => {
+      const replaced: number[] = [];
       const stored: SpeakerSamples[] = [];
       const at = now();
       for (const k of kept) {
         const old = tx
           .select({ id: speakerSamples.id })
           .from(speakerSamples)
-          .where(and(eq(speakerSamples.bookId, bookId), eq(speakerSamples.speaker, k.speaker)))
-          .all();
-        for (const o of old) replaced.push(...filesOf(tx, o.id).map((f) => f.file));
+          .where(
+            and(
+              eq(speakerSamples.bookId, bookId),
+              eq(speakerSamples.speaker, k.speaker),
+              isNull(speakerSamples.discardedAt),
+            ),
+          )
+          .all()
+          .map((o) => o.id);
+        replaced.push(...old);
         if (old.length)
-          tx.delete(speakerSamples)
-            .where(
-              inArray(
-                speakerSamples.id,
-                old.map((o) => o.id),
-              ),
-            )
+          tx.update(speakerSamples)
+            .set({ discardedAt: at })
+            .where(inArray(speakerSamples.id, old))
             .run();
         const row = tx
           .insert(speakerSamples)
@@ -286,14 +309,8 @@ export async function storeSamples(
         });
         stored.push(shapeOf(tx, row));
       }
-      const still = namedFiles(tx, bookId);
-      return { stored, replaced: [...new Set(replaced)].filter((f) => !still.has(f)) };
+      return { stored, replaced };
     });
-    if (replaced.length)
-      inBackground(files.remove(bookId, replaced), "could not remove replaced voice samples", {
-        book: bookId,
-      });
-    return stored;
   } catch (e) {
     const orphans = [...new Set(written)].filter((f) => !before.has(f));
     const still = namedFiles(db, bookId);

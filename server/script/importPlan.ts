@@ -136,7 +136,20 @@ export interface ReadFile {
    * when it was small enough to be worth keeping. Judged a folder at a time by what the cast names.
    */
   voices: Map<string, FolderEntry>;
+  /** the folder the manifest sits in, which every other path is read from — `""` at the top */
+  root: string;
 }
+
+/**
+ * How much of each recording a read holds. A plan needs to know what a recording is, not to hold
+ * it, so by default only its first bytes are kept — enough for `sniffRecording` — and its size is
+ * the one the zip guard measured. Keeping recordings is the voice samples' route's job, and it
+ * asks for whole ones only in the folders it is keeping, named by their path in the zip.
+ */
+export type RecordingReads = "head" | { whole(path: string): boolean };
+
+/** What `sniffRecording` reads of a recording; comfortably more than any header it looks for. */
+export const SNIFF_BYTES = 4096;
 
 const refuse = (message: string, detail?: string): AppError => new AppError(400, message, detail);
 
@@ -150,6 +163,7 @@ const isZip = (b: Uint8Array): boolean => b.length >= 4 && b[0] === 0x50 && b[1]
 export async function readScriptFile(
   upload: ScriptUpload,
   limits: SampleLimits = SAMPLE_LIMITS,
+  recordings: RecordingReads = "head",
 ): Promise<ReadFile> {
   if (!isZip(upload.bytes)) return readLoneChapter(upload);
 
@@ -166,15 +180,25 @@ export async function readScriptFile(
         new AppError(415, "That file could not be read as a script file", message),
     },
     // A recording over the limit on one is refused by its size alone, so it is never inflated
-    // into memory to be refused.
-    keep: (name, size) =>
-      !junk(name) && (/\.json$/i.test(name) || (VOICES.test(name) && size <= limits.clip)),
+    // into memory to be refused; the rest are held as a head unless this read keeps them whole.
+    keep: (name, size) => {
+      if (junk(name)) return false;
+      if (/\.json$/i.test(name)) return true;
+      if (!VOICES.test(name) || size > limits.clip) return false;
+      return recordings !== "head" && recordings.whole(name) ? true : SNIFF_BYTES;
+    },
   });
+  const partial = new Set(
+    recordings === "head"
+      ? names.filter((n) => VOICES.test(n) && !/\.json$/i.test(n))
+      : names.filter((n) => VOICES.test(n) && !/\.json$/i.test(n) && !recordings.whole(n)),
+  );
   return readZip(
     entries,
     entries.map((e) => e.name),
     names.filter((n) => !junk(n)),
     sizes,
+    partial,
   );
 }
 
@@ -196,6 +220,7 @@ function readZip(
   kept: string[],
   all: string[],
   sizes: ReadonlyMap<string, number>,
+  partial: ReadonlySet<string>,
 ): ReadFile {
   // Finder's Compress wraps everything in a folder, so the manifest is wherever it is shallowest
   // and every other path is read from there.
@@ -235,6 +260,7 @@ function readZip(
     lexicon: [],
     ignored: [],
     voices: new Map(),
+    root,
   };
 
   const castName = `${root}cast.json`;
@@ -247,7 +273,11 @@ function readZip(
     const bytes = bytesOf.get(name);
     if (name.startsWith(voiceDir)) {
       const at = name.slice(root.length);
-      read.voices.set(at, { size: sizes.get(name) ?? 0, ...(bytes ? { bytes } : {}) });
+      read.voices.set(at, {
+        size: sizes.get(name) ?? 0,
+        ...(bytes ? { bytes } : {}),
+        ...(bytes && partial.has(name) ? { partial: true } : {}),
+      });
       voiceFiles.push(at);
       continue;
     }
@@ -312,6 +342,7 @@ function readLoneChapter(upload: ScriptUpload): ReadFile {
     lexicon: [],
     ignored: [],
     voices: new Map(),
+    root: "",
   };
   if ("reason" in chapter) read.refused.push(chapter);
   else read.chapters.push({ file: upload.name, chapter });

@@ -66,7 +66,7 @@ export function speakerSampleRoutes(
         fail(400, "`speakers` must be a JSON array of names");
       }
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const stored = await store.storeSamples(
+      const { stored, replaced } = await store.storeSamples(
         db,
         files,
         c.req.valid("param").id,
@@ -78,10 +78,12 @@ export function speakerSampleRoutes(
         {
           speakers: stored.map((s) => s.speaker),
           recordings: stored.flatMap((s) => s.samples).length,
+          replaced,
         },
         "voice samples kept",
       );
-      return c.json({ stored }, 201);
+      // `replaced`: rows put aside for these speakers, which the import's Undo restores
+      return c.json({ stored, replaced }, 201);
     },
   );
 

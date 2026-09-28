@@ -12,7 +12,8 @@ import { upsertCharacter } from "~/db/cast";
 import { speakerSamples } from "~/db/schema";
 import { GRACE_MS } from "~/db/voiceSamples";
 import { speakerSampleFiles } from "~/speakerSamples/files";
-import { listSamples } from "~/speakerSamples/store";
+import { readScriptFile, SNIFF_BYTES } from "~/script/importPlan";
+import { listSamples, readSpeakerSamplesForExport } from "~/speakerSamples/store";
 import { epubFile } from "../support/epub";
 import { testApi, type TestApi } from "../support/server";
 
@@ -103,10 +104,13 @@ const store = async (file: File, speakers: unknown) => {
   const form = new FormData();
   form.set("file", file);
   form.set("speakers", typeof speakers === "string" ? speakers : JSON.stringify(speakers));
-  return api.request<{ stored: SpeakerSamples[] }>(`/api/books/${id}/speaker-samples`, {
-    method: "POST",
-    body: form,
-  });
+  return api.request<{ stored: SpeakerSamples[]; replaced: number[] }>(
+    `/api/books/${id}/speaker-samples`,
+    {
+      method: "POST",
+      body: form,
+    },
+  );
 };
 const list = async () =>
   (await api.request<{ samples: SpeakerSamples[] }>(`/api/books/${id}/speaker-samples`)).body
@@ -145,14 +149,48 @@ describe("keeping them", () => {
     expect(new Uint8Array(await served.arrayBuffer())).toEqual(wav("vex"));
   });
 
-  test("storing again for a speaker replaces what was waiting", async () => {
-    await store(await both(), ["Vex"]);
+  test("storing again for a speaker puts what was waiting aside, where Undo can restore it", async () => {
+    const [first] = (await store(await both(), ["Vex"])).body.stored;
     const again = await store(
       await scriptFile([speaker("Vex", "voices/vex/")], { Vex: [wav("newer")] }),
       ["Vex"],
     );
-    expect((await list()).map((s) => s.samples.length)).toEqual([1]);
+    expect(again.body.replaced).toEqual([first.id]);
     expect(await list()).toEqual(again.body.stored);
+    // the first import's recordings are still on disk, not deleted with their row
+    expect(existsSync(onDisk(first.samples[0].file))).toBe(true);
+
+    const back = await api.request(`/api/books/${id}/speaker-samples/${first.id}/restore`, {
+      method: "POST",
+    });
+    expect(back.status).toBe(200);
+    expect((await list()).map((s) => s.id).sort()).toEqual(
+      [first.id, again.body.stored[0].id].sort(),
+    );
+  });
+
+  test("storing reads whole only the recordings of the speakers it keeps", async () => {
+    const big = new Uint8Array(64 * 1024).fill(7);
+    big.set(wav("ines"));
+    const file = await scriptFile(
+      [speaker("Vex", "voices/vex/"), speaker("Ines", "voices/ines/")],
+      {
+        Vex: [wav("vex")],
+        Ines: [big],
+      },
+    );
+    const heads = await readScriptFile({ name: "f", bytes: await file.bytes() });
+    const ines = heads.voices.get("voices/ines/sample-1.wav")!;
+    expect([ines.size, ines.bytes!.length, ines.partial]).toEqual([big.length, SNIFF_BYTES, true]);
+
+    const kept = await readScriptFile({ name: "f", bytes: await file.bytes() }, undefined, {
+      whole: (path) => path.startsWith("voices/vex/"),
+    });
+    expect(kept.voices.get("voices/vex/sample-1.wav")!.partial).toBeUndefined();
+    expect(kept.voices.get("voices/ines/sample-1.wav")!.bytes!.length).toBe(SNIFF_BYTES);
+
+    const [vex] = (await store(file, ["Vex"])).body.stored;
+    expect(vex.samples.map((s) => s.bytes)).toEqual([wav("vex").length]);
   });
 
   test.each<[string, unknown, RegExp]>([
@@ -208,6 +246,23 @@ describe("where they belong", () => {
       ["Narrator", true],
       ["Narrator", true],
     ]);
+  });
+
+  test("an export leaves out a recording gone from disk, and a voice with none left", async () => {
+    const [vex, ines] = (await store(await both(), ["Vex", "Ines"])).body.stored;
+    const vexOnly = vex.samples.find((s) => !ines.samples.some((i) => i.file === s.file))!;
+    const carried = () =>
+      readSpeakerSamplesForExport(api.db, id, api.audioDir).map((w) => [
+        w.speaker,
+        w.samples.length,
+      ]);
+    await Bun.file(onDisk(vexOnly.file)).delete();
+    expect(carried()).toEqual([
+      ["Vex", 1],
+      ["Ines", 1],
+    ]);
+    await Bun.file(onDisk(ines.samples[0].file)).delete(); // the one they share
+    expect(carried()).toEqual([]);
   });
 
   test.each([

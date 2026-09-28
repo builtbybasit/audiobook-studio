@@ -8,7 +8,7 @@
 //
 // Nothing is re-encoded: a recording is kept exactly as it was picked, and its format is what its
 // first bytes said it was when the route read it (`sniffRecording`).
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, rmdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { RecordingFormat } from "~/providers/clone";
@@ -34,8 +34,11 @@ export interface VoiceFiles {
   ): Promise<string>;
   /** The path a request names, or null when it names something that cannot be a recording. */
   path(endpointId: string, voiceId: string, file: string): string | null;
-  /** Remove these recordings of one voice, or all of them when `files` is left out. */
-  remove(endpointId: string, voiceId: string, files?: readonly string[]): Promise<void>;
+  /**
+   * Remove these recordings of one voice, and its directory once nothing is left in it. Only the
+   * files named, never the directory whole: a keep for the same voice may be writing into it.
+   */
+  remove(endpointId: string, voiceId: string, files: readonly string[]): Promise<void>;
 }
 
 /** Recordings under `dir` — `VOICE_DIR` in the server, a temporary directory in a test. */
@@ -54,8 +57,9 @@ export function voiceFiles(dir: string): VoiceFiles {
     },
     async remove(endpointId, voiceId, files) {
       const at = join(dir, keyOf(endpointId, voiceId));
-      if (!files) return rm(at, { recursive: true, force: true });
       await Promise.all(files.filter(isSampleFile).map((f) => rm(join(at, f), { force: true })));
+      // refused while anything is still in it, which is the point
+      await rmdir(at).catch(() => {});
     },
   };
 }

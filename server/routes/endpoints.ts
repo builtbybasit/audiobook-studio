@@ -269,12 +269,20 @@ export function endpointRoutes(
     },
   );
 
-  /** Forget one voice's recordings; the voice stays. */
+  /** Forget one voice's recordings; the voice stays, and the forget can be taken back for a while. */
   app.delete("/:id/voices/:voice/samples", validate("param", VoiceParam), (c) => {
     const { id, voice } = c.req.valid("param");
-    samples.forgetClips(db, voiceFiles, id, voice);
+    samples.forgetClips(db, id, voice);
     c.var.logger.info({ id, voice }, "voice samples forgotten");
     return c.json({ voiceId: voice });
+  });
+
+  /** Take back a forget whose recordings no save has removed yet; answers with them. */
+  app.post("/:id/voices/:voice/samples/restore", validate("param", VoiceParam), (c) => {
+    const { id, voice } = c.req.valid("param");
+    const kept = samples.restoreClips(db, id, voice);
+    c.var.logger.info({ id, voice }, "voice samples restored");
+    return c.json(kept);
   });
 
   /**

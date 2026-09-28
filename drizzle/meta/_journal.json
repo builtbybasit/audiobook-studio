@@ -64,6 +64,13 @@
       "when": 1790608983382,
       "tag": "0008_fat_thundra",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1790610403272,
+      "tag": "0009_bright_sabra",
+      "breakpoints": true
     }
   ]
 }

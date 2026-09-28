@@ -34,6 +34,18 @@ export const clonedVoices = sqliteTable(
      * clone answers before the page saves it — so a save without it is not yet a removal.
      */
     attached: integer("attached", { mode: "boolean" }).notNull().default(false),
+    /**
+     * Epoch ms a save first went without this attached voice. Removing a voice or an endpoint on
+     * the page offers Undo, and a settings import can drop a voice and bring it back, so a missing
+     * voice keeps its recordings for a grace period and gets them back when it returns; a later
+     * save after the grace period removes them.
+     */
+    missingSince: integer("missing_since"),
+    /**
+     * Epoch ms the person forgot these recordings. Hidden from every read at once, restorable by
+     * the forget's Undo until a save after the grace period removes them.
+     */
+    forgottenAt: integer("forgotten_at"),
   },
   (t) => [primaryKey({ columns: [t.endpointId, t.voiceId] })],
 );

@@ -274,7 +274,7 @@ export function endpointRoutes(
     const { id, voice } = c.req.valid("param");
     samples.forgetClips(db, voiceFiles, id, voice);
     c.var.logger.info({ id, voice }, "voice samples forgotten");
-    return c.body(null, 204);
+    return c.json({ voiceId: voice });
   });
 
   /**

@@ -43,6 +43,7 @@ import type {
   Endpoint,
   EndpointKind,
   ExpressionConfig,
+  KeptVoiceSamples,
   Profile,
   ResolvedVoice,
   SettingsFile,
@@ -666,8 +667,9 @@ export const useEndpointsStore = defineStore("endpoints", {
     },
     /**
      * Make a voice from recordings on `ep`'s provider and add it to the endpoint, where the
-     * write-behind saves it like any other voice. Null when there is no server to ask, or the
-     * provider refused, which has been said.
+     * write-behind saves it like any other voice. The server keeps the recordings with it; when it
+     * could not, the voice is still made, and the toast says the recordings were not kept. Null
+     * when there is no server to ask, or the provider refused, which has been said.
      */
     async cloneVoice(ep: Endpoint, request: VoiceCloneRequest): Promise<Voice | null> {
       const svc = this._service();
@@ -675,16 +677,73 @@ export const useEndpointsStore = defineStore("endpoints", {
       const uiStore = useUiStore();
       try {
         await this.flushWrites();
-        const voice = await svc.cloneVoice(ep.id, request);
+        const { samplesKept, ...voice } = await svc.cloneVoice(ep.id, request);
         this.addVoice(ep, voice);
         uiStore.toast(`Made the voice ${voice.label} on ${ep.name}`, {
-          kind: "success",
-          description: "It is private to your account, and on this endpoint's list now.",
+          kind: samplesKept ? "success" : "warn",
+          description: samplesKept
+            ? "It is private to your account, and on this endpoint's list now. Its recordings are kept here with it."
+            : "It is private to your account, and on this endpoint's list now — but its recordings could not be kept here. Keep them from the voice's row to let it travel with a script.",
         });
         return voice;
       } catch (cause) {
         this._failed("make the voice", cause);
         return null;
+      }
+    },
+    /**
+     * Every voice of `ep` whose recordings the server keeps. Empty when there is no server, the
+     * endpoint is not saved yet, or the server could not say — the Voices tab then offers nothing
+     * it cannot do.
+     */
+    async keptSamples(ep: Endpoint): Promise<KeptVoiceSamples[]> {
+      const svc = this._service();
+      if (!svc) return [];
+      try {
+        return await svc.keptSamples(ep.id);
+      } catch {
+        return [];
+      }
+    },
+    /**
+     * Keep the recordings a voice already on `ep` was made from, in place of any it had. Nothing is
+     * sent to the provider. The endpoint is saved first, so a voice added on the page is one the
+     * server knows. Null when there is no server, or it refused, which has been said.
+     */
+    async keepVoiceSamples(
+      ep: Endpoint,
+      voiceId: string,
+      request: Omit<VoiceCloneRequest, "title">,
+    ): Promise<KeptVoiceSamples | null> {
+      const svc = this._service();
+      if (!svc) return null;
+      const uiStore = useUiStore();
+      try {
+        await this.flushWrites();
+        const kept = await svc.keepSamples(ep.id, voiceId, request);
+        uiStore.toast(
+          `Kept ${kept.samples.length} recording${kept.samples.length === 1 ? "" : "s"} of ${kept.title}`,
+          {
+            kind: "success",
+            description: "They stay on this server with the voice, and go if the voice is removed.",
+          },
+        );
+        return kept;
+      } catch (cause) {
+        this._failed("keep the recordings", cause);
+        return null;
+      }
+    },
+    /** Forget the recordings kept for one voice of `ep`; the voice stays. False when that failed. */
+    async forgetVoiceSamples(ep: Endpoint, voiceId: string): Promise<boolean> {
+      const svc = this._service();
+      if (!svc) return false;
+      try {
+        await svc.forgetSamples(ep.id, voiceId);
+        return true;
+      } catch (cause) {
+        this._failed("forget the recordings", cause);
+        return false;
       }
     },
     /**

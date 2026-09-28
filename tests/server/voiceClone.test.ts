@@ -580,10 +580,10 @@ describe("the recordings a voice was made from", () => {
         404,
       );
 
-    expect(
-      (await api.fetch("/api/endpoints/fish/voices/old-voice/samples", { method: "DELETE" }))
-        .status,
-    ).toBe(204);
+    const forgot = await api.request("/api/endpoints/fish/voices/old-voice/samples", {
+      method: "DELETE",
+    });
+    expect(forgot).toEqual({ status: 200, body: { voiceId: "old-voice" } });
     expect((await samplesOf(api, "old-voice")).status).toBe(404);
     await settled();
     expect(readdirSync(api.voiceDir)).toEqual([]);

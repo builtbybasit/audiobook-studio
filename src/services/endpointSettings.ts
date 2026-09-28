@@ -12,8 +12,16 @@
 // in the same body), which a partial write could not let it do.
 import type { Credential } from "@/lib/credentials";
 import { keyring } from "@/lib/keyring";
-import type { Endpoint, EndpointKind, FoundVoice, Profile, Voice } from "@/types";
-import { HttpClient, type FetchLike } from "@/services/http";
+import { CLONE_CONSENT } from "@/lib/endpointShapes";
+import type {
+  ClonedVoice,
+  Endpoint,
+  EndpointKind,
+  FoundVoice,
+  KeptVoiceSamples,
+  Profile,
+} from "@/types";
+import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { isBackend } from "@/services/mode";
 
 /**
@@ -106,9 +114,23 @@ export interface EndpointSettingsService {
   sampleVoice(id: string, voice: string): Promise<VoiceSample>;
   /**
    * Make a voice from recordings on the *saved* endpoint's provider, with the key the server holds.
-   * `consent` must be true: it says the person has the right to clone the voice in them.
+   * `consent` must be true: it says the person has the right to clone the voice in them. The server
+   * keeps the recordings with the voice, and says whether it managed to.
    */
-  cloneVoice(id: string, request: VoiceCloneRequest): Promise<Voice>;
+  cloneVoice(id: string, request: VoiceCloneRequest): Promise<ClonedVoice>;
+  /** Every voice of the *saved* endpoint whose recordings are kept. */
+  keptSamples(id: string): Promise<KeptVoiceSamples[]>;
+  /**
+   * Keep recordings for a voice already on the *saved* endpoint, in place of any it had — for a
+   * voice cloned before recordings were kept. Nothing is sent to the provider.
+   */
+  keepSamples(
+    id: string,
+    voice: string,
+    request: Omit<VoiceCloneRequest, "title">,
+  ): Promise<KeptVoiceSamples>;
+  /** Forget one voice's kept recordings; the voice stays. */
+  forgetSamples(id: string, voice: string): Promise<void>;
 }
 
 /** What a voice is made from: a name, the recordings, and the person's say-so. */
@@ -140,19 +162,53 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
     return this.http.post<VoiceListPage>("/endpoints/voices", { id, ...query });
   }
 
-  cloneVoice(id: string, request: VoiceCloneRequest): Promise<Voice> {
-    const form = new FormData();
+  cloneVoice(id: string, request: VoiceCloneRequest): Promise<ClonedVoice> {
+    const form = recordingsForm(request);
     form.set("id", id);
     form.set("title", request.title.trim());
-    if (request.consent) form.set("consent", "yes");
-    for (const clip of request.clips) form.append("clips", clip, clip.name);
-    return this.http.postFormData<Voice>("/endpoints/voices/clone", form);
+    return this.http.postFormData<ClonedVoice>("/endpoints/voices/clone", form);
+  }
+
+  keptSamples(id: string): Promise<KeptVoiceSamples[]> {
+    return this.http.get<KeptVoiceSamples[]>(`/endpoints/${seg(id)}/samples`);
+  }
+
+  keepSamples(
+    id: string,
+    voice: string,
+    request: Omit<VoiceCloneRequest, "title">,
+  ): Promise<KeptVoiceSamples> {
+    return this.http.postFormData<KeptVoiceSamples>(
+      samplesPath(id, voice),
+      recordingsForm(request),
+    );
+  }
+
+  async forgetSamples(id: string, voice: string): Promise<void> {
+    await this.http.delete<null>(samplesPath(id, voice));
   }
 
   async sampleVoice(id: string, voice: string): Promise<VoiceSample> {
     const { blob, headers } = await this.http.postForFile("/endpoints/sample", { id, voice });
     return { blob, duration: Number(headers.get("x-audio-duration")) || 0 };
   }
+}
+
+const samplesPath = (id: string, voice: string) =>
+  `/endpoints/${seg(id)}/voices/${seg(voice)}/samples`;
+
+/**
+ * The recordings and the person's say-so, as the server reads them. The sentence sent is the one
+ * the form shows beside the box, so what the server keeps is what was actually agreed to.
+ */
+function recordingsForm(request: Omit<VoiceCloneRequest, "title">): FormData {
+  const form = new FormData();
+  if (request.consent) {
+    form.set("consent", "yes");
+    form.set("consentText", CLONE_CONSENT);
+  }
+  for (const clip of request.clips) form.append("clips", clip, clip.name);
+  return form;
 }
 
 let service: EndpointSettingsService | null = null;

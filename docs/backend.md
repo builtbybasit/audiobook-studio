@@ -624,7 +624,7 @@ service are both built on it, so that rule is written once.
 | `POST`   | `/api/endpoints/test`                            | One small request to a saved endpoint with its saved key      |
 | `POST`   | `/api/endpoints/voices`                          | A saved endpoint's voices: its library, or a public search    |
 | `POST`   | `/api/endpoints/sample`                          | One saved voice saying the sample sentence: the audio itself  |
-| `POST`   | `/api/endpoints/voices/clone`                    | A voice made from recordings on the provider (multipart, 201) |
+| `POST`   | `/api/endpoints/voices/clone`                    | A voice made from samples on the provider (multipart, 201)    |
 | `GET`    | `/api/endpoints/requests`                        | One endpoint's requests, newest first; `?kind&id&range`       |
 | `GET`    | `/api/books/:id/spend`                           | What the book has spent, and what its unfinished work holds   |
 | `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                          |
@@ -1019,30 +1019,41 @@ has heard for the session, so pressing ▶ again replays it rather than paying a
 endpoint's base URL, model, format or rate changes.
 
 **Cloning a voice** is `POST /api/endpoints/voices/clone`, a multipart form of the endpoint's `id`,
-the voice's `title`, 1 to 20 recordings under `clips` (up to 20 MB each, 100 MB in all) and
-`consent=yes`, which says the person has the right to clone the voice in them; without it nothing
-is sent. The `voice cloned` log line is the record that it was given: the endpoint, the new
-voice's id, its title, how many recordings and `consent: true`. A recording is what its first bytes
-say (`sniffRecording`), never its name or the type the browser gave it, and only the formats Fish
-documents for a voice sample are taken — WAV, MP3, M4A, Ogg Opus and FLAC; anything else, an Ogg
-Vorbis, AAC or WebM file among them, is a `415` naming the file. Only an endpoint whose provider
-keeps a cloned voice is asked (`canCloneVoices`: Fish Audio, so far) — the cloner refuses any other
-before a request, a `400`. For Fish it is `POST /model` on the API's host
-([clone.ts](../server/providers/clone.ts)): `type=tts`, the title, `train_mode=fast` so the voice is
-usable at once, `visibility=private`, and the recordings under `voices`; Fish transcribes them
-itself. The answer is the new model, and the route answers `201` with it as a voice, which the page
-adds to the endpoint and the write-behind saves.
+the voice's `title`, the samples under `clips` and `consent=yes`, which says the person has the
+right to clone the voice in them; without it nothing is sent. A sample is any audio of the one
+person speaking — recorded, or downloaded — and the provider makes the voice from it **once**: from
+then on a line is spoken with the new voice's id, like any other voice's. The `voice cloned` log
+line is the record that consent was given: the endpoint, the new voice's id, its title, how many
+samples and `consent: true`.
 
-Making a model is not idempotent, so the request goes out **once**, whatever the endpoint's
-`maxRetries`: an upload that timed out or met a 5xx may still have made the voice, and a second
-attempt would make a second, private and duplicate. Its clock is ten minutes rather than the
+Which providers can clone, and from what, is written once beside each provider's other facts, as
+its `cloning` ([lib/providers/types.ts](../src/lib/providers/types.ts)): the most samples a voice is
+made from, the most one may be, the formats its docs take, its advice on samples, and what cloning
+costs. `canCloneVoices` is whether there is one. The route holds the form to it before anything is
+read whole: too many samples is a `400`, one over the provider's size (never above 20 MB, nor 100 MB
+in all) a `413`, and a sample is what its first bytes say (`sniffRecording`), never its name or the
+type the browser gave it — WAV, MP3, M4A, Ogg Opus or FLAC, of which the provider takes the ones
+its docs name; anything else, an Ogg Vorbis, AAC or WebM file among them, is a `415` naming the
+file. How the voice is made is the provider's wire module's `clone`
+([speech/wire.ts](../server/providers/speech/wire.ts)), and an endpoint whose provider has none is a
+`400` before a request. For Fish it is `POST /model` on the API's host
+([speech/fish.ts](../server/providers/speech/fish.ts)): `type=tts`, the title, `train_mode=fast`
+so the voice is usable at once, `visibility=private`, and up to 20 samples under `voices`; Fish
+transcribes them itself. PROVIDERS_HERE The answer is the new voice, and the route answers `201`
+with it, which the page adds to the endpoint and the write-behind saves.
+
+Making a voice is not idempotent, so each of its requests goes out **once**, whatever the
+endpoint's `maxRetries` ([clone.ts](../server/providers/clone.ts)): an upload that timed out or met
+a 5xx may still have made the voice, and a second attempt would make a second, private and
+duplicate. A clone of two requests (an upload, then the clone) makes each once and says which
+failed. Its clock is ten minutes rather than the
 endpoint's per-line timeout — 100 MB over a slow uplink and Fish's transcription after it — and the
 route lifts Bun's ten-second idle limit for this one request, which would otherwise close it while
 Fish works. Fish's refusals are split as the voice list's are. The server's own body ceiling
 (`maxRequestBodySize`) sits above both this route's limit and the import's. The recordings pass
 through, held once — the parsed form's files are what is sent on.
 
-**The recordings are kept once Fish has answered**, never before, so a failed clone keeps nothing:
+**The samples are kept once the provider has answered**, never before, so a failed clone keeps nothing:
 the bytes as they were picked, named by their hash, under `VOICE_DIR` (`./data/voices`) in one
 directory per voice ([voices/files.ts](../server/voices/files.ts)), and a `cloned_voices` row with
 the time the box was ticked and the sentence it said (`consent_at`, `consent_text`) beside a

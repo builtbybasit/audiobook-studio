@@ -109,6 +109,13 @@ describe("speech presets", () => {
     expect(speechAt("gemini-3.8-flash-lite-tts", Date.UTC(2027, 0, 1, 1, 0))).toEqual([1, 12]);
   });
 
+  test("each is listed under a provider, and a provider's presets sit together", () => {
+    const groups = TTS_PRESETS.map((p) => p.group);
+    expect(groups.every(Boolean)).toBe(true);
+    const runs = groups.filter((g, i) => g !== groups[i - 1]);
+    expect(new Set(runs).size).toBe(runs.length);
+  });
+
   test("each has a rate card that reads, and ids are unique", () => {
     const ids = TTS_PRESETS.map((p) => p.id);
     expect(new Set(ids).size).toBe(ids.length);

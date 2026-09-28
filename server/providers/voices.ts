@@ -6,7 +6,9 @@
 // `reference_id` a line is spoken with — so a voice found either way is ready to use.
 //
 // Gemini's prebuilt voices are written down in its speech guide, so they are answered without a
-// request; ElevenLabs lists an account's voices at `GET /v2/voices`, a page at a time.
+// request; ElevenLabs lists an account's voices at `GET /v2/voices` and BreezeBlue at
+// `GET /v1/voices`, a page at a time; MiniMax at `POST /v1/get_voice`, all at once; Cartesia at
+// `GET /voices`, a page after the last voice of the one before.
 //
 // An OpenAI-shaped endpoint has no standard way to say what voices it has. OpenAI itself lists its
 // built-in voices only in its documentation, so for `api.openai.com` the list is that one, written
@@ -20,15 +22,22 @@ import {
   fishApiRoot,
   fishSampleOf,
   fishVoiceLabel,
+  isBreezeBlue,
+  isCartesia,
   isElevenLabs,
   isFishAudio,
   isGemini,
+  isMiniMax,
+  isQwen,
   voicesFromFishModels,
   type FishModel,
 } from "@/lib/endpointShapes";
 import type { FoundVoice, Gender, Voice } from "@/types";
+import { cartesiaVoicePage } from "~/providers/cartesiaSpeech";
 import { elevenLabsHeaders, elevenLabsRoot } from "~/providers/elevenLabsSpeech";
 import { GEMINI_VOICES } from "~/providers/geminiSpeech";
+import { miniMaxVoices } from "~/providers/miniMaxSpeech";
+import { QWEN_VOICES } from "~/providers/qwenSpeech";
 import { call, jsonHeaders, ProviderError, requireKey, type CallOptions } from "~/providers/http";
 import type { ProviderTarget } from "~/providers/target";
 
@@ -223,6 +232,75 @@ export function endpointVoiceLister(options: Omit<CallOptions, "signal"> = {}): 
     return { voices, total: voices.length, page: 1, hasMore: more };
   }
 
+  /**
+   * A BreezeBlue account's voices, `GET /v1/voices` a page at a time, up to ten pages. Unlike
+   * ElevenLabs it gives a voice's gender as a field of its own.
+   */
+  async function breezeVoices(target: ProviderTarget, signal: AbortSignal): Promise<VoicePage> {
+    const voices: Voice[] = [];
+    let token: string | null = null;
+    let more = true;
+    for (let page = 1; more && page <= LIBRARY_PAGES; page++) {
+      const q = token ? `?${new URLSearchParams({ next_page_token: token })}` : "";
+      const res = await call(
+        target,
+        `${elevenLabsRoot(target.baseUrl)}/voices${q}`,
+        { method: "GET", headers: elevenLabsHeaders(target) },
+        { signal, ...options },
+      );
+      const body = (await res.json().catch(() => null)) as {
+        voices?: { voice_id?: unknown; name?: unknown; gender?: unknown }[];
+        has_more?: unknown;
+        next_page_token?: unknown;
+      } | null;
+      for (const v of body?.voices ?? []) {
+        if (typeof v.voice_id !== "string" || !v.voice_id) continue;
+        const gender = String(v.gender ?? "").toLowerCase();
+        voices.push({
+          id: v.voice_id,
+          label: typeof v.name === "string" && v.name.trim() ? v.name.trim() : v.voice_id,
+          gender: gender.startsWith("m") ? "m" : gender.startsWith("f") ? "f" : "?",
+        });
+      }
+      token = typeof body?.next_page_token === "string" ? body.next_page_token : null;
+      more = body?.has_more === true && !!token;
+    }
+    return { voices, total: voices.length, page: 1, hasMore: more };
+  }
+
+  /**
+   * Cartesia's voices and the account's own, a hundred a page up to ten pages, each page after the
+   * last voice of the one before. Its gender is `masculine`, `feminine` or `gender_neutral`.
+   */
+  async function cartesiaVoices(target: ProviderTarget, signal: AbortSignal): Promise<VoicePage> {
+    const voices: Voice[] = [];
+    let more = true;
+    for (let page = 1; more && page <= LIBRARY_PAGES; page++) {
+      const found = await cartesiaVoicePage(
+        target,
+        signal,
+        options,
+        LIBRARY_PAGE,
+        voices.at(-1)?.id,
+      );
+      for (const v of found.voices)
+        voices.push({
+          id: v.id,
+          label: v.name,
+          gender:
+            v.gender === "masculine"
+              ? "m"
+              : v.gender === "feminine"
+                ? "f"
+                : v.gender === "gender_neutral"
+                  ? "n"
+                  : "?",
+        });
+      more = found.hasMore && found.voices.length > 0;
+    }
+    return { voices, total: voices.length, page: 1, hasMore: more };
+  }
+
   async function openAiShaped(target: ProviderTarget, signal: AbortSignal): Promise<VoicePage> {
     if (isOpenAi(target)) {
       const voices = OPENAI_VOICES.map((id) => ({
@@ -277,6 +355,19 @@ export function endpointVoiceLister(options: Omit<CallOptions, "signal"> = {}): 
         return { voices, total: voices.length, page: 1, hasMore: false };
       }
       if (isElevenLabs(target)) return elevenLabsVoices(target, signal);
+      if (isBreezeBlue(target)) return breezeVoices(target, signal);
+      if (isCartesia(target)) return cartesiaVoices(target, signal);
+      if (isQwen(target)) {
+        // each model's system voices, written down in Alibaba's voice list: nothing to ask for
+        const voices = [...(QWEN_VOICES[target.model] ?? [])];
+        return { voices, total: voices.length, page: 1, hasMore: false };
+      }
+      if (isMiniMax(target)) {
+        // every voice the key can use, MiniMax's own and those made on it; none has a gender field
+        const found = await miniMaxVoices(target, signal, options);
+        const voices = found.map((v) => ({ ...v, gender: "?" as const }));
+        return { voices, total: voices.length, page: 1, hasMore: false };
+      }
       return openAiShaped(target, signal);
     },
   };

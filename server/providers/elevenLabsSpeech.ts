@@ -1,5 +1,9 @@
 // A line spoken by ElevenLabs, as its own API takes it.
 //
+// BreezeBlue's hosted API (https://docs.breezeblue.ai) copies this shape — path, key header,
+// `output_format` — and adds an `instructions` field for delivery, which it is sent when the line
+// has some. Everything below serves both, and says where they differ.
+//
 // ElevenLabs is neither Fish- nor OpenAI-shaped
 // (https://elevenlabs.io/docs/api-reference/text-to-speech/convert): the voice rides in the path —
 // `POST /v1/text-to-speech/{voice_id}` — the model in the body as `model_id`, the key in an
@@ -13,6 +17,7 @@
 // from what was sent; when the answer carries ElevenLabs' own count (`character-cost`, which its
 // request-stitching guide reads) that count is reported beside it.
 import type { SpeechUsage } from "@/types";
+import { isBreezeBlue } from "@/lib/endpointShapes";
 import { normalizeSpeechUsage } from "@/lib/pricing";
 import { audioAnswer, refuseEncoding } from "~/providers/answer";
 import { sendSpeech, type SpeechCallOptions } from "~/providers/fishSpeech";
@@ -54,6 +59,8 @@ export async function elevenLabsSpeak(
   refuseEncoding(target, input);
   const { format } = input.encoding;
   const query = new URLSearchParams({ output_format: elevenLabsOutputFormat(input) });
+  // BreezeBlue takes delivery as `instructions` beside the words; ElevenLabs has no such field
+  const instructions = isBreezeBlue(target) ? input.instructions.trim() : "";
   const started = Date.now();
   const audio = await sendSpeech(
     input,
@@ -63,12 +70,16 @@ export async function elevenLabsSpeak(
       init: {
         method: "POST",
         headers: elevenLabsHeaders(target),
-        body: JSON.stringify({ text: input.text, model_id: target.model }),
+        body: JSON.stringify({
+          text: input.text,
+          model_id: target.model,
+          ...(instructions ? { instructions } : {}),
+        }),
       },
       format,
       text: input.text,
-      // no instructions field (see the header), so none are billed
-      instructions: "",
+      // what was sent beside the words, and so what the ledger counts: nothing to ElevenLabs
+      instructions,
       read: async (res, signal) => {
         const characters = Number(res.headers.get("character-cost"));
         const reported: SpeechUsage | null =
@@ -100,9 +111,10 @@ export async function elevenLabsProbe(
     { signal, ...options },
   );
   const ms = Date.now() - started;
-  const body = (await res.json().catch(() => null)) as
-    | { model_id?: unknown; can_do_text_to_speech?: unknown }[]
-    | null;
+  type Listed = { model_id?: unknown; can_do_text_to_speech?: unknown };
+  const answer = (await res.json().catch(() => null)) as Listed[] | { models?: Listed[] } | null;
+  // ElevenLabs answers a bare list; an API copying it may wrap the list in `models`
+  const body = Array.isArray(answer) ? answer : answer?.models;
   const ids = Array.isArray(body)
     ? body
         .filter((m) => m?.can_do_text_to_speech !== false)

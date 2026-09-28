@@ -36,9 +36,14 @@ export {
   KIND_PATH,
   OPS_DEFAULTS,
   fishModelsUrl,
+  isBreezeBlue,
+  isCartesia,
   isElevenLabs,
+  isElevenLabsShaped,
   isFishAudio,
   isGemini,
+  isMiniMax,
+  isQwen,
   ttsRequestPath,
   voicesFromFishModels,
   type FishModel,
@@ -146,6 +151,7 @@ export type ScriptingPreset = Preset<Profile>;
 function openaiTts1(model: string, label: string, hint: string, rate: number): TtsPreset {
   return {
     id: `openai-${model}`,
+    group: "OpenAI",
     label,
     hint,
     note:
@@ -182,6 +188,7 @@ function elevenLabs(
 ): TtsPreset {
   return {
     id: `elevenlabs-${model}`,
+    group: "ElevenLabs",
     label,
     hint,
     note:
@@ -209,6 +216,105 @@ function elevenLabs(
   };
 }
 
+const RATES_AS_OF = "Rates as published on 28 September 2026.";
+
+/**
+ * A BreezeBlue model through its hosted API, shaped like ElevenLabs'. Billed per character — a
+ * Chinese, Japanese or Korean one counts twice — at $40 a million on the free plan and less on
+ * paid ones, up to 1,000 characters a request unless BreezeBlue raises it.
+ */
+function breezeTts(model: string, label: string, hint: string, languages: string): TtsPreset {
+  return {
+    id: model,
+    group: "BreezeBlue",
+    label,
+    hint,
+    note:
+      `${languages} $40 per million characters on the free plan — $36, $32 and $28 on Starter, ` +
+      "Creator and Pro — with a Chinese, Japanese or Korean character counting as two; set the " +
+      "rate to your plan's. Up to 1,000 characters a request. A line's style and direction go as " +
+      "its instructions; sound tags such as (laughs) or (pause) go in the text, from the " +
+      "Expressions tab. Commercial use needs a paid plan. " +
+      RATES_AS_OF,
+    apply: {
+      name: label,
+      baseUrl: "https://api.breeze.blue/v1",
+      model,
+      needsKey: true,
+      price: 40,
+      billing: { unit: "chars", rate: 40 },
+      maxChars: 1000,
+      splitAt: "sentence",
+      concurrency: 2,
+      latency: 1500,
+      failRate: 0.01,
+    },
+  };
+}
+
+/** A MiniMax speech model: billed per character at `rate` dollars a million, under 10,000 a request. */
+function miniMax(model: string, label: string, hint: string, rate: number): TtsPreset {
+  return {
+    id: `minimax-${model}`,
+    group: "MiniMax",
+    label,
+    hint,
+    note:
+      `$${rate} per million characters, under 10,000 a request; MiniMax reports the characters it ` +
+      "billed, which the ledger keeps. A voice is a voice_id such as English_expressive_narrator; " +
+      "Fetch lists the system voices and any you cloned or designed. Pauses go in the text as " +
+      "<#0.5#> and sounds as (laughs) or (sighs), from the Expressions tab. " +
+      RATES_AS_OF,
+    apply: {
+      name: label,
+      baseUrl: "https://api.minimax.io/v1",
+      model,
+      needsKey: true,
+      price: rate,
+      billing: { unit: "chars", rate },
+      maxChars: 9999,
+      splitAt: "sentence",
+      concurrency: 2,
+      latency: 1500,
+      failRate: 0.01,
+    },
+  };
+}
+
+/**
+ * A Qwen-Audio 3.0 model through Alibaba's Model Studio, Singapore region: billed per 10,000
+ * characters — a Chinese one counting twice — with the audio itself free.
+ */
+function qwenTts(model: string, label: string, hint: string, rate: number): TtsPreset {
+  return {
+    id: model,
+    group: "Alibaba Qwen",
+    label,
+    hint,
+    note:
+      `$${rate / 100} per 10,000 characters, a Chinese character counting as two; the first ` +
+      "10,000 are free for 90 days. Each model has its own voices — Fetch lists this one's system " +
+      "voices, and its 500 base voices can be added by id. WAV at 24 kHz. Requests are kept to 600 " +
+      "characters: Alibaba publishes no limit for these models, and 600 is the one it gives for " +
+      "its other speech models. The base URL may be your workspace's own " +
+      "(https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com), which Alibaba recommends. " +
+      RATES_AS_OF,
+    apply: {
+      name: label,
+      baseUrl: "https://dashscope-intl.aliyuncs.com/api/v1",
+      model,
+      needsKey: true,
+      price: rate,
+      billing: { unit: "chars", rate },
+      maxChars: 600,
+      splitAt: "sentence",
+      concurrency: 2,
+      latency: 2000,
+      failRate: 0.01,
+    },
+  };
+}
+
 /**
  * One of the Gemini 3.8 speech models, released on 22 September 2026. Billed like 3.1 — input text
  * tokens and output audio tokens, 25 audio tokens a second — at $1 in and `audioRate` out from
@@ -224,6 +330,7 @@ function gemini38Tts(
 ): TtsPreset {
   return {
     id,
+    group: "Google Gemini",
     label,
     hint,
     note:
@@ -265,6 +372,7 @@ function gemini38Tts(
 export const TTS_PRESETS: TtsPreset[] = [
   {
     id: "fish-free",
+    group: "Fish Audio",
     label: "Fish Audio · S2.1 Pro Free",
     hint: "free tier, no hard character cap",
     note:
@@ -289,6 +397,7 @@ export const TTS_PRESETS: TtsPreset[] = [
   },
   {
     id: "fish-pro",
+    group: "Fish Audio",
     label: "Fish Audio · S2.1 Pro",
     hint: "paid tier, same API",
     note:
@@ -313,6 +422,7 @@ export const TTS_PRESETS: TtsPreset[] = [
   },
   {
     id: "openai",
+    group: "OpenAI",
     label: "OpenAI · gpt-4o-mini-tts",
     hint: "text tokens in, audio tokens out",
     note:
@@ -356,6 +466,7 @@ export const TTS_PRESETS: TtsPreset[] = [
   ),
   {
     id: "gemini-tts",
+    group: "Google Gemini",
     label: "Gemini 3.1 Flash TTS (legacy)",
     hint: "preview Google now calls legacy — use 3.8 Flash-Lite",
     note:
@@ -400,8 +511,61 @@ export const TTS_PRESETS: TtsPreset[] = [
     10000,
   ),
   elevenLabs("eleven_flash_v2_5", "ElevenLabs · Flash v2.5", "fast, half the price", 40, 40000),
+  breezeTts(
+    "breeze-tts-2",
+    "BreezeBlue · Breeze TTS 2",
+    "English and Chinese, delivery as instructions",
+    "English and Chinese.",
+  ),
+  breezeTts(
+    "breeze-tts-2-multilingual",
+    "BreezeBlue · Breeze TTS 2 Multilingual",
+    "51 languages",
+    "51 languages.",
+  ),
+  miniMax("speech-2.8-hd", "MiniMax · Speech 2.8 HD", "richest quality", 100),
+  miniMax("speech-2.8-turbo", "MiniMax · Speech 2.8 Turbo", "faster, 40% cheaper", 60),
+  {
+    id: "cartesia-sonic-3.6",
+    group: "Cartesia",
+    label: "Cartesia · Sonic 3.6",
+    hint: "44 languages, tags in the transcript",
+    note:
+      "Billed in credits, about one a character: $50 per million characters on the Pro plan " +
+      "($5 for 100,000), less on larger plans — Startup $39, Scale $37 — so set the rate to your " +
+      "own plan's. Failed requests cost nothing. Delivery goes in the text as [laughter], " +
+      '<break time="1s"/> or <emotion value="calm"/>, set up on the Expressions tab. A voice is ' +
+      "a voice id from Cartesia; Fetch lists them. Cartesia documents no per-request limit. " +
+      "Rates as published on 28 September 2026.",
+    apply: {
+      name: "Cartesia · Sonic 3.6",
+      baseUrl: "https://api.cartesia.ai",
+      model: "sonic-3.6",
+      needsKey: true,
+      price: 50,
+      billing: { unit: "chars", rate: 50 },
+      maxChars: 0,
+      splitAt: "sentence",
+      concurrency: 2,
+      latency: 900,
+      failRate: 0.01,
+    },
+  },
+  qwenTts(
+    "qwen-audio-3.0-tts-plus",
+    "Alibaba · Qwen-Audio 3.0 TTS Plus",
+    "higher quality, 2 system voices",
+    20,
+  ),
+  qwenTts(
+    "qwen-audio-3.0-tts-flash",
+    "Alibaba · Qwen-Audio 3.0 TTS Flash",
+    "cheaper, 12 system voices",
+    15,
+  ),
   {
     id: "compatible",
+    group: "On your machine",
     label: "OpenAI-compatible server · Kokoro",
     hint: "Kokoro-FastAPI on :8880; an Orpheus or Piper bridge too",
     apply: {
@@ -420,6 +584,7 @@ export const TTS_PRESETS: TtsPreset[] = [
   },
   {
     id: "vllm-omni",
+    group: "On your machine",
     label: "OpenAI-compatible server · vLLM-Omni",
     hint: "open speech models on :8091 — Fish S2 Pro, Qwen3-TTS, Voxtral",
     note:

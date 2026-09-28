@@ -865,8 +865,9 @@ order, so it catches a dropped sentence but not a moved one. A bad answer is not
 provider, so a failure never spends tokens twice without anyone asking.
 
 **Speech** ([endpointSpeech.ts](../server/providers/endpointSpeech.ts)) picks the wire shape from
-the base URL: Fish Audio's, Google's Gemini API, ElevenLabs', and OpenAI's `/audio/speech` for
-everything else (OpenAI, Kokoro-FastAPI, vLLM-Omni, …):
+the base URL: Fish Audio's, Google's Gemini API, ElevenLabs' (and BreezeBlue's, which copies it),
+MiniMax's, Cartesia's, Alibaba's Model Studio for Qwen, and OpenAI's `/audio/speech` for everything
+else (OpenAI, Kokoro-FastAPI, vLLM-Omni, …):
 
 - Fish ([fishSpeech.ts](../server/providers/fishSpeech.ts)): `POST /v1/tts` with the model in a
   `model` header, the voice as `reference_id`, `format: "wav"` and `normalize`. Its WAV rates are
@@ -892,6 +893,26 @@ everything else (OpenAI, Kokoro-FastAPI, vLLM-Omni, …):
   `character-cost` header, when present, is reported as the characters billed. Voices come from
   `GET /v2/voices` a hundred a page; the Test button reads `GET /v1/models` and says when the
   configured model is not on it.
+- BreezeBlue (the ElevenLabs adapter): `api.breeze.blue` takes the same path, `xi-api-key` and
+  `output_format`, and also an `instructions` field, which it is sent — the line's style and
+  direction. Voices come from `GET /v1/voices`, with gender as a field; a request is up to 1,000
+  characters.
+- MiniMax ([miniMaxSpeech.ts](../server/providers/miniMaxSpeech.ts)): `POST /v1/t2a_v2` with a
+  bearer key, `voice_setting.voice_id` and `audio_setting` (rate up to 44.1 kHz; an MP3's bitrate
+  in bits a second), answered as JSON with the audio in hex. A refusal can arrive as a 200 whose
+  `base_resp.status_code` is not 0; it is read out as a failure, marked retryable for a rate limit
+  or a fault. `extra_info.usage_characters` is reported as the characters billed. Voices, and the
+  Test button, are `POST /v1/get_voice`.
+- Cartesia ([cartesiaSpeech.ts](../server/providers/cartesiaSpeech.ts)): `POST /tts/bytes` with a
+  bearer key and `Cartesia-Version: 2026-08-14`, `{ model_id, transcript, voice: { id },
+output_format }`, answered with the audio. It reports no usage. Voices are `GET /voices`, paged
+  after the last voice of the page before; the Test button reads one.
+- Qwen-Audio 3.0 ([qwenSpeech.ts](../server/providers/qwenSpeech.ts)): `POST
+/api/v1/services/audio/tts/SpeechSynthesizer` on `dashscope-intl.aliyuncs.com` or a workspace's
+  own host, `{ model, input: { text, voice, format, sample_rate } }`. The answer is a link to the
+  audio, valid a day, fetched at once without the key (it is signed) as part of the same request.
+  WAV at 24 kHz only, and requests kept to 600 characters, until more is known about these models.
+  The voices are each model's system voices from Alibaba's list, answered without a request.
 - OpenAI-shaped ([openaiSpeech.ts](../server/providers/openaiSpeech.ts)): `model`, `input`,
   `voice`, `response_format: "wav"`, and the line's instructions (the speaker's style and the
   line's direction, as the clip records them) except on `tts-1`. This API cannot be asked for a

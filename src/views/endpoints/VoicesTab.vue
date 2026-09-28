@@ -777,8 +777,8 @@ async function playFound(v: FoundVoice) {
       <p class="mt-2 text-[11px] leading-relaxed text-zinc-500">
         Labels and gender are yours to change and take effect at once — the id is what goes in the
         request, so renaming a voice re-routes nothing. Removing one leaves the speakers that used
-        it unrouted in every book, and is undoable from the toast; once it is saved, any recordings
-        kept for it go too.
+        it unrouted in every book, and is undoable from the toast; any recordings kept for it are
+        held for a day in case it comes back, then go.
       </p>
     </section>
   </div>

@@ -584,59 +584,60 @@ method whose whole contract is that it raises `ApiError`, and the page would rep
 fault where it should be saying the server is unreachable. The library service and the jobs
 service are both built on it, so that rule is written once.
 
-| Method   | Path                                             | Does                                                          |
-| -------- | ------------------------------------------------ | ------------------------------------------------------------- |
-| `GET`    | `/api/health`                                    | Is it up                                                      |
-| `GET`    | `/api/books`                                     | Every book, importing ones included, with chapter counts      |
-| `GET`    | `/api/books/:id`                                 | A book and its chapters                                       |
-| `GET`    | `/api/books/:id/chapters/:n/text`                | A chapter's prose                                             |
-| `GET`    | `/api/books/:id/chapters/:n/script`              | A chapter's script, and its revision                          |
-| `PUT`    | `/api/books/:id/chapters/:n/script`              | Replace the script, naming the revision that was read         |
-| `GET`    | `/api/books/:id/chapters/:n/history`             | The chapter's versions and how the script came to be          |
-| `POST`   | `/api/books/:id/chapters/:n/history/checkpoints` | Name the script as it stands and keep a copy (201)            |
-| `DELETE` | `/api/books/:id/chapters/:n/history/versions/:v` | Forget one version; what an Undo of a checkpoint sends        |
-| `GET`    | `/api/books/:id/cast`                            | The cast and the pronunciation dictionary                     |
-| `PUT`    | `/api/books/:id/characters/:name`                | One speaker, written as stated: new or replaced               |
-| `POST`   | `/api/books/:id/characters/:name/rename`         | Rename; every line that names them moves                      |
-| `POST`   | `/api/books/:id/characters/:name/merge`          | Fold one speaker into another                                 |
-| `DELETE` | `/api/books/:id/characters/:name`                | Remove a speaker; their lines go to the Narrator              |
-| `POST`   | `/api/books/:id/characters/attribute`            | Put a speaker back on exactly these lines; an Undo            |
-| `PUT`    | `/api/books/:id/lexicon`                         | The dictionary, replaced whole, and the clips it made stale   |
-| `GET`    | `/api/books/:id/exports`                         | The finished audiobooks                                       |
-| `POST`   | `/api/books/:id/exports`                         | Queue a build; the job and the version it makes (202)         |
-| `GET`    | `/api/books/:id/exports/:e`                      | One of them                                                   |
-| `GET`    | `/api/books/:id/exports/:e/files/:n`             | One of its files, to save                                     |
-| `DELETE` | `/api/books/:id/exports/:e`                      | Forget one, and take its files off the disk                   |
-| `POST`   | `/api/books/import`                              | An uploaded EPUB → a book, or one more volume of one          |
-| `POST`   | `/api/books/:id/covers`                          | A JPEG or PNG for an audiobook's cover → its url              |
-| `GET`    | `/api/books/:id/covers/:file`                    | A cover's bytes                                               |
-| `POST`   | `/api/books/:id/confirm`                         | The review is done; it joins the library                      |
-| `POST`   | `/api/books/:id/discard`                         | Cancel: an unconfirmed book goes, or its new volume           |
-| `POST`   | `/api/books/:id/chapters/skip`                   | Skip chapters for the audiobook                               |
-| `POST`   | `/api/books/:id/chapters/include`                | Put them back                                                 |
-| `POST`   | `/api/books/:id/chapters/keep`                   | Keep a noted chapter and stop the suggestion asking           |
-| `POST`   | `/api/books/:id/chapters/decisions`              | Put decisions back exactly as stated; what an Undo sends      |
-| `POST`   | `/api/books/:id/chapters/script`                 | Queue a scripting job per chapter, as one run (202)           |
-| `POST`   | `/api/books/:id/chapters/narrate`                | Queue a narration job per chapter, at a scope (202)           |
-| `GET`    | `/api/audio/:bookId/:file`                       | A rendered clip's audio                                       |
-| `GET`    | `/api/endpoints`                                 | Speech endpoints, scripting profiles, credentials             |
-| `PUT`    | `/api/endpoints`                                 | The whole configuration, in place of what is stored           |
-| `POST`   | `/api/endpoints/test`                            | One small request to a saved endpoint with its saved key      |
-| `POST`   | `/api/endpoints/voices`                          | A saved endpoint's voices: its library, or a public search    |
-| `POST`   | `/api/endpoints/sample`                          | One saved voice saying the sample sentence: the audio itself  |
-| `POST`   | `/api/endpoints/voices/clone`                    | A voice made from samples on the provider (multipart, 201)    |
-| `GET`    | `/api/endpoints/requests`                        | One endpoint's requests, newest first; `?kind&id&range`       |
-| `GET`    | `/api/books/:id/spend`                           | What the book has spent, and what its unfinished work holds   |
-| `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                          |
-| `DELETE` | `/api/books/:id/volumes/:volumeId`               | Remove a volume; the last one removes the book; 409 mid-build |
-| `PATCH`  | `/api/books/:id`                                 | The budget, script budget or pacing; chapters are re-timed    |
-| `PATCH`  | `/api/books/:id/volumes/:volumeId`               | Rename a volume                                               |
-| `PUT`    | `/api/books/:id/volumes/order`                   | Read the volumes in this order; chapters renumber to follow   |
-| `GET`    | `/api/jobs`                                      | Every job, oldest first; `?bookId=` narrows it                |
-| `GET`    | `/api/jobs/:id`                                  | One job, with its activity                                    |
-| `POST`   | `/api/jobs/:id/cancel`                           | Stop it: a queued job never starts, a running one stops       |
-| `DELETE` | `/api/jobs/:id`                                  | Take a finished job out of the history                        |
-| `POST`   | `/api/jobs/clear`                                | Clear the history; live jobs stay                             |
+| Method   | Path                                             | Does                                                           |
+| -------- | ------------------------------------------------ | -------------------------------------------------------------- |
+| `GET`    | `/api/health`                                    | Is it up                                                       |
+| `GET`    | `/api/books`                                     | Every book, importing ones included, with chapter counts       |
+| `GET`    | `/api/books/:id`                                 | A book and its chapters                                        |
+| `GET`    | `/api/books/:id/chapters/:n/text`                | A chapter's prose                                              |
+| `GET`    | `/api/books/:id/chapters/:n/script`              | A chapter's script, and its revision                           |
+| `PUT`    | `/api/books/:id/chapters/:n/script`              | Replace the script, naming the revision that was read          |
+| `GET`    | `/api/books/:id/chapters/:n/history`             | The chapter's versions and how the script came to be           |
+| `POST`   | `/api/books/:id/chapters/:n/history/checkpoints` | Name the script as it stands and keep a copy (201)             |
+| `DELETE` | `/api/books/:id/chapters/:n/history/versions/:v` | Forget one version; what an Undo of a checkpoint sends         |
+| `GET`    | `/api/books/:id/cast`                            | The cast and the pronunciation dictionary                      |
+| `PUT`    | `/api/books/:id/characters/:name`                | One speaker, written as stated: new or replaced                |
+| `POST`   | `/api/books/:id/characters/:name/rename`         | Rename; every line that names them moves                       |
+| `POST`   | `/api/books/:id/characters/:name/merge`          | Fold one speaker into another                                  |
+| `DELETE` | `/api/books/:id/characters/:name`                | Remove a speaker; their lines go to the Narrator               |
+| `POST`   | `/api/books/:id/characters/attribute`            | Put a speaker back on exactly these lines; an Undo             |
+| `PUT`    | `/api/books/:id/lexicon`                         | The dictionary, replaced whole, and the clips it made stale    |
+| `GET`    | `/api/books/:id/exports`                         | The finished audiobooks                                        |
+| `POST`   | `/api/books/:id/exports`                         | Queue a build; the job and the version it makes (202)          |
+| `GET`    | `/api/books/:id/exports/:e`                      | One of them                                                    |
+| `GET`    | `/api/books/:id/exports/:e/files/:n`             | One of its files, to save                                      |
+| `DELETE` | `/api/books/:id/exports/:e`                      | Forget one, and take its files off the disk                    |
+| `POST`   | `/api/books/import`                              | An uploaded EPUB → a book, or one more volume of one           |
+| `POST`   | `/api/books/:id/covers`                          | A JPEG or PNG for an audiobook's cover → its url               |
+| `GET`    | `/api/books/:id/covers/:file`                    | A cover's bytes                                                |
+| `POST`   | `/api/books/:id/confirm`                         | The review is done; it joins the library                       |
+| `POST`   | `/api/books/:id/discard`                         | Cancel: an unconfirmed book goes, or its new volume            |
+| `POST`   | `/api/books/:id/chapters/skip`                   | Skip chapters for the audiobook                                |
+| `POST`   | `/api/books/:id/chapters/include`                | Put them back                                                  |
+| `POST`   | `/api/books/:id/chapters/keep`                   | Keep a noted chapter and stop the suggestion asking            |
+| `POST`   | `/api/books/:id/chapters/decisions`              | Put decisions back exactly as stated; what an Undo sends       |
+| `POST`   | `/api/books/:id/chapters/script`                 | Queue a scripting job per chapter, as one run (202)            |
+| `POST`   | `/api/books/:id/chapters/narrate`                | Queue a narration job per chapter, at a scope (202)            |
+| `GET`    | `/api/audio/:bookId/:file`                       | A rendered clip's audio                                        |
+| `GET`    | `/api/endpoints`                                 | Speech endpoints, scripting profiles, credentials              |
+| `PUT`    | `/api/endpoints`                                 | The whole configuration, in place of what is stored            |
+| `POST`   | `/api/endpoints/test`                            | One small request to a saved endpoint with its saved key       |
+| `POST`   | `/api/endpoints/voices`                          | A saved endpoint's voices: its library, or a public search     |
+| `POST`   | `/api/endpoints/sample`                          | One saved voice saying the sample sentence: the audio itself   |
+| `POST`   | `/api/endpoints/voices/clone`                    | A voice made from samples on the provider (multipart, 201)     |
+| `GET`    | `/api/endpoints/requests`                        | One endpoint's requests, newest first; `?kind&id&range`        |
+| `GET`    | `/api/endpoints/live`                            | Each speech endpoint's lines out and waiting, and its cooldown |
+| `GET`    | `/api/books/:id/spend`                           | What the book has spent, and what its unfinished work holds    |
+| `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                           |
+| `DELETE` | `/api/books/:id/volumes/:volumeId`               | Remove a volume; the last one removes the book; 409 mid-build  |
+| `PATCH`  | `/api/books/:id`                                 | The budget, script budget or pacing; chapters are re-timed     |
+| `PATCH`  | `/api/books/:id/volumes/:volumeId`               | Rename a volume                                                |
+| `PUT`    | `/api/books/:id/volumes/order`                   | Read the volumes in this order; chapters renumber to follow    |
+| `GET`    | `/api/jobs`                                      | Every job, oldest first; `?bookId=` narrows it                 |
+| `GET`    | `/api/jobs/:id`                                  | One job, with its activity                                     |
+| `POST`   | `/api/jobs/:id/cancel`                           | Stop it: a queued job never starts, a running one stops        |
+| `DELETE` | `/api/jobs/:id`                                  | Take a finished job out of the history                         |
+| `POST`   | `/api/jobs/clear`                                | Clear the history; live jobs stay                              |
 
 `POST /api/books/import` is `multipart/form-data`: `file` is the EPUB, `title` optionally overrides
 the one in the file, and `bookId` with `name` adds the file to an existing book as one more volume.
@@ -1222,6 +1223,30 @@ than one — so the render details show where the line was cut and the Queue's b
 requests. A part that fails fails the line with `error.part`, and the parts before it are thrown
 away rather than kept as half a line. Its duration is the parts' together.
 
+**Lines go out as their endpoint will take them.** Every line of the run asks the speech gate
+([server/providers/gate.ts](../server/providers/gate.ts)) for a slot on its speaker's endpoint, in
+the chapter's order, and is sent when it has one: up to the endpoint's `concurrency` at once, none
+while it is paused, and none while it is cooling down after a rate limit — the demo's dispatch rule.
+Lines for two endpoints go out alongside each other, each at its own limit. The gate is one for the
+whole process, because the limit is the provider's, and it reads the endpoint's limits every time it
+looks, so a concurrency raised or an endpoint paused mid-run changes what the next line does; a save
+wakes it, and it looks again every second while a pause holds work. **A paused endpoint holds its
+lines** — they stay `queued`, and the job says once that it is waiting and why — rather than failing
+them, which is what separates Pause from Cancel; since the runner runs one job at a time, a pause
+holds the queue behind it too, until the endpoint is resumed or the job cancelled. **A rate limit is
+the endpoint's**: the request that met it waits its `Retry-After` (or `cooldownSec`) and tries again
+as it always has, and `call` tells the gate, which holds every other line for that endpoint until the
+same moment, so the lines behind it do not walk into the same refusal one by one. Lines land in the
+order they are answered, each written by its own id. A budget that stops covering the next line
+stops anything more going out and lets the lines already out land and be paid for; to keep that
+honest, each request's charge is given back from what its line holds as it is written to the ledger,
+so a line in flight is never counted as spent and held at once while another line asks the budget.
+What the gate has seen — lines out and waiting, rate limits, the cooldown's end — is the process's
+own, never stored, and `GET /api/endpoints/live` answers it for the Endpoints and Queue pages. A
+line's parts still go out one after another, holding the line's one slot. The presets set each
+provider's `concurrency` from its own documentation for its entry plan, the page named beside it
+([src/lib/presets/speech.ts](../src/lib/presets/speech.ts)); a bigger plan can raise it.
+
 **The endpoints are saved whole.** `PUT /api/endpoints` takes what the Endpoints page holds — speech
 endpoints, scripting profiles and the credential registry, with each endpoint's voices, rate
 schedule, promotions and expression tags — and keeps exactly that in place of what was stored, in
@@ -1538,34 +1563,36 @@ What it can vary is what real EPUBs vary: where the navigation document sits rel
 chapters, whether it calls a chapter something other than the heading inside it, whether one file
 holds several chapters, and whether a file the package promises is in the archive at all.
 
-| File                                                               | Covers                                                                                                      |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| [epubImport.test.ts](../tests/server/epubImport.test.ts)           | Reading a file: metadata, titles, text, refusals                                                            |
-| [notices.test.ts](../tests/server/notices.test.ts)                 | Which chapters are not story                                                                                |
-| [contentsReview.test.ts](../tests/server/contentsReview.test.ts)   | Import → review → add, volumes, removal, renumbering                                                        |
-| [volumes.test.ts](../tests/server/volumes.test.ts)                 | Removing a volume: rekeyed jobs, cancelled work, files, refusals mid-build                                  |
-| [bookSettings.test.ts](../tests/server/bookSettings.test.ts)       | Budget, pacing and re-timing, a volume's name, and a reorder and its refusals                               |
-| [endpoints.test.ts](../tests/server/endpoints.test.ts)             | Saved and refused whole; tags and sample rate on a line; one rate a file; a long line sent in parts         |
-| [covers.test.ts](../tests/server/covers.test.ts)                   | The EPUB's cover kept, an upload and its refusals, a cover in an M4B and an MP3, the book's details as tags |
-| [markdown.test.ts](../tests/server/markdown.test.ts)               | The converter's DOM bracket, and reading Markdown back                                                      |
-| [jobs.test.ts](../tests/server/jobs.test.ts)                       | The queue: dedupe, cancel, restart, revision conflicts, HTTP; a chapter in a profile's chunks; its spending |
-| [usage.test.ts](../tests/server/usage.test.ts)                     | Pricing a request into the ledger, a book's spending, the budget gate, the two ledger routes                |
-| [narrationBudget.test.ts](../tests/server/narrationBudget.test.ts) | A row per part, a refused part not charged, runs and retakes refused, a cap lowered mid-run                 |
-| [narration.test.ts](../tests/server/narration.test.ts)             | Narration: scopes, replacement, failure, cancel, restart, dictionary, files                                 |
-| [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)           | Editing against a revision, the history rule, what a run writes                                             |
-| [cast.test.ts](../tests/server/cast.test.ts)                       | The cast a run leaves, rename, merge, removal, exact undo                                                   |
-| [exports.test.ts](../tests/server/exports.test.ts)                 | Building one: the file, the spans, refusals, cancel, failure, download                                      |
-| [endpointKeys.test.ts](../tests/server/endpointKeys.test.ts)       | A key kept, never sent back or logged, kept by a save that omits it; the Test route                         |
-| [encodedClips.test.ts](../tests/server/encodedClips.test.ts)       | MP3 and Opus asked for, kept, read, joined, served; the stitcher's refusal; an ffmpeg build from them       |
-| [voices.test.ts](../tests/server/voices.test.ts)                   | A library read to its end, a public search, OpenAI's list, refusals                                         |
-| [chatScripting.test.ts](../tests/server/chatScripting.test.ts)     | The chat request, a fenced answer, fidelity, a cut-off, retries, cancel, probe                              |
-| [endpointSpeech.test.ts](../tests/server/endpointSpeech.test.ts)   | Fish and OpenAI-shaped requests, a streamed header made plain, refusals, billed or not, probe               |
-| [speechProviders.test.ts](../tests/server/speechProviders.test.ts) | Every other provider's request and answer from its docs; what each reports billed, and the usage kept       |
-| [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)       | What the fake models produce — attributions, a valid WAV — and that they abort                              |
-| [libraryClient.test.ts](../tests/server/libraryClient.test.ts)     | The client and the API against each other                                                                   |
-| [schema.test.ts](../tests/server/schema.test.ts)                   | The seeded world through the schema and back                                                                |
-| [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)       | The library store, with a server answering                                                                  |
-| [../jobsBackend.test.ts](../tests/jobsBackend.test.ts)             | The jobs, scripting, narration, scripts, cast and history stores, with a server                             |
+| File                                                                         | Covers                                                                                                       |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| [epubImport.test.ts](../tests/server/epubImport.test.ts)                     | Reading a file: metadata, titles, text, refusals                                                             |
+| [notices.test.ts](../tests/server/notices.test.ts)                           | Which chapters are not story                                                                                 |
+| [contentsReview.test.ts](../tests/server/contentsReview.test.ts)             | Import → review → add, volumes, removal, renumbering                                                         |
+| [volumes.test.ts](../tests/server/volumes.test.ts)                           | Removing a volume: rekeyed jobs, cancelled work, files, refusals mid-build                                   |
+| [bookSettings.test.ts](../tests/server/bookSettings.test.ts)                 | Budget, pacing and re-timing, a volume's name, and a reorder and its refusals                                |
+| [endpoints.test.ts](../tests/server/endpoints.test.ts)                       | Saved and refused whole; tags and sample rate on a line; one rate a file; a long line sent in parts          |
+| [covers.test.ts](../tests/server/covers.test.ts)                             | The EPUB's cover kept, an upload and its refusals, a cover in an M4B and an MP3, the book's details as tags  |
+| [markdown.test.ts](../tests/server/markdown.test.ts)                         | The converter's DOM bracket, and reading Markdown back                                                       |
+| [jobs.test.ts](../tests/server/jobs.test.ts)                                 | The queue: dedupe, cancel, restart, revision conflicts, HTTP; a chapter in a profile's chunks; its spending  |
+| [usage.test.ts](../tests/server/usage.test.ts)                               | Pricing a request into the ledger, a book's spending, the budget gate, the two ledger routes                 |
+| [narrationBudget.test.ts](../tests/server/narrationBudget.test.ts)           | A row per part, a refused part not charged, runs and retakes refused, a cap lowered mid-run                  |
+| [narration.test.ts](../tests/server/narration.test.ts)                       | Narration: scopes, replacement, failure, cancel, restart, dictionary, files                                  |
+| [narrationConcurrency.test.ts](../tests/server/narrationConcurrency.test.ts) | Lines at an endpoint's concurrency, two endpoints alongside, a pause held, a rate limit's cooldown, a cancel |
+| [speechGate.test.ts](../tests/server/speechGate.test.ts)                     | The gate alone: its limit, order, pause and poll, cooldown and timer, what it tells a waiting line, cancels  |
+| [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)                     | Editing against a revision, the history rule, what a run writes                                              |
+| [cast.test.ts](../tests/server/cast.test.ts)                                 | The cast a run leaves, rename, merge, removal, exact undo                                                    |
+| [exports.test.ts](../tests/server/exports.test.ts)                           | Building one: the file, the spans, refusals, cancel, failure, download                                       |
+| [endpointKeys.test.ts](../tests/server/endpointKeys.test.ts)                 | A key kept, never sent back or logged, kept by a save that omits it; the Test route                          |
+| [encodedClips.test.ts](../tests/server/encodedClips.test.ts)                 | MP3 and Opus asked for, kept, read, joined, served; the stitcher's refusal; an ffmpeg build from them        |
+| [voices.test.ts](../tests/server/voices.test.ts)                             | A library read to its end, a public search, OpenAI's list, refusals                                          |
+| [chatScripting.test.ts](../tests/server/chatScripting.test.ts)               | The chat request, a fenced answer, fidelity, a cut-off, retries, cancel, probe                               |
+| [endpointSpeech.test.ts](../tests/server/endpointSpeech.test.ts)             | Fish and OpenAI-shaped requests, a streamed header made plain, refusals, billed or not, probe                |
+| [speechProviders.test.ts](../tests/server/speechProviders.test.ts)           | Every other provider's request and answer from its docs; what each reports billed, and the usage kept        |
+| [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)                 | What the fake models produce — attributions, a valid WAV — and that they abort                               |
+| [libraryClient.test.ts](../tests/server/libraryClient.test.ts)               | The client and the API against each other                                                                    |
+| [schema.test.ts](../tests/server/schema.test.ts)                             | The seeded world through the schema and back                                                                 |
+| [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)                 | The library store, with a server answering                                                                   |
+| [../jobsBackend.test.ts](../tests/jobsBackend.test.ts)                       | The jobs, scripting, narration, scripts, cast and history stores, with a server                              |
 
 The client tests matter more than they look. Both sides of the seam are in this repository, so "the
 API returns what the client reads" is something the suite can check rather than a comment two files

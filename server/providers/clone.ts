@@ -1,35 +1,37 @@
-// A voice made from someone's recordings, kept by the provider as one more voice on the account.
+// A voice made from someone's samples, kept by the provider as one more voice on the account.
 //
 // Only providers that keep a cloned voice and answer with an id for it are cloned through here — a
 // voice made this way is then an ordinary voice: listed by "Fetch", cast like any other, and sent
-// by id with every line, so the recordings go out once rather than with every request.
+// by id with every line, so the samples go out once rather than with every request. Which providers
+// can is their description's `cloning` (`lib/providers/`); how the request goes is their wire
+// module's `clone` (`speech/<provider>.ts`). This file is what they share: the port the route
+// clones through, what a sample is, and the rule that a clone is sent once.
 //
-// Fish Audio is the one so far (https://docs.fish.audio/api-reference/endpoint/model/create-model):
-// `POST /model` on the API's host, as multipart, with `type=tts`, a title, `train_mode=fast` — the
-// model is usable at once — and 1 to 20 recordings under `voices`. With no `texts` Fish transcribes
-// the recordings itself. The voice is made private: only the account that made it can use it. The
-// answer is the new model, whose `_id` is the `reference_id` a line is spoken with.
+// **Sent once.** Unlike a line of speech, making a voice is not idempotent: an upload that timed
+// out or met a 5xx may still have made the voice on the provider's side, and a second attempt would
+// make a second one — a duplicate private voice on the account, and the upload paid for twice in
+// time. So every request of a clone goes out with no retries, whatever the endpoint's own
+// `maxRetries`, and a failure is said at once; the person can look at their voices on the provider
+// and try again knowingly.
 //
-// **Sent once.** Unlike a line of speech, making a model is not idempotent: an upload that timed
-// out or met a 5xx may still have made the voice on Fish's side, and a second attempt would make a
-// second one — a duplicate private voice on the account, and the upload paid for twice in time. So
-// the one request goes out with no retries, whatever the endpoint's own `maxRetries`, and a failure
-// is said at once; the person can look at their Fish voices and try again knowingly.
-//
-// **What counts as a recording** is read from the file's first bytes, the way a cover's type is
-// (`covers/files.ts`), rather than from its name or the type the browser guessed. Only the formats
-// Fish documents for a voice sample are sent: WAV, MP3, M4A and Opus for a model
-// (https://docs.fish.audio/features/voice-cloning), and FLAC besides for a reference in a speech
-// request (https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech) — anything
-// else would be an upload Fish may refuse after the wait.
+// **What counts as a sample** is read from the file's first bytes, the way a cover's type is
+// (`covers/files.ts`), rather than from its name or the type the browser guessed: a clip
+// downloaded from the web is as good as one recorded, whatever it was saved as. The sniffer knows
+// WAV, MP3, M4A, Opus and FLAC; each provider's `cloning.formats` says which of those it takes.
 import type { Voice } from "@/types";
-import { canCloneVoices, fishApiRoot } from "@/lib/endpointShapes";
-import { authHeaders, call, ProviderError, requireKey, type CallOptions } from "~/providers/http";
+import { speechProviderOf, type RecordingFormat } from "@/lib/providers";
+import { ProviderError, requireKey, type CallOptions } from "~/providers/http";
+import { SPEECH_WIRES } from "~/providers/speech/registry";
 import type { ProviderTarget } from "~/providers/target";
 
-/** One recording to make the voice from. */
+export type { RecordingFormat } from "@/lib/providers";
+
+/** One sample to make the voice from. */
 export interface CloneClip {
+  /** the file's name as the person picked it, for display and for a provider that wants one */
   name: string;
+  /** what its first bytes say it is — one of the provider's `cloning.formats` */
+  format: RecordingFormat;
   /**
    * The recording as the form parser holds it, typed by what its bytes say it is — handed to the
    * provider's form as it stands, so the upload is kept in memory once rather than copied again.
@@ -48,9 +50,7 @@ export interface VoiceCloner {
   clone(target: ProviderTarget, request: CloneRequest, signal: AbortSignal): Promise<Voice>;
 }
 
-// ---------- what a recording is ----------
-
-export type RecordingFormat = "wav" | "mp3" | "m4a" | "opus" | "flac";
+// ---------- what a sample is ----------
 
 /** The media type each format is sent to the provider as, whatever the browser called it. */
 export const RECORDING_MIME: Record<RecordingFormat, string> = {
@@ -77,7 +77,7 @@ const M4A_BRANDS = /^(M4A |M4B |mp4[12]|iso[m2-6]|dash|3gp[4-6]|3g2a)$/;
 const says = (b: Uint8Array, at: number, text: string): boolean =>
   b.length >= at + text.length && [...text].every((ch, i) => b[at + i] === ch.charCodeAt(0));
 
-/** What a file's first bytes say it is, or null when they say none of the formats Fish takes. */
+/** What a file's first bytes say it is, or null when they say none of the formats the sniffer knows. */
 export function sniffRecording(b: Uint8Array): RecordingFormat | null {
   if (says(b, 0, "RIFF") && says(b, 8, "WAVE")) return "wav";
   if (says(b, 0, "fLaC")) return "flac";
@@ -102,8 +102,8 @@ export function sniffRecording(b: Uint8Array): RecordingFormat | null {
 
 /**
  * The one attempt's wall clock, in seconds. The endpoint's own timeout is sized for a line of
- * speech; this request carries up to 100 MB of recordings and then waits while Fish transcribes
- * them. Ten minutes is the whole 100 MB at about 1.5 Mbit/s — a slow home uplink — with time left
+ * speech; a clone carries up to 100 MB of samples and then waits while the provider works on
+ * them (Fish transcribes them). Ten minutes is the whole 100 MB at about 1.5 Mbit/s — a slow home uplink — with time left
  * for the transcription, and since there is no second attempt, one that gives up too early is a
  * failure the person has to start again by hand.
  */
@@ -118,40 +118,17 @@ export function endpointVoiceCloner(options: VoiceClonerOptions = {}): VoiceClon
   const { timeoutSec = CLONE_TIMEOUT_SEC, ...callOptions } = options;
   return {
     async clone(target, request, signal) {
-      if (!canCloneVoices(target))
+      const shape = speechProviderOf(target);
+      const clone = SPEECH_WIRES[shape.id].clone;
+      if (!shape.cloning || !clone)
         throw new ProviderError(
-          `${target.name} cannot make a voice from recordings; only Fish Audio can, so far`,
+          `${target.name} cannot make a voice from samples: ${shape.label} has no cloning this app speaks to`,
           0,
           false,
         );
       requireKey(target);
-      const form = new FormData();
-      form.set("type", "tts");
-      form.set("title", request.title);
-      form.set("train_mode", "fast");
-      form.set("visibility", "private");
-      for (const clip of request.clips) form.append("voices", clip.blob, clip.name);
-      const res = await call(
-        // once, and with a clock sized for the upload: see the top of this file
-        { ...target, maxRetries: 0, timeoutSec },
-        `${fishApiRoot(target.baseUrl)}/model`,
-        // no content-type: the multipart boundary is the form's to write
-        { method: "POST", headers: authHeaders(target), body: form },
-        { signal, ...callOptions },
-      );
-      const body = (await res.json().catch(() => null)) as {
-        _id?: unknown;
-        title?: unknown;
-      } | null;
-      if (typeof body?._id !== "string" || !body._id)
-        throw new ProviderError(
-          `${target.name} answered ${res.status} without the new voice's id`,
-          res.status,
-          false,
-        );
-      const title =
-        typeof body.title === "string" && body.title.trim() ? body.title.trim() : request.title;
-      return { id: body._id, label: title, gender: "?" };
+      // once, and with a clock sized for the upload: see the top of this file
+      return clone({ ...target, maxRetries: 0, timeoutSec }, request, signal, callOptions);
     },
   };
 }

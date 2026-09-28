@@ -30,6 +30,13 @@
 // as another cue would put words into the text the person never configured — and read them aloud on
 // a model that spells cues differently.
 //
+// A voice is cloned with `POST /model` on the API's host
+// (https://docs.fish.audio/api-reference/endpoint/model/create-model), as multipart, with
+// `type=tts`, a title, `train_mode=fast` — the model is usable at once — and 1 to 20 samples under
+// `voices`. With no `texts` Fish transcribes the samples itself. The voice is made private: only the
+// account that made it can use it. The answer is the new model, whose `_id` is the `reference_id` a
+// line is spoken with.
+//
 // Voices come from two catalogues, because Fish has two: the account's own library (`self=true`),
 // which is what "Fetch from server" merges in, and the public catalogue anyone's voice can be
 // picked from, which the Voices tab searches a page at a time. A Fish voice's id is the model's
@@ -44,7 +51,7 @@ import {
   type FishModel,
 } from "@/lib/endpointShapes";
 import { FISH_MODELS } from "@/lib/providers/fish";
-import { call, jsonHeaders, ProviderError } from "~/providers/http";
+import { authHeaders, call, jsonHeaders, ProviderError } from "~/providers/http";
 import type { ProviderTarget } from "~/providers/target";
 import { getJson, type SpeechWire } from "~/providers/speech/wire";
 
@@ -88,6 +95,35 @@ const publicVoices = (models: FishModel[]): FoundVoice[] => {
 };
 
 export const fishWire: SpeechWire = {
+  async clone(target, request, signal, options) {
+    const form = new FormData();
+    form.set("type", "tts");
+    form.set("title", request.title);
+    form.set("train_mode", "fast");
+    form.set("visibility", "private");
+    for (const clip of request.clips) form.append("voices", clip.blob, clip.name);
+    const res = await call(
+      target,
+      `${fishApiRoot(target.baseUrl)}/model`,
+      // no content-type: the multipart boundary is the form's to write
+      { method: "POST", headers: authHeaders(target), body: form },
+      { signal, ...options },
+    );
+    const body = (await res.json().catch(() => null)) as {
+      _id?: unknown;
+      title?: unknown;
+    } | null;
+    if (typeof body?._id !== "string" || !body._id)
+      throw new ProviderError(
+        `${target.name} answered ${res.status} without the new voice's id`,
+        res.status,
+        false,
+      );
+    const title =
+      typeof body.title === "string" && body.title.trim() ? body.title.trim() : request.title;
+    return { id: body._id, label: title, gender: "?" };
+  },
+
   request(input, target, voice) {
     const problem = unknownModel(target);
     if (problem) throw new ProviderError(`${target.name}: ${problem}`, 0, false);

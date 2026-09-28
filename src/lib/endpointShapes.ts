@@ -15,7 +15,12 @@ import type {
   Gender,
   Voice,
 } from "@/types";
-import { speechProviderOf, type FormatSupport, type SpeechProviderId } from "@/lib/providers";
+import {
+  cloningOf,
+  speechProviderOf,
+  type FormatSupport,
+  type SpeechProviderId,
+} from "@/lib/providers";
 
 export type { FormatSupport } from "@/lib/providers";
 
@@ -238,14 +243,16 @@ export const fishApiRoot = (baseUrl: string): string =>
 // ---------- voice cloning ----------
 
 /**
- * Whether this endpoint's provider can make a voice from someone's recordings and keep it as one
- * more voice on the account. Only Fish Audio, so far; the Voices tab offers cloning only here.
+ * Whether this endpoint's provider can make a voice from someone's samples and keep it as one more
+ * voice on the account — whether its description has `cloning`. The Voices tab offers cloning only
+ * where it does.
  */
-export const canCloneVoices = (e: Pick<Endpoint, "baseUrl">): boolean => isFishAudio(e);
+export const canCloneVoices = (e: Pick<Endpoint, "baseUrl">): boolean => !!cloningOf(e);
 
 /**
- * The most recordings one voice is made from. Fish takes up to twenty; the server refuses more, and
- * the Voices tab keeps the first twenty picked and says so.
+ * The most samples one voice is kept with, whatever its provider: Fish takes up to twenty, the
+ * most of any. A provider that takes fewer says so in its `cloning.maxClips`, which the clone route
+ * holds to; the kept samples of a voice are held to this.
  */
 export const MAX_CLONE_CLIPS = 20;
 

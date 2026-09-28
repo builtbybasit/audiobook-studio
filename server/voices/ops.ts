@@ -4,7 +4,7 @@
 // files a change leaves unnamed are removed after the commit, in the background, the way a removed
 // book's clips are. A leftover file is a warning in the log, never a failed request.
 import type { KeptSample, KeptVoiceSamples } from "@/types";
-import { canCloneVoices } from "@/lib/endpointShapes";
+import { cloningOf, type CloneSupport } from "@/lib/providers";
 import type { Db } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
 import {
@@ -88,10 +88,17 @@ export async function keepClips(db: Db, files: VoiceFiles, keep: KeepRequest): P
 function clonableEndpoint(db: Db, id: string) {
   const ep = readEndpoint(db, id);
   if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
-  if (!canCloneVoices(ep))
-    throw badRequest(`${ep.name} cannot make a voice from recordings, so it keeps none`);
-  return ep;
+  const cloning = cloningOf(ep);
+  if (!cloning) throw badRequest(`${ep.name} cannot make a voice from samples`);
+  return { ...ep, cloning };
 }
+
+/**
+ * What a saved endpoint's provider makes a voice from — the limits a clone's samples, and the
+ * samples kept for one of its voices, are held to before anything is read whole — or the refusal
+ * that says it makes none.
+ */
+export const cloningFor = (db: Db, id: string): CloneSupport => clonableEndpoint(db, id).cloning;
 
 /** Every voice of one saved endpoint that has recordings kept. */
 export function keptFor(db: Db, id: string): KeptVoiceSamples[] {

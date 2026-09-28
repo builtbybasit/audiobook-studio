@@ -5,6 +5,8 @@
 // choice of provider the registry's (`registry.ts`). What the page also needs to know about a
 // provider without a request is its description in `lib/providers/`.
 import { call, ProviderError } from "~/providers/http";
+import type { Voice } from "@/types";
+import type { CloneRequest } from "~/providers/clone";
 import type { SpeechCallOptions, SpeechRequest } from "~/providers/send";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
@@ -29,6 +31,22 @@ export interface SpeechWire {
     signal: AbortSignal,
     options: SpeechCallOptions,
   ): Promise<VoicePage>;
+  /**
+   * A voice made from someone's samples and kept on the account, answered as a voice a line can
+   * then be spoken with by id — for a provider whose description has `cloning`, and only those.
+   *
+   * The target comes with `maxRetries: 0` and the clone's own clock (`clone.ts`): making a voice is
+   * not idempotent, so every request here goes out once, whatever the endpoint's retries. A clone
+   * that takes several requests (an upload, then the clone) makes each once, and a failure part way
+   * says which step failed. The samples arrive already held to the provider's `cloning` limits and
+   * typed by their bytes (`clip.format`, and the blob's type is that format's media type).
+   */
+  clone?(
+    target: ProviderTarget,
+    request: CloneRequest,
+    signal: AbortSignal,
+    options: SpeechCallOptions,
+  ): Promise<Voice>;
   /** One page of the provider's public catalogue, for the one provider that has one (Fish). */
   search?(
     target: ProviderTarget,

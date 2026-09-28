@@ -155,7 +155,7 @@ function discard() {
 const presets = computed(() => presetsOf(props.u.kind));
 const PRESET_OPTIONS = computed(() => [
   { value: "", label: "Start from a preset…", hint: "leaves every field as it is" },
-  ...presets.value.map((p) => ({ value: p.id, label: p.label, hint: p.hint })),
+  ...presets.value.map((p) => ({ value: p.id, label: p.label, hint: p.hint, group: p.group })),
 ]);
 const presetId = ref("");
 const presetById = (id: string) => presets.value.find((p) => p.id === id);

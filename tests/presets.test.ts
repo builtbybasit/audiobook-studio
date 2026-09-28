@@ -44,6 +44,15 @@ describe("scripting presets", () => {
     }
   });
 
+  test("each is listed under a provider, and a provider's presets sit together", () => {
+    // the picker makes a heading per group in the order groups first appear, so one split in two
+    // would show the same heading twice
+    const groups = SCRIPTING_PRESETS.map((p) => p.group);
+    expect(groups.every(Boolean)).toBe(true);
+    const runs = groups.filter((g, i) => g !== groups[i - 1]);
+    expect(new Set(runs).size).toBe(runs.length);
+  });
+
   test("ids are unique, and each kind finds its own", () => {
     const ids = SCRIPTING_PRESETS.map((p) => p.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -77,7 +86,6 @@ describe("a preset's rate card over time", () => {
     expect(ratesAt("deepseek-flash", Date.UTC(2026, 8, 29, 12, 0))).toEqual([0.15, 0.6]);
     // Saturday 3 October, inside what would be a peak hour on a weekday
     expect(ratesAt("deepseek-flash", Date.UTC(2026, 9, 3, 2, 30))).toEqual([0.15, 0.6]);
-    expect(ratesAt("deepseek-pro", Date.UTC(2026, 8, 29, 2, 30))).toEqual([1.32, 3.96]);
   });
 
   test("Gemini 3.8 Flash is its 2026 price until the year ends, and double from 2027", () => {

@@ -18,6 +18,10 @@ export const router = createRouter({
     { path: "/book/:bookId/contents", component: () => import("@/views/ContentsView.vue") },
     { path: "/book/:bookId/search", component: () => import("@/views/SearchView.vue") },
     { path: "/book/:bookId/scripting", component: () => import("@/views/ScriptingView.vue") },
+    {
+      path: "/book/:bookId/script-import",
+      component: () => import("@/views/ScriptImportView.vue"),
+    },
     { path: "/book/:bookId/narration", component: () => import("@/views/NarrationView.vue") },
     { path: "/book/:bookId/export", component: () => import("@/views/ExportView.vue") },
   ],

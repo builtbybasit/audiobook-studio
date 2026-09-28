@@ -151,6 +151,8 @@ export function originLabel(origin: VersionOrigin): string {
       return origin.label;
     case "restored":
       return `Restored from v${origin.from}`;
+    case "imported":
+      return origin.file ? `Imported from ${origin.file}` : "Imported";
     case "checkpoint":
       return `“${origin.name}”`;
   }
@@ -167,6 +169,8 @@ export function originKindLabel(origin: VersionOrigin): string {
       return "bulk correction";
     case "restored":
       return "restored";
+    case "imported":
+      return "imported";
     case "checkpoint":
       return "checkpoint";
   }
@@ -183,6 +187,10 @@ export function originNote(origin: VersionOrigin): string {
       return `${origin.lines} line${origin.lines === 1 ? "" : "s"} in one batch`;
     case "restored":
       return "the script as that version left it";
+    case "imported":
+      return origin.chapters
+        ? `${origin.chapters} chapter${origin.chapters === 1 ? "" : "s"} in one import`
+        : "read in from a script file";
     case "checkpoint":
       return origin.was ? `saved by hand · ${originLabel(origin.was)}` : "saved by hand";
   }

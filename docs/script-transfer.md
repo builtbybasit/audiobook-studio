@@ -102,6 +102,13 @@ rendered it. An omitted tag is `{sigh!}` and one awaiting review is `{sigh?}`, t
 needs no escape, because only `{` opens a marker. `annotationId`, `label`, `token` and `kind` are not
 written: the id is local and the rest belong to the endpoint that will speak the line.
 
+**A marker reads the way a person types it.** A marker that starts a word — at the start of the
+line or after whitespace — is written with one space after it, and reading takes that space back:
+`{sigh} Don't move.` is the line `Don't move.` with the tag before its first word, and `{sigh}Don't
+move.` reads the same. Glued to a word, `move{sigh}.`, a marker takes no space. A tag id is whatever
+was typed when the tag was configured, so inside a marker a backslash escapes `{ } ! ? \`:
+`{huh\?}` is the tag `huh?`, where `{huh?}` is the tag `huh` awaiting review.
+
 **The marker functions live in `src/lib`.** `writeMarkers(segment)` and `readMarkers(text)` are
 pure, in `src/lib/scriptFile.ts` beside the schemas' types, because the server writes the export and
 the browser will want to read a single chapter file to preview it before sending it. The server

@@ -2,6 +2,9 @@
 // The per-book menu, the same on a cover and on a table row: where to go in the book, one more
 // volume, and Remove from library.
 //
+// The script travels as a file from here too: **Export script** downloads it, **Import script…**
+// opens the page that reads one in. Both are the server's, so the demo says so on the item.
+//
 // Removing acts at once and offers the usual Undo toast — the app's one rule for danger, see
 // `src/stores/README.md`. It used to ask first as well, which said nothing Undo did not already
 // cover; what that step explained now hangs off the item itself, where it can be read before the
@@ -15,8 +18,15 @@ import { useRouter } from "vue-router";
 import { plural } from "@/views/library/shared";
 import type { Book } from "@/types";
 import { pickedFrom, type PickedFile } from "@/components/addEpub";
+import { scriptExportUrl } from "@/services/library";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
-import { Ellipsis as MenuIcon, Plus as AddIcon, Trash2 as RemoveIcon } from "@lucide/vue";
+import {
+  Download as ExportIcon,
+  Ellipsis as MenuIcon,
+  FileUp as ImportIcon,
+  Plus as AddIcon,
+  Trash2 as RemoveIcon,
+} from "@lucide/vue";
 
 const props = defineProps<{ book: Book; triggerClass?: string; align?: "start" | "end" }>();
 const emit = defineEmits<{ addVolume: [picked: PickedFile] }>();
@@ -27,6 +37,9 @@ const contents = computed(() => libraryStore.contentsOf(props.book.id));
 const menu = ref(false);
 /** Backend mode: a removal cannot be undone, so the item asks with a second click. */
 const asksFirst = computed(() => !!libraryStore._service());
+/** The script file is written and read by the server; the demo has none to ask. */
+const NEEDS_SERVER = "Needs the server — start the app with pnpm dev";
+const scriptFiles = computed(() => !!libraryStore._service());
 const confirming = ref(false);
 /** What the item is about to take, in the menu's own words. */
 const removeWarning = computed(
@@ -92,6 +105,27 @@ async function remove() {
           <AddIcon class="mr-1 icon-sm" /> Add a volume…
           <input type="file" accept=".epub" class="hidden" @change="addVolume" />
         </label>
+        <a
+          v-if="scriptFiles"
+          class="ui-item w-full hover:bg-violet-50 dark:hover:bg-violet-500/15"
+          :href="scriptExportUrl(book.id)"
+          download
+          title="The whole book's script, cast and dictionary as a .script.zip"
+          @click="menu = false"
+        >
+          <ExportIcon class="mr-1 icon-sm" /> Export script
+        </a>
+        <button v-else class="ui-item w-full opacity-50" disabled :title="NEEDS_SERVER">
+          <ExportIcon class="mr-1 icon-sm" /> Export script
+        </button>
+        <button
+          class="ui-item w-full hover:bg-violet-50 disabled:opacity-50 dark:hover:bg-violet-500/15"
+          :disabled="!scriptFiles"
+          :title="scriptFiles ? 'Read a script file into this book' : NEEDS_SERVER"
+          @click="go('script-import')"
+        >
+          <ImportIcon class="mr-1 icon-sm" /> Import script…
+        </button>
         <div class="my-1 border-t border-zinc-100 dark:border-zinc-800"></div>
         <button
           class="ui-item w-full items-start text-red-600 hover:bg-red-500/10 dark:text-red-400"

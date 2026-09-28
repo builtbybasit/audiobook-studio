@@ -16,6 +16,7 @@ import type {
   ExportItem,
   LexEntry,
   Pacing,
+  ScriptImportPlan,
   ScriptVersion,
   Segment,
   VersionOrigin,
@@ -213,6 +214,14 @@ export interface LibraryService {
   uploadCover(bookId: string, file: File): Promise<{ cover: string }>;
   exports(bookId: string): Promise<ExportItem[]>;
   removeExport(bookId: string, exportId: number): Promise<void>;
+
+  // ---------- the script as a file ----------
+  /**
+   * What importing a script file into this book would do: the chapters it matches, the ones it
+   * refuses, and how its cast, dictionary and voices differ from the book's. Nothing is written —
+   * applying the plan is the store's, through the same edits a restore makes.
+   */
+  planScriptImport(bookId: string, file: File): Promise<ScriptImportPlan>;
 }
 
 export class HttpLibraryService implements LibraryService {
@@ -408,6 +417,18 @@ export class HttpLibraryService implements LibraryService {
   async removeExport(bookId: string, exportId: number): Promise<void> {
     await this.http.delete(`/books/${seg(bookId)}/exports/${exportId}`);
   }
+
+  planScriptImport(bookId: string, file: File): Promise<ScriptImportPlan> {
+    return this.http.postForm<ScriptImportPlan>(`/books/${seg(bookId)}/script-import`, file, {});
+  }
+}
+
+/**
+ * Where a book's script is downloaded from, as `<book>.script.zip`. A URL rather than a request:
+ * the browser follows it and saves what comes back, the way a built audiobook is downloaded.
+ */
+export function scriptExportUrl(bookId: string): string {
+  return `/api/books/${seg(bookId)}/script-export`;
 }
 
 let service: LibraryService | null = null;

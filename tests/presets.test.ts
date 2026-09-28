@@ -9,9 +9,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { baseRates, effectiveRates, pricingProblems, speechRates } from "@/lib/pricing";
 import { presetsOf, SCRIPTING_PRESETS, scriptingPresetById, TTS_PRESETS } from "@/lib/endpoints";
+import { expressionSupport } from "@/lib/expressions";
 import { newProfile, profileErrors } from "@/lib/scripting";
 import { clone } from "@/lib/utils";
 import { useEndpointsStore } from "@/stores/endpoints";
+import type { Endpoint } from "@/types";
 import { testPinia, type TestPinia } from "./support/pinia";
 
 const LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/)/;
@@ -122,6 +124,67 @@ describe("speech presets", () => {
     for (const { id, apply } of TTS_PRESETS)
       if (apply.pricing)
         expect({ id, problems: pricingProblems(apply.pricing) }).toEqual({ id, problems: [] });
+  });
+});
+
+describe("what a preset says and sets", () => {
+  const ALL = [...TTS_PRESETS, ...SCRIPTING_PRESETS];
+  const tts = (id: string) => TTS_PRESETS.find((p) => p.id === id)!;
+
+  test("each rate card is read in UTC, whatever the timezone of the machine that loads it", () => {
+    for (const { id, apply } of ALL)
+      if (apply.pricing)
+        expect({ id, timezone: apply.pricing.timezone }).toEqual({ id, timezone: "UTC" });
+  });
+
+  test("every priced hosted preset says which day its rates were read", () => {
+    for (const { id, note, apply } of ALL) {
+      if (LOCAL.test(apply.baseUrl ?? "")) continue;
+      expect({ id, dated: note?.includes("as published on 28 September 2026") }).toEqual({
+        id,
+        dated: true,
+      });
+    }
+  });
+
+  test("Gemini 3.8's speech presets start with Google's vocal tags, for their own model", () => {
+    for (const id of ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"]) {
+      const endpoint = clone(tts(id).apply) as Endpoint;
+      expect(expressionSupport(endpoint)).toBe("supported");
+      const tokens = endpoint.expressions!.tags.map((t) => t.token);
+      expect(tokens).toEqual(expect.arrayContaining(["<laugh>", "<sigh>", "<short pause>"]));
+      expect(tokens.every((t) => /^<[a-z -]+>$/.test(t))).toBe(true);
+      expect(endpoint.expressions!.tags.every((t) => t.kind === "sound")).toBe(true);
+    }
+    // the legacy preview takes no style, and says so
+    expect(tts("gemini-tts").note).toContain("neither is sent");
+  });
+
+  test("BreezeBlue bills the text alone, not the instructions sent beside it", () => {
+    for (const id of ["breeze-tts-2", "breeze-tts-2-multilingual"])
+      expect(tts(id).apply.billing!.billsInstructions).toBe(false);
+  });
+
+  test("a request stays inside what the model reads and what its answer can carry", () => {
+    // gpt-4o-mini-tts reads at most 2,000 input tokens, instructions included
+    expect(tts("openai").apply.maxChars).toBeLessThanOrEqual(2000);
+    // MiniMax recommends streaming above 3,000 characters, and answers in hex
+    for (const id of ["minimax-speech-2.8-hd", "minimax-speech-2.8-turbo"])
+      expect(tts(id).apply.maxChars).toBe(3000);
+  });
+
+  test("a price is written as money, and Qwen's shared host is said to be going", () => {
+    const qwen = tts("qwen-audio-3.0-tts-plus").note!;
+    expect(qwen).toContain("$0.20 per 10,000 characters");
+    expect(qwen).toContain("maintenance mode on 30 September 2026");
+  });
+
+  test("OpenRouter's presets do not claim its prices are the provider's", () => {
+    for (const { id, note, group } of SCRIPTING_PRESETS)
+      if (group === "OpenRouter") {
+        expect({ id, note }).not.toMatchObject({ note: expect.stringContaining("passes") });
+        expect({ id, note }).not.toMatchObject({ note: expect.stringContaining("most-used") });
+      }
   });
 });
 

@@ -150,6 +150,18 @@ describe("a request", () => {
     expect(sent[0].error).toBeUndefined();
   });
 
+  test("carries the cost a gateway reports beside the tokens, as OpenRouter does", async () => {
+    const { provider } = gateway(() =>
+      Response.json({
+        choices: [{ message: { content: fenced(LINES) }, finish_reason: "stop" }],
+        usage: { ...USAGE, cost: 0.00123, cost_details: { upstream_inference_cost: null } },
+      }),
+    );
+    const { sent, input } = reported();
+    await provider.script(input);
+    expect(sent[0].usage).toMatchObject({ inputTokens: 1200, reportedCost: 0.00123 });
+  });
+
   test("carries no key when none is needed, and no cap when the profile sets none", async () => {
     const { sent, provider } = gateway(() => completion(JSON.stringify({ lines: LINES })));
     await provider.script(

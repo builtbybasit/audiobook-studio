@@ -442,8 +442,9 @@ export interface RateEstimate {
   /** the same work if cached input ran at a recently observed hit rate; null when neither applies */
   withObservedCache: { hitRate: number; cost: number; samples: number } | null;
   /**
-   * The ceiling: every promotion expired, every schedule window gone, and every input token at the
-   * dearest rate any input token can be charged at on this card — cached and cache-write tokens are
+   * The ceiling: every promotion expired, the dearest schedule window in force (`ceilingRates` — a
+   * window can raise a rate, as a peak hour does), and every input token at the dearest rate any
+   * input token can be charged at on this card — cached and cache-write tokens are
    * slices of the input and are not always cheaper than it. This is what a budget must survive, and
    * what a reservation is taken at.
    */

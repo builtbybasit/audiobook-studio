@@ -1031,9 +1031,10 @@ spends nothing, and a budget can be run into, tested and shown without a key.
 **A book's budget is enforced here, by one question asked twice.**
 [budget.ts](../server/usage/budget.ts) asks whether some work fits: a paused book fits nothing; a
 book with a cap fits what keeps _spent + held by unfinished jobs + this_ under it; scripting must
-also fit under the script budget. The price asked about is the worst case — undiscounted rates,
-the dearest input rate, the whole output ceiling — because a run lasts long enough for a promotion
-to end inside it, which is the rule `src/stores/README.md` sets for the browser.
+also fit under the script budget. The price asked about is the worst case — the dearest rates any
+window or promotion can make (a peak hour can charge more than the card), the dearest input rate,
+the whole output ceiling — because a run lasts long enough for a promotion to end or a peak to
+start inside it, which is the rule `src/stores/README.md` sets for the browser.
 
 - **Before anything is queued**, with the whole run's worst case. A run that does not fit queues
   nothing and answers **409** with a sentence that says what to change. Every way of asking for

@@ -2,6 +2,7 @@ import type { Profile } from "@/types";
 import { splitText } from "@/lib/split";
 import {
   baseRates,
+  ceilingRates,
   dearestInput,
   effectiveRates,
   ensurePricing,
@@ -116,11 +117,12 @@ export function scriptParts(text: string, p: Profile): string[] {
  *
  * Two figures matter and they are deliberately different. `cost` is what this chunk would cost at
  * the rates in force *now*, including any off-peak window or promotion. `reserve` is what is held
- * against the budget while it is in flight, and it is worked out at the **undiscounted** rates with
- * the whole output ceiling: a budget must survive a promotion expiring or an off-peak window
- * closing mid-run, so a reservation is never allowed to lean on a discount that may be gone by the
- * time the request is actually sent. No cache saving is assumed either way — cache use is not
- * knowable before the answer comes back.
+ * against the budget while it is in flight, and it is worked out at the **dearest** rates the card
+ * can reach (`ceilingRates`) with the whole output ceiling: a budget must survive a promotion
+ * expiring or an off-peak window closing mid-run, so a reservation is never allowed to lean on a
+ * discount that may be gone by the time the request is actually sent. The base card is not that
+ * ceiling — DeepSeek's card is its off-peak price, and its peak windows double it. No cache saving
+ * is assumed either way — cache use is not knowable before the answer comes back.
  *
  * The input side of the reservation is taken at the **dearest** rate any input token could be
  * charged at, not at the ordinary input rate. Cached and cache-write tokens are slices of the
@@ -137,14 +139,16 @@ export function tokenEstimate(text: string, p: Profile, at: number = Date.now())
   const now = effectiveRates(base, ensurePricing(p), at).components;
   const inRate = now.input.rate ?? p.inPrice;
   const outRate = now.output.rate ?? p.outPrice;
-  const reserveIn = dearestInput(base) ?? p.inPrice;
+  const ceiling = ceilingRates(base, ensurePricing(p));
+  const reserveIn = dearestInput(ceiling) ?? p.inPrice;
+  const reserveOut = ceiling.output ?? p.outPrice;
   return {
     inputTokens,
     outputTokens,
     inputCost: (inputTokens * inRate) / 1e6,
     outputCost: (outputTokens * outRate) / 1e6,
     cost: (inputTokens * inRate + outputTokens * outRate) / 1e6,
-    reserve: (inputTokens * reserveIn + p.maxOutputTokens * p.outPrice) / 1e6,
+    reserve: (inputTokens * reserveIn + p.maxOutputTokens * reserveOut) / 1e6,
   };
 }
 

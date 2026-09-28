@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 import {
   baseRates,
+  ceilingRates,
   ensurePricing,
   estimateRates,
   newPricing,
@@ -13,7 +14,9 @@ import {
   uncachedInput,
   usageTrustworthy,
 } from "@/lib/pricing";
+import { scriptingPresetById } from "@/lib/endpoints";
 import { newProfile, tokenEstimate } from "@/lib/scripting";
+import { clone } from "@/lib/utils";
 import { cacheShapeFor, simulateUsage, usageFormatFor } from "@/mock/simulators/usage";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
@@ -302,6 +305,46 @@ describe("reservations and budgets", () => {
     // ...but the reservation does not
     expect(cheap.reserve).toBeCloseTo(bare.reserve, 12);
     expect(cheap.reserve).toBeGreaterThan(cheap.cost);
+  });
+
+  test("a reservation is taken at the dearest window, so a card that stores its off-peak price still covers the peak", () => {
+    // DeepSeek's card is its off-peak rate, and its weekday peak windows double it
+    const p = newProfile(clone(scriptingPresetById("deepseek-flash")!.apply));
+    const peak = Date.UTC(2026, 8, 29, 2, 30); // Tuesday, 02:30 UTC
+    const offPeak = Date.UTC(2026, 8, 29, 12, 0);
+    const text = "x".repeat(6000);
+    const atPeak = tokenEstimate(text, p, peak);
+    const worst = (atPeak.inputTokens * 0.3 + p.maxOutputTokens * 1.2) / 1e6;
+    expect(atPeak.reserve).toBeCloseTo(worst, 12);
+    // reserved off-peak, the same request may land at peak, so the reservation does not move
+    expect(tokenEstimate(text, p, offPeak).reserve).toBeCloseTo(worst, 12);
+
+    // and a request that spends its whole output ceiling at peak fits inside it
+    const usage = normalizeUsage(
+      {
+        inputTokens: atPeak.inputTokens,
+        cachedInput: 0,
+        cacheWrite: 0,
+        outputTokens: p.maxOutputTokens,
+      },
+      "internal",
+    );
+    const real = priceRequest(baseRates(p), ensurePricing(p), usage, { at: peak });
+    expect(real.total!).toBeCloseTo(worst, 12);
+    expect(real.total!).toBeLessThanOrEqual(atPeak.reserve + 1e-12);
+  });
+
+  test("a window that raises a rate raises the ceiling, and a promotion never does", () => {
+    const cfg = config({
+      windows: [{ id: "p", label: "Peak", days: [], from: 60, to: 240, rates: { output: 12 } }],
+      promotions: [promo({ scope: ["input"], rates: { input: 5 } })],
+    });
+    expect(ceilingRates(card(), cfg)).toMatchObject({ input: 1, output: 12 });
+    // outside the window the estimate is the card, and the budget figure is the peak's
+    const e = estimateRates(card(), cfg, { inputTokens: 0, outputTokens: 1e6 }, utc(THU, "12:00"));
+    expect(e.cost).toBeCloseTo(4, 12);
+    expect(e.withoutPromotions).toBeCloseTo(12, 12);
+    expect(e.cautions.join(" ")).toContain("dearest hours");
   });
 
   test("a budget check uses the undiscounted price, and says so when that is what blocks it", () => {

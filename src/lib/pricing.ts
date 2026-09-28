@@ -833,6 +833,29 @@ function resolveAll(
 }
 
 /**
+ * The dearest rate each component can reach on this card, at any instant.
+ *
+ * Not the base card. A window can raise a rate as well as lower one — DeepSeek's card is its
+ * off-peak price, and the peak windows put the full one back at twice that — so "every discount
+ * gone" is not "every window gone", and a reservation taken at the base card would be half of
+ * what a peak-hour request costs. Every window is tried, and none, each with every promotion on
+ * its own and with none. A promotion never makes a rate dearer than the schedule left it
+ * (`resolveComponent` drops one that would), so trying them costs nothing and keeps this true
+ * whatever that rule becomes. A component with no base rate stays `null`.
+ */
+export function ceilingRates(base: RateSet, config: PricingConfig): RateSet {
+  const ceiling = { ...base };
+  for (const window of [null, ...config.windows])
+    for (const running of [[], ...config.promotions.map((p) => [p])])
+      for (const c of RATE_COMPONENTS) {
+        if (base[c] == null) continue;
+        const rate = resolveComponent(c, base, window, running).effective.rate;
+        if (rate != null && rate > (ceiling[c] ?? -Infinity)) ceiling[c] = rate;
+      }
+  return ceiling;
+}
+
+/**
  * Every rate in force at one instant, with the reasoning and the next change.
  *
  * `base` is the endpoint's own card; `config` is the schedule and the promotions. A component whose
@@ -1553,21 +1576,20 @@ export function estimateRates(
         }
       : null;
 
-  // The same work with every discount gone **and** every input token at the dearest rate any input
-  // token could be charged at: what the budget must be able to cover. Cached and cache-write tokens
-  // are slices of the input, and a cache write usually costs more than ordinary input, so reserving
-  // the whole input at the ordinary rate would leave a request able to exceed its own reservation.
-  const bare = effectiveRates(base, { ...config, windows: [], promotions: [] }, at);
-  const bareInput =
-    dearestInput({
-      input: bare.components.input.rate,
-      cachedInput: bare.components.cachedInput.rate,
-      cacheWrite: bare.components.cacheWrite.rate,
-    }) ?? 0;
+  // The same work at the dearest rates the card can reach — every discount gone and any window that
+  // raises a rate in force (`ceilingRates`) — **and** every input token at the dearest rate any
+  // input token could be charged at: what the budget must be able to cover. Cached and cache-write
+  // tokens are slices of the input, and a cache write usually costs more than ordinary input, so
+  // reserving the whole input at the ordinary rate would leave a request able to exceed its own
+  // reservation.
+  const ceiling = ceilingRates(base, config);
   const withoutPromotions =
-    (tokens.inputTokens / 1e6) * bareInput +
-    (tokens.outputTokens / 1e6) * (bare.components.output.rate ?? 0);
+    (tokens.inputTokens / 1e6) * (dearestInput(ceiling) ?? 0) +
+    (tokens.outputTokens / 1e6) * (ceiling.output ?? 0);
 
+  // a window later on (a peak hour) charges more than the rates in force now
+  const dearerLater =
+    (ceiling.input ?? 0) > inRate + EPSILON || (ceiling.output ?? 0) > outRate + EPSILON;
   const cautions: string[] = [];
   // "no cache savings" is only the conservative reading where the cached and cache-write rates are
   // cheaper than ordinary input. Where one of them is dearer — a cache write normally is — this
@@ -1592,9 +1614,14 @@ export function estimateRates(
     cautions.push(
       `${snapshot.applied.length === 1 ? "A promotion is" : `${snapshot.applied.length} promotions are`} in force. Budget checks use ${money(withoutPromotions)}, the price without ${snapshot.applied.length === 1 ? "it" : "them"}, so a promotion ending mid-run cannot overshoot a cap.`,
     );
-  else if (!inputIsCeiling)
+  else if (!inputIsCeiling || dearerLater)
     cautions.push(
-      `Budget checks use ${money(withoutPromotions)}, every input token at the dearest rate this endpoint charges for one, so no request can cost more than it reserved.`,
+      `Budget checks use ${money(withoutPromotions)}, ${[
+        dearerLater ? "the rates of this endpoint's dearest hours" : "",
+        inputIsCeiling ? "" : "every input token at the dearest rate this endpoint charges for one",
+      ]
+        .filter(Boolean)
+        .join(" and ")}, so no request can cost more than it reserved.`,
     );
 
   return {

@@ -58,8 +58,11 @@ export interface ReadArchiveOptions {
    * Asked with the size the entry declares, so a caller can decline one too big for what it means
    * to do with it — a recording over the clone limit — without inflating it into memory; the size
    * is still held to the data, as every entry's is.
+   *
+   * A number keeps only that many leading bytes — enough to tell what a recording is by its first
+   * bytes without holding the rest of it — while the whole entry is still inflated and measured.
    */
-  keep?: (name: string, size: number) => boolean;
+  keep?: (name: string, size: number) => boolean | number;
 }
 
 /** One entry the caller asked to keep, as it unzipped. */
@@ -155,12 +158,20 @@ async function inflate(
   zip: ZipFile,
   entry: Entry,
   wording: ArchiveWording,
-  keep: boolean,
+  keep: boolean | number,
 ): Promise<Uint8Array | undefined> {
   const chunks: Buffer[] = [];
+  // how many more bytes to hold on to: all of them, a head of them, or none
+  let room = keep === true ? Infinity : keep === false ? 0 : Math.max(0, keep);
   try {
     const stream = await zip.openReadStreamPromise(entry);
-    for await (const chunk of stream) if (keep) chunks.push(chunk as Buffer);
+    for await (const chunk of stream) {
+      if (room <= 0) continue;
+      const c = chunk as Buffer;
+      const part = c.length > room ? c.subarray(0, room) : c;
+      chunks.push(part);
+      room -= part.length;
+    }
   } catch (e) {
     // yauzl's wording, and the only way it tells this case apart: "too many bytes in the stream.
     // expected 1000. got at least 16384".
@@ -172,7 +183,7 @@ async function inflate(
       );
     return undefined;
   }
-  return keep ? new Uint8Array(Buffer.concat(chunks)) : undefined;
+  return keep === false ? undefined : new Uint8Array(Buffer.concat(chunks));
 }
 
 const reason = (e: unknown): string => (e instanceof Error ? e.message : "");

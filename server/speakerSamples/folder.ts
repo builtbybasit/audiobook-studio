@@ -55,17 +55,23 @@ const ScriptFileVoiceSchema = v.object({
   ),
 }) satisfies v.GenericSchema<unknown, ScriptFileVoice>;
 
-/** One entry of a voice's folder, as the zip guard measured it; `bytes` when it was kept. */
+/**
+ * One entry of a voice's folder, as the zip guard measured it: `bytes` when it was kept, and
+ * `partial` when only its first bytes were — enough to judge it by, not enough to keep.
+ */
 export interface FolderEntry {
   size: number;
   bytes?: Uint8Array;
+  partial?: boolean;
 }
 
-/** A recording that passed, as it will be kept. */
+/** A recording that passed, as it will be kept — or, from a read that held only heads, judged. */
 export interface JudgedClip {
   name: string;
   format: RecordingFormat;
   bytes: Uint8Array;
+  /** only the head of the recording is in `bytes`: judged, and not to be kept */
+  partial?: boolean;
 }
 
 export type JudgedVoice =
@@ -133,7 +139,12 @@ export function judgeVoiceFolder(
     if (!entry.bytes) return refused(`${s.file} could not be unzipped`);
     const format = sniffRecording(entry.bytes.subarray(0, 512));
     if (!format) return refused(`${s.file} is not a WAV, MP3, M4A, Opus or FLAC recording`);
-    clips.push({ name: s.name || s.file, format, bytes: entry.bytes });
+    clips.push({
+      name: s.name || s.file,
+      format,
+      bytes: entry.bytes,
+      ...(entry.partial ? { partial: true } : {}),
+    });
   }
   return { ok: true, voice, clips, bytes: total };
 }

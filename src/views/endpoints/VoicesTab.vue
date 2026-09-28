@@ -48,7 +48,16 @@ import {
 } from "@lucide/vue";
 import { UiCheckbox, UiSelect, UiTooltip } from "@/ui";
 import { isFishAudio } from "@/lib/endpoints";
-import { canCloneVoices, CLONE_CONSENT, MAX_CLONE_CLIPS, VOICE_SAMPLE } from "@/lib/endpointShapes";
+import { CLONE_CONSENT, VOICE_SAMPLE } from "@/lib/endpointShapes";
+import { cloningOf, speechProviderOf } from "@/lib/providers";
+import {
+  acceptOf,
+  leftOutSaid,
+  limitsSaid,
+  maxClipsOf,
+  pickOf,
+  pickProblem,
+} from "@/views/endpoints/cloneForm";
 import type {
   Endpoint,
   FoundVoice,
@@ -185,51 +194,56 @@ async function runSearch(page = 1) {
 const has = (v: Voice) => props.endpoint.voices.some((x) => x.id === v.id);
 
 // ---------- cloning ----------
-// A voice made from someone's recordings, kept by the provider as a private voice on the account
-// and added to this endpoint like any other. Only where the provider keeps one (`canCloneVoices`)
-// and a server is answering: the recordings go to the provider through it, with the saved key, and
+// A voice made from samples of someone speaking — recorded, or downloaded — kept by the provider as
+// a private voice on the account and added to this endpoint like any other: the provider makes it
+// once, and it is spoken by its id from then on. Only where the provider keeps one (its `cloning`)
+// and a server is answering: the samples go to the provider through it, with the saved key, and
 // the server keeps them beside the voice with the consent they were given under — so the voice can
 // travel with a book's script to someone who has to make it again.
 //
-// The picker offers the formats Fish documents for a voice sample, and the server decides by each
-// file's first bytes rather than its name, so a renamed file is refused there with its name.
-const CLIP_TYPES = ".wav,.mp3,.m4a,.opus,.ogg,.flac";
-const clonable = computed(
-  () => canCloneVoices(props.endpoint) && !!activeEndpointSettingsService(),
-);
+// What a pick may be is the provider's (`cloneForm.ts`): the picker offers its formats, a pick is
+// cut to the most it takes, and a file too large for it blocks the button with its name. The
+// server still decides by each file's first bytes, so a renamed file is refused there with its name.
+const cloning = computed(() => cloningOf(props.endpoint));
+const provider = computed(() => speechProviderOf(props.endpoint).label);
+const clonable = computed(() => !!cloning.value && !!activeEndpointSettingsService());
 const clone = reactive({
   title: "",
   clips: [] as File[],
-  /** how many picked recordings were left out, past the most one voice is made from */
+  /** how many picked samples were left out, past the most one voice is made from */
   leftOut: 0,
   consent: false,
   busy: false,
 });
 const clipsInput = ref<HTMLInputElement | null>(null);
 const clipsSize = computed(() => clone.clips.reduce((n, f) => n + f.size, 0));
+/** Why the picked samples cannot be sent, naming the file; null when nothing stops them. */
+const problemOf = (clips: File[]) =>
+  cloning.value ? pickProblem(clips, cloning.value, provider.value) : null;
+const cloneProblem = computed(() => problemOf(clone.clips));
 const cloneBlocked = computed(
   () =>
     !clone.title.trim() ||
     !clone.clips.length ||
+    !!cloneProblem.value ||
     !clone.consent ||
     clone.busy ||
     needsKeyFirst.value,
 );
-/** The recordings a file input holds, up to the most one voice is made from, and how many were not. */
+/** The samples a file input holds, up to the most one voice is made from, and how many were not. */
 function picked(e: Event): { clips: File[]; leftOut: number } {
   const all = [...((e.target as HTMLInputElement).files ?? [])];
-  const clips = all.slice(0, MAX_CLONE_CLIPS);
-  return { clips, leftOut: all.length - clips.length };
+  return cloning.value ? pickOf(all, cloning.value) : { clips: [], leftOut: all.length };
 }
 function pickClips(e: Event) {
   Object.assign(clone, picked(e));
-  // recordings picked by hand are not the ones the link brought, so the voice is not theirs to assign
+  // samples picked by hand are not the ones the link brought, so the voice is not theirs to assign
   from.value = null;
 }
 
 // ---------- cloning from samples a script file brought ----------
 // The Cast page and the import report link here with `?book=…&samples=…&speaker=…&was=…` when a
-// script file carried the recordings of a private voice. The form is filled with them and nothing
+// script file carried the samples of a private voice. The form is filled with them and nothing
 // more: the file's consent record is shown as what someone else agreed to, the box stays unticked
 // for this person's own, and the button is theirs to press. A voice made from them goes to the
 // speaker only if the speaker's voice is still `was` — see `afterClone`.
@@ -262,10 +276,10 @@ async function prefill() {
     was: query("was") || null,
     sample,
   };
+  // held to this provider like a pick by hand: a script file may carry more samples than it takes
   Object.assign(clone, {
     title: sample.title,
-    clips: clips.slice(0, MAX_CLONE_CLIPS),
-    leftOut: Math.max(0, clips.length - MAX_CLONE_CLIPS),
+    ...(cloning.value ? pickOf(clips, cloning.value) : { clips: [], leftOut: clips.length }),
     consent: false,
   });
   if (clipsInput.value) clipsInput.value.value = "";
@@ -313,13 +327,13 @@ async function makeVoice() {
   }
 }
 
-// ---------- kept recordings ----------
-// Which voices here have the recordings they were made from kept on the server. A voice cloned
-// before recordings were kept has none, and the server cannot tell it from any other voice on the
-// account — so every voice without them offers to keep them, under the same consent as a clone.
-// Removing a voice from this list keeps its recordings for a day, so the removal's Undo brings them
-// back with it; a save after that takes them. The list is asked again whenever the voices change,
-// which is how a voice put back by an Undo shows its recordings again.
+// ---------- kept samples ----------
+// Which voices here have the samples they were made from kept on the server. A voice cloned before
+// samples were kept has none, and the server cannot tell it from any other voice on the account —
+// so every voice without them offers to keep them, under the same consent and the same provider
+// limits as a clone. Removing a voice from this list keeps its samples for a day, so the removal's
+// Undo brings them back with it; a save after that takes them. The list is asked again whenever the
+// voices change, which is how a voice put back by an Undo shows its samples again.
 const kept = ref<Record<string, KeptVoiceSamples>>({});
 async function loadKept() {
   const list = clonable.value ? await endpointsStore.keptSamples(props.endpoint) : [];
@@ -331,7 +345,7 @@ watch(
   { immediate: true },
 );
 const keptTitle = (k: KeptVoiceSamples) =>
-  `${k.samples.length} recording${k.samples.length === 1 ? "" : "s"} kept on this server, ${sizeLabel(
+  `${k.samples.length} sample${k.samples.length === 1 ? "" : "s"} kept on this server, ${sizeLabel(
     k.samples.reduce((n, x) => n + x.bytes, 0),
   )}. Consent given ${new Date(k.consentAt).toLocaleDateString()}: “${k.consentText}”`;
 
@@ -343,7 +357,10 @@ const keep = reactive({
   busy: false,
 });
 const keepVoice = computed(() => props.endpoint.voices.find((v) => v.id === keep.voiceId));
-const keepBlocked = computed(() => !keep.clips.length || !keep.consent || keep.busy);
+const keepProblem = computed(() => problemOf(keep.clips));
+const keepBlocked = computed(
+  () => !keep.clips.length || !!keepProblem.value || !keep.consent || keep.busy,
+);
 function openKeep(v: Voice) {
   Object.assign(keep, { voiceId: keep.voiceId === v.id ? null : v.id, clips: [], leftOut: 0 });
   keep.consent = false;
@@ -633,15 +650,23 @@ async function playFound(v: FoundVoice) {
       </template>
     </section>
 
-    <section v-if="clonable" class="card p-3">
+    <section v-if="clonable && cloning" class="card p-3">
       <h3 class="label mb-1"><CloneIcon class="icon-sm" /> Clone a voice</h3>
       <p class="text-[11px] leading-relaxed text-zinc-500">
-        Make a voice from recordings of one person speaking — your own, or any you have the right to
-        use. {{ endpoint.name }} keeps it as a private voice on your account, and it is added to
-        this list. The recordings are kept on this server with the voice and your consent, so the
-        voice can go with a book's script. Fish recommends two or three clips of 15–20 seconds each,
-        at least 10 seconds in all: one speaker, a quiet room, an even tone. It transcribes them
-        itself. WAV, MP3, M4A, Opus or FLAC; up to {{ MAX_CLONE_CLIPS }} recordings.
+        Make a voice from samples of one person speaking — audio you recorded or downloaded, any
+        clip of that one voice you have the right to use. {{ endpoint.name }} makes the voice once
+        and keeps it as a private voice on your account; it is added to this list, and spoken by its
+        id from then on. The samples are kept on this server with the voice and your consent, so the
+        voice can go with a book's script.
+      </p>
+      <p class="mt-1 text-[11px] leading-relaxed text-zinc-500">
+        {{ cloning.advice }} {{ limitsSaid(cloning) }}
+      </p>
+      <p
+        v-if="cloning.cost"
+        class="mt-1 rounded bg-amber-400/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
+      >
+        {{ cloning.cost }}
       </p>
       <div
         v-if="from"
@@ -649,7 +674,7 @@ async function playFound(v: FoundVoice) {
       >
         <div class="flex flex-wrap items-center justify-between gap-2">
           <span class="font-medium"
-            >Recordings for {{ from.speaker }}, from {{ from.sample.source }}</span
+            >Samples for {{ from.speaker }}, from {{ from.sample.source }}</span
           >
           <button type="button" class="btn-ghost btn-xs" @click="putAside">Put them aside</button>
         </div>
@@ -672,23 +697,30 @@ async function playFound(v: FoundVoice) {
               placeholder="Narrator — Mara"
           /></label>
           <label class="space-y-1 text-xs font-medium"
-            ><span>Recordings</span
+            ><span>{{ maxClipsOf(cloning) === 1 ? "Sample" : "Samples" }}</span
             ><input
               ref="clipsInput"
               type="file"
-              :accept="CLIP_TYPES"
-              multiple
+              :accept="acceptOf(cloning)"
+              :multiple="maxClipsOf(cloning) > 1"
               class="block text-xs"
               @change="pickClips"
           /></label>
           <span v-if="clone.clips.length" class="text-[11px] text-zinc-500">
-            {{ clone.clips.length }} recording{{ clone.clips.length === 1 ? "" : "s" }},
-            {{ (clipsSize / 1024 / 1024).toFixed(1) }} MB
+            {{ clone.clips.length }} sample{{ clone.clips.length === 1 ? "" : "s" }},
+            {{ sizeLabel(clipsSize) }}
           </span>
           <span v-if="clone.leftOut" class="text-[11px] text-amber-600 dark:text-amber-400">
-            Only the first {{ MAX_CLONE_CLIPS }} are used: {{ clone.leftOut }} left out.
+            {{ leftOutSaid(clone.leftOut, cloning) }}
           </span>
         </div>
+        <p
+          v-if="cloneProblem"
+          class="rounded bg-amber-400/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
+          role="alert"
+        >
+          <WarnIcon class="icon-sm" /> {{ cloneProblem }}
+        </p>
         <label class="flex items-start gap-2 text-xs">
           <UiCheckbox v-model="clone.consent" />
           <span>{{ CLONE_CONSENT }}</span>
@@ -786,8 +818,8 @@ async function playFound(v: FoundVoice) {
             <button
               v-if="kept[v.id]"
               class="btn-ghost btn-xs shrink-0 hover:text-red-500"
-              :aria-label="`Forget the recordings kept for ${v.label}`"
-              title="Forget the recordings kept for this voice — the voice stays"
+              :aria-label="`Forget the samples kept for ${v.label}`"
+              title="Forget the samples kept for this voice — the voice stays"
               @click="forgetKept(v)"
             >
               <RemoveIcon class="icon-sm" /> Forget
@@ -796,7 +828,7 @@ async function playFound(v: FoundVoice) {
               v-else
               class="btn-ghost btn-xs shrink-0"
               :aria-expanded="keep.voiceId === v.id"
-              title="Keep the recordings this voice was made from, so it can go with a book's script"
+              title="Keep the samples this voice was made from, so it can go with a book's script"
               @click="openKeep(v)"
             >
               Keep its samples…
@@ -830,40 +862,47 @@ async function playFound(v: FoundVoice) {
       </ul>
 
       <form
-        v-if="keepVoice"
+        v-if="keepVoice && cloning"
         class="mt-2 space-y-2 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50"
         @submit.prevent="keepSamples"
       >
         <p class="text-[11px] leading-relaxed text-zinc-500">
-          Keep the recordings <b>{{ keepVoice.label }}</b> was made from, so it can go with a book's
-          script to someone who has to make it again. Nothing is sent to {{ endpoint.name }}. WAV,
-          MP3, M4A, Opus or FLAC; up to {{ MAX_CLONE_CLIPS }} recordings.
+          Keep the samples <b>{{ keepVoice.label }}</b> was made from, so it can go with a book's
+          script to someone who has to make it again. Nothing is sent to {{ endpoint.name }}.
+          {{ limitsSaid(cloning) }}
         </p>
         <div class="flex flex-wrap items-end gap-2">
           <label class="space-y-1 text-xs font-medium"
-            ><span>Recordings</span
+            ><span>{{ maxClipsOf(cloning) === 1 ? "Sample" : "Samples" }}</span
             ><input
               type="file"
-              :accept="CLIP_TYPES"
-              multiple
+              :accept="acceptOf(cloning)"
+              :multiple="maxClipsOf(cloning) > 1"
               class="block text-xs"
               @change="pickKept"
           /></label>
           <span v-if="keep.clips.length" class="text-[11px] text-zinc-500">
-            {{ keep.clips.length }} recording{{ keep.clips.length === 1 ? "" : "s" }},
+            {{ keep.clips.length }} sample{{ keep.clips.length === 1 ? "" : "s" }},
             {{ sizeLabel(keep.clips.reduce((n, f) => n + f.size, 0)) }}
           </span>
           <span v-if="keep.leftOut" class="text-[11px] text-amber-600 dark:text-amber-400">
-            Only the first {{ MAX_CLONE_CLIPS }} are used: {{ keep.leftOut }} left out.
+            {{ leftOutSaid(keep.leftOut, cloning) }}
           </span>
         </div>
+        <p
+          v-if="keepProblem"
+          class="rounded bg-amber-400/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
+          role="alert"
+        >
+          <WarnIcon class="icon-sm" /> {{ keepProblem }}
+        </p>
         <label class="flex items-start gap-2 text-xs">
           <UiCheckbox v-model="keep.consent" />
           <span>{{ CLONE_CONSENT }}</span>
         </label>
         <div class="flex items-center gap-2">
           <button class="btn-primary btn-xs" type="submit" :disabled="keepBlocked">
-            <KeptIcon class="icon-sm" /> {{ keep.busy ? "Keeping…" : "Keep recordings" }}
+            <KeptIcon class="icon-sm" /> {{ keep.busy ? "Keeping…" : "Keep samples" }}
           </button>
           <button class="btn-ghost btn-xs" type="button" @click="keep.voiceId = null">
             Cancel
@@ -874,8 +913,8 @@ async function playFound(v: FoundVoice) {
       <p class="mt-2 text-[11px] leading-relaxed text-zinc-500">
         Labels and gender are yours to change and take effect at once — the id is what goes in the
         request, so renaming a voice re-routes nothing. Removing one leaves the speakers that used
-        it unrouted in every book, and is undoable from the toast; any recordings kept for it are
-        held for a day in case it comes back, then go.
+        it unrouted in every book, and is undoable from the toast; any samples kept for it are held
+        for a day in case it comes back, then go.
       </p>
     </section>
   </div>

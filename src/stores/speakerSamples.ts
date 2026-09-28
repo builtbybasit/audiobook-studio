@@ -1,7 +1,7 @@
 // Voice samples that came in a script file and wait with a speaker. See docs/script-transfer.md,
 // "Slice 3".
 //
-// A script file can carry the recordings a private voice was cloned from. Nothing here can speak
+// A script file can carry the samples a private voice was cloned from. Nothing here can speak
 // with them — the voice lives on someone else's account — so they wait with the speaker until
 // someone clones them on the Voices tab, or discards them. **Nothing clones by itself:** the clone
 // link only fills the form, the person still ticks their own consent and presses the button, and
@@ -9,14 +9,14 @@
 // they had when the link was opened, so a choice made meanwhile is never overwritten.
 import { defineStore } from "pinia";
 import type { RouteLocationRaw } from "vue-router";
-import { canCloneVoices } from "@/lib/endpointShapes";
+import { cloningOf, type CloneSupport } from "@/lib/providers";
 import {
   activeLibraryService,
   ApiError,
   type LibraryService,
   type StoredSamples,
 } from "@/services/library";
-import type { Endpoint, SpeakerSamples, VoiceRef } from "@/types";
+import type { Endpoint, KeptSample, SpeakerSamples, VoiceRef } from "@/types";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
@@ -26,13 +26,25 @@ interface SpeakerSamplesState {
   waiting: Record<string, SpeakerSamples[]>;
 }
 
-/** What a clone link carries, so the Voices tab knows whose recordings it is making a voice from. */
+/** What a clone link carries, so the Voices tab knows whose samples it is making a voice from. */
 export interface CloneFromSamples {
   bookId: string;
   sampleId: number;
   speaker: string;
   /** the speaker's voice when the link was opened; the new voice replaces only this */
   was: VoiceRef | null;
+}
+
+/**
+ * How well a provider takes these samples: 2 when it takes all of them as they are, 1 when it takes
+ * each one's format and size but not so many, 0 when some sample is one it refuses.
+ */
+export function cloneFit(cloning: CloneSupport, samples: readonly KeptSample[]): number {
+  const each = samples.every(
+    (s) => cloning.formats.includes(s.format) && s.bytes <= cloning.maxClipBytes,
+  );
+  if (!each) return 0;
+  return samples.length <= cloning.maxClips ? 2 : 1;
 }
 
 export const useSpeakerSamplesStore = defineStore("speakerSamples", {
@@ -44,16 +56,32 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
     waitingFor(s): (bookId: string, speaker: string) => SpeakerSamples | null {
       return (bookId, speaker) => s.waiting[bookId]?.find((x) => x.speaker === speaker) ?? null;
     },
-    /** The endpoint a clone link opens: the first enabled one whose provider keeps a cloned voice. */
-    cloneEndpoint(): Endpoint | null {
+    /**
+     * The endpoint a clone link opens for these samples: of the enabled ones whose provider keeps
+     * a cloned voice, the first that takes every sample as it is, else the first that takes each
+     * one's format and size (and makes a voice from as many as it takes), else the first that
+     * clones at all — where the Voices tab says what stands in the way. Providers differ: one makes
+     * a voice from a single file, another from twenty, and not every one takes every format.
+     */
+    cloneEndpointFor(): (sample: SpeakerSamples) => Endpoint | null {
       const endpointsStore = useEndpointsStore();
-      return endpointsStore.endpoints.find((e) => e.enabled && canCloneVoices(e)) ?? null;
+      return (sample) => {
+        let best: Endpoint | null = null;
+        let bestFit = -1;
+        for (const e of endpointsStore.endpoints) {
+          const cloning = e.enabled ? cloningOf(e) : null;
+          if (!cloning) continue;
+          const fit = cloneFit(cloning, sample.samples);
+          if (fit > bestFit) [best, bestFit] = [e, fit];
+        }
+        return best;
+      };
     },
-    /** Where "Clone on the Voices tab" goes for these recordings; null when nothing can clone. */
+    /** Where "Clone on the Voices tab" goes for these samples; null when nothing can clone. */
     cloneLink(): (bookId: string, sample: SpeakerSamples) => RouteLocationRaw | null {
       const castStore = useCastStore();
       return (bookId, sample) => {
-        const ep = this.cloneEndpoint;
+        const ep = this.cloneEndpointFor(sample);
         if (!ep) return null;
         const was = castStore.charactersOf(bookId).find((c) => c.name === sample.speaker)?.voice;
         return {
@@ -102,7 +130,7 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
       return this.waitingOf(bookId);
     },
     /**
-     * Keep the recordings `file` carries for these speakers. What an applied import calls; its Undo
+     * Keep the samples `file` carries for these speakers. What an applied import calls; its Undo
      * hands what this answered to `_unstore`.
      */
     async _store(bookId: string, file: File, speakers: string[]): Promise<StoredSamples> {
@@ -157,7 +185,7 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
       await this._restore(bookId, done.replaced);
     },
     /**
-     * Discard a speaker's waiting recordings. The server hides them at once and keeps them a day,
+     * Discard a speaker's waiting samples. The server hides them at once and keeps them a day,
      * so the Undo — from the toast or ⌘Z, however late — brings them back while it still can.
      */
     async discard(bookId: string, sample: SpeakerSamples): Promise<boolean> {
@@ -181,7 +209,7 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
       });
       return true;
     },
-    /** The recordings, as files the clone form can send on. Null when they could not be read. */
+    /** The samples, as files the clone form can send on. Null when they could not be read. */
     async files(bookId: string, sample: SpeakerSamples): Promise<File[] | null> {
       const svc = this._service();
       if (!svc) return null;
@@ -195,9 +223,9 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
       }
     },
     /**
-     * A voice was just made from these recordings. It goes to the speaker when their voice is still
+     * A voice was just made from these samples. It goes to the speaker when their voice is still
      * the one they had when the link was opened — anything else is a choice made since, and is left
-     * alone — and the recordings stop waiting: the voice keeps them now.
+     * alone — and the samples stop waiting: the voice keeps them now.
      */
     async afterClone(from: CloneFromSamples, voice: VoiceRef): Promise<"assigned" | "kept"> {
       const castStore = useCastStore();

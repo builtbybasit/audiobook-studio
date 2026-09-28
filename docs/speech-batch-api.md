@@ -68,16 +68,16 @@ GET /v1/audio/speech/capabilities
 
 One entry per model the server serves; a client picks the one its endpoint names.
 
-| Field              | Meaning                                                                                                                                                                                                                  |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `batch`            | Present when the model takes batches. `max_items` lines per request; `max_input_chars` the most characters of `input` across them all. Either may be `null` for no limit. Absent: send one line per request.         |
-| `max_item_chars`   | The longest `input` one item may have; `null` for none. A client splits a longer line itself.                                                                                                                           |
-| `response_formats` | The formats it can answer in, from `wav`, `mp3`, `opus`, `flac`, `aac`, `pcm` (OpenAI's list). `pcm` is raw 16-bit little-endian mono at the answer's `sample_rate`.                                                  |
-| `sample_rates`     | The rates it can be asked for, in Hz; `null` when it renders at its model's own rate and cannot be asked for another.                                                                                                     |
-| `instructions`     | Whether it reads `instructions` — delivery, emotion, a voice described in words. A server that says `false` ignores the field.                                                                                          |
-| `speed`            | The range `speed` may take, or `null` when it takes none.                                                                                                                                                                |
-| `languages`        | The language codes it takes (BCP 47, `en`, `zh`…), or `null` for "works it out from the text".                                                                                                                           |
-| `tags`             | How it reads non-verbal tags written into the text, if it does: the brackets, and the tags it knows. `null` when a bracketed word is read out as a word.                                                                |
+| Field              | Meaning                                                                                                                                                                                                                     |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `batch`            | Present when the model takes batches. `max_items` lines per request; `max_input_chars` the most characters of `input` across them all. Either may be `null` for no limit. Absent: send one line per request.                |
+| `max_item_chars`   | The longest `input` one item may have; `null` for none. A client splits a longer line itself.                                                                                                                               |
+| `response_formats` | The formats it can answer in, from `wav`, `mp3`, `opus`, `flac`, `aac`, `pcm` (OpenAI's list). `pcm` is raw 16-bit little-endian mono at the answer's `sample_rate`.                                                        |
+| `sample_rates`     | The rates it can be asked for, in Hz; `null` when it renders at its model's own rate and cannot be asked for another.                                                                                                       |
+| `instructions`     | Whether it reads `instructions` — delivery, emotion, a voice described in words. A server that says `false` ignores the field.                                                                                              |
+| `speed`            | The range `speed` may take, or `null` when it takes none.                                                                                                                                                                   |
+| `languages`        | The language codes it takes (BCP 47, `en`, `zh`…), or `null` for "works it out from the text".                                                                                                                              |
+| `tags`             | How it reads non-verbal tags written into the text, if it does: the brackets, and the tags it knows. `null` when a bracketed word is read out as a word.                                                                    |
 | `extra`            | The model's own options a client may send in `extra`, each with a JSON type, a default and a description, so a page can offer them. Informational: a server takes an option it does not list and ignores one it cannot use. |
 
 A server may answer `404` here, which a client reads as "no batches, no promises", and falls back to
@@ -112,20 +112,20 @@ Accept: application/x-ndjson
 }
 ```
 
-| Field             | Required | Meaning                                                                                                                                     |
-| ----------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `model`           | yes      | One of the capabilities' `models[].id`.                                                                                                     |
-| `response_format` | no       | For every item; `wav` when absent.                                                                                                          |
-| `sample_rate`     | no       | For every item, one of `sample_rates`; the model's own rate when absent.                                                                    |
-| `extra`           | no       | Model options for every item. An item's own `extra` is merged over it, key by key.                                                         |
-| `items`           | yes      | One to `batch.max_items` lines.                                                                                                             |
-| `items[].id`      | yes      | The client's name for the line, 1–200 characters, unique in the request. Answered back as it was sent; the server reads nothing into it.    |
-| `items[].input`   | yes      | The text to say, tags written in as the capabilities' `tags` spell them.                                                                   |
-| `items[].voice`   | yes      | A voice id from [`GET /v1/audio/voices`](#voices). Voices live on the server; a request never carries reference audio.                     |
-| `items[].instructions` | no  | How to say it, in words. Ignored by a model whose capabilities say `instructions: false`.                                                   |
-| `items[].speed`   | no       | Within the capabilities' `speed`; `1.0` when absent.                                                                                        |
-| `items[].language`| no       | A code from `languages`; the server's own guess when absent.                                                                                |
-| `items[].extra`   | no       | Model options for this item alone.                                                                                                          |
+| Field                  | Required | Meaning                                                                                                                                  |
+| ---------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `model`                | yes      | One of the capabilities' `models[].id`.                                                                                                  |
+| `response_format`      | no       | For every item; `wav` when absent.                                                                                                       |
+| `sample_rate`          | no       | For every item, one of `sample_rates`; the model's own rate when absent.                                                                 |
+| `extra`                | no       | Model options for every item. An item's own `extra` is merged over it, key by key.                                                       |
+| `items`                | yes      | One to `batch.max_items` lines.                                                                                                          |
+| `items[].id`           | yes      | The client's name for the line, 1–200 characters, unique in the request. Answered back as it was sent; the server reads nothing into it. |
+| `items[].input`        | yes      | The text to say, tags written in as the capabilities' `tags` spell them.                                                                 |
+| `items[].voice`        | yes      | A voice id from [`GET /v1/audio/voices`](#voices). Voices live on the server; a request never carries reference audio.                   |
+| `items[].instructions` | no       | How to say it, in words. Ignored by a model whose capabilities say `instructions: false`.                                                |
+| `items[].speed`        | no       | Within the capabilities' `speed`; `1.0` when absent.                                                                                     |
+| `items[].language`     | no       | A code from `languages`; the server's own guess when absent.                                                                             |
+| `items[].extra`        | no       | Model options for this item alone.                                                                                                       |
 
 **The request is refused whole only when it cannot be read**: not JSON, no `items` or more than
 `max_items`, two items with one `id`, an unknown `model`, a `response_format` or `sample_rate` it
@@ -157,12 +157,12 @@ answered:
 {"type":"done","items":{"done":1,"failed":1},"usage":{"input_characters":23,"audio_seconds":1.42}}
 ```
 
-| Line                  | Fields                                                                                                                                                                                                                                                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Line                  | Fields                                                                                                                                                                                                                                                                                                                    |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `item`, `done` status | `id` and `index` (its place in `items`, from 0); `format`; `sample_rate` of the audio; `duration` in seconds; `audio`, the whole file base64-encoded (standard alphabet, padded); `usage` — `input_characters` and `audio_seconds` at least, and whatever else the model counts (`input_tokens`, `output_audio_tokens`…). |
-| `item`, `failed`      | `id`, `index`, `error` — `code`, `message`, and `retryable`: whether sending that item again could go differently.                                                                                                                                                                                      |
-| `done`                | How many items were `done` and `failed`, and the `usage` summed over the batch. Nothing follows it.                                                                                                                                                                                                     |
-| `ping`                | Nothing but `type`. A server whose first item may take a while sends one every few seconds, so a client can tell a slow batch from a dead connection.                                                                                                                                                  |
+| `item`, `failed`      | `id`, `index`, `error` — `code`, `message`, and `retryable`: whether sending that item again could go differently.                                                                                                                                                                                                        |
+| `done`                | How many items were `done` and `failed`, and the `usage` summed over the batch. Nothing follows it.                                                                                                                                                                                                                       |
+| `ping`                | Nothing but `type`. A server whose first item may take a while sends one every few seconds, so a client can tell a slow batch from a dead connection.                                                                                                                                                                     |
 
 Every item is answered exactly once. A client reads a stream that ends without `done` as a dropped
 connection: the items it was not told about were not rendered, as far as it knows, and it may send
@@ -180,24 +180,31 @@ A refusal of the whole request is OpenAI's error shape, so a client already read
 reads these:
 
 ```json
-{ "error": { "message": "No model 'omni'", "type": "invalid_request_error", "code": "model_not_found", "param": "model" } }
+{
+  "error": {
+    "message": "No model 'omni'",
+    "type": "invalid_request_error",
+    "code": "model_not_found",
+    "param": "model"
+  }
+}
 ```
 
 An item's `error` has the same `code` and `message`, and `retryable` beside them. The codes a client
 may act on — any other is shown as its message:
 
-| Code               | Where        | Retryable | Meaning                                                  |
-| ------------------ | ------------ | --------- | -------------------------------------------------------- |
-| `invalid_request`  | request      | no        | Not JSON, a field of the wrong type, duplicate ids       |
-| `model_not_found`  | request      | no        | `model` is not one the server serves                     |
-| `too_many_items`   | request      | no        | Over `batch.max_items` or `batch.max_input_chars`        |
-| `unsupported`      | request      | no        | A `response_format` or `sample_rate` it cannot answer in |
-| `overloaded`       | request (503)| yes       | Busy; try the batch again, after `Retry-After`           |
-| `voice_not_found`  | item         | no        | No voice with that id                                    |
-| `input_too_long`   | item         | no        | Over `max_item_chars`                                    |
-| `empty_input`      | item         | no        | Nothing to say                                           |
-| `render_failed`    | item         | yes       | The model failed on this item                            |
-| `out_of_memory`    | item         | yes       | Too big for the device at the moment; smaller batches may go through |
+| Code              | Where         | Retryable | Meaning                                                              |
+| ----------------- | ------------- | --------- | -------------------------------------------------------------------- |
+| `invalid_request` | request       | no        | Not JSON, a field of the wrong type, duplicate ids                   |
+| `model_not_found` | request       | no        | `model` is not one the server serves                                 |
+| `too_many_items`  | request       | no        | Over `batch.max_items` or `batch.max_input_chars`                    |
+| `unsupported`     | request       | no        | A `response_format` or `sample_rate` it cannot answer in             |
+| `overloaded`      | request (503) | yes       | Busy; try the batch again, after `Retry-After`                       |
+| `voice_not_found` | item          | no        | No voice with that id                                                |
+| `input_too_long`  | item          | no        | Over `max_item_chars`                                                |
+| `empty_input`     | item          | no        | Nothing to say                                                       |
+| `render_failed`   | item          | yes       | The model failed on this item                                        |
+| `out_of_memory`   | item          | yes       | Too big for the device at the moment; smaller batches may go through |
 
 ## Voices
 
@@ -206,7 +213,17 @@ GET /v1/audio/voices
 ```
 
 ```json
-{ "voices": [ { "id": "mara", "name": "Mara", "gender": "f", "language": "en", "description": "Cloned from the author's reading" } ] }
+{
+  "voices": [
+    {
+      "id": "mara",
+      "name": "Mara",
+      "gender": "f",
+      "language": "en",
+      "description": "Cloned from the author's reading"
+    }
+  ]
+}
 ```
 
 `id` is what an item's `voice` names; the rest is for a person choosing one, and all of it is
@@ -220,12 +237,12 @@ POST /v1/audio/voices
 Content-Type: multipart/form-data
 ```
 
-| Part          | Meaning                                                                     |
-| ------------- | --------------------------------------------------------------------------- |
-| `name`        | What to call it; the server makes an id from it                              |
+| Part          | Meaning                                                                         |
+| ------------- | ------------------------------------------------------------------------------- |
+| `name`        | What to call it; the server makes an id from it                                 |
 | `samples`     | One or more recordings (WAV, MP3, FLAC, M4A, Opus); absent for a designed voice |
-| `transcript`  | What the samples say, when known; a model that needs it may work it out     |
-| `description` | A voice in words — "female, low, British" — for a model that designs voices |
+| `transcript`  | What the samples say, when known; a model that needs it may work it out         |
+| `description` | A voice in words — "female, low, British" — for a model that designs voices     |
 
 It answers `201` with the voice as the list shows it. Making a voice is not safe to repeat, so a
 client sends it once, with no retries. A server that does not make voices answers `404` or `405`.
@@ -254,15 +271,15 @@ An example of the mapping, not part of the contract. OmniVoice's `generate()` ta
 a voice prompt, an instruction, a language, a speed or a duration per item — and returns one 24 kHz
 array per item, so a batch is close to one call:
 
-| This API                       | OmniVoice                                                                          |
-| ------------------------------ | ---------------------------------------------------------------------------------- |
-| `items[].input`                | `text[i]`; its `[laughter]`-style tags pass through (`tags.open`/`close` = `[`/`]`) |
-| `items[].voice`                | a stored `voice_clone_prompt` (from `create_voice_clone_prompt(ref_audio, ref_text)` when the voice was made), or a stored `instruct` for a designed voice |
-| `items[].instructions`         | `instruct[i]`, for a designed voice                                                |
-| `items[].speed`, `language`    | `speed[i]`, `language[i]`                                                          |
-| `extra.num_step`, `guidance_scale`, … | the matching `generate()` keyword arguments                                 |
-| `sample_rates`                 | `[24000]`; resample to offer others                                                 |
-| `batch.max_items`              | whatever fits the GPU; the README reports its FlashInfer path 2.6× faster at batch size 8 |
+| This API                              | OmniVoice                                                                                                                                                  |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `items[].input`                       | `text[i]`; its `[laughter]`-style tags pass through (`tags.open`/`close` = `[`/`]`)                                                                        |
+| `items[].voice`                       | a stored `voice_clone_prompt` (from `create_voice_clone_prompt(ref_audio, ref_text)` when the voice was made), or a stored `instruct` for a designed voice |
+| `items[].instructions`                | `instruct[i]`, for a designed voice                                                                                                                        |
+| `items[].speed`, `language`           | `speed[i]`, `language[i]`                                                                                                                                  |
+| `extra.num_step`, `guidance_scale`, … | the matching `generate()` keyword arguments                                                                                                                |
+| `sample_rates`                        | `[24000]`; resample to offer others                                                                                                                        |
+| `batch.max_items`                     | whatever fits the GPU; the README reports its FlashInfer path 2.6× faster at batch size 8                                                                  |
 
 Items with different `extra` cannot share one `generate()` call; a server groups them, or renders
 the odd ones separately, and still answers every item in the one stream.

@@ -49,6 +49,15 @@ async function pick(e: Event) {
   }
 }
 
+/** Each voice row's choice, reset whenever a new plan arrives — declared before the watcher that
+ *  fills it, which runs at once. */
+interface VoiceChoice {
+  use: boolean;
+  /** the voice to give them: an option of `here`, or one picked by Replace… */
+  ref: VoiceRef | null;
+}
+const choices = reactive<Record<string, VoiceChoice>>({});
+
 // ---------- chapters ----------
 const busy = (c: ImportChapter) => historyStore.busyJobs(bookId, c.chapterId).length > 0;
 const ticked = ref(new Set<number>());
@@ -139,12 +148,6 @@ const REFUSED: Record<RefusalReason, string> = {
 };
 
 // ---------- voices ----------
-interface VoiceChoice {
-  use: boolean;
-  /** the voice to give them: an option of `here`, or one picked by Replace… */
-  ref: VoiceRef | null;
-}
-const choices = reactive<Record<string, VoiceChoice>>({});
 function resetVoices() {
   for (const k of Object.keys(choices)) delete choices[k];
   for (const row of plan.value?.voices ?? [])

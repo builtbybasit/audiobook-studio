@@ -195,7 +195,9 @@ describe("an endpoint that is paused", () => {
     await save(api, [speech("a")]);
     await api.runner.idle();
     expect((await jobById(api, job.id)).status).toBe("done");
-    const waits = (await jobById(api, job.id)).activity!.filter((e) => /^Waiting/.test(e.message));
+    const waits = (await jobById(api, job.id)).activity!.filter((e) =>
+      e.message.startsWith("Waiting"),
+    );
     expect(waits).toHaveLength(1);
   });
 

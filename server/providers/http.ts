@@ -145,6 +145,8 @@ export async function call(
     if (options.stats) options.stats.attempts = attempt;
     const clock = AbortSignal.timeout(target.timeoutSec * 1000);
     let wait: number | undefined;
+    /** the wait a rate limit asked for, told after the attempt so a listener's throw is its own */
+    let limited: number | undefined;
     try {
       const res = await send(url, { ...init, signal: AbortSignal.any([signal, clock]) });
       if (res.ok) {
@@ -154,7 +156,7 @@ export async function call(
         if (refused.rateLimited) {
           if (options.stats) options.stats.rateLimited = true;
           wait = target.cooldownSec * 1000;
-          options.rateLimited?.(wait);
+          limited = wait;
         }
       } else {
         if (res.status === 429 && options.stats) options.stats.rateLimited = true;
@@ -167,7 +169,7 @@ export async function call(
         wait = retryAfterMs(res.headers.get("retry-after"));
         if (res.status === 429) {
           wait ??= target.cooldownSec * 1000;
-          options.rateLimited?.(wait);
+          limited = wait;
         }
       }
     } catch (e) {
@@ -180,6 +182,7 @@ export async function call(
             true,
           );
     }
+    if (limited !== undefined) options.rateLimited?.(limited);
     if (!last.retryable || attempt === attempts) break;
     await sleep(wait ?? backoff(attempt, target), signal);
   }

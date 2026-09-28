@@ -13,6 +13,7 @@ import * as ops from "~/endpoints/ops";
 import { fail, notFound } from "~/lib/errors";
 import { CredentialSchema, EndpointSchema, ProfileSchema } from "~/lib/schemas";
 import { fileResponse } from "~/lib/serve";
+import type { SpeechGate } from "~/providers/gate";
 import { validate } from "~/lib/validate";
 import type { Providers } from "~/providers/target";
 import type { VoiceFiles } from "~/voices/files";
@@ -93,14 +94,23 @@ export function endpointRoutes(
   db: Db,
   providers: Providers,
   voiceFiles: VoiceFiles,
+  gate: SpeechGate,
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
   app.get("/", (c) => c.json(ops.endpointSettings(db)));
 
+  /**
+   * What this process has seen of each speech endpoint it has sent to: lines out and waiting, rate
+   * limits, the end of a cooldown. An endpoint nothing has been sent to is not in it.
+   */
+  app.get("/live", (c) => c.json({ endpoints: gate.live() }));
+
   /** The whole configuration, in place of what is stored. */
   app.put("/", validate("json", Config), (c) => {
     const saved = ops.saveEndpoints(db, c.req.valid("json"), voiceFiles);
+    // a concurrency raised or an endpoint resumed applies to the lines already waiting on it
+    gate.changed();
     c.var.logger.info(
       { endpoints: saved.endpoints.length, profiles: saved.profiles.length },
       "endpoints saved",

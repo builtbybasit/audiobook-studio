@@ -18,6 +18,7 @@ import { chatScriptingProvider } from "~/providers/chatScripting";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { fakeScriptingProvider } from "~/providers/fake";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
+import { createSpeechGate } from "~/providers/gate";
 import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { wavEncoders } from "~/providers/wavEncoder";
 import { CLONE_BODY_BYTES } from "~/routes/endpoints";
@@ -56,11 +57,14 @@ const exports = {
   encoders: env.EXPORT_ENCODER === "ffmpeg" ? ffmpegEncoders(env.FFMPEG_BIN) : wavEncoders(),
   files: audiobookFiles(env.EXPORT_DIR),
 };
+// One gate for every line this process sends to a speech endpoint, shared by the narration handler
+// and the routes that save the endpoints and show what they are doing (`providers/gate.ts`).
+const gate = createSpeechGate();
 const runner = createRunner(
   db,
   {
     scripting: scriptingHandler(scripting),
-    narration: narrationHandler(speech, files),
+    narration: narrationHandler(speech, files, gate),
     export: exportHandler(exports, files),
   },
   { log },
@@ -76,7 +80,7 @@ const server = Bun.serve({
   // only catches what gets past it.
   maxRequestBodySize:
     Math.max(importBodyBytes(), scriptBodyBytes(), CLONE_BODY_BYTES) + 1024 * 1024,
-  fetch: createApp(db, { runner, files, exports, providers: { scripting, speech } }).fetch,
+  fetch: createApp(db, { runner, files, exports, providers: { scripting, speech }, gate }).fetch,
 });
 
 boot.info(

@@ -125,6 +125,21 @@ export interface EndpointLoad {
   backoff: boolean;
 }
 
+/**
+ * Backend only: what the server's process has seen of one speech endpoint since it started —
+ * `GET /api/endpoints/live`. Never stored; a restart starts it again from nothing.
+ */
+export interface EndpointLive {
+  /** lines out at the endpoint right now, across every job */
+  active: number;
+  /** lines held for it: its concurrency is full, it is paused, or it is cooling down */
+  waiting: number;
+  /** requests it has refused as rate limited */
+  rateLimits: number;
+  /** when the cooldown after its last rate limit ends, epoch ms; in the past when there is none */
+  backoffUntil: number;
+}
+
 export type EndpointKind = "scripting" | "tts";
 
 /** Operational settings shared by both kinds. Optional on the endpoint types so anything saved

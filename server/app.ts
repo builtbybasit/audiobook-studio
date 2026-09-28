@@ -17,6 +17,7 @@ import { AppError, codeFor, type ApiError } from "~/lib/errors";
 import type { Logger } from "~/log";
 import { log as defaultLog } from "~/log";
 import type { ExportPorts } from "~/providers/encoder";
+import { createSpeechGate, type SpeechGate } from "~/providers/gate";
 import { fakeScriptingProvider } from "~/providers/fake";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { Providers } from "~/providers/target";
@@ -61,6 +62,12 @@ export interface AppOptions {
   providers?: Providers;
   /** where the recordings a cloned voice was made from are kept; the configured directory by default */
   voiceFiles?: VoiceFiles;
+  /**
+   * The speech gate the runner's narration handler sends through: told when the endpoints are
+   * saved, and read for what the Endpoints page shows live. A gate of its own by default, which
+   * nothing sends through — right for a test that is not about narration.
+   */
+  gate?: SpeechGate;
 }
 
 export function createApp(
@@ -72,6 +79,7 @@ export function createApp(
     exports = { encoders: wavEncoders(), files: audiobookFiles(env.EXPORT_DIR) },
     providers = { scripting: fakeScriptingProvider(), speech: fakeSpeechProvider() },
     voiceFiles = voiceFilesIn(env.VOICE_DIR),
+    gate = createSpeechGate(),
   }: AppOptions = {},
 ): Hono<PinoEnv> {
   // Typed with the logger the middleware puts on the context, so a route reaching for
@@ -131,7 +139,7 @@ export function createApp(
   app.route("/api/books", bookUsageRoutes(db));
   app.route("/api/jobs", jobRoutes(db, runner));
   // The endpoints belong to the installation rather than to a book.
-  app.route("/api/endpoints", endpointRoutes(db, providers, voiceFiles));
+  app.route("/api/endpoints", endpointRoutes(db, providers, voiceFiles, gate));
   app.route("/api/endpoints", endpointUsageRoutes(db));
   // A clip's url is served from disk, and the files it names belong to the same book routes above
   // remove — see `server/audio/files.ts` for why the path is a book and a token.

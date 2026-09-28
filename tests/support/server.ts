@@ -17,6 +17,7 @@ import { createLogger, type Logger } from "~/log";
 import { fakeScriptingProvider } from "~/providers/fake";
 import type { AudiobookEncoder, EncoderChoice, ExportPorts } from "~/providers/encoder";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
+import { createSpeechGate, type SpeechGate } from "~/providers/gate";
 import { wavEncoders } from "~/providers/wavEncoder";
 import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
@@ -37,6 +38,8 @@ export interface TestApi {
   exportDir: string;
   /** where this API keeps the recordings a cloned voice was made from */
   voiceDir: string;
+  /** the speech gate narration sends through and the endpoint routes read and wake */
+  gate: SpeechGate;
   /** `fetch` for a client, answered by this app without a network */
   fetch: FetchLike;
   /** every line this API wrote, for the tests that are about the logging itself */
@@ -75,6 +78,8 @@ export interface TestApiOptions {
   encoder?: AudiobookEncoder | EncoderChoice;
   /** handlers for other kinds, or an override for `scripting` or `narration` */
   handlers?: JobHandlers;
+  /** the speech gate; one of this API's own by default, shared by its runner and its routes */
+  gate?: SpeechGate;
 }
 
 /** A directory of its own for one test's clips, so no two suites can read each other's files. */
@@ -141,7 +146,7 @@ export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): R
     db,
     {
       scripting: scriptingHandler(options.scripting ?? fakeScriptingProvider()),
-      narration: narrationHandler(options.speech ?? fakeSpeechProvider(), files),
+      narration: narrationHandler(options.speech ?? fakeSpeechProvider(), files, options.gate),
       export: exportHandler(testExports(options), files),
       ...options.handlers,
     },
@@ -156,7 +161,8 @@ export function testApi(options: TestApiOptions = {}): TestApi {
   const files = audioFiles(audioDir);
   const exportDir = options.exportDir ?? tempExportDir();
   const exports = testExports({ ...options, exportDir });
-  const runner = testRunner(db, log, { ...options, audioDir, exportDir });
+  const gate = options.gate ?? createSpeechGate();
+  const runner = testRunner(db, log, { ...options, audioDir, exportDir, gate });
   const providers = {
     scripting: options.scripting ?? fakeScriptingProvider(),
     speech: options.speech ?? fakeSpeechProvider(),
@@ -172,6 +178,7 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     exports,
     providers,
     voiceFiles: voiceFiles(voiceDir),
+    gate,
   });
 
   const request = async <T>(path: string, init?: RequestInit) => {
@@ -188,6 +195,7 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     exports,
     exportDir,
     voiceDir,
+    gate,
     fetch: async (input, init) => app.request(new Request(`http://api.test${input}`, init)),
     logs: lines,
     request,

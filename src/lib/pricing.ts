@@ -1651,7 +1651,8 @@ export function estimateRates(
  * The two halves come back separately (`inputCost` + `audioCost` = `cost`) because on a token-billed
  * endpoint they are worked out from different things and a single total hides which one is large.
  * `withoutPromotions` is again what a budget is checked against, because a run over a book takes
- * long enough for a discount to end inside it.
+ * long enough for a discount to end inside it — or a dearer window to open: it is priced at the
+ * dearest rates the card can reach (`ceilingRates`), not at the card with its windows taken away.
  */
 export function estimateSpeech(
   billing: TtsBilling,
@@ -1662,7 +1663,7 @@ export function estimateSpeech(
   const components = speechComponents(billing.unit);
   const audioSide = (c: RateComponent) => c === "audioTokens" || billing.unit === "minute";
 
-  const priceWith = (snapshotComponents: Record<RateComponent, EffectiveComponent>) => {
+  const priceWith = (rateOf: (c: RateComponent) => number | null) => {
     let input: number | null = null;
     let audio: number | null = null;
     let known = true;
@@ -1671,7 +1672,7 @@ export function estimateSpeech(
         c,
         billing.unit,
         quantityFor(c, billing.unit, units),
-        snapshotComponents[c].rate,
+        rateOf(c),
       );
       if (amount == null) {
         known = false;
@@ -1684,11 +1685,9 @@ export function estimateSpeech(
   };
 
   const snapshot = effectiveRates(speechRates(billing), config, at, billing.unit);
-  const now = priceWith(snapshot.components);
-  const bare = priceWith(
-    resolveAll(speechRates(billing), { ...config, windows: [], promotions: [] }, at, billing.unit)
-      .components,
-  );
+  const now = priceWith((c) => snapshot.components[c].rate);
+  const ceiling = ceilingRates(speechRates(billing), config);
+  const bare = priceWith((c) => ceiling[c]);
 
   const cautions: string[] = [];
   if (snapshot.next)
@@ -1698,6 +1697,10 @@ export function estimateSpeech(
   if (snapshot.applied.length && now.total != null && bare.total != null)
     cautions.push(
       `${snapshot.applied.length === 1 ? "A promotion is" : `${snapshot.applied.length} promotions are`} in force. Budget checks use ${money(bare.total)}, the price without ${snapshot.applied.length === 1 ? "it" : "them"}, so a promotion ending mid-run cannot overshoot a cap.`,
+    );
+  else if (now.total != null && bare.total != null && bare.total > now.total + EPSILON)
+    cautions.push(
+      `Budget checks use ${money(bare.total)}, the rates of this endpoint's dearest hours, so a run still going when they start cannot overshoot a cap.`,
     );
   if (billing.unit === "minute")
     cautions.push(

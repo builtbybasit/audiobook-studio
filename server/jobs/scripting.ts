@@ -103,9 +103,9 @@ function chunksOf(text: string, profile: Profile | undefined): string[] {
 }
 
 /**
- * What each chunk holds against the budget while it is unsettled: its worst case, undiscounted
- * with the whole output ceiling (`tokenEstimate`). Nothing for a run with no profile, which has no
- * rates to price it by.
+ * What each chunk holds against the budget while it is unsettled: its worst case, at the dearest
+ * rates any window or promotion on the card can reach (`ceilingRates`) with the whole output
+ * ceiling (`tokenEstimate`). Nothing for a run with no profile, which has no rates to price it by.
  */
 function holdsOf(chunks: readonly string[], profile: Profile | undefined): number[] {
   return chunks.map((c) => (profile ? tokenEstimate(c, profile).reserve : 0));

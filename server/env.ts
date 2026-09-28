@@ -109,6 +109,12 @@ const Env = v.object({
    * deliverable — so the two can be measured, backed up and cleared separately.
    */
   EXPORT_DIR: v.optional(v.string(), "./data/exports"),
+  /**
+   * Where the recordings a cloned voice was made from are kept: one directory per voice. Apart from
+   * the clips and the audiobooks, because these are recordings of a person rather than anything
+   * this server rendered — measured, backed up and cleared on their own terms.
+   */
+  VOICE_DIR: v.optional(v.string(), "./data/voices"),
 });
 
 export type Env = v.InferOutput<typeof Env>;

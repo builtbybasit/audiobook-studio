@@ -18,6 +18,7 @@ import {
   replaceEndpoints,
   type EndpointConfig,
 } from "~/db/endpoints";
+import { reconcileClones } from "~/db/voiceSamples";
 import { AppError, badRequest, notFound } from "~/lib/errors";
 import { endpointVoiceCloner, type CloneRequest } from "~/providers/clone";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
@@ -26,6 +27,8 @@ import type { RenderedClip } from "~/providers/speech";
 import { scriptTarget, speechTarget, type ProbeResult, type Providers } from "~/providers/target";
 import { endpointVoiceLister, type VoicePage, type VoiceQuery } from "~/providers/voices";
 import { settleSpeech } from "~/usage/ledger";
+import type { VoiceFiles } from "~/voices/files";
+import { removeDropped } from "~/voices/ops";
 
 /** What the page reads: the configuration as saved, or none on a server nobody has saved to. */
 export function endpointSettings(db: Db): EndpointConfig {
@@ -94,9 +97,19 @@ function check(config: EndpointConfig): void {
  * stands — so a tag redefined or a rate changed reads as drift on exactly the clips it reaches,
  * without this having to find them.
  */
-export function saveEndpoints(db: Db, config: EndpointConfig): EndpointConfig {
+export function saveEndpoints(
+  db: Db,
+  config: EndpointConfig,
+  voiceFiles: VoiceFiles,
+): EndpointConfig {
   check(config);
-  db.transaction((tx) => replaceEndpoints(tx, config));
+  // The kept recordings are lined up with the voices in the same transaction: a voice removed on
+  // the page takes the recordings it was made from with it, and never the other way round.
+  const gone = db.transaction((tx) => {
+    replaceEndpoints(tx, config);
+    return reconcileClones(tx, config, Date.now());
+  });
+  removeDropped(voiceFiles, gone);
   return endpointSettings(db);
 }
 

@@ -20,6 +20,7 @@ import { fakeScriptingProvider } from "~/providers/fake";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { wavEncoders } from "~/providers/wavEncoder";
+import { CLONE_BODY_BYTES } from "~/routes/endpoints";
 
 const boot = log.child({ name: "boot" });
 
@@ -69,10 +70,11 @@ runner.start();
 const server = Bun.serve({
   hostname: env.HOST,
   port: env.PORT,
-  // A long web novel is a big upload, and Bun's default body limit is well under it. Set a
-  // megabyte above the import route's own limit, so that the route is the one that answers — in
-  // the API's error shape, before the body is read — and this only catches what gets past it.
-  maxRequestBodySize: importBodyBytes() + 1024 * 1024,
+  // A long web novel is a big upload, and so are a voice's recordings; Bun's default body limit is
+  // well under either. Set a megabyte above the larger of the two routes' own limits, so that the
+  // route is the one that answers — in the API's error shape, before the body is read — and this
+  // only catches what gets past it.
+  maxRequestBodySize: Math.max(importBodyBytes(), CLONE_BODY_BYTES) + 1024 * 1024,
   fetch: createApp(db, { runner, files, exports, providers: { scripting, speech } }).fetch,
 });
 

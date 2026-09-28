@@ -5,12 +5,18 @@ import { bodyLimit } from "hono/body-limit";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
+import { MAX_CLONE_CLIPS } from "@/lib/endpointShapes";
 import type { Db } from "~/db/client";
 import * as ops from "~/endpoints/ops";
 import { fail } from "~/lib/errors";
-import { MAX_CLONE_CLIPS, type CloneClip } from "~/providers/clone";
 import { CredentialSchema, EndpointSchema, ProfileSchema } from "~/lib/schemas";
 import { validate } from "~/lib/validate";
+import {
+  RECORDING_HEAD_BYTES,
+  RECORDING_MIME,
+  sniffRecording,
+  type CloneClip,
+} from "~/providers/clone";
 import type { Providers } from "~/providers/target";
 
 const Config = v.object({
@@ -32,7 +38,12 @@ const Sample = v.object({
 /** The most one recording may be, and all of them together, in bytes. */
 export const MAX_CLIP_BYTES = 20 * 1024 * 1024;
 const MAX_CLONE_BYTES = 100 * 1024 * 1024;
-const AUDIO_NAME = /\.(wav|mp3|m4a|aac|ogg|opus|flac|webm)$/i;
+/**
+ * The largest body the clone route reads: the recordings, and a little over for the multipart
+ * envelope around them. The server's own ceiling (`maxRequestBodySize`) is set above it, so this
+ * route is the one that answers.
+ */
+export const CLONE_BODY_BYTES = MAX_CLONE_BYTES + 256 * 1024;
 
 const VoiceList = v.object({
   id: v.pipe(v.string(), v.nonEmpty()),
@@ -87,16 +98,26 @@ export function endpointRoutes(db: Db, providers: Providers): Hono<PinoEnv> {
    * saying the person has the right to clone the voice in them. Answers with the new voice, which
    * the page then adds to the endpoint. Only the recordings' way to the provider passes through here:
    * nothing is kept on this server.
+   *
+   * The form is read by hand, where the book uploads go through `validate("form", …)`: the
+   * validator hands back a lone file for one recording and an array for several, and answers every
+   * refusal as "the form was not valid" — where each refusal here has its own words for the page.
    */
   app.post(
     "/voices/clone",
     bodyLimit({
-      // a little over the limit, for the multipart envelope around the recordings
-      maxSize: MAX_CLONE_BYTES + 256 * 1024,
+      maxSize: CLONE_BODY_BYTES,
       onError: () =>
         fail(413, `The recordings come to more than ${MAX_CLONE_BYTES / 1024 / 1024} MB`),
     }),
     async (c) => {
+      // Fish takes its time over an upload this size, and Bun closes a request whose answer has not
+      // started within ten seconds. This one is left open, for as long as the cloner's own clock
+      // allows; under a test there is no Bun server, and nothing to lift.
+      (c.env as { timeout?(request: Request, seconds: number): void } | undefined)?.timeout?.(
+        c.req.raw,
+        0,
+      );
       const form = await c.req.formData().catch(() => fail(400, "The request was not a form"));
       const id = String(form.get("id") ?? "").trim();
       const title = String(form.get("title") ?? "").trim();
@@ -113,23 +134,34 @@ export function endpointRoutes(db: Db, providers: Providers): Hono<PinoEnv> {
       if (files.length > MAX_CLONE_CLIPS) fail(400, `Use at most ${MAX_CLONE_CLIPS} recordings`);
       const clips: CloneClip[] = [];
       for (const f of files) {
-        if (!f.type.startsWith("audio/") && !AUDIO_NAME.test(f.name))
-          fail(
-            400,
-            `${f.name} is not a recording`,
-            "Use WAV, MP3, M4A, OGG, Opus, FLAC or WebM audio.",
-          );
+        // Bun's parser drops an empty file's name, so a refusal cannot always quote it
+        const named = f.name || "One of the recordings";
         if (f.size > MAX_CLIP_BYTES)
-          fail(413, `${f.name} is larger than ${MAX_CLIP_BYTES / 1024 / 1024} MB`);
-        if (!f.size) fail(400, `${f.name} is empty`);
+          fail(413, `${named} is larger than ${MAX_CLIP_BYTES / 1024 / 1024} MB`);
+        if (!f.size) fail(400, `${named} is empty`);
+        // What it is, from its first bytes alone: its name and the type the browser gave it are
+        // only guesses, and reading the whole of it to find out would be a copy of every recording.
+        const head = await f.slice(0, RECORDING_HEAD_BYTES).arrayBuffer();
+        const format = sniffRecording(new Uint8Array(head));
+        if (!format)
+          fail(
+            415,
+            `${named} is not a recording Fish can make a voice from`,
+            "Use WAV, MP3, M4A, Opus or FLAC audio.",
+          );
+        // the parsed file itself, typed by its bytes: a slice is a view, not a copy
         clips.push({
-          name: f.name,
-          type: f.type || "application/octet-stream",
-          bytes: new Uint8Array(await f.arrayBuffer()),
+          name: f.name || `recording.${format}`,
+          blob: f.slice(0, f.size, RECORDING_MIME[format]),
         });
       }
       const voice = await ops.cloneVoice(db, providers, id, { title, clips }, c.req.raw.signal);
-      c.var.logger.info({ id, voice: voice.id, clips: clips.length }, "voice cloned");
+      // The form cannot get here without `consent=yes`, and this line is the record that it was
+      // given: which endpoint, which voice, what it was called, and from how many recordings.
+      c.var.logger.info(
+        { id, voice: voice.id, title, clips: clips.length, consent: true },
+        "voice cloned",
+      );
       return c.json(voice, 201);
     },
   );

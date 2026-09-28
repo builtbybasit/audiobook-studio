@@ -127,12 +127,14 @@ export async function call(
   throw last!;
 }
 
+/** The key as a bearer token, when there is one — alone, for a body that types itself: a form. */
+export function authHeaders(target: ProviderTarget): Record<string, string> {
+  return target.apiKey ? { authorization: `Bearer ${target.apiKey}` } : {};
+}
+
 /** The headers every JSON request carries, the key among them when there is one. */
 export function jsonHeaders(target: ProviderTarget): Record<string, string> {
-  return {
-    "content-type": "application/json",
-    ...(target.apiKey ? { authorization: `Bearer ${target.apiKey}` } : {}),
-  };
+  return { "content-type": "application/json", ...authHeaders(target) };
 }
 
 /** A target that needs a key and has none fails before any request, saying where to put one. */

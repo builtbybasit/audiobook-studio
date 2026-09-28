@@ -146,7 +146,7 @@ export class HttpClient {
     const form = new FormData();
     form.set("file", file);
     for (const [k, v] of Object.entries(fields)) if (v?.trim()) form.set(k, v.trim());
-    return this.send<T>(path, { method: "POST", body: form });
+    return this.postFormData<T>(path, form);
   }
 
   /** `multipart/form-data` built by the caller — several files under one name, say. */

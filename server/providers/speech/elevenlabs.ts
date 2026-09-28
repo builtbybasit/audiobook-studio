@@ -17,11 +17,23 @@
 // ignored, since a blank read as 0 would price the line at nothing.
 //
 // Voices are an account's own — premade, cloned, designed and saved from the library — at
-// `GET /v2/voices`, a hundred a page.
+// `GET /v2/voices`, a hundred a page. With no `voice_type` it answers every kind
+// (https://elevenlabs.io/docs/api-reference/voices/search), so a voice cloned here is among them.
+//
+// A voice is cloned with Instant Voice Cloning, `POST /v1/voices/add`
+// (https://elevenlabs.io/docs/api-reference/voices/ivc/create), as multipart: the voice's `name` and
+// every sample under `files`. `remove_background_noise` is left at its default, off — the docs warn
+// that on clean samples it "can make the quality worse" — and no `labels` are sent, since nothing
+// here knows the speaker's gender or accent. The voice is usable at once and its `voice_id` is
+// what a line is spoken with. The answer also says whether the voice `requires_verification`: then
+// it exists on the account but ElevenLabs will not speak with it until the person has verified it
+// on ElevenLabs' site. It is answered all the same, named so it says what is left to do — failing
+// here would leave the voice made on the account, the recordings and the consent unkept, and a
+// second try would make a second voice.
 import type { SpeechUsage, Voice } from "@/types";
 import { normalizeSpeechUsage } from "@/lib/pricing";
 import { audioAnswer } from "~/providers/answer";
-import { call } from "~/providers/http";
+import { call, ProviderError } from "~/providers/http";
 import type { SpeechCallOptions, SpeechRequest } from "~/providers/send";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
@@ -40,12 +52,23 @@ export const VOICE_PAGES = 10;
 /** ElevenLabs serves its API under `/v1` on its host, whatever path the base URL was saved with. */
 export const elevenLabsRoot = (baseUrl: string): string => `${new URL(baseUrl).origin}/v1`;
 
-/** The headers every ElevenLabs request carries: its key goes in its own header. */
+/** The key in ElevenLabs' own header, alone — for a body that types itself: a form. */
+export function elevenLabsKeyHeader(target: ProviderTarget): Record<string, string> {
+  return target.apiKey ? { "xi-api-key": target.apiKey } : {};
+}
+
+/** The headers every ElevenLabs JSON request carries: its key goes in its own header. */
 export function elevenLabsHeaders(target: ProviderTarget): Record<string, string> {
-  return {
-    "content-type": "application/json",
-    ...(target.apiKey ? { "xi-api-key": target.apiKey } : {}),
-  };
+  return { "content-type": "application/json", ...elevenLabsKeyHeader(target) };
+}
+
+/**
+ * What a cloned voice is called on the endpoint: its name, and — when the provider says it must be
+ * verified before it speaks — what the person has to do first, so a line that fails on it is no
+ * surprise. The name can be changed on the endpoint once it is verified.
+ */
+export function clonedLabel(target: ProviderTarget, title: string, unverified: boolean): string {
+  return unverified ? `${title} (verify it on ${target.name} first)` : title;
 }
 
 /** The `output_format` a line is asked for, from the endpoint's format, rate and bitrate. */
@@ -137,6 +160,34 @@ export async function modelsProbe(
 }
 
 export const elevenLabsWire: SpeechWire = {
+  async clone(target, request, signal, options) {
+    const form = new FormData();
+    form.set("name", request.title);
+    for (const clip of request.clips) form.append("files", clip.blob, clip.name);
+    const res = await call(
+      target,
+      `${elevenLabsRoot(target.baseUrl)}/voices/add`,
+      // no content-type: the multipart boundary is the form's to write
+      { method: "POST", headers: elevenLabsKeyHeader(target), body: form },
+      { signal, ...options },
+    );
+    const body = (await res.json().catch(() => null)) as {
+      voice_id?: unknown;
+      requires_verification?: unknown;
+    } | null;
+    if (typeof body?.voice_id !== "string" || !body.voice_id)
+      throw new ProviderError(
+        `${target.name} answered ${res.status} without the new voice's id`,
+        res.status,
+        false,
+      );
+    return {
+      id: body.voice_id,
+      label: clonedLabel(target, request.title, body.requires_verification === true),
+      gender: "?",
+    };
+  },
+
   // ElevenLabs has no instructions field, so nothing is sent beside the words, and none is billed
   request: (input, target, voice) => elevenLabsRequest(input, target, voice, ""),
   probe: modelsProbe,

@@ -44,6 +44,20 @@ export const breezeblue: SpeechProviderShape = {
   }),
   // Its pricing page: "Failed requests release their reservation."
   billsFailures: false,
-  cloning: null,
+  // Its voice-clone guide (https://docs.breezeblue.ai/guides/voice-clone) and the create-clone-preview
+  // reference: "exactly one sample file", "MP3 or WAV", "at least 3 seconds", "up to 5 MB". Its
+  // pricing page (https://docs.breezeblue.ai/concepts/pricing): "Voice cloning: 100 credits per
+  // clone generation, regardless of sample or preview text length"; saving the voice costs no more,
+  // but "saving consumes a voice slot".
+  cloning: {
+    maxClips: 1,
+    maxClipBytes: 5 * 1024 * 1024,
+    formats: ["wav", "mp3"],
+    advice:
+      "BreezeBlue makes a voice from one clip of at least 3 seconds: one speaker, no music or " +
+      "background noise. It listens to the first minute and keeps up to 30 seconds of it, so put " +
+      "the voice you want at the start.",
+    cost: "100 credits a voice, however long the sample; the voice takes one of the plan's voice slots.",
+  },
   models: ["breeze-tts-2", "breeze-tts-2-multilingual"],
 };

@@ -666,6 +666,23 @@ describe("MiniMax", () => {
     ]);
   });
 
+  test("a rate limit inside a 200 tells the line the endpoint's cooldown, as a 429 would", async () => {
+    const told: number[] = [];
+    const rateLimited = (ms: number) => void told.push(ms);
+    const f = scripted(refused(1002, "rate limit"), () => answer(wav(32000, 3200)));
+    await provider(f.fetch).speak(line({ ...minimax, cooldownSec: 0.02 }, { rateLimited }));
+    expect(told).toEqual([20]);
+
+    // and on the last attempt, with nothing left to wait for, all the same
+    const last = scripted(refused(1002, "rate limit"));
+    await expect(
+      provider(last.fetch).speak(
+        line({ ...minimax, cooldownSec: 5, maxRetries: 0 }, { rateLimited }),
+      ),
+    ).rejects.toThrow("(1002: rate limit)");
+    expect(told).toEqual([20, 5000]);
+  });
+
   test("a fault inside a 200 that outlasts the retries is one failed request", async () => {
     const f = scripted(refused(1024, "internal error"));
     const r = reports();

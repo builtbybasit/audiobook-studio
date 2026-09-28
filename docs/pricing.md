@@ -124,6 +124,9 @@ rule rather than assert it.
 - **A charge the provider reported is kept apart from one we worked out.** `CostBasis` is
   `calculated`, `provider-reported`, `estimated` or `unknown`, and where a provider reports its own
   figure the receipt shows both with a note that a provider's tokeniser and rounding are not ours.
+  On the server a scripting request whose answer says what it cost — OpenRouter's `usage.cost` —
+  is recorded at that figure (`provider-reported`), since a gateway bills at whichever provider
+  served it rather than at the listed rate; the card's figure stays on the receipt as `calculated`.
 
 ### Estimates, and what they are allowed to assume
 

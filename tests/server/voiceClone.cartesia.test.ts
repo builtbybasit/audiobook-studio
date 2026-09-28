@@ -6,11 +6,20 @@
 // makes a voice from one, and M4A, which it does not take.
 import { describe, expect, test } from "bun:test";
 
-import type { ClonedVoice, Endpoint } from "@/types";
-import { endpointVoiceCloner, type CloneRequest, type VoiceClonerOptions } from "~/providers/clone";
+import type { CloneRequest } from "~/providers/clone";
 import { CARTESIA_VERSION, cartesiaWire } from "~/providers/speech/cartesia";
 import type { ProviderTarget } from "~/providers/target";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import {
+  agreed,
+  answering,
+  cloneForm,
+  HEADS,
+  postClone,
+  sampleFile,
+  saved,
+  speechEndpoint,
+} from "../support/cloning";
+import { testApi } from "../support/server";
 
 const target: ProviderTarget = {
   id: "cartesia",
@@ -24,19 +33,6 @@ const target: ProviderTarget = {
   maxRetries: 2,
   cooldownSec: 0,
 };
-
-/** A `fetch` that remembers each request and answers it with `answer`, and a cloner over it. */
-function cartesiaAnswering(
-  answer: (init: RequestInit) => Response | Promise<Response>,
-  options: VoiceClonerOptions = {},
-) {
-  const sent: { url: string; init: RequestInit }[] = [];
-  const fetch = (async (url: string, init: RequestInit) => {
-    sent.push({ url: String(url), init });
-    return answer(init);
-  }) as unknown as typeof globalThis.fetch;
-  return { sent, cloner: endpointVoiceCloner({ fetch, backoffMs: () => 0, ...options }) };
-}
 
 /** What Cartesia answers a clone with: the new voice's metadata, as its reference's example. */
 const made = (over: Record<string, unknown> = {}) =>
@@ -67,7 +63,7 @@ const signal = () => new AbortController().signal;
 
 describe("the Cartesia cloner", () => {
   test("posts the multipart form Cartesia's docs give: one clip, English, private", async () => {
-    const f = cartesiaAnswering(() => made());
+    const f = answering(() => made());
     const voice = await f.cloner.clone(target, request, signal());
     expect(voice).toEqual({
       id: "f161df88-b5a0-4ea8-aa21-6be12859f761",
@@ -94,9 +90,9 @@ describe("the Cartesia cloner", () => {
   });
 
   test("the voice is named as Cartesia answers, or as asked when it answers no name", async () => {
-    const renamed = cartesiaAnswering(() => made({ name: " Mara (clone) " }));
+    const renamed = answering(() => made({ name: " Mara (clone) " }));
     expect((await renamed.cloner.clone(target, request, signal())).label).toBe("Mara (clone)");
-    const unnamed = cartesiaAnswering(() => made({ name: "" }));
+    const unnamed = answering(() => made({ name: "" }));
     expect((await unnamed.cloner.clone(target, request, signal())).label).toBe("Mara");
   });
 
@@ -110,7 +106,7 @@ describe("the Cartesia cloner", () => {
       ],
     ];
     for (const [answer, said] of failures) {
-      const f = cartesiaAnswering(answer);
+      const f = answering(answer);
       await expect(f.cloner.clone(target, request, signal())).rejects.toThrow(said);
       expect(f.sent).toHaveLength(1);
     }
@@ -118,7 +114,7 @@ describe("the Cartesia cloner", () => {
 
   test("a refusal is read out in Cartesia's words, and an answer without an id fails", async () => {
     // its structured error, as https://docs.cartesia.ai/use-the-api/api-conventions gives it
-    const refused = cartesiaAnswering(() =>
+    const refused = answering(() =>
       Response.json(
         {
           error_code: "plan_upgrade_required",
@@ -134,11 +130,11 @@ describe("the Cartesia cloner", () => {
     );
     expect(refused.sent).toHaveLength(1);
 
-    const noId = cartesiaAnswering(() => made({ id: undefined }));
+    const noId = answering(() => made({ id: undefined }));
     await expect(noId.cloner.clone(target, request, signal())).rejects.toThrow(
       "Cartesia answered 200 without the new voice's id",
     );
-    const notJson = cartesiaAnswering(() => new Response("ok"));
+    const notJson = answering(() => new Response("ok"));
     await expect(notJson.cloner.clone(target, request, signal())).rejects.toThrow(
       "without the new voice's id",
     );
@@ -178,83 +174,26 @@ describe("a cloned voice in Cartesia's list", () => {
 
 // ---------- through the route ----------
 
-const cartesiaEndpoint = (over: Partial<Endpoint> = {}): Endpoint => ({
-  id: "cartesia",
-  name: "Cartesia",
-  baseUrl: "https://api.cartesia.ai",
-  model: "sonic-3.6",
-  concurrency: 1,
-  enabled: true,
-  latency: 0,
-  failRate: 0,
-  price: 0,
-  needsKey: true,
-  maxChars: 0,
-  splitAt: "sentence",
-  voices: [],
-  history: [],
-  failures: 0,
-  rateLimits: 0,
-  backoffUntil: 0,
-  apiKey: "sk_car_key",
-  ...over,
-});
-
-async function saved(api: TestApi, ep: Endpoint): Promise<void> {
-  const { status } = await api.request("/api/endpoints", {
-    ...jsonBody({ endpoints: [ep], profiles: [], credentials: [] }),
-    method: "PUT",
-  });
-  expect(status).toBe(200);
-}
-
-const ascii = (text: string): number[] => [...text].map((ch) => ch.charCodeAt(0));
-const bytes = (...parts: (string | number[])[]): Uint8Array =>
-  new Uint8Array(parts.flatMap((p) => (typeof p === "string" ? ascii(p) : p)));
-
-const HEADS = {
-  wav: bytes("RIFF", [36, 0, 0, 0], "WAVEfmt "),
-  m4a: bytes([0, 0, 0, 32], "ftypM4A ", [0, 0, 0, 0]),
-};
-
-/** A file whose first bytes are `head`, padded to `size`. */
-const clip = (
-  name = "take-1.wav",
-  head: Uint8Array = HEADS.wav,
-  type = "audio/wav",
-  size = 1024,
-) => {
-  const body = new Uint8Array(Math.max(size, head.length)).fill(7);
-  body.set(head);
-  return new File([body], name, { type });
-};
-
-function form(fields: Record<string, string>, samples: File[]): FormData {
-  const f = new FormData();
-  for (const [k, v] of Object.entries(fields)) f.set(k, v);
-  for (const c of samples) f.append("samples", c, c.name);
-  return f;
-}
-
-const post = (api: TestApi, body: FormData) =>
-  api.request<ClonedVoice & { error?: { message: string } }>("/api/endpoints/voices/clone", {
-    method: "POST",
-    body,
-  });
-
-const agreed = { id: "cartesia", title: "Mara", consent: "yes" };
-
 describe("a Cartesia clone, through the route", () => {
   async function cloningAgainst(answer: () => Response | Promise<Response>, samples: File[]) {
-    const f = cartesiaAnswering(answer);
+    const f = answering(answer);
     const api = testApi({ cloner: f.cloner });
-    await saved(api, cartesiaEndpoint());
-    const { status, body } = await post(api, form(agreed, samples));
+    await saved(
+      api,
+      speechEndpoint({
+        id: "cartesia",
+        name: "Cartesia",
+        baseUrl: "https://api.cartesia.ai",
+        model: "sonic-3.6",
+        apiKey: "sk_car_key",
+      }),
+    );
+    const { status, body } = await postClone(api, cloneForm(agreed("cartesia"), samples));
     return { status, body, message: body.error?.message ?? "", sent: f.sent };
   }
 
   test("one WAV is made into a voice", async () => {
-    const { status, body, sent } = await cloningAgainst(() => made(), [clip()]);
+    const { status, body, sent } = await cloningAgainst(() => made(), [sampleFile()]);
     expect(status).toBe(201);
     expect(body).toMatchObject({ id: "f161df88-b5a0-4ea8-aa21-6be12859f761", label: "Mara" });
     expect(sent).toHaveLength(1);
@@ -263,7 +202,7 @@ describe("a Cartesia clone, through the route", () => {
   test("a second sample is refused before anything is sent: Cartesia takes one", async () => {
     const { status, message, sent } = await cloningAgainst(
       () => made(),
-      [clip("a.wav"), clip("b.wav")],
+      [sampleFile("a.wav"), sampleFile("b.wav")],
     );
     expect([status, message]).toEqual([
       400,
@@ -275,7 +214,7 @@ describe("a Cartesia clone, through the route", () => {
   test("M4A, which Cartesia does not list, is refused before anything is sent", async () => {
     const { status, message, sent } = await cloningAgainst(
       () => made(),
-      [clip("memo.m4a", HEADS.m4a, "audio/mp4")],
+      [sampleFile("memo.m4a", HEADS.m4a, "audio/mp4")],
     );
     expect([status, message]).toEqual([
       415,
@@ -287,7 +226,7 @@ describe("a Cartesia clone, through the route", () => {
   test("a sample over Cartesia's 16 MB is refused before anything is sent", async () => {
     const { status, message, sent } = await cloningAgainst(
       () => made(),
-      [clip("long.wav", HEADS.wav, "audio/wav", 16 * 1024 * 1024 + 1)],
+      [sampleFile("long.wav", HEADS.wav, "audio/wav", 16 * 1024 * 1024 + 1)],
     );
     expect([status, message]).toEqual([
       413,
@@ -303,7 +242,7 @@ describe("a Cartesia clone, through the route", () => {
           { error_code: "file_too_large", title: "File too large", message: "Clip is too long." },
           { status: 413 },
         ),
-      [clip()],
+      [sampleFile()],
     );
     expect([status, message]).toEqual([400, "Cartesia answered 413: Clip is too long."]);
     expect(message).not.toContain("sk_car_key");

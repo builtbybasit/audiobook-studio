@@ -50,6 +50,7 @@ Start with a chapter with script history, a failed replacement, a book with miss
 | Correct scripts, use history or rerun completed chapters     | [Scripting, history and bulk reruns](docs/scripting.md)                        |
 | Review retakes, configure expressions or understand playback | [Audio review and playback](docs/audio.md)                                     |
 | Plan, build or update an audiobook                           | [Export](docs/exports.md)                                                      |
+| Export a book's script, or import one into another copy      | [Script export and import](docs/script-transfer.md) (spec)                     |
 | Configure endpoints or inspect queue activity                | [Endpoints and queue](docs/endpoints.md)                                       |
 | Understand billing units, discounts, cache usage and budgets | [Pricing and usage](docs/pricing.md)                                           |
 | Reproduce a situation without paying for AI calls            | [Seeded demo and walkthroughs](docs/demo.md)                                   |

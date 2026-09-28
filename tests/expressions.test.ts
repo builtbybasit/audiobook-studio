@@ -322,6 +322,17 @@ test("invalid tag definitions cannot be saved or imported", () => {
   expect(() => endpointsStore.importSettings(settings)).toThrow("Invalid expression support");
 });
 
+test("tags are checked against the model they are saved for, not the one the draft was opened on", () => {
+  // drafted while the endpoint pointed at a server that takes brackets, saved after it was moved
+  // to OpenAI, which documents no tags: the tags would be refused on every line, so the save is
+  const e = endpoint();
+  const draft = { status: "supported" as const, model: e.model, baseUrl: e.baseUrl, tags: [laugh] };
+  e.baseUrl = "https://api.openai.com/v1";
+  e.model = "gpt-4o-mini-tts";
+  expect(endpointsStore.saveExpressionConfig(e.id, draft)).toBe(false);
+  expect(e.expressions).toBeUndefined();
+});
+
 test("a deleted tag does not fall back to sending the old syntax", () => {
   insert();
   endpoint().expressions!.tags = [];

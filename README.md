@@ -55,5 +55,6 @@ Start with a chapter with script history, a failed replacement, a book with miss
 | Understand billing units, discounts, cache usage and budgets | [Pricing and usage](docs/pricing.md)                                           |
 | Reproduce a situation without paying for AI calls            | [Seeded demo and walkthroughs](docs/demo.md)                                   |
 | Run the server, import a real EPUB or add an endpoint        | [Backend](docs/backend.md)                                                     |
+| Serve a local speech model the app can send batches to       | [Batch speech API](docs/speech-batch-api.md)                                   |
 | Work on the code, run checks or follow UI conventions        | [Development](docs/development.md) and [store ownership](src/stores/README.md) |
 | Understand earlier design choices                            | [Design history](docs/design-history.md)                                       |

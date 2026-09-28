@@ -1247,6 +1247,22 @@ line's parts still go out one after another, holding the line's one slot. The pr
 provider's `concurrency` from its own documentation for its entry plan, the page named beside it
 ([src/lib/presets/speech.ts](../src/lib/presets/speech.ts)); a bigger plan can raise it.
 
+**An endpoint that takes batches is sent batches.** A speech server that answers the
+[batch speech API](speech-batch-api.md) — written for a local model that renders many lines at once
+on a GPU, and fitted to no model in particular — says so at `GET …/audio/speech/capabilities`, and a
+run asks it once per endpoint as it starts (the answer is remembered for a few minutes). Its lines
+then go in batches: each batch takes one of the endpoint's slots at the gate and is filled when it
+has one, from the lines still waiting, in the chapter's order, up to the items and characters the
+server said it takes. A line longer than an item may be goes as its parts, each an item, and is
+joined when they have all come back. The answer is a stream of JSON lines, one per item in whatever
+order the server finishes, and each line lands on its own as its items are answered — its own clip,
+its own ledger row per item, its own failure. An item the server says is worth another try, and the
+lines a dropped batch never answered, go into a later batch, up to the endpoint's retries; a batch
+refused whole is retried whole, with the endpoint's retries and cooldown, as a single request is. An
+endpoint that does not answer, or whose model does not batch, is sent one line at a time, as before;
+hosted providers are never asked. The fake takes batches too when a test asks (`batch` in
+`fakeSpeechProvider`), answering each batch last item first so nothing passes by assuming order.
+
 **The endpoints are saved whole.** `PUT /api/endpoints` takes what the Endpoints page holds — speech
 endpoints, scripting profiles and the credential registry, with each endpoint's voices, rate
 schedule, promotions and expression tags — and keeps exactly that in place of what was stored, in
@@ -1563,36 +1579,37 @@ What it can vary is what real EPUBs vary: where the navigation document sits rel
 chapters, whether it calls a chapter something other than the heading inside it, whether one file
 holds several chapters, and whether a file the package promises is in the archive at all.
 
-| File                                                                         | Covers                                                                                                       |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| [epubImport.test.ts](../tests/server/epubImport.test.ts)                     | Reading a file: metadata, titles, text, refusals                                                             |
-| [notices.test.ts](../tests/server/notices.test.ts)                           | Which chapters are not story                                                                                 |
-| [contentsReview.test.ts](../tests/server/contentsReview.test.ts)             | Import → review → add, volumes, removal, renumbering                                                         |
-| [volumes.test.ts](../tests/server/volumes.test.ts)                           | Removing a volume: rekeyed jobs, cancelled work, files, refusals mid-build                                   |
-| [bookSettings.test.ts](../tests/server/bookSettings.test.ts)                 | Budget, pacing and re-timing, a volume's name, and a reorder and its refusals                                |
-| [endpoints.test.ts](../tests/server/endpoints.test.ts)                       | Saved and refused whole; tags and sample rate on a line; one rate a file; a long line sent in parts          |
-| [covers.test.ts](../tests/server/covers.test.ts)                             | The EPUB's cover kept, an upload and its refusals, a cover in an M4B and an MP3, the book's details as tags  |
-| [markdown.test.ts](../tests/server/markdown.test.ts)                         | The converter's DOM bracket, and reading Markdown back                                                       |
-| [jobs.test.ts](../tests/server/jobs.test.ts)                                 | The queue: dedupe, cancel, restart, revision conflicts, HTTP; a chapter in a profile's chunks; its spending  |
-| [usage.test.ts](../tests/server/usage.test.ts)                               | Pricing a request into the ledger, a book's spending, the budget gate, the two ledger routes                 |
-| [narrationBudget.test.ts](../tests/server/narrationBudget.test.ts)           | A row per part, a refused part not charged, runs and retakes refused, a cap lowered mid-run                  |
-| [narration.test.ts](../tests/server/narration.test.ts)                       | Narration: scopes, replacement, failure, cancel, restart, dictionary, files                                  |
-| [narrationConcurrency.test.ts](../tests/server/narrationConcurrency.test.ts) | Lines at an endpoint's concurrency, two endpoints alongside, a pause held, a rate limit's cooldown, a cancel |
-| [speechGate.test.ts](../tests/server/speechGate.test.ts)                     | The gate alone: its limit, order, pause and poll, cooldown and timer, what it tells a waiting line, cancels  |
-| [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)                     | Editing against a revision, the history rule, what a run writes                                              |
-| [cast.test.ts](../tests/server/cast.test.ts)                                 | The cast a run leaves, rename, merge, removal, exact undo                                                    |
-| [exports.test.ts](../tests/server/exports.test.ts)                           | Building one: the file, the spans, refusals, cancel, failure, download                                       |
-| [endpointKeys.test.ts](../tests/server/endpointKeys.test.ts)                 | A key kept, never sent back or logged, kept by a save that omits it; the Test route                          |
-| [encodedClips.test.ts](../tests/server/encodedClips.test.ts)                 | MP3 and Opus asked for, kept, read, joined, served; the stitcher's refusal; an ffmpeg build from them        |
-| [voices.test.ts](../tests/server/voices.test.ts)                             | A library read to its end, a public search, OpenAI's list, refusals                                          |
-| [chatScripting.test.ts](../tests/server/chatScripting.test.ts)               | The chat request, a fenced answer, fidelity, a cut-off, retries, cancel, probe                               |
-| [endpointSpeech.test.ts](../tests/server/endpointSpeech.test.ts)             | Fish and OpenAI-shaped requests, a streamed header made plain, refusals, billed or not, probe                |
-| [speechProviders.test.ts](../tests/server/speechProviders.test.ts)           | Every other provider's request and answer from its docs; what each reports billed, and the usage kept        |
-| [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)                 | What the fake models produce — attributions, a valid WAV — and that they abort                               |
-| [libraryClient.test.ts](../tests/server/libraryClient.test.ts)               | The client and the API against each other                                                                    |
-| [schema.test.ts](../tests/server/schema.test.ts)                             | The seeded world through the schema and back                                                                 |
-| [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)                 | The library store, with a server answering                                                                   |
-| [../jobsBackend.test.ts](../tests/jobsBackend.test.ts)                       | The jobs, scripting, narration, scripts, cast and history stores, with a server                              |
+| File                                                                         | Covers                                                                                                              |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| [epubImport.test.ts](../tests/server/epubImport.test.ts)                     | Reading a file: metadata, titles, text, refusals                                                                    |
+| [notices.test.ts](../tests/server/notices.test.ts)                           | Which chapters are not story                                                                                        |
+| [contentsReview.test.ts](../tests/server/contentsReview.test.ts)             | Import → review → add, volumes, removal, renumbering                                                                |
+| [volumes.test.ts](../tests/server/volumes.test.ts)                           | Removing a volume: rekeyed jobs, cancelled work, files, refusals mid-build                                          |
+| [bookSettings.test.ts](../tests/server/bookSettings.test.ts)                 | Budget, pacing and re-timing, a volume's name, and a reorder and its refusals                                       |
+| [endpoints.test.ts](../tests/server/endpoints.test.ts)                       | Saved and refused whole; tags and sample rate on a line; one rate a file; a long line sent in parts                 |
+| [covers.test.ts](../tests/server/covers.test.ts)                             | The EPUB's cover kept, an upload and its refusals, a cover in an M4B and an MP3, the book's details as tags         |
+| [markdown.test.ts](../tests/server/markdown.test.ts)                         | The converter's DOM bracket, and reading Markdown back                                                              |
+| [jobs.test.ts](../tests/server/jobs.test.ts)                                 | The queue: dedupe, cancel, restart, revision conflicts, HTTP; a chapter in a profile's chunks; its spending         |
+| [usage.test.ts](../tests/server/usage.test.ts)                               | Pricing a request into the ledger, a book's spending, the budget gate, the two ledger routes                        |
+| [narrationBudget.test.ts](../tests/server/narrationBudget.test.ts)           | A row per part, a refused part not charged, runs and retakes refused, a cap lowered mid-run                         |
+| [narration.test.ts](../tests/server/narration.test.ts)                       | Narration: scopes, replacement, failure, cancel, restart, dictionary, files                                         |
+| [narrationConcurrency.test.ts](../tests/server/narrationConcurrency.test.ts) | Lines at an endpoint's concurrency, two endpoints alongside, a pause held, a rate limit's cooldown, a cancel        |
+| [narrationBatch.test.ts](../tests/server/narrationBatch.test.ts)             | Batches filled in order to what they take, a long line's parts, a line sent again, a dropped batch, slots, a cancel |
+| [speechGate.test.ts](../tests/server/speechGate.test.ts)                     | The gate alone: its limit, order, pause and poll, cooldown and timer, what it tells a waiting line, cancels         |
+| [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)                     | Editing against a revision, the history rule, what a run writes                                                     |
+| [cast.test.ts](../tests/server/cast.test.ts)                                 | The cast a run leaves, rename, merge, removal, exact undo                                                           |
+| [exports.test.ts](../tests/server/exports.test.ts)                           | Building one: the file, the spans, refusals, cancel, failure, download                                              |
+| [endpointKeys.test.ts](../tests/server/endpointKeys.test.ts)                 | A key kept, never sent back or logged, kept by a save that omits it; the Test route                                 |
+| [encodedClips.test.ts](../tests/server/encodedClips.test.ts)                 | MP3 and Opus asked for, kept, read, joined, served; the stitcher's refusal; an ffmpeg build from them               |
+| [voices.test.ts](../tests/server/voices.test.ts)                             | A library read to its end, a public search, OpenAI's list, refusals                                                 |
+| [chatScripting.test.ts](../tests/server/chatScripting.test.ts)               | The chat request, a fenced answer, fidelity, a cut-off, retries, cancel, probe                                      |
+| [endpointSpeech.test.ts](../tests/server/endpointSpeech.test.ts)             | Fish and OpenAI-shaped requests, a streamed header made plain, refusals, billed or not, probe                       |
+| [speechProviders.test.ts](../tests/server/speechProviders.test.ts)           | Every other provider's request and answer from its docs; what each reports billed, and the usage kept               |
+| [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)                 | What the fake models produce — attributions, a valid WAV — and that they abort                                      |
+| [libraryClient.test.ts](../tests/server/libraryClient.test.ts)               | The client and the API against each other                                                                           |
+| [schema.test.ts](../tests/server/schema.test.ts)                             | The seeded world through the schema and back                                                                        |
+| [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)                 | The library store, with a server answering                                                                          |
+| [../jobsBackend.test.ts](../tests/jobsBackend.test.ts)                       | The jobs, scripting, narration, scripts, cast and history stores, with a server                                     |
 
 The client tests matter more than they look. Both sides of the seam are in this repository, so "the
 API returns what the client reads" is something the suite can check rather than a comment two files

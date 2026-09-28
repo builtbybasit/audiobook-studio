@@ -48,6 +48,19 @@ export const cartesia: SpeechProviderShape = {
   }),
   // Its pricing page: "Credits are only used by successful requests; errors will not consume credits."
   billsFailures: false,
-  cloning: null,
+  // https://docs.cartesia.ai/api-reference/voices/clone: one `clip` of at most 16 MB, in FLAC, MP3,
+  // Ogg, WAV or WebM — of which the sniffer knows all but WebM, and Opus as Ogg's. No M4A. The
+  // advice is https://docs.cartesia.ai/build-with-cartesia/capability-guides/clone-voices. The
+  // pricing page (https://cartesia.ai/pricing, read 2026-09-28) charges no credits for an instant
+  // clone but leaves it off the Free plan: it starts with Pro, $5 a month.
+  cloning: {
+    maxClips: 1,
+    maxClipBytes: 16 * 1024 * 1024,
+    formats: ["wav", "mp3", "flac", "opus"],
+    advice:
+      "Cartesia makes a voice from one clip: 10 seconds is enough, and up to 60 keeps more of the " +
+      "accent. One speaker, no background noise, spoken naturally in the mood the voice should have.",
+    cost: "No credits per voice, but instant cloning needs Cartesia's Pro plan or above.",
+  },
   models: ["sonic-3.6", "sonic-3.5", "sonic-3", "sonic-latest"],
 };

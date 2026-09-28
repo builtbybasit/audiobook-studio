@@ -168,7 +168,9 @@ This is a frontend prototype. Keep fixtures, scenarios and simulated endpoint wo
 - **A budget is checked against the price with no discount and no cache saving.** A promotion can
   expire and an off-peak window can close while a run is still going, so a cap that only holds while
   a discount lasts is not a cap: `tokenEstimate().reserve` and the blockers in `scriptEstimate` use
-  the undiscounted rates and the full output ceiling. The discounted figure and any cache-adjusted
+  the dearest rates the card can reach (`ceilingRates`) and the full output ceiling. That is not the
+  base card: a window can raise a rate too — DeepSeek's card is its off-peak price and its peak
+  hours double it — so every window is tried, not just none. The discounted figure and any cache-adjusted
   figure are shown beside the conservative one, labelled, and used for neither. The input side is
   reserved at the **dearest** rate any input token could be charged at (`dearestInput`), not at the
   ordinary input rate: cached and cache-write tokens are slices of the input and a cache write

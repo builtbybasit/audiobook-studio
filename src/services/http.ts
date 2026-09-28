@@ -39,16 +39,39 @@ function excerpt(text: string, max = 200): string {
   return flat.length <= max ? flat : flat.slice(0, max) + "…";
 }
 
+// Not everything that answers this URL is the API. A proxy, a dev server or a gateway in front
+// of it answers with HTML, and parsing that would throw a `SyntaxError` out of a method whose
+// whole contract is that it throws `ApiError` — so the page would report a JavaScript fault
+// where it should be saying the server is unreachable.
+function parseJson(text: string): { body: unknown; parsed: boolean } {
+  try {
+    return { body: text ? JSON.parse(text) : null, parsed: true };
+  } catch {
+    return { body: null, parsed: false };
+  }
+}
+
+/** A response that is not ok, as the error the API's JSON body describes. */
+function refusal(res: Response, text: string): ApiError {
+  const { body, parsed } = parseJson(text);
+  const { error } = (parsed ? (body ?? {}) : {}) as ErrorBody;
+  return new ApiError(
+    error?.message ?? `Request failed (${res.status})`,
+    res.status,
+    error?.detail ?? (parsed ? undefined : excerpt(text)),
+    error?.code,
+  );
+}
+
 export class HttpClient {
   constructor(
     readonly base = "/api",
     private readonly fetch: FetchLike = (input, init) => globalThis.fetch(input, init),
   ) {}
 
-  async send<T>(path: string, init?: RequestInit): Promise<T> {
-    let res: Response;
+  private async reach(path: string, init?: RequestInit): Promise<Response> {
     try {
-      res = await this.fetch(`${this.base}${path}`, init);
+      return await this.fetch(`${this.base}${path}`, init);
     } catch (cause) {
       // The server is not answering. Saying so is the whole point: the alternative is a UI that
       // looks like an empty library rather than one that cannot be reached.
@@ -58,28 +81,13 @@ export class HttpClient {
         cause instanceof Error ? cause.message : undefined,
       );
     }
-    const text = await res.text();
-    // Not everything that answers this URL is the API. A proxy, a dev server or a gateway in front
-    // of it answers with HTML, and parsing that would throw a `SyntaxError` out of a method whose
-    // whole contract is that it throws `ApiError` — so the page would report a JavaScript fault
-    // where it should be saying the server is unreachable.
-    let body: unknown = null;
-    let parsed = true;
-    try {
-      body = text ? JSON.parse(text) : null;
-    } catch {
-      parsed = false;
-    }
+  }
 
-    if (!res.ok) {
-      const { error } = (parsed ? (body ?? {}) : {}) as ErrorBody;
-      throw new ApiError(
-        error?.message ?? `Request failed (${res.status})`,
-        res.status,
-        error?.detail ?? (parsed ? undefined : excerpt(text)),
-        error?.code,
-      );
-    }
+  async send<T>(path: string, init?: RequestInit): Promise<T> {
+    const res = await this.reach(path, init);
+    const text = await res.text();
+    if (!res.ok) throw refusal(res, text);
+    const { body, parsed } = parseJson(text);
     if (!parsed)
       throw new ApiError(
         "The server did not answer with JSON",
@@ -87,6 +95,20 @@ export class HttpClient {
         excerpt(text) || "The response was empty.",
       );
     return body as T;
+  }
+
+  /**
+   * POST JSON and take a file back rather than JSON: the bytes and the response's headers. A
+   * refusal is still the API's JSON error, and is thrown as `send` throws it.
+   */
+  async postForFile(path: string, body: unknown): Promise<{ blob: Blob; headers: Headers }> {
+    const res = await this.reach(path, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw refusal(res, await res.text());
+    return { blob: await res.blob(), headers: res.headers };
   }
 
   get<T>(path: string): Promise<T> {

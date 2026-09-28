@@ -34,6 +34,9 @@ import {
   type VoiceListQuery,
 } from "@/services/endpointSettings";
 import { ApiError } from "@/services/http";
+import { invalidate } from "@/queries/invalidate";
+import { keys } from "@/queries/keys";
+import { encodingOf } from "@/lib/endpointShapes";
 import type {
   ConnectionTest,
   Endpoint,
@@ -116,6 +119,15 @@ let inFlight = 0;
 let held = "";
 let timer: ReturnType<typeof setTimeout> | null = null;
 let stopWatch: (() => void) | null = null;
+
+/**
+ * Voice samples heard this session, as object urls, by what they were rendered with. A sample is a
+ * paid request, so pressing play again replays it rather than buying it again — until the endpoint
+ * is pointed at another server, model, format or rate, which would make it a different sample.
+ */
+const samples = new Map<string, { url: string; duration: number }>();
+const sampleKey = (ep: Endpoint, voiceId: string): string =>
+  JSON.stringify([ep.id, ep.baseUrl, ep.model, encodingOf(ep), ep.sampleRate ?? null, voiceId]);
 
 function cancelTimer(): void {
   if (timer) clearTimeout(timer);
@@ -248,7 +260,8 @@ export const useEndpointsStore = defineStore("endpoints", {
         },
       );
     },
-    /** Stop the write-behind and forget its bookkeeping. For tests, between one store and the next. */
+    /** Stop the write-behind and forget its bookkeeping, and the samples heard. For tests, between
+     *  one store and the next. */
     _detach(): void {
       stopWatch?.();
       stopWatch = null;
@@ -256,6 +269,8 @@ export const useEndpointsStore = defineStore("endpoints", {
       edits = 0;
       inFlight = 0;
       held = "";
+      for (const { url } of samples.values()) URL.revokeObjectURL(url);
+      samples.clear();
     },
     /**
      * Send the configuration now rather than when the timer would have. Resolves when the answer
@@ -621,6 +636,34 @@ export const useEndpointsStore = defineStore("endpoints", {
      * saves it. Throws the server's `ApiError`, which the search panel shows where it searched.
      * Nothing is cached: a search is typed, read and moved past.
      */
+    /**
+     * One of `ep`'s voices saying the sample sentence, rendered by the saved endpoint with its saved
+     * key — a real request, priced into the ledger — or the one already heard. Null when there is
+     * no server to ask, or the request failed, which has been said.
+     */
+    async sampleVoice(
+      ep: Endpoint,
+      voiceId: string,
+    ): Promise<{ url: string; duration: number } | null> {
+      const svc = this._service();
+      if (!svc) return null;
+      const key = sampleKey(ep, voiceId);
+      const heard = samples.get(key);
+      if (heard) return heard;
+      try {
+        await this.flushWrites();
+        const { blob, duration } = await svc.sampleVoice(ep.id, voiceId);
+        const sample = { url: URL.createObjectURL(blob), duration };
+        samples.set(key, sample);
+        return sample;
+      } catch (cause) {
+        this._failed("play the sample", cause);
+        return null;
+      } finally {
+        // answered or not, a request may have reached the provider, and it is a row on this page
+        void invalidate({ key: keys.endpointRequests });
+      }
+    },
     async searchVoices(
       ep: Endpoint,
       query: Omit<VoiceListQuery, "source">,

@@ -21,7 +21,7 @@ import {
   type VoiceListPage,
 } from "@/services/endpointSettings";
 import { ApiError } from "@/services/http";
-import { speak } from "@/composables/usePlayer";
+import { speak, usePlayer } from "@/composables/usePlayer";
 import type { Component } from "vue";
 import {
   Check as AddedIcon,
@@ -29,6 +29,8 @@ import {
   ChevronRight as NextIcon,
   Dot as NeutralIcon,
   Globe as PublicIcon,
+  LoaderCircle as BusyIcon,
+  Pause as PauseIcon,
   Mars as MaleIcon,
   Play as PlayIcon,
   Plus as AddIcon,
@@ -164,7 +166,34 @@ async function runSearch(page = 1) {
 }
 const has = (v: Voice) => props.endpoint.voices.some((x) => x.id === v.id);
 
+// ---------- samples ----------
+// With a server answering, play is the saved endpoint saying a sentence in that voice: a real,
+// priced request, heard once and replayed from then on (`endpointsStore.sampleVoice`). The demo
+// has no provider to ask, so it falls back on the browser's own voice.
 const SAMPLE = "The mountain mist thinned as dawn crept over the outer sect grounds.";
+const player = usePlayer();
+const onServer = !!activeEndpointSettingsService();
+const sampling = ref<string | null>(null);
+const sampleId = (v: Voice) => `sample:${props.endpoint.id}/${v.id}`;
+const playingSample = (v: Voice) => player.p.id === sampleId(v) && player.p.playing;
+const sampleTitle = computed(() =>
+  !onServer
+    ? "preview with the browser’s own voice — the provider is never called"
+    : needsKeyFirst.value
+      ? "Save a key for this endpoint first: a sample is a real request"
+      : "Hear this voice from the provider — a real request, billed once and replayed after",
+);
+async function playSample(v: Voice) {
+  if (!onServer) return speak(SAMPLE, v.id);
+  if (sampling.value) return;
+  sampling.value = v.id;
+  try {
+    const sample = await endpointsStore.sampleVoice(props.endpoint, v.id);
+    if (sample) player.play(sampleId(v), sample.duration, sample.url);
+  } finally {
+    sampling.value = null;
+  }
+}
 </script>
 
 <template>
@@ -425,11 +454,15 @@ const SAMPLE = "The mountain mist thinned as dawn crept over the outer sect grou
           </UiTooltip>
           <button
             class="btn-ghost btn-xs shrink-0"
-            :aria-label="`Preview ${v.label}`"
-            title="preview with the browser’s own voice — the provider is never called"
-            @click="speak(SAMPLE, v.id)"
+            :aria-label="`${playingSample(v) ? 'Pause' : 'Preview'} ${v.label}`"
+            :title="sampleTitle"
+            :disabled="(onServer && needsKeyFirst) || (!!sampling && sampling !== v.id)"
+            :aria-busy="sampling === v.id"
+            @click="playSample(v)"
           >
-            <PlayIcon class="icon-sm icon-fill" />
+            <BusyIcon v-if="sampling === v.id" class="icon-sm animate-spin" />
+            <PauseIcon v-else-if="playingSample(v)" class="icon-sm icon-fill" />
+            <PlayIcon v-else class="icon-sm icon-fill" />
           </button>
           <button
             class="btn-ghost btn-xs shrink-0 hover:text-red-500"

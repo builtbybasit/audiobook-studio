@@ -23,6 +23,13 @@ export interface Providers {
    * hands over another.
    */
   voices?: VoiceLister;
+  /**
+   * What renders the Voices tab's samples. Not chosen by `SPEECH_PROVIDER` either: a sample is a
+   * click on one voice that asks to hear the real thing, and the fake's tone would answer a
+   * question nobody asked. So the real provider is the default, the request is priced into the
+   * ledger like any other, and only a test hands over another.
+   */
+  samples?: SpeechProvider;
 }
 
 export interface ProviderTarget {

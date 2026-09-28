@@ -82,6 +82,13 @@ export interface VoiceListPage {
   hasMore: boolean;
 }
 
+/** One voice saying the server's sample sentence: the audio as the endpoint answered, and its length. */
+export interface VoiceSample {
+  blob: Blob;
+  /** seconds */
+  duration: number;
+}
+
 export interface EndpointSettingsService {
   getSettings(): Promise<EndpointSettings>;
   /**
@@ -95,6 +102,8 @@ export interface EndpointSettingsService {
   testEndpoint(kind: EndpointKind, id: string): Promise<EndpointProbe>;
   /** Ask the *saved* speech endpoint, with the key the server holds, what voices it offers. */
   listVoices(id: string, query: VoiceListQuery): Promise<VoiceListPage>;
+  /** Have the *saved* speech endpoint say a sentence in one voice. A real, priced request. */
+  sampleVoice(id: string, voice: string): Promise<VoiceSample>;
 }
 
 export class HttpEndpointSettingsService implements EndpointSettingsService {
@@ -117,6 +126,11 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
 
   listVoices(id: string, query: VoiceListQuery): Promise<VoiceListPage> {
     return this.http.post<VoiceListPage>("/endpoints/voices", { id, ...query });
+  }
+
+  async sampleVoice(id: string, voice: string): Promise<VoiceSample> {
+    const { blob, headers } = await this.http.postForFile("/endpoints/sample", { id, voice });
+    return { blob, duration: Number(headers.get("x-audio-duration")) || 0 };
   }
 }
 

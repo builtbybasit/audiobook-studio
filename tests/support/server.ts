@@ -53,6 +53,8 @@ export interface TestApiOptions {
   speech?: SpeechProvider;
   /** where the Voices tab's lists come from; the real lister, over the network, by default */
   voices?: VoiceLister;
+  /** what renders the Voices tab's samples; the real provider, over the network, by default */
+  samples?: SpeechProvider;
   /** where clips are written; a fresh temporary directory by default */
   audioDir?: string;
   /** where built audiobooks are written; a fresh temporary directory by default */
@@ -129,6 +131,7 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     scripting: options.scripting ?? fakeScriptingProvider(),
     speech: options.speech ?? fakeSpeechProvider(),
     ...(options.voices ? { voices: options.voices } : {}),
+    ...(options.samples ? { samples: options.samples } : {}),
   };
   const app = createApp(db, { log, runner, files, exports, providers });
 

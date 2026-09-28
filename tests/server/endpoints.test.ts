@@ -15,6 +15,7 @@ import type {
   Chapter,
   Character,
   Endpoint,
+  EndpointLive,
   ExportItem,
   ExpressionAnnotation,
   Profile,
@@ -25,6 +26,7 @@ import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { expressionParts, expressionPlan } from "@/lib/expressions";
 import { makeEndpoints } from "@/mock/fixtures/endpoints";
 import { makeProfiles } from "@/mock/fixtures/profiles";
+import { readEndpoint } from "~/db/endpoints";
 import { fakeSpeechProvider, SAMPLE_RATE } from "~/providers/fakeSpeech";
 import type { SpeechInput, SpeechProvider } from "~/providers/speech";
 import { readWavHeader } from "~/providers/wavEncoder";
@@ -196,6 +198,67 @@ describe("the endpoints' configuration", () => {
       expect(body.error.message).toBe(message);
     }
     expect(await read(api)).toEqual(before);
+  });
+});
+
+// ---- the speech gate, as the routes read and wake it ----
+
+describe("the speech gate behind the routes", () => {
+  /** The limits the narration job reads for a line: the endpoint as the table holds it now. */
+  const fromTable = (api: TestApi, id: string) => () => {
+    const e = readEndpoint(api.db, id);
+    return e && { concurrency: e.concurrency, enabled: e.enabled };
+  };
+  const settle = () => new Promise<void>((r) => setImmediate(r));
+  const live = async (api: TestApi) =>
+    (await api.request<{ endpoints: Record<string, EndpointLive> }>("/api/endpoints/live")).body;
+
+  test("GET /live answers what this process has seen of each endpoint, and nothing of the rest", async () => {
+    const api = testApi();
+    expect(await live(api)).toEqual({ endpoints: {} });
+
+    await save(api, { endpoints: [speech({ concurrency: 2 })] });
+    const signal = new AbortController().signal;
+    const release = await api.gate.acquire("studio", fromTable(api, "studio"), { signal });
+    api.gate.rateLimited("studio", 60_000);
+    const held = new AbortController();
+    const waiting = api.gate
+      .acquire("studio", fromTable(api, "studio"), { signal: held.signal })
+      .catch(() => "cancelled");
+    await settle();
+    const { endpoints } = await live(api);
+    expect(endpoints).toEqual({
+      studio: { active: 1, waiting: 1, rateLimits: 1, backoffUntil: expect.any(Number) },
+    });
+    expect(endpoints.studio.backoffUntil).toBeGreaterThan(Date.now());
+
+    held.abort();
+    expect(await waiting).toBe("cancelled");
+    release();
+    expect((await live(api)).endpoints.studio).toMatchObject({ active: 0, waiting: 0 });
+  });
+
+  test("a save that resumes a paused endpoint lets out the line it held, without waiting for the poll", async () => {
+    const api = testApi();
+    await save(api, { endpoints: [speech({ enabled: false })] });
+    let out = false;
+    const told: string[] = [];
+    const signal = new AbortController().signal;
+    const line = api.gate
+      .acquire("studio", fromTable(api, "studio"), { signal, waiting: (why) => told.push(why) })
+      .then((release) => {
+        out = true;
+        return release;
+      });
+    await settle();
+    expect(out).toBe(false);
+    expect(told).toEqual(["paused"]);
+
+    const { status } = await save(api, { endpoints: [speech({ enabled: true })] });
+    expect(status).toBe(200);
+    await settle();
+    expect(out).toBe(true);
+    (await line)();
   });
 });
 

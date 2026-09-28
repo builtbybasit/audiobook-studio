@@ -102,8 +102,10 @@ export function createSpeechGate(now: () => number = Date.now): SpeechGate {
   function wake(id: string, s: State): void {
     if (s.timer) clearTimeout(s.timer);
     s.timer = null;
-    const ms = s.backoffUntil - now();
-    if (ms <= 0) return;
+    const ms = Math.max(0, s.backoffUntil - now());
+    // Armed even when the end has just passed if a line is waiting: `pump` read the clock a moment
+    // ago and found the endpoint cooling, and a line left with no timer would wait for good.
+    if (ms === 0 && !s.queue.length) return;
     s.timer = setTimeout(() => {
       s.timer = null;
       pump(id);
@@ -154,7 +156,7 @@ export function createSpeechGate(now: () => number = Date.now): SpeechGate {
   }
 
   function pumpAll(): void {
-    for (const id of [...states.keys()]) pump(id);
+    for (const id of states.keys()) pump(id);
   }
 
   return {

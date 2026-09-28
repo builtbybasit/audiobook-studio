@@ -330,6 +330,60 @@ describe("what comes back", () => {
   });
 });
 
+describe("a rate limit, told to the line", () => {
+  /**
+   * What reached the wire and what the line was told, in the order they happened — the line is
+   * told before the wait, so the gate holds the other lines for the same stretch this one waits.
+   */
+  function timeline(...answers: (() => Response)[]) {
+    const events: string[] = [];
+    const f = scripted(
+      ...answers.map((answer) => () => {
+        events.push("sent");
+        return answer();
+      }),
+    );
+    return { ...f, events, rateLimited: (ms: number) => void events.push(`told ${ms}`) };
+  }
+
+  test("a 429 tells how long its Retry-After asks for, before the attempt after it", async () => {
+    const t = timeline(
+      () => new Response("slow down", { status: 429, headers: { "retry-after": "0.02" } }),
+      audio,
+    );
+    await provider(t.fetch).speak(line(fish, { rateLimited: t.rateLimited }));
+    expect(t.events).toEqual(["sent", "told 20", "sent"]);
+  });
+
+  test("a 429 with no Retry-After tells the endpoint's cooldown", async () => {
+    const t = timeline(() => new Response("slow down", { status: 429 }), audio);
+    await provider(t.fetch).speak(
+      line({ ...fish, cooldownSec: 0.02 }, { rateLimited: t.rateLimited }),
+    );
+    expect(t.events).toEqual(["sent", "told 20", "sent"]);
+  });
+
+  test("the last attempt's 429 is told too: the endpoint is limited whether or not this line waits", async () => {
+    const t = timeline(
+      () => new Response("slow down", { status: 429, headers: { "retry-after": "30" } }),
+    );
+    await expect(
+      provider(t.fetch).speak(line({ ...fish, maxRetries: 0 }, { rateLimited: t.rateLimited })),
+    ).rejects.toThrow("answered 429: slow down");
+    expect(t.events).toEqual(["sent", "told 30000"]);
+  });
+
+  test("a 500 is a fault, not a rate limit, and tells nothing", async () => {
+    const t = timeline(
+      () => new Response("upstream fell over", { status: 500, headers: { "retry-after": "0" } }),
+    );
+    await expect(
+      provider(t.fetch).speak(line(openai, { rateLimited: t.rateLimited })),
+    ).rejects.toThrow("answered 500");
+    expect(t.events).toEqual(["sent", "sent", "sent"]);
+  });
+});
+
 describe("refused before any request", () => {
   test("no key, no voice, or a voice whose endpoint is gone", async () => {
     const f = scripted(audio);

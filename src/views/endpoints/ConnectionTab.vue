@@ -25,14 +25,14 @@ import {
 import {
   KIND_LABEL,
   KIND_PATH,
-  TTS_PRESETS,
   endpointErrors,
   opsOf,
-  presetById,
+  presetsOf,
   relative,
   ttsRequestPath,
 } from "@/lib/endpoints";
 import { maybeMoney } from "@/lib/pricing";
+import { clone } from "@/lib/utils";
 import { encodingSummary } from "@/lib/audioFormat";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import {
@@ -150,13 +150,15 @@ function discard() {
 // ---------- presets ----------
 // A preset fills in what the provider pins down. The connection half (base URL, model, whether a
 // key is needed) goes into the draft so it is saved like any other provider change; the rest —
-// billing, limits, concurrency — is written straight onto the endpoint, the way the Pricing tab
-// writes it, because nothing stages those.
-const PRESET_OPTIONS = [
+// billing or token prices, limits, concurrency — is written straight onto the endpoint or profile,
+// the way the Pricing tab writes it, because nothing stages those.
+const presets = computed(() => presetsOf(props.u.kind));
+const PRESET_OPTIONS = computed(() => [
   { value: "", label: "Start from a preset…", hint: "leaves every field as it is" },
-  ...TTS_PRESETS.map((p) => ({ value: p.id, label: p.label, hint: p.hint })),
-];
+  ...presets.value.map((p) => ({ value: p.id, label: p.label, hint: p.hint })),
+]);
 const presetId = ref("");
+const presetById = (id: string) => presets.value.find((p) => p.id === id);
 /** Where a request actually goes. Fish Audio serves /tts, not the OpenAI-style /audio/speech, so
  *  this follows the draft and updates the moment a preset or a hand-typed base URL changes it. */
 const path = computed(() =>
@@ -168,13 +170,18 @@ function usePreset(id: string | number | null) {
   const preset = presetById(String(id ?? ""));
   presetId.value = preset?.id ?? "";
   if (!preset) return;
-  const { name, model, baseUrl, needsKey, ...rest } = preset.apply;
+  // a copy: a preset's billing or pricing object must not become the endpoint's own, or editing
+  // prices on one endpoint would change the preset and every endpoint made from it after
+  const { name, model, baseUrl, needsKey, ...rest } = clone(preset.apply);
   if (name !== undefined) draft.value.name = name;
   if (model !== undefined) draft.value.model = model;
   if (baseUrl !== undefined) draft.value.baseUrl = baseUrl;
   if (needsKey !== undefined) draft.value.needsKey = needsKey;
-  const endpoint = endpointsStore.endpoints.find((e) => e.id === props.u.id);
-  if (endpoint) Object.assign(endpoint, rest);
+  const target =
+    props.u.kind === "scripting"
+      ? endpointsStore.profiles.find((p) => p.id === props.u.id)
+      : endpointsStore.endpoints.find((e) => e.id === props.u.id);
+  if (target) Object.assign(target, rest);
   uiStore.toast(`${preset.label} defaults filled in`, {
     kind: "success",
     description: "Review the connection below, then Save. Nothing is dispatched until you do.",
@@ -219,7 +226,7 @@ function newCredential() {
       </p>
     </div>
 
-    <section v-if="u.kind === 'tts'" class="card p-3">
+    <section class="card p-3">
       <h3 class="label mb-2">Provider</h3>
       <div class="flex flex-wrap items-center gap-2">
         <UiSelect
@@ -230,7 +237,8 @@ function newCredential() {
           @update:model-value="usePreset"
         />
         <span class="text-[11px] text-zinc-500">
-          Fills in the base URL, model and billing. Every field stays editable.
+          Fills in the base URL, model and
+          {{ u.kind === "scripting" ? "token prices" : "billing" }}. Every field stays editable.
         </span>
       </div>
       <p v-if="presetNote" class="mt-2 text-[11px] leading-relaxed text-zinc-500">

@@ -544,7 +544,9 @@ export const useEndpointsStore = defineStore("endpoints", {
         backoffUntil: 0,
         fetching: false,
       };
-      this.endpoints.push(Object.assign(base, presetId ? presetById(presetId)?.apply : undefined));
+      const preset = presetId ? presetById(presetId) : undefined;
+      // a copy, so the preset's billing never becomes an object two endpoints share
+      this.endpoints.push(Object.assign(base, preset ? clone(preset.apply) : undefined));
       return this.endpoints[this.endpoints.length - 1];
     },
     removeEndpoint(id: string): void {

@@ -1,0 +1,104 @@
+// Provider presets: what "Start from a preset…" fills in on an endpoint's Connection tab.
+//
+// A preset is a starting point, so what these guard is that every one of them is a configuration
+// the app would accept as it stands — a scripting profile its queue can send a chapter to, with a
+// rate card the Pricing tab can read — and that applying one hands over a copy: a preset's billing
+// or pricing object that became an endpoint's own would be edited by the Pricing tab, and every
+// endpoint made from that preset afterwards would start from the edited rates.
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
+import { baseRates, effectiveRates, pricingProblems } from "@/lib/pricing";
+import { presetsOf, SCRIPTING_PRESETS, scriptingPresetById, TTS_PRESETS } from "@/lib/endpoints";
+import { newProfile, profileErrors } from "@/lib/scripting";
+import { clone } from "@/lib/utils";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { testPinia, type TestPinia } from "./support/pinia";
+
+const LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/)/;
+
+describe("scripting presets", () => {
+  test("each makes a profile the scripting queue accepts, with a rate card that reads", () => {
+    expect(SCRIPTING_PRESETS.length).toBeGreaterThan(0);
+    for (const preset of SCRIPTING_PRESETS) {
+      const profile = newProfile(clone(preset.apply));
+      // a local server's model is whatever you pulled, so that preset leaves it for you to type
+      const expected = preset.apply.model === "" ? ["Enter a model ID."] : [];
+      expect({ preset: preset.id, errors: profileErrors(profile) }).toEqual({
+        preset: preset.id,
+        errors: expected,
+      });
+      if (profile.pricing)
+        expect({ preset: preset.id, problems: pricingProblems(profile.pricing) }).toEqual({
+          preset: preset.id,
+          problems: [],
+        });
+    }
+  });
+
+  test("a hosted provider needs a key and is priced; a server of your own is neither", () => {
+    for (const { id, apply } of SCRIPTING_PRESETS) {
+      const local = LOCAL.test(apply.baseUrl ?? "");
+      expect({ id, needsKey: apply.needsKey }).toEqual({ id, needsKey: !local });
+      if (local)
+        expect({ id, in: apply.inPrice, out: apply.outPrice }).toEqual({ id, in: 0, out: 0 });
+    }
+  });
+
+  test("ids are unique, and each kind finds its own", () => {
+    const ids = SCRIPTING_PRESETS.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(presetsOf("scripting")).toBe(SCRIPTING_PRESETS);
+    expect(presetsOf("tts")).toBe(TTS_PRESETS);
+    expect(scriptingPresetById(ids[0])).toBe(SCRIPTING_PRESETS[0]);
+    expect(scriptingPresetById("fish-pro")).toBeUndefined();
+  });
+
+  test("a preset's base URL is the root /chat/completions is appended to", () => {
+    for (const { id, apply } of SCRIPTING_PRESETS)
+      expect({ id, url: apply.baseUrl }).not.toMatchObject({
+        url: expect.stringMatching(/chat\/completions/),
+      });
+  });
+});
+
+/** What `preset` charges per million input tokens, and per million output, at `at`. */
+function ratesAt(presetId: string, at: number): [number | null, number | null] {
+  const profile = newProfile(clone(scriptingPresetById(presetId)!.apply));
+  const { components } = effectiveRates(baseRates(profile), profile.pricing!, at);
+  return [components.input.rate, components.output.rate];
+}
+
+describe("a preset's rate card over time", () => {
+  test("DeepSeek is full price in its weekday peak hours (UTC), half price otherwise", () => {
+    // Tuesday 29 September 2026
+    expect(ratesAt("deepseek-flash", Date.UTC(2026, 8, 29, 2, 30))).toEqual([0.3, 1.2]);
+    expect(ratesAt("deepseek-flash", Date.UTC(2026, 8, 29, 8, 0))).toEqual([0.3, 1.2]);
+    expect(ratesAt("deepseek-flash", Date.UTC(2026, 8, 29, 5, 0))).toEqual([0.15, 0.6]);
+    expect(ratesAt("deepseek-flash", Date.UTC(2026, 8, 29, 12, 0))).toEqual([0.15, 0.6]);
+    // Saturday 3 October, inside what would be a peak hour on a weekday
+    expect(ratesAt("deepseek-flash", Date.UTC(2026, 9, 3, 2, 30))).toEqual([0.15, 0.6]);
+    expect(ratesAt("deepseek-pro", Date.UTC(2026, 8, 29, 2, 30))).toEqual([1.32, 3.96]);
+  });
+
+  test("Gemini 3.8 Flash is its 2026 price until the year ends, and double from 2027", () => {
+    expect(ratesAt("gemini-flash", Date.UTC(2026, 11, 31, 23, 0))).toEqual([0.75, 3.75]);
+    expect(ratesAt("gemini-flash", Date.UTC(2027, 0, 1, 1, 0))).toEqual([1.5, 7.5]);
+  });
+});
+
+describe("adding an endpoint from a preset", () => {
+  let pinia: TestPinia;
+  beforeEach(() => {
+    pinia = testPinia();
+  });
+  afterEach(() => pinia.stop());
+
+  test("hands over a copy, so editing its prices leaves the preset as published", () => {
+    const store = useEndpointsStore();
+    const before = clone(TTS_PRESETS.find((p) => p.id === "fish-pro")!.apply);
+    const ep = store.addEndpoint("fish-pro");
+    ep.billing!.rate = 99;
+    expect(TTS_PRESETS.find((p) => p.id === "fish-pro")!.apply).toEqual(before);
+    expect(store.addEndpoint("fish-pro").billing).toEqual({ unit: "bytes", rate: 15 });
+  });
+});

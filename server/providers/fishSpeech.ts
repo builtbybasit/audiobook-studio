@@ -24,7 +24,7 @@
 // spelling is explicit and a change to them is tracked as drift. Writing the free-text direction in
 // as another cue would put words into the text the person never configured — and read them aloud on
 // a model that spells cues differently.
-import type { AudioFormat } from "@/types";
+import type { AudioFormat, SpeechUsage } from "@/types";
 import { fishModelsUrl } from "@/lib/endpointShapes";
 import { audioAnswer, type AnsweredAudio, refuseEncoding } from "~/providers/answer";
 import type { CallOptions, CallStats } from "~/providers/http";
@@ -44,6 +44,15 @@ export interface SpeechRequest {
   text: string;
   /** exactly as it is in the body; empty when none was sent */
   instructions: string;
+  /**
+   * How a successful answer becomes audio, when it is not the audio itself — Gemini answers JSON
+   * carrying base64 audio and what it counted. `reported` is that count, for the ledger to price
+   * from; absent, the answer's body is the audio (`audioAnswer`) and nothing is reported.
+   */
+  read?(
+    res: Response,
+    signal: AbortSignal,
+  ): Promise<{ audio: AnsweredAudio; reported: SpeechUsage | null }>;
 }
 
 /**
@@ -53,8 +62,9 @@ export interface SpeechRequest {
  * A request that got an answer is reported: a success with the audio's length, a refusal after the
  * endpoint's retries with the status it last answered, and a 200 that was not usable audio as
  * failed, because the provider was asked and will bill for it. A cancel reports nothing, since what
- * the provider did with a request it was mid-way through is not knowable. Neither API says what a
- * line used, so `reported` is null and the ledger counts what was sent.
+ * the provider did with a request it was mid-way through is not knowable. Fish and OpenAI do not say
+ * what a line used, so `reported` is null and the ledger counts what was sent; a `read` that finds
+ * a count in the answer (Gemini's) reports it.
  */
 export async function sendSpeech(
   input: SpeechInput,
@@ -65,7 +75,10 @@ export async function sendSpeech(
   const { signal } = input;
   const stats: CallStats = { attempts: 0, rateLimited: false };
   const startedAt = Date.now();
-  const report = (rest: Pick<SentSpeech, "status" | "audioSeconds" | "error">): void =>
+  const report = (
+    rest: Pick<SentSpeech, "status" | "audioSeconds" | "error"> &
+      Partial<Pick<SentSpeech, "reported">>,
+  ): void =>
     input.sent?.({
       startedAt,
       finishedAt: Date.now(),
@@ -96,12 +109,14 @@ export async function sendSpeech(
     return failed(e);
   }
   let audio: AnsweredAudio;
+  let reported: SpeechUsage | null = null;
   try {
-    audio = await audioAnswer(target, res, signal, request.format);
+    if (request.read) ({ audio, reported } = await request.read(res, signal));
+    else audio = await audioAnswer(target, res, signal, request.format);
   } catch (e) {
     return failed(e);
   }
-  report({ status: "done", audioSeconds: audio.duration });
+  report({ status: "done", audioSeconds: audio.duration, reported });
   return audio;
 }
 

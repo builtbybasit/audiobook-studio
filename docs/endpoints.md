@@ -56,7 +56,9 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   focus, so the plot is a keyboard control too: focus it and `←`/`→` walk the buckets, `Enter` picks
   one, `Esc` clears, and the readout under the chart is a live region that announces each one.
 - **Connection** — starts with **Start from a preset…**, for both kinds: a speech provider
-  (Fish Audio, OpenAI, Gemini, a local server) or a scripting one, grouped by provider: OpenAI
+  (Fish Audio; OpenAI's gpt-4o-mini-tts, tts-1 and tts-1-hd; Gemini 3.8 Flash and Flash-Lite TTS
+  and the legacy 3.1; ElevenLabs Eleven v3, Multilingual v2 and Flash v2.5; an OpenAI-compatible
+  server — Kokoro or vLLM-Omni) or a scripting one, grouped by provider: OpenAI
   GPT-6 Luna, Sol and Astra; DeepSeek V4.1 Flash; Gemini 3.8 Flash and 3.1 Pro; Claude Opus 5.5,
   Sonnet 5 and Haiku 4.5 through Anthropic's OpenAI layer; xAI Grok 4.7 and 4.3; OpenRouter's
   most-used models that week (Claude Opus 5.5 and Fable 5.1, GPT-6 Astra and Sol, Grok 4.7,

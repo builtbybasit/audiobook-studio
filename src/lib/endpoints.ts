@@ -36,7 +36,9 @@ export {
   KIND_PATH,
   OPS_DEFAULTS,
   fishModelsUrl,
+  isElevenLabs,
   isFishAudio,
+  isGemini,
   ttsRequestPath,
   voicesFromFishModels,
   type FishModel,
@@ -137,6 +139,77 @@ export type TtsPreset = Preset<Endpoint>;
 export type ScriptingPreset = Preset<Profile>;
 
 /**
+ * OpenAI's first two speech models, still offered: billed per character of input, so a line's cost
+ * is exact rather than estimated, at up to 4,096 characters a request. They take no instructions,
+ * and speak 9 of the 13 voices `gpt-4o-mini-tts` does.
+ */
+function openaiTts1(model: string, label: string, hint: string, rate: number): TtsPreset {
+  return {
+    id: `openai-${model}`,
+    label,
+    hint,
+    note:
+      `$${rate} per million characters, each one counted, so a line's price is exact. It speaks ` +
+      "alloy, ash, coral, echo, fable, onyx, nova, sage and shimmer — not ballad, verse, marin or " +
+      "cedar, which Fetch also lists — and ignores a line's direction. " +
+      "Rates as published on 28 September 2026.",
+    apply: {
+      name: label,
+      baseUrl: "https://api.openai.com/v1",
+      model,
+      needsKey: true,
+      price: rate,
+      billing: { unit: "chars", rate },
+      maxChars: 4096,
+      splitAt: "sentence",
+      concurrency: 3,
+      latency: 1400,
+      failRate: 0.01,
+    },
+  };
+}
+
+/**
+ * An ElevenLabs model: billed per character of the text, at `rate` dollars per million — ElevenLabs
+ * prices per thousand — and up to `maxChars` a request, the model's own limit.
+ */
+function elevenLabs(
+  model: string,
+  label: string,
+  hint: string,
+  rate: number,
+  maxChars: number,
+): TtsPreset {
+  return {
+    id: `elevenlabs-${model}`,
+    label,
+    hint,
+    note:
+      `$${rate / 1000} per thousand characters, up to ${maxChars.toLocaleString("en")} a request. ` +
+      "A voice is a voice_id from your ElevenLabs account; Fetch lists them. WAV at 44.1 or " +
+      "48 kHz needs a Pro plan, and 192 kbps MP3 a Creator plan. " +
+      (model === "eleven_v3"
+        ? "Delivery goes in the text as audio tags such as [whispers] or [laughs], set up on the " +
+          "Expressions tab. "
+        : "") +
+      "Rates as published on 28 September 2026.",
+    apply: {
+      name: label,
+      baseUrl: "https://api.elevenlabs.io/v1",
+      model,
+      needsKey: true,
+      price: rate,
+      billing: { unit: "chars", rate },
+      maxChars,
+      splitAt: "sentence",
+      concurrency: 2,
+      latency: 1500,
+      failRate: 0.01,
+    },
+  };
+}
+
+/**
  * One of the Gemini 3.8 speech models, released on 22 September 2026. Billed like 3.1 — input text
  * tokens and output audio tokens, 25 audio tokens a second — at $1 in and `audioRate` out from
  * 2027; until then Google charges half, which a promotion holds so the card turns over by itself.
@@ -157,8 +230,8 @@ function gemini38Tts(
       `${about} $${audioRate / 2} per million output audio tokens and $0.50 per million input ` +
       `text tokens until the end of 2026, then $${audioRate} and $1: the card is the 2027 rate ` +
       "and a promotion on the Pricing tab holds the 2026 one until it ends. A request takes up " +
-      "to 8,192 input tokens. Narrating through Gemini needs a speech adapter the server does " +
-      "not have yet, so a run on this endpoint fails until it does. " +
+      "to 8,192 input tokens. A line's style and direction go beside it as its style rather " +
+      "than into the text, which 3.8 reads aloud word for word. " +
       "Rates as published on 28 September 2026.",
     apply: {
       name: label,
@@ -240,15 +313,21 @@ export const TTS_PRESETS: TtsPreset[] = [
   },
   {
     id: "openai",
-    label: "OpenAI",
-    hint: "gpt-4o-mini-tts",
+    label: "OpenAI · gpt-4o-mini-tts",
+    hint: "text tokens in, audio tokens out",
+    note:
+      "Billed $0.60 per million input text tokens and $12 per million output audio tokens. " +
+      "OpenAI does not publish how many audio tokens a second of speech is, and its speech " +
+      "endpoint reports no usage, so the audio half is worked out at this endpoint's " +
+      "tokens-per-second setting on the Pricing tab — an assumption, marked as one wherever it is " +
+      "used. Rates as published on 28 September 2026.",
     apply: {
-      name: "OpenAI",
+      name: "OpenAI · gpt-4o-mini-tts",
       baseUrl: "https://api.openai.com/v1",
       model: "gpt-4o-mini-tts",
       needsKey: true,
-      price: 12,
-      billing: { unit: "chars", rate: 12 },
+      price: 0,
+      billing: { unit: "audio-tokens", rate: 0.6, audioRate: 12 },
       maxChars: 4096,
       splitAt: "sentence",
       concurrency: 3,
@@ -256,6 +335,8 @@ export const TTS_PRESETS: TtsPreset[] = [
       failRate: 0.01,
     },
   },
+  openaiTts1("tts-1", "OpenAI · tts-1", "per character, the older fast model", 15),
+  openaiTts1("tts-1-hd", "OpenAI · tts-1-hd", "per character, the older quality model", 30),
   gemini38Tts(
     "gemini-3.8-flash-tts",
     "Gemini 3.8 Flash TTS",
@@ -304,14 +385,53 @@ export const TTS_PRESETS: TtsPreset[] = [
       failRate: 0.015,
     },
   },
+  elevenLabs(
+    "eleven_v3",
+    "ElevenLabs · Eleven v3",
+    "most expressive, takes [audio tags]",
+    80,
+    5000,
+  ),
+  elevenLabs(
+    "eleven_multilingual_v2",
+    "ElevenLabs · Multilingual v2",
+    "steady long-form narration",
+    80,
+    10000,
+  ),
+  elevenLabs("eleven_flash_v2_5", "ElevenLabs · Flash v2.5", "fast, half the price", 40, 40000),
   {
     id: "compatible",
-    label: "OpenAI-compatible server",
-    hint: "Kokoro-FastAPI, Orpheus, a Piper bridge",
+    label: "OpenAI-compatible server · Kokoro",
+    hint: "Kokoro-FastAPI on :8880; an Orpheus or Piper bridge too",
     apply: {
-      name: "Local server",
+      name: "Kokoro (local)",
       baseUrl: "http://127.0.0.1:8880/v1",
       model: "kokoro",
+      needsKey: false,
+      price: 0,
+      billing: { unit: "chars", rate: 0 },
+      maxChars: 500,
+      splitAt: "sentence",
+      concurrency: 2,
+      latency: 2600,
+      failRate: 0.025,
+    },
+  },
+  {
+    id: "vllm-omni",
+    label: "OpenAI-compatible server · vLLM-Omni",
+    hint: "open speech models on :8091 — Fish S2 Pro, Qwen3-TTS, Voxtral",
+    note:
+      "vLLM-Omni serves open speech models over OpenAI's /audio/speech, started with " +
+      "`vllm serve <repo> --omni --port 8091`. The model is the Hugging Face repo you served — " +
+      "fishaudio/s2-pro here; Qwen/Qwen3-TTS and mistralai/Voxtral-4B-TTS are others. Its " +
+      "sample rate is the model's own (44.1 kHz for Fish S2, 24 kHz for most), so leave the rate " +
+      "unset. Nothing is billed.",
+    apply: {
+      name: "vLLM-Omni (local)",
+      baseUrl: "http://127.0.0.1:8091/v1",
+      model: "fishaudio/s2-pro",
       needsKey: false,
       price: 0,
       billing: { unit: "chars", rate: 0 },

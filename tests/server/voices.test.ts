@@ -193,6 +193,64 @@ describe("a Fish public search", () => {
   });
 });
 
+describe("Gemini and ElevenLabs", () => {
+  test("Gemini's prebuilt voices are its guide's thirty, asked of nobody", async () => {
+    const { api: t, seen } = await api(
+      () => json({}),
+      speech({
+        id: "fish",
+        name: "Gemini 3.8 Flash TTS",
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+        model: "gemini-3.8-flash-tts",
+      }),
+    );
+    const { body } = await list(t, { source: "library" });
+    expect(seen).toEqual([]);
+    expect(body.voices).toHaveLength(30);
+    expect(body.voices[3]).toEqual({ id: "Kore", label: "Kore", gender: "?" });
+  });
+
+  test("an ElevenLabs account is read a page at a time with its own key header", async () => {
+    const { api: t, seen } = await api(
+      (url) =>
+        url.searchParams.get("next_page_token") === "p2"
+          ? json({
+              voices: [{ voice_id: "v3", name: "Callum", labels: { gender: "male" } }],
+              has_more: false,
+            })
+          : json({
+              voices: [
+                { voice_id: "v1", name: "Rachel", labels: { gender: "female" } },
+                { voice_id: "v2", name: "River", labels: {} },
+              ],
+              has_more: true,
+              next_page_token: "p2",
+            }),
+      speech({
+        id: "fish",
+        name: "ElevenLabs",
+        baseUrl: "https://api.elevenlabs.io/v1",
+        model: "eleven_v3",
+        apiKey: "xi-key",
+      }),
+    );
+    const { body } = await list(t, { source: "library" });
+    expect(seen.map((s) => s.url.origin + s.url.pathname)).toEqual([
+      "https://api.elevenlabs.io/v2/voices",
+      "https://api.elevenlabs.io/v2/voices",
+    ]);
+    expect(seen[0].url.searchParams.get("page_size")).toBe("100");
+    // the key rides in xi-api-key, never as a bearer token
+    expect(seen[0].auth).toBeNull();
+    expect(body.voices).toEqual([
+      { id: "v1", label: "Rachel", gender: "f" },
+      { id: "v2", label: "River", gender: "?" },
+      { id: "v3", label: "Callum", gender: "m" },
+    ]);
+    expect(body).toMatchObject({ total: 3, hasMore: false });
+  });
+});
+
 describe("listing refusals", () => {
   test("an endpoint that was never saved is a 404, and no request goes out", async () => {
     const { api: t, seen } = await api(() => json({ items: [] }));

@@ -1,9 +1,10 @@
 // The real speech provider: each line sent to the endpoint its voice belongs to.
 //
 // Which endpoint that is, and its key, the job has already decided and hands over as the line's
-// `target` — this module only picks the wire shape. Fish Audio's base URL gets Fish's own request
-// (`fishSpeech.ts`); every other base URL is taken to speak OpenAI's `/audio/speech`
-// (`openaiSpeech.ts`), which is what the compatible local servers copy. Both answer in the format
+// `target` — this module only picks the wire shape, from the base URL. Fish Audio's gets Fish's own
+// request (`fishSpeech.ts`), Google's Gemini API its `generateContent` (`geminiSpeech.ts`),
+// ElevenLabs' its own (`elevenLabsSpeech.ts`); every other base URL is taken to speak OpenAI's
+// `/audio/speech` (`openaiSpeech.ts`), which is what the compatible local servers copy. Both answer in the format
 // the endpoint asks for (`answer.ts`): a WAV rewritten under a plain header, its duration counted
 // from its samples (`wav.ts`), or an MP3 or Opus file kept as it came, its duration read from it.
 //
@@ -11,9 +12,11 @@
 // speaker with no voice, a voice whose endpoint has been deleted, an endpoint that needs a key and
 // has none. All three are refused before a request, so none of them costs anything, and none is
 // reported through `sent`: the ledger records requests that happened (`sent.ts`).
-import { isFishAudio } from "@/lib/endpointShapes";
+import { isElevenLabs, isFishAudio, isGemini } from "@/lib/endpointShapes";
 import { ProviderError, requireKey } from "~/providers/http";
+import { elevenLabsProbe, elevenLabsSpeak } from "~/providers/elevenLabsSpeech";
 import { fishProbe, fishSpeak, type SpeechCallOptions } from "~/providers/fishSpeech";
+import { geminiProbe, geminiSpeak } from "~/providers/geminiSpeech";
 import { openaiProbe, openaiSpeak } from "~/providers/openaiSpeech";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
@@ -43,9 +46,10 @@ export function endpointSpeechProvider(options: SpeechCallOptions = {}): SpeechP
           false,
         );
       requireKey(target);
-      return isFishAudio(target)
-        ? fishSpeak(input, target, voice, options)
-        : openaiSpeak(input, target, voice, options);
+      if (isFishAudio(target)) return fishSpeak(input, target, voice, options);
+      if (isGemini(target)) return geminiSpeak(input, target, voice, options);
+      if (isElevenLabs(target)) return elevenLabsSpeak(input, target, voice, options);
+      return openaiSpeak(input, target, voice, options);
     },
 
     async probe(target: ProviderTarget, signal: AbortSignal): Promise<ProbeResult> {
@@ -55,7 +59,14 @@ export function endpointSpeechProvider(options: SpeechCallOptions = {}): SpeechP
       try {
         requireKey(once);
         started = Date.now();
-        return await (isFishAudio(once) ? fishProbe : openaiProbe)(once, signal, options);
+        const probe = isFishAudio(once)
+          ? fishProbe
+          : isGemini(once)
+            ? geminiProbe
+            : isElevenLabs(once)
+              ? elevenLabsProbe
+              : openaiProbe;
+        return await probe(once, signal, options);
       } catch (e) {
         if (signal.aborted) throw signal.reason;
         return {

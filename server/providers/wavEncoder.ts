@@ -131,7 +131,7 @@ export function joinWav(files: Uint8Array[]): Uint8Array {
 }
 
 /** The 44 bytes that say what the samples after them are. */
-function wavHeader(f: WavFormat, samples: number): Uint8Array {
+export function wavHeader(f: WavFormat, samples: number): Uint8Array {
   const bytes = new Uint8Array(HEADER);
   const view = new DataView(bytes.buffer);
   const ascii = (at: number, s: string): void => {

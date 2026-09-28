@@ -60,8 +60,8 @@ describe("expressions placed in a line", () => {
   });
   afterEach(() => restore.forEach((f) => f()));
 
-  test("the main OpenAI model ships with tags, so a line read by it can be annotated at once", () => {
-    const ep = useEndpointsStore().endpoints.find((e) => e.id === "openai")!;
+  test("Fish's S2 model ships with tags, so a line read by it can be annotated at once", () => {
+    const ep = useEndpointsStore().endpoints.find((e) => e.id === "fish")!;
     expect(expressionSupport(ep)).toBe("supported");
     expect(ep.expressions?.tags.map((t) => t.id)).toEqual(EXPRESSION_TAGS.map((t) => t.id));
     expect(EXPRESSION_TAGS.some((t) => t.kind === "sound")).toBe(true);

@@ -139,10 +139,14 @@ scrubbing a chapter that isn't loaded parks the playhead without starting it.
 
 ## Model-specific expressions
 
-TTS endpoints have an **Expressions** tab for explicitly configuring supported names, exact bracket
+TTS endpoints have an **Expressions** tab for explicitly configuring supported names, exact tag
 syntax, and whether each tag is a vocal sound or delivery instruction. Support starts unknown and is
 bound to the configured model and base URL; changing either requires confirming support again.
-No provider capabilities are inferred from its name. Some fixtures explicitly seed illustrative support for testing; this does not verify that the named real model supports those tags.
+Which tags are named is the person's choice; the shape a tag must have is the provider's, from its
+docs ([src/lib/providers/](../src/lib/providers/)): square brackets for Fish S2, ElevenLabs v3 and
+most local servers, angle brackets for Gemini 3.8 (vocal sounds only — delivery goes in the style),
+parentheses for MiniMax's interjections and BreezeBlue's English tags, SSML-like tags for Cartesia,
+and none at all for OpenAI, Qwen and Gemini's older previews, where a tag would be read out as words. Some fixtures explicitly seed illustrative support for testing; this does not verify that the named real model supports those tags.
 
 Expanded script lines offer a searchable expression picker, placement controls,
 inline annotations, and an exact outgoing-text preview after pronunciation replacements. Annotations
@@ -172,7 +176,7 @@ joins in the editor and shows the same strip, with the quotes and chips kept; ho
 both halves as they would come out, and hovering a join shows the merged line and who would read
 it, inline rather than in a tooltip. ← → walk the gaps, Enter cuts or places, Esc leaves; `s` and
 `m` still split and join from the reader. When a model has no tags the button reads **Set up
-expressions for gpt-4o-mini-tts** and opens the configuration in place. The seeded OpenAI endpoint
+expressions for gpt-4o-mini-tts** and opens the configuration in place. The seeded Fish endpoint
 ships with a dozen illustrative tags (`EXPRESSION_TAGS` in [src/mock/fixtures/endpoints.ts](../src/mock/fixtures/endpoints.ts)), and the Demo tools
 row **Expressions placed in a line** opens the reader on a line that has some, one of which needs
 its position chosen again. [tests/reader.test.ts](../tests/reader.test.ts) covers the gaps and the row.

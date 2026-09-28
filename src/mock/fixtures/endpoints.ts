@@ -14,8 +14,9 @@ import {
 import type { Endpoint, ExpressionTag } from "@/types";
 
 /**
- * The expression tags the main OpenAI model is configured with, so a line read by it can carry
- * a vocal sound or a delivery note out of the box. Tags are per model: the other endpoints start
+ * The expression tags Fish's S2 model is configured with, so a line read by it can carry a vocal
+ * sound or a delivery note out of the box — S2 takes both as free-form cues in square brackets.
+ * OpenAI documents no tags, so its model takes none. Tags are per model: the other endpoints start
  * unconfigured, which is the state a new server is really in.
  */
 export const EXPRESSION_TAGS: ExpressionTag[] = [
@@ -93,12 +94,6 @@ export function makeEndpoints(now: number = Date.now()): Endpoint[] {
       needsKey: true,
       maxChars: 4096,
       splitAt: "sentence",
-      expressions: {
-        status: "supported",
-        model: "gpt-4o-mini-tts",
-        baseUrl: "https://api.openai.com/v1",
-        tags: EXPRESSION_TAGS.map((t) => ({ ...t })),
-      },
       voices: OPENAI_VOICES.map((v) => ({ ...v })),
       history: Array.from({ length: 30 }, (_, i) => ({
         t: Date.now() - (30 - i) * 60000,
@@ -145,6 +140,12 @@ export function makeEndpoints(now: number = Date.now()): Endpoint[] {
       needsKey: true,
       maxChars: 0,
       splitAt: "sentence",
+      expressions: {
+        status: "supported",
+        model: "s2.1-pro",
+        baseUrl: "https://api.fish.audio/v1",
+        tags: EXPRESSION_TAGS.map((t) => ({ ...t })),
+      },
       voices: FISH_VOICES.map((v) => ({ ...v })),
       history: Array.from({ length: 20 }, (_, i) => ({
         t: Date.now() - (20 - i) * 60000,

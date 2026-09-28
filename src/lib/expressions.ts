@@ -6,13 +6,28 @@ import type {
   LexEntry,
   Segment,
 } from "@/types";
+import { tagSyntaxOf, type TagSyntax } from "@/lib/providers";
 import { speak } from "@/lib/speech";
 import { splitText } from "@/lib/split";
 
 export const expressionId = (label: string) =>
   label.trim().toLocaleLowerCase().replace(/\s+/g, " ");
-export const validToken = (token: string) =>
-  /^\[[^\]\r\n[]{1,80}\]$/.test(token) && !!token.slice(1, -1).trim();
+/**
+ * Whether `token` is one whole tag in the syntax the endpoint's provider takes — square brackets
+ * for one, angle brackets or parentheses for another (`lib/providers/`). Nothing is a tag for a
+ * model that takes none: a bracketed word sent to it would be read out as a word.
+ */
+export const validToken = (token: string, syntax: TagSyntax | null) =>
+  !!syntax && syntax.forms.some((form) => form.test(token));
+const KIND_WORDS: Record<ExpressionTag["kind"], string> = {
+  sound: "vocal sounds",
+  delivery: "delivery instructions",
+};
+/** Why a tag of `kind` cannot be sent to a model with `syntax`; empty when it can. */
+const kindProblem = (kind: ExpressionTag["kind"], syntax: TagSyntax | null): string =>
+  !syntax || syntax.kinds.includes(kind)
+    ? ""
+    : `This model takes only ${syntax.kinds.map((k) => KIND_WORDS[k]).join(" and ")} inline; give the rest as the line's direction.`;
 export function expressionSupport(ep: Endpoint | null | undefined): ExpressionConfig["status"] {
   const c = ep?.expressions;
   return !ep || !c || c.model !== ep.model || c.baseUrl !== ep.baseUrl ? "unknown" : c.status;
@@ -33,10 +48,16 @@ export function configErrors(c: ExpressionConfig): string[] {
   )
     return ["Invalid expression configuration."];
   if (c.status !== "supported") return [];
+  // the syntax is the provider's, read from the base URL and model the config was saved for
+  const syntax = tagSyntaxOf({ baseUrl: String(c.baseUrl ?? ""), model: String(c.model ?? "") });
+  if (!syntax)
+    return ["This model takes no expression tags. Set it to “No expression tags” instead."];
   const errors: string[] = [];
   if (!c.tags.length) errors.push("Add at least one supported expression.");
-  if (c.tags.some((t) => !t.label.trim() || !t.id || !validToken(t.token)))
-    errors.push("Each expression needs a name and one complete tag, such as [laughter].");
+  if (c.tags.some((t) => !t.label.trim() || !t.id || !validToken(t.token, syntax)))
+    errors.push(`Each expression needs a name and one complete tag, such as ${syntax.example}.`);
+  const wrongKind = c.tags.map((t) => kindProblem(t.kind, syntax)).find(Boolean);
+  if (wrongKind) errors.push(wrongKind);
   if (
     new Set(c.tags.map((t) => expressionId(t.label))).size !== c.tags.length ||
     new Set(c.tags.map((t) => t.id)).size !== c.tags.length
@@ -82,6 +103,7 @@ export function expressionPlan(
     if (a.omitted) continue;
     const definition = ep?.expressions?.tags.find((t) => t.id === a.id && t.kind === a.kind);
     const status = expressionSupport(ep);
+    const syntax = ep ? tagSyntaxOf(ep) : null;
     let reason = a.needsReview
       ? "Text changed here; choose the position again."
       : !Number.isInteger(a.at) || a.at < 0 || a.at > s.text.length
@@ -97,9 +119,11 @@ export function expressionPlan(
               ? "Expression support has not been confirmed for this model."
               : status === "unsupported"
                 ? "This model is configured without expression support."
-                : !definition || !validToken(definition.token)
-                  ? "This expression is not in this model's supported list."
-                  : "";
+                : !syntax
+                  ? "This model takes no expression tags."
+                  : !definition || !validToken(definition.token, syntax)
+                    ? "This expression is not in this model's supported list."
+                    : kindProblem(definition.kind, syntax);
     if (!reason && spoken.hits.some((h) => a.at > h.from && a.at < h.to))
       reason = "Move outside this pronunciation replacement.";
     if (!reason && ep?.maxChars && definition!.token.length > ep.maxChars)

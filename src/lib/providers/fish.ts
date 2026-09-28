@@ -84,12 +84,13 @@ export const fish: SpeechProviderShape = {
   // under `voices`, WAV, MP3, M4A or Opus for a model — and FLAC, which the speech reference takes
   // as reference audio and a model upload has taken too.
   cloning: {
-    maxClips: 20,
-    maxClipBytes: 20 * 1024 * 1024,
+    maxSamples: 20,
+    maxSampleBytes: 20 * 1024 * 1024,
     formats: ["wav", "mp3", "m4a", "opus", "flac"],
     advice:
       "Fish recommends two or three clips of 15–20 seconds each, at least 10 seconds in all: " +
       "one speaker, a quiet room, an even tone. It transcribes them itself.",
     cost: null,
+    fee: null,
   },
 };

@@ -13,26 +13,25 @@ import { fish } from "@/lib/providers/fish";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { cloneFit, useSpeakerSamplesStore } from "@/stores/speakerSamples";
 import type { Endpoint, KeptSample, SpeakerSamples } from "@/types";
+import { formatsSaid, maxSamplesOf, sizeSaid } from "@/lib/voiceSamples";
 import {
   acceptOf,
   formatOfName,
-  formatsSaid,
   leftOutSaid,
   limitsSaid,
-  maxClipsOf,
   pickOf,
   pickProblem,
-  sizeSaid,
 } from "@/views/endpoints/cloneForm";
 
 const FISH = fish.cloning!;
 /** A provider that makes a voice from one file, of a couple of formats, and not a large one. */
 const ONE: CloneSupport = {
-  maxClips: 1,
-  maxClipBytes: 10 * 1024 * 1024,
+  maxSamples: 1,
+  maxSampleBytes: 10 * 1024 * 1024,
   formats: ["wav", "mp3"],
   advice: "Use one clean clip of 10 seconds to a minute.",
   cost: "Making a voice costs a one-off fee.",
+  fee: { usd: 3, when: "made", said: "$3 a voice" },
 };
 
 const file = (name: string, bytes = 8) => new File([new Uint8Array(bytes)], name);
@@ -58,8 +57,8 @@ describe("the picker and what it says", () => {
   });
 
   test("never takes more than the app keeps with a voice, whatever a provider says", () => {
-    expect(maxClipsOf({ ...FISH, maxClips: 50 })).toBe(20);
-    expect(maxClipsOf(ONE)).toBe(1);
+    expect(maxSamplesOf({ ...FISH, maxSamples: 50 })).toBe(20);
+    expect(maxSamplesOf(ONE)).toBe(1);
   });
 });
 
@@ -67,15 +66,15 @@ describe("a pick", () => {
   test("is cut to the most the provider makes a voice from, and the cut is said", () => {
     const files = Array.from({ length: 23 }, (_, i) => file(`take${i}.wav`));
     const twenty = pickOf(files, FISH);
-    expect(twenty.clips).toHaveLength(20);
+    expect(twenty.samples).toHaveLength(20);
     expect(twenty.leftOut).toBe(3);
     expect(leftOutSaid(twenty.leftOut, FISH)).toBe("Only the first 20 are used: 3 left out.");
 
     const one = pickOf(files.slice(0, 3), ONE);
-    expect(one.clips.map((f) => f.name)).toEqual(["take0.wav"]);
+    expect(one.samples.map((f) => f.name)).toEqual(["take0.wav"]);
     expect(leftOutSaid(one.leftOut, ONE)).toBe("Only one sample is used: 2 left out.");
 
-    expect(pickOf(files.slice(0, 2), FISH)).toEqual({ clips: files.slice(0, 2), leftOut: 0 });
+    expect(pickOf(files.slice(0, 2), FISH)).toEqual({ samples: files.slice(0, 2), leftOut: 0 });
   });
 
   test("a file larger than the provider takes stops it, by name", () => {

@@ -17,9 +17,10 @@ import { qwen } from "@/lib/providers/qwen";
 import type { CloneSupport, SpeechProviderShape, TagSyntax } from "@/lib/providers/types";
 
 export type {
+  CloneFee,
   CloneSupport,
   FormatSupport,
-  RecordingFormat,
+  SampleFormat,
   SpeechProviderId,
   SpeechProviderShape,
   TagSyntax,
@@ -41,9 +42,24 @@ export const SPEECH_PROVIDERS: readonly SpeechProviderShape[] = [
 export const speechProviderOf = (e: Pick<Endpoint, "baseUrl">): SpeechProviderShape =>
   SPEECH_PROVIDERS.find((p) => p.matches(e.baseUrl)) ?? compatible;
 
-/** How an endpoint's provider makes a voice from samples, or null when it cannot. */
-export const cloningOf = (e: Pick<Endpoint, "baseUrl">): CloneSupport | null =>
-  speechProviderOf(e).cloning;
+/**
+ * How an endpoint makes a voice from samples, or null when it cannot: its provider has no cloning,
+ * or clones only for other models than the endpoint's (`cloning.models`).
+ */
+export function cloningOf(e: Pick<Endpoint, "baseUrl" | "model">): CloneSupport | null {
+  const cloning = speechProviderOf(e).cloning;
+  if (!cloning?.models) return cloning;
+  return cloning.models.includes(e.model.trim()) ? cloning : null;
+}
+
+/**
+ * The models to switch the endpoint to for it to clone, when its provider clones only for others
+ * than the endpoint's; empty when it clones already, or its provider never does.
+ */
+export function cloneModelsFor(e: Pick<Endpoint, "baseUrl" | "model">): readonly string[] {
+  const cloning = speechProviderOf(e).cloning;
+  return cloning?.models && !cloningOf(e) ? cloning.models : [];
+}
 
 /** How an endpoint's model takes expression tags, or null when it takes none. */
 export const tagSyntaxOf = (e: Pick<Endpoint, "baseUrl" | "model">): TagSyntax | null =>

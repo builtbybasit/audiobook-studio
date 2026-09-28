@@ -8,7 +8,7 @@ import { mkdir, rm, rmdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { BOOK_ID } from "~/lib/http";
-import type { RecordingFormat } from "~/providers/clone";
+import type { SampleFormat } from "~/providers/clone";
 
 const FILE = /^[a-f0-9]{32}\.(wav|mp3|m4a|opus|flac)$/;
 
@@ -17,7 +17,7 @@ const hash = (data: Uint8Array): string =>
 
 export interface SpeakerSampleFiles {
   /** Keep one recording already sniffed as `format`, and say the name it is kept under. */
-  write(bookId: string, bytes: Uint8Array, format: RecordingFormat): Promise<string>;
+  write(bookId: string, bytes: Uint8Array, format: SampleFormat): Promise<string>;
   /** The path a request names, or null when it names something that cannot be a recording. */
   path(bookId: string, file: string): string | null;
   /** Remove these recordings of one book, and the directory once nothing is left in it. */

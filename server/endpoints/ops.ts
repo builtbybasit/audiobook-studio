@@ -7,7 +7,6 @@
 // endpoint and a scripting profile may share one — the seeded world's `openai` is both), two
 // voices or tags under one id on one endpoint, and an endpoint pointing at a credential that is
 // not in the registry being saved with it.
-import type { Voice } from "@/types";
 import type { Credential } from "@/lib/credentials";
 import { encodingOf, VOICE_SAMPLE } from "@/lib/endpointShapes";
 import type { Db } from "~/db/client";
@@ -20,7 +19,6 @@ import {
 } from "~/db/endpoints";
 import { reconcileClones } from "~/db/voiceSamples";
 import { AppError, badRequest, notFound } from "~/lib/errors";
-import { endpointVoiceCloner, type CloneRequest } from "~/providers/clone";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { ProviderError } from "~/providers/http";
 import type { RenderedClip } from "~/providers/speech";
@@ -231,32 +229,15 @@ export async function sampleVoice(
         settleSpeech(
           db,
           ep,
-          { bookId: null, chapterUid: null, label: `Voice sample · ${speaker}` },
+          {
+            bookId: null,
+            chapterUid: null,
+            label: `Voice sample · ${speaker}`,
+            voiceRef: `${ep.id}/${voiceId}`,
+          },
           request,
         ),
     });
-  } catch (e) {
-    throw e instanceof ProviderError ? providerFailure(e) : e;
-  }
-}
-
-/**
- * A voice made from recordings on a saved speech endpoint's provider, with its saved key, and
- * answered as a voice the page then adds to the endpoint. The cloner itself refuses, before any
- * request, an endpoint whose provider keeps no cloned voice (`canCloneVoices`) — a `400` here.
- */
-export async function cloneVoice(
-  db: Db,
-  providers: Providers,
-  id: string,
-  request: CloneRequest,
-  signal: AbortSignal,
-): Promise<Voice> {
-  const ep = readEndpoint(db, id);
-  if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
-  const cloner = providers.cloner ?? endpointVoiceCloner();
-  try {
-    return await cloner.clone(speechTarget(db, ep), request, signal);
   } catch (e) {
     throw e instanceof ProviderError ? providerFailure(e) : e;
   }

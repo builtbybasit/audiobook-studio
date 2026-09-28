@@ -19,7 +19,7 @@ import type {
 import { CLONE_CONSENT } from "@/lib/endpointShapes";
 import { clonedVoices } from "~/db/schema";
 import { sourceHash } from "~/script/transfer";
-import { keepClips } from "~/voices/ops";
+import { keepSampleFiles } from "~/voices/ops";
 import { voiceFiles } from "~/voices/files";
 import { epubFile, story } from "../support/epub";
 import { jsonBody, testApi } from "../support/server";
@@ -172,13 +172,13 @@ describe("voice samples", () => {
       method: "PUT",
     });
     const recordings = [wav("one"), wav("two")];
-    await keepClips(api.db, voiceFiles(api.voiceDir), {
+    await keepSampleFiles(api.db, voiceFiles(api.voiceDir), {
       endpointId: "fish",
       voiceId: "v1",
       title: "Mara (clone)",
       consentText: CLONE_CONSENT,
       attached: true,
-      clips: recordings.map((r, i) => ({
+      samples: recordings.map((r, i) => ({
         name: `take-${i + 1}.wav`,
         blob: new Blob([r]),
         format: "wav" as const,

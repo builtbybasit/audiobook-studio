@@ -134,9 +134,9 @@ export const cartesiaWire: SpeechWire = {
     form.set("name", request.title);
     form.set("language", "en");
     form.set("access", "private");
-    // one clip: the route holds a clone to `cloning.maxClips` before it gets here
-    const [clip] = request.clips;
-    form.set("clip", clip.blob, clip.name);
+    // one clip: the route holds a clone to `cloning.maxSamples` before it gets here
+    const [sample] = request.samples;
+    form.set("clip", sample.blob, sample.name);
     const res = await call(
       target,
       `${cartesiaRoot(target.baseUrl)}/voices/clone`,

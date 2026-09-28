@@ -41,10 +41,10 @@ export interface CloneFromSamples {
  */
 export function cloneFit(cloning: CloneSupport, samples: readonly KeptSample[]): number {
   const each = samples.every(
-    (s) => cloning.formats.includes(s.format) && s.bytes <= cloning.maxClipBytes,
+    (s) => cloning.formats.includes(s.format) && s.bytes <= cloning.maxSampleBytes,
   );
   if (!each) return 0;
-  return samples.length <= cloning.maxClips ? 2 : 1;
+  return samples.length <= cloning.maxSamples ? 2 : 1;
 }
 
 export const useSpeakerSamplesStore = defineStore("speakerSamples", {

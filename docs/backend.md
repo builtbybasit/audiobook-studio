@@ -1031,7 +1031,7 @@ its `cloning` ([lib/providers/types.ts](../src/lib/providers/types.ts)): the mos
 made from, the most one may be, the formats its docs take, its advice on samples, and what cloning
 costs. `canCloneVoices` is whether there is one. The route holds the form to it before anything is
 read whole: too many samples is a `400`, one over the provider's size (never above 20 MB, nor 100 MB
-in all) a `413`, and a sample is what its first bytes say (`sniffRecording`), never its name or the
+in all) a `413`, and a sample is what its first bytes say (`sniffSample`), never its name or the
 type the browser gave it — WAV, MP3, M4A, Ogg Opus or FLAC, of which the provider takes the ones
 its docs name; anything else, an Ogg Vorbis, AAC or WebM file among them, is a `415` naming the
 file. How the voice is made is the provider's wire module's `clone`

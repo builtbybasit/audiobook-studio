@@ -247,14 +247,7 @@ export const fishApiRoot = (baseUrl: string): string =>
  * voice on the account — whether its description has `cloning`. The Voices tab offers cloning only
  * where it does.
  */
-export const canCloneVoices = (e: Pick<Endpoint, "baseUrl">): boolean => !!cloningOf(e);
-
-/**
- * The most samples one voice is kept with, whatever its provider: Fish takes up to twenty, the
- * most of any. A provider that takes fewer says so in its `cloning.maxClips`, which the clone route
- * holds to; the kept samples of a voice are held to this.
- */
-export const MAX_CLONE_CLIPS = 20;
+export const canCloneVoices = (e: Pick<Endpoint, "baseUrl" | "model">): boolean => !!cloningOf(e);
 
 /**
  * What a person agrees to by ticking the box before a voice is made, or before its recordings are

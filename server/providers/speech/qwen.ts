@@ -139,9 +139,9 @@ export const qwenWire: SpeechWire = {
   async clone(target, request, signal, options) {
     const problem = uncloneableModel(target);
     if (problem) throw new ProviderError(problem, 0, false);
-    // one recording: the route holds a clone to `cloning.maxClips`, which is 1
-    const [clip] = request.clips;
-    const data = Buffer.from(await clip.blob.arrayBuffer()).toString("base64");
+    // one recording: the route holds a clone to `cloning.maxSamples`, which is 1
+    const [sample] = request.samples;
+    const data = Buffer.from(await sample.blob.arrayBuffer()).toString("base64");
     const res = await call(
       target,
       customizationUrl(target.baseUrl),
@@ -155,7 +155,7 @@ export const qwenWire: SpeechWire = {
             target_model: target.model,
             preferred_name: qwenPreferredName(request.title),
             // the blob is typed by its bytes: audio/wav, audio/mpeg or audio/mp4, as the docs list
-            audio: { data: `data:${clip.blob.type};base64,${data}` },
+            audio: { data: `data:${sample.blob.type};base64,${data}` },
             language: "en",
           },
         }),

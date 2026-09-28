@@ -14,20 +14,20 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 
 import type { ClonedVoice, Endpoint, KeptVoiceSamples, Voice } from "@/types";
-import { CLONE_CONSENT, MAX_CLONE_CLIPS } from "@/lib/endpointShapes";
+import { CLONE_CONSENT } from "@/lib/endpointShapes";
+import { MAX_SAMPLE_BYTES, MAX_VOICE_SAMPLES } from "@/lib/voiceSamples";
 import { SPEECH_PROVIDERS } from "@/lib/providers";
 import { clonedVoices } from "~/db/schema";
 import {
   endpointVoiceCloner,
-  sniffRecording,
+  sniffSample,
   type CloneRequest,
   type VoiceCloner,
   type VoiceClonerOptions,
 } from "~/providers/clone";
 import { SPEECH_WIRES } from "~/providers/speech/registry";
 import type { ProviderTarget } from "~/providers/target";
-import { MAX_CLIP_BYTES } from "~/routes/endpoints";
-import { keepClips } from "~/voices/ops";
+import { keepSampleFiles } from "~/voices/ops";
 import { voiceFiles, type VoiceFiles } from "~/voices/files";
 import { jsonBody, tempVoiceDir, testApi, type TestApi } from "../support/server";
 
@@ -100,9 +100,12 @@ describe("which providers clone", () => {
   test("no provider's limits reach past the server's own", () => {
     for (const p of SPEECH_PROVIDERS) {
       if (!p.cloning) continue;
-      const { maxClips, maxClipBytes, formats, advice } = p.cloning;
-      expect([p.id, maxClips >= 1 && maxClips <= MAX_CLONE_CLIPS]).toEqual([p.id, true]);
-      expect([p.id, maxClipBytes > 0 && maxClipBytes <= MAX_CLIP_BYTES]).toEqual([p.id, true]);
+      const { maxSamples, maxSampleBytes, formats, advice } = p.cloning;
+      expect([p.id, maxSamples >= 1 && maxSamples <= MAX_VOICE_SAMPLES]).toEqual([p.id, true]);
+      expect([p.id, maxSampleBytes > 0 && maxSampleBytes <= MAX_SAMPLE_BYTES]).toEqual([
+        p.id,
+        true,
+      ]);
       expect([p.id, formats.length > 0, advice.trim().length > 0]).toEqual([p.id, true, true]);
     }
   });
@@ -110,19 +113,19 @@ describe("which providers clone", () => {
 
 describe("what counts as a recording", () => {
   test("the formats Fish documents are known by their first bytes", () => {
-    expect(sniffRecording(HEADS.wav)).toBe("wav");
-    expect(sniffRecording(HEADS.mp3Tagged)).toBe("mp3");
-    expect(sniffRecording(HEADS.mp3Frame)).toBe("mp3");
-    expect(sniffRecording(HEADS.m4a)).toBe("m4a");
-    expect(sniffRecording(HEADS.m4aAndroid)).toBe("m4a");
-    expect(sniffRecording(HEADS.opus)).toBe("opus");
-    expect(sniffRecording(HEADS.flac)).toBe("flac");
+    expect(sniffSample(HEADS.wav)).toBe("wav");
+    expect(sniffSample(HEADS.mp3Tagged)).toBe("mp3");
+    expect(sniffSample(HEADS.mp3Frame)).toBe("mp3");
+    expect(sniffSample(HEADS.m4a)).toBe("m4a");
+    expect(sniffSample(HEADS.m4aAndroid)).toBe("m4a");
+    expect(sniffSample(HEADS.opus)).toBe("opus");
+    expect(sniffSample(HEADS.flac)).toBe("flac");
   });
 
   test("audio Fish does not document, a picture in an MP4 box, and text are none of them", () => {
     for (const head of [HEADS.vorbis, HEADS.aac, HEADS.webm, HEADS.heic, HEADS.text])
-      expect(sniffRecording(head)).toBeNull();
-    expect(sniffRecording(new Uint8Array())).toBeNull();
+      expect(sniffSample(head)).toBeNull();
+    expect(sniffSample(new Uint8Array())).toBeNull();
   });
 });
 
@@ -150,10 +153,10 @@ async function saved(api: TestApi, ep: Endpoint): Promise<void> {
   expect(status).toBe(200);
 }
 
-function form(fields: Record<string, string>, clips: File[]): FormData {
+function form(fields: Record<string, string>, samples: File[]): FormData {
   const f = new FormData();
   for (const [k, v] of Object.entries(fields)) f.set(k, v);
-  for (const c of clips) f.append("clips", c, c.name);
+  for (const c of samples) f.append("samples", c, c.name);
   return f;
 }
 
@@ -187,11 +190,11 @@ describe("the clone route", () => {
     expect(asked).toHaveLength(1);
     expect(asked[0].title).toBe("Narrator — Mara");
     // the files as sent, typed by what their bytes say
-    expect(asked[0].clips.map((c) => [c.name, c.blob.size, c.blob.type])).toEqual([
+    expect(asked[0].samples.map((c) => [c.name, c.blob.size, c.blob.type])).toEqual([
       ["a.wav", 1024, "audio/wav"],
       ["b.mp3", 2048, "audio/mpeg"],
     ]);
-    expect(new Uint8Array(await asked[0].clips[1].blob.arrayBuffer()).subarray(0, 2)).toEqual(
+    expect(new Uint8Array(await asked[0].samples[1].blob.arrayBuffer()).subarray(0, 2)).toEqual(
       new Uint8Array([0xff, 0xfb]),
     );
   });
@@ -206,7 +209,7 @@ describe("the clone route", () => {
       id: "fish",
       voice: "new-voice-id",
       title: "Mara",
-      clips: 1,
+      samples: 1,
       consent: true,
     });
   });
@@ -215,8 +218,8 @@ describe("the clone route", () => {
     const { cloner, asked } = remembering();
     const api = testApi({ cloner });
     await saved(api, fishEndpoint());
-    const refused = async (fields: Record<string, string>, clips: File[]) => {
-      const { status, body } = await post(api, form(fields, clips));
+    const refused = async (fields: Record<string, string>, samples: File[]) => {
+      const { status, body } = await post(api, form(fields, samples));
       return [status, body.error?.message];
     };
     // consent is the person's say-so, and nothing goes without it
@@ -256,7 +259,7 @@ describe("the clone route", () => {
       ]),
     );
     expect(accepted.status).toBe(201);
-    expect(asked[0].clips.map((c) => c.blob.type)).toEqual([
+    expect(asked[0].samples.map((c) => c.blob.type)).toEqual([
       "audio/mp4",
       "audio/ogg",
       "audio/flac",
@@ -317,7 +320,7 @@ function fishAnswering(
 describe("the Fish Audio cloner", () => {
   const request: CloneRequest = {
     title: "Mara",
-    clips: [
+    samples: [
       {
         name: "a.wav",
         format: "wav",
@@ -545,7 +548,7 @@ describe("the recordings a voice was made from", () => {
     expect([status, body.samplesKept]).toEqual([201, false]);
     expect(asked).toHaveLength(1);
     expect((await samplesOf(api)).status).toBe(404);
-    expect(api.logs.some((l) => l.msg === "cloned, but the recordings were not kept")).toBe(true);
+    expect(api.logs.some((l) => l.msg === "cloned, but the samples were not kept")).toBe(true);
   });
 
   test("outlast a removal the page can still undo, and go with the voice once it is final", async () => {
@@ -595,14 +598,14 @@ describe("the recordings a voice was made from", () => {
         return real.write(...args);
       },
     });
-    const keep = (files: VoiceFiles, clips: File[]) =>
-      keepClips(api.db, files, {
+    const keep = (files: VoiceFiles, samples: File[]) =>
+      keepSampleFiles(api.db, files, {
         endpointId: "fish",
         voiceId: "v",
         title: "Mara",
         consentText: CLONE_CONSENT,
         attached: true,
-        clips: clips.map((c) => ({ name: c.name, blob: c, format: "wav" as const })),
+        samples: samples.map((c) => ({ name: c.name, blob: c, format: "wav" as const })),
       });
     const a = clip("a.wav", HEADS.wav, "audio/wav", 1500);
     const b = clip("b.wav", HEADS.wav, "audio/wav", 1600);
@@ -623,10 +626,10 @@ describe("the recordings a voice was made from", () => {
     const api = testApi();
     const old: Voice = { id: "old-voice", label: "Old Tomas", gender: "m" };
     await saved(api, fishEndpoint({ voices: [old] }));
-    const keep = (fields: Record<string, string>, clips: File[], voice = "old-voice") =>
+    const keep = (fields: Record<string, string>, samples: File[], voice = "old-voice") =>
       api.request<KeptVoiceSamples & { error?: { message: string } }>(
         `/api/endpoints/fish/voices/${voice}/samples`,
-        { method: "POST", body: form(fields, clips) },
+        { method: "POST", body: form(fields, samples) },
       );
 
     expect((await keep({}, [clip()])).body.error?.message).toBe(

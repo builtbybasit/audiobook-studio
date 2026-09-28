@@ -70,14 +70,15 @@ export const elevenlabs: SpeechProviderShape = {
   // Starter plan or above (https://elevenlabs.io/docs/overview/administration/billing) and spends no
   // credits that the docs name, but a voice takes one of the plan's custom voice slots.
   cloning: {
-    maxClips: 20,
-    maxClipBytes: 10 * 1024 * 1024,
+    maxSamples: 20,
+    maxSampleBytes: 10 * 1024 * 1024,
     formats: ["mp3", "wav", "m4a", "flac"],
     advice:
       "ElevenLabs recommends 1–2 minutes of audio in all, and no more than 3 — how many clips does " +
       "not matter: one speaker, no background noise or reverb, an even tone and volume. It advises " +
       "MP3 at 128 kbps or more; WAV usually makes no better a clone.",
     cost: "Needs a Starter plan or above, and each voice takes one of the plan's custom voice slots.",
+    fee: null,
   },
   models: ["eleven_v3", "eleven_multilingual_v2", "eleven_flash_v2_5", "eleven_turbo_v2_5"],
 };

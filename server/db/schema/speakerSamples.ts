@@ -12,7 +12,7 @@
 // so removing the book removes them from disk too.
 import { foreignKey, index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-import type { RecordingFormat } from "~/providers/clone";
+import type { SampleFormat } from "~/providers/clone";
 import { characters } from "~/db/schema/cast";
 
 /** One voice's recordings, waiting with one speaker of one book. */
@@ -61,7 +61,7 @@ export const speakerSampleFiles = sqliteTable(
     /** the name the recording had in the script file */
     name: text("name").notNull(),
     /** what the bytes say they are, which is what they are served as */
-    format: text("format").$type<RecordingFormat>().notNull(),
+    format: text("format").$type<SampleFormat>().notNull(),
     bytes: integer("bytes").notNull(),
     position: integer("position").notNull().default(0),
   },

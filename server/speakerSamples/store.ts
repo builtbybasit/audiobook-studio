@@ -20,7 +20,7 @@ import { speakerSampleFiles as filesTable, speakerSamples } from "~/db/schema";
 import { GRACE_MS } from "~/db/voiceSamples";
 import { inBackground } from "~/lib/background";
 import { fail, notFound } from "~/lib/errors";
-import type { RecordingFormat } from "~/providers/clone";
+import type { SampleFormat } from "~/providers/clone";
 import { readScriptFile, type ReadFile, type ScriptUpload } from "~/script/importPlan";
 import { speakerSampleFiles, type SpeakerSampleFiles } from "~/speakerSamples/files";
 import {
@@ -108,7 +108,7 @@ export interface WaitingVoice {
   consentText: string;
   samples: {
     name: string;
-    format: RecordingFormat;
+    format: SampleFormat;
     bytes: number;
     read(): Promise<Uint8Array>;
   }[];
@@ -394,7 +394,7 @@ export function sampleFile(
   bookId: string,
   id: number,
   file: string,
-): { path: string; format: RecordingFormat } {
+): { path: string; format: SampleFormat } {
   const row = rowOf(db, bookId, id);
   const kept = row && row.discardedAt == null ? filesOf(db, id).find((f) => f.file === file) : null;
   const path = kept ? files.path(bookId, file) : null;

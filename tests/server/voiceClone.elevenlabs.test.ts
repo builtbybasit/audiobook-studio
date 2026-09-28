@@ -38,10 +38,10 @@ const clip = (
   return new File([body], name, { type });
 };
 
-function form(fields: Record<string, string>, clips: File[]): FormData {
+function form(fields: Record<string, string>, samples: File[]): FormData {
   const f = new FormData();
   for (const [k, v] of Object.entries(fields)) f.set(k, v);
-  for (const c of clips) f.append("clips", c, c.name);
+  for (const c of samples) f.append("samples", c, c.name);
   return f;
 }
 
@@ -122,7 +122,7 @@ const signal = () => new AbortController().signal;
 
 const request: CloneRequest = {
   title: "Mara",
-  clips: [
+  samples: [
     {
       name: "a.wav",
       format: "wav",
@@ -174,12 +174,13 @@ describe("the ElevenLabs cloner", () => {
     ]);
   });
 
-  test("a voice ElevenLabs must verify first is kept, and named so it says so", async () => {
+  test("a voice ElevenLabs must verify first is kept, and says so beside its name", async () => {
     const f = answering(() => Response.json({ voice_id: "v1", requires_verification: true }));
     expect(await f.cloner.clone(target(), request, signal())).toEqual({
       id: "v1",
-      label: "Mara (verify it on ElevenLabs first)",
+      label: "Mara",
       gender: "?",
+      warning: "Verify this voice on ElevenLabs before a line is spoken with it.",
     });
   });
 
@@ -241,7 +242,7 @@ describe("the ElevenLabs cloner", () => {
 // ---------- BreezeBlue ----------
 
 describe("the BreezeBlue cloner", () => {
-  const one: CloneRequest = { title: "Mara", clips: [request.clips[0]] };
+  const one: CloneRequest = { title: "Mara", samples: [request.samples[0]] };
   const previewed = () =>
     Response.json({ generated_voice_id: "gvi_01hpreview", requires_verification: false });
   const savedVoice = () =>
@@ -339,11 +340,11 @@ describe("the BreezeBlue cloner", () => {
 describe("what each provider takes, through the route", () => {
   const agreed = { title: "Mara", consent: "yes" };
 
-  async function cloning(ep: Endpoint, clips: File[], answer: (n: number) => Response) {
+  async function cloning(ep: Endpoint, samples: File[], answer: (n: number) => Response) {
     const f = answering(answer);
     const api = testApi({ cloner: f.cloner });
     await saved(api, ep);
-    const { status, body } = await post(api, form({ ...agreed, id: ep.id }, clips));
+    const { status, body } = await post(api, form({ ...agreed, id: ep.id }, samples));
     return { status, message: body.error?.message ?? "", body, sent: f.sent };
   }
   const made = () => Response.json({ voice_id: "v1", requires_verification: false });
@@ -381,7 +382,10 @@ describe("what each provider takes, through the route", () => {
       [clip("long.mp3", HEADS.mp3Frame, "audio/mpeg", 10 * 1024 * 1024 + 1)],
       made,
     );
-    expect([big.status, big.message]).toEqual([413, "long.mp3 is larger than 10 MB"]);
+    expect([big.status, big.message]).toEqual([
+      413,
+      "long.mp3 is larger than 10 MB, the most this provider takes for one sample",
+    ]);
     expect(big.sent).toEqual([]);
   });
 
@@ -407,7 +411,10 @@ describe("what each provider takes, through the route", () => {
       [clip("long.wav", HEADS.wav, "audio/wav", 5 * 1024 * 1024 + 1)],
       made,
     );
-    expect([big.status, big.message]).toEqual([413, "long.wav is larger than 5 MB"]);
+    expect([big.status, big.message]).toEqual([
+      413,
+      "long.wav is larger than 5 MB, the most this provider takes for one sample",
+    ]);
     for (const refused of [two, m4a, big]) expect(refused.sent).toEqual([]);
 
     const ok = await cloning(ep, [clip("take.mp3", HEADS.mp3Frame, "audio/mpeg")], (n) =>

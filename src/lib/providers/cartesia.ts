@@ -54,13 +54,14 @@ export const cartesia: SpeechProviderShape = {
   // pricing page (https://cartesia.ai/pricing, read 2026-09-28) charges no credits for an instant
   // clone but leaves it off the Free plan: it starts with Pro, $5 a month.
   cloning: {
-    maxClips: 1,
-    maxClipBytes: 16 * 1024 * 1024,
+    maxSamples: 1,
+    maxSampleBytes: 16 * 1024 * 1024,
     formats: ["wav", "mp3", "flac", "opus"],
     advice:
       "Cartesia makes a voice from one clip: 10 seconds is enough, and up to 60 keeps more of the " +
       "accent. One speaker, no background noise, spoken naturally in the mood the voice should have.",
     cost: "No credits per voice, but instant cloning needs Cartesia's Pro plan or above.",
+    fee: null,
   },
   models: ["sonic-3.6", "sonic-3.5", "sonic-3", "sonic-latest"],
 };

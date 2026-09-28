@@ -201,18 +201,18 @@ async function miniMaxClone(
   signal: AbortSignal,
   options: SpeechCallOptions,
 ): Promise<Voice> {
-  // the route holds a clone to `cloning.maxClips`, which is 1; this is its guard, not the rule
-  const [clip] = request.clips;
-  if (!clip || request.clips.length > 1)
+  // the route holds a clone to `cloning.maxSamples`, which is 1; this is its guard, not the rule
+  const [sample] = request.samples;
+  if (!sample || request.samples.length > 1)
     throw new ProviderError(`${target.name} makes a voice from exactly one sample`, 0, false);
   const root = miniMaxRoot(target.baseUrl);
   const check = checkOf(target);
 
-  const uploading = `Uploading ${clip.name} to ${target.name} failed`;
+  const uploading = `Uploading ${sample.name} to ${target.name} failed`;
   const fileId = await step(uploading, async () => {
     const form = new FormData();
     form.set("purpose", "voice_clone");
-    form.set("file", clip.blob, clip.name);
+    form.set("file", sample.blob, sample.name);
     const res = await call(
       target,
       `${root}/files/upload`,
@@ -227,7 +227,7 @@ async function miniMaxClone(
   });
 
   const voiceId = miniMaxVoiceId(request.title);
-  await step(`${clip.name} was uploaded, but making the voice from it failed`, async () => {
+  await step(`${sample.name} was uploaded, but making the voice from it failed`, async () => {
     const res = await call(
       target,
       `${root}/voice_clone`,

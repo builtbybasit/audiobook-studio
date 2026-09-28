@@ -391,6 +391,7 @@ export function narrationHandler(provider: SpeechProvider, files: AudioFiles): J
           bookId: job.bookId,
           label: `${slot === "candidate" ? (t.queued.auto ? "Replacement" : "Retake") : "Line"} ${s.id} · ${s.speaker}`,
           queuedAt: job.queuedAt,
+          ...(who.voiceRef ? { voiceRef: who.voiceRef } : {}),
         };
         const settle = (sent: SentSpeech): void => {
           const priced = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;

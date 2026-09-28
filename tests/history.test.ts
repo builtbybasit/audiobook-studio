@@ -9,7 +9,7 @@ import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useTransferStore } from "@/stores/transfer";
 import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
-import type { LibraryService } from "@/services/library";
+import { ApiError, type LibraryService } from "@/services/library";
 import { useUiStore } from "@/stores/ui";
 // Chapter script history: the versions a chapter's script has been through, and restoring one.
 //
@@ -813,6 +813,10 @@ describe("voice samples a script file carries", () => {
   // from memory and writes down what it was asked.
   const calls: string[] = [];
   let held: SpeakerSamples[] = [];
+  /** what the next store says it put aside: the rows the same speakers already had */
+  let replacing: number[] = [];
+  /** the server has already lost these rows — gone with a speaker, say */
+  let lost: number[] = [];
   const waiting = (id: number, speaker: string): SpeakerSamples => ({
     id,
     speaker,
@@ -825,10 +829,11 @@ describe("voice samples a script file carries", () => {
   const server = {
     storeSpeakerSamples: async (_book: string, _file: File, speakers: string[]) => {
       calls.push(`store ${speakers.join(",")}`);
-      return speakers.map((s, i) => waiting(i + 1, s));
+      return { stored: speakers.map((s, i) => waiting(i + 1, s)), replaced: replacing };
     },
     discardSpeakerSamples: async (_book: string, id: number) => {
       calls.push(`discard ${id}`);
+      if (lost.includes(id)) throw new ApiError("There are no recordings waiting by that id", 404);
     },
     restoreSpeakerSamples: async (_book: string, id: number) => {
       calls.push(`restore ${id}`);
@@ -842,6 +847,8 @@ describe("voice samples a script file carries", () => {
   beforeEach(() => {
     calls.length = 0;
     held = [];
+    replacing = [];
+    lost = [];
     samplesStore._service = () => server;
   });
   const row = (speaker: string, match: VoiceRow["match"]): VoiceRow => ({
@@ -858,6 +865,63 @@ describe("voice samples a script file carries", () => {
       consentAt: "2026-09-12T10:00:00Z",
       consentText: "This is my voice.",
     },
+  });
+
+  /** A plan whose one chapter changes and whose voice rows carry samples; the file held to apply. */
+  const planWithSamples = (voices: (speaker: string) => VoiceRow[]) => {
+    const chapter = segments(1).map((x, i) => ({ ...x, id: i + 1 }));
+    chapter.find((x) => x.type === "narration")!.direction = "slowly";
+    const speaker = chapter.find((x) => x.type === "dialogue")!.speaker;
+    const title = libraryStore.chapter("cliche", 1)!.title;
+    transferStore.plans.cliche = {
+      title: "The Cliche",
+      author: "",
+      name: "The Cliche.script.zip",
+      chapters: [{ chapterId: 1, title, fileTitle: title, file: "c/1.json", segments: chapter }],
+      refused: [],
+      ignored: [],
+      cast: { add: [], differ: [], aliases: [] },
+      lexicon: { add: [], differ: [] },
+      voices: voices(speaker),
+    };
+    transferStore._hold("cliche", new File(["zip"], "The Cliche.script.zip"));
+    return speaker;
+  };
+
+  test("an import's samples replace what the speaker had waiting, and its Undo brings that back", async () => {
+    const speaker = planWithSamples((sp) => [row(sp, { kind: "private" })]);
+    held = [waiting(9, speaker)];
+    samplesStore.waiting.cliche = [...held];
+    replacing = [9];
+
+    transferStore.apply("cliche", [1]);
+    await settle();
+    expect(samplesStore.waitingOf("cliche").map((x) => x.id)).toEqual([1]);
+
+    undoLast();
+    await settle();
+    // what the import kept goes aside before what it replaced comes back
+    expect(calls).toEqual([`store ${speaker}`, "discard 1", "restore 9"]);
+    expect(samplesStore.waitingOf("cliche").map((x) => x.id)).toEqual([9]);
+  });
+
+  test("a row the server already lost is not a failure when the import is undone", async () => {
+    const errors: string[] = [];
+    uiStore.toast = (msg, opts = {}) => {
+      if (opts.undo) undos.push(opts.undo);
+      if (opts.kind === "error") errors.push(msg);
+      return "test";
+    };
+    const speaker = planWithSamples((sp) => [row(sp, { kind: "private" })]);
+    lost = [1];
+
+    transferStore.apply("cliche", [1]);
+    await settle();
+    undoLast();
+    await settle();
+    expect(calls).toEqual([`store ${speaker}`, "discard 1"]);
+    expect(errors).toEqual([]);
+    expect(samplesStore.waitingOf("cliche")).toEqual([]);
   });
 
   test("they wait with a speaker whose voice is private, and the import's Undo lets them go", async () => {

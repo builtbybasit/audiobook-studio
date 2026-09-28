@@ -10,7 +10,12 @@
 import { defineStore } from "pinia";
 import type { RouteLocationRaw } from "vue-router";
 import { canCloneVoices } from "@/lib/endpointShapes";
-import { activeLibraryService, ApiError, type LibraryService } from "@/services/library";
+import {
+  activeLibraryService,
+  ApiError,
+  type LibraryService,
+  type StoredSamples,
+} from "@/services/library";
 import type { Endpoint, SpeakerSamples, VoiceRef } from "@/types";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
@@ -60,7 +65,7 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
             tab: "voices",
             book: bookId,
             samples: String(sample.id),
-            speaker: sample.speaker,
+            // no speaker: the row names them, and follows a rename the address would not
             was: was ?? "",
           },
         };
@@ -100,21 +105,25 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
     },
     /**
      * Keep the recordings `file` carries for these speakers. What an applied import calls; its Undo
-     * calls `_drop` with what this answered.
+     * hands what this answered to `_unstore`.
      */
-    async _store(bookId: string, file: File, speakers: string[]): Promise<SpeakerSamples[]> {
+    async _store(bookId: string, file: File, speakers: string[]): Promise<StoredSamples> {
       const svc = this._service();
-      if (!svc || !speakers.length) return [];
+      if (!svc || !speakers.length) return { stored: [], replaced: [] };
       try {
-        const stored = await svc.storeSpeakerSamples(bookId, file, speakers);
-        for (const s of stored) this._put(bookId, s);
-        return stored;
+        const done = await svc.storeSpeakerSamples(bookId, file, speakers);
+        this._take(bookId, done.replaced);
+        for (const s of done.stored) this._put(bookId, s);
+        return done;
       } catch (cause) {
         this._failed("keep the file's voice samples", cause);
-        return [];
+        return { stored: [], replaced: [] };
       }
     },
-    /** Put these aside without a word — the Undo of the import that kept them. */
+    /**
+     * Put these aside without a word. A row the server no longer has — gone with a speaker the same
+     * Undo removed, say — is already where this was taking it, so a 404 is done, not a failure.
+     */
     async _drop(bookId: string, ids: number[]): Promise<void> {
       const svc = this._service();
       this._take(bookId, ids);
@@ -122,10 +131,32 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
       await Promise.all(
         ids.map((id) =>
           svc.discardSpeakerSamples(bookId, id).catch((cause) => {
+            if (cause instanceof ApiError && cause.status === 404) return;
             this._failed("put the voice samples aside", cause);
           }),
         ),
       );
+    },
+    /** Bring rows put aside back, without a word unless one could not be. */
+    async _restore(bookId: string, ids: number[]): Promise<void> {
+      const svc = this._service();
+      if (!svc) return;
+      await Promise.all(
+        ids.map((id) =>
+          svc.restoreSpeakerSamples(bookId, id).then(
+            (back) => this._put(bookId, back),
+            (cause) => this._failed("bring the voice samples back", cause),
+          ),
+        ),
+      );
+    },
+    /** The Undo of `_store`: what it kept goes aside first, then what it replaced comes back. */
+    async _unstore(bookId: string, done: StoredSamples): Promise<void> {
+      await this._drop(
+        bookId,
+        done.stored.map((x) => x.id),
+      );
+      await this._restore(bookId, done.replaced);
     },
     /**
      * Discard a speaker's waiting recordings. The server hides them at once and keeps them a day,

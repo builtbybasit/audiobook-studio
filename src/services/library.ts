@@ -233,7 +233,11 @@ export interface LibraryService {
    * Keep the recordings `file` carries for these speakers, to wait with them until someone clones
    * them. The server reads them from the file again; answers with what it kept.
    */
-  storeSpeakerSamples(bookId: string, file: File, speakers: string[]): Promise<SpeakerSamples[]>;
+  /**
+   * Keep what `file` carries for these speakers. `replaced` names the rows those speakers already
+   * had, which the server put aside rather than deleting, so the import's Undo can bring them back.
+   */
+  storeSpeakerSamples(bookId: string, file: File, speakers: string[]): Promise<StoredSamples>;
   speakerSamples(bookId: string): Promise<SpeakerSamples[]>;
   /** One kept recording, as a file the clone form can send on. */
   speakerSampleFile(bookId: string, sampleId: number, sample: KeptSample): Promise<File>;
@@ -241,6 +245,12 @@ export interface LibraryService {
   discardSpeakerSamples(bookId: string, sampleId: number): Promise<void>;
   /** Bring back recordings put aside, while the server still holds them. */
   restoreSpeakerSamples(bookId: string, sampleId: number): Promise<SpeakerSamples>;
+}
+
+/** What keeping an import's voice samples did: the rows it made, and the ones it put aside. */
+export interface StoredSamples {
+  stored: SpeakerSamples[];
+  replaced: number[];
 }
 
 export class HttpLibraryService implements LibraryService {
@@ -449,16 +459,15 @@ export class HttpLibraryService implements LibraryService {
     bookId: string,
     file: File,
     speakers: string[],
-  ): Promise<SpeakerSamples[]> {
+  ): Promise<StoredSamples> {
     const form = new FormData();
     form.set("file", file);
     form.set("speakers", JSON.stringify(speakers));
-    return (
-      await this.http.postFormData<{ stored: SpeakerSamples[] }>(
-        `/books/${seg(bookId)}/speaker-samples`,
-        form,
-      )
-    ).stored;
+    const { stored, replaced } = await this.http.postFormData<{
+      stored: SpeakerSamples[];
+      replaced?: number[];
+    }>(`/books/${seg(bookId)}/speaker-samples`, form);
+    return { stored, replaced: replaced ?? [] };
   }
 
   async speakerSamples(bookId: string): Promise<SpeakerSamples[]> {

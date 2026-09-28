@@ -53,11 +53,36 @@ export const isGemini = (e: Pick<Endpoint, "baseUrl">): boolean =>
 export const isElevenLabs = (e: Pick<Endpoint, "baseUrl">): boolean =>
   /(^|\/\/)([a-z0-9-]+\.)*elevenlabs\.io(\/|:|$)/i.test(e.baseUrl);
 
+/** BreezeBlue's hosted API, which copies ElevenLabs' shape and adds an `instructions` field. */
+export const isBreezeBlue = (e: Pick<Endpoint, "baseUrl">): boolean =>
+  /(^|\/\/)([a-z0-9-]+\.)*breeze\.blue(\/|:|$)/i.test(e.baseUrl);
+
+/** Either API that takes the voice in the path of `/text-to-speech/{voice_id}`. */
+export const isElevenLabsShaped = (e: Pick<Endpoint, "baseUrl">): boolean =>
+  isElevenLabs(e) || isBreezeBlue(e);
+
+/** MiniMax: `POST /v1/t2a_v2`, answered with JSON carrying the audio as hex. */
+export const isMiniMax = (e: Pick<Endpoint, "baseUrl">): boolean =>
+  /(^|\/\/)([a-z0-9-]+\.)*minimax\.(io|chat|cn)(\/|:|$)/i.test(e.baseUrl);
+
+/** Cartesia: `POST /tts/bytes` at the host root, with a `Cartesia-Version` header. */
+export const isCartesia = (e: Pick<Endpoint, "baseUrl">): boolean =>
+  /(^|\/\/)([a-z0-9-]+\.)*cartesia\.ai(\/|:|$)/i.test(e.baseUrl);
+
+/** Alibaba's Model Studio (DashScope), by its long-standing host or a workspace's own. */
+export const isQwen = (e: Pick<Endpoint, "baseUrl">): boolean =>
+  /(^|\/\/)(dashscope[a-z-]*\.aliyuncs\.com|[a-z0-9-]+\.[a-z0-9-]+\.maas\.aliyuncs\.com)(\/|:|$)/i.test(
+    e.baseUrl,
+  );
+
 /** The path a line is sent to, after the base URL — worth showing, since every provider differs. */
 export function ttsRequestPath(e: Pick<Endpoint, "baseUrl"> & { model?: string }): string {
   if (isFishAudio(e)) return "/tts";
   if (isGemini(e)) return `/models/${e.model || "<model>"}:generateContent`;
-  if (isElevenLabs(e)) return "/text-to-speech/<voice>";
+  if (isElevenLabsShaped(e)) return "/text-to-speech/<voice>";
+  if (isMiniMax(e)) return "/t2a_v2";
+  if (isCartesia(e)) return "/tts/bytes";
+  if (isQwen(e)) return "/services/audio/tts/SpeechSynthesizer";
   return KIND_PATH.tts;
 }
 
@@ -201,11 +226,105 @@ const ELEVENLABS_FORMATS: readonly FormatSupport[] = [
   },
 ];
 
+/**
+ * BreezeBlue's `output_format` (https://docs.breezeblue.ai): the same `<format>_<rate>[_<kbps>]` as
+ * ElevenLabs, WAV as 16-bit mono at any of its rates, 24 kHz being the model's own. Its MP3 is
+ * offered at 44.1 kHz and 128 kbps, the combination its docs show; its Opus is left out until its
+ * container is known to be Ogg.
+ */
+const BREEZE_FORMATS: readonly FormatSupport[] = [
+  {
+    format: "wav",
+    label: "WAV · 16-bit PCM, mono",
+    rates: [16000, 22050, 24000, 32000, 44100, 48000],
+    defaultRate: 24000,
+    bitrates: [],
+    defaultBitrate: null,
+  },
+  {
+    format: "mp3",
+    label: "MP3 · mono",
+    rates: [44100],
+    defaultRate: 44100,
+    bitrates: [{ value: 128, label: "128 kbps" }],
+    defaultBitrate: 128,
+  },
+];
+
+/**
+ * MiniMax's `audio_setting` (https://platform.minimax.io/docs/api-reference/speech-t2a-http): a
+ * rate up to 44.1 kHz — it has no 48 — and for an MP3 a bitrate, in bits a second on the wire.
+ * Its Ogg Opus is left out until its rates are known. What this app asks for when no rate is set
+ * is 32 kHz, the rate MiniMax's own example uses.
+ */
+const MINIMAX_RATES = [16000, 22050, 24000, 32000, 44100] as const;
+const MINIMAX_FORMATS: readonly FormatSupport[] = [
+  {
+    format: "wav",
+    label: "WAV · 16-bit PCM, mono",
+    rates: MINIMAX_RATES,
+    defaultRate: 32000,
+    bitrates: [],
+    defaultBitrate: null,
+  },
+  {
+    format: "mp3",
+    label: "MP3 · mono",
+    rates: MINIMAX_RATES,
+    defaultRate: 32000,
+    bitrates: [32, 64, 128, 256].map((value) => ({ value, label: `${value} kbps` })),
+    defaultBitrate: 128,
+  },
+];
+
+/**
+ * Cartesia's `output_format` (https://docs.cartesia.ai/api-reference/tts/bytes): WAV as 16-bit PCM
+ * at any of its rates, 44.1 kHz when none is set (the rate its own example uses); MP3 offered at
+ * 44.1 kHz and 64 to 192 kbps. It has no Opus.
+ */
+const CARTESIA_FORMATS: readonly FormatSupport[] = [
+  {
+    format: "wav",
+    label: "WAV · 16-bit PCM, mono",
+    rates: [16000, 22050, 24000, 44100, 48000],
+    defaultRate: 44100,
+    bitrates: [],
+    defaultBitrate: null,
+  },
+  {
+    format: "mp3",
+    label: "MP3 · mono",
+    rates: [44100],
+    defaultRate: 44100,
+    bitrates: [64, 128, 192].map((value) => ({ value, label: `${value} kbps` })),
+    defaultBitrate: 128,
+  },
+];
+
+/**
+ * Qwen-Audio 3.0 through Model Studio: WAV at 24 kHz, the combination Alibaba's own example asks
+ * for. Its MP3 and other rates are left out until they have been tried against these models.
+ */
+const QWEN_FORMATS: readonly FormatSupport[] = [
+  {
+    format: "wav",
+    label: "WAV · 16-bit PCM, mono",
+    rates: [24000],
+    defaultRate: 24000,
+    bitrates: [],
+    defaultBitrate: null,
+  },
+];
+
 /** The formats a speech endpoint can be asked for, by the API its base URL speaks. */
 export function speechFormats(e: Pick<Endpoint, "baseUrl">): readonly FormatSupport[] {
   if (isFishAudio(e)) return FISH_FORMATS;
   if (isGemini(e)) return GEMINI_FORMATS;
   if (isElevenLabs(e)) return ELEVENLABS_FORMATS;
+  if (isBreezeBlue(e)) return BREEZE_FORMATS;
+  if (isMiniMax(e)) return MINIMAX_FORMATS;
+  if (isCartesia(e)) return CARTESIA_FORMATS;
+  if (isQwen(e)) return QWEN_FORMATS;
   return OPENAI_FORMATS;
 }
 

@@ -251,6 +251,85 @@ describe("Gemini and ElevenLabs", () => {
   });
 });
 
+describe("BreezeBlue, MiniMax, Cartesia and Qwen", () => {
+  const at = (baseUrl: string, model: string) =>
+    speech({ id: "fish", name: "Voices", baseUrl, model, apiKey: "k" });
+
+  test("BreezeBlue pages through GET /v1/voices, its gender a field of its own", async () => {
+    const { api: t, seen } = await api(
+      (url) =>
+        url.searchParams.get("next_page_token") === "n2"
+          ? json({ voices: [{ voice_id: "b2", name: "Ben", gender: "male" }], has_more: false })
+          : json({
+              voices: [{ voice_id: "b1", name: "Ada", gender: "female" }],
+              has_more: true,
+              next_page_token: "n2",
+            }),
+      at("https://api.breeze.blue/v1", "breeze-tts-2"),
+    );
+    const { body } = await list(t, { source: "library" });
+    expect(seen.map((s) => s.url.pathname)).toEqual(["/v1/voices", "/v1/voices"]);
+    expect(body.voices).toEqual([
+      { id: "b1", label: "Ada", gender: "f" },
+      { id: "b2", label: "Ben", gender: "m" },
+    ]);
+  });
+
+  test("MiniMax lists its own voices and those made on the key, in one request", async () => {
+    const { api: t, seen } = await api(
+      () =>
+        json({
+          system_voice: [
+            { voice_id: "English_expressive_narrator", voice_name: "Expressive Narrator" },
+          ],
+          voice_cloning: [{ voice_id: "my-clone" }],
+          voice_generation: [],
+          base_resp: { status_code: 0 },
+        }),
+      at("https://api.minimax.io/v1", "speech-2.8-hd"),
+    );
+    const { body } = await list(t, { source: "library" });
+    expect(seen.map((s) => s.url.pathname)).toEqual(["/v1/get_voice"]);
+    expect(body.voices).toEqual([
+      { id: "English_expressive_narrator", label: "Expressive Narrator", gender: "?" },
+      { id: "my-clone", label: "my-clone", gender: "?" },
+    ]);
+  });
+
+  test("Cartesia pages after the last voice, and reads its three genders", async () => {
+    const { api: t, seen } = await api(
+      (url) =>
+        url.searchParams.get("starting_after") === "c2"
+          ? json({ data: [{ id: "c3", name: "Sam", gender: "gender_neutral" }], has_more: false })
+          : json({
+              data: [
+                { id: "c1", name: "Katie", gender: "feminine" },
+                { id: "c2", name: "Blake", gender: "masculine" },
+              ],
+              has_more: true,
+            }),
+      at("https://api.cartesia.ai", "sonic-3.6"),
+    );
+    const { body } = await list(t, { source: "library" });
+    expect(seen.map((s) => s.url.searchParams.get("starting_after"))).toEqual([null, "c2"]);
+    expect(body.voices.map((v) => [v.id, v.gender])).toEqual([
+      ["c1", "f"],
+      ["c2", "m"],
+      ["c3", "n"],
+    ]);
+  });
+
+  test("Qwen's are each model's own system voices, asked of nobody", async () => {
+    const { api: t, seen } = await api(
+      () => json({}),
+      at("https://dashscope-intl.aliyuncs.com/api/v1", "qwen-audio-3.0-tts-plus"),
+    );
+    const { body } = await list(t, { source: "library" });
+    expect(seen).toEqual([]);
+    expect(body.voices.map((v) => v.id)).toEqual(["longanlingxin", "longanlufeng"]);
+  });
+});
+
 describe("listing refusals", () => {
   test("an endpoint that was never saved is a 404, and no request goes out", async () => {
     const { api: t, seen } = await api(() => json({ items: [] }));

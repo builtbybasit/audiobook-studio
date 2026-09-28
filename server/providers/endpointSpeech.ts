@@ -3,7 +3,8 @@
 // Which endpoint that is, and its key, the job has already decided and hands over as the line's
 // `target` — this module only picks the wire shape, from the base URL. Fish Audio's gets Fish's own
 // request (`fishSpeech.ts`), Google's Gemini API its `generateContent` (`geminiSpeech.ts`),
-// ElevenLabs' its own (`elevenLabsSpeech.ts`); every other base URL is taken to speak OpenAI's
+// ElevenLabs' and BreezeBlue's theirs (`elevenLabsSpeech.ts`), MiniMax, Cartesia
+// and Alibaba's Qwen their own (`miniMaxSpeech.ts`, `cartesiaSpeech.ts`, `qwenSpeech.ts`); every other base URL is taken to speak OpenAI's
 // `/audio/speech` (`openaiSpeech.ts`), which is what the compatible local servers copy. Both answer in the format
 // the endpoint asks for (`answer.ts`): a WAV rewritten under a plain header, its duration counted
 // from its samples (`wav.ts`), or an MP3 or Opus file kept as it came, its duration read from it.
@@ -12,12 +13,22 @@
 // speaker with no voice, a voice whose endpoint has been deleted, an endpoint that needs a key and
 // has none. All three are refused before a request, so none of them costs anything, and none is
 // reported through `sent`: the ledger records requests that happened (`sent.ts`).
-import { isElevenLabs, isFishAudio, isGemini } from "@/lib/endpointShapes";
+import {
+  isCartesia,
+  isElevenLabsShaped,
+  isFishAudio,
+  isGemini,
+  isMiniMax,
+  isQwen,
+} from "@/lib/endpointShapes";
 import { ProviderError, requireKey } from "~/providers/http";
+import { cartesiaProbe, cartesiaSpeak } from "~/providers/cartesiaSpeech";
 import { elevenLabsProbe, elevenLabsSpeak } from "~/providers/elevenLabsSpeech";
 import { fishProbe, fishSpeak, type SpeechCallOptions } from "~/providers/fishSpeech";
 import { geminiProbe, geminiSpeak } from "~/providers/geminiSpeech";
+import { miniMaxProbe, miniMaxSpeak } from "~/providers/miniMaxSpeech";
 import { openaiProbe, openaiSpeak } from "~/providers/openaiSpeech";
+import { qwenProbe, qwenSpeak } from "~/providers/qwenSpeech";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
 
@@ -48,7 +59,10 @@ export function endpointSpeechProvider(options: SpeechCallOptions = {}): SpeechP
       requireKey(target);
       if (isFishAudio(target)) return fishSpeak(input, target, voice, options);
       if (isGemini(target)) return geminiSpeak(input, target, voice, options);
-      if (isElevenLabs(target)) return elevenLabsSpeak(input, target, voice, options);
+      if (isElevenLabsShaped(target)) return elevenLabsSpeak(input, target, voice, options);
+      if (isMiniMax(target)) return miniMaxSpeak(input, target, voice, options);
+      if (isCartesia(target)) return cartesiaSpeak(input, target, voice, options);
+      if (isQwen(target)) return qwenSpeak(input, target, voice, options);
       return openaiSpeak(input, target, voice, options);
     },
 
@@ -63,9 +77,15 @@ export function endpointSpeechProvider(options: SpeechCallOptions = {}): SpeechP
           ? fishProbe
           : isGemini(once)
             ? geminiProbe
-            : isElevenLabs(once)
+            : isElevenLabsShaped(once)
               ? elevenLabsProbe
-              : openaiProbe;
+              : isMiniMax(once)
+                ? miniMaxProbe
+                : isCartesia(once)
+                  ? cartesiaProbe
+                  : isQwen(once)
+                    ? qwenProbe
+                    : openaiProbe;
         return await probe(once, signal, options);
       } catch (e) {
         if (signal.aborted) throw signal.reason;

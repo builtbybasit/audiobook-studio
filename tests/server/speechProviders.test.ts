@@ -323,3 +323,241 @@ describe("the Test button", () => {
     expect(result.message).toContain("“eleven_multilingual_v2” is not among the 2");
   });
 });
+
+// ---------- BreezeBlue, MiniMax, Cartesia and Qwen ----------
+
+const breeze: ProviderTarget = {
+  ...eleven,
+  id: "breeze",
+  name: "Breeze TTS 2",
+  baseUrl: "https://api.breeze.blue/v1",
+  model: "breeze-tts-2",
+  apiKey: "brz-key",
+};
+const minimax: ProviderTarget = {
+  ...gemini,
+  id: "minimax",
+  name: "MiniMax",
+  baseUrl: "https://api.minimax.io/v1",
+  model: "speech-2.8-hd",
+  apiKey: "mm-key",
+};
+const cartesia: ProviderTarget = {
+  ...gemini,
+  id: "cartesia",
+  name: "Cartesia",
+  baseUrl: "https://api.cartesia.ai",
+  model: "sonic-3.6",
+  apiKey: "sk_car_key",
+};
+const qwen: ProviderTarget = {
+  ...gemini,
+  id: "qwen",
+  name: "Qwen-Audio 3.0 TTS Flash",
+  baseUrl: "https://dashscope-intl.aliyuncs.com/api/v1",
+  model: "qwen-audio-3.0-tts-flash",
+  apiKey: "sk-qwen",
+};
+
+const wavResponse = (bytes: Uint8Array) =>
+  new Response(bytes, { headers: { "content-type": "audio/wav" } });
+
+describe("which API the newer base URLs speak", () => {
+  test("each is known by its host and shows its own request line", () => {
+    expect(ttsRequestPath(breeze)).toBe("/text-to-speech/<voice>");
+    expect(ttsRequestPath(minimax)).toBe("/t2a_v2");
+    expect(ttsRequestPath(cartesia)).toBe("/tts/bytes");
+    expect(ttsRequestPath(qwen)).toBe("/services/audio/tts/SpeechSynthesizer");
+    // a workspace's own Model Studio host is Qwen too
+    expect(
+      ttsRequestPath({ baseUrl: "https://ws123.ap-southeast-1.maas.aliyuncs.com/api/v1" }),
+    ).toBe("/services/audio/tts/SpeechSynthesizer");
+  });
+
+  test("each offers only what it has been asked for", () => {
+    expect(
+      encodingProblems({ ...minimax, encoding: { format: "wav" }, sampleRate: 48000 }),
+    ).toHaveLength(1);
+    expect(
+      encodingProblems({
+        ...minimax,
+        encoding: { format: "mp3", bitrate: 256 },
+        sampleRate: 44100,
+      }),
+    ).toEqual([]);
+    expect(encodingProblems({ ...cartesia, encoding: { format: "opus" } })).toHaveLength(1);
+    expect(
+      encodingProblems({ ...qwen, encoding: { format: "wav" }, sampleRate: 16000 }),
+    ).toHaveLength(1);
+    expect(encodingProblems({ ...breeze, encoding: { format: "wav" }, sampleRate: 48000 })).toEqual(
+      [],
+    );
+  });
+});
+
+describe("BreezeBlue", () => {
+  test("is asked as ElevenLabs is, with the line's instructions beside the words", async () => {
+    const f = scripted(() => wavResponse(wav(24000, 2400)));
+    const r = reports();
+    await provider(f.fetch).speak(
+      line(breeze, { voiceRef: "breeze/voc_xeh3w54cqvnp", instructions: "Softly.", sent: r.sent }),
+    );
+    expect(f.sent[0].url).toBe(
+      "https://api.breeze.blue/v1/text-to-speech/voc_xeh3w54cqvnp?output_format=wav_24000",
+    );
+    expect(headersOf(f.sent[0].init).get("xi-api-key")).toBe("brz-key");
+    expect(f.body()).toEqual({
+      text: "Come in.",
+      model_id: "breeze-tts-2",
+      instructions: "Softly.",
+    });
+    expect(r.got[0].instructions).toBe("Softly.");
+  });
+
+  test("its Test button accepts a model list wrapped in `models`", async () => {
+    const f = scripted(() => Response.json({ models: [{ model_id: "breeze-tts-2" }] }));
+    const result = await provider(f.fetch).probe!(breeze, new AbortController().signal);
+    expect(f.sent[0].url).toBe("https://api.breeze.blue/v1/models");
+    expect(result).toMatchObject({ ok: true });
+  });
+});
+
+describe("MiniMax", () => {
+  const answer = (bytes: Uint8Array, extra: Record<string, unknown> = {}) =>
+    Response.json({
+      data: { audio: Buffer.from(bytes).toString("hex"), status: 2 },
+      extra_info: { usage_characters: 8, audio_format: "wav" },
+      base_resp: { status_code: 0, status_msg: "success" },
+      ...extra,
+    });
+
+  test("is sent the model, words, voice and format its docs give, and its hex comes back as audio", async () => {
+    const f = scripted(() => answer(wav(32000, 16000)));
+    const r = reports();
+    const clip = await provider(f.fetch).speak(
+      line(minimax, { voiceRef: "minimax/English_expressive_narrator", sent: r.sent }),
+    );
+    expect(f.sent[0].url).toBe("https://api.minimax.io/v1/t2a_v2");
+    expect(headersOf(f.sent[0].init).get("authorization")).toBe("Bearer mm-key");
+    expect(f.body()).toEqual({
+      model: "speech-2.8-hd",
+      text: "Come in.",
+      stream: false,
+      output_format: "hex",
+      voice_setting: { voice_id: "English_expressive_narrator" },
+      audio_setting: { sample_rate: 32000, format: "wav", channel: 1 },
+    });
+    expect(clip.duration).toBeCloseTo(0.5);
+    expect(r.got[0].reported).toMatchObject({ chars: 8 });
+  });
+
+  test("an MP3's bitrate is sent in bits a second", async () => {
+    const mp3 = silentMp3(38, { kbps: 128 });
+    const f = scripted(() => answer(mp3));
+    await provider(f.fetch).speak(
+      line(minimax, { sampleRate: 44100, encoding: { format: "mp3", bitrate: 128 } }),
+    );
+    expect(f.body().audio_setting).toEqual({
+      sample_rate: 44100,
+      format: "mp3",
+      channel: 1,
+      bitrate: 128000,
+    });
+  });
+
+  test("a refusal inside a 200 is a failure that says so, and a rate limit is marked retryable", async () => {
+    const refused = (code: number, msg: string) => () =>
+      Response.json({ data: null, base_resp: { status_code: code, status_msg: msg } });
+    const r = reports();
+    await expect(
+      provider(scripted(refused(1004, "auth failed")).fetch).speak(line(minimax, { sent: r.sent })),
+    ).rejects.toMatchObject({
+      message: "MiniMax refused the request (1004: auth failed)",
+      retryable: false,
+    });
+    await expect(
+      provider(scripted(refused(1002, "rate limit")).fetch).speak(line(minimax)),
+    ).rejects.toMatchObject({ retryable: true });
+    expect(r.got[0].status).toBe("failed");
+  });
+});
+
+describe("Cartesia", () => {
+  test("is sent its version header and the body its reference gives", async () => {
+    const f = scripted(() => wavResponse(wav(44100, 44100)));
+    const r = reports();
+    await provider(f.fetch).speak(
+      line(cartesia, { voiceRef: "cartesia/db6b0ed5", instructions: "Calm.", sent: r.sent }),
+    );
+    expect(f.sent[0].url).toBe("https://api.cartesia.ai/tts/bytes");
+    const h = headersOf(f.sent[0].init);
+    expect(h.get("authorization")).toBe("Bearer sk_car_key");
+    expect(h.get("cartesia-version")).toBe("2026-08-14");
+    expect(f.body()).toEqual({
+      model_id: "sonic-3.6",
+      transcript: "Come in.",
+      voice: { id: "db6b0ed5" },
+      output_format: { container: "wav", encoding: "pcm_s16le", sample_rate: 44100 },
+    });
+    // no instructions field: the tags go in the transcript
+    expect(r.got[0].instructions).toBe("");
+  });
+
+  test("an MP3 names its bitrate in bits a second", async () => {
+    const f = scripted(
+      () =>
+        new Response(silentMp3(38, { kbps: 192 }), { headers: { "content-type": "audio/mpeg" } }),
+    );
+    await provider(f.fetch).speak(line(cartesia, { encoding: { format: "mp3", bitrate: 192 } }));
+    expect(f.body().output_format).toEqual({
+      container: "mp3",
+      sample_rate: 44100,
+      bit_rate: 192000,
+    });
+  });
+
+  test("its Test button reads one voice", async () => {
+    const f = scripted(() =>
+      Response.json({ data: [{ id: "v1", name: "Katie" }], has_more: true }),
+    );
+    const result = await provider(f.fetch).probe!(cartesia, new AbortController().signal);
+    expect(f.sent[0].url).toBe("https://api.cartesia.ai/voices?limit=1");
+    expect(result).toMatchObject({ ok: true });
+  });
+});
+
+describe("Qwen-Audio 3.0", () => {
+  test("is sent Model Studio's body, and the audio is fetched from the link it answers with", async () => {
+    const f = scripted(
+      () => Response.json({ output: { audio: { url: "http://oss.example/a.wav", data: "" } } }),
+      () => wavResponse(wav(24000, 24000)),
+    );
+    const r = reports();
+    const clip = await provider(f.fetch).speak(
+      line(qwen, { voiceRef: "qwen/longanhuan_v3.6", sent: r.sent }),
+    );
+    expect(f.sent[0].url).toBe(
+      "https://dashscope-intl.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer",
+    );
+    expect(headersOf(f.sent[0].init).get("authorization")).toBe("Bearer sk-qwen");
+    expect(f.body()).toEqual({
+      model: "qwen-audio-3.0-tts-flash",
+      input: { text: "Come in.", voice: "longanhuan_v3.6", format: "wav", sample_rate: 24000 },
+    });
+    // the link is signed: fetched without the key
+    expect(f.sent[1].url).toBe("http://oss.example/a.wav");
+    expect(headersOf(f.sent[1].init).has("authorization")).toBe(false);
+    expect(clip.duration).toBeCloseTo(1);
+    expect(r.got).toHaveLength(1);
+    expect(r.got[0].status).toBe("done");
+  });
+
+  test("an answer with no link says what Model Studio said", async () => {
+    const f = scripted(() =>
+      Response.json({ code: "InvalidParameter", message: "voice not found" }),
+    );
+    await expect(provider(f.fetch).speak(line(qwen))).rejects.toThrow(
+      "no audio link: InvalidParameter, voice not found",
+    );
+  });
+});

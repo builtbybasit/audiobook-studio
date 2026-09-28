@@ -6,7 +6,8 @@ import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
 import type { ClonedVoice } from "@/types";
-import { CLONE_CONSENT, MAX_CLONE_CLIPS } from "@/lib/endpointShapes";
+import { CLONE_CONSENT } from "@/lib/endpointShapes";
+import type { CloneSupport, RecordingFormat } from "@/lib/providers";
 import type { Db } from "~/db/client";
 import * as ops from "~/endpoints/ops";
 import { fail, notFound } from "~/lib/errors";
@@ -74,33 +75,56 @@ function consentOf(form: Form): string {
   return said ? said.slice(0, MAX_CONSENT_CHARS) : CLONE_CONSENT;
 }
 
+const FORMAT_NAME: Record<RecordingFormat, string> = {
+  wav: "WAV",
+  mp3: "MP3",
+  m4a: "M4A",
+  opus: "Opus",
+  flac: "FLAC",
+};
+
+/** "WAV, MP3 or M4A" */
+export const formatsSaid = (formats: readonly RecordingFormat[]): string => {
+  const names = formats.map((f) => FORMAT_NAME[f]);
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : names[0];
+};
+
 /**
- * The recordings under `clips`, each typed by what its first bytes say it is: its name and the type
+ * The samples under `clips`, each typed by what its first bytes say it is: its name and the type
  * the browser gave it are only guesses, and reading the whole of it to find out would be a copy of
- * every recording. Refused, with the file's own name, before anything is sent or kept.
+ * every sample. Held to what the endpoint's provider takes (`cloning`), and refused, with the
+ * file's own name, before anything is sent or kept.
  */
-async function clipsOf(form: Form): Promise<samples.KeptClip[]> {
+async function clipsOf(form: Form, cloning: CloneSupport): Promise<samples.KeptClip[]> {
   const files = form.getAll("clips").filter((f): f is File => f instanceof File);
-  if (!files.length) fail(400, "Add at least one recording of the voice");
-  if (files.length > MAX_CLONE_CLIPS) fail(400, `Use at most ${MAX_CLONE_CLIPS} recordings`);
+  if (!files.length) fail(400, "Add at least one sample of the voice");
+  if (files.length > cloning.maxClips)
+    fail(
+      400,
+      cloning.maxClips === 1
+        ? "Use one sample: this provider makes a voice from a single file"
+        : `Use at most ${cloning.maxClips} samples`,
+    );
+  const maxBytes = Math.min(cloning.maxClipBytes, MAX_CLIP_BYTES);
   const clips: samples.KeptClip[] = [];
   for (const f of files) {
     // Bun's parser drops an empty file's name, so a refusal cannot always quote it
-    const named = f.name || "One of the recordings";
-    if (f.size > MAX_CLIP_BYTES)
-      fail(413, `${named} is larger than ${MAX_CLIP_BYTES / 1024 / 1024} MB`);
+    const named = f.name || "One of the samples";
+    if (f.size > maxBytes) fail(413, `${named} is larger than ${sizeSaid(maxBytes)}`);
     if (!f.size) fail(400, `${named} is empty`);
     const head = await f.slice(0, RECORDING_HEAD_BYTES).arrayBuffer();
     const format = sniffRecording(new Uint8Array(head));
-    if (!format)
+    if (!format || !cloning.formats.includes(format))
       fail(
         415,
-        `${named} is not a recording Fish can make a voice from`,
-        "Use WAV, MP3, M4A, Opus or FLAC audio.",
+        format
+          ? `${named} is ${FORMAT_NAME[format]} audio, which this provider does not make a voice from`
+          : `${named} is not audio a voice can be made from`,
+        `Use ${formatsSaid(cloning.formats)} audio.`,
       );
     // the parsed file itself, typed by its bytes: a slice is a view, not a copy
     clips.push({
-      name: f.name || `recording.${format}`,
+      name: f.name || `sample.${format}`,
       blob: f.slice(0, f.size, RECORDING_MIME[format]),
       format,
     });
@@ -108,9 +132,15 @@ async function clipsOf(form: Form): Promise<samples.KeptClip[]> {
   return clips;
 }
 
+/** "20 MB", "512 KB" */
+const sizeSaid = (bytes: number): string =>
+  bytes >= 1024 * 1024
+    ? `${+(bytes / 1024 / 1024).toFixed(1)} MB`
+    : `${Math.round(bytes / 1024)} KB`;
+
 const recordingsLimit = bodyLimit({
   maxSize: CLONE_BODY_BYTES,
-  onError: () => fail(413, `The recordings come to more than ${MAX_CLONE_BYTES / 1024 / 1024} MB`),
+  onError: () => fail(413, `The samples come to more than ${MAX_CLONE_BYTES / 1024 / 1024} MB`),
 });
 
 const VoiceList = v.object({
@@ -193,7 +223,7 @@ export function endpointRoutes(
     if (!id) fail(400, "Say which endpoint to make the voice on");
     if (!title || title.length > 100) fail(400, "Give the voice a name of up to 100 characters");
     const consentText = consentOf(form);
-    const clips = await clipsOf(form);
+    const clips = await clipsOf(form, samples.cloningFor(db, id));
     const voice = await ops.cloneVoice(db, providers, id, { title, clips }, c.req.raw.signal);
     let samplesKept = true;
     try {
@@ -254,7 +284,7 @@ export function endpointRoutes(
       const { id, voice } = c.req.valid("param");
       const form = await formOf(c.req);
       const consentText = consentOf(form);
-      const clips = await clipsOf(form);
+      const clips = await clipsOf(form, samples.cloningFor(db, id));
       const kept = await samples.replaceClips(db, voiceFiles, {
         endpointId: id,
         voiceId: voice,

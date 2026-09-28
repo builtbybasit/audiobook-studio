@@ -48,5 +48,6 @@ export const cartesia: SpeechProviderShape = {
   }),
   // Its pricing page: "Credits are only used by successful requests; errors will not consume credits."
   billsFailures: false,
+  cloning: null,
   models: ["sonic-3.6", "sonic-3.5", "sonic-3", "sonic-latest"],
 };

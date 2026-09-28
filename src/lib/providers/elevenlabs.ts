@@ -57,5 +57,6 @@ export const elevenlabs: SpeechProviderShape = {
         },
   // ElevenLabs bills characters of text it spoke; its docs say nothing of charging a refusal.
   billsFailures: false,
+  cloning: null,
   models: ["eleven_v3", "eleven_multilingual_v2", "eleven_flash_v2_5", "eleven_turbo_v2_5"],
 };

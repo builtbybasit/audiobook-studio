@@ -37,6 +37,7 @@ export const openai: SpeechProviderShape = {
   tags: () => null,
   // OpenAI's pricing is per character or token of what it speaks; it says nothing of refusals.
   billsFailures: false,
+  cloning: null,
   models: ["gpt-4o-mini-tts", "tts-1", "tts-1-hd"],
 };
 
@@ -54,5 +55,6 @@ export const compatible: SpeechProviderShape = {
   }),
   // a server you run yourself bills nothing; a gateway that bills is priced by its own card
   billsFailures: false,
+  cloning: null,
   models: [],
 };

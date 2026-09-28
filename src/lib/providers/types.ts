@@ -74,6 +74,43 @@ export interface SpeechProviderShape {
   billsFailures: boolean;
   /** the model ids the provider's docs name; empty when they name none worth holding to */
   models: readonly string[];
+  /**
+   * How the provider makes a voice from someone's samples and keeps it on the account, to be spoken
+   * with by id from then on; null when it has no such API, and the Voices tab offers no cloning.
+   * A provider with a description here has a `clone` in its wire module, and one without has none.
+   */
+  cloning: CloneSupport | null;
+}
+
+// ---------- voice cloning ----------
+
+/**
+ * What a voice sample can be, read from its first bytes (`sniffRecording` on the server) rather
+ * than from its name. A sample is any audio of the person speaking: recorded, or downloaded.
+ */
+export type RecordingFormat = "wav" | "mp3" | "m4a" | "opus" | "flac";
+
+/**
+ * What the provider's docs allow a clone to be made from. The server refuses anything outside it
+ * before a request, with the file's own name, and the Voices tab says it above the picker.
+ */
+export interface CloneSupport {
+  /** the most samples one voice is made from; never more than `MAX_CLONE_CLIPS` */
+  maxClips: number;
+  /** the most one sample may be, in bytes; never more than the server's own 20 MB */
+  maxClipBytes: number;
+  /** the formats the provider documents for a sample, a subset of what the sniffer knows */
+  formats: readonly RecordingFormat[];
+  /**
+   * The provider's own advice on samples, a sentence or two for the Voices tab: how long, how
+   * many, what kind of audio. From its docs, not invented.
+   */
+  advice: string;
+  /**
+   * What making the voice costs, or what it starts costing, as the provider's docs put it — a
+   * sentence for the Voices tab — or null when the docs say it is free or say nothing.
+   */
+  cost: string | null;
 }
 
 // ---------- tag shapes several providers share ----------

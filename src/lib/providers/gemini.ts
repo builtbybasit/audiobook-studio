@@ -48,6 +48,7 @@ export const gemini: SpeechProviderShape = {
         },
   // Google bills the tokens of what it generated; a refused request generated nothing.
   billsFailures: false,
+  cloning: null,
   models: [
     "gemini-3.8-flash-tts",
     "gemini-3.8-flash-lite-tts",

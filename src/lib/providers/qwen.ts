@@ -29,5 +29,6 @@ export const qwen: SpeechProviderShape = {
   tags: () => null,
   // nothing in Model Studio's docs says a refused request is charged
   billsFailures: false,
+  cloning: null,
   models: ["qwen-audio-3.0-tts-flash", "qwen-audio-3.0-tts-plus"],
 };

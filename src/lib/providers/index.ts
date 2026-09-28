@@ -14,10 +14,12 @@ import { gemini } from "@/lib/providers/gemini";
 import { minimax } from "@/lib/providers/minimax";
 import { compatible, openai } from "@/lib/providers/openai";
 import { qwen } from "@/lib/providers/qwen";
-import type { SpeechProviderShape, TagSyntax } from "@/lib/providers/types";
+import type { CloneSupport, SpeechProviderShape, TagSyntax } from "@/lib/providers/types";
 
 export type {
+  CloneSupport,
   FormatSupport,
+  RecordingFormat,
   SpeechProviderId,
   SpeechProviderShape,
   TagSyntax,
@@ -38,6 +40,10 @@ export const SPEECH_PROVIDERS: readonly SpeechProviderShape[] = [
 /** The provider a speech endpoint's base URL speaks; `compatible` when no other claims it. */
 export const speechProviderOf = (e: Pick<Endpoint, "baseUrl">): SpeechProviderShape =>
   SPEECH_PROVIDERS.find((p) => p.matches(e.baseUrl)) ?? compatible;
+
+/** How an endpoint's provider makes a voice from samples, or null when it cannot. */
+export const cloningOf = (e: Pick<Endpoint, "baseUrl">): CloneSupport | null =>
+  speechProviderOf(e).cloning;
 
 /** How an endpoint's model takes expression tags, or null when it takes none. */
 export const tagSyntaxOf = (e: Pick<Endpoint, "baseUrl" | "model">): TagSyntax | null =>

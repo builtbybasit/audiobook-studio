@@ -14,7 +14,8 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 
 import type { ClonedVoice, Endpoint, KeptVoiceSamples, Voice } from "@/types";
-import { CLONE_CONSENT } from "@/lib/endpointShapes";
+import { CLONE_CONSENT, MAX_CLONE_CLIPS } from "@/lib/endpointShapes";
+import { SPEECH_PROVIDERS } from "@/lib/providers";
 import { clonedVoices } from "~/db/schema";
 import {
   endpointVoiceCloner,
@@ -23,7 +24,9 @@ import {
   type VoiceCloner,
   type VoiceClonerOptions,
 } from "~/providers/clone";
+import { SPEECH_WIRES } from "~/providers/speech/registry";
 import type { ProviderTarget } from "~/providers/target";
+import { MAX_CLIP_BYTES } from "~/routes/endpoints";
 import { keepClips } from "~/voices/ops";
 import { voiceFiles, type VoiceFiles } from "~/voices/files";
 import { jsonBody, tempVoiceDir, testApi, type TestApi } from "../support/server";
@@ -87,6 +90,23 @@ const clip = (
   body.set(head);
   return new File([body], name, { type });
 };
+
+describe("which providers clone", () => {
+  test("a provider described with cloning has a clone in its wire module, and only those", () => {
+    for (const p of SPEECH_PROVIDERS)
+      expect([p.id, !!p.cloning]).toEqual([p.id, typeof SPEECH_WIRES[p.id].clone === "function"]);
+  });
+
+  test("no provider's limits reach past the server's own", () => {
+    for (const p of SPEECH_PROVIDERS) {
+      if (!p.cloning) continue;
+      const { maxClips, maxClipBytes, formats, advice } = p.cloning;
+      expect([p.id, maxClips >= 1 && maxClips <= MAX_CLONE_CLIPS]).toEqual([p.id, true]);
+      expect([p.id, maxClipBytes > 0 && maxClipBytes <= MAX_CLIP_BYTES]).toEqual([p.id, true]);
+      expect([p.id, formats.length > 0, advice.trim().length > 0]).toEqual([p.id, true, true]);
+    }
+  });
+});
 
 describe("what counts as a recording", () => {
   test("the formats Fish documents are known by their first bytes", () => {
@@ -204,7 +224,7 @@ describe("the clone route", () => {
       400,
       "Confirm you have the right to clone this voice",
     ]);
-    expect(await refused(agreed, [])).toEqual([400, "Add at least one recording of the voice"]);
+    expect(await refused(agreed, [])).toEqual([400, "Add at least one sample of the voice"]);
     expect(await refused({ ...agreed, title: "" }, [clip()])).toEqual([
       400,
       "Give the voice a name of up to 100 characters",
@@ -214,11 +234,11 @@ describe("the clone route", () => {
         agreed,
         Array.from({ length: 21 }, (_, i) => clip(`t${i}.wav`)),
       ),
-    ).toEqual([400, "Use at most 20 recordings"]);
+    ).toEqual([400, "Use at most 20 samples"]);
     // Bun's form parser drops an empty file's name
     expect(await refused(agreed, [clip("silence.wav", new Uint8Array(), "audio/wav", 0)])).toEqual([
       400,
-      "One of the recordings is empty",
+      "One of the samples is empty",
     ]);
     expect(asked).toEqual([]);
   });
@@ -251,7 +271,7 @@ describe("the clone route", () => {
       const { status, body } = await post(api, form(agreed, [clip(name, head, type)]));
       expect([status, body.error?.message]).toEqual([
         415,
-        `${name} is not a recording Fish can make a voice from`,
+        `${name} is not audio a voice can be made from`,
       ]);
     }
     expect(asked).toHaveLength(1);
@@ -298,8 +318,16 @@ describe("the Fish Audio cloner", () => {
   const request: CloneRequest = {
     title: "Mara",
     clips: [
-      { name: "a.wav", blob: new Blob([new Uint8Array([1, 2, 3])], { type: "audio/wav" }) },
-      { name: "b.mp3", blob: new Blob([new Uint8Array([4, 5])], { type: "audio/mpeg" }) },
+      {
+        name: "a.wav",
+        format: "wav",
+        blob: new Blob([new Uint8Array([1, 2, 3])], { type: "audio/wav" }),
+      },
+      {
+        name: "b.mp3",
+        format: "mp3",
+        blob: new Blob([new Uint8Array([4, 5])], { type: "audio/mpeg" }),
+      },
     ],
   };
   const signal = () => new AbortController().signal;
@@ -382,7 +410,7 @@ describe("the Fish Audio cloner", () => {
         request,
         signal(),
       ),
-    ).rejects.toThrow("only Fish Audio can");
+    ).rejects.toThrow("OpenAI cannot make a voice from samples");
     expect(f.sent).toEqual([]);
   });
 });
@@ -443,7 +471,7 @@ describe("a failure to clone, through the route", () => {
     );
     expect([openai.status, openai.message]).toEqual([
       400,
-      "OpenAI cannot make a voice from recordings; only Fish Audio can, so far",
+      "OpenAI cannot make a voice from samples",
     ]);
     expect(openai.sent).toEqual([]);
     const keyless = await cloningAgainst(
@@ -606,7 +634,7 @@ describe("the recordings a voice was made from", () => {
     );
     const tooMany = Array.from({ length: 21 }, (_, i) => clip(`t${i}.wav`));
     expect((await keep({ consent: "yes" }, tooMany)).body.error?.message).toBe(
-      "Use at most 20 recordings",
+      "Use at most 20 samples",
     );
     expect((await keep({ consent: "yes" }, [clip()], "nobody")).status).toBe(404);
 

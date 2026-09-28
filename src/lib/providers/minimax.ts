@@ -55,6 +55,7 @@ export const minimax: SpeechProviderShape = {
         },
   // Its error codes are refusals to retry or fix; nothing in its docs says one is charged.
   billsFailures: false,
+  cloning: null,
   models: [
     "speech-2.8-hd",
     "speech-2.8-turbo",

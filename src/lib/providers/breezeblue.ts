@@ -44,5 +44,6 @@ export const breezeblue: SpeechProviderShape = {
   }),
   // Its pricing page: "Failed requests release their reservation."
   billsFailures: false,
+  cloning: null,
   models: ["breeze-tts-2", "breeze-tts-2-multilingual"],
 };

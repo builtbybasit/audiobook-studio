@@ -118,12 +118,9 @@ export async function sendSpeech(
     async call(further, url, init) {
       const counted: CallStats = { attempts: 0, rateLimited: false };
       try {
-        return await call(further, url, init, {
-          signal,
-          stats: counted,
-          rateLimited: input.rateLimited,
-          ...inject,
-        });
+        // Not told to the gate: a further request goes to wherever the answer pointed — Qwen's
+        // download from its storage host — and that host's limits are not the endpoint's.
+        return await call(further, url, init, { signal, stats: counted, ...inject });
       } finally {
         more.attempts += counted.attempts;
         more.rateLimited ||= counted.rateLimited;

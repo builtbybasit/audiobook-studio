@@ -99,6 +99,20 @@ export function createSpeechGate(now: () => number = Date.now): SpeechGate {
     return null;
   }
 
+  /**
+   * The head's limits, or undefined when reading them failed. The read is the caller's — a row
+   * from the endpoints table — and it runs inside whatever woke the gate: a release, a save, a
+   * timer. A throw there would land in someone else's hands, so a failed read counts as an
+   * endpoint that is not configured, and the line goes out to be refused by the provider.
+   */
+  function limitsOf(w: Waiter): GateLimits | undefined {
+    try {
+      return w.limits();
+    } catch {
+      return undefined;
+    }
+  }
+
   function wake(id: string, s: State): void {
     if (s.timer) clearTimeout(s.timer);
     s.timer = null;
@@ -119,7 +133,7 @@ export function createSpeechGate(now: () => number = Date.now): SpeechGate {
     if (!s) return;
     while (s.queue.length) {
       const head = s.queue[0];
-      const why = blockedBy(s, id === NOWHERE ? undefined : head.limits());
+      const why = blockedBy(s, id === NOWHERE ? undefined : limitsOf(head));
       if (why) {
         if (why !== head.told) {
           head.told = why;
@@ -195,6 +209,8 @@ export function createSpeechGate(now: () => number = Date.now): SpeechGate {
       s.rateLimits++;
       s.backoffUntil = Math.max(s.backoffUntil, now() + Math.max(0, waitMs));
       wake(id, s);
+      // the line first in line is told at once that it now waits on the cooldown, not on a slot
+      pump(id);
     },
 
     changed: pumpAll,

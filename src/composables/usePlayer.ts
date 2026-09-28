@@ -254,6 +254,28 @@ function play(id: string, len: number, url?: string): void {
   playQueue({ id, clips: [{ id, duration: len, url }], title: id });
 }
 
+/**
+ * One file whose length is not known yet — a provider's own sample of a voice. Its length is read
+ * off the file's metadata first, since the timeline is drawn from it. Pressing it again toggles.
+ */
+async function playFile(id: string, url: string, title = id): Promise<void> {
+  const duration = p.id === id ? p.len : await fileDuration(url);
+  playQueue({ id, clips: [{ id, duration, url }], title });
+}
+
+function fileDuration(url: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = new Audio();
+    probe.preload = "metadata";
+    probe.onloadedmetadata = () =>
+      Number.isFinite(probe.duration) && probe.duration > 0
+        ? resolve(probe.duration)
+        : reject(new Error("The file does not say how long it plays"));
+    probe.onerror = () => reject(new Error("The file could not be loaded"));
+    probe.src = url;
+  });
+}
+
 function pause(): void {
   setPlaying(false);
 }
@@ -319,6 +341,7 @@ function cycleRate(): void {
 const api = {
   p,
   play,
+  playFile,
   playQueue,
   cue,
   pause,

@@ -904,7 +904,9 @@ endpoint and key are used and the request is made **whatever `SPEECH_PROVIDER` s
 voices spends nothing and reads the account, it does not narrate. For Fish, `library` is every
 model in your workspace (`self=true`, every page up to a thousand) and `public` one page of Fish's
 public catalogue by title and language, TTS models only; a pasted 32-character id is looked up
-directly. OpenAI has no voice-list API, so its documented voices are answered without a request;
+directly. A public voice carries Fish's own recording of it as `sample: { url, text }` when the
+model has one at an `https` link — the Voices tab plays it straight from Fish's CDN, free — and adding
+the voice keeps only its id, label and gender. OpenAI has no voice-list API, so its documented voices are answered without a request;
 any other OpenAI-shaped server is asked `GET /audio/voices`. A provider's refusal is a `502` with
 the code `upstream` and what it said.
 

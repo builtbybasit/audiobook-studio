@@ -72,7 +72,9 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   saved key can see — a Fish Audio library, OpenAI's documented voices, or an OpenAI-compatible
   server's `/audio/voices` — and adds the ones not already listed. A Fish endpoint also gets
   **Public voices**: search Fish's public catalogue by title (or paste an id), filter by language,
-  page through, and add one with a click. A Fish voice is a `reference_id`, public or your own.
+  page through, and add one with a click; ▶ on a result plays Fish's own recording of that voice,
+  a file on Fish's CDN that costs nothing (a voice with none is rendered like a listed one). A Fish
+  voice is a `reference_id`, public or your own.
   With a server, a voice's ▶ has the saved endpoint say a sentence in it — a real request, billed
   and listed under Activity, heard once and replayed from then on; see
   [voice samples](backend.md#the-providers-and-where-a-key-lives). In the demo it is the browser's own voice.

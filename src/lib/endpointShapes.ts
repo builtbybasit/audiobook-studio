@@ -199,6 +199,8 @@ export interface FishModel {
   tags?: string[];
   languages?: string[];
   visibility?: string;
+  /** recordings Fish made of the voice; `audio` is a link to an MP3 on its CDN */
+  samples?: { title?: string; text?: string; audio?: string }[];
 }
 
 /** The words among Fish's free-form tags that say a gender, and which. */
@@ -252,6 +254,18 @@ export function voicesFromFishModels(
     label: labelOf(m),
     gender: fishGender(m.tags),
   }));
+}
+
+/**
+ * A Fish model's first recording, when it has one at an `https` link — the only kind the browser is
+ * handed to play. Fish's public voices mostly have one; a voice still training has none.
+ */
+export function fishSampleOf(m: FishModel): { url: string; text: string } | null {
+  for (const s of m.samples ?? []) {
+    const url = s.audio?.trim() ?? "";
+    if (/^https:\/\//i.test(url)) return { url, text: s.text?.trim() ?? "" };
+  }
+  return null;
 }
 
 /** Where Fish keeps its model catalogue: the host root, without the `/v1` speech is under. */

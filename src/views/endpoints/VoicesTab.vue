@@ -2,6 +2,7 @@
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
+import { useUiStore } from "@/stores/ui";
 
 // The voice catalogue of one speech endpoint — the only place voices are added, edited or removed.
 //
@@ -42,12 +43,13 @@ import {
 } from "@lucide/vue";
 import { UiSelect, UiTooltip } from "@/ui";
 import { isFishAudio } from "@/lib/endpoints";
-import type { Endpoint, Gender, Voice } from "@/types";
+import type { Endpoint, FoundVoice, Gender, Voice } from "@/types";
 
 const props = defineProps<{ endpoint: Endpoint }>();
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
+const uiStore = useUiStore();
 
 const GENDERS: { value: Gender; label: string }[] = [
   { value: "f", label: "female" },
@@ -190,6 +192,35 @@ async function playSample(v: Voice) {
   try {
     const sample = await endpointsStore.sampleVoice(props.endpoint, v.id);
     if (sample) player.play(sampleId(v), sample.duration, sample.url);
+  } finally {
+    sampling.value = null;
+  }
+}
+
+// A public Fish voice found by the search plays Fish's own recording of it: a file on Fish's CDN,
+// free, nothing rendered. One that has none is rendered by this endpoint like a listed voice.
+const foundId = (v: FoundVoice) => `found:${props.endpoint.id}/${v.id}`;
+const playingFound = (v: FoundVoice) => player.p.id === foundId(v) && player.p.playing;
+const foundTitle = (v: FoundVoice) => {
+  if (!v.sample)
+    return "Fish has no sample of this voice — hear it from this endpoint: a real request, billed once and replayed after";
+  const said = v.sample.text.length > 120 ? `${v.sample.text.slice(0, 119)}…` : v.sample.text;
+  return `Fish's own sample${said ? `: “${said}”` : ""} — free, nothing is rendered`;
+};
+async function playFound(v: FoundVoice) {
+  if (sampling.value) return;
+  sampling.value = foundId(v);
+  try {
+    if (v.sample) await player.playFile(foundId(v), v.sample.url, v.label);
+    else {
+      const sample = await endpointsStore.sampleVoice(props.endpoint, v.id);
+      if (sample) player.play(foundId(v), sample.duration, sample.url);
+    }
+  } catch (e) {
+    uiStore.toast(`Could not play the sample of ${v.label}`, {
+      kind: "error",
+      description: e instanceof Error ? e.message : undefined,
+    });
   } finally {
     sampling.value = null;
   }
@@ -345,6 +376,18 @@ async function playSample(v: Voice) {
               :title="v.id"
               >{{ v.id }}</span
             >
+            <button
+              class="btn-ghost btn-xs shrink-0"
+              :aria-label="`${playingFound(v) ? 'Pause' : 'Preview'} ${v.label}`"
+              :title="foundTitle(v)"
+              :disabled="!!sampling && sampling !== foundId(v)"
+              :aria-busy="sampling === foundId(v)"
+              @click="playFound(v)"
+            >
+              <BusyIcon v-if="sampling === foundId(v)" class="icon-sm animate-spin" />
+              <PauseIcon v-else-if="playingFound(v)" class="icon-sm icon-fill" />
+              <PlayIcon v-else class="icon-sm icon-fill" />
+            </button>
             <button
               class="btn-ghost btn-xs shrink-0"
               :disabled="has(v)"

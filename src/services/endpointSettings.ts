@@ -12,7 +12,7 @@
 // in the same body), which a partial write could not let it do.
 import type { Credential } from "@/lib/credentials";
 import { keyring } from "@/lib/keyring";
-import type { Endpoint, EndpointKind, Profile, Voice } from "@/types";
+import type { Endpoint, EndpointKind, FoundVoice, Profile } from "@/types";
 import { HttpClient, type FetchLike } from "@/services/http";
 import { isBackend } from "@/services/mode";
 
@@ -75,7 +75,8 @@ export interface VoiceListQuery {
 
 /** A page of voices the server found. Nothing is added to the endpoint until the page adds it. */
 export interface VoiceListPage {
-  voices: Voice[];
+  /** a public Fish voice carries Fish's own recording of it, when it has one */
+  voices: FoundVoice[];
   /** how many the provider says match */
   total: number;
   page: number;

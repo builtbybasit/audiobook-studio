@@ -56,9 +56,12 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   focus, so the plot is a keyboard control too: focus it and `←`/`→` walk the buckets, `Enter` picks
   one, `Esc` clears, and the readout under the chart is a live region that announces each one.
 - **Connection** — starts with **Start from a preset…**, for both kinds: a speech provider
-  (Fish Audio, OpenAI, Gemini, a local server) or a scripting one (OpenAI GPT-6 Luna and Astra,
-  DeepSeek V4.1 Flash and V4 Pro, Gemini 3.8 Flash and 3.1 Pro, Claude Sonnet 5 and Haiku 4.5
-  through Anthropic's OpenAI layer, Ollama, LM Studio). A preset fills in the base URL, model and
+  (Fish Audio, OpenAI, Gemini, a local server) or a scripting one, grouped by provider: OpenAI
+  GPT-6 Luna, Sol and Astra; DeepSeek V4.1 Flash; Gemini 3.8 Flash and 3.1 Pro; Claude Opus 5.5,
+  Sonnet 5 and Haiku 4.5 through Anthropic's OpenAI layer; xAI Grok 4.7 and 4.3; OpenRouter's
+  most-used models that week (Claude Opus 5.5 and Fable 5.1, GPT-6 Astra and Sol, Grok 4.7,
+  Qwen3.8 Max, MiMo-V2.6-Pro) at OpenRouter's listed rates; and Ollama and LM Studio on your
+  own machine. A preset fills in the base URL, model and
   prices, and every field stays editable. The rates are the providers' published cards on
   28 September 2026, in `SCRIPTING_PRESETS` and `TTS_PRESETS` in
   [lib/endpoints.ts](../src/lib/endpoints.ts). DeepSeek's weekday peak hours are a schedule on the

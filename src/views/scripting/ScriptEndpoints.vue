@@ -120,7 +120,7 @@ async function importSettings(event: Event) {
 // so a preset is written onto it the same way — a copy, so no two profiles share a rate card.
 const PRESET_OPTIONS = [
   { value: "", label: "Start from a preset…", hint: "leaves every field as it is" },
-  ...SCRIPTING_PRESETS.map((x) => ({ value: x.id, label: x.label, hint: x.hint })),
+  ...SCRIPTING_PRESETS.map((x) => ({ value: x.id, label: x.label, hint: x.hint, group: x.group })),
 ];
 const presetId = ref("");
 watch(selectedId, () => (presetId.value = ""));

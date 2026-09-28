@@ -127,6 +127,8 @@ export interface Preset<T> {
   hint: string;
   /** shown under the picker once chosen — the caveat that belongs with this choice */
   note?: string;
+  /** the heading it is listed under in the picker, when a kind has enough presets to need them */
+  group?: string;
   apply: Partial<T>;
 }
 export type TtsPreset = Preset<Endpoint>;
@@ -288,9 +290,43 @@ const GEMINI_FLASH_2026 = {
   note: "Google's published 2026 rate for gemini-3.8-flash; the card rate applies from 1 January 2027.",
 };
 
+/**
+ * A model through OpenRouter, one key for all of them. Its rates are OpenRouter's listing for the
+ * model (`GET /api/v1/models`), standard tier — the underlying provider's price passed through.
+ */
+function openRouter(
+  id: string,
+  label: string,
+  model: string,
+  hint: string,
+  rates: { input: number; output: number; cachedInput: number | null; cacheWrite: number | null },
+): ScriptingPreset {
+  return {
+    id: `openrouter-${id}`,
+    group: "OpenRouter",
+    label: `OpenRouter · ${label}`,
+    hint,
+    note:
+      "Through OpenRouter, which passes the model's own price through; buying credits adds " +
+      "OpenRouter's fee (5.5%, at least $0.80), which these rates leave out. One of the most-used " +
+      "models on OpenRouter in the week to 27 September 2026. " +
+      PRICES_AS_OF,
+    apply: {
+      name: `OpenRouter · ${label}`,
+      baseUrl: "https://openrouter.ai/api/v1",
+      model,
+      needsKey: true,
+      inPrice: rates.input,
+      outPrice: rates.output,
+      pricing: newPricing({ cachedInput: rates.cachedInput, cacheWrite: rates.cacheWrite }),
+    },
+  };
+}
+
 export const SCRIPTING_PRESETS: ScriptingPreset[] = [
   {
     id: "openai-luna",
+    group: "OpenAI",
     label: "OpenAI · GPT-6 Luna",
     hint: "gpt-6-luna — cheapest, for high-volume work",
     note:
@@ -304,11 +340,31 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: true,
       inPrice: 0.1,
       outPrice: 0.5,
-      pricing: newPricing({ cachedInput: 0.01, cacheWrite: null }),
+      pricing: newPricing({ cachedInput: 0.01, cacheWrite: 0.125 }),
+    },
+  },
+  {
+    id: "openai-sol",
+    group: "OpenAI",
+    label: "OpenAI · GPT-6 Sol",
+    hint: "gpt-6-sol — the middle of the three",
+    note:
+      "Twenty times Luna, a fifth of Astra; OpenAI pitches it at coding and agentic work. " +
+      "Prompts over 272K input tokens cost more, which no chunk here comes near. " +
+      PRICES_AS_OF,
+    apply: {
+      name: "OpenAI · GPT-6 Sol",
+      baseUrl: "https://api.openai.com/v1",
+      model: "gpt-6-sol",
+      needsKey: true,
+      inPrice: 2,
+      outPrice: 10,
+      pricing: newPricing({ cachedInput: 0.2, cacheWrite: 2.5 }),
     },
   },
   {
     id: "openai-astra",
+    group: "OpenAI",
     label: "OpenAI · GPT-6 Astra",
     hint: "gpt-6-astra — flagship, a hundred times Luna",
     note: PRICES_AS_OF,
@@ -319,11 +375,12 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       needsKey: true,
       inPrice: 10,
       outPrice: 50,
-      pricing: newPricing({ cachedInput: 1, cacheWrite: null }),
+      pricing: newPricing({ cachedInput: 1, cacheWrite: 12.5 }),
     },
   },
   {
     id: "deepseek-flash",
+    group: "DeepSeek",
     label: "DeepSeek · V4.1 Flash",
     hint: "deepseek-flash — half price off-peak",
     note:
@@ -347,30 +404,8 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
     },
   },
   {
-    id: "deepseek-pro",
-    label: "DeepSeek · V4 Pro",
-    hint: "deepseek-v4-pro — half price off-peak",
-    note:
-      "The same peak hours as Flash, held by the schedule on the Pricing tab. Thinking mode is on " +
-      "by default and its tokens are billed as output. " +
-      PRICES_AS_OF,
-    apply: {
-      name: "DeepSeek · V4 Pro",
-      baseUrl: "https://api.deepseek.com",
-      model: "deepseek-v4-pro",
-      needsKey: true,
-      inPrice: 0.66,
-      outPrice: 1.98,
-      pricing: newPricing({
-        cachedInput: 0.022,
-        cacheWrite: null,
-        timezone: "UTC",
-        windows: deepseekPeaks({ input: 1.32, output: 3.96, cachedInput: 0.044 }),
-      }),
-    },
-  },
-  {
     id: "gemini-flash",
+    group: "Google Gemini",
     label: "Gemini · 3.8 Flash",
     hint: "gemini-3.8-flash — price doubles on 1 Jan 2027",
     note:
@@ -395,6 +430,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
   },
   {
     id: "gemini-pro",
+    group: "Google Gemini",
     label: "Gemini · 3.1 Pro (preview)",
     hint: "gemini-3.1-pro-preview",
     note:
@@ -412,7 +448,28 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
     },
   },
   {
+    id: "anthropic-opus",
+    group: "Anthropic",
+    label: "Anthropic · Claude Opus 5.5",
+    hint: "claude-opus-5-5, through its OpenAI compatibility layer",
+    note:
+      "Anthropic's most capable model, at twice Sonnet's price. The same caveat as Sonnet: " +
+      "Anthropic describes its OpenAI compatibility layer as meant for testing and comparing " +
+      "models, and prompt caching is not available through it. " +
+      PRICES_AS_OF,
+    apply: {
+      name: "Anthropic · Claude Opus 5.5",
+      baseUrl: "https://api.anthropic.com/v1",
+      model: "claude-opus-5-5",
+      needsKey: true,
+      inPrice: 4,
+      outPrice: 20,
+      pricing: newPricing(),
+    },
+  },
+  {
     id: "anthropic-sonnet",
+    group: "Anthropic",
     label: "Anthropic · Claude Sonnet 5",
     hint: "claude-sonnet-5, through its OpenAI compatibility layer",
     note:
@@ -432,6 +489,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
   },
   {
     id: "anthropic-haiku",
+    group: "Anthropic",
     label: "Anthropic · Claude Haiku 4.5",
     hint: "claude-haiku-4-5, through its OpenAI compatibility layer",
     note:
@@ -448,7 +506,107 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
     },
   },
   {
+    id: "xai-grok-4.7",
+    group: "xAI",
+    label: "xAI · Grok 4.7",
+    hint: "grok-4.7 — flagship, always reasons",
+    note:
+      "Reasoning cannot be turned off, and its tokens are billed as output. Every rate doubles " +
+      "for a prompt of 200K tokens or more, which no chunk here comes near. xAI calls Chat " +
+      "Completions its legacy API, still served. " +
+      PRICES_AS_OF,
+    apply: {
+      name: "xAI · Grok 4.7",
+      baseUrl: "https://api.x.ai/v1",
+      model: "grok-4.7",
+      needsKey: true,
+      inPrice: 2,
+      outPrice: 6,
+      pricing: newPricing({ cachedInput: 0.5, cacheWrite: null }),
+    },
+  },
+  {
+    id: "xai-grok-4.3",
+    group: "xAI",
+    label: "xAI · Grok 4.3",
+    hint: "grok-4.3 — fast and cheaper",
+    note:
+      "xAI's fast model, reasoning at low effort by default; the Grok 4 fast models retired in " +
+      "May now answer as this one. Every rate doubles for a prompt of 200K tokens or more. " +
+      PRICES_AS_OF,
+    apply: {
+      name: "xAI · Grok 4.3",
+      baseUrl: "https://api.x.ai/v1",
+      model: "grok-4.3",
+      needsKey: true,
+      inPrice: 1.25,
+      outPrice: 2.5,
+      pricing: newPricing({ cachedInput: 0.2, cacheWrite: null }),
+    },
+  },
+  openRouter(
+    "claude-opus-5.5",
+    "Claude Opus 5.5",
+    "anthropic/claude-opus-5.5",
+    "anthropic/claude-opus-5.5",
+    {
+      input: 4,
+      output: 20,
+      cachedInput: 0.2,
+      cacheWrite: 5,
+    },
+  ),
+  openRouter(
+    "claude-fable-5.1",
+    "Claude Fable 5.1",
+    "anthropic/claude-fable-5.1",
+    "anthropic/claude-fable-5.1",
+    {
+      input: 10,
+      output: 50,
+      cachedInput: 0.25,
+      cacheWrite: 12.5,
+    },
+  ),
+  openRouter("gpt-6-astra", "GPT-6 Astra", "openai/gpt-6-astra", "openai/gpt-6-astra", {
+    input: 10,
+    output: 50,
+    cachedInput: 1,
+    cacheWrite: 12.5,
+  }),
+  openRouter("gpt-6-sol", "GPT-6 Sol", "openai/gpt-6-sol", "openai/gpt-6-sol", {
+    input: 2,
+    output: 10,
+    cachedInput: 0.2,
+    cacheWrite: 2.5,
+  }),
+  openRouter("grok-4.7", "Grok 4.7", "x-ai/grok-4.7", "x-ai/grok-4.7", {
+    input: 1.6,
+    output: 4.8,
+    cachedInput: 0.4,
+    cacheWrite: null,
+  }),
+  openRouter("qwen3.8-max", "Qwen3.8 Max", "qwen/qwen3.8-max-0902", "qwen/qwen3.8-max-0902", {
+    input: 2,
+    output: 6,
+    cachedInput: 0.25,
+    cacheWrite: 2.5,
+  }),
+  openRouter(
+    "mimo-v2.6-pro",
+    "MiMo-V2.6-Pro",
+    "xiaomi/mimo-v2.6-pro",
+    "xiaomi/mimo-v2.6-pro — cheapest of these",
+    {
+      input: 0.435,
+      output: 0.87,
+      cachedInput: 0.0036,
+      cacheWrite: null,
+    },
+  ),
+  {
     id: "ollama",
+    group: "On your machine",
     label: "Ollama (local)",
     hint: "a model you have pulled, on localhost:11434",
     note:
@@ -466,6 +624,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
   },
   {
     id: "lm-studio",
+    group: "On your machine",
     label: "LM Studio (local)",
     hint: "its local server, on localhost:1234",
     note:

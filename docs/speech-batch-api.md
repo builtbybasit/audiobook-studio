@@ -68,17 +68,17 @@ GET /v1/audio/speech/capabilities
 
 One entry per model the server serves; a client picks the one its endpoint names.
 
-| Field              | Meaning                                                                                                                                                                                                                     |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `batch`            | Present when the model takes batches. `max_items` lines per request; `max_input_chars` the most characters of `input` across them all. Either may be `null` for no limit. Absent: send one line per request.                |
-| `max_item_chars`   | The longest `input` one item may have; `null` for none. A client splits a longer line itself.                                                                                                                               |
-| `response_formats` | The formats it can answer in, from `wav`, `mp3`, `opus`, `flac`, `aac`, `pcm` (OpenAI's list). `pcm` is raw 16-bit little-endian mono at the answer's `sample_rate`.                                                        |
-| `sample_rates`     | The rates it can be asked for, in Hz; `null` when it renders at its model's own rate and cannot be asked for another.                                                                                                       |
-| `instructions`     | Whether it reads `instructions` — delivery, emotion, a voice described in words. A server that says `false` ignores the field.                                                                                              |
-| `speed`            | The range `speed` may take, or `null` when it takes none.                                                                                                                                                                   |
-| `languages`        | The language codes it takes (BCP 47, `en`, `zh`…), or `null` for "works it out from the text".                                                                                                                              |
-| `tags`             | How it reads non-verbal tags written into the text, if it does: the brackets, and the tags it knows. `null` when a bracketed word is read out as a word.                                                                    |
-| `extra`            | The model's own options a client may send in `extra`, each with a JSON type, a default and a description, so a page can offer them. Informational: a server takes an option it does not list and ignores one it cannot use. |
+| Field              | Meaning                                                                                                                                                                                                                                 |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `batch`            | Present when the model takes batches. `max_items` lines per request; `max_input_chars` the most characters of `input` across them all. Each is a whole number of at least 1, or `null` for no limit. Absent: send one line per request. |
+| `max_item_chars`   | The longest `input` one item may have; `null` for none. A client splits a longer line itself.                                                                                                                                           |
+| `response_formats` | The formats it can answer in, from `wav`, `mp3`, `opus`, `flac`, `aac`, `pcm` (OpenAI's list). `pcm` is raw 16-bit little-endian mono at the answer's `sample_rate`.                                                                    |
+| `sample_rates`     | The rates it can be asked for, in Hz; `null` when it renders at its model's own rate and cannot be asked for another.                                                                                                                   |
+| `instructions`     | Whether it reads `instructions` — delivery, emotion, a voice described in words. A server that says `false` ignores the field.                                                                                                          |
+| `speed`            | The range `speed` may take, or `null` when it takes none.                                                                                                                                                                               |
+| `languages`        | The language codes it takes (BCP 47, `en`, `zh`…), or `null` for "works it out from the text".                                                                                                                                          |
+| `tags`             | How it reads non-verbal tags written into the text, if it does: the brackets, and the tags it knows. `null` when a bracketed word is read out as a word.                                                                                |
+| `extra`            | The model's own options a client may send in `extra`, each with a JSON type, a default and a description, so a page can offer them. Informational: a server takes an option it does not list and ignores one it cannot use.             |
 
 A server may answer `404` here, which a client reads as "no batches, no promises", and falls back to
 `POST /v1/audio/speech` one line at a time.
@@ -112,20 +112,20 @@ Accept: application/x-ndjson
 }
 ```
 
-| Field                  | Required | Meaning                                                                                                                                  |
-| ---------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `model`                | yes      | One of the capabilities' `models[].id`.                                                                                                  |
-| `response_format`      | no       | For every item; `wav` when absent.                                                                                                       |
-| `sample_rate`          | no       | For every item, one of `sample_rates`; the model's own rate when absent.                                                                 |
-| `extra`                | no       | Model options for every item. An item's own `extra` is merged over it, key by key.                                                       |
-| `items`                | yes      | One to `batch.max_items` lines.                                                                                                          |
-| `items[].id`           | yes      | The client's name for the line, 1–200 characters, unique in the request. Answered back as it was sent; the server reads nothing into it. |
-| `items[].input`        | yes      | The text to say, tags written in as the capabilities' `tags` spell them.                                                                 |
-| `items[].voice`        | yes      | A voice id from [`GET /v1/audio/voices`](#voices). Voices live on the server; a request never carries reference audio.                   |
-| `items[].instructions` | no       | How to say it, in words. Ignored by a model whose capabilities say `instructions: false`.                                                |
-| `items[].speed`        | no       | Within the capabilities' `speed`; `1.0` when absent.                                                                                     |
-| `items[].language`     | no       | A code from `languages`; the server's own guess when absent.                                                                             |
-| `items[].extra`        | no       | Model options for this item alone.                                                                                                       |
+| Field                  | Required | Meaning                                                                                                                                                                                    |
+| ---------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `model`                | yes      | One of the capabilities' `models[].id`.                                                                                                                                                    |
+| `response_format`      | no       | For every item; `wav` when absent.                                                                                                                                                         |
+| `sample_rate`          | no       | For every item, one of `sample_rates`; the model's own rate when absent.                                                                                                                   |
+| `extra`                | no       | Model options for every item. An item's own `extra` is merged over it, key by key.                                                                                                         |
+| `items`                | yes      | One to `batch.max_items` lines.                                                                                                                                                            |
+| `items[].id`           | yes      | The client's name for the line: a string of 1–200 characters, unique in the request (two with one id are a `400`). Answered back exactly as it was sent; the server reads nothing into it. |
+| `items[].input`        | yes      | The text to say, tags written in as the capabilities' `tags` spell them.                                                                                                                   |
+| `items[].voice`        | yes      | A voice id from [`GET /v1/audio/voices`](#voices). Voices live on the server; a request never carries reference audio.                                                                     |
+| `items[].instructions` | no       | How to say it, in words. Ignored by a model whose capabilities say `instructions: false`.                                                                                                  |
+| `items[].speed`        | no       | Within the capabilities' `speed`; `1.0` when absent.                                                                                                                                       |
+| `items[].language`     | no       | A code from `languages`; the server's own guess when absent.                                                                                                                               |
+| `items[].extra`        | no       | Model options for this item alone.                                                                                                                                                         |
 
 **The request is refused whole only when it cannot be read**: not JSON, no `items` or more than
 `max_items`, two items with one `id`, an unknown `model`, a `response_format` or `sample_rate` it
@@ -164,10 +164,26 @@ answered:
 | `done`                | How many items were `done` and `failed`, and the `usage` summed over the batch. Nothing follows it.                                                                                                                                                                                                                       |
 | `ping`                | Nothing but `type`. A server whose first item may take a while sends one every few seconds, so a client can tell a slow batch from a dead connection.                                                                                                                                                                     |
 
-Every item is answered exactly once. A client reads a stream that ends without `done` as a dropped
-connection: the items it was not told about were not rendered, as far as it knows, and it may send
-them again. A client that closes the connection is cancelling the batch; the server should stop
-rendering what is left, and whatever it had finished is lost.
+Every item is answered exactly once, and a client matches an answer to its item by `id`; `index`
+is a convenience a server should send and a client may fall back on. A second answer for an item,
+or one naming an item that was not sent, is ignored. `done`'s counts are for a person reading a log;
+a client goes by the item lines it saw.
+
+A client reads a stream that ends without `done` as a dropped connection: the items it was not told
+about were not rendered, as far as it knows, and it may send them again. One that ends without
+`done` after every item was answered lost nothing, and is complete. A `done` that arrives with items
+still unanswered leaves those unanswered, as a dropped connection does. A client that closes the
+connection is cancelling the batch; the server should stop rendering what is left, and whatever it
+had finished is lost.
+
+Once the `200` is sent, a refusal of the whole request is too late: it belongs before the stream.
+A server that finds one afterwards fails each item still unanswered instead. A client that meets a
+line that is an error object rather than an `item` treats it as a refusal of everything unanswered.
+
+**How long a client waits.** A client gives up on a batch when nothing — an item or a `ping` — has
+arrived for its endpoint's timeout (60 seconds by default in this app; a person can change it), not
+when the whole batch has taken that long, so a long batch that keeps talking is never cut off. A
+server should send a `ping` at least every 10 seconds while nothing else is ready.
 
 Why a stream of JSON rather than one answer or multipart: lines land as they finish, so a person
 watching a chapter sees it fill in; one item's failure is one line, not a failed request; and it is
@@ -249,7 +265,7 @@ client sends it once, with no retries. A server that does not make voices answer
 
 ## How this app uses it
 
-- **Test** asks for the capabilities and says what it found — "Answers batches of up to 16 lines" —
+- **Test** asks for the capabilities and says what it found — "… · takes batches of up to 16 lines" —
   beside the usual check that the host and key answer.
 - **A narration run** asks again when it starts (the answer is kept for a few minutes), and when the
   endpoint's model takes batches, gathers that endpoint's waiting lines into batches of up to
@@ -262,6 +278,11 @@ client sends it once, with no retries. A server that does not make voices answer
   retried whole, with the endpoint's retries and cooldown; an item that failed `retryable` goes into
   a later batch, up to the endpoint's retries; one that did not, fails its line.
 - **A retake** of one line is a batch of one.
+- **What it sends**: `model`, `response_format`, and per item `id` (its place in the batch, as a
+  string), `input`, `voice` and `instructions` when the line has any — whether or not the
+  capabilities say the model reads them; a server that does not ignores them. It sends no
+  `sample_rate`, `speed`, `language` or `extra` yet: an OpenAI-compatible endpoint that names a
+  sample rate is still refused before any request, as it is for one line.
 - The endpoint's `concurrency`, pause and rate-limit cooldown apply as they do to any endpoint (see
   [backend.md](backend.md#narration)).
 

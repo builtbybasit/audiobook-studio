@@ -1595,6 +1595,7 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [narration.test.ts](../tests/server/narration.test.ts)                       | Narration: scopes, replacement, failure, cancel, restart, dictionary, files                                         |
 | [narrationConcurrency.test.ts](../tests/server/narrationConcurrency.test.ts) | Lines at an endpoint's concurrency, two endpoints alongside, a pause held, a rate limit's cooldown, a cancel        |
 | [narrationBatch.test.ts](../tests/server/narrationBatch.test.ts)             | Batches filled in order to what they take, a long line's parts, a line sent again, a dropped batch, slots, a cancel |
+| [speechBatch.test.ts](../tests/server/speechBatch.test.ts)                   | The batch client against a fake batch server: capabilities, the stream, refusals, drops, idle timeout, ledger       |
 | [speechGate.test.ts](../tests/server/speechGate.test.ts)                     | The gate alone: its limit, order, pause and poll, cooldown and timer, what it tells a waiting line, cancels         |
 | [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)                     | Editing against a revision, the history rule, what a run writes                                                     |
 | [cast.test.ts](../tests/server/cast.test.ts)                                 | The cast a run leaves, rename, merge, removal, exact undo                                                           |

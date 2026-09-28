@@ -71,7 +71,10 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   [lib/endpoints.ts](../src/lib/endpoints.ts). DeepSeek's weekday peak hours are a schedule on the
   Pricing tab over an off-peak card, and Gemini Flash's 2026 price is a promotion that ends when
   its 2027 card applies. The picker copies what it fills in, so editing an endpoint's prices never
-  changes the preset. The Scripting page's endpoint manager has the same picker. The tab keeps
+  changes the preset. On this tab a preset is staged with the connection edits, prices and limits
+  included: Save applies all of it and Discard drops all of it, and its note goes when another
+  endpoint is selected. The Scripting page's endpoint manager has the same picker
+  (`usePresetPicker`), and writes onto the profile at once, as all its fields do. The tab keeps
   three things apart that usually get confused: the saved model configuration, the provider connection (base URL + credential, shareable between configurations)
   and the shared quota group. Named credentials can be used by several endpoints; in the demo the
   key itself stays in the in-memory keyring and never reaches an export. With a server, the key is

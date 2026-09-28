@@ -71,7 +71,7 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   $3.20 / $9.60); and Ollama and LM Studio on your own machine. A preset fills in the base URL,
   model and prices, and every field stays editable. The rates are the providers' published cards
   on 28 September 2026, read in UTC, in `SCRIPTING_PRESETS` and `TTS_PRESETS` in
-  [lib/endpoints.ts](../src/lib/endpoints.ts). Gemini 3.8's speech presets start with Google's
+  [lib/presets/](../src/lib/presets/), re-exported by `lib/endpoints.ts`. Gemini 3.8's speech presets start with Google's
   recommended vocal tags (`<laugh>`, `<sigh>`, `<short pause>` and the rest) on the Expressions
   tab; BreezeBlue's bill the text but not the instructions beside it; gpt-4o-mini-tts is cut at
   1,500 characters, since the model reads at most 2,000 input tokens, and MiniMax at 3,000, above

@@ -33,6 +33,7 @@ import RunEstimate from "@/views/narration/RunEstimate.vue";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import JobLedger from "@/views/narration/JobLedger.vue";
 import { useBookId } from "@/composables/useBookId";
+import { useCast } from "@/queries";
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
@@ -42,6 +43,7 @@ const uiStore = useUiStore();
 const route = useRoute();
 const router = useRouter();
 const bookId = useBookId();
+useCast(bookId);
 const tab = ref("voices");
 const lexicon = ref<InstanceType<typeof LexiconPanel> | null>(null);
 /** the ledger's pronunciation flag hands a word straight to the dictionary */

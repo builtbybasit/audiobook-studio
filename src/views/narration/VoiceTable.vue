@@ -173,7 +173,8 @@ function applyAssignments() {
         </div>
         <div class="mt-2 flex items-center gap-1.5">
           <VoicePicker
-            v-model="c.voice"
+            :model-value="c.voice"
+            @update:model-value="(v) => castStore.setVoice(bookId, c.name, v)"
             :book-id="bookId"
             :speaker="c.name"
             class="min-w-0 flex-1"
@@ -251,7 +252,14 @@ function applyAssignments() {
             </td>
             <td class="w-16 font-mono text-xs text-zinc-400">{{ counts[c.name] ?? 0 }} seg</td>
             <td class="w-56 py-1">
-              <VoicePicker v-model="c.voice" :book-id="bookId" :speaker="c.name" size="xs" block />
+              <VoicePicker
+                :model-value="c.voice"
+                @update:model-value="(v) => castStore.setVoice(bookId, c.name, v)"
+                :book-id="bookId"
+                :speaker="c.name"
+                size="xs"
+                block
+              />
             </td>
             <td class="w-8 py-1 pl-2 pr-3">
               <RouterLink

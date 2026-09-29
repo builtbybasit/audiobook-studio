@@ -17,7 +17,7 @@ import ScriptReader from "@/views/scripting/ScriptReader.vue";
 import ScriptSettings from "@/views/scripting/ScriptSettings.vue";
 import ScriptEndpoints from "@/views/scripting/ScriptEndpoints.vue";
 import { useBookId } from "@/composables/useBookId";
-import { useChapterScript } from "@/queries";
+import { useCast, useChapterScript } from "@/queries";
 import { scriptExportUrl } from "@/services/library";
 
 const endpointsStore = useEndpointsStore();
@@ -28,6 +28,7 @@ const uiStore = useUiStore();
 const route = useRoute();
 const router = useRouter();
 const bookId = useBookId();
+useCast(bookId);
 const selected = ref<number[]>([]);
 const showEndpoints = ref(false);
 const focusReader = ref(false);

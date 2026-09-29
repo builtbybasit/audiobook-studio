@@ -1343,7 +1343,8 @@ watch(open, (v) => {
         </div>
         <div class="mt-2 flex items-center gap-1 pl-4 text-[11px]">
           <VoicePicker
-            v-model="c.voice"
+            :model-value="c.voice"
+            @update:model-value="(v) => castStore.setVoice(bookId, c.name, v)"
             :book-id="bookId"
             :speaker="c.name"
             size="xs"

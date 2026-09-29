@@ -671,6 +671,12 @@ export const useCastStore = defineStore("cast", {
       Object.assign(c, rest);
       return this._push(bookId, name);
     },
+    /** Give a speaker a voice, or take theirs away so they borrow the Narrator's. What every
+     *  voice picker writes through: a picker bound straight to `c.voice` would change this copy
+     *  and never tell the server, and the choice would be gone on the next read. */
+    setVoice(bookId: string, name: string, voice: VoiceRef | null): Promise<void> {
+      return this.updateCharacter(bookId, name, { voice });
+    },
     /** Dismiss a merge suggestion: the name stays as its own speaker, and stops being new. */
     keepCharacter(bookId: string, name: string): Promise<void> {
       const c = this.characters[bookId]?.find((x) => x.name === name);

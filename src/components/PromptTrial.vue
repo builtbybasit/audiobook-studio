@@ -342,7 +342,10 @@ const colorOf = (name: string): string =>
       </template>
       <span :id="`${id}-note`" class="text-[11px] leading-snug text-zinc-500">
         <template v-if="blocked && !running">{{ blocked }}</template>
-        <template v-else-if="simulated">A simulated endpoint: nothing is billed.</template>
+        <template v-else-if="simulated"
+          >A simulated endpoint: nothing is sent or billed; the cost shown is what a real request
+          would come to.</template
+        >
         <template v-else
           >A real request, billed to {{ book?.title ?? "the book" }} and held to its
           budget.</template

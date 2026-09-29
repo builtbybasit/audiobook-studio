@@ -4,7 +4,7 @@
 // the reference answer, because it is the same data every screen in the app is built against. The
 // world's own parts are written by the demo library's seed (`server/demo/world.ts`), which writes
 // the same world into the demo's database, so the round trip proves the writer the demo uses; what
-// the world does not hold — a chapter's history, a ledger row — is written here.
+// the world does not hold — a ledger row — is written here.
 import { and, asc, eq } from "drizzle-orm";
 
 import type {
@@ -19,8 +19,8 @@ import type {
 import type { Db } from "~/db/client";
 import * as rows from "~/db/rows";
 
-// the world's books, casts, exports and jobs, as the demo's seed writes them
-export { writeBook, writeCast, writeExport, writeJob } from "~/demo/world";
+// the world's books, casts, exports, jobs and script histories, as the demo's seed writes them
+export { writeBook, writeCast, writeExport, writeHistory, writeJob } from "~/demo/world";
 // the dictionary, by the module the lexicon route writes through
 export { replaceLexicon as writeLexicon } from "~/db/cast";
 // A chapter's script is read and written by the server's own module; the round-trip test drives
@@ -49,21 +49,6 @@ import {
 } from "~/db/schema";
 
 // ---------- writing ----------
-
-export function writeHistory(
-  db: Db,
-  bookId: string,
-  chapterId: number,
-  history: ChapterHistory,
-): void {
-  db.insert(scriptHeads)
-    .values(rows.scriptHeadValues(bookId, chapterId, history))
-    .run();
-  for (const v of history.versions)
-    db.insert(scriptVersions)
-      .values(rows.scriptVersionValues(bookId, chapterId, v))
-      .run();
-}
 
 /**
  * Append one request to the ledger.

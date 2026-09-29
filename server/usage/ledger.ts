@@ -56,7 +56,12 @@ const errorOf = (sent: SentScript | SentSpeech): ReqError | undefined =>
     ? { code: sent.error.code, message: sent.error.message, body: "", at: sent.finishedAt }
     : undefined;
 
-function append(
+/**
+ * Append one settled request as it stands. Everything a job sends goes through `settleScript` or
+ * `settleSpeech`, which price it first; this is for a row that arrives with its receipt already
+ * decided — the demo's history of its simulated endpoints, which nothing billed.
+ */
+export function append(
   db: Db | Tx,
   r: Omit<RequestRecord, "id" | "chapterId">,
   chapterUid: string | null,

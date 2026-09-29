@@ -17,6 +17,8 @@ import { demoClips } from "~/audio/demoClips";
 import { audioFiles, type AudioFiles } from "~/audio/files";
 import { openDb, type Db } from "~/db/client";
 import { migrate } from "~/db/migrate";
+import { startLive, type DemoLive } from "~/demo/live";
+import { pacedEncoders } from "~/demo/pace";
 import { demoReset } from "~/demo/reset";
 import { isFresh, seedDemo } from "~/demo/seed";
 import { audiobookFiles } from "~/exports/files";
@@ -56,9 +58,10 @@ export interface LibraryOptions {
    */
   providers?: Providers;
   /**
-   * The demo: seeded when its database is fresh, given the route that empties it and seeds it
-   * again, and making a seeded clip's file the first time it is read. The real library is none of
-   * these — a fresh one starts empty, and a clip file it has lost stays lost.
+   * The demo: seeded when its database is fresh, given the routes that empty it and seed it again
+   * — as it began, or in a Demo tools situation — and making a seeded clip's file the first time
+   * it is read. The real library is none of these — a fresh one starts empty, and a clip file it
+   * has lost stays lost.
    */
   demo?: boolean;
 }
@@ -69,8 +72,13 @@ export interface Library {
   /** the SQLite file it was opened on, for the boot log */
   readonly database: string;
   readonly db: Db;
-  /** its queue, not yet started: `start` it once the server is about to listen */
+  /** its queue, not yet started: `start` the library once the server is about to listen */
   readonly runner: Runner;
+  /**
+   * Start its queue, and then — for a demo seeded as it was opened — set going what the seed
+   * describes that is not a row: its endpoints' recent trouble, as a reset does.
+   */
+  start(): Promise<void>;
   readonly app: Hono<PinoEnv>;
   readonly files: AudioFiles;
   readonly exports: ExportPorts;
@@ -102,7 +110,11 @@ export function openLibrary(options: LibraryOptions): Library {
     speech: endpointSpeechProvider(),
   };
   const files = audioFiles(options.audioDir, base, options.demo ? demoClips(db) : undefined);
-  const exports = { encoders: options.encoders, files: audiobookFiles(options.exportDir) };
+  // the demo's builds take the time the browser's do, so one running is seen running (`demo/pace.ts`)
+  const exports = {
+    encoders: options.demo ? pacedEncoders(options.encoders) : options.encoders,
+    files: audiobookFiles(options.exportDir),
+  };
   const voiceFiles = voiceFilesIn(options.voiceDir);
   // One gate for every line this library sends to a speech endpoint, shared by the narration
   // handler and the routes that save the endpoints and show what they are doing.
@@ -117,7 +129,14 @@ export function openLibrary(options: LibraryOptions): Library {
     { log },
   );
 
-  if (options.demo && isFresh(db)) log.info(seedDemo(db, voiceFiles, { base }), "seeded the demo");
+  const live = (l: DemoLive) => startLive({ db, runner, gate, files, exports }, l);
+  // what a seed made as the demo was opened leaves for once its queue is running
+  let pending: DemoLive | null = null;
+  if (options.demo && isFresh(db)) {
+    const { seeded, live: seededLive } = seedDemo(db, voiceFiles, { base, now: Date.now() });
+    log.info(seeded, "seeded the demo");
+    pending = seededLive;
+  }
   const reset = options.demo
     ? demoReset({
         db,
@@ -126,8 +145,15 @@ export function openLibrary(options: LibraryOptions): Library {
         voiceFiles,
         base,
         dirs: [options.audioDir, options.exportDir, options.voiceDir],
+        live,
       })
     : undefined;
+  async function start(): Promise<void> {
+    runner.start();
+    const seeded = pending;
+    pending = null;
+    if (seeded) await live(seeded);
+  }
 
   const app = createApp(db, {
     base,
@@ -140,7 +166,18 @@ export function openLibrary(options: LibraryOptions): Library {
     gate,
     reset,
   });
-  return { name, base, database: options.databaseUrl, db, runner, app, files, exports, providers };
+  return {
+    name,
+    base,
+    database: options.databaseUrl,
+    db,
+    runner,
+    start,
+    app,
+    files,
+    exports,
+    providers,
+  };
 }
 
 /**

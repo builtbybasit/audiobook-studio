@@ -195,10 +195,13 @@ function refuseEncodedClips(
  * draws the blocker panel — is what is asked, so the server's reasons are the page's reasons.
  * Chapters are never quietly dropped from a build the way they are from a bulk narration run: a
  * selection is a promise about what will be in the file.
+ *
+ * Only the queue's `enqueue` is asked for, so the demo can put up a build the worker never runs —
+ * one that failed before this session began (`demo/live.ts`) — through the same refusals and plan.
  */
 export function enqueueBuild(
   db: Db,
-  runner: Runner,
+  runner: Pick<Runner, "enqueue">,
   { encoders }: ExportPorts,
   covers: CoverFiles,
   bookId: string,

@@ -41,7 +41,7 @@ import { encodingOf, FORMAT_LABEL } from "@/lib/endpointShapes";
 import { chapterNarration, narrationTargets, SCOPE_LABEL } from "@/lib/runPlan";
 import { expressionParts, expressionPlan, type ExpressionPlan } from "@/lib/expressions";
 import type { SplitPart } from "@/lib/split";
-import { pacingOrDefault, silenceOf, speechInstructions } from "@/lib/speech";
+import { chapterSeconds, pacingOrDefault, speechInstructions } from "@/lib/speech";
 import { nextTakeNumber, requeue } from "@/lib/takes";
 import type { AudioFiles } from "~/audio/files";
 import { joinClips, probeClip } from "~/audio/probe";
@@ -153,7 +153,7 @@ export function settleChapter(
 ): { narration: NarrationStatus; seconds: number } {
   const segs = readScript(tx, bookId, chapterId);
   const pacing = pacingOrDefault(library.getBook(tx, bookId)?.pacing);
-  const seconds = segs.reduce((n, s) => n + s.audio.duration, 0) + silenceOf(segs, pacing);
+  const seconds = chapterSeconds(segs, pacing);
   const narration = chapterNarration(segs);
   setChapterNarration(tx, bookId, chapterId, narration, 100, seconds);
   return { narration, seconds };

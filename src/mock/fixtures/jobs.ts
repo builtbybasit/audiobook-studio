@@ -5,9 +5,8 @@
 // queued afterwards share one numbering, so "retry this job" addresses the same row either way.
 import type { Job, JobKind, JobStatus } from "@/types";
 
-const ago = (min: number): number => Date.now() - min * 60000;
-
-export function makeJobHistory(nextId: () => number): Job[] {
+export function makeJobHistory(nextId: () => number, now: number = Date.now()): Job[] {
+  const ago = (min: number): number => now - min * 60000;
   const mk = (
     kind: JobKind,
     bookId: string,

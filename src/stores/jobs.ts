@@ -8,6 +8,7 @@
 import { usable } from "@/lib/exports";
 import { logJob } from "@/lib/jobActivity";
 import { chapterNarration, segmentFailed } from "@/lib/runPlan";
+import { unusedTelemetry } from "@/lib/scripting";
 import { makeJobHistory } from "@/mock";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
@@ -480,14 +481,7 @@ export const useJobsStore = defineStore("jobs", {
     },
     // ---------- scripting ----------
     scriptingTelemetry(id: string): ScriptEndpointTelemetry {
-      return (this.scriptTelemetry[id] ??= {
-        completed: 0,
-        failures: 0,
-        rateLimits: 0,
-        backoffUntil: 0,
-        lastSuccess: 0,
-        history: [],
-      });
+      return (this.scriptTelemetry[id] ??= unusedTelemetry());
     },
   },
 });

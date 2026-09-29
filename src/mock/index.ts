@@ -38,7 +38,15 @@ export { SHELF_BOOKS, type ShelfBook, type ShelfState } from "@/mock/fixtures/sh
 // the world
 export { makeWorld } from "@/mock/world";
 export { makeVolumes, makeChapters, volumesOfSeed } from "@/mock/world/chapters";
-export { importedBook, importedVolume, type ImportedBook } from "@/mock/world/imports";
+export {
+  importedBook,
+  importedVolume,
+  importInto,
+  shelveInto,
+  type ImportedBook,
+  type LocalLibrary,
+} from "@/mock/world/imports";
+export { finishedExport } from "@/mock/world/exports";
 export { chapterParts, partsText, type ContentPart } from "@/mock/world/text";
 export { generateSegments } from "@/mock/world/script";
 export { makeCharacters, newSpeaker } from "@/mock/world/cast";
@@ -69,7 +77,12 @@ export {
   type ExportDemoPrep,
 } from "@/mock/scenarios/export";
 export { DEMO_GROUPS, demoScenario, demoScenarios } from "@/mock/scenarios/catalogue";
-export { applySituation, type HistoryRow, type ScenarioContext } from "@/mock/scenarios/situations";
+export {
+  applySituation,
+  historyJob,
+  type HistoryRow,
+  type ScenarioContext,
+} from "@/mock/scenarios/situations";
 
 // simulators — the timer-driven fakes that stand in for the endpoints
 export { discoverVoices, voicesUrl } from "@/mock/simulators/voices";

@@ -5,10 +5,10 @@
 // Built last, and from the draft, because those fingerprints only mean anything once the clips in
 // `seedPipeline` and `seedStory` are in place.
 import { DEFAULT_PACING } from "@/lib/speech";
-import { chapterSignature } from "@/lib/exports";
+import { chapterSignature, DEFAULT_EXPORT_SETTINGS, exportKey } from "@/lib/exports";
 import { volumesOfSeed } from "@/mock/world/chapters";
 import type { WorldDraft } from "@/mock/world/draft";
-import type { ExportItem } from "@/types";
+import type { Book, Chapter, ExportItem, ExportSettings } from "@/types";
 
 export function makeExports(w: WorldDraft): ExportItem[] {
   const sign = (bookId: string, ids: number[]): Record<number, string> =>
@@ -243,4 +243,66 @@ export function makeExports(w: WorldDraft): ExportItem[] {
   ];
 
   return exports;
+}
+
+/**
+ * An audiobook built earlier from exactly these chapters of the book, fingerprinted with `state` —
+ * the chapters as they stand now — so it reads as up to date until one of them moves.
+ */
+export function finishedExport(
+  id: number,
+  book: Book,
+  chapters: Chapter[],
+  ids: number[],
+  state: Record<number, string>,
+): ExportItem {
+  const duration =
+    chapters.filter((c) => ids.includes(c.id)).reduce((a, c) => a + c.duration, 0) +
+    Math.max(0, ids.length - 1) * 2;
+  const settings: ExportSettings = {
+    ...DEFAULT_EXPORT_SETTINGS,
+    title: book.title,
+    series: book.title,
+    author: book.author,
+    filename: book.title,
+  };
+  const size = Math.max(1, Math.round(((duration * settings.bitrate) / 8 / 1024) * 1.04));
+  const file = {
+    name: `${book.title}.m4b`,
+    chapterIds: ids,
+    duration,
+    size,
+    markers: ids.length,
+    volume: null,
+  };
+  return {
+    id,
+    bookId: book.id,
+    key: exportKey(settings),
+    filename: file.name,
+    title: book.title,
+    series: book.title,
+    author: book.author,
+    narrator: "OpenAI TTS · multi-voice",
+    year: settings.year,
+    description: "",
+    format: settings.format,
+    grouping: settings.grouping,
+    files: [file],
+    chapterIds: ids,
+    chapters: ids.length,
+    duration,
+    bitrate: settings.bitrate,
+    chapterGap: settings.chapterGap,
+    normalize: settings.normalize,
+    loudness: settings.loudness,
+    size,
+    markers: ids.length,
+    createdAt: `${book.addedAt} 20:10`,
+    version: 1,
+    replaces: null,
+    status: "done",
+    settings,
+    state,
+  };
 }

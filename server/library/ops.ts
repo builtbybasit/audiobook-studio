@@ -9,7 +9,7 @@
 import { and, eq } from "drizzle-orm";
 
 import type { Book, Chapter } from "@/types";
-import { pacingOrDefault, silenceOf } from "@/lib/speech";
+import { chapterSeconds, pacingOrDefault } from "@/lib/speech";
 import type { AudioFiles } from "~/audio/files";
 import { MAX_COVER_BYTES, sniffCover, type CoverFiles } from "~/covers/files";
 import type { AudiobookFiles } from "~/exports/files";
@@ -435,7 +435,7 @@ export function updateBook(
     for (const ch of library.listChapters(tx, bookId)) {
       if (ch.narration === "none") continue;
       const segs = readScript(tx, bookId, ch.id);
-      const duration = segs.reduce((n, s) => n + s.audio.duration, 0) + silenceOf(segs, pacing);
+      const duration = chapterSeconds(segs, pacing);
       tx.update(chapters)
         .set({ duration })
         .where(and(eq(chapters.bookId, bookId), eq(chapters.id, ch.id)))

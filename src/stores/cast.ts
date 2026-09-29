@@ -10,7 +10,7 @@ import type { Spoken } from "@/lib/speech";
 // the clips it staled, and its Undo names exactly those, for the server to put back to done.
 import { keyInPlace } from "@/services/endpointSettings";
 import { key, norm } from "@/lib/scriptReview";
-import { hitsIn, pacingOrDefault, silenceOf, speak } from "@/lib/speech";
+import { chapterSeconds, hitsIn, pacingOrDefault, speak } from "@/lib/speech";
 import { clone } from "@/lib/utils";
 import { newSpeaker, voiceRef } from "@/mock";
 import {
@@ -345,8 +345,7 @@ export const useCastStore = defineStore("cast", {
       const c = libraryStore.chapter(bookId, chId);
       if (!c) return;
       const segs = scriptsStore.segmentsOf(bookId, chId);
-      c.duration =
-        segs.reduce((a, s) => a + s.audio.duration, 0) + silenceOf(segs, this.pacingOf(bookId));
+      c.duration = chapterSeconds(segs, this.pacingOf(bookId));
     },
     // ---------- pronunciation & pacing ----------
     // Two ways to change how a book sounds without editing a word of it. The dictionary rewrites a

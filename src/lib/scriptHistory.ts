@@ -86,6 +86,20 @@ export function scriptOnly(s: Segment): Segment {
 /** A version's own copy of a script: script content only, and nothing shared with the live one. */
 export const snapshotScript = (segments: Segment[]): Segment[] => segments.map(scriptOnly);
 
+/** The versions a demo situation says a chapter went through, as a history: ids in the order given. */
+export const seededHistory = (seeded: {
+  versions: Omit<ScriptVersion, "id">[];
+  head: HistoryHead;
+}): ChapterHistory => ({
+  versions: seeded.versions.map((v, i) => ({
+    ...v,
+    id: i + 1,
+    segments: snapshotScript(v.segments),
+  })),
+  head: clone(seeded.head),
+  nextId: seeded.versions.length + 1,
+});
+
 // ---------- preserving a script before it is replaced ----------
 
 /** What preserving the working script comes to: the entry added, if any, and the head after it. */

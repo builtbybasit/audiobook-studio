@@ -510,6 +510,21 @@ export function chapterSignature(c: Chapter, segments: Segment[], pacing: Pacing
   return [c.narration, clips.length, Math.round(c.duration * 100), silence, h].join(":");
 }
 
+/** One fingerprint per chapter of `ids` the book has, so a later build knows what it can carry over. */
+export function chapterStates(
+  chapters: Chapter[],
+  ids: number[],
+  segmentsOf: (chId: number) => Segment[],
+  pacing: Pacing,
+): Record<number, string> {
+  const out: Record<number, string> = {};
+  for (const id of ids) {
+    const c = chapters.find((x) => x.id === id);
+    if (c) out[id] = chapterSignature(c, segmentsOf(id), pacing);
+  }
+  return out;
+}
+
 /** Settings that change the bytes, so a rebuild is a different file rather than the same one. */
 export const OUTPUT_KEYS = [
   "format",

@@ -2,10 +2,13 @@
 // chapters in reading order with continuous numbering, and the notes the import attached to the
 // chapters that did not look like story. Nothing is skipped here — every chapter arrives included
 // and the review is where the person decides.
+import { narrator } from "@/lib/cast";
 import { importSample, type VolumeSpec } from "@/mock/fixtures/imports";
 import { noteOf } from "@/mock/fixtures/notices";
+import type { ShelfBook } from "@/mock/fixtures/shelf";
+import { voiceRef } from "@/mock/fixtures/voices";
 import { rng } from "@/mock/random";
-import type { Book, Chapter, Volume } from "@/types";
+import type { Book, Chapter, Volume, World } from "@/types";
 
 export interface ImportedBook {
   book: Book;
@@ -78,6 +81,43 @@ export function importedBook(sampleId: string, id: string): ImportedBook {
     },
     chapters,
   };
+}
+
+/** The parts of a library an import lands in: the shelf, its chapters, its casts, and the voices a cast can use. */
+export type LocalLibrary = Pick<World, "books" | "chapters" | "characters" | "endpoints">;
+
+/**
+ * An EPUB read into a library with no server behind it, waiting in the contents review: the book
+ * under `id` (or `import-<sample>`), numbered on when that id is taken, with the Narrator its only
+ * speaker, on the first voice an enabled endpoint offers. Returns the book's id.
+ */
+export function importInto(
+  library: LocalLibrary,
+  sample: string,
+  { id, file, title }: { id?: string; file?: string; title?: string } = {},
+): string {
+  const base = id ?? `import-${sample}`;
+  let bookId = base;
+  for (let n = 2; library.books.some((b) => b.id === bookId); n++) bookId = `${base}-${n}`;
+  const { book, chapters } = importedBook(sample, bookId);
+  if (title?.trim()) book.title = title.trim();
+  if (file) book.volumes[0].file = file;
+  library.books.push(book);
+  library.chapters[bookId] = chapters;
+  const voiced = library.endpoints.find((e) => e.enabled && e.voices.length);
+  library.characters[bookId] = [narrator(voiced ? voiceRef(voiced.id, voiced.voices[0].id) : null)];
+  return bookId;
+}
+
+/** A shelf book straight into the library, its review already done. Returns the book's id. */
+export function shelveInto(library: LocalLibrary, spec: ShelfBook): string {
+  const id = importInto(library, spec.sample, { id: spec.id, title: spec.title });
+  const book = library.books.find((b) => b.id === id)!;
+  book.author = spec.author;
+  book.cover = spec.cover;
+  book.addedAt = spec.addedAt;
+  delete book.importing;
+  return id;
 }
 
 /** One more volume for an existing book: the sample's first volume, numbered after the book's last chapter. */

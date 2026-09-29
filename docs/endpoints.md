@@ -148,7 +148,7 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   output-token ceiling. A simulated speech endpoint also has **Simulated answers**: how long each
   answer takes, in milliseconds, and the share that fail, in percent (stored as `latency` and
   `failRate`, 0–1), so a run on it moves and fails like one on a real provider. A simulated
-  scripting profile has neither; it answers at once. The split preview runs the real splitter and asserts the pieces rejoin the
+  scripting profile has neither: it takes a tenth of its **Seconds per chunk** estimate to answer each chunk, the pace the demo scripts at, and never fails. The split preview runs the real splitter and asserts the pieces rejoin the
   source character for character. A footer says which settings apply immediately and which apply to
   the next job.
 - **Pricing & budgets** — scripting keeps separate input/output prices per million tokens, with

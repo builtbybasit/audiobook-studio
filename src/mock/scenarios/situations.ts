@@ -26,10 +26,12 @@ import type {
   Character,
   DemoResult,
   HistoryHead,
+  Job,
   JobKind,
   JobStatus,
   Profile,
   RateWindow,
+  RequestRecord,
   ScriptEndpointTelemetry,
   ScriptVersion,
   Segment,
@@ -59,6 +61,82 @@ export interface HistoryRow {
     detail?: Record<string, string | number>;
   }[];
 }
+
+/**
+ * A finished row in the queue, as an earlier session would have left it — including the activity
+ * that explains it. A failed row whose log says only "Job queued" is not a failure anyone can
+ * diagnose, so the run's own account is seeded with it and dated between the row's start and its
+ * finish, in order.
+ */
+export function historyJob(row: HistoryRow, id: number, now: number): Job {
+  const started = now - row.minutesAgo * 60000;
+  const finished = started + row.seconds * 1000;
+  const queuedAt = started - 1500;
+  const middle = row.activity ?? [];
+  return {
+    id,
+    kind: row.kind,
+    bookId: row.bookId,
+    chapterId: row.chapterId,
+    label: row.label,
+    status: row.status,
+    progress: row.status === "done" || row.status === "failed" ? 100 : 40,
+    queuedAt,
+    startedAt: started,
+    finishedAt: finished,
+    cancelled: row.status === "cancelled",
+    waitingReason: "",
+    ...(row.bulk ? { bulk: { ...row.bulk } } : {}),
+    // the run's account, spread over the time it actually took
+    activity: [
+      { at: queuedAt, level: "info" as const, message: "Job queued" },
+      { at: started, level: "info" as const, message: "Job started", detail: { queueMs: 1500 } },
+      ...middle.map((e, i) => ({
+        at: started + ((i + 1) * (finished - started)) / (middle.length + 1),
+        level: e.level ?? ("info" as const),
+        message: e.message,
+        ...(e.detail ? { detail: e.detail } : {}),
+      })),
+      {
+        at: finished,
+        level: row.status === "failed" ? ("error" as const) : ("info" as const),
+        message: `Job ${row.status}`,
+        detail: { elapsedMs: finished - started },
+      },
+    ].map((e, i) => ({ ...e, id: i + 1, at: Math.round(e.at) })),
+  };
+}
+
+/**
+ * Spending a situation declares rather than a request anybody made — "this book has already used
+ * its scripting budget". An opening balance, so it carries no receipt and is marked as invented; it
+ * counts against the cap all the same.
+ */
+export const openingScriptSpend = (
+  id: string,
+  bookId: string,
+  profileId: string,
+  cost: number,
+  at: number,
+): RequestRecord => ({
+  id,
+  endpointId: profileId,
+  kind: "scripting",
+  bookId,
+  chapterId: null,
+  label: "Earlier scripting on this book",
+  status: "done",
+  attempts: 1,
+  queuedAt: at,
+  startedAt: at,
+  finishedAt: at,
+  queueMs: 0,
+  responseMs: 0,
+  usage: {},
+  cost,
+  costBasis: "calculated",
+  simulated: true,
+});
 
 /**
  * The slice of the application a situation is allowed to reach for. Like `SimulatorContext`, it is

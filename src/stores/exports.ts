@@ -6,7 +6,7 @@
 // rather than encoding anything here. Everything below the request is the demo's: the simulated
 // encoder, its progress and its failures never run with a server answering.
 import {
-  chapterSignature,
+  chapterStates,
   coverRefusal,
   dataUrlOf,
   DEFAULT_EXPORT_SETTINGS,
@@ -179,13 +179,12 @@ export const useExportsStore = defineStore("exports", {
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
 
-      const pacing = castStore.pacingOf(bookId);
-      const out: Record<number, string> = {};
-      for (const id of ids) {
-        const c = libraryStore.chapter(bookId, id);
-        if (c) out[id] = chapterSignature(c, scriptsStore.segmentsOf(bookId, id), pacing);
-      }
-      return out;
+      return chapterStates(
+        libraryStore.chaptersOf(bookId),
+        ids,
+        (id) => scriptsStore.segmentsOf(bookId, id),
+        castStore.pacingOf(bookId),
+      );
     },
     exportsOf(bookId: string): ExportItem[] {
       return this.exports.filter((e) => e.bookId === bookId && e.status !== "replaced");

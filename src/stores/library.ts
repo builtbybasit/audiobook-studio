@@ -15,11 +15,10 @@
 // An undo of a skip or a keep, by contrast, is exact on both sides: the store records what the
 // chapters were and puts that back — in memory, or through `setDecisions` on the server — rather
 // than running the inverse rule and letting an undone skip come back as "looked at".
-import { narrator } from "@/lib/cast";
 import { noticeGroups, plural, summarize } from "@/lib/contents";
 import { isNarrated, isScripted, key } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
-import { importedBook, importedVolume, sampleForFile } from "@/mock";
+import { importedVolume, importInto, sampleForFile, type LocalLibrary } from "@/mock";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import {
@@ -610,6 +609,18 @@ export const useLibraryStore = defineStore("library", {
       }
       return this._importedLocally(spec.sample ?? sampleForFile(spec.file ?? ""), spec);
     },
+    /** The seeded world's library, as the demo's imports write into it. */
+    _local(): LocalLibrary {
+      const castStore = useCastStore();
+      const endpointsStore = useEndpointsStore();
+
+      return {
+        books: this.books,
+        chapters: this.chapters,
+        characters: castStore.characters,
+        endpoints: endpointsStore.endpoints,
+      };
+    },
     /**
      * The seeded world's half of `importBook`, kept separate because it is synchronous.
      *
@@ -620,21 +631,7 @@ export const useLibraryStore = defineStore("library", {
       sample: string,
       { id, file, title }: { id?: string; file?: string; title?: string } = {},
     ): string {
-      const castStore = useCastStore();
-      const endpointsStore = useEndpointsStore();
-
-      const base = id ?? `import-${sample}`;
-      let bookId = base;
-      for (let n = 2; this.books.some((b) => b.id === bookId); n++) bookId = `${base}-${n}`;
-      const { book, chapters } = importedBook(sample, bookId);
-      if (title?.trim()) book.title = title.trim();
-      if (file) book.volumes[0].file = file;
-      this.books.push(book);
-      this.chapters[bookId] = chapters;
-      castStore.characters[bookId] = [
-        narrator(endpointsStore.voiceOptions.find((o) => !o.disabled)?.value ?? null),
-      ];
-      return bookId;
+      return importInto(this._local(), sample, { id, file, title });
     },
     /**
      * A novel split across several EPUBs: the file becomes one more volume, chapters keep numbering

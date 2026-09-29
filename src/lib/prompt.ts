@@ -387,7 +387,7 @@ export function promptWarnings(t: PromptTemplate): string[] {
 export function sampleVars(excerpt: string, endpoint: { name: string; model: string }): PromptVars {
   return {
     book: { title: "The Lamplighter", author: "A. N. Author", notes: "" },
-    chapter: { title: "Connection test", number: 1 },
+    chapter: { title: "The Bridge", number: 1 },
     part: 1,
     parts: 1,
     cast: [{ name: "Mara", gender: "f", aliases: [], description: "" }],

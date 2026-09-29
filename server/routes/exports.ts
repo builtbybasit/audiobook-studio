@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
+import type { CoverFiles } from "~/covers/files";
 import type { Db } from "~/db/client";
 import * as ops from "~/exports/ops";
 import { enqueueBuild } from "~/jobs/export";
@@ -39,7 +40,12 @@ const Build = v.object({
   updates: v.optional(v.nullable(v.pipe(v.number(), v.integer(), v.minValue(1))), null),
 });
 
-export function exportRoutes(db: Db, runner: Runner, ports: ExportPorts): Hono<PinoEnv> {
+export function exportRoutes(
+  db: Db,
+  runner: Runner,
+  ports: ExportPorts,
+  covers: CoverFiles,
+): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
   app.get("/:id/exports", validate("param", BookParam), (c) =>
@@ -54,7 +60,7 @@ export function exportRoutes(db: Db, runner: Runner, ports: ExportPorts): Hono<P
    */
   app.post("/:id/exports", validate("param", BookParam), validate("json", Build), (c) => {
     const { ids, settings, updates } = c.req.valid("json");
-    const result = enqueueBuild(db, runner, ports, c.req.valid("param").id, {
+    const result = enqueueBuild(db, runner, ports, covers, c.req.valid("param").id, {
       ids,
       settings,
       updates,

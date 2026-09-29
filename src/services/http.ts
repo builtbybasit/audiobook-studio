@@ -51,10 +51,30 @@ function parseJson(text: string): { body: unknown; parsed: boolean } {
   }
 }
 
+const UNREACHABLE = "Could not reach the server";
+
+// A gateway's answer for an API it could not reach. The API's own 502 carries its error body with
+// a code; one without is the proxy in front of it — `pnpm dev`'s, when the server is not running —
+// and is the same failure as a refused connection, so it is reported as one.
+const GATEWAY = new Set([502, 503, 504]);
+
+/**
+ * Whether a failure is the API not answering at all: nothing listening (status 0, no response),
+ * or a proxy in front of it that could not reach it.
+ */
+export const unreachable = (cause: unknown): boolean =>
+  cause instanceof ApiError && (cause.status === 0 || (!cause.code && GATEWAY.has(cause.status)));
+
 /** A response that is not ok, as the error the API's JSON body describes. */
 function refusal(res: Response, text: string): ApiError {
   const { body, parsed } = parseJson(text);
   const { error } = (parsed ? (body ?? {}) : {}) as ErrorBody;
+  if (!error?.code && GATEWAY.has(res.status))
+    return new ApiError(
+      UNREACHABLE,
+      res.status,
+      excerpt(text) || `The proxy in front of the API answered ${res.status} with nothing else.`,
+    );
   return new ApiError(
     error?.message ?? `Request failed (${res.status})`,
     res.status,
@@ -75,11 +95,7 @@ export class HttpClient {
     } catch (cause) {
       // The server is not answering. Saying so is the whole point: the alternative is a UI that
       // looks like an empty library rather than one that cannot be reached.
-      throw new ApiError(
-        "Could not reach the server",
-        0,
-        cause instanceof Error ? cause.message : undefined,
-      );
+      throw new ApiError(UNREACHABLE, 0, cause instanceof Error ? cause.message : undefined);
     }
   }
 

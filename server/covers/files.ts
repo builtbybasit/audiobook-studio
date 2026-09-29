@@ -3,7 +3,9 @@
 // A cover is kept beside the book's clips, in `<AUDIO_DIR>/<bookId>/covers/`, so the removal that
 // takes a book's directory takes its covers with it and nothing else has to remember them. The file
 // is named by a hash of its bytes: the same image uploaded twice is one file under one url, and a
-// url whose bytes can never change is one a browser may cache for good.
+// url whose bytes can never change is one a browser may cache for good. The url is under the API
+// base of the library the clips belong to, as a clip's is (`server/audio/files.ts`), and a book
+// keeps the url it was given.
 //
 // **Only JPEG and PNG.** Those are what an M4B's cover atom and an MP3's picture frame are read as
 // by every player that shows a cover at all, and what ffmpeg copies in without re-encoding. The
@@ -12,6 +14,7 @@
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { AudioFiles } from "~/audio/files";
 import { BOOK_ID } from "~/lib/http";
 
 export type CoverType = "image/jpeg" | "image/png";
@@ -31,32 +34,24 @@ export function sniffCover(bytes: Uint8Array): CoverType | null {
   return null;
 }
 
-export const coverUrl = (bookId: string, file: string): string =>
-  `/api/books/${bookId}/covers/${file}`;
-
-/**
- * The file a cover url of this book names, or null when it names anything else: another book's
- * cover, a path that is not one, a data URL. Asked before a build is queued, so a cover the server
- * could never find is a refusal rather than a build that fails later.
- */
-export function coverFileOf(bookId: string, url: string): string | null {
-  const prefix = `/api/books/${bookId}/covers/`;
-  if (!url.startsWith(prefix)) return null;
-  const file = url.slice(prefix.length);
-  return FILE.test(file) ? file : null;
-}
-
 export interface CoverFiles {
   /** Keep an image already sniffed as a cover, and say its url. The same bytes, the same url. */
   write(bookId: string, bytes: Uint8Array, type: CoverType): Promise<{ url: string; file: string }>;
   /** The file a request names, or null when the request names something that cannot be one. */
   path(bookId: string, file: string): string | null;
+  /**
+   * The file a cover url of this book names, or null when it names anything else: another book's
+   * cover, another library's, a path that is not one, a data URL. Asked before a build is queued,
+   * so a cover the server could never find is a refusal rather than a build that fails later.
+   */
+  fileOf(bookId: string, url: string): string | null;
   /** The file a cover url of this book names, when it is on disk. */
   existing(bookId: string, url: string): Promise<{ path: string; type: CoverType } | null>;
 }
 
-/** Covers under `dir` — the audio directory, so a book's covers go with its clips. */
-export function coverFiles(dir: string): CoverFiles {
+/** Covers beside a library's clips, under the same directory and the same API base. */
+export function coverFiles({ dir, base }: Pick<AudioFiles, "dir" | "base">): CoverFiles {
+  const prefix = (bookId: string) => `${base}/books/${bookId}/covers/`;
   return {
     async write(bookId, bytes, type) {
       const hash = new Bun.CryptoHasher("sha256").update(bytes).digest("hex").slice(0, 32);
@@ -64,14 +59,19 @@ export function coverFiles(dir: string): CoverFiles {
       const at = join(dir, bookId, "covers");
       await mkdir(at, { recursive: true });
       await writeFile(join(at, file), bytes);
-      return { url: coverUrl(bookId, file), file };
+      return { url: prefix(bookId) + file, file };
     },
     path(bookId, file) {
       if (!BOOK_ID.test(bookId) || !FILE.test(file)) return null;
       return join(dir, bookId, "covers", file);
     },
+    fileOf(bookId, url) {
+      if (!url.startsWith(prefix(bookId))) return null;
+      const file = url.slice(prefix(bookId).length);
+      return FILE.test(file) ? file : null;
+    },
     async existing(bookId, url) {
-      const file = coverFileOf(bookId, url);
+      const file = this.fileOf(bookId, url);
       const path = file ? this.path(bookId, file) : null;
       if (!file || !path) return null;
       const found = await stat(path).catch(() => null);

@@ -5,6 +5,9 @@
 // cascades — and drizzle runs migrations in a transaction, where SQLite ignores the
 // `PRAGMA foreign_keys=OFF` the generated SQL puts first. No migration in `drizzle/` rebuilds a
 // table yet; this writes the one the next schema change on `chapters` would, and runs it.
+//
+// And the one migration that rewrites rows rather than tables: a book's cover, once kept as a file
+// name, kept as the url it is served at.
 import { describe, expect, test } from "bun:test";
 import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -107,5 +110,30 @@ describe("a migration that rebuilds a table", () => {
     db.$client.exec("PRAGMA foreign_keys = ON;");
     addRebuild(db, dir, "chapters");
     expect(() => migrate(db, dir)).toThrow(/pointing at nothing/);
+  });
+});
+
+describe("keeping a cover as its url", () => {
+  test("gives a cover kept as a file name the real library's url for it", () => {
+    const dir = copyOfMigrations();
+    const journalPath = join(dir, "meta", "_journal.json");
+    const journal = readFileSync(journalPath, "utf8");
+    const before = JSON.parse(journal) as { entries: { tag: string }[] };
+    before.entries = before.entries.filter((e) => e.tag !== "0012_cover_urls");
+    writeFileSync(journalPath, JSON.stringify(before));
+    const db = openDb(":memory:");
+    migrate(db, dir);
+    db.$client.exec(
+      "INSERT INTO books (id, title, author, cover_from, cover_to, cover_image, added_at) VALUES " +
+        "('kept', 'Kept', 'A', '#000', '#111', 'abc.png', 0), " +
+        "('none', 'None', 'A', '#000', '#111', NULL, 0)",
+    );
+
+    writeFileSync(journalPath, journal);
+    migrate(db, dir);
+    expect(db.$client.query("SELECT id, cover_image FROM books ORDER BY id").all()).toEqual([
+      { id: "kept", cover_image: "/api/books/kept/covers/abc.png" },
+      { id: "none", cover_image: null },
+    ]);
   });
 });

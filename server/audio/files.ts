@@ -7,6 +7,10 @@
 // browser to cache a clip forever. The book id is in the path so that removing a book is removing
 // a directory, which is the whole of the cleanup story.
 //
+// The url is under the API base of the library that rendered the clip — `/api`, or `/demo/api` for
+// the demo — and it is stored with the clip, so a clip is only ever served by the library that
+// holds it.
+//
 // `path` is the one function that turns a request into a filesystem path, and it refuses anything
 // that is not exactly a book id and a token: there is no request that legitimately reads outside a
 // book's directory, so none is allowed to try.
@@ -36,6 +40,8 @@ export function formatOfFile(name: string): AudioFormat | null {
 export interface AudioFiles {
   /** the directory everything is under, for the boot log */
   readonly dir: string;
+  /** the library's API base its urls are under: `/api`, or `/demo/api` */
+  readonly base: string;
   /** Keep one render, under its format's extension, and say where a browser can fetch it. */
   write(bookId: string, bytes: Uint8Array, format: AudioFormat): Promise<{ url: string }>;
   /** The file a request names, or null when the request names something that cannot be a file. */
@@ -46,14 +52,15 @@ export interface AudioFiles {
   removeBook(bookId: string): Promise<void>;
 }
 
-export function audioFiles(dir: string): AudioFiles {
+export function audioFiles(dir: string, base = "/api"): AudioFiles {
   return {
     dir,
+    base,
     async write(bookId, bytes, format) {
       const file = `${crypto.randomUUID()}.${AUDIO_EXT[format]}`;
       await mkdir(join(dir, bookId), { recursive: true });
       await writeFile(join(dir, bookId, file), bytes);
-      return { url: `/api/audio/${bookId}/${file}` };
+      return { url: `${base}/audio/${bookId}/${file}` };
     },
     path(bookId, file) {
       if (!BOOK_ID.test(bookId) || !FILE.test(file)) return null;

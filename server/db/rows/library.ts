@@ -13,7 +13,6 @@ import type {
   ScriptingStatus,
   Volume,
 } from "@/types";
-import { coverUrl } from "~/covers/files";
 import type { books, chapters, volumes } from "~/db/schema";
 
 type BookRow = typeof books.$inferSelect;
@@ -37,7 +36,7 @@ export function toBook(row: BookRow, vols: readonly VolumeRow[], counts?: Chapte
   };
   if (counts) book.chapters = counts;
   if (row.importing) book.importing = true;
-  if (row.coverImage != null) book.coverImage = coverUrl(row.id, row.coverImage);
+  if (row.coverImage != null) book.coverImage = row.coverImage;
   // A budget exists once either half of it has been set; absent is not the same as "no cap, not
   // paused", and the overview reads the difference.
   if (row.budgetCap != null || row.budgetPaused != null)
@@ -88,7 +87,7 @@ export function bookValues(book: Book, addedAt: number): typeof books.$inferInse
     author: book.author,
     coverFrom: book.cover[0],
     coverTo: book.cover[1],
-    coverImage: book.coverImage?.split("/").at(-1) ?? null,
+    coverImage: book.coverImage ?? null,
     addedAt,
     importing: !!book.importing,
     budgetCap: book.budget?.cap ?? null,

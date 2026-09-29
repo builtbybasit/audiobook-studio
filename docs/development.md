@@ -18,7 +18,7 @@ The scripts are defined in [package.json](../package.json):
 | Command            | Purpose                                      |
 | ------------------ | -------------------------------------------- |
 | `pnpm dev`         | Start the API and the frontend together      |
-| `pnpm dev:web`     | Start the frontend alone, in backend mode    |
+| `pnpm dev:web`     | Start the frontend alone                     |
 | `pnpm dev:server`  | Start the backend API on :8787               |
 | `pnpm typecheck`   | Run `vue-tsc --build`                        |
 | `pnpm lint`        | Check with Oxlint                            |
@@ -56,7 +56,7 @@ The scenario catalogue and shared store rules remain in their existing locations
 
 ## State that survives a reload
 
-In demo mode — which is the default — books, scripts, history, jobs, usage, endpoint settings and credentials are in memory, and reloading reconstructs the seeded world. In backend mode the library, each chapter's script and the job queue are stored in SQLite and survive — a job the server was running when it stopped is picked up again when it starts; everything else is still in memory. See [backend](backend.md).
+In a demo tab — opened from the header's **Demo** chip — books, scripts, history, jobs, usage, endpoint settings and credentials are in memory, and reloading reconstructs the seeded world. With the server the library, each chapter's script and the job queue are stored in SQLite and survive — a job the server was running when it stopped is picked up again when it starts; everything else is still in memory. See [backend](backend.md).
 
 Browser localStorage retains reader typography and cast-rail preferences, the Library grid/list choice, and whether Narration’s setup panel is open. Searches, filters and some navigation state are also represented in the URL. These preferences are not persistence for library data.
 

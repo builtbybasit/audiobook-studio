@@ -174,7 +174,9 @@ function scriptFirst() {
             class="text-violet-600 hover:underline dark:text-violet-400"
             >Export script</a
           >
-          <span v-else title="Start the app with pnpm dev">needs the server</span>
+          <span v-else title="Leave the demo, from the Demo chip, to use the server"
+            >needs the server</span
+          >
         </div>
       </div>
 

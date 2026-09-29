@@ -34,6 +34,7 @@ import AppRail from "@/components/AppRail.vue";
 import BookSelector from "@/components/BookSelector.vue";
 import BookTabs from "@/components/BookTabs.vue";
 import { useShell } from "@/composables/useShell";
+import { isDemo } from "@/services/mode";
 import { TooltipProvider } from "reka-ui";
 
 const endpointsStore = useEndpointsStore();
@@ -80,7 +81,9 @@ watch(
 watch(
   () => jobsStore.activeJobs.length,
   (n) => {
-    document.title = (n ? `(${n}) ` : "") + "Audiobook Studio · prototype";
+    // the mode is the tab's, so the tab says which one it is
+    document.title =
+      (n ? `(${n}) ` : "") + (isDemo ? "Audiobook Studio · demo" : "Audiobook Studio");
   },
   { immediate: true },
 );
@@ -174,14 +177,19 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
         <div class="flex items-center gap-2 px-4 py-4" :class="!uiStore.railExpanded && 'lg:px-3'">
           <div
             class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-600 text-white"
-            title="Audiobook Studio · demo mode: seeded books and simulated jobs. No provider is called and every cost shown is simulated."
+            :title="
+              isDemo
+                ? 'Audiobook Studio · demo mode: seeded books and simulated jobs. No provider is called and every cost shown is simulated.'
+                : 'Audiobook Studio'
+            "
           >
             <LogoIcon class="icon-lg" />
           </div>
           <div class="leading-tight" :class="!uiStore.railExpanded && 'lg:hidden'">
             <div class="font-semibold">Audiobook Studio</div>
-            <!-- the app runs on seeded data and simulated jobs; say so where the name is -->
+            <!-- in the demo the app runs on seeded data and simulated jobs; say so where the name is -->
             <div
+              v-if="isDemo"
               class="text-[10px] uppercase tracking-wider text-amber-500"
               title="Seeded books and simulated jobs. No provider is called and every cost shown is simulated."
             >

@@ -1,11 +1,16 @@
 <script setup lang="ts">
-// The Demo drawer. Prototype only, and the one place the seeded situations are driven from.
+// The Demo drawer: the way into the demo and out of it, and in the demo the one place the seeded
+// situations are driven from.
 //
-// It is a workbench rather than a menu, so it is a non-modal panel down the right of the page:
+// On the server's library it says what the demo is and offers to open it; nothing else here means
+// anything outside the demo, so nothing else shows. Entering and leaving load the page again in
+// the other mode (services/mode.ts) rather than swapping worlds under the open page.
+//
+// In the demo it is a workbench rather than a menu, so it is a non-modal panel down the right of the page:
 // picking a row leaves it open so the page can be watched reacting, and it keeps its scroll. Top
 // to bottom: the situation the world is in now, with what applying it did and what to try; the
 // seeded rows that belong to the page that is open; every situation, grouped; and the simulation
-// switches with Reset, which says what it will drop before it is pressed.
+// switches with Reset, which says what it will drop before it is pressed, and the way out.
 import { useDemoStore } from "@/stores/demo";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
@@ -14,10 +19,13 @@ import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { usePlayer } from "@/composables/usePlayer";
 import { DEMO_GROUPS, SPEEDS } from "@/mock";
+import { enterDemo, isDemo, leaveDemo } from "@/services/mode";
 import { UiSwitch, UiToggleGroup } from "@/ui";
 import {
   ArrowUpRight as OpenIcon,
   FlaskConical as DemoIcon,
+  LogIn as EnterIcon,
+  LogOut as LeaveIcon,
   RotateCcw as ResetIcon,
   Search as SearchIcon,
   Undo2 as RestoreIcon,
@@ -108,6 +116,17 @@ async function reset() {
   await leaveIfBookGoes();
   demoStore.resetDemo();
 }
+// ---- in and out. Both reload the page; a false is a storage that would not keep the choice, and
+// the page would come straight back as it is, so say so instead.
+const stuck = ref(false);
+function enter() {
+  stuck.value = !enterDemo();
+}
+function leave() {
+  player.stop();
+  stuck.value = !leaveDemo();
+}
+
 function pickSearch(s: SearchScenario) {
   if (!bookId.value) return;
   demoStore.seedSearchDemo(bookId.value);
@@ -168,11 +187,14 @@ function onKey(e: KeyboardEvent) {
         >
           <div class="min-w-0 flex-1">
             <div class="label flex items-center gap-1.5">
-              <DemoIcon class="icon-sm" /> Demo mode
+              <DemoIcon class="icon-sm" /> {{ isDemo ? "Demo mode" : "Demo" }}
             </div>
-            <p class="mt-0.5 leading-relaxed text-zinc-500">
-              Seeded books, simulated jobs, invented costs. A row is always applied to the seeded
-              world, so the same row gives the same situation every time.
+            <p v-if="isDemo" class="mt-0.5 leading-relaxed text-zinc-500">
+              Seeded books, simulated jobs, invented costs, in this tab only. A row is always
+              applied to the seeded world, so the same row gives the same situation every time.
+            </p>
+            <p v-else class="mt-0.5 leading-relaxed text-zinc-500">
+              You are on your own library, from the server.
             </p>
           </div>
           <button
@@ -185,7 +207,28 @@ function onKey(e: KeyboardEvent) {
           </button>
         </header>
 
-        <div data-scroll class="min-h-0 flex-1 overflow-y-auto">
+        <!-- on the server's library: what the demo is, and the way in -->
+        <section v-if="!isDemo" class="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+          <div class="text-sm font-medium">Try the app on seeded books</div>
+          <p class="mt-1 leading-relaxed text-zinc-600 dark:text-zinc-300">
+            The demo is a seeded library of books at different points, with scripting, narration and
+            builds simulated and their costs invented. Nothing is sent to a provider and nothing is
+            billed, and your library on the server is left exactly as it is.
+          </p>
+          <p class="mt-2 leading-relaxed text-zinc-500">
+            It opens in this tab only, and stays until you leave it or close the tab; a new tab
+            opens on your library. Entering reloads the page.
+          </p>
+          <button class="btn-primary btn-xs mt-3" @click="enter">
+            <EnterIcon class="icon-sm" /> Enter demo
+          </button>
+          <p v-if="stuck" role="alert" class="mt-2 leading-relaxed text-red-600 dark:text-red-400">
+            This browser would not keep the choice — its storage for this site is blocked — so the
+            demo cannot open here.
+          </p>
+        </section>
+
+        <div v-else data-scroll class="min-h-0 flex-1 overflow-y-auto">
           <!-- where the world is now -->
           <section
             class="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800"
@@ -307,7 +350,10 @@ function onKey(e: KeyboardEvent) {
           </section>
         </div>
 
-        <footer class="shrink-0 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
+        <footer
+          v-if="isDemo"
+          class="shrink-0 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800"
+        >
           <div class="label mb-1">Simulation</div>
           <div class="flex flex-wrap items-center gap-2">
             <span id="demo-speed">Simulated jobs run at</span>
@@ -340,6 +386,19 @@ function onKey(e: KeyboardEvent) {
               >
             </p>
           </div>
+          <div class="mt-2 flex items-start gap-2">
+            <button class="btn-ghost btn-xs shrink-0" @click="leave">
+              <LeaveIcon class="icon-sm" /> Leave demo
+            </button>
+            <p class="leading-relaxed text-zinc-500">
+              Back to your library on the server. The page reloads, and nothing done here goes with
+              it.
+            </p>
+          </div>
+          <p v-if="stuck" role="alert" class="mt-2 leading-relaxed text-red-600 dark:text-red-400">
+            This browser would not forget the choice — its storage for this site is blocked — so the
+            page cannot leave the demo.
+          </p>
         </footer>
       </aside>
     </Transition>

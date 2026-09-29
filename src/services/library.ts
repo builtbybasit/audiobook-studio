@@ -531,7 +531,7 @@ export function libraryService(): LibraryService {
   if (!found)
     throw new Error(
       `The library service is not available in ${mode} mode. ` +
-        `The seeded library lives in the store; start the app with VITE_MODE=backend to talk to a server.`,
+        `The seeded library lives in the store; leave the demo (the Demo chip) to talk to the server.`,
     );
   return found;
 }

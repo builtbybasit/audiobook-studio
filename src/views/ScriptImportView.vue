@@ -294,7 +294,8 @@ const SKIPPED = {
           <p class="font-medium">Importing a script needs the server.</p>
           <p class="mt-1 text-xs text-zinc-500">
             A script file is matched to this book's chapters by the words of their source, which the
-            server reads. Start the app with <code class="font-mono">pnpm dev</code> to import one.
+            server reads. Leave the demo — from the Demo chip in the header — to import one into
+            your own library.
           </p>
         </section>
 

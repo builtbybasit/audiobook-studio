@@ -2,7 +2,7 @@
 
 [Back to README](../../README.md) · [Development and checks](../../docs/development.md) · [Demo lifecycle](../../docs/demo.md)
 
-This is a frontend prototype. Keep fixtures, scenarios and simulated endpoint work in [src/mock/](../../src/mock/); stores own reactive state and user actions. No persistence or real provider integration is introduced here.
+Stores own reactive state and user actions. With the server they read and write through the services in [src/services/](../../src/services/); in a demo tab they hold the seeded world, whose fixtures, scenarios and simulators stay in [src/mock/](../../src/mock/) until the demo moves onto the server.
 
 | Store               | Owns                                                                                                                               |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |

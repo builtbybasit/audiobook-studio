@@ -36,6 +36,7 @@ import EffectiveRates from "@/views/endpoints/EffectiveRates.vue";
 import RatePromotions from "@/views/endpoints/RatePromotions.vue";
 import RateSchedule from "@/views/endpoints/RateSchedule.vue";
 import type { MetricTotals, TtsBilling } from "@/types";
+import { isDemo } from "@/services/mode";
 
 const props = defineProps<{
   u: UnifiedEndpoint;
@@ -568,12 +569,16 @@ const limitUsed = computed(() =>
         checked against a budget at all, which is the other reason not to leave a rate blank for a
         provider that bills you.
       </div>
-      <p class="mt-2 text-[11px] text-zinc-500">
+      <p v-if="isDemo" class="mt-2 text-[11px] text-zinc-500">
         <UiTooltip text="No payment method is connected and no provider is called.">
           <span class="cursor-help underline decoration-dotted underline-offset-2"
-            >Budgets here are bookkeeping inside the prototype.</span
+            >Budgets here are bookkeeping inside the demo.</span
           >
         </UiTooltip>
+      </p>
+      <p v-else class="mt-2 text-[11px] text-zinc-500">
+        The server holds these budgets against what its requests were priced at; it never sees your
+        provider's invoice. A simulated endpoint's requests count against them and bill nothing.
       </p>
     </section>
   </div>

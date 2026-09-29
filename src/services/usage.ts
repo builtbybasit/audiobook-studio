@@ -1,13 +1,12 @@
 // What has been spent, as the server's ledger records it.
 //
-// The same arrangement as `@/services/jobs`: one HTTP implementation, chosen at startup, and `null`
-// in demo mode — where spending is the session's own ledger in `@/stores/usage` and the Endpoints
-// page's history is the fixture's invented week. With a server answering, every provider request
-// a job sends is priced and appended there, so a book's total and an endpoint's Activity list are
-// both sums over the same rows; nothing in the browser prices a request of its own.
+// The same arrangement as `@/services/jobs`: one HTTP implementation, answering at this tab's API.
+// Every provider request a job sends is priced and appended to the server's ledger, so a book's
+// total and an endpoint's Activity list are both sums over the same rows; nothing in the browser
+// prices a request of its own.
 import type { BookSpend, EndpointKind, RangeKey, RequestRecord } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
-import { isBackend } from "@/services/mode";
+import { API_BASE } from "@/services/mode";
 
 export interface UsageService {
   /** What one book has spent and what its unfinished work holds. */
@@ -18,7 +17,7 @@ export interface UsageService {
 
 export class HttpUsageService implements UsageService {
   private readonly http: HttpClient;
-  constructor(base = "/api", fetch?: FetchLike) {
+  constructor(base = API_BASE, fetch?: FetchLike) {
     this.http = new HttpClient(base, fetch);
   }
 
@@ -35,10 +34,9 @@ export class HttpUsageService implements UsageService {
 
 let service: UsageService | null = null;
 
-/** The usage service, or `null` when spending is the demo's own ledger. */
-export function activeUsageService(): UsageService | null {
-  if (service) return service;
-  return isBackend ? (service = new HttpUsageService()) : null;
+/** The usage service: the one a test set, or the HTTP one for this tab's library. */
+export function usageService(): UsageService {
+  return (service ??= new HttpUsageService());
 }
 
 /** For tests and for wiring at startup. Set it before the jobs store is created. */

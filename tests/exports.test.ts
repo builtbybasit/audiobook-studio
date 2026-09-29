@@ -1,19 +1,18 @@
+// Building an audiobook, and keeping it up to date afterwards.
+//
+// Three things are worth pinning down here, because the whole page rests on them: the plan is the
+// single source of what a build produces; a chapter that cannot be exported is never quietly
+// dropped; and an update or a retry that would have to decide something on your behalf asks
+// instead. The build itself is the server's (`tests/server/exports.test.ts`); the store tests here
+// build on a seeded demo library and read back what it made, the way the Audiobooks tab does.
+import { test, expect, beforeAll, beforeEach, describe } from "bun:test";
+
 import { useCastStore } from "@/stores/cast";
-import { useDemoStore } from "@/stores/demo";
 import { useExportsStore } from "@/stores/exports";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-// Building an audiobook, and keeping it up to date afterwards.
-//
-// Three things are worth pinning down here, because the whole page rests on them: the plan is the
-// single source of what a build produces; a chapter that cannot be exported is never quietly
-// dropped; and a build that fails or is cancelled leaves the version already on disk exactly where
-// it was. The simulated encoder runs on setInterval, so the clock and the timer API are faked.
-import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
-
 import {
   chapterSignature,
   DEFAULT_EXPORT_SETTINGS,
@@ -29,62 +28,18 @@ import {
   usable,
 } from "@/lib/exports";
 import { DEFAULT_PACING } from "@/lib/speech";
-import type { Chapter, ExportSettings, Volume } from "@/types";
+import { jobsService } from "@/services/jobs";
+import { libraryService } from "@/services/library";
+import type { Chapter, ExportItem, ExportSettings, Job, Volume } from "@/types";
+import { demoServer } from "./support/demoServer";
+import { openDemoBook } from "./support/demoBook";
+import { testPinia } from "./support/pinia";
 
-let callbacks = new Map<number, () => void>();
-let clock = 1000;
-let restore: (() => void)[] = [];
 let castStore: ReturnType<typeof useCastStore>;
-let demoStore: ReturnType<typeof useDemoStore>;
 let exportsStore: ReturnType<typeof useExportsStore>;
 let jobsStore: ReturnType<typeof useJobsStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
-let uiStore: ReturnType<typeof useUiStore>;
-
-function tick() {
-  // snapshot first: a callback may clear its own interval, and a new one may start
-  const pending = Array.from(callbacks);
-  for (const [id, fn] of pending) if (callbacks.has(id)) fn();
-}
-function finish(max = 400) {
-  for (let i = 0; i < max && callbacks.size; i++) tick();
-}
-
-/** A fresh seeded world. Only the store tests pay for one: the plan, the blockers and loudness
- *  are functions of what they are handed. */
-function freshStores() {
-  Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  setActivePinia(createPinia());
-  castStore = useCastStore();
-  demoStore = useDemoStore();
-  exportsStore = useExportsStore();
-  jobsStore = useJobsStore();
-  libraryStore = useLibraryStore();
-  scriptsStore = useScriptsStore();
-  uiStore = useUiStore();
-  jobsStore.jobs = [];
-  uiStore.toast = () => "test";
-}
-
-beforeEach(() => {
-  callbacks = new Map();
-  clock = 1000;
-  let seq = 0;
-  restore = [
-    spyOn(globalThis, "setInterval").mockImplementation(((fn: () => void) => {
-      const id = ++seq;
-      callbacks.set(id, fn);
-      return id;
-    }) as typeof setInterval),
-    spyOn(globalThis, "clearInterval").mockImplementation(((id: number) => {
-      callbacks.delete(id);
-    }) as typeof clearInterval),
-    spyOn(Date, "now").mockImplementation(() => (clock += 1)),
-    spyOn(Math, "random").mockReturnValue(0.5),
-  ].map((s) => () => s.mockRestore());
-});
-afterEach(() => restore.forEach((fn) => fn()));
 
 const settings = (over: Partial<ExportSettings> = {}): ExportSettings => ({
   ...DEFAULT_EXPORT_SETTINGS,
@@ -243,116 +198,74 @@ describe("loudness", () => {
   });
 });
 
-describe("a build", () => {
-  beforeEach(freshStores);
+// ---------- against the demo library ----------
+//
+// One demo library for the rest of the file, with the runs it starts with cancelled so that a
+// build finishing is the only thing a test waits for. Each build is named for its own test, so no
+// test's audiobook is the next version of another's.
 
-  const ready = (bookId: string) =>
-    libraryStore
-      .chaptersOf(bookId)
-      .filter((c) => c.narration === "done" && !c.excluded)
-      .map((c) => c.id);
+let named = 0;
+/** Settings for an audiobook no other test has built. */
+const own = (over: Partial<ExportSettings> = {}) =>
+  settings({ filename: `Test Book ${++named}`, ...over });
 
-  test("refuses chapters it cannot use instead of dropping them", async () => {
-    const ids = [...ready("starforge"), 1]; // ch 1 of Starforge is stale
-    expect(await exportsStore.buildExport("starforge", ids, settings())).toBeNull();
-    expect(exportsStore.exports.some((e) => e.status === "building")).toBe(false);
-    // and goes ahead once the stale audio is accepted on purpose
-    expect(
-      await exportsStore.buildExport("starforge", ids, settings({ useStale: true })),
-    ).not.toBeNull();
-  });
-
-  test("runs to a finished export and replaces the version it supersedes", async () => {
-    const ids = ready("starforge").slice(0, 5);
-    const first = (await exportsStore.buildExport("starforge", ids, settings()))!;
-    finish();
-    expect(first.status).toBe("done");
-    expect(first.size).toBeGreaterThan(0);
-    expect(first.version).toBe(1);
-
-    const second = (await exportsStore.buildExport("starforge", ids, settings()))!;
-    finish();
-    expect(second.version).toBe(2);
-    expect(second.replaces).toBe(first.id);
-    expect(first.status).toBe("replaced");
-    // nothing changed in between, so every chapter was carried over rather than encoded again
-    expect(second.reused).toBe(ids.length);
-    expect(second.rebuilt).toBe(0);
-    expect(exportsStore.exportsOf("starforge").some((e) => e.id === first.id)).toBe(false);
-    expect(exportsStore.exportVersionsOf(second).map((e) => e.id)).toContain(first.id);
-  });
-
-  test("keeps the finished version when the next build fails, and retry starts over", async () => {
-    const ids = ready("starforge").slice(0, 6);
-    const good = (await exportsStore.buildExport("starforge", ids, settings()))!;
-    finish();
-    expect(good.status).toBe("done");
-
-    demoStore._exportFails = true;
-    const bad = (await exportsStore.buildExport("starforge", ids, settings()))!;
-    finish();
-    expect(bad.status).toBe("failed");
-    expect(bad.error).toBeTruthy();
-    // the audiobook on disk is untouched: still done, still the current version
-    expect(good.status).toBe("done");
-    expect(exportsStore.exportsOf("starforge").filter((e) => e.status === "done")).toContain(good);
-    expect(demoStore._exportFails).toBe(false);
-
-    exportsStore.retryExport(bad.id);
-    finish();
-    expect(exportsStore.exports.some((e) => e.id === bad.id)).toBe(false);
-    const now = exportsStore.exportsOf("starforge").find((e) => e.key === exportKey(settings()))!;
-    expect(now.status).toBe("done");
-    expect(now.version).toBe(2);
-  });
-
-  test("cancelling writes nothing and leaves the previous version alone", async () => {
-    const ids = ready("starforge").slice(0, 8);
-    const good = (await exportsStore.buildExport("starforge", ids, settings()))!;
-    finish();
-    const next = (await exportsStore.buildExport("starforge", [...ids, 9], settings()))!;
-    tick();
-    const job = jobsStore.jobs.find((j) => j.id === next.jobId)!;
-    jobsStore.cancelJob(job.id);
-    finish();
-    expect(exportsStore.exports.some((e) => e.id === next.id)).toBe(false);
-    expect(job.status).toBe("cancelled");
-    expect(good.status).toBe("done");
-  });
-
-  test("the job carries the build so the queue can describe it and retry it", async () => {
-    const ids = ready("starforge").slice(0, 4);
-    const item = (await exportsStore.buildExport(
-      "starforge",
-      ids,
-      settings({ grouping: "single" }),
-    ))!;
-    const job = jobsStore.jobs.find((j) => j.id === item.jobId)!;
-    expect(job.kind).toBe("export");
-    expect(job.exportRun?.chapterIds).toEqual(ids);
-    expect(job.exportRun?.files).toBe(1);
-    finish();
-    expect(job.status).toBe("done");
-    expect(job.activity?.some((e) => e.message === "Export ready")).toBe(true);
-  });
+beforeAll(async () => {
+  Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
+  const demo = await demoServer();
+  const jobs = jobsService();
+  for (const j of await jobs.list())
+    if (j.status === "queued" || j.status === "running") await jobs.cancel(j.id);
+  await demo.idle();
 });
 
-describe("staying up to date", () => {
-  beforeEach(freshStores);
+/** A fresh page on `bookId`, read from the demo library. */
+async function open(bookId = "starforge") {
+  const pinia = testPinia();
+  castStore = useCastStore();
+  exportsStore = useExportsStore();
+  jobsStore = useJobsStore();
+  libraryStore = useLibraryStore();
+  scriptsStore = useScriptsStore();
+  useUiStore().toast = () => "test";
+  await openDemoBook(pinia, bookId);
+  exportsStore._install(bookId, await libraryService().exports(bookId));
+}
 
-  /** every chapter of Starforge a build could use, stale included */
-  const usableIds = () =>
-    libraryStore
-      .chaptersOf("starforge")
-      .filter((c) => ["done", "stale"].includes(c.narration) && !c.excluded)
-      .map((c) => c.id);
+/** Wait for the server to finish a build, and read the book's audiobooks back. */
+async function settled(entry: ExportItem | null): Promise<ExportItem> {
+  expect(entry).not.toBeNull();
+  const jobs = jobsService();
+  for (;;) {
+    const job = (await jobs.list()).find((j) => j.id === entry!.jobId);
+    if (!job || job.finishedAt) break;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  exportsStore._install(entry!.bookId, await libraryService().exports(entry!.bookId));
+  return exportsStore.exports.find((e) => e.id === entry!.id)!;
+}
+const build = async (
+  bookId: string,
+  ids: number[],
+  s: ExportSettings,
+  opts?: { updates?: number },
+): Promise<ExportItem> => settled(await exportsStore.buildExport(bookId, ids, s, opts));
+
+/** every chapter of a book a build could use, stale included */
+const usableIds = (bookId = "starforge") =>
+  libraryStore
+    .chaptersOf(bookId)
+    .filter((c) => ["done", "stale"].includes(c.narration) && !c.excluded)
+    .map((c) => c.id);
+
+describe("staying up to date", () => {
+  beforeEach(() => open());
 
   test("a chapter that has not been touched is carried over; one that changed is not", async () => {
-    const ids = usableIds();
-    const item = (await exportsStore.buildExport("starforge", ids, settings({ useStale: true })))!;
-    finish();
-    // the whole book is in it and nothing has moved since
-    expect(exportsStore.exportUpdateFor(item).needed).toBe(false);
+    const ids = usableIds().slice(0, 4);
+    const item = await build("starforge", ids, own({ useStale: true }));
+    expect(item.status).toBe("done");
+    // nothing has moved since: the server's fingerprints are the ones this page works out
+    expect(exportsStore.exportUpdateFor(item).changed).toEqual([]);
 
     // re-rendering one chapter's clip changes that chapter's fingerprint and nothing else
     const seg = scriptsStore.segmentsOf("starforge", ids[1])[0];
@@ -365,58 +278,57 @@ describe("staying up to date", () => {
   });
 
   test("a pause costs nothing and renders nothing, but it does change the file", async () => {
-    const ids = usableIds().slice(0, 4);
-    const item = (await exportsStore.buildExport("starforge", ids, settings({ useStale: true })))!;
-    finish();
+    const ids = usableIds().slice(0, 3);
+    const item = await build("starforge", ids, own({ useStale: true }));
     expect(exportsStore.exportUpdateFor(item).changed).toHaveLength(0);
-    castStore.setPacing("starforge", { turn: 1.4 });
+    await castStore.setPacing("starforge", { turn: 1.4 });
     expect(exportsStore.exportUpdateFor(item).changed.length).toBeGreaterThan(0);
+    await castStore.resetPacing("starforge");
   });
 
   test("an export of everything the book can give follows the book", async () => {
-    // Cliché can export 1–3 today; the rest of it has never been narrated
-    const item = (await exportsStore.buildExport(
-      "cliche",
-      [1, 2, 3],
-      settings({ useStale: true }),
-    ))!;
-    finish();
+    await open("cliche");
+    const ids = libraryStore
+      .chaptersOf("cliche")
+      .filter((c) => !c.excluded && usable(c))
+      .map((c) => c.id);
+    const item = await build("cliche", ids, own({ useStale: true }));
     expect(item.scope).toBe("book");
-    expect(exportsStore.exportUpdateFor(item).needed).toBe(false);
 
-    const later = libraryStore.chapter("cliche", 5)!;
+    const later = libraryStore.chaptersOf("cliche").find((c) => !ids.includes(c.id))!;
     later.narration = "done";
     later.duration = 120;
     const update = exportsStore.exportUpdateFor(item);
-    expect(update.added).toEqual([5]);
+    expect(update.added).toEqual([later.id]);
     expect(update.outside).toHaveLength(0);
     expect(update.changed).toHaveLength(0);
     expect(update.needed).toBe(true);
   });
 
   test("a per-volume export claims its own volumes and nothing beyond them", async () => {
-    const item = (await exportsStore.buildExport(
-      "cliche",
-      [1, 2, 3],
-      settings({ grouping: "volume", useStale: true }),
-    ))!;
-    finish();
+    await open("cliche");
+    const ids = libraryStore
+      .chaptersOf("cliche")
+      .filter((c) => !c.excluded && usable(c))
+      .map((c) => c.id);
+    const vol = libraryStore.chapter("cliche", ids[0])!.volumeId;
+    const item = await build("cliche", ids, own({ grouping: "volume", useStale: true }));
     expect(item.scope).toBe("volumes");
 
-    const inside = libraryStore.chapter("cliche", 5)!; // vol 1, like the rest of it
-    const beyond = libraryStore.chapter("cliche", 9)!; // vol 2, which it never claimed
+    const unnarrated = libraryStore.chaptersOf("cliche").filter((c) => !ids.includes(c.id));
+    const inside = unnarrated.find((c) => c.volumeId === vol)!;
+    const beyond = unnarrated.find((c) => c.volumeId !== vol)!;
     for (const c of [inside, beyond]) {
       c.narration = "done";
       c.duration = 120;
     }
     const update = exportsStore.exportUpdateFor(item);
-    expect(update.added).toEqual([5]);
-    expect(update.outside).toEqual([9]);
+    expect(update.added).toEqual([inside.id]);
+    expect(update.outside).toEqual([beyond.id]);
   });
 
   test("chapters chosen on purpose stay the chapters chosen: the rest is not missing", async () => {
-    const item = (await exportsStore.buildExport("starforge", [2, 3], settings()))!;
-    finish();
+    const item = await build("starforge", [2, 3], own());
     expect(item.scope).toBe("chosen");
     const update = exportsStore.exportUpdateFor(item);
     // nothing is behind — this audiobook is two chapters, and it still is
@@ -431,57 +343,29 @@ describe("staying up to date", () => {
     expect(update.outside).toEqual(readyIds.filter((id) => id !== 2 && id !== 3));
   });
 
-  test("an update rebuilds what moved and reuses the rest", async () => {
-    // every chapter ready, nothing to ask about: the update simply runs
-    const ids = libraryStore
-      .chaptersOf("starforge")
-      .filter((c) => c.narration === "done")
-      .map((c) => c.id);
-    const first = (await exportsStore.buildExport("starforge", ids, settings()))!;
-    finish();
-    const seg = scriptsStore.segmentsOf("starforge", ids[3])[0];
-    seg.audio.duration += 5;
-    castStore._retime("starforge", ids[3]);
-
-    const next = (await exportsStore.updateExport(first.id))!;
-    finish();
-    expect(next.version).toBe(2);
-    expect(next.rebuilt).toBe(1);
-    expect(next.reused).toBe(ids.length - 1);
-    expect(next.status).toBe("done");
-    expect(first.status).toBe("replaced");
-  });
-
   test("the reuse the plan promises is the reuse the build performs", async () => {
     const ids = [2, 3, 4];
-    const first = (await exportsStore.buildExport("starforge", ids, settings({ bitrate: 64 })))!;
-    finish();
+    const s = own({ bitrate: 64 });
+    const first = await build("starforge", ids, s);
     // the plan panel and the build ask the same question of the same answer
-    expect(exportsStore.exportReuse(first, ids, settings({ bitrate: 64 }))).toEqual(ids);
-    expect(exportsStore.exportReuse(first, ids, settings({ bitrate: 128 }))).toEqual([]);
-    expect(exportsStore.exportReuse(first, ids, settings({ markerPattern: "{title}" }))).toEqual(
-      [],
-    );
-    expect(sameOutput(first, settings({ cover: "art.jpg" }))).toBe(false);
+    expect(exportsStore.exportReuse(first, ids, s)).toEqual(ids);
+    expect(exportsStore.exportReuse(first, ids, { ...s, bitrate: 128 })).toEqual([]);
+    expect(exportsStore.exportReuse(first, ids, { ...s, markerPattern: "{title}" })).toEqual([]);
+    expect(sameOutput(first, { ...s, cover: "art.jpg" })).toBe(false);
 
     // a different bitrate is the same audiobook, built again — as a new version with nothing carried
-    const louder = (await exportsStore.buildExport("starforge", ids, settings({ bitrate: 128 })))!;
-    finish();
+    const louder = await build("starforge", ids, { ...s, bitrate: 128 });
     expect(louder.version).toBe(2);
     expect(louder.reused).toBe(0);
     expect(louder.rebuilt).toBe(ids.length);
   });
 
   test("a finished export keeps the timeline it played, so a later correction is a difference", async () => {
-    const item = (await exportsStore.buildExport(
-      "starforge",
-      [2, 3],
-      settings({ chapterGap: 2 }),
-    ))!;
-    finish();
+    const item = await build("starforge", [2, 3], own({ chapterGap: 2 }));
     expect(item.timeline!.map((t) => t.id)).toEqual([2, 3]);
-    expect(item.timeline!.reduce((a, t) => a + t.duration, 0) + item.chapterGap).toBe(
+    expect(item.timeline!.reduce((a, t) => a + t.duration, 0) + item.chapterGap).toBeCloseTo(
       item.duration,
+      6,
     );
 
     const was = item.timeline![0].duration;
@@ -507,6 +391,7 @@ describe("staying up to date", () => {
   test("the fingerprint covers the clips, the stitched silence and the chapter's state", () => {
     const c = chapter(1, 1, 100);
     const segs = scriptsStore.segmentsOf("starforge", 2);
+    expect(segs.length).toBeGreaterThan(0);
     const a = chapterSignature(c, segs, DEFAULT_PACING);
     expect(chapterSignature(c, segs, DEFAULT_PACING)).toBe(a);
     expect(chapterSignature(c, segs, { line: 1, turn: 2 })).not.toBe(a);
@@ -515,15 +400,64 @@ describe("staying up to date", () => {
 });
 
 describe("update and retry ask before they decide", () => {
-  beforeEach(freshStores);
+  beforeEach(() => open());
 
   // Both are "this audiobook again". Neither may shrink the selection or accept clips the script has
   // moved under on your behalf — when either would have to, the build goes to the Build tab and the
   // same readiness review that guards a first build guards this one.
 
+  /**
+   * A build of `ids` that fell over, as the queue lists it: the audiobook row and the job that
+   * carried its settings. Nothing makes a demo build fail, so it is written here.
+   */
+  function failedBuild(ids: number[], s: ExportSettings): ExportItem {
+    const failed = {
+      id: 9_000 + named,
+      bookId: "starforge",
+      key: exportKey(s),
+      filename: s.filename,
+      chapterIds: ids,
+      settings: s,
+      version: 1,
+      replaces: null,
+      status: "failed",
+      error: "The encoder stopped",
+      jobId: 9_000 + named,
+      state: {},
+    } as unknown as ExportItem;
+    const job: Job = {
+      id: failed.jobId!,
+      kind: "export",
+      bookId: "starforge",
+      chapterId: null,
+      label: `Build ${s.filename}`,
+      status: "failed",
+      progress: 40,
+      queuedAt: 1,
+      startedAt: 1,
+      finishedAt: 2,
+      cancelled: false,
+      exportRun: {
+        exportId: failed.id,
+        settings: s,
+        chapterIds: ids,
+        updates: null,
+        files: 1,
+        file: 1,
+        fileName: s.filename,
+        stage: "Encoding",
+        encode: ids.length,
+        reuse: 0,
+        done: 0,
+      },
+    };
+    exportsStore.exports.push(failed);
+    jobsStore._install([job]);
+    return exportsStore.exports.find((e) => e.id === failed.id)!;
+  }
+
   test("a chapter that lost its audio sends the update to the review, not out of the file", async () => {
-    const item = (await exportsStore.buildExport("starforge", [2, 3], settings()))!;
-    finish();
+    const item = await build("starforge", [2, 3], own());
     const gone = libraryStore.chapter("starforge", 3)!;
     gone.narration = "none";
     gone.duration = 0;
@@ -540,8 +474,7 @@ describe("update and retry ask before they decide", () => {
   });
 
   test("an update never gives consent to stale clips that was never given", async () => {
-    const item = (await exportsStore.buildExport("starforge", [2, 3], settings()))!;
-    finish();
+    const item = await build("starforge", [2, 3], own());
     libraryStore.chapter("starforge", 3)!.narration = "stale";
 
     expect(await exportsStore.updateExport(item.id)).toBeNull();
@@ -549,14 +482,11 @@ describe("update and retry ask before they decide", () => {
     expect(exportsStore.exports.filter((e) => e.key === item.key)).toHaveLength(1);
   });
 
-  test("an update starts from the settings its export was built with", async () => {
-    const item = (await exportsStore.buildExport(
-      "starforge",
-      [2, 3],
-      settings({ markerPattern: "{title}", cover: "art.jpg", volPrefix: false, bitrate: 96 }),
-    ))!;
-    finish();
-    const from = exportsStore.settingsFromExport(item);
+  test("an update starts from the settings its export was built with", () => {
+    const s = own({ markerPattern: "{title}", cover: "art.jpg", volPrefix: false, bitrate: 96 });
+    const from = exportsStore.settingsFromExport({
+      settings: { ...s, useStale: true },
+    } as ExportItem);
     expect(from.markerPattern).toBe("{title}");
     expect(from.cover).toBe("art.jpg");
     expect(from.volPrefix).toBe(false);
@@ -566,72 +496,42 @@ describe("update and retry ask before they decide", () => {
   });
 
   test("a retry keeps the consent the failed build was started with", async () => {
-    demoStore._exportFails = true;
     // ch 1 is stale, and this build accepted it on purpose
-    const bad = (await exportsStore.buildExport(
-      "starforge",
-      [1, 2],
-      settings({ useStale: true }),
-    ))!;
-    finish();
-    expect(bad.status).toBe("failed");
+    expect(libraryStore.chapter("starforge", 1)!.narration).toBe("stale");
+    const s = own({ useStale: true });
+    const bad = failedBuild([1, 2], s);
 
-    exportsStore.retryExport(bad.id);
-    finish();
+    // the retry is a build of its own, and it goes through with the consent the first one had
+    const retry = await settled(await exportsStore.retryExport(bad.id));
     expect(exportsStore._exportDraft).toBeNull();
-    expect(exportsStore.exportsOf("starforge").find((e) => e.key === bad.key)!.status).toBe("done");
+    expect(retry.status).toBe("done");
+    expect(retry.settings!.useStale).toBe(true);
   });
 
   test("a retry whose chapters moved since it failed goes to the review", async () => {
-    demoStore._exportFails = true;
-    const bad = (await exportsStore.buildExport("starforge", [2, 3], settings()))!;
-    finish();
+    const bad = failedBuild([2, 3], own());
     libraryStore.chapter("starforge", 2)!.narration = "stale";
 
-    exportsStore.retryExport(bad.id);
-    finish();
+    expect(await exportsStore.retryExport(bad.id)).toBeNull();
     expect(exportsStore._exportDraft!.ids).toEqual([2, 3]);
     expect(exportsStore._exportDraft!.settings.useStale).toBe(false);
     // nothing was retried, so the failed attempt is still there to retry
     expect(exportsStore.exports.some((e) => e.id === bad.id)).toBe(true);
   });
 
-  test("one audiobook builds once at a time", async () => {
-    const ids = [2, 3, 4];
-    const first = (await exportsStore.buildExport("starforge", ids, settings()))!;
-    tick();
-    expect(first.status).toBe("building");
-    expect(await exportsStore.buildExport("starforge", ids, settings())).toBeNull();
-    finish();
-    expect(exportsStore.exportsOf("starforge").filter((e) => e.key === first.key)).toHaveLength(1);
-    expect(exportsStore.exports.filter((e) => e.key === first.key && e.version === 2)).toHaveLength(
-      0,
-    );
-  });
-
   test("an update only updates an export it would actually replace", async () => {
-    const first = (await exportsStore.buildExport("starforge", [2, 3], settings()))!;
-    finish();
+    const first = await build("starforge", [2, 3], own());
     // renamed on the way through: a different audiobook, built for the first time
-    const other = (await exportsStore.buildExport(
-      "starforge",
-      [2, 3],
-      settings({ filename: "Something Else" }),
-      {
-        updates: first.id,
-      },
-    ))!;
-    finish();
+    const other = await build("starforge", [2, 3], own(), { updates: first.id });
     expect(other.version).toBe(1);
     expect(other.replaces).toBeNull();
-    expect(first.status).toBe("done");
+    expect(exportsStore.exports.find((e) => e.id === first.id)!.status).toBe("done");
   });
 });
 
-describe("the demo scenarios", () => {
-  beforeEach(freshStores);
-
-  test("the long book is there to be exported", () => {
+describe("the demo library", () => {
+  test("the long book is there to be exported", async () => {
+    await open("gates");
     const chapters = libraryStore.chaptersOf("gates");
     expect(chapters.length).toBeGreaterThan(100);
     expect(libraryStore.volumesOf("gates").length).toBeGreaterThan(1);

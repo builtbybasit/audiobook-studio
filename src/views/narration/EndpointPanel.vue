@@ -62,7 +62,7 @@ function statusOf(e: Endpoint): Status {
       fix: "Lines routed here wait instead of going out. Resume it to narrate them.",
       tab: "overview",
     };
-  if (e.needsKey && !keyInPlace(e, e.id))
+  if (e.needsKey && !keyInPlace(e))
     return {
       label: "No API key",
       tone: "warn",

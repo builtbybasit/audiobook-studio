@@ -1,11 +1,3 @@
-import { useCastStore } from "@/stores/cast";
-import { useDemoStore } from "@/stores/demo";
-import { useExportsStore } from "@/stores/exports";
-import { useJobsStore } from "@/stores/jobs";
-import { useLibraryStore } from "@/stores/library";
-import { useNarrationStore } from "@/stores/narration";
-import { useScriptsStore } from "@/stores/scripts";
-import { useUiStore } from "@/stores/ui";
 // The book's review inbox: every decision waiting on a person, gathered from the six pages that
 // each used to hold one small count of its own.
 //
@@ -13,41 +5,77 @@ import { useUiStore } from "@/stores/ui";
 // is listed here, with a link that lands on the row rather than the top of its page. And it is
 // *settled by deciding*: accept the retake, clear the flag, dismiss the merge, retry the chapter,
 // and the row is gone on the next read. A count that only ever goes up is a count nobody trusts.
-import { test, expect, describe, beforeEach } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
+//
+// Each reads the demo library put into one of the Demo tools' situations, with the book read in
+// whole — every scripted chapter, the cast, the audiobooks and the queue — as its pages would.
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
+import { jobsService } from "@/services/jobs";
+import { libraryService } from "@/services/library";
+import { useCastStore } from "@/stores/cast";
+import { useExportsStore } from "@/stores/exports";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
+import { useScriptsStore } from "@/stores/scripts";
+import { useUiStore } from "@/stores/ui";
 import { reviewCount, reviewInbox, type DecisionGroup } from "@/views/review/inbox";
+import { demoServer, type DemoServer } from "./support/demoServer";
+import { testPinia, type TestPinia } from "./support/pinia";
 
+let demo: DemoServer;
+let pinia: TestPinia;
 let castStore: ReturnType<typeof useCastStore>;
-let demoStore: ReturnType<typeof useDemoStore>;
 let exportsStore: ReturnType<typeof useExportsStore>;
 let jobsStore: ReturnType<typeof useJobsStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let narrationStore: ReturnType<typeof useNarrationStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
-let uiStore: ReturnType<typeof useUiStore>;
 
-beforeEach(() => {
+beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  setActivePinia(createPinia());
+  demo = await demoServer();
+});
+beforeEach(async () => {
+  await demo.reset();
+  pinia = testPinia();
   castStore = useCastStore();
-  demoStore = useDemoStore();
   exportsStore = useExportsStore();
   jobsStore = useJobsStore();
   libraryStore = useLibraryStore();
   narrationStore = useNarrationStore();
   scriptsStore = useScriptsStore();
-  uiStore = useUiStore();
-  uiStore.toast = () => "test";
+  useUiStore().toast = () => "test";
 });
+afterEach(async () => {
+  await demo.idle();
+  pinia.stop();
+});
+
+/** The demo in situation `id`, and `bookId` read in whole. */
+async function situated(id: string, bookId: string): Promise<void> {
+  await demo.situate(id);
+  const svc = libraryService();
+  await libraryStore.loadBook(bookId);
+  castStore._install(bookId, await svc.cast(bookId));
+  exportsStore._install(bookId, await svc.exports(bookId));
+  jobsStore._install(await jobsService().list());
+  for (const c of libraryStore.chaptersOf(bookId))
+    if (c.scripting !== "none")
+      scriptsStore._install(bookId, c.id, await svc.chapterScript(bookId, c.id));
+}
+/** Wait for a request the store sent on its own to be answered. */
+async function until(done: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !done(); i++) await new Promise((r) => setTimeout(r, 1));
+}
 
 const group = (bookId: string, kind: string): DecisionGroup | undefined =>
   reviewInbox(bookId).find((g) => g.kind === kind);
 const kinds = (bookId: string): string[] => reviewInbox(bookId).map((g) => g.kind);
 
 describe("what the inbox gathers", () => {
-  test("the listening scenario's flags and second takes are both in it, with the ledger's own links", () => {
-    demoStore.applyScenario("stale-audio");
+  test("the listening scenario's flags and second takes are both in it, with the ledger's own links", async () => {
+    await situated("stale-audio", "starforge");
     const flagged = group("starforge", "flagged")!;
     const retakes = group("starforge", "retake")!;
     // the same segments the ledger's own chips count
@@ -72,8 +100,8 @@ describe("what the inbox gathers", () => {
     expect(retakes.items[0].detail).toMatch(/take \d/i);
   });
 
-  test("a part-way book brings its failed run, its unverified chunk and its undecided chapters together", () => {
-    demoStore.applyScenario("resume-book");
+  test("a part-way book brings its failed run, its unverified chunk and its undecided chapters together", async () => {
+    await situated("resume-book", "cliche");
     const all = kinds("cliche");
     expect(all).toContain("failed");
     expect(all).toContain("unverified");
@@ -102,10 +130,10 @@ describe("what the inbox gathers", () => {
     );
   });
 
-  test("chapters with the same notice are one decision, because one verdict settles them all", () => {
+  test("chapters with the same notice are one decision, because one verdict settles them all", async () => {
     // the 212-chapter serial, with updates scattered through it: a row per kind of notice, not a
     // row per chapter, or the inbox would be longer than the book
-    demoStore.applyScenario("import-serial");
+    await situated("import-serial", "import-serial");
     const contents = group("import-serial", "contents")!;
     const pending = libraryStore.noticeGroupsOf("import-serial").filter((g) => g.pending.length);
     expect(pending.length).toBeGreaterThan(1);
@@ -118,8 +146,8 @@ describe("what the inbox gathers", () => {
     });
   });
 
-  test("an expression the script moved under is listed with the line it sits on", () => {
-    demoStore.applyScenario("expressions");
+  test("an expression the script moved under is listed with the line it sits on", async () => {
+    await situated("expressions", "starforge");
     const issues = narrationStore.expressionIssues(
       "starforge",
       libraryStore.chaptersOf("starforge").map((c) => c.id),
@@ -134,8 +162,8 @@ describe("what the inbox gathers", () => {
     });
   });
 
-  test("broken work is listed first, and the rest follow the pipeline", () => {
-    demoStore.applyScenario("resume-book");
+  test("broken work is listed first, and the rest follow the pipeline", async () => {
+    await situated("resume-book", "cliche");
     const all = kinds("cliche");
     expect(all[0]).toBe("failed");
     const order = [
@@ -151,8 +179,8 @@ describe("what the inbox gathers", () => {
     expect(all).toEqual(order.filter((k) => all.includes(k)));
   });
 
-  test("the count the badges show is the number of rows the page lists", () => {
-    demoStore.applyScenario("stale-audio");
+  test("the count the badges show is the number of rows the page lists", async () => {
+    await situated("stale-audio", "starforge");
     expect(reviewCount("starforge")).toBe(
       reviewInbox("starforge").reduce((n, g) => n + g.items.length, 0),
     );
@@ -161,12 +189,13 @@ describe("what the inbox gathers", () => {
 });
 
 describe("deciding one empties its row", () => {
-  test("accepting a retake and clearing a flag drop out of the list", () => {
-    demoStore.applyScenario("stale-audio");
+  test("accepting a retake and clearing a flag drop out of the list", async () => {
+    await situated("stale-audio", "starforge");
     const before = group("starforge", "retake")!.items.length;
     const row = group("starforge", "retake")!.items[0];
     const [, chId, segId] = row.id.split(":").map(Number);
     narrationStore.acceptTake("starforge", chId, segId);
+    await until(() => (group("starforge", "retake")?.items.length ?? 0) < before);
     expect(group("starforge", "retake")?.items.length ?? 0).toBe(before - 1);
 
     const flag = group("starforge", "flagged")!.items[0];
@@ -176,8 +205,8 @@ describe("deciding one empties its row", () => {
     expect(group("starforge", "flagged")?.items.length ?? 0).toBe(flagsBefore - 1);
   });
 
-  test("a chapter that failed and was run again stops being a decision, however long its job history is", () => {
-    demoStore.applyScenario("resume-book");
+  test("a chapter that failed and was run again stops being a decision, however long its job history is", async () => {
+    await situated("resume-book", "cliche");
     const failed = libraryStore.chaptersOf("cliche").find((c) => c.narration === "failed")!;
     expect(
       group("cliche", "failed")!.items.some((d) => d.id === `failed:narration:${failed.id}`),
@@ -194,8 +223,8 @@ describe("deciding one empties its row", () => {
     ).toBe(false);
   });
 
-  test("a merge suggestion the user dismissed does not come back", () => {
-    demoStore.applyScenario("resume-book");
+  test("a merge suggestion the user dismissed does not come back", async () => {
+    await situated("resume-book", "cliche");
     // the scenario is seeded with one; without it this test would check nothing
     const suggestion = castStore.mergeSuggestions("cliche")[0];
     expect(suggestion).toBeDefined();
@@ -212,8 +241,8 @@ describe("deciding one empties its row", () => {
   });
 });
 
-test("a book with nothing decided against it shows an empty inbox, not an empty page of zeroes", () => {
-  demoStore.applyScenario("fresh-book");
+test("a book with nothing decided against it shows an empty inbox, not an empty page of zeroes", async () => {
+  await situated("fresh-book", "drowned");
   // nothing is scripted, so there are no clips, no new speakers and no failed runs to weigh up
   expect(group("drowned", "flagged")).toBeUndefined();
   expect(group("drowned", "retake")).toBeUndefined();

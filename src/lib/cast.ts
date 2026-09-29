@@ -3,7 +3,7 @@
 // Shared by the seeded world, the cast store and the server's scripting job, because all three
 // bring speakers into a cast and a walk-on the model turned up has to look the same whichever of
 // them found it. Nothing here reaches a store or the demo world.
-import type { Character } from "@/types";
+import type { Character, VoiceRef } from "@/types";
 
 /** The colours a cast is assigned from, in the order speakers arrive. */
 export const PALETTE: string[] = [
@@ -31,6 +31,28 @@ export const newSpeaker = (name: string, castSize: number): Character => ({
   major: false,
   isNew: true,
 });
+
+/** How a speaker names their voice: the endpoint it is on, and its id there. */
+export const voiceRef = (epId: string, voiceId: string): VoiceRef => `${epId}/${voiceId}`;
+
+/** The delivery notes a direction is picked from, and the seeded scripts are written with. */
+export const DIRECTIONS: string[] = [
+  "calm, measured",
+  "urgent, breathless",
+  "whispered, hesitant",
+  "dry, amused",
+  "cold and clipped",
+  "warm, gentle",
+  "rising anger",
+  "weary, slow",
+  "excited, quick",
+  "sarcastic, flat",
+  "gravely serious",
+  "teasing, light",
+  "trembling",
+  "commanding",
+  "muttered under breath",
+];
 
 export const NARRATOR = "Narrator";
 

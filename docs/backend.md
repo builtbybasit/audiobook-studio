@@ -54,10 +54,9 @@ service they find: switching in place would mean tearing down every store and ca
 
 **Neither mode ever silently becomes the other.** A backend that is down is an error the person
 sees — the Library says the server is not running and how to start it — not a quiet slide into
-seeded books that look real. `libraryService()` throws in demo mode
-rather than handing back something that would pass for a backend, and the HTTP client reports a
-server it cannot reach as exactly that, rather than as an empty library. The rules this enforces
-are in [future backend integration requirements](demo.md#future-backend-integration-requirements).
+seeded books that look real, and the HTTP client reports a server it cannot reach as exactly that,
+rather than as an empty library. The rules this keeps are in
+[how the demo is built](demo.md#how-the-demo-is-built).
 
 ## Two libraries: yours and the demo
 
@@ -129,12 +128,18 @@ What a situation describes that is not a row is made real once the queue is runn
 A book's opening scripting spend, which a situation such as the spent budget declares, is a row in
 the ledger, since that is what a book's scripting budget is held to.
 
-[tests/demoSituations.test.ts](../tests/demoSituations.test.ts) applies every situation on the
-server and in the browser's demo store in the same process, with the clock frozen, and compares what
-the demo API answers with what the stores hold.
+[tests/server/demoSituations.test.ts](../tests/server/demoSituations.test.ts) applies every
+situation through the route and checks what it answers and what it leaves running.
 
-The page does not use the demo library yet: the **Demo** chip still opens the seeded world in the
-browser. The last slice points it at `/demo/api` and removes the browser's copy.
+A demo tab is the page talking to `/demo/api` rather than `/api`: the Demo drawer lists the
+situations from `GET …/demo/situations`, applies one or resets through the routes above and loads
+the page onto where it opens, and keeps the applied situation's name, note and steps in the tab's
+`sessionStorage` so they survive that reload — the server does not remember which situation was
+applied. **Speed** is the demo library's own: `GET`/`PUT /demo/api/demo/speed` (1, 4 or 16) divides
+every simulated wait in the demo — a line's, a scripting chunk's, a build chapter's — and never
+touches your library; it is kept in memory, survives a reset, and is 1× again when the server
+restarts. A reset (not a situation) also starts a few runs, so the queue is not empty the first
+time you look.
 
 ## The schema
 
@@ -943,7 +948,7 @@ The target a request is sent to ([target.ts](../server/providers/target.ts)) rea
 moment of dispatch, so it is never copied onto a job — `scriptRun.profile` is the profile as read,
 which carries `hasKey` and not the key — and a key changed on the page is the one the next request
 uses. The logger redacts `apiKey` wherever it sits. Named credentials stay a registry of labels:
-in backend mode every endpoint has its own key field.
+every endpoint has its own key field.
 
 **Around every request** [http.ts](../server/providers/http.ts) keeps the endpoint's own
 `timeoutSec` per attempt and `maxRetries` after the first, retries only what another attempt could
@@ -1280,8 +1285,8 @@ chapter that has no script yet (`unscripted`). Each line goes to a
 direction, and comes back as audio with a duration.
 
 **A line is sent what the dictionary makes of it.** The book's pronunciation dictionary is applied
-by `speak` in [src/lib/speech.ts](../src/lib/speech.ts) — the function the demo's simulator
-applies — as each line goes out, so a term added mid-run reaches every line not yet sent. The
+by `speak` in [src/lib/speech.ts](../src/lib/speech.ts) — the same function the page's
+estimates use — as each line goes out, so a term added mid-run reaches every line not yet sent. The
 clip records what it was sent: `pronounced` always, and `said` with the number of substitutions
 (`lex`) when that differs from the line, because the browser's drift rule compares `pronounced`
 against the dictionary as it now stands. Two things keep that record honest. `PUT …/lexicon`
@@ -1296,7 +1301,7 @@ those, because a clip stale by a rename would also match and is not the dictiona
 **A line carries its tags, at its endpoint's rate.** The speaker's voice names an endpoint —
 `<endpointId>/<voiceId>` — and the handler reads that endpoint from the stored configuration as
 each line goes out, then hands it to `expressionPlan` in
-[src/lib/expressions.ts](../src/lib/expressions.ts), the demo simulator's function: the words after
+[src/lib/expressions.ts](../src/lib/expressions.ts), the function the page plans with: the words after
 the dictionary, with each tag placed on the line written in as that endpoint spells it. The clip
 records the plan — `expressionSignature` and the tags sent, beside `pronounced` — so the
 browser's drift rule compares like with like. A line whose tags the endpoint cannot say (support
@@ -1610,8 +1615,8 @@ arriving rather than nothing; an export job that moved has the book's exports re
 how progress, a finish, a failure and a cancel that removed the row all reach the page. Cancel and
 Retry are the queue's, as they are for every other kind.
 
-**Every figure about money on screen is the server's.** The browser's estimate and budget gates are
-skipped in backend mode, because the server is the authority: it refuses before queuing and stops
+**Every figure about money on screen is the server's.** The browser's estimate shows the same
+figures, and the server is the authority: it refuses before queuing and stops
 a running job before a request that no longer fits (see
 [what a request costs](#what-a-request-costs-and-what-a-book-may-spend)). The jobs store's
 `spent`, `reserved`, `scriptSpent` and `scriptReserved` answer from `GET /api/books/:id/spend`
@@ -1741,14 +1746,13 @@ own rate and at 24 kHz, and both connection tests — to prove the providers aga
 ## What is not done yet
 
 `libraryStore` reads and writes through [src/services/library.ts](../src/services/library.ts), so
-the library screens are the server's in backend mode. What is worth knowing about that:
+the library screens are the server's. What is worth knowing about that:
 
-- **A removal cannot be undone, so it asks first.** `_bookSnapshot` puts a book back in the store;
-  nothing puts one back in the database. The danger rule in
-  [store ownership](../src/stores/README.md) has two halves — act at once with Undo, or ask first —
-  and with a server answering a removal takes the second: the menu item and the volume row ask
-  with a second click, and the toast says it cannot be undone rather than offering a button that
-  would lie. Demo mode keeps the first half, because its snapshot really does put the book back.
+- **A removal cannot be undone, so it asks first.** Nothing puts a book back in the database. The
+  danger rule in [store ownership](../src/stores/README.md) has two halves — act at once with
+  Undo, or ask first — and a removal takes the second: the menu item and the volume row ask with a
+  second click, and the toast says it cannot be undone rather than offering a button that would
+  lie.
 - **An undo of a skip or a keep is exact.** Skip, include and keep are rules that only run
   forwards — including a noted chapter records that it was looked at — so an Undo does not run the
   inverse rule: the store records what the chapters were and sends that to

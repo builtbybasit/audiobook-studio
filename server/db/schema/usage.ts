@@ -7,7 +7,7 @@
 // That rule is the point of the table rather than a nicety about it. The store's history is
 // explicit: totalling the clip currently on each line meant a failed render cost nothing and
 // accepting a retake made the money spent on the displaced clip **disappear**, and reading the
-// activity list out of the running job simulator made a request vanish the moment it finished. So
+// activity list out of the running job made a request vanish the moment it finished. So
 // the record does not live on the artefact, because the artefact moves.
 //
 // The receipts — `priced` for tokens, `speech` for a rendered clip — are frozen documents and are

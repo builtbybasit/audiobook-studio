@@ -111,7 +111,8 @@ describe("a preset on the Connection tab", () => {
   /** A scripting endpoint as the Endpoints page holds it, and a picker wired as that tab wires it. */
   function connection() {
     const store = useEndpointsStore();
-    const profile = store.profiles[0];
+    const id = store.addScriptProfile();
+    const profile = store.profiles.find((p) => p.id === id)!;
     const u = unifyProfile(profile);
     const it = pinia.run(() =>
       usePresetPicker({
@@ -163,7 +164,7 @@ describe("a preset on the Connection tab", () => {
 describe("a preset in the scripting page's endpoint editor", () => {
   test("is written straight onto the selected profile, as a copy", () => {
     const store = useEndpointsStore();
-    const selected = ref(store.profiles[0].id);
+    const selected = ref(store.addScriptProfile());
     const profile = () => store.profiles.find((p) => p.id === selected.value);
     // wired as ScriptEndpoints wires it
     const { choose } = pinia.run(() =>

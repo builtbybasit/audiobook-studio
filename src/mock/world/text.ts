@@ -7,13 +7,10 @@
 import { generateSegments } from "@/mock/world/script";
 import { noticeBody } from "@/mock/fixtures/notices";
 import { BOOK_SEEDS } from "@/mock/fixtures/books";
+import type { ContentPart } from "@/lib/contents";
 import type { Chapter } from "@/types";
 
-/** A run of text, marked when it is the note rather than the story. */
-export interface ContentPart {
-  text: string;
-  notice?: boolean;
-}
+export { partsText, type ContentPart } from "@/lib/contents";
 
 /** The seeded prose an imported book reads with — its sample says which, and a seeded book is its own. */
 const proseOf = (bookId: string, prose?: string): string =>
@@ -52,5 +49,3 @@ export function chapterParts(
   }
   return [{ text: noticeBody(note.kind, variant), notice: true }];
 }
-
-export const partsText = (parts: ContentPart[]): string => parts.map((p) => p.text).join("\n\n");

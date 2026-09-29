@@ -68,6 +68,8 @@ function open(
       speech: endpointSpeechProvider({ fetch }),
     },
     demo,
+    // the demo's startup runs would hold the queue for most of a minute (`demoSpeed.test.ts`)
+    still: true,
   });
   return Object.assign(library, dirs);
 }

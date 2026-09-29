@@ -78,7 +78,7 @@ export const jobs = sqliteTable(
       Pick<Job, "scriptRun" | "narrationRun" | "exportRun">
     >(),
 
-    /** events this session's simulator observed but could not keep */
+    /** events the job reported beyond the ones it keeps */
     droppedEvents: integer("dropped_events").notNull().default(0),
 
     /**

@@ -1,6 +1,6 @@
 // A chapter's script history, read into the history store.
 //
-// With a server answering, the history is the server's: an edit, a checkpoint and a restore each
+// The history is the server's: an edit, a checkpoint and a restore each
 // write it there, in the transaction that writes the script, and answer with the history as it
 // now stands — which the store installs, so the panel follows without asking again. This query is
 // the read on opening a chapter, and what the queue invalidates when a scripting job lands.
@@ -9,15 +9,12 @@ import { useQuery } from "@pinia/colada";
 
 import type { ChapterHistory } from "@/types";
 import { keys } from "@/queries/keys";
-import { activeLibraryService } from "@/services/library";
+import { libraryService } from "@/services/library";
 import { useHistoryStore } from "@/stores/history";
 
 async function readHistory(bookId: string, chapterId: number): Promise<ChapterHistory> {
-  const historyStore = useHistoryStore();
-  const svc = activeLibraryService();
-  if (!svc) return historyStore.historyOf(bookId, chapterId);
-  const history = await svc.chapterHistory(bookId, chapterId);
-  historyStore._install(bookId, chapterId, history);
+  const history = await libraryService().chapterHistory(bookId, chapterId);
+  useHistoryStore()._install(bookId, chapterId, history);
   return history;
 }
 

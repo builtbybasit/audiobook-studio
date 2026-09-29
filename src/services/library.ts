@@ -2,12 +2,10 @@
 //
 // `EndpointService` next door already does this for the Endpoints page; this is the same idea for
 // the books themselves. Everything above it works in the shapes `@/types` defines and does not
-// know which side answered — that is what lets the seeded demo and a real backend put the same
-// contents review on screen.
+// know what answered — which is what lets a test point the page at a library of its own.
 //
-// Only the HTTP implementation lives here. In demo mode the library's state *is* the mock world
-// the store holds, so asking for this service is a mistake worth failing on rather than answering
-// with seeded books that would look like a working backend.
+// Only the HTTP implementation lives here. It asks the library this tab is on (`API_BASE`): yours,
+// or the demo's, which the server holds as a second library with a database of its own.
 import type {
   Book,
   Chapter,
@@ -25,7 +23,7 @@ import type {
   VersionOrigin,
 } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
-import { isBackend, mode } from "@/services/mode";
+import { API_BASE } from "@/services/mode";
 
 export { ApiError, type FetchLike } from "@/services/http";
 
@@ -256,7 +254,7 @@ export interface StoredSamples {
 export class HttpLibraryService implements LibraryService {
   readonly simulated = false;
   private readonly http: HttpClient;
-  constructor(base = "/api", fetch?: FetchLike) {
+  constructor(base = API_BASE, fetch?: FetchLike) {
     this.http = new HttpClient(base, fetch);
   }
 
@@ -501,46 +499,19 @@ export class HttpLibraryService implements LibraryService {
  * the browser follows it and saves what comes back, the way a built audiobook is downloaded.
  */
 export function scriptExportUrl(bookId: string, samples = false): string {
-  return `/api/books/${seg(bookId)}/script-export${samples ? "?samples=1" : ""}`;
+  return `${API_BASE}/books/${seg(bookId)}/script-export${samples ? "?samples=1" : ""}`;
 }
 
 let service: LibraryService | null = null;
 
-/**
- * The library service, or `null` when there is nobody to ask.
- *
- * This is the question the store asks, and the answer decides which half of every library action
- * runs: with a service the library is the server's and every change is a request; without one it
- * is the seeded world the store holds. `null` is a mode, not a failure — what the demo rules
- * forbid is a *service* that quietly answers with fixtures, not a store that knows it has none.
- */
-export function activeLibraryService(): LibraryService | null {
-  if (service) return service;
-  return isBackend ? (service = new HttpLibraryService()) : null;
-}
-
-/**
- * The library service for the mode the app started in.
- *
- * In demo mode there isn't one, and this throws rather than inventing an answer: the library's
- * demo state is the seeded world the store holds, and handing back something that merely looked
- * like a backend is exactly the silent fallback the demo rules forbid.
- */
+/** The library service: the one a test set, or the HTTP one for this tab's library. */
 export function libraryService(): LibraryService {
-  const found = activeLibraryService();
-  if (!found)
-    throw new Error(
-      `The library service is not available in ${mode} mode. ` +
-        `The seeded library lives in the store; leave the demo (the Demo chip) to talk to the server.`,
-    );
-  return found;
+  return (service ??= new HttpLibraryService());
 }
 
 /**
- * Point the app at a different implementation. For tests and for wiring at startup.
- *
- * A store reads the service when its state is first built, so a test that wants the backend half
- * of the library must set this *before* it creates the store.
+ * Point the app at a different implementation. For tests and for wiring at startup; `null` goes
+ * back to the HTTP one, built afresh when it is next asked for.
  */
 export function setLibraryService(next: LibraryService | null): void {
   service = next;

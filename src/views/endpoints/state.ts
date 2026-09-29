@@ -5,8 +5,6 @@
 // domain state, so it doesn't belong in the store — it lives here, at module scope, reactive and
 // keyed by `<kind>:<id>`.
 import { reactive } from "vue";
-import { bindCredential } from "@/lib/credentials";
-import { onDemoReset } from "@/lib/pageState";
 import { opsOf } from "@/lib/endpoints";
 import { encodingChanged, repairEncoding } from "@/lib/audioFormat";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
@@ -93,7 +91,7 @@ interface PageState {
   tests: Record<string, ConnectionTest>;
 }
 
-const blank = (): PageState => ({
+export const ui = reactive<PageState>({
   selected: null,
   kind: "all",
   search: "",
@@ -104,12 +102,6 @@ const blank = (): PageState => ({
   activity: {},
   tests: {},
 });
-
-export const ui = reactive<PageState>(blank());
-
-// A demo reset restores the endpoints themselves; a draft of an edit to one of them would otherwise
-// survive it, and the form would claim unsaved changes against a model that had just been put back.
-onDemoReset(() => Object.assign(ui, blank()));
 
 /** The remembered tab, or the first one this kind has. Selecting a scripting endpoint while
  *  Voices was open must land somewhere real rather than on an empty panel. */
@@ -192,7 +184,6 @@ export function applyDraft(u: UnifiedEndpoint): string[] {
   target.needsKey = d.needsKey;
   target.credentialId = d.credentialId;
   target.quotaGroup = d.quotaGroup.trim() || null;
-  bindCredential(u.slot, d.credentialId);
   let notes: string[] = [];
   if (u.endpoint) {
     const r = repairEncoding(u.endpoint);

@@ -43,7 +43,7 @@ const router = useRouter();
 const book = computed(() => libraryStore.bookById(bookId)!);
 const chapters = computed(() => libraryStore.chaptersOf(bookId));
 const p = computed(() => libraryStore.progress(bookId));
-// the cast and the audiobooks: read from the server when the overview opens, or the seeded world's
+// the cast and the audiobooks, read from the server when the overview opens
 const { characters: cast } = useCast(bookId);
 useBookExports(bookId);
 const unreviewed = computed(() => cast.value.filter((c) => c.isNew).length);
@@ -80,11 +80,10 @@ function saveName(v: Volume) {
   void libraryStore.renameVolume(bookId, v.id, draft.value);
   editing.value = null;
 }
-/** Backend mode: a removal cannot be undone, so the row asks first. */
-const asksFirst = computed(() => !!libraryStore._service());
+/** A removal cannot be undone, so the row asks first. */
 const confirming = ref<number | null>(null);
 async function remove(v: Volume) {
-  if (asksFirst.value && confirming.value !== v.id) {
+  if (confirming.value !== v.id) {
     confirming.value = v.id;
     return;
   }
@@ -98,10 +97,9 @@ function removeWarning(v: Volume): string {
   const work = [scripted && `${scripted} scripted`, narrated && `${narrated} narrated`]
     .filter(Boolean)
     .join(", ");
-  const after = asksFirst.value ? "This cannot be undone." : "Undo is offered afterwards.";
   return book.value.volumes.length === 1
-    ? `${v.name} is the only volume, so this removes the whole novel: its ${n} chapters${work ? ` (${work})` : ""}, script, cast and audiobooks. ${after}`
-    : `Removes ${v.name} (${v.file}) and its ${n} chapters${work ? ` (${work})` : ""}, and renumbers the rest. ${after}`;
+    ? `${v.name} is the only volume, so this removes the whole novel: its ${n} chapters${work ? ` (${work})` : ""}, script, cast and audiobooks. This cannot be undone.`
+    : `Removes ${v.name} (${v.file}) and its ${n} chapters${work ? ` (${work})` : ""}, and renumbers the rest. This cannot be undone.`;
 }
 const budget = computed(() => book.value.budget ?? { cap: null, paused: false });
 const spent = computed(() => jobsStore.spent(bookId));

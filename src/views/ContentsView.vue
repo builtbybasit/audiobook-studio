@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useDemoStore } from "@/stores/demo";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
@@ -27,7 +26,6 @@ import { DialogContent, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } f
 import { BookOpen as ReadIcon, Search as SearchIcon, X as ClearIcon } from "@lucide/vue";
 import type { Chapter, NoticeGroup, NoticeKind } from "@/types";
 
-const demoStore = useDemoStore();
 const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
@@ -105,16 +103,6 @@ watch([q, filter, kind, collapsed, opened], () => {
   };
   if (JSON.stringify(next) !== JSON.stringify(route.query)) void router.replace({ query: next });
 });
-// a demo scenario replaces the world under the page; a seeded book is still here, so start over
-watch(
-  () => demoStore._epoch,
-  () => {
-    opened.value = chapters.value.find(isUndecided)?.id ?? null;
-    filter.value = "all";
-    kind.value = null;
-    q.value = "";
-  },
-);
 
 // ---- the list
 const rows = computed<VolumeRow[]>(() =>
@@ -144,8 +132,7 @@ const textOf = (c: Chapter) => scriptsStore.rawText(bookId, c.id);
 const openedChapter = computed(() =>
   opened.value == null ? undefined : libraryStore.chapter(bookId, opened.value),
 );
-// The opened chapter's prose: read from the server the first time it is opened, or generated from
-// the seeded world. The preview reads `parts` either way and never knows which answered.
+// The opened chapter's prose, read from the server the first time it is opened.
 const { parts: openedParts, isLoading: textLoading } = useChapterText(
   bookId,
   () => openedChapter.value?.id,

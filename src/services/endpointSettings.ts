@@ -1,17 +1,16 @@
 // Where the endpoints are configured: the speech endpoints, the scripting profiles, and the named
 // credentials they point at.
 //
-// The same arrangement as `@/services/library`: one HTTP implementation, chosen at startup, and
-// `null` in demo mode — where the configuration is the seeded one the endpoints store holds. This
-// is not `EndpointService` next door, which answers for the *past* requests the Endpoints page
-// charts; this is the configuration a narration job on the server reads to know what to call.
+// The same arrangement as `@/services/library`: one HTTP implementation, answering at this tab's
+// API — your library's, or the demo's. This is not `@/services/usage`, which answers for the *past*
+// requests the Endpoints page charts; this is the configuration a narration job on the server reads
+// to know what to call.
 //
 // The whole configuration travels as one document. The page binds its fields straight onto the
 // objects it edits, so there is no single action to hang a narrower request on — and the server
 // has to check the three lists against each other anyway (a credential an endpoint names must be
 // in the same body), which a partial write could not let it do.
 import type { Credential } from "@/lib/credentials";
-import { keyring } from "@/lib/keyring";
 import { CLONE_CONSENT } from "@/lib/endpointShapes";
 import type {
   ClonedVoice,
@@ -23,7 +22,7 @@ import type {
   Profile,
 } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
-import { isBackend } from "@/services/mode";
+import { API_BASE } from "@/services/mode";
 
 /**
  * The parts of an endpoint that are a record of its requests rather than its configuration. The
@@ -152,7 +151,7 @@ export interface VoiceCloneRequest {
 
 export class HttpEndpointSettingsService implements EndpointSettingsService {
   private readonly http: HttpClient;
-  constructor(base = "/api", fetch?: FetchLike) {
+  constructor(base = API_BASE, fetch?: FetchLike) {
     this.http = new HttpClient(base, fetch);
   }
 
@@ -232,10 +231,9 @@ function recordingsForm(request: Omit<VoiceCloneRequest, "title">): FormData {
 
 let service: EndpointSettingsService | null = null;
 
-/** The endpoint settings service, or `null` when the configuration is the seeded one in the store. */
-export function activeEndpointSettingsService(): EndpointSettingsService | null {
-  if (service) return service;
-  return isBackend ? (service = new HttpEndpointSettingsService()) : null;
+/** The endpoint settings service: the one a test set, or the HTTP one for this tab's library. */
+export function endpointSettingsService(): EndpointSettingsService {
+  return (service ??= new HttpEndpointSettingsService());
 }
 
 /** For tests and for wiring at startup. Set it before the endpoints store loads. */
@@ -245,12 +243,8 @@ export function setEndpointSettingsService(next: EndpointSettingsService | null)
 
 /**
  * Whether the key an endpoint or profile needs is in place, for every "no key" warning and gate.
- *
- * With a server answering, the key is the server's and the browser only ever learns that one is
- * held (`hasKey`); the keyring is the demo's, and whatever it holds is sent nowhere. Asking the
- * keyring there would clear a warning for a key the server has never seen. `slot` is the keyring
- * slot — the endpoint's id, or `profile:<id>`.
+ * The key is the server's, and the browser only ever learns that one is held (`hasKey`).
  */
-export function keyInPlace(entry: { hasKey?: boolean } | null | undefined, slot: string): boolean {
-  return activeEndpointSettingsService() ? !!entry?.hasKey : keyring.has(slot);
+export function keyInPlace(entry: { hasKey?: boolean } | null | undefined): boolean {
+  return !!entry?.hasKey;
 }

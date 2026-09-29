@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { useEndpointsStore } from "@/stores/endpoints";
-import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { keyring } from "@/lib/keyring";
-import { activeEndpointSettingsService, keyInPlace } from "@/services/endpointSettings";
+import { keyInPlace } from "@/services/endpointSettings";
 import ServerKeyField from "@/views/endpoints/ServerKeyField.vue";
 import { UiNumber, UiSelect, UiSwitch } from "@/ui";
 import NumberSlider from "@/components/NumberSlider.vue";
@@ -24,6 +22,8 @@ import {
   ArrowUpRight as ArrowIcon,
 } from "@lucide/vue";
 import { profileErrors, scriptParts, tokenEstimate, scriptingHealth } from "@/lib/scripting";
+import { scriptTelemetry } from "@/lib/scriptActivity";
+import { useScriptActivity } from "@/queries/scriptActivity";
 import { isSimulated } from "@/lib/providers";
 import { usePresetPicker } from "@/composables/usePresetPicker";
 import { TabsRoot, TabsList, TabsTrigger, TabsContent } from "reka-ui";
@@ -32,13 +32,10 @@ import type { Profile, SettingsFile } from "@/types";
 import { SPLIT_MODES } from "@/lib/split";
 const props = defineProps<{ bookId: string; selected: number[] }>();
 const endpointsStore = useEndpointsStore();
-const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
-/** with a server answering, a profile's key is kept there, not in this browser's keyring */
-const onServer = !!activeEndpointSettingsService();
 const selectedId = ref(scriptingStore.scriptSettings.profile);
 const now = ref(Date.now());
 let clock: ReturnType<typeof setInterval>;
@@ -47,13 +44,10 @@ onMounted(() => {
 });
 onUnmounted(() => clearInterval(clock));
 const endpointList = ref<HTMLElement | null>(null);
+// what each profile has been through is its rows in the server's ledger, read once for the list
+const activity = useScriptActivity();
 const health = (ep: Profile) =>
-  scriptingHealth(
-    ep,
-    jobsStore.scriptTelemetry[ep.id],
-    keyInPlace(ep, "profile:" + ep.id),
-    now.value,
-  );
+  scriptingHealth(ep, scriptTelemetry(activity.rowsOf(ep.id), ep), keyInPlace(ep), now.value);
 const tone = (ep: Profile) =>
   ({ good: "bg-emerald-500", warn: "bg-amber-500", muted: "bg-zinc-400" })[health(ep).tone];
 watch(selectedId, async () => {
@@ -276,7 +270,7 @@ function remove() {
           >
         </div>
       </div>
-      <EndpointActivity :profile="p" :now="now" />
+      <EndpointActivity :profile="p" :rows="activity.rowsOf(p.id)" :now="now" />
       <TabsRoot v-model="section"
         ><TabsList
           class="sticky top-0 z-10 mb-3 mt-3 flex gap-1 border-b bg-white pt-1 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800"
@@ -349,27 +343,15 @@ function remove() {
           >
           <div v-if="!simulated" class="space-y-2">
             <UiSwitch v-model="p.needsKey" label="Requires an API key" />
-            <!-- with a server answering, the key is the server's: see ServerKeyField -->
+            <!-- the key is the server's: see ServerKeyField -->
             <ServerKeyField
-              v-if="p.needsKey && onServer"
+              v-if="p.needsKey"
               kind="scripting"
               :id="p.id"
               :name="p.name"
               :has-key="!!p.hasKey"
               :needs-key="p.needsKey"
-            /><label v-else-if="p.needsKey" class="block space-y-1 text-xs font-medium"
-              ><span>API key</span
-              ><input
-                :value="keyring.get('profile:' + p.id)"
-                type="password"
-                autocomplete="off"
-                class="input w-full font-mono"
-                placeholder="Paste your API key"
-                @input="keyring.set('profile:' + p!.id, ($event.target as HTMLInputElement).value)"
-              /><span class="block text-[11px] font-normal text-zinc-500"
-                >Kept in memory only. Excluded from settings exports.</span
-              ></label
-            >
+            />
           </div>
         </TabsContent>
         <TabsContent value="limits" class="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -498,10 +480,8 @@ function remove() {
       <div
         class="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800"
       >
-        <span v-if="onServer" class="text-[11px] text-zinc-500"
+        <span class="text-[11px] text-zinc-500"
           >Changes apply to new runs; a paused endpoint can’t start one.</span
-        ><span v-else class="text-[11px] text-zinc-500"
-          >Changes apply to new jobs. Enable/pause and concurrency apply live.</span
         ><button class="text-xs text-red-600 hover:underline dark:text-red-400" @click="remove">
           Remove endpoint
         </button>

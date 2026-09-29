@@ -17,16 +17,26 @@ import {
 import { scriptingPresetById } from "@/lib/endpoints";
 import { newProfile, tokenEstimate } from "@/lib/scripting";
 import { clone } from "@/lib/utils";
-import { cacheShapeFor, simulateUsage, usageFormatFor } from "@/mock/simulators/usage";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
+import { useChapterText } from "@/queries";
+import { demoServer } from "./support/demoServer";
+import { flush, testPinia } from "./support/pinia";
 import { FRI, THU, card, config, promo, utc } from "./support/pricingFixtures";
 
 beforeEach(() => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   setActivePinia(createPinia());
 });
+
+/** The demo library's scripting profiles, read into the endpoints store as the page reads them. */
+async function seededProfiles() {
+  const store = useEndpointsStore();
+  await store.load();
+  store._detach();
+  return store.profiles;
+}
 
 describe("token accounting", () => {
   test("cached input is a slice of the total input, never an addition to it", () => {
@@ -372,14 +382,21 @@ describe("reservations and budgets", () => {
     expect(e.cautions.join(" ")).toContain("dearest hours");
   });
 
-  test("a budget check uses the undiscounted price, and says so when that is what blocks it", () => {
+  test("a budget check uses the undiscounted price, and says so when that is what blocks it", async () => {
+    await demoServer();
+    const pinia = testPinia();
     const library = useLibraryStore();
     const scripting = useScriptingStore();
+    await Promise.all([library.load(true), seededProfiles()]);
+    await library.loadBook(library.books[0].id);
     const book = library.books[0];
     const ids = library
       .chaptersOf(book.id)
       .slice(0, 2)
       .map((c) => c.id);
+    // the estimate counts the prose the page has read, so read it
+    const texts = pinia.run(() => ids.map((id) => useChapterText(book.id, id, "plain")));
+    while (texts.some((t) => !t.text.value)) await flush();
 
     const bare = scripting.scriptEstimate(book.id, ids);
     expect(bare.rates).not.toBeNull();
@@ -391,6 +408,7 @@ describe("reservations and budgets", () => {
     const blocked = scripting.scriptEstimate(book.id, ids);
     expect(blocked.blockers.join(" ")).toContain("Without the discounts in force");
     book.scriptBudget = null;
+    pinia.stop();
   });
 });
 
@@ -441,57 +459,11 @@ describe("historical accuracy", () => {
   });
 });
 
-describe("the simulated provider", () => {
-  test("the simulated provider round-trips through the normalizer for every shape it speaks", () => {
-    for (const format of ["openai", "anthropic", "plain"] as const) {
-      const { raw, usage } = simulateUsage(
-        { inputTokens: 10_000, outputTokens: 2_000, cacheHit: 0.8 },
-        format,
-      );
-      expect(usage.inputTokens).toBe(10_000);
-      expect(usage.outputTokens).toBe(2_000);
-      expect(usage.format).toBe(format);
-      if (format === "plain") {
-        expect(usage.cachedInput).toBeNull();
-        expect(raw.prompt_tokens_details).toBeUndefined();
-      } else {
-        expect(usage.cachedInput).toBe(8_000);
-        expect(uncachedInput(usage)).toBe(2_000);
-      }
-    }
-  });
-
-  test("a corrupt payload is caught by the normalizer rather than by the arithmetic", () => {
-    const { usage } = simulateUsage(
-      { inputTokens: 1_000, outputTokens: 10, cacheHit: 0.5, corrupt: "cache-exceeds-input" },
-      "openai",
-    );
-    expect(usageTrustworthy(usage)).toBe(false);
-    expect(uncachedInput(usage)).toBe(0);
-
-    const { usage: noOutput } = simulateUsage(
-      { inputTokens: 1_000, outputTokens: 10, cacheHit: 0, corrupt: "no-output" },
-      "anthropic",
-    );
-    expect(noOutput.problems.map((p) => p.code)).toContain("output-missing");
-  });
-
-  test("the provider shape follows the provider, and only a reporting one can have a cache", () => {
-    expect(usageFormatFor("claude-sonnet-5", "https://api.anthropic.com/v1")).toBe("anthropic");
-    expect(usageFormatFor("gpt-4o-mini", "https://api.openai.com/v1")).toBe("openai");
-    expect(usageFormatFor("kokoro", "http://localhost:8000/v1")).toBe("plain");
-    // the first request of a run has nothing to read back, and writes the prefix instead
-    expect(cacheShapeFor(1, true).cacheHit).toBe(0);
-    expect(cacheShapeFor(1, true).cacheWrite).toBeGreaterThan(0);
-    expect(cacheShapeFor(4, true).cacheHit).toBeGreaterThan(0);
-    expect(cacheShapeFor(4, false)).toEqual({ cacheHit: 0, cacheWrite: 0 });
-  });
-});
-
 describe("the seeded world", () => {
-  test("the seeded endpoints cover every pricing case the demo claims to", () => {
-    const store = useEndpointsStore();
-    const byId = (id: string) => store.profiles.find((p) => p.id === id)!;
+  test("the seeded endpoints cover every pricing case the demo claims to", async () => {
+    await demoServer();
+    const profiles = await seededProfiles();
+    const byId = (id: string) => profiles.find((p) => p.id === id)!;
     // cached input, a schedule with a midnight-crossing window, and promotions
     expect(byId("openai").pricing!.cachedInput).toBeGreaterThan(0);
     expect(byId("openai").pricing!.windows.some((w) => w.to <= w.from)).toBe(true);

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
-import { useDemoStore } from "@/stores/demo";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
@@ -34,7 +33,6 @@ import PronunciationDialog from "@/views/search/PronunciationDialog.vue";
 import type { BulkResult, BulkTarget, Segment, UndoEntry } from "@/types";
 
 const castStore = useCastStore();
-const demoStore = useDemoStore();
 const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
@@ -222,15 +220,6 @@ function undo() {
   uiStore.revertEntry(last.value.entry);
   announcement.value = `Undone: ${last.value.result.label}.`;
 }
-
-// the Demo drawer seeds this book and puts it back; either way the last batch is history
-watch(
-  () => demoStore._searchDemo?.bookId,
-  () => {
-    clearSelection();
-    last.value = null;
-  },
-);
 
 // ---------- display helpers ----------
 function mark(text: string): { t: string; hit?: boolean }[] {

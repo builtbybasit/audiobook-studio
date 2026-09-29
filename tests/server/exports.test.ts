@@ -9,7 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 import type { Book, Chapter, ExportItem, ExportSettings, Job } from "@/types";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
-import { makeWorld } from "@/mock";
+import { makeWorld } from "@/mock/world";
 import { chapterSpans, exportFileToken } from "~/db/exports";
 import { fakeSpeechProvider, SAMPLE_RATE, toneOf, toneWav } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";

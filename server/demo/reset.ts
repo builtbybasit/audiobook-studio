@@ -49,13 +49,24 @@ export interface DemoParts {
   dirs: readonly string[];
   /** set going what a seed describes that is not a row, once the queue is running (`startLive`) */
   live: (live: DemoLive) => Promise<void>;
+  /** seed a reset with no situation without its startup runs (`SeedOptions.still`) */
+  still?: boolean;
 }
 
 /**
  * The demo's reset, one at a time: a second asked for while one runs waits for it, then runs.
  * Given a situation, it seeds the world with the situation applied; given none, the world as it is.
  */
-export function demoReset({ db, runner, gate, voiceFiles, base, dirs, live }: DemoParts): Reset {
+export function demoReset({
+  db,
+  runner,
+  gate,
+  voiceFiles,
+  base,
+  dirs,
+  live,
+  still,
+}: DemoParts): Reset {
   async function rebuild(scenario?: DemoScenario): Promise<Seeding> {
     await runner.stop();
     let seeding: Seeding;
@@ -63,7 +74,7 @@ export function demoReset({ db, runner, gate, voiceFiles, base, dirs, live }: De
       wipe(db);
       await Promise.all(dirs.map((dir) => rm(dir, { recursive: true, force: true })));
       // the request's own moment, so every cooldown and window the situation sets starts now
-      seeding = seedDemo(db, voiceFiles, { base, now: Date.now(), scenario });
+      seeding = seedDemo(db, voiceFiles, { base, now: Date.now(), scenario, still });
       // the endpoints were replaced, as a save replaces them; the gate reads its limits again
       gate.changed();
     } finally {

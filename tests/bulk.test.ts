@@ -1,9 +1,12 @@
 // Bulk script corrections from the Search page: previewing changes nothing, applying touches exactly
 // the lines the preview counted, and one undo puts the batch back without stepping on later edits.
-import { test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
+// They run on the demo library's The Cliché Cultivation World, whose first chapter is narrated.
+import { test, expect, beforeAll, beforeEach, afterEach, mock } from "bun:test";
 import { bulkOutcome, segmentFingerprint, directionOptions } from "@/lib/bulk";
+import { libraryService } from "@/services/library";
 import type { BulkTarget, Segment, UndoEntry } from "@/types";
+import { demoServer, type DemoServer } from "./support/demoServer";
+import { testPinia, type TestPinia } from "./support/pinia";
 
 // The batch undo is the store's own undo stack, and that stack lives on a toast. Swap the toast
 // library for a silent one so `revertEntry` can be exercised for real.
@@ -19,32 +22,42 @@ mock.module("vue-toastflow", () => ({
   },
 }));
 
-const { useJobsStore } = await import("@/stores/jobs");
 const { useLibraryStore } = await import("@/stores/library");
 const { useNarrationStore } = await import("@/stores/narration");
 const { useScriptsStore } = await import("@/stores/scripts");
 const { useUiStore } = await import("@/stores/ui");
 
-let jobsStore: ReturnType<typeof useJobsStore>;
+let demo: DemoServer;
+let pinia: TestPinia;
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let narrationStore: ReturnType<typeof useNarrationStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
 let uiStore: ReturnType<typeof useUiStore>;
-let restore: (() => void)[] = [];
+/** the chapters these read: narrated, narrated with stale lines, and scripted only */
+const CHAPTERS = [1, 2, 5];
 
-beforeEach(() => {
+beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  setActivePinia(createPinia());
-  jobsStore = useJobsStore();
+  demo = await demoServer();
+});
+beforeEach(async () => {
+  await demo.reset();
+  pinia = testPinia();
   libraryStore = useLibraryStore();
   narrationStore = useNarrationStore();
   scriptsStore = useScriptsStore();
   uiStore = useUiStore();
-  jobsStore.jobs = [];
   toasts.length = 0;
-  restore = [spyOn(Math, "random").mockReturnValue(0.5)].map((s) => () => s.mockRestore());
+  const svc = libraryService();
+  await libraryStore.loadBook("cliche");
+  for (const chId of CHAPTERS)
+    scriptsStore._install("cliche", chId, await svc.chapterScript("cliche", chId));
 });
-afterEach(() => restore.forEach((fn) => fn()));
+// a batch's writes are still on their way when a test ends; they must not land on the next demo
+afterEach(async () => {
+  await Promise.all(CHAPTERS.map((chId) => scriptsStore._settled("cliche", chId)));
+  pinia.stop();
+});
 
 /** Every line of a chapter, as selection targets. */
 const all = (chId: number): BulkTarget[] =>

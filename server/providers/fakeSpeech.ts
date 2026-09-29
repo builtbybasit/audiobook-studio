@@ -6,8 +6,8 @@
 // provider answers that with this tone (`speakTone`, `simulatedSpeech.ts`). It is deterministic on
 // its input, so a test can say what it will produce, and it is honest about what it is: every clip
 // is a quiet sine tone whose pitch comes from the speaker's name, so two speakers sound different
-// and nothing sounds like speech. The duration follows the demo simulator's reading-speed rule, so
-// a chapter timed here is timed the way the seeded world times it.
+// and nothing sounds like speech. The duration follows the seeded world's reading-speed rule, so a
+// chapter timed here is timed the way the seeded world times it.
 //
 // The file it writes is a real WAV — PCM, 8-bit, mono, 8000 Hz unless the endpoint asked for
 // another rate — because the point of the fake is that a browser's audio element plays what the
@@ -61,7 +61,7 @@ export interface FakeSpeechOptions {
 export const SAMPLE_RATE = 8000;
 /** how far the tone swings either side of silence, out of 127; quiet on purpose */
 const AMPLITUDE = 24;
-/** the fake's reading speed, in words per second — the demo simulator's rule */
+/** the fake's reading speed, in words per second — the seeded world's rule */
 const WORDS_PER_SECOND = 2.6;
 const MIN_SECONDS = 0.4;
 

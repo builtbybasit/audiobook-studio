@@ -1,18 +1,18 @@
-import { useDemoStore } from "@/stores/demo";
-import { useLibraryStore } from "@/stores/library";
-import { useScriptingStore } from "@/stores/scripting";
-import { useScriptsStore } from "@/stores/scripts";
-import { useUiStore } from "@/stores/ui";
 // The contents review: import → review → add, and the same review afterwards.
 //
 // Two things matter and neither is visible from a screenshot. A suggestion never removes anything:
 // a chapter the import flagged is included until the person acts, and the import button counts it.
 // And a skipped chapter is skipped everywhere: the stages, the run totals and the export readiness
 // all read the one flag the review sets, and restoring it puts it back everywhere at once.
-import { test, expect, beforeEach, describe } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
+//
+// The pure side reads what it is handed. The store is driven against the demo library, whose Demo
+// tools open the review on each of the import samples below, and which reads a real EPUB as one
+// more volume of a book.
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
-import { IMPORT_SAMPLES, chapterParts, demoScenarios, importedBook } from "@/mock";
+import { IMPORT_SAMPLES } from "@/mock/fixtures/imports";
+import { importedBook } from "@/mock/world/imports";
+import { chapterParts } from "@/mock/world/text";
 import { readinessOf } from "@/lib/exports";
 import {
   excerptOf,
@@ -22,30 +22,14 @@ import {
   stateOf,
   summarize,
 } from "@/lib/contents";
+import { libraryService } from "@/services/library";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptingStore } from "@/stores/scripting";
+import { useUiStore } from "@/stores/ui";
 import type { Chapter } from "@/types";
-
-let demoStore: ReturnType<typeof useDemoStore>;
-let libraryStore: ReturnType<typeof useLibraryStore>;
-let scriptingStore: ReturnType<typeof useScriptingStore>;
-let scriptsStore: ReturnType<typeof useScriptsStore>;
-let uiStore: ReturnType<typeof useUiStore>;
-let toasts: { msg: string; undo: (() => void) | null }[];
-
-/** A fresh seeded world, for the tests that drive the stores; the pure side reads what it is handed. */
-function freshStores() {
-  Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  setActivePinia(createPinia());
-  demoStore = useDemoStore();
-  libraryStore = useLibraryStore();
-  scriptingStore = useScriptingStore();
-  scriptsStore = useScriptsStore();
-  uiStore = useUiStore();
-  toasts = [];
-  uiStore.toast = ((msg: string, opts: { undo?: (() => void) | null } = {}) => {
-    toasts.push({ msg, undo: opts.undo ?? null });
-    return "test";
-  }) as typeof uiStore.toast;
-}
+import { demoServer, type DemoServer } from "./support/demoServer";
+import { epubFile, story } from "./support/epub";
+import { testPinia, type TestPinia } from "./support/pinia";
 
 const chapter = (over: Partial<Chapter> = {}): Chapter => ({
   id: 1,
@@ -195,135 +179,164 @@ describe("the import samples", () => {
   });
 });
 
-describe("import → review → add", () => {
-  beforeEach(freshStores);
-
-  test("a read file waits off the shelf until it is confirmed, and confirming starts nothing", async () => {
-    const id = (await libraryStore.importBook({ sample: "serial" }))!;
-    expect(libraryStore.bookById(id)?.importing).toBe(true);
-    expect(libraryStore.shelved.some((b) => b.id === id)).toBe(false);
-    const s = libraryStore.contentsOf(id);
-    expect(s.suggested).toBeGreaterThan(5);
-    expect(s.included).toBe(s.total); // suggestions have removed nothing
-    await libraryStore.confirmImport(id);
-    expect(libraryStore.bookById(id)?.importing).toBeUndefined();
-    expect(libraryStore.shelved.some((b) => b.id === id)).toBe(true);
-    expect(libraryStore.chaptersOf(id).every((c) => c.scripting === "none")).toBe(true);
+describe("the review against the demo library", () => {
+  let demo: DemoServer;
+  let pinia: TestPinia;
+  let libraryStore: ReturnType<typeof useLibraryStore>;
+  let toasts: { msg: string; undo: (() => void | Promise<void>) | null }[];
+  beforeAll(async () => {
+    Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
+    demo = await demoServer();
   });
+  beforeEach(async () => {
+    await demo.reset();
+    pinia = testPinia();
+    libraryStore = useLibraryStore();
+    toasts = [];
+    useUiStore().toast = (msg, opts = {}) => {
+      toasts.push({ msg, undo: opts.undo ?? null });
+      return "test";
+    };
+  });
+  afterEach(() => pinia.stop());
 
-  test("cancelling an import leaves no trace; cancelling a volume leaves the book as it was", async () => {
-    const id = (await libraryStore.importBook({ sample: "clean" }))!;
-    expect(await libraryStore.discardImport(id)).toBe("book");
-    expect(libraryStore.bookById(id)).toBeUndefined();
-    expect(libraryStore.chaptersOf(id)).toEqual([]);
-
-    const before = libraryStore.chaptersOf("cliche").length;
-    const volId = await libraryStore.importVolume("cliche", {
-      sample: "volumes",
-      file: "Vol 4.epub",
-      name: "Vol. 4",
+  /** The Demo tools' row for an import sample: the book it reads, waiting in its review. */
+  async function imported(sample: string): Promise<string> {
+    const id = `import-${sample}`;
+    await demo.situate(id);
+    await libraryStore.load(true);
+    await libraryStore.loadBook(id);
+    return id;
+  }
+  /** One more volume of a book: a story chapter, a hiatus notice the import flags, and another. */
+  const volume = () =>
+    epubFile({
+      chapters: [
+        { title: "Four", paragraphs: story() },
+        {
+          title: "A short break",
+          paragraphs: [
+            "Going on hiatus for a few weeks. Thank you for reading, and for your patience.",
+          ],
+        },
+        { title: "Five", paragraphs: story() },
+      ],
     });
-    expect(libraryStore.importingVolume("cliche")?.id).toBe(volId);
-    expect(libraryStore.chaptersOf("cliche").length).toBeGreaterThan(before);
-    expect(libraryStore.bookById("cliche")?.importing).toBeUndefined();
-    expect(await libraryStore.discardImport("cliche")).toBe("volume");
-    expect(libraryStore.chaptersOf("cliche").length).toBe(before);
-    expect(libraryStore.importingVolume("cliche")).toBeUndefined();
-  });
 
-  test("a new volume numbers on from the book and confirms into it", async () => {
-    const before = libraryStore.chaptersOf("cliche").length;
-    await libraryStore.importVolume("cliche", {
-      sample: "volumes",
-      file: "Vol 4.epub",
-      name: "Vol. 4",
+  describe("import → review → add", () => {
+    test("a read file waits off the shelf until it is confirmed, and confirming starts nothing", async () => {
+      const id = await imported("serial");
+      expect(libraryStore.bookById(id)?.importing).toBe(true);
+      expect(libraryStore.shelved.some((b) => b.id === id)).toBe(false);
+      const s = libraryStore.contentsOf(id);
+      expect(s.suggested).toBeGreaterThan(5);
+      expect(s.included).toBe(s.total); // suggestions have removed nothing
+      await libraryStore.confirmImport(id);
+      expect(libraryStore.bookById(id)?.importing).toBeUndefined();
+      expect(libraryStore.shelved.some((b) => b.id === id)).toBe(true);
+      expect(libraryStore.chaptersOf(id).every((c) => c.scripting === "none")).toBe(true);
     });
-    const added = libraryStore.chaptersOf("cliche").slice(before);
-    expect(added[0].id).toBe(before + 1);
-    expect(added.some((c) => c.note)).toBe(true);
-    await libraryStore.confirmImport("cliche");
-    expect(libraryStore.bookById("cliche")?.volumes.some((v) => v.importing)).toBe(false);
-    expect(toasts.at(-1)?.msg).toContain("Vol. 4");
-  });
 
-  test("the Demo rows open the review on a book the row itself creates, and reset takes it away", () => {
-    const rows = demoScenarios().filter((s) => s.group === "import");
-    expect(rows.length).toBe(IMPORT_SAMPLES.length);
-    for (const row of rows) {
-      const to = demoStore.applyScenario(row.id);
-      expect(to, row.id).toBe(row.path);
-      expect(libraryStore.bookById(row.bookId)?.importing, row.id).toBe(true);
-      expect(demoStore.survivesReset(row.bookId), row.id).toBe(false);
-    }
-    demoStore.resetDemo();
-    for (const row of rows) expect(libraryStore.bookById(row.bookId)).toBeUndefined();
-  });
-});
+    test("cancelling an import leaves no trace; cancelling a volume leaves the book as it was", async () => {
+      const id = await imported("clean");
+      expect(await libraryStore.discardImport(id)).toBe("book");
+      expect(libraryStore.bookById(id)).toBeUndefined();
+      expect(libraryStore.chaptersOf(id)).toEqual([]);
 
-describe("deciding", () => {
-  beforeEach(freshStores);
-
-  test("a batch skip toasts with an Undo that puts every chapter back exactly", async () => {
-    const id = (await libraryStore.importBook({ sample: "repeated" }))!;
-    const sponsor = libraryStore.noticeGroupsOf(id).find((g) => g.kind === "sponsor")!;
-    // one of them already looked at and kept: the batch only covers what is pending
-    await libraryStore.keepChapters(id, [sponsor.ids[0]], { quiet: true });
-    const pending = libraryStore.noticeGroupsOf(id).find((g) => g.kind === "sponsor")!.pending;
-    expect(pending.length).toBeGreaterThan(1);
-    const suggested0 = libraryStore.contentsOf(id).suggested;
-    expect(await libraryStore.skipChapters(id, pending, true)).toBe(pending.length);
-    // the toast counts what the batch covered, whatever size the batch was
-    expect(toasts.at(-1)?.msg).toContain(String(pending.length));
-    expect(libraryStore.contentsOf(id)).toMatchObject({
-      skipped: pending.length,
-      kept: 1,
-      suggested: suggested0 - pending.length,
+      await libraryStore.loadBook("cliche");
+      const before = libraryStore.chaptersOf("cliche").length;
+      const volId = await libraryStore.importVolume("cliche", {
+        source: await volume(),
+        name: "Vol. 4",
+      });
+      expect(libraryStore.importingVolume("cliche")?.id).toBe(volId!);
+      expect(libraryStore.chaptersOf("cliche").length).toBeGreaterThan(before);
+      expect(libraryStore.bookById("cliche")?.importing).toBeFalsy();
+      expect(await libraryStore.discardImport("cliche")).toBe("volume");
+      expect(libraryStore.chaptersOf("cliche").length).toBe(before);
+      expect(libraryStore.importingVolume("cliche")).toBeUndefined();
     });
-    toasts.at(-1)!.undo!();
-    // undo puts every one of them back where it was
-    expect(libraryStore.contentsOf(id)).toMatchObject({
-      skipped: 0,
-      kept: 1,
-      suggested: suggested0,
+
+    test("a new volume numbers on from the book and confirms into it", async () => {
+      await libraryStore.loadBook("cliche");
+      const before = libraryStore.chaptersOf("cliche").length;
+      await libraryStore.importVolume("cliche", { source: await volume(), name: "Vol. 4" });
+      const added = libraryStore.chaptersOf("cliche").slice(before);
+      expect(added[0].id).toBe(before + 1);
+      expect(added.some((c) => c.note)).toBe(true);
+      await libraryStore.confirmImport("cliche");
+      expect(libraryStore.bookById("cliche")?.volumes.some((v) => v.importing)).toBe(false);
+      expect(toasts.at(-1)?.msg).toContain("Vol. 4");
     });
-    expect(libraryStore.chapter(id, sponsor.ids[0])?.kept).toBe(true);
   });
 
-  test("including a flagged chapter again counts as having looked at it", async () => {
-    const id = (await libraryStore.importBook({ sample: "serial" }))!;
-    const c = libraryStore.chaptersOf(id).find((ch) => ch.note?.kind === "hiatus")!;
-    await libraryStore.skipChapters(id, [c.id], true, { quiet: true });
-    expect(stateOf(c)).toBe("skipped");
-    await libraryStore.skipChapters(id, [c.id], false, { quiet: true });
-    expect(stateOf(c)).toBe("kept");
-    expect(isUndecided(c)).toBe(false);
-    // a quiet single toggle does not toast; the click is its own undo
-    expect(toasts.length).toBe(0);
-  });
+  describe("deciding", () => {
+    test("a batch skip toasts with an Undo that puts every chapter back exactly", async () => {
+      const id = await imported("repeated");
+      const sponsor = libraryStore.noticeGroupsOf(id).find((g) => g.kind === "sponsor")!;
+      // one of them already looked at and kept: the batch only covers what is pending
+      await libraryStore.keepChapters(id, [sponsor.ids[0]], { quiet: true });
+      const pending = libraryStore.noticeGroupsOf(id).find((g) => g.kind === "sponsor")!.pending;
+      expect(pending.length).toBeGreaterThan(1);
+      const suggested0 = libraryStore.contentsOf(id).suggested;
+      expect(await libraryStore.skipChapters(id, pending, true)).toBe(pending.length);
+      // the toast counts what the batch covered, whatever size the batch was
+      expect(toasts.at(-1)?.msg).toContain(String(pending.length));
+      expect(libraryStore.contentsOf(id)).toMatchObject({
+        skipped: pending.length,
+        kept: 1,
+        suggested: suggested0 - pending.length,
+      });
+      await toasts.at(-1)!.undo!();
+      // undo puts every one of them back where it was
+      expect(libraryStore.contentsOf(id)).toMatchObject({
+        skipped: 0,
+        kept: 1,
+        suggested: suggested0,
+      });
+      expect(libraryStore.chapter(id, sponsor.ids[0])?.kept).toBe(true);
+    });
 
-  test("a skipped chapter leaves every stage and comes back when restored", async () => {
-    const id = (await libraryStore.importBook({ sample: "clean" }))!;
-    await libraryStore.confirmImport(id);
-    const [a, b] = libraryStore.chaptersOf(id);
-    const count = libraryStore.chaptersOf(id).length;
-    await libraryStore.skipChapters(id, [b.id], true, { quiet: true });
-    expect(scriptingStore.scriptEstimate(id, [a.id, b.id]).chapters).toBe(1);
-    expect(readinessOf(b)).toBe("skipped");
-    // the progress total is what is still in the book
-    expect(libraryStore.progress(id)).toMatchObject({ total: count - 1, excluded: 1 });
-    await libraryStore.skipChapters(id, [b.id], false, { quiet: true });
-    expect(scriptingStore.scriptEstimate(id, [a.id, b.id]).chapters).toBe(2);
-    expect(readinessOf(b)).toBe("missing");
-  });
+    test("including a flagged chapter again counts as having looked at it", async () => {
+      const id = await imported("serial");
+      const chId = libraryStore.chaptersOf(id).find((ch) => ch.note?.kind === "hiatus")!.id;
+      const c = () => libraryStore.chapter(id, chId)!;
+      await libraryStore.skipChapters(id, [chId], true, { quiet: true });
+      expect(stateOf(c())).toBe("skipped");
+      await libraryStore.skipChapters(id, [chId], false, { quiet: true });
+      expect(stateOf(c())).toBe("kept");
+      expect(isUndecided(c())).toBe(false);
+      // a quiet single toggle does not toast; the click is its own undo
+      expect(toasts.length).toBe(0);
+    });
 
-  test("the seeded books explain the chapters they already skip", () => {
-    const gates = libraryStore.chaptersOf("gates").at(-1)!;
-    expect(gates.excluded).toBe(true);
-    expect(gates.note?.kind).toBe("afterword");
-    expect(scriptsStore.rawText("gates", gates.id)).toContain("end of the volume");
-    const drowned = libraryStore.chaptersOf("drowned").at(-1)!;
-    expect(drowned.note?.kind).toBe("translator");
-    // a story chapter of a seeded book still reads as its own prose
-    expect(scriptsStore.rawText("cliche", 1)).toContain("Ji Ning");
+    test("a skipped chapter leaves every stage and comes back when restored", async () => {
+      const scriptingStore = useScriptingStore();
+      const id = await imported("clean");
+      await libraryStore.confirmImport(id);
+      const [a, b] = libraryStore.chaptersOf(id).map((c) => c.id);
+      const count = libraryStore.chaptersOf(id).length;
+      await libraryStore.skipChapters(id, [b], true, { quiet: true });
+      expect(scriptingStore.scriptEstimate(id, [a, b]).chapters).toBe(1);
+      expect(readinessOf(libraryStore.chapter(id, b)!)).toBe("skipped");
+      // the progress total is what is still in the book
+      expect(libraryStore.progress(id)).toMatchObject({ total: count - 1, excluded: 1 });
+      await libraryStore.skipChapters(id, [b], false, { quiet: true });
+      expect(scriptingStore.scriptEstimate(id, [a, b]).chapters).toBe(2);
+      expect(readinessOf(libraryStore.chapter(id, b)!)).toBe("missing");
+    });
+
+    test("the seeded books explain the chapters they already skip", async () => {
+      const svc = libraryService();
+      await Promise.all(["gates", "drowned"].map((id) => libraryStore.loadBook(id)));
+      const gates = libraryStore.chaptersOf("gates").at(-1)!;
+      expect(gates.excluded).toBe(true);
+      expect(gates.note?.kind).toBe("afterword");
+      expect(await svc.chapterText("gates", gates.id, "plain")).toContain("end of the volume");
+      const drowned = libraryStore.chaptersOf("drowned").at(-1)!;
+      expect(drowned.note?.kind).toBe("translator");
+      // a story chapter of a seeded book still reads as its own prose
+      expect(await svc.chapterText("cliche", 1, "plain")).toContain("Ji Ning");
+    });
   });
 });

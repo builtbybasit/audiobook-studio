@@ -5,16 +5,24 @@ import LatencySparkline from "@/components/LatencySparkline.vue";
 
 import { computed } from "vue";
 
-import type { Profile } from "@/types";
-const props = defineProps<{ profile: Profile; now: number }>();
+import { isSimulated } from "@/lib/providers";
+import { scriptTelemetry, scriptUsageTotals } from "@/lib/scriptActivity";
+import type { Profile, RequestRecord } from "@/types";
+const props = defineProps<{
+  profile: Profile;
+  /** the profile's settled requests in the server's ledger, newest first */
+  rows: RequestRecord[];
+  now: number;
+}>();
 const jobsStore = useJobsStore();
 const uiStore = useUiStore();
-const stats = computed(() => jobsStore.scriptTelemetry[props.profile.id]);
-const error = computed(() => stats.value?.lastError);
-const recovered = computed(() => !!error.value && (stats.value?.lastSuccess ?? 0) > error.value.at);
+const stats = computed(() => scriptTelemetry(props.rows, props.profile));
+const error = computed(() => stats.value.lastError);
+const recovered = computed(() => !!error.value && stats.value.lastSuccess > error.value.at);
 const cooldown = computed(() =>
-  Math.max(0, Math.ceil(((stats.value?.backoffUntil ?? 0) - props.now) / 1000)),
+  Math.max(0, Math.ceil((stats.value.backoffUntil - props.now) / 1000)),
 );
+const simulated = computed(() => isSimulated(props.profile.baseUrl));
 const requests = computed(() =>
   jobsStore.jobs.filter((j) => j.scriptRun?.profile.id === props.profile.id && !j.finishedAt),
 );
@@ -25,24 +33,13 @@ const queued = computed(() =>
     0,
   ),
 );
-const usage = computed(() =>
-  jobsStore.scriptUsage
-    .filter((x) => x.profileId === props.profile.id)
-    .reduce(
-      (n, x) => ({
-        input: n.input + x.inputTokens,
-        output: n.output + x.outputTokens,
-        cost: n.cost + x.cost,
-      }),
-      { input: 0, output: 0, cost: 0 },
-    ),
-);
-const history = computed(() => stats.value?.history.filter((x) => x.ok) ?? []);
+const usage = computed(() => scriptUsageTotals(props.rows));
+const history = computed(() => stats.value.history.filter((x) => x.ok));
 const latency = computed(() =>
   history.value.length ? history.value.reduce((n, x) => n + x.ms, 0) / history.value.length : null,
 );
 const success = computed(() =>
-  stats.value && stats.value.completed + stats.value.failures
+  stats.value.completed + stats.value.failures
     ? Math.round((stats.value.completed / (stats.value.completed + stats.value.failures)) * 100) +
       "%"
     : "—",
@@ -64,7 +61,7 @@ async function copyError() {
         {
           ...error.value,
           endpoint: error.value.baseUrl.replace(/\/$/, "") + "/chat/completions",
-          simulated: true,
+          simulated: simulated.value,
         },
         null,
         2,
@@ -80,7 +77,7 @@ async function copyError() {
   <div class="mt-3 space-y-2">
     <dl
       class="grid grid-cols-3 gap-x-3 gap-y-3 rounded-lg bg-zinc-50 px-3 py-2.5 text-xs dark:bg-zinc-800/50 xl:grid-cols-6"
-      aria-label="Endpoint activity this session"
+      aria-label="Endpoint activity over the last 7 days"
     >
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Active / limit</dt>
@@ -96,8 +93,8 @@ async function copyError() {
       </div>
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Success / 429s</dt>
-        <dd class="mt-0.5 font-mono">{{ success }} / {{ stats?.rateLimits ?? 0 }}</dd>
-        <dd class="text-[10px] text-zinc-500">{{ number(stats?.completed ?? 0) }} completed</dd>
+        <dd class="mt-0.5 font-mono">{{ success }} / {{ stats.rateLimits }}</dd>
+        <dd class="text-[10px] text-zinc-500">{{ number(stats.completed) }} completed</dd>
       </div>
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Input tokens</dt>
@@ -110,7 +107,7 @@ async function copyError() {
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Spend</dt>
         <dd class="mt-0.5 font-mono">{{ cost }}</dd>
-        <dd class="text-[10px] text-zinc-500">all books · demo</dd>
+        <dd class="text-[10px] text-zinc-500">all books · 7 days</dd>
       </div>
     </dl>
     <details
@@ -123,7 +120,8 @@ async function copyError() {
       "
     >
       <summary class="cursor-pointer text-zinc-600 dark:text-zinc-300">
-        {{ recovered ? "Recovered" : "Rate limited" }} · HTTP {{ error.code
+        {{ recovered ? "Recovered" : error.code === 429 ? "Rate limited" : error.message }} · HTTP
+        {{ error.code
         }}<span class="text-zinc-500">
           · {{ Math.max(0, Math.floor((now - error.at) / 1000)) }}s ago</span
         ><span v-if="cooldown"> · retry in {{ cooldown }}s</span>
@@ -138,7 +136,8 @@ async function copyError() {
                 ? "Queued requests retry automatically after the cooldown."
                 : "Waiting for the next queued request to retry."
         }}
-        Chapter {{ error.chapterId }} · {{ error.model }} · simulated response.
+        <template v-if="error.chapterId != null">Chapter {{ error.chapterId }} · </template
+        >{{ error.model }}<template v-if="simulated"> · simulated response</template>.
       </p>
       <pre
         class="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words rounded bg-white/60 p-2 font-mono text-[11px] dark:bg-zinc-950/50"

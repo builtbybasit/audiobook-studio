@@ -40,14 +40,13 @@ const props = defineProps<{
   bookId: string;
   chapterId: number;
   segment: Segment;
-  startOpen?: boolean;
 }>();
 const castStore = useCastStore();
 const narrationStore = useNarrationStore();
 
 const root = ref<HTMLElement | null>(null);
 const strip = ref<HTMLElement | null>(null);
-const expanded = ref(!!props.startOpen);
+const expanded = ref(false);
 const settings = ref(false);
 
 const route = computed(() => castStore.effectiveVoice(props.bookId, props.segment.speaker));

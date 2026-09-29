@@ -1,33 +1,29 @@
-// Provider configurations and voice catalogues. In the demo, credentials remain in the keyring;
-// with a server answering, the server keeps each endpoint's key and this store only ever holds
-// whether it does (`hasKey`) — a typed key goes out in one write (`saveKey`) and is never kept.
+// Provider configurations and voice catalogues. The server keeps each endpoint's key and this
+// store only ever holds whether it does (`hasKey`) — a typed key goes out in one write (`saveKey`)
+// and is never kept.
 //
-// With a server answering, the configuration is the server's: a narration job there reads it to
-// know which endpoint a line goes to and at what sample rate. The page binds its fields straight
-// onto these objects — a text box writes `ep.concurrency`, a toggle `ep.enabled`, an import
-// assigns a dozen fields at once — so rather than chase every one of those into a request, the
-// store *writes behind*: it watches the configuration as one document (the endpoints without their
-// telemetry, the profiles, the credential registry), and a short while after it last changed sends
-// the whole of it. What the server answers is what the store then holds. Demo mode has no server
-// and none of this runs; the seeded configuration is simply what the page edits.
+// The configuration is the server's: a narration job there reads it to know which endpoint a line
+// goes to and at what sample rate. The page binds its fields straight onto these objects — a text
+// box writes `ep.concurrency`, a toggle `ep.enabled`, an import assigns a dozen fields at once — so
+// rather than chase every one of those into a request, the store *writes behind*: it watches the
+// configuration as one document (the endpoints without their telemetry, the profiles, the
+// credential registry), and a short while after it last changed sends the whole of it. What the
+// server answers is what the store then holds.
 //
 // The request history, failure counts and back-off on each endpoint are not configuration. The
-// server never stores them, and neither sending nor installing a configuration touches them. In the
-// demo they are the simulator's record of what it sent; with a server answering, the rate limits
-// and the cooldown are the server's gate's (`_installLive`), read while narration is running, and
-// the lines each endpoint has out and held sit beside the endpoints in `live` rather than on them.
-// Either way they are left out of what the write-behind watches, so a poll never sends a save.
+// server never stores them, and neither sending nor installing a configuration touches them. The
+// rate limits and the cooldown are the server's gate's (`_installLive`), read while narration is
+// running, and the lines each endpoint has out and held sit beside the endpoints in `live` rather
+// than on them. They are left out of what the write-behind watches, so a poll never sends a save.
 import { watch } from "vue";
 import { credentials } from "@/lib/credentials";
-import { isFishAudio, presetById } from "@/lib/endpoints";
+import { isFishAudio, presetById, voiceRef } from "@/lib/endpoints";
 import { configErrors, expressionId } from "@/lib/expressions";
-import { keyring } from "@/lib/keyring";
 import { newProfile, profileErrors } from "@/lib/scripting";
 import { GENDER } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
-import { discoverVoices, voiceRef } from "@/mock";
 import {
-  activeEndpointSettingsService,
+  endpointSettingsService,
   ENDPOINT_TELEMETRY,
   type EndpointConfig,
   type EndpointSettings,
@@ -61,16 +57,15 @@ import { useJobsStore } from "@/stores/jobs";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
-import { seedState } from "@/stores/seed";
 import { useUiStore } from "@/stores/ui";
 interface EndpointsState {
   endpoints: Endpoint[];
   profiles: Profile[];
-  /** Backend mode: whether the configuration has been read from the server yet. */
+  /** Whether the configuration has been read from the server yet. */
   loaded: boolean;
   /**
-   * Backend mode: what the server's process last said of each speech endpoint it has sent to, by
-   * id (`GET /api/endpoints/live`). Empty in the demo, and until narration first runs.
+   * What the server's process last said of each speech endpoint it has sent to, by id
+   * (`GET /api/endpoints/live`). Empty until narration first runs.
    */
   live: Record<string, EndpointLive>;
 }
@@ -149,25 +144,22 @@ function cancelTimer(): void {
 }
 
 export const useEndpointsStore = defineStore("endpoints", {
-  // With a server answering, the configuration is only ever the server's: the store starts on none
-  // and `load` installs what the server holds. A server nobody has configured has no endpoints,
-  // and the seeded ones stay the demo's rather than being handed over as if someone had made them.
+  // The configuration is only ever the server's: the store starts on none and `load` installs what
+  // the server holds. A server nobody has configured has no endpoints.
   state: (): EndpointsState => ({
-    ...(activeEndpointSettingsService()
-      ? { endpoints: [], profiles: [] }
-      : seedState("endpoints", "profiles")),
+    endpoints: [],
+    profiles: [],
     loaded: false,
     live: {},
   }),
   getters: {
     /**
      * Lines out at a speech endpoint and lines held for it, across every job, as the server counts
-     * them — or null in the demo, whose counts are derived from the clips the simulator is moving.
-     * The server's are the truth with one answering: the clips the browser has loaded are only
-     * those of the chapters it has opened, and the gate counts every job's lines.
+     * them. The clips the browser has loaded are only those of the chapters it has opened; the gate
+     * counts every job's lines.
      */
-    serverLoad(s): (id: string) => EndpointLive | null {
-      return (id) => (activeEndpointSettingsService() ? (s.live[id] ?? IDLE) : null);
+    serverLoad(s): (id: string) => EndpointLive {
+      return (id) => s.live[id] ?? IDLE;
     },
     enabledEndpoints(s): Endpoint[] {
       return s.endpoints.filter((e) => e.enabled);
@@ -205,8 +197,8 @@ export const useEndpointsStore = defineStore("endpoints", {
   },
   actions: {
     // ---------- the seam ----------
-    _service(): EndpointSettingsService | null {
-      return activeEndpointSettingsService();
+    _service(): EndpointSettingsService {
+      return endpointSettingsService();
     },
     /** Say a request failed. The caller decides what to read again. */
     _failed(what: string, cause: unknown): void {
@@ -260,18 +252,17 @@ export const useEndpointsStore = defineStore("endpoints", {
       }
     },
     /**
-     * Read the configuration from the server. Demo mode is already holding one.
+     * Read the configuration from the server.
      *
-     * Called once when the app starts in backend mode; `force` reads it again, which is what a
-     * refused write does to put back what the server actually holds. A server that has never been
-     * given a configuration answers with none, and none is what the page then shows.
+     * Called once when the app starts; `force` reads it again, which is what a refused write does
+     * to put back what the server actually holds. A server that has never been given a
+     * configuration answers with none, and none is what the page then shows.
      */
     async load(force = false): Promise<void> {
-      const svc = this._service();
-      if (!svc || (this.loaded && !force)) return;
+      if (this.loaded && !force) return;
       const before = edits;
       try {
-        const answer = await svc.getSettings();
+        const answer = await this._service().getSettings();
         // Something was typed while the read was out: that is newer than what it read, and its
         // own write is already on its way.
         if (this.loaded && edits !== before) return;
@@ -319,8 +310,7 @@ export const useEndpointsStore = defineStore("endpoints", {
      * the server's configuration is read back so the page shows what is actually in force.
      */
     async flushWrites(): Promise<void> {
-      const svc = this._service();
-      if (!svc || !timer) return;
+      if (!timer) return;
       cancelTimer();
       const n = edits;
       const body = this._config();
@@ -330,7 +320,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       inFlight++;
       let answer: EndpointSettings;
       try {
-        answer = await svc.putSettings(body);
+        answer = await this._service().putSettings(body);
       } catch (cause) {
         inFlight--;
         if (edits !== n) return;
@@ -357,8 +347,6 @@ export const useEndpointsStore = defineStore("endpoints", {
      * is `hasKey`, which is all the page is ever told.
      */
     async saveKey(kind: EndpointKind, id: string, apiKey: string): Promise<boolean> {
-      const svc = this._service();
-      if (!svc) return false;
       const body = this._config();
       const entry = (kind === "tts" ? body.endpoints : body.profiles).find((e) => e.id === id);
       if (!entry) return false;
@@ -368,7 +356,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       inFlight++;
       let answer: EndpointSettings;
       try {
-        answer = await svc.putSettings(body);
+        answer = await this._service().putSettings(body);
       } catch (cause) {
         inFlight--;
         this._failed(apiKey ? "save the key" : "remove the key", cause);
@@ -398,20 +386,9 @@ export const useEndpointsStore = defineStore("endpoints", {
      * run is a failed result rather than a throw, so the tab shows it where it shows the others.
      */
     async testSaved(kind: EndpointKind, id: string): Promise<ConnectionTest> {
-      const failed = (message: string, detail: string): ConnectionTest => ({
-        ok: false,
-        at: Date.now(),
-        ms: 0,
-        message,
-        detail,
-        cost: null,
-        simulated: false,
-      });
-      const svc = this._service();
-      if (!svc) return failed("The test did not run", "There is no server to run it.");
       try {
         await this.flushWrites();
-        const probe = await svc.testEndpoint(kind, id);
+        const probe = await this._service().testEndpoint(kind, id);
         return {
           ok: probe.ok,
           at: Date.now(),
@@ -420,20 +397,20 @@ export const useEndpointsStore = defineStore("endpoints", {
           detail: probe.ms
             ? `The server's request took ${probe.ms} ms, with the settings and key it has saved.`
             : "The server made no request to the provider.",
-          // the server reports no charge for its probe, and an estimate is not a receipt
-          cost: null,
-          simulated: false,
         };
       } catch (cause) {
         const api = cause instanceof ApiError ? cause : null;
-        return failed(
-          api?.status === 404 ? "Not saved on the server yet" : "The test did not run",
-          api
+        return {
+          ok: false,
+          at: Date.now(),
+          ms: 0,
+          message: api?.status === 404 ? "Not saved on the server yet" : "The test did not run",
+          detail: api
             ? (api.detail ?? api.message)
             : cause instanceof Error
               ? cause.message
               : String(cause),
-        );
+        };
       }
     },
     saveExpressionConfig(id: string, config: ExpressionConfig): boolean {
@@ -552,14 +529,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       const i = this.profiles.findIndex((p) => p.id === id);
       if (i < 0) return;
       const [p] = this.profiles.splice(i, 1);
-      const secret = keyring.get("profile:" + id);
-      keyring.set("profile:" + id, "");
-      uiStore.toast(`Removed ${p.name}`, {
-        undo: () => {
-          this.profiles.splice(i, 0, p);
-          keyring.set("profile:" + id, secret);
-        },
-      });
+      uiStore.toast(`Removed ${p.name}`, { undo: () => this.profiles.splice(i, 0, p) });
     },
     // ---------- endpoints & their voices ----------
     /** `presetId` fills in what a provider pins down (base URL, model, billing, limits); every
@@ -622,30 +592,26 @@ export const useEndpointsStore = defineStore("endpoints", {
     // Voice discovery. Most OpenAI-compatible servers (Kokoro-FastAPI, Orpheus…) expose
     // GET /audio/voices; Fish Audio instead has a per-account model catalogue at the host root,
     // which is authenticated and returns far more than voices, so it is mapped down to the few
-    // fields a voice picker needs. With a server answering, the server asks the real endpoint
-    // (`POST /endpoints/voices`); in the demo the simulator stands in for it. Either way what is
-    // found is merged: new ids are added, and nothing already here is touched or removed.
+    // fields a voice picker needs. The server asks the real endpoint (`POST /endpoints/voices`), and
+    // what it finds is merged: new ids are added, and nothing already here is touched or removed.
     fetchVoices(ep: Endpoint): Promise<number> {
       const uiStore = useUiStore();
 
       const fish = isFishAudio(ep);
-      const svc = this._service();
       let empty = false;
-      const work = svc
-        ? (async () => {
-            ep.fetching = true;
-            try {
-              // The server asks what it has saved, key and base URL alike, so what the page is
-              // still holding goes first.
-              await this.flushWrites();
-              const found = await svc.listVoices(ep.id, { source: "library" });
-              empty = !found.voices.length;
-              return this.mergeVoices(ep, found.voices);
-            } finally {
-              ep.fetching = false;
-            }
-          })()
-        : discoverVoices(ep);
+      const work = (async () => {
+        ep.fetching = true;
+        try {
+          // The server asks what it has saved, key and base URL alike, so what the page is still
+          // holding goes first.
+          await this.flushWrites();
+          const found = await this._service().listVoices(ep.id, { source: "library" });
+          empty = !found.voices.length;
+          return this.mergeVoices(ep, found.voices);
+        } finally {
+          ep.fetching = false;
+        }
+      })();
       uiStore.toastLoading(work, {
         loading: `Fetching voices from ${ep.name}\u2026`,
         success: (n) =>
@@ -675,21 +641,19 @@ export const useEndpointsStore = defineStore("endpoints", {
     },
     /**
      * One of `ep`'s voices saying the sample sentence, rendered by the saved endpoint with its saved
-     * key — a real request, priced into the ledger — or the one already heard. Null when there is
-     * no server to ask, or the request failed, which has been said.
+     * key — a real request, priced into the ledger — or the one already heard. Null when the
+     * request failed, which has been said.
      */
     async sampleVoice(
       ep: Endpoint,
       voiceId: string,
     ): Promise<{ url: string; duration: number } | null> {
-      const svc = this._service();
-      if (!svc) return null;
       const key = sampleKey(ep, voiceId);
       const heard = samples.get(key);
       if (heard) return heard;
       try {
         await this.flushWrites();
-        const { blob, duration } = await svc.sampleVoice(ep.id, voiceId);
+        const { blob, duration } = await this._service().sampleVoice(ep.id, voiceId);
         const sample = { url: URL.createObjectURL(blob), duration };
         samples.set(key, sample);
         return sample;
@@ -705,15 +669,13 @@ export const useEndpointsStore = defineStore("endpoints", {
      * Make a voice from samples on `ep`'s provider and add it to the endpoint, where the
      * write-behind saves it like any other voice. The server keeps the samples with it; when it
      * could not, the voice is still made, and the toast says the samples were not kept. Null
-     * when there is no server to ask, or the provider refused, which has been said.
+     * when the provider refused, which has been said.
      */
     async cloneVoice(ep: Endpoint, request: VoiceCloneRequest): Promise<Voice | null> {
-      const svc = this._service();
-      if (!svc) return null;
       const uiStore = useUiStore();
       try {
         await this.flushWrites();
-        const { samplesKept, warning, ...voice } = await svc.cloneVoice(ep.id, request);
+        const { samplesKept, warning, ...voice } = await this._service().cloneVoice(ep.id, request);
         this.addVoice(ep, voice);
         // what the provider said to do before the voice speaks comes first: a line spoken with it
         // before then fails
@@ -731,15 +693,12 @@ export const useEndpointsStore = defineStore("endpoints", {
       }
     },
     /**
-     * Every voice of `ep` whose samples the server keeps. Empty when there is no server, the
-     * endpoint is not saved yet, or the server could not say — the Voices tab then offers nothing
-     * it cannot do.
+     * Every voice of `ep` whose samples the server keeps. Empty when the endpoint is not saved
+     * yet, or the server could not say — the Voices tab then offers nothing it cannot do.
      */
     async keptSamples(ep: Endpoint): Promise<KeptVoiceSamples[]> {
-      const svc = this._service();
-      if (!svc) return [];
       try {
-        return await svc.keptSamples(ep.id);
+        return await this._service().keptSamples(ep.id);
       } catch {
         return [];
       }
@@ -747,19 +706,17 @@ export const useEndpointsStore = defineStore("endpoints", {
     /**
      * Keep the samples a voice already on `ep` was made from, in place of any it had. Nothing is
      * sent to the provider. The endpoint is saved first, so a voice added on the page is one the
-     * server knows. Null when there is no server, or it refused, which has been said.
+     * server knows. Null when the server refused, which has been said.
      */
     async keepVoiceSamples(
       ep: Endpoint,
       voiceId: string,
       request: Omit<VoiceCloneRequest, "title">,
     ): Promise<KeptVoiceSamples | null> {
-      const svc = this._service();
-      if (!svc) return null;
       const uiStore = useUiStore();
       try {
         await this.flushWrites();
-        const kept = await svc.keepSamples(ep.id, voiceId, request);
+        const kept = await this._service().keepSamples(ep.id, voiceId, request);
         uiStore.toast(
           `Kept ${kept.samples.length} sample${kept.samples.length === 1 ? "" : "s"} of ${kept.title}`,
           {
@@ -784,7 +741,6 @@ export const useEndpointsStore = defineStore("endpoints", {
       restored: (k: KeptVoiceSamples) => void,
     ): Promise<boolean> {
       const svc = this._service();
-      if (!svc) return false;
       const uiStore = useUiStore();
       try {
         await svc.forgetSamples(ep.id, kept.voiceId);
@@ -811,10 +767,8 @@ export const useEndpointsStore = defineStore("endpoints", {
       ep: Endpoint,
       query: Omit<VoiceListQuery, "source">,
     ): Promise<VoiceListPage> {
-      const svc = this._service();
-      if (!svc) throw new ApiError("Searching voices needs the server", 0);
       await this.flushWrites();
-      return svc.listVoices(ep.id, { ...query, source: "public" });
+      return this._service().listVoices(ep.id, { ...query, source: "public" });
     },
     // how many segments of this book a limit would split, for the endpoint card
     splitCount(bookId: string, ep: Endpoint): number {

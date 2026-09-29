@@ -1,17 +1,13 @@
-import { useCastStore } from "@/stores/cast";
-import { useDemoStore } from "@/stores/demo";
-import { useEndpointsStore } from "@/stores/endpoints";
-import { useNarrationStore } from "@/stores/narration";
-import { useScriptsStore } from "@/stores/scripts";
-import { useUiStore } from "@/stores/ui";
 // The reader's one gesture for cutting a line and placing an expression on it: the gaps between
-// words. And the demo row that puts expressions on a line so the gesture has something to show.
-import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
+// words. And the endpoint whose model reads expressions, so the gesture has something to place.
+import { test, expect, describe } from "bun:test";
 
-import { EXPRESSION_TAGS, demoScenario } from "@/mock";
+import { EXPRESSION_TAGS } from "@/mock/fixtures/endpoints";
 import { expressionSupport } from "@/lib/expressions";
 import { gapLabel, gapsOf, tokensOf } from "@/lib/gaps";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { demoServer } from "./support/demoServer";
+import { testPinia } from "./support/pinia";
 
 describe("the gaps between words", () => {
   const text = "I am not asking. Doctor, sit down.";
@@ -48,47 +44,15 @@ describe("the gaps between words", () => {
 });
 
 describe("expressions placed in a line", () => {
-  let restore: (() => void)[] = [];
-  beforeEach(() => {
-    Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-    setActivePinia(createPinia());
-    useUiStore().toast = () => "test";
-    restore = [
-      spyOn(globalThis, "setInterval").mockImplementation((() => 0) as typeof setInterval),
-      spyOn(globalThis, "setTimeout").mockImplementation((() => 0) as typeof setTimeout),
-    ].map((s) => () => s.mockRestore());
-  });
-  afterEach(() => restore.forEach((f) => f()));
-
-  test("Fish's S2 model ships with tags, so a line read by it can be annotated at once", () => {
-    const ep = useEndpointsStore().endpoints.find((e) => e.id === "fish")!;
+  test("Fish's S2 model ships with tags, so a line read by it can be annotated at once", async () => {
+    await demoServer();
+    testPinia();
+    const endpointsStore = useEndpointsStore();
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints.find((e) => e.id === "fish")!;
     expect(expressionSupport(ep)).toBe("supported");
     expect(ep.expressions?.tags.map((t) => t.id)).toEqual(EXPRESSION_TAGS.map((t) => t.id));
     expect(EXPRESSION_TAGS.some((t) => t.kind === "sound")).toBe(true);
     expect(EXPRESSION_TAGS.some((t) => t.kind === "delivery")).toBe(true);
-  });
-
-  test("the demo row places two sound expressions and one that needs its position again", () => {
-    const demoStore = useDemoStore();
-    const narrationStore = useNarrationStore();
-    const scriptsStore = useScriptsStore();
-    const castStore = useCastStore();
-    const open = demoStore.applyScenario("expressions");
-    expect(open).toMatch(/^\/book\/starforge\/scripting\?ch=\d+&seg=\d+$/);
-    const [, ch, seg] = open!.match(/ch=(\d+)&seg=(\d+)/)!.map(Number);
-    const segs = scriptsStore.segmentsOf("starforge", ch);
-    const a = segs.find((s) => s.id === seg)!;
-    expect(a.expressions).toHaveLength(2);
-    expect(a.expressions![0]).toMatchObject({ id: "sighs", at: 0 });
-    // the line's speaker resolves to the model that has the tags, so nothing on it needs review
-    expect(expressionSupport(castStore.effectiveVoice("starforge", a.speaker).endpoint)).toBe(
-      "supported",
-    );
-    expect(narrationStore.expressionRender("starforge", a).issues).toHaveLength(0);
-    // the next annotated line asks for its laugh to be placed again
-    const b = segs.find((s) => s.id !== a.id && s.expressions?.length)!;
-    expect(b.expressions![0].needsReview).toBe(true);
-    expect(narrationStore.expressionRender("starforge", b).issues).toHaveLength(1);
-    expect(demoScenario("expressions")?.group).toBe("review");
   });
 });

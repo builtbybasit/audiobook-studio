@@ -4,9 +4,8 @@ import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 
 // The shelf. Books first: each card says the one next thing to do, how far along it is, what is
-// running or broken, and whether its audiobook still matches it. Adding is a button, a sample
-// menu, or a drop anywhere on the page — the drop target only grows when a file is actually being
-// dragged, so it never takes the room the books need. A book still in its contents review is a
+// running or broken, and whether its audiobook still matches it. Adding is a button or a drop
+// anywhere on the page — the drop target only grows when a file is actually being dragged, so it never takes the room the books need. A book still in its contents review is a
 // card of its own rather than a book that quietly went missing.
 //
 // The shelf has two shapes — a grid of covers, and a table with the pipeline as columns — and can
@@ -16,8 +15,8 @@ import { useUiStore } from "@/stores/ui";
 // visit as well.
 //
 // With the server not answering, the shelf is not empty but unknown, so the page says that where
-// the books would be — how to start the server, and a retry — and stays on the server's library;
-// the demo is one chip away, never somewhere it goes by itself.
+// the books would be — how to start the server, and a retry. The demo is the server's too, so it
+// is no way round it.
 import { useStorage } from "@vueuse/core";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -27,8 +26,6 @@ import EmptyState from "@/components/EmptyState.vue";
 import AddEpubDialog from "@/components/AddEpubDialog.vue";
 import { pendingFor, pickedFrom, type PendingAdd, type PickedFile } from "@/components/addEpub";
 import ImportingCard from "@/views/library/ImportingCard.vue";
-import SampleMenu from "@/views/library/SampleMenu.vue";
-import { isDemo } from "@/services/mode";
 import ShelfGrid from "@/views/library/ShelfGrid.vue";
 import ShelfTable from "@/views/library/ShelfTable.vue";
 import { bookFacts } from "@/views/library/bookFacts";
@@ -44,7 +41,6 @@ import {
   type ShelfSort,
 } from "@/views/library/shelf";
 import { plural } from "@/views/library/shared";
-import { IMPORT_SAMPLES } from "@/mock";
 import {
   LayoutGrid as GridIcon,
   Library as LibraryIcon,
@@ -73,7 +69,7 @@ const running = computed(
 );
 const subtitle = computed(() => {
   if (libraryStore.unreachable) return "Your library is on the server, which is not answering.";
-  if (!shelved.value.length) return "Add an EPUB, or try a sample, to start.";
+  if (!shelved.value.length) return "Add an EPUB to start.";
   const parts = [plural(shelved.value.length, "book")];
   if (running.value) parts.push(`${running.value} running`);
   if (importing.value.length) parts.push(`${importing.value.length} being reviewed`);
@@ -174,12 +170,6 @@ function onPick(e: Event) {
   input.value = "";
   if (picked) addFile(picked);
 }
-/** One of the sample EPUBs: the same dialog, with the file and its contents already chosen. */
-function addSample(id: string) {
-  const s = IMPORT_SAMPLES.find((x) => x.id === id);
-  if (!s) return;
-  pending.value = { ...pendingFor(s.volumes[0].file, null, s.id), title: s.title };
-}
 
 // ---- drop anywhere on the page. The strip under the header is the standing hint; the full-page
 // target appears only while a file is over the window, counted in and out so a drag across child
@@ -254,8 +244,6 @@ onUnmounted(() => {
             <component :is="v.icon" class="icon" />
           </button>
         </div>
-        <!-- a sample has no file behind it, so only the demo can add one -->
-        <SampleMenu v-if="isDemo" @pick="addSample" />
         <label class="btn-primary cursor-pointer"
           ><AddIcon class="icon" /> Add EPUB<input
             type="file"
@@ -296,9 +284,6 @@ onUnmounted(() => {
         <button class="btn-primary mt-4" @click="retry">
           <RetryIcon class="icon" /> Try again
         </button>
-        <p class="mt-4 text-xs text-zinc-500">
-          To look around without it, the Demo chip in the header opens a seeded demo in this tab.
-        </p>
       </div>
     </div>
 
@@ -315,7 +300,6 @@ onUnmounted(() => {
           class="hidden"
           @change="onPick"
       /></label>
-      <SampleMenu v-if="isDemo" @pick="addSample" />
     </EmptyState>
 
     <template v-else>

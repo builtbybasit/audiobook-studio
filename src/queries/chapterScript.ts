@@ -1,24 +1,20 @@
 // A chapter's script, read into the scripts store.
 //
-// The scripts store is the working copy: every edit, every undo and the seeded world act on
-// `scripts.segments`, and the pages read it. This query is how that copy is filled and kept fresh
-// with a server answering — what comes back is installed into the store with the revision a later
-// edit has to name — and in the demo it simply answers with what the store already holds. It is
-// invalidated by the things that change a script elsewhere: a scripting job landing, a rename
-// moving lines, a book being renumbered.
+// The scripts store is the working copy: every edit and every undo act on `scripts.segments`, and
+// the pages read it. This query is how that copy is filled and kept fresh — what comes back is
+// installed into the store with the revision a later edit has to name. It is invalidated by the
+// things that change a script elsewhere: a scripting job landing, a rename moving lines, a book
+// being renumbered.
 import { computed, toValue, type MaybeRefOrGetter } from "vue";
 import { useQuery } from "@pinia/colada";
 
 import { keys } from "@/queries/keys";
-import { activeLibraryService, type ChapterScript } from "@/services/library";
+import { libraryService, type ChapterScript } from "@/services/library";
 import { useScriptsStore } from "@/stores/scripts";
 
 async function readScript(bookId: string, chapterId: number): Promise<ChapterScript> {
-  const scriptsStore = useScriptsStore();
-  const svc = activeLibraryService();
-  if (!svc) return { segments: scriptsStore.segmentsOf(bookId, chapterId), revision: 0 };
-  const script = await svc.chapterScript(bookId, chapterId);
-  scriptsStore._install(bookId, chapterId, script);
+  const script = await libraryService().chapterScript(bookId, chapterId);
+  useScriptsStore()._install(bookId, chapterId, script);
   return script;
 }
 

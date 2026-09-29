@@ -15,17 +15,13 @@ import { useSpeakerSamplesStore, type CloneFromSamples } from "@/stores/speakerS
 //
 // Two ways in, because providers differ: fetch the server's list where there is one (Fish Audio's
 // catalogue is per account and needs the key first), or type an id by hand for a server that has no
-// list endpoint at all. With a server answering, a Fish endpoint has a third: search Fish's public
-// catalogue and add a voice from the results.
+// list endpoint at all. A Fish endpoint has a third: search Fish's public catalogue and add a voice
+// from the results.
 import { computed, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import {
-  activeEndpointSettingsService,
-  keyInPlace,
-  type VoiceListPage,
-} from "@/services/endpointSettings";
+import { keyInPlace, type VoiceListPage } from "@/services/endpointSettings";
 import { ApiError } from "@/services/http";
-import { speak, usePlayer } from "@/composables/usePlayer";
+import { usePlayer } from "@/composables/usePlayer";
 import type { Component } from "vue";
 import {
   Check as AddedIcon,
@@ -48,7 +44,7 @@ import {
 } from "@lucide/vue";
 import { UiCheckbox, UiSelect, UiTooltip } from "@/ui";
 import { isFishAudio } from "@/lib/endpoints";
-import { CLONE_CONSENT, VOICE_SAMPLE } from "@/lib/endpointShapes";
+import { CLONE_CONSENT } from "@/lib/endpointShapes";
 import { cloneModelsFor, cloningOf, speechProviderOf } from "@/lib/providers";
 import {
   acceptOf,
@@ -134,16 +130,13 @@ function add() {
 
 // ---------- fetching ----------
 const fish = computed(() => isFishAudio(props.endpoint));
-const needsKeyFirst = computed(
-  () => props.endpoint.needsKey && !keyInPlace(props.endpoint, props.endpoint.id),
-);
+const needsKeyFirst = computed(() => props.endpoint.needsKey && !keyInPlace(props.endpoint));
 const fetchBlocked = computed(() => fish.value && needsKeyFirst.value);
 
 // ---------- searching the public catalogue ----------
 // Fish Audio's public voices, a page at a time, through the server — which asks with the saved key.
-// Only with a server answering: the demo has no catalogue to search. A result is only a result
-// until "Add" puts it on this endpoint, and the write-behind saves it like any other voice.
-const searchable = computed(() => fish.value && !!activeEndpointSettingsService());
+// A result is only a result until "Add" puts it on this endpoint, and the write-behind saves it like
+// any other voice. Only a Fish endpoint has one.
 const LANGUAGES = [
   { value: "", label: "Any language" },
   { value: "en", label: "English" },
@@ -196,9 +189,8 @@ const has = (v: Voice) => props.endpoint.voices.some((x) => x.id === v.id);
 // ---------- cloning ----------
 // A voice made from samples of someone speaking — recorded, or downloaded — kept by the provider as
 // a private voice on the account and added to this endpoint like any other: the provider makes it
-// once, and it is spoken by its id from then on. Only where the provider keeps one (its `cloning`)
-// and a server is answering: the samples go to the provider through it, with the saved key, and
-// the server keeps them beside the voice with the consent they were given under — so the voice can
+// once, and it is spoken by its id from then on. Only where the provider keeps one (its `cloning`):
+// the samples go to the provider through the server, with the saved key, and the server keeps them beside the voice with the consent they were given under — so the voice can
 // travel with a book's script to someone who has to make it again.
 //
 // What a pick may be is the provider's (`cloneForm.ts`): the picker offers its formats, a pick is
@@ -206,11 +198,9 @@ const has = (v: Voice) => props.endpoint.voices.some((x) => x.id === v.id);
 // server still decides by each file's first bytes, so a renamed file is refused there with its name.
 const cloning = computed(() => cloningOf(props.endpoint));
 const provider = computed(() => speechProviderOf(props.endpoint).label);
-const clonable = computed(() => !!cloning.value && !!activeEndpointSettingsService());
+const clonable = computed(() => !!cloning.value);
 // a provider that clones only for some of its models (Qwen) says which, where this one does not
-const cloneModels = computed(() =>
-  activeEndpointSettingsService() ? cloneModelsFor(props.endpoint) : [],
-);
+const cloneModels = computed(() => cloneModelsFor(props.endpoint));
 const clone = reactive({
   title: "",
   samples: [] as File[],
@@ -398,23 +388,18 @@ async function forgetKept(v: Voice) {
 }
 
 // ---------- samples ----------
-// With a server answering, play is the saved endpoint saying a sentence in that voice: a real,
-// priced request, heard once and replayed from then on (`endpointsStore.sampleVoice`). The demo
-// has no provider to ask, so it falls back on the browser's own voice.
+// Play is the saved endpoint saying a sentence in that voice: a real, priced request, heard once and
+// replayed from then on (`endpointsStore.sampleVoice`).
 const player = usePlayer();
-const onServer = !!activeEndpointSettingsService();
 const sampling = ref<string | null>(null);
 const sampleId = (v: Voice) => `sample:${props.endpoint.id}/${v.id}`;
 const playingSample = (v: Voice) => player.p.id === sampleId(v) && player.p.playing;
 const sampleTitle = computed(() =>
-  !onServer
-    ? "preview with the browser’s own voice — the provider is never called"
-    : needsKeyFirst.value
-      ? "Save a key for this endpoint first: a sample is a real request"
-      : "Hear this voice from the provider — a real request, billed once and replayed after",
+  needsKeyFirst.value
+    ? "Save a key for this endpoint first: a sample is a real request"
+    : "Hear this voice from the provider — a real request, billed once and replayed after",
 );
 async function playSample(v: Voice) {
-  if (!onServer) return speak(VOICE_SAMPLE, v.id);
   if (sampling.value) return;
   sampling.value = v.id;
   try {
@@ -541,7 +526,7 @@ async function playFound(v: FoundVoice) {
       </p>
     </section>
 
-    <section v-if="searchable" class="card p-3">
+    <section v-if="fish" class="card p-3">
       <h3 class="label mb-1"><PublicIcon class="icon-sm" /> Public voices</h3>
       <p class="mb-2 text-[11px] leading-relaxed text-zinc-500">
         Search Fish Audio’s public catalogue by title, or paste a voice’s id to find that one. Best
@@ -850,7 +835,7 @@ async function playFound(v: FoundVoice) {
             class="btn-ghost btn-xs shrink-0"
             :aria-label="`${playingSample(v) ? 'Pause' : 'Preview'} ${v.label}`"
             :title="sampleTitle"
-            :disabled="(onServer && needsKeyFirst) || (!!sampling && sampling !== v.id)"
+            :disabled="needsKeyFirst || (!!sampling && sampling !== v.id)"
             :aria-busy="sampling === v.id"
             @click="playSample(v)"
           >

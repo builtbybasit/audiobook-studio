@@ -19,7 +19,6 @@ import {
 import { X as CloseIcon, Copy as CopyIcon, ArrowUpRight as OpenIcon } from "@lucide/vue";
 
 import { duration } from "@/lib/endpoints";
-import { isDemo } from "@/services/mode";
 import { jobDiagnostics } from "@/lib/jobActivity";
 import type { Job } from "@/types";
 
@@ -245,9 +244,6 @@ async function copy() {
               class="mt-3 rounded-md bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
             >
               {{ job.waitingReason }}. Active requests can still finish.
-            </p>
-            <p v-if="isDemo" class="mt-3 text-xs text-zinc-500">
-              Simulated · session only · no provider calls or charges
             </p>
           </header>
 
@@ -517,8 +513,8 @@ async function copy() {
               </dl>
               <p class="mt-5 text-xs leading-relaxed text-zinc-500">
                 Event details describe this run at the time they were recorded. Endpoint settings
-                and chapter contents may have changed since then. Removing this job or refreshing
-                the prototype also removes its log.
+                and chapter contents may have changed since then. Removing this job also removes its
+                log.
               </p>
             </TabsContent>
           </TabsRoot>

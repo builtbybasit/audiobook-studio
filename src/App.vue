@@ -29,7 +29,6 @@ import {
 import Toasts from "@/components/Toasts.vue";
 import MiniPlayer from "@/components/MiniPlayer.vue";
 import ShortcutsDialog from "@/components/ShortcutsDialog.vue";
-import ExpressionReview from "@/components/ExpressionReview.vue";
 import AppRail from "@/components/AppRail.vue";
 import BookSelector from "@/components/BookSelector.vue";
 import BookTabs from "@/components/BookTabs.vue";
@@ -179,7 +178,7 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
             class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-600 text-white"
             :title="
               isDemo
-                ? 'Audiobook Studio · demo mode: seeded books and simulated jobs. No provider is called and every cost shown is simulated.'
+                ? 'Audiobook Studio · demo mode: a demo library on the server, on simulated endpoints. No provider is called and nothing is billed.'
                 : 'Audiobook Studio'
             "
           >
@@ -187,13 +186,14 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
           </div>
           <div class="leading-tight" :class="!uiStore.railExpanded && 'lg:hidden'">
             <div class="font-semibold">Audiobook Studio</div>
-            <!-- in the demo the app runs on seeded data and simulated jobs; say so where the name is -->
+            <!-- in the demo the page is on the demo library, whose endpoints are simulated; say so where
+                 the name is -->
             <div
               v-if="isDemo"
               class="text-[10px] uppercase tracking-wider text-amber-500"
-              title="Seeded books and simulated jobs. No provider is called and every cost shown is simulated."
+              title="A demo library on the server, seeded with books and on simulated endpoints. No provider is called and nothing is billed."
             >
-              demo mode · simulated costs
+              demo library · nothing billed
             </div>
           </div>
           <button
@@ -262,7 +262,6 @@ const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
         <BookTabs />
         <CommandPalette ref="palette" />
         <ShortcutsDialog v-model:open="shortcuts" />
-        <ExpressionReview />
         <main class="min-h-0 flex-1 overflow-auto">
           <!-- Stage views read `:bookId` once, at setup. Going from one book's stage straight to the
                same stage of another (the command palette, the Export demo) reuses the instance and

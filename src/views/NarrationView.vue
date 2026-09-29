@@ -82,9 +82,9 @@ const est = computed(() =>
  * estimate panel because the strip has to say how many there are while the panel is closed.
  *
  * What the *run* refuses is asked of the store: `narrationStore.blockers` is built on the same
- * `_worstCase` `_budgetBlocked` gates every entry point with — a per-endpoint sum of undiscounted
- * prices — so the strip cannot green-light a press the store then turns down with a toast. This
- * view only adds the setup the page itself is about: the cast, the endpoints and the book's pause.
+ * figure the server reserves against the cap — a per-endpoint sum of undiscounted prices — so the
+ * strip cannot green-light a press the server then turns down. This view only adds the setup the
+ * page itself is about: the cast, the endpoints and the book's pause.
  */
 const blockers = computed(() => {
   const b: string[] = [];
@@ -217,13 +217,7 @@ const ready = computed(
             :run-skipped="skipSummary(plan)"
             :selectable="(c) => isScripted(c)"
             @open="openChapter"
-            @run="
-              (ids) =>
-                narrationStore.runNarration(bookId, ids, {
-                  scope,
-                  keepPending,
-                })
-            "
+            @run="(ids) => narrationStore.runNarration(bookId, ids, { scope })"
           />
         </div>
         <!-- Scope is a choice and stays on screen; the estimate is a consequence of it and only

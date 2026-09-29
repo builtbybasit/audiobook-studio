@@ -31,7 +31,7 @@
 // what `probeClip` reads for the others, at 16 bits.
 import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import type { ExportSettings } from "@/types";
 import { formatOfFile } from "~/audio/files";
@@ -124,6 +124,14 @@ function measured(stderr: string): Record<string, string> | null {
 }
 
 /**
+ * One line of a concat list. ffmpeg reads a relative path in the list against the list's own
+ * folder — a temporary one — not the server's, and then blames the list: "Error opening input file
+ * …/concat.txt". So every path is made absolute first; a clip under the default
+ * `AUDIO_DIR=./data/audio` is named relative to the server's folder.
+ */
+const listed = (path: string): string => `file '${resolve(path).replaceAll("'", "'\\''")}'`;
+
+/**
  * The parts of one file as a concat list, with the silence written out as real files.
  *
  * ffmpeg's concat demuxer takes a list of paths, so a pause has to be something on disk. They are
@@ -156,7 +164,7 @@ async function concatList(
       await writeFile(path, bytes);
       silences.set(key, path);
     }
-    lines.push(`file '${path.replaceAll("'", "'\\''")}'`);
+    lines.push(listed(path));
     seconds += key / 1000;
   };
 
@@ -172,7 +180,7 @@ async function concatList(
       if (part.kind === "carry")
         throw new Error("this encoder cannot copy a span out of an audiobook it already wrote");
       const path = decoded.get(part.path) ?? part.path;
-      lines.push(`file '${path.replaceAll("'", "'\\''")}'`);
+      lines.push(listed(path));
       const head = readWavHeader(new Uint8Array(await Bun.file(path).arrayBuffer()));
       // The concat demuxer reads every file as the first one's format, so a clip at another rate
       // would play at the wrong speed rather than fail. The stitcher refuses it; so does this.

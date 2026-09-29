@@ -4,8 +4,8 @@
 // stands on its own; the building half drives the real runner and the real encoder and checks the
 // file that comes out.
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import type { Book, Chapter, ExportItem, ExportSettings, Job } from "@/types";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
@@ -14,7 +14,7 @@ import { chapterSpans, exportFileToken } from "~/db/exports";
 import { fakeSpeechProvider, SAMPLE_RATE, toneOf, toneWav } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";
 import type { AudiobookEncoder } from "~/providers/encoder";
-import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
+import { ffmpegAvailable, ffmpegEncoder, ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { byteRate, readWavHeader, wavEncoder } from "~/providers/wavEncoder";
 import { epubFile, story } from "../support/epub";
 import { writeExport } from "../support/persist";
@@ -679,6 +679,41 @@ async function probe(
 }
 
 describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
+  test("finds a clip named relative to the server's folder, as the default `./data/audio` names it", async () => {
+    // ffmpeg reads a relative path in a concat list against the list's own folder — a temporary
+    // one — and then blames the list: "Error opening input file …/concat.txt". A library on the
+    // default AUDIO_DIR could not build with ffmpeg at all.
+    // Under the working folder, as `data/audio` is: a path climbing out of a deep temporary folder
+    // reaches the root and happens to resolve from anywhere.
+    const dir = mkdtempSync(join(process.cwd(), ".audiobook-relative-"));
+    try {
+      writeFileSync(join(dir, "a.wav"), toneWav(440, 0.5));
+      writeFileSync(join(dir, "b.wav"), toneWav(660, 0.5));
+      const clip = (name: string) => ({
+        kind: "clip" as const,
+        path: relative(process.cwd(), join(dir, name)),
+      });
+      expect(clip("a.wav").path.startsWith(".audiobook-relative-")).toBe(true);
+
+      const written = await ffmpegEncoder({ format: "mp3" }).encode({
+        chapters: [
+          {
+            id: 1,
+            title: "One",
+            parts: [clip("a.wav"), { kind: "silence", seconds: 0.25 }, clip("b.wav")],
+          },
+        ],
+        gap: 1,
+        out: join(dir, "out.mp3"),
+        signal: new AbortController().signal,
+      });
+      expect(written.seconds).toBeCloseTo(1.25, 1);
+      expect((await probe(join(dir, "out.mp3"))).seconds).toBeCloseTo(1.25, 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   test("writes the format that was asked for, with the chapter marks in it", async () => {
     const { api, id } = await narrated(testApi({ encoder: ffmpegEncoders() }));
     await build(api, id, {

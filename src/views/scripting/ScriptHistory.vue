@@ -12,7 +12,13 @@ import { useScriptsStore } from "@/stores/scripts";
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { relative } from "@/lib/endpoints";
-import { originKindLabel, originLabel, originNote, restoreConsequences } from "@/lib/scriptHistory";
+import {
+  originKindLabel,
+  originLabel,
+  originNote,
+  originPrompt,
+  restoreConsequences,
+} from "@/lib/scriptHistory";
 import { useReader } from "@/stores/reader";
 import ExpressionText from "@/components/ExpressionText.vue";
 import ScriptHistoryDiff from "@/views/scripting/ScriptHistoryDiff.vue";
@@ -425,6 +431,9 @@ watch(
         >
           <b>v{{ selected.id }}</b> · {{ originLabel(selected.origin) }} ·
           {{ originKindLabel(selected.origin) }} · {{ when(selected.at) }} ·
+          <template v-if="originPrompt(selected.origin)"
+            >{{ originPrompt(selected.origin) }} ·</template
+          >
           {{ selected.segments.length }} lines. Read-only: this is how the chapter read then, with
           the book's cast and voices as they are now.
         </div>
@@ -482,7 +491,11 @@ watch(
       <div v-else-if="mode === 'compare' && selected && comparison" class="mx-auto max-w-3xl">
         <ScriptHistoryDiff
           :comparison="comparison"
-          :from-label="`v${selected.id} · ${originLabel(selected.origin)}`"
+          :from-label="
+            [`v${selected.id}`, originLabel(selected.origin), originPrompt(selected.origin)]
+              .filter(Boolean)
+              .join(' · ')
+          "
           to-label="the current script"
           jumpable
           @jump="jump"

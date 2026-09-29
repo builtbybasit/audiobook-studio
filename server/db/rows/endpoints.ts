@@ -12,6 +12,7 @@ import type {
   ExpressionTag,
   PricingConfig,
   Profile,
+  ProfilePrompt,
   Promotion,
   RateWindow,
   TtsBilling,
@@ -202,9 +203,25 @@ export function toEndpoint(row: EndpointRow, parts: EndpointParts): Endpoint {
 export const PROFILE_KEY = "scripting:";
 export const profileKey = (id: string): string => PROFILE_KEY + id;
 
+/**
+ * A profile's say over the prompt, or nothing when it has never had one. Any of the three columns
+ * set means it has: a `default` endpoint keeps its texts for when it is switched back, and a mode
+ * left null reads as the `default` it stands for.
+ */
+function toProfilePrompt(row: EndpointRow): ProfilePrompt | undefined {
+  if (row.promptMode == null && row.promptSystem == null && row.promptUser == null)
+    return undefined;
+  return {
+    mode: row.promptMode ?? "default",
+    system: row.promptSystem ?? "",
+    user: row.promptUser ?? "",
+  };
+}
+
 /** A scripting profile. Same table, `kind = "scripting"`. */
 export function toProfile(row: EndpointRow, parts: EndpointParts): Profile {
   const pricing = toPricingConfig(row, parts);
+  const prompt = toProfilePrompt(row);
   return {
     id: row.id.startsWith(PROFILE_KEY) ? row.id.slice(PROFILE_KEY.length) : row.id,
     name: row.name,
@@ -222,6 +239,12 @@ export function toProfile(row: EndpointRow, parts: EndpointParts): Profile {
     needsKey: row.needsKey,
     ...(row.apiKey ? { hasKey: true } : {}),
     ...ops(row),
+    // Null is a setting — leave it to the model — once the page has filled the profile in, which
+    // is when the operational block exists; before then it can only mean "never set".
+    ...(row.reasoningEffort != null || row.timeoutSec != null
+      ? { reasoning: row.reasoningEffort }
+      : {}),
+    ...(prompt ? { prompt } : {}),
   };
 }
 
@@ -300,6 +323,10 @@ export function profileValues(
     cacheWrite: p.pricing?.cacheWrite ?? null,
     timezone: p.pricing?.timezone ?? null,
     ...opsValues(p),
+    reasoningEffort: p.reasoning ?? null,
+    promptMode: p.prompt?.mode ?? null,
+    promptSystem: p.prompt?.system ?? null,
+    promptUser: p.prompt?.user ?? null,
   };
 }
 

@@ -6,13 +6,15 @@
 // caller's transaction. Nothing else in the schema points at an endpoint by key — a character holds
 // `<endpointId>/<voiceId>` as text, and the requests ledger keeps the id it was made under — so
 // replacing the rows moves nothing and orphans nothing. What an endpoint owns (voices, the rate
-// schedule, promotions, expression tags) cascades with it.
+// schedule, promotions, expression tags) cascades with it. The library's default scripting prompt
+// is edited on the same page and saved in the same write, though it lives in `settings`.
 import { asc, eq, sql } from "drizzle-orm";
 
-import type { Endpoint, Profile } from "@/types";
+import type { Endpoint, Profile, PromptTemplate } from "@/types";
 import type { Credential } from "@/lib/credentials";
 import type { Db, Tx } from "~/db/client";
 import * as rows from "~/db/rows";
+import { readLibraryPrompt, writeLibraryPrompt } from "~/db/settings";
 import {
   credentials,
   endpoints,
@@ -27,6 +29,11 @@ export interface EndpointConfig {
   endpoints: rows.EndpointSettings[];
   profiles: Profile[];
   credentials: Credential[];
+  /**
+   * The library's default scripting prompt; null is the built-in one. Always there in a read; in a
+   * write, left out keeps the one stored, so a save that never showed it cannot reset it.
+   */
+  prompt?: PromptTemplate | null;
 }
 
 /**
@@ -148,6 +155,7 @@ export function readEndpointConfig(db: Db | Tx): EndpointConfig {
     endpoints: readEndpoints(db),
     profiles: readProfiles(db),
     credentials: readCredentials(db),
+    prompt: readLibraryPrompt(db),
   };
 }
 
@@ -194,4 +202,5 @@ export function replaceEndpoints(tx: Tx, config: EndpointConfig): void {
   config.profiles.forEach((p, i) =>
     writeProfile(tx, p, i, keyAfterSave(p.apiKey, kept.get(rows.profileKey(p.id)))),
   );
+  if (config.prompt !== undefined) writeLibraryPrompt(tx, config.prompt);
 }

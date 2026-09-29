@@ -964,14 +964,33 @@ attempt's clock cuts off says it timed out rather than that it was not JSON. An 
 **Scripting** ([chatScripting.ts](../server/providers/chatScripting.ts)) is OpenAI's chat
 completions — OpenAI, a gateway, a local model — at `{baseUrl}/chat/completions`, asking for
 `{"lines":[…]}` with `response_format: json_object`, `max_tokens` only when the profile's
-`maxOutputTokens` is above 0, and the book's cast in the prompt so a chunk read on its own still
-calls Mara "Mara". A gateway may wrap the JSON in a code fence anyway; the answer is read from the
+`maxOutputTokens` is above 0, the profile's reasoning level as its host spells it, and the book's
+cast in the prompt so a chunk read on its own still calls Mara "Mara". A gateway may wrap the JSON in a code fence anyway; the answer is read from the
 first `{` to the last `}`. A **reasoning model counts its thinking against `max_tokens`**: a
 cap of 8000 cut a 200-word excerpt off on the model this was tested with, so give such a profile 0. Before anything is written, the lines are held against the prose (`fidelity`): if more than 2% of
 the words went missing or were invented, the chapter fails saying how many and which — an
 audiobook that silently skips a paragraph is the worst thing this job could do. Word counts, not
 order, so it catches a dropped sentence but not a moved one. A bad answer is not retried by the
 provider, so a failure never spends tokens twice without anyone asking.
+
+**The prompt it sends is not in this file.** It has three layers ([src/lib/prompt.ts](../src/lib/prompt.ts)):
+the library's default, kept in `settings` under `prompt` (no row is the built-in prompt) and saved with
+the Endpoints `PUT` (`prompt` absent keeps it, `null` resets it); each scripting profile's `prompt`
+(`default` / `append` / `replace`, its texts kept whatever the mode) and `reasoning`, in the endpoint
+row's `prompt_*` and `reasoning_effort` columns; and each book's `prompt` (notes, and a whole
+replacement it may switch on), in the book row's `prompt_*` columns, set by `PATCH /api/books/:id`.
+Saves are checked with the same rules the editor shows (`profilePromptProblems`, `bookPromptProblems`)
+and refused with a 400 whose message is the problem — from the save, not the validator, whose refusal
+would reach the page as "the json of this request was not valid". `enqueueScripting` resolves the
+layers once and keeps the template, its origin and the book's notes on `scriptRun.prompt`; the holds
+and the estimate are priced with that template (`tokenEstimate`'s fourth argument), and edits made
+after queueing reach only later runs. At dispatch each request's tags are filled from the book, the
+chapter, the cast as it stands and the request's part, the locked output format is added after the
+system prompt, and the provider sends the two messages it is handed. The scripted history version
+records the prompt's origin and fingerprint; the connection test sends the library prompt with the
+profile's own layer, filled with a made-up book. The reasoning level becomes the host's own fields
+in [src/lib/reasoning.ts](../src/lib/reasoning.ts), shared with the page so the note under the select
+is about what is actually sent.
 
 **Speech** ([endpointSpeech.ts](../server/providers/endpointSpeech.ts)) finds which provider the
 base URL speaks and hands the line to that provider's wire module. A provider is two files:

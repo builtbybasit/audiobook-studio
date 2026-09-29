@@ -8,10 +8,13 @@
 import * as v from "valibot";
 
 import type {
+  BookPrompt,
   Character,
   ExportSettings,
   LexEntry,
   Profile,
+  ProfilePrompt,
+  PromptTemplate,
   ScriptFileChapter,
   ScriptFileSpeaker,
   ScriptFileTerm,
@@ -20,8 +23,10 @@ import type {
   VersionOrigin,
 } from "@/types";
 import type { Credential } from "@/lib/credentials";
+import { REASONING_EFFORTS } from "@/lib/prompt";
 import { SAMPLE_RATES } from "@/lib/speech";
 import type { EndpointSettings } from "~/db/rows";
+import { badRequest } from "~/lib/errors";
 
 const Gender = v.picklist(["m", "f", "n", "?"]);
 
@@ -107,6 +112,13 @@ export const VersionOriginSchema = v.variant("kind", [
     profile: v.optional(v.string()),
     model: v.optional(v.string()),
     again: v.optional(v.boolean()),
+    prompt: v.optional(
+      v.object({
+        from: v.picklist(["built-in", "library", "endpoint", "book"]),
+        appended: v.boolean(),
+        fingerprint: v.string(),
+      }),
+    ),
   }),
   v.object({ kind: v.literal("edited"), edits: v.pipe(v.number(), v.integer(), v.minValue(1)) }),
   v.object({
@@ -381,12 +393,43 @@ export const EndpointSchema = v.object({
   ),
 }) satisfies v.GenericSchema<unknown, EndpointSettings>;
 
+// ---- the scripting prompt ----
+//
+// The shapes are checked here, with the rest of the body; what a prompt says — its tags, its
+// `{{excerpt}}`, its length — is checked by `@/lib/prompt`, the rules the editor shows as it is
+// typed in, and refused with `refusePrompt` by the operation that saves it. A refusal from the
+// validator would reach the page as "the json of this request was not valid"; this one reaches it
+// as the sentence that says what to change.
+
+export const PromptTemplateSchema = v.object({
+  system: v.string(),
+  user: v.string(),
+}) satisfies v.GenericSchema<unknown, PromptTemplate>;
+
+const ProfilePromptSchema = v.object({
+  mode: v.picklist(["default", "append", "replace"]),
+  ...PromptTemplateSchema.entries,
+}) satisfies v.GenericSchema<unknown, ProfilePrompt>;
+
+export const BookPromptSchema = v.object({
+  notes: v.string(),
+  replace: v.boolean(),
+  ...PromptTemplateSchema.entries,
+}) satisfies v.GenericSchema<unknown, BookPrompt>;
+
+/** Refuse a prompt that has problems, naming whose it is: “OpenAI”'s prompt: … */
+export function refusePrompt(whose: string, problems: readonly string[]): void {
+  if (problems.length) throw badRequest(`${whose}: ${problems.join(" ")}`);
+}
+
 export const ProfileSchema = v.object({
   ...Common,
   inPrice: v.pipe(v.number(), v.minValue(0)),
   outPrice: v.pipe(v.number(), v.minValue(0)),
   maxOutputTokens: Count,
   secPerChunk: v.pipe(v.number(), v.minValue(0)),
+  reasoning: v.optional(v.nullable(v.picklist(REASONING_EFFORTS))),
+  prompt: v.optional(v.nullable(ProfilePromptSchema)),
 }) satisfies v.GenericSchema<unknown, Profile>;
 
 export const CredentialSchema = v.object({

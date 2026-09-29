@@ -11,7 +11,12 @@ import { MAX_SAMPLES_BYTES, tooMuchSaid } from "@/lib/voiceSamples";
 import type { Db } from "~/db/client";
 import * as ops from "~/endpoints/ops";
 import { fail, notFound } from "~/lib/errors";
-import { CredentialSchema, EndpointSchema, ProfileSchema } from "~/lib/schemas";
+import {
+  CredentialSchema,
+  EndpointSchema,
+  ProfileSchema,
+  PromptTemplateSchema,
+} from "~/lib/schemas";
 import { fileResponse } from "~/lib/serve";
 import type { SpeechGate } from "~/providers/gate";
 import { validate } from "~/lib/validate";
@@ -24,6 +29,8 @@ const Config = v.object({
   endpoints: v.array(EndpointSchema),
   profiles: v.array(ProfileSchema),
   credentials: v.array(CredentialSchema),
+  /** the library's default scripting prompt: left out keeps it, null goes back to the built-in one */
+  prompt: v.optional(v.nullable(PromptTemplateSchema)),
 });
 
 const Probe = v.object({

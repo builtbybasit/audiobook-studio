@@ -16,7 +16,7 @@ import type {
 } from "@/types/pricing";
 import type { Voice } from "@/types/voice";
 import type { ExpressionConfig } from "@/types/expression";
-import type { Profile, ScriptSettings } from "@/types/scripting";
+import type { Profile, PromptTemplate, ScriptSettings } from "@/types/scripting";
 
 export type { TtsBilling, TtsBillingUnit } from "@/types/pricing";
 
@@ -308,5 +308,7 @@ export interface SettingsFile {
   exportedAt: string;
   endpoints: Partial<Endpoint>[];
   profiles: Profile[];
+  /** the library's default scripting prompt; null is the built-in one, absent (an older file) leaves it be */
+  prompt?: PromptTemplate | null;
   scriptSettings: ScriptSettings;
 }

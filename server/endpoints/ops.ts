@@ -6,8 +6,10 @@
 // tables cannot hold or would hold wrongly: two endpoints of one kind under one id (a speech
 // endpoint and a scripting profile may share one — the seeded world's `openai` is both), two
 // voices or tags under one id on one endpoint, and an endpoint pointing at a credential that is
-// not in the registry being saved with it.
+// not in the registry being saved with it. The scripting prompts saved with them — the library's
+// default, and each profile's say over it — are held to the rules the editor shows (`@/lib/prompt`).
 import type { Credential } from "@/lib/credentials";
+import { profilePromptProblems, promptProblems, resolvePrompt } from "@/lib/prompt";
 import { encodingOf, VOICE_SAMPLE } from "@/lib/endpointShapes";
 import type { Db, Tx } from "~/db/client";
 import {
@@ -17,8 +19,10 @@ import {
   replaceEndpoints,
   type EndpointConfig,
 } from "~/db/endpoints";
+import { readLibraryPrompt } from "~/db/settings";
 import { reconcileClones } from "~/db/voiceSamples";
 import { AppError, badRequest, notFound } from "~/lib/errors";
+import { refusePrompt } from "~/lib/schemas";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { ProviderError } from "~/providers/http";
 import type { RenderedClip } from "~/providers/speech";
@@ -84,7 +88,9 @@ function check(config: EndpointConfig): void {
       const id = repeated(ids);
       if (id) throw badRequest(`“${p.name || p.id}” has two of one ${what}`, `${what}: ${id}`);
     }
+    if (p.prompt) refusePrompt(`“${p.name || p.id}”'s prompt`, profilePromptProblems(p.prompt));
   }
+  if (config.prompt) refusePrompt("The library's prompt", promptProblems(config.prompt, "whole"));
 }
 
 /**
@@ -136,7 +142,12 @@ export async function testEndpoint(
   if (!profile) throw notFound("There is no saved scripting profile by that id", `id: ${id}`);
   const probe = providers.scripting.probe;
   if (!probe) return untestable(providers.scripting.name);
-  return probe.call(providers.scripting, scriptTarget(db, profile), signal);
+  // the prompt this profile's runs would be sent, over a book with none of its own
+  const { system, user } = resolvePrompt({
+    library: readLibraryPrompt(db),
+    profile: profile.prompt,
+  });
+  return probe.call(providers.scripting, scriptTarget(db, profile), signal, { system, user });
 }
 
 const untestable = (name: string): ProbeResult => ({

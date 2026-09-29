@@ -7,6 +7,7 @@ import { useScriptsStore } from "@/stores/scripts";
 
 import { computed } from "vue";
 import { useScriptActivity } from "@/queries/scriptActivity";
+import BookPromptPanel from "@/views/scripting/BookPromptPanel.vue";
 
 import { UiNumber, UiSelect, UiSwitch, UiTooltip } from "@/ui";
 import {
@@ -208,6 +209,10 @@ const money = (n: number) =>
           @update:model-value="(v: number | null) => libraryStore.setScriptBudget(bookId, v)"
         />
       </div>
+    </div>
+    <!-- what this book tells the scripter, and the prompt it may have of its own -->
+    <div class="border-t border-zinc-200 pt-3 dark:border-zinc-800">
+      <BookPromptPanel :key="bookId" :book-id="bookId" :selected="selected" />
     </div>
     <div
       v-if="est.blockers.length"

@@ -19,6 +19,8 @@ import type { Runner } from "~/jobs/runner";
 import { enqueueScripting } from "~/jobs/scripting";
 import { fail, notFound } from "~/lib/errors";
 import { IdParam } from "~/lib/http";
+import { bookPromptProblems } from "@/lib/prompt";
+import { BookPromptSchema, refusePrompt } from "~/lib/schemas";
 import { fileResponse } from "~/lib/serve";
 import { validate } from "~/lib/validate";
 import * as ops from "~/library/ops";
@@ -69,6 +71,7 @@ const Settings = v.pipe(
     ),
     scriptBudget: v.optional(v.nullable(Dollars)),
     pacing: v.optional(v.nullable(v.strictObject({ line: Seconds, turn: Seconds }))),
+    prompt: v.optional(v.nullable(BookPromptSchema)),
   }),
   v.check((s) => Object.keys(s).length > 0, "name at least one setting"),
 );
@@ -225,10 +228,12 @@ export function bookRoutes(
   );
 
   // ---------- a book's settings, and its volumes ----------
-  /** The budget, the script budget and the pacing; answers with the book and its re-timed chapters. */
-  app.patch("/:id", validate("param", BookParam), validate("json", Settings), (c) =>
-    c.json(ops.updateBook(db, c.req.valid("param").id, c.req.valid("json"))),
-  );
+  /** The budget, the script budget, the pacing and the prompt; answers with the book and its re-timed chapters. */
+  app.patch("/:id", validate("param", BookParam), validate("json", Settings), (c) => {
+    const settings = c.req.valid("json");
+    if (settings.prompt) refusePrompt("The book's prompt", bookPromptProblems(settings.prompt));
+    return c.json(ops.updateBook(db, c.req.valid("param").id, settings));
+  });
 
   /** Read the volumes in this order; the chapters are numbered to follow it. */
   app.put("/:id/volumes/order", validate("param", BookParam), validate("json", VolumeOrder), (c) =>

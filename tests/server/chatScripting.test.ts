@@ -302,3 +302,72 @@ describe("the Test button", () => {
     expect(result).toMatchObject({ ok: false, message: "Gateway answered 403: nope" });
   });
 });
+
+describe("a reasoning level", () => {
+  test("none set sends today's request: temperature, and no reasoning field", async () => {
+    const { sent, provider } = gateway(() => completion(fenced(LINES)));
+    await provider.script(input({ target: target({ baseUrl: "https://openrouter.ai/api/v1" }) }));
+    await provider.script(input({ target: target({ baseUrl: "https://api.openai.com/v1" }) }));
+    expect(sent[0].body.temperature).toBe(0.1);
+    expect(Object.keys(sent[0].body).sort()).toEqual(
+      ["max_tokens", "messages", "model", "response_format", "temperature"].sort(),
+    );
+    // GPT-6 reasons by default, and refuses a temperature while it does
+    expect(Object.keys(sent[1].body)).not.toContain("temperature");
+  });
+
+  test("is sent as the host spells it, and temperature is left out where the host refuses it", async () => {
+    const { sent, provider } = gateway(() => completion(fenced(LINES)));
+    const at = (baseUrl: string, reasoning: "off" | "low" | "medium" | "high") =>
+      provider.script(input({ target: target({ baseUrl, reasoning }) }));
+    await at("https://api.openai.com/v1", "low");
+    await at("https://openrouter.ai/api/v1", "off");
+    await at("https://api.deepseek.com", "off");
+    expect(sent[0].body).toMatchObject({ reasoning_effort: "low" });
+    expect(sent[0].body.temperature).toBeUndefined();
+    expect(sent[1].body).toMatchObject({ reasoning: { effort: "none" }, temperature: 0.1 });
+    expect(sent[2].body).toMatchObject({ thinking: { type: "disabled" }, temperature: 0.1 });
+  });
+
+  test("a cut-off answer suggests a lower level when one was asked for", async () => {
+    const { provider } = gateway(() => completion('{"lines":[', "length"));
+    await expect(provider.script(input({ target: target({ reasoning: "high" }) }))).rejects.toThrow(
+      /raise it or lower the reasoning level on the Endpoints page/,
+    );
+    await expect(provider.script(input({ target: target({ reasoning: "off" }) }))).rejects.toThrow(
+      /raise it on the Endpoints page \(a reasoning model/,
+    );
+  });
+
+  test("the Test button counts the reasoning tokens, and shrugs off a malformed usage block", async () => {
+    const probeLines = fenced([
+      { type: "narration", speaker: "Narrator", text: "The lamp guttered in the draught." },
+      { type: "dialogue", speaker: "Mara", text: "Is someone there?" },
+      { type: "narration", speaker: "Narrator", text: "Mara whispered." },
+    ]);
+    const answer = (usage: unknown) => () =>
+      Response.json({
+        choices: [{ message: { content: probeLines }, finish_reason: "stop" }],
+        usage,
+      });
+    const probe = async (usage: unknown, reasoning: "off" | null = null) =>
+      (
+        await gateway(answer(usage)).provider.probe!(
+          target({ reasoning }),
+          new AbortController().signal,
+        )
+      ).message;
+    const details = (n: unknown) => ({
+      ...USAGE,
+      completion_tokens_details: { reasoning_tokens: n },
+    });
+    expect(await probe(details(212))).toMatch(
+      /^Answered in \d+ ms with 3 lines, spoken by Mara; 212 reasoning tokens$/,
+    );
+    // none spent is worth saying only to someone who turned reasoning off
+    expect(await probe(details(0))).toMatch(/spoken by Mara$/);
+    expect(await probe(details(0), "off")).toMatch(/; 0 reasoning tokens$/);
+    expect(await probe(details("lots"))).toMatch(/spoken by Mara$/);
+    expect(await probe({ completion_tokens_details: null })).toMatch(/spoken by Mara$/);
+  });
+});

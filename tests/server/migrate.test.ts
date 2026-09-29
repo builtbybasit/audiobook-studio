@@ -119,7 +119,11 @@ describe("keeping a cover as its url", () => {
     const journalPath = join(dir, "meta", "_journal.json");
     const journal = readFileSync(journalPath, "utf8");
     const before = JSON.parse(journal) as { entries: { tag: string }[] };
-    before.entries = before.entries.filter((e) => e.tag !== "0012_cover_urls");
+    // the migration and every one after it: one is applied only if it is newer than the last that was
+    before.entries = before.entries.slice(
+      0,
+      before.entries.findIndex((e) => e.tag === "0012_cover_urls"),
+    );
     writeFileSync(journalPath, JSON.stringify(before));
     const db = openDb(":memory:");
     migrate(db, dir);

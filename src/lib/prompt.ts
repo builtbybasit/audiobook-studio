@@ -304,15 +304,11 @@ export function notesProblems(notes: string): string[] {
  * be empty and must not bring a second excerpt.
  */
 export function promptProblems(t: PromptTemplate, kind: "whole" | "append"): string[] {
-  const problems: string[] = [];
+  const problems = lengthProblems(t);
   for (const [label, text] of [
     ["system prompt", t.system],
     ["user message", t.user],
   ] as const) {
-    if (text.length > PROMPT_MAX_CHARS)
-      problems.push(
-        `The ${label} is ${text.length.toLocaleString("en")} characters; the most is ${PROMPT_MAX_CHARS.toLocaleString("en")}.`,
-      );
     const unknown = [...new Set(tagsIn(text).filter((n) => !TAG_NAMES.has(n)))];
     for (const n of unknown) problems.push(`The ${label} names {{${n}}}, which is not a tag.`);
   }
@@ -329,6 +325,45 @@ export function promptProblems(t: PromptTemplate, kind: "whole" | "append"): str
       "An addition must not include {{excerpt}}: the prompt it adds to already has it.",
     );
   return problems;
+}
+
+/** Only how long a template is: what a prompt keeps but does not send is otherwise its own. */
+export function lengthProblems(t: PromptTemplate): string[] {
+  return (
+    [
+      ["system prompt", t.system],
+      ["user message", t.user],
+    ] as const
+  ).flatMap(([label, text]) =>
+    text.length > PROMPT_MAX_CHARS
+      ? [
+          `The ${label} is ${text.length.toLocaleString("en")} characters; the most is ${PROMPT_MAX_CHARS.toLocaleString("en")}.`,
+        ]
+      : [],
+  );
+}
+
+/**
+ * What stops an endpoint's say over the prompt from being saved: a replacement is a prompt on its
+ * own, an addition must not bring a second excerpt, and the texts a `default` endpoint keeps for
+ * later are sent nowhere, so only their length is held against them.
+ */
+export function profilePromptProblems(p: ProfilePrompt): string[] {
+  if (p.mode === "replace") return promptProblems(p, "whole");
+  if (p.mode === "append") return promptProblems(p, "append");
+  return lengthProblems(p);
+}
+
+/**
+ * The same for a book's: its notes always, its texts as a whole prompt only while it is switched
+ * on. A replacement that is off is kept as it was typed, problems and all, since nothing is sent
+ * from it — but not at any length.
+ */
+export function bookPromptProblems(p: BookPrompt): string[] {
+  return [
+    ...notesProblems(p.notes),
+    ...(p.replace ? promptProblems(p, "whole") : lengthProblems(p)),
+  ];
 }
 
 /** What is allowed but costly: a tag in the system prompt that changes with every chapter. */

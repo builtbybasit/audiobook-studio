@@ -1,14 +1,11 @@
 // The seam the queue is read and driven through.
 //
-// The same arrangement as `@/services/library`: one HTTP implementation, chosen at startup, and
-// `null` in demo mode — where the queue is the simulated one the jobs store runs itself. The jobs
-// store asks `activeJobsService()` and takes one of two halves; no view knows which answered.
+// The same arrangement as `@/services/library`: one HTTP implementation, asking the library this
+// tab is on (`API_BASE`) — yours, or the demo's — unless a test set another. The jobs store asks
+// `jobsService()`; no view knows which answered.
 import type { Chapter, ExportItem, ExportSettings, Job, NarrationScope } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
-import { isBackend } from "@/services/mode";
-
-/** Where the API answers. One spelling, because a download is a URL rather than a request. */
-const API_BASE = "/api";
+import { API_BASE } from "@/services/mode";
 
 /** What queueing a scripting run came to: the jobs, and the chapters it left out and why. */
 export interface ScriptingQueued {
@@ -44,7 +41,6 @@ export interface BuildQueued {
 }
 
 export interface JobsService {
-  readonly simulated: boolean;
   /** Every job the server holds, oldest first. */
   list(): Promise<Job[]>;
   /** Stop a job: a queued one never starts, a running one is told to stop. */
@@ -72,7 +68,6 @@ export interface JobsService {
 }
 
 export class HttpJobsService implements JobsService {
-  readonly simulated = false;
   private readonly http: HttpClient;
   constructor(base = API_BASE, fetch?: FetchLike) {
     this.http = new HttpClient(base, fetch);
@@ -138,10 +133,9 @@ export function exportFileUrl(bookId: string, exportId: number, position: number
 
 let service: JobsService | null = null;
 
-/** The jobs service, or `null` when the queue is the simulated one the store runs itself. */
-export function activeJobsService(): JobsService | null {
-  if (service) return service;
-  return isBackend ? (service = new HttpJobsService()) : null;
+/** The jobs service: the one a test set, or the HTTP one for this tab's library. */
+export function jobsService(): JobsService {
+  return (service ??= new HttpJobsService());
 }
 
 /** For tests and for wiring at startup. Set it before the jobs store is created. */

@@ -28,8 +28,6 @@ const uiStore = useUiStore();
 const route = useRoute();
 const router = useRouter();
 const bookId = useBookId();
-/** A script file is written and read by the server; the demo has none to ask. */
-const scriptFiles = !!libraryStore._service();
 const selected = ref<number[]>([]);
 const showEndpoints = ref(false);
 const focusReader = ref(false);
@@ -45,7 +43,7 @@ async function configure() {
 function smallerChunks() {
   if (currentEndpoint.value)
     currentEndpoint.value.maxChars = Math.max(100, (currentEndpoint.value.maxChars || 6000) - 2000);
-  scriptingStore.runScripting(bookId, [opened.value]);
+  void scriptingStore.runScripting(bookId, [opened.value]);
 }
 const opened = ref(
   Number(route.query.ch) ||
@@ -72,9 +70,8 @@ function remember(id: number) {
 }
 watch(opened, remember);
 onMounted(() => remember(opened.value));
-// The opened chapter's script: with a server answering it is read when the chapter is opened and
-// again when the queue says a run landed on it; the seeded world is already holding every one.
-// The reader itself reads the scripts store, which is where the read lands.
+// The opened chapter's script, read when the chapter is opened and again when the queue says a
+// run landed on it. The reader itself reads the scripts store, which is where the read lands.
 useChapterScript(bookId, opened);
 // One plan behind the button's label, the line under it and the work the run queues.
 const plan = computed(() => scriptingStore.scriptPlan(bookId, selected.value));
@@ -98,7 +95,7 @@ function scriptFirst() {
     .slice(0, 3)
     .map((c) => c.id);
   selected.value = ids;
-  scriptingStore.runScripting(bookId, ids);
+  void scriptingStore.runScripting(bookId, ids);
 }
 </script>
 
@@ -148,12 +145,7 @@ function scriptFirst() {
             :run-disabled="!!scriptingStore.scriptEstimate(bookId, selected).blockers.length"
             :selectable="(c) => !['running', 'queued'].includes(c.scripting)"
             @open="openChapter"
-            @run="
-              (ids) =>
-                scriptingStore.runScripting(bookId, ids, {
-                  keepEdits: scriptingStore.scriptSettings.keepEdits,
-                })
-            "
+            @run="(ids) => scriptingStore.runScripting(bookId, ids)"
           />
         </div>
         <div class="card shrink-0 p-3">
@@ -162,20 +154,15 @@ function scriptFirst() {
         <div class="flex shrink-0 items-center gap-3 px-1 text-xs text-zinc-500">
           <span>Script file</span>
           <RouterLink
-            v-if="scriptFiles"
             :to="`/book/${bookId}/script-import`"
             class="text-violet-600 hover:underline dark:text-violet-400"
             >Import script…</RouterLink
           >
           <a
-            v-if="scriptFiles"
             :href="scriptExportUrl(bookId)"
             download
             class="text-violet-600 hover:underline dark:text-violet-400"
             >Export script</a
-          >
-          <span v-else title="Leave the demo, from the Demo chip, to use the server"
-            >needs the server</span
           >
         </div>
       </div>

@@ -1,5 +1,5 @@
 // The lifecycle of one rendered clip. Pure functions on `SegmentAudio`, shared by the store's
-// retake actions and by the narration simulator, so a clip put back in the queue by a retry and one
+// retake actions and by the server's narration, so a clip put back in the queue by a retry and one
 // put back by a rate limit end up in exactly the same state.
 import type { SegmentAudio, Take } from "@/types";
 

@@ -3,9 +3,7 @@
 // `bulkOutcome` before anything is applied, and the store applies it through the same per-segment
 // actions a single edit uses. Labels live where `FLAG_LABEL` lives; this file stays label-free so
 // the store can import it.
-// Deep import, not the `@/mock` barrel: the barrel reaches the scenarios, which reach back into
-// `lib/scriptReview` and so into this file. The fixture list itself depends on nothing.
-import { DIRECTIONS } from "@/mock/fixtures/style";
+import { DIRECTIONS } from "@/lib/cast";
 import type { BulkAction, BulkOutcome, Segment, SegmentMap } from "@/types";
 import type { UiOption } from "@/ui/types";
 

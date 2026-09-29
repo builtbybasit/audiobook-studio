@@ -1,9 +1,9 @@
 // The endpoints store with a server answering.
 //
 // The configuration — speech endpoints, scripting profiles, the credential registry — is the
-// server's in backend mode, and the page edits it by binding fields straight onto the objects. So
-// what these guard is the write-behind: that the store reads the server's configuration and holds
-// it, that a server nobody has configured is left with none rather than given the seeded one, that an edit
+// server's, and the page edits it by binding fields straight onto the objects. So what these guard
+// is the write-behind: that the store reads the server's configuration and holds it, that a server
+// nobody has configured is left with none rather than given the seeded one, that an edit
 // becomes one whole-document write a moment later with the browser's telemetry left out, that the
 // server's answer being installed is not mistaken for an edit and sent back, and that a refused
 // write puts back what the server actually holds.
@@ -13,7 +13,6 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 
 import { credentials, type Credential } from "@/lib/credentials";
-import { keyring } from "@/lib/keyring";
 import { ApiError } from "@/services/http";
 import {
   HttpEndpointSettingsService,
@@ -419,35 +418,18 @@ describe("the endpoints store with a server answering", () => {
   });
 });
 
-describe("the endpoints store in the demo", () => {
-  test("reads nothing and writes nothing", async () => {
-    setEndpointSettingsService(null);
-    // the store was made with a server answering; made again without one, it holds the seeded world
-    endpointsStore.$reset();
-    const before = endpointsStore.endpoints.map((e) => e.id);
-    expect(before.length).toBeGreaterThan(0);
-    await endpointsStore.load();
-    endpointsStore.endpoints[0].concurrency = 11;
-    await settle();
-    expect(endpointsStore.endpoints.map((e) => e.id)).toEqual(before);
-    expect(svc.gets).toBe(0);
-    expect(svc.puts).toEqual([]);
-    expect(endpointsStore.loaded).toBe(false);
-  });
-});
-
 describe("API keys with a server answering", () => {
   test("a typed key goes out once, on its own entry, and only hasKey comes back", async () => {
     svc.held = server();
     await endpointsStore.load();
     const ep = endpointsStore.endpoints[0];
-    expect(keyInPlace(ep, ep.id)).toBe(false);
+    expect(keyInPlace(ep)).toBe(false);
 
     expect(await endpointsStore.saveKey("tts", "srv-tts", "sk-typed")).toBe(true);
     expect(svc.puts).toHaveLength(1);
     expect(keysSent(svc.puts[0])).toEqual([["tts:srv-tts", "sk-typed"]]);
     expect(ep.hasKey).toBe(true);
-    expect(keyInPlace(ep, ep.id)).toBe(true);
+    expect(keyInPlace(ep)).toBe(true);
     // the key is never on what the store holds…
     expect(JSON.stringify(endpointsStore.$state)).not.toContain("sk-typed");
     // …so the next edit keeps it by saying nothing about it, and installing `hasKey` sent nothing
@@ -489,18 +471,6 @@ describe("API keys with a server answering", () => {
     expect(svc.puts).toHaveLength(1);
   });
 
-  test("the key warnings read hasKey, not the browser's keyring", () => {
-    keyring.set("srv-tts", "sk-in-the-browser");
-    try {
-      expect(keyInPlace({}, "srv-tts")).toBe(false);
-      expect(keyInPlace({ hasKey: true }, "srv-tts")).toBe(true);
-      setEndpointSettingsService(null);
-      expect(keyInPlace({}, "srv-tts")).toBe(true);
-    } finally {
-      keyring.set("srv-tts", "");
-    }
-  });
-
   test("a settings file carries neither a key nor hasKey, in or out", async () => {
     svc.held = server();
     svc.keys.set("tts:srv-tts", "sk-old");
@@ -535,7 +505,6 @@ describe("the connection test with a server answering", () => {
       ok: true,
       message: "tts-1 answered",
       ms: 840,
-      simulated: false,
     });
     expect(result.detail).toContain("840 ms");
   });
@@ -733,13 +702,6 @@ describe("voice samples with a server answering", () => {
     expect(await endpointsStore.sampleVoice(ep, "ash")).not.toBeNull();
     expect(svc.sampled).toHaveLength(2);
   });
-
-  test("the demo asks nothing", async () => {
-    setEndpointSettingsService(null);
-    endpointsStore.$reset();
-    expect(await endpointsStore.sampleVoice(endpointsStore.endpoints[0], "alloy")).toBeNull();
-    expect(svc.sampled).toEqual([]);
-  });
 });
 
 describe("cloning a voice with a server answering", () => {
@@ -803,18 +765,5 @@ describe("cloning a voice with a server answering", () => {
     await drain();
     expect(svc.forgot).toEqual([]);
     expect(back).toEqual([keptOf("v1")]);
-  });
-
-  test("the demo asks nothing", async () => {
-    setEndpointSettingsService(null);
-    endpointsStore.$reset();
-    expect(
-      await endpointsStore.cloneVoice(endpointsStore.endpoints[0], {
-        title: "Mara",
-        clips: [recording()],
-        consent: true,
-      }),
-    ).toBeNull();
-    expect(svc.cloned).toEqual([]);
   });
 });

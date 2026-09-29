@@ -41,6 +41,29 @@ export interface DemoResult {
   open?: string;
 }
 
+/** A situation as the demo library lists it for the drawer (`GET /demo/api/demo/situations`). */
+export type DemoSituation = Pick<
+  DemoScenario,
+  "id" | "group" | "name" | "blurb" | "bookId" | "path"
+> & {
+  steps: string[];
+};
+
+/** Every situation the demo offers, and the headings the drawer lists them under, in order. */
+export interface DemoSituations {
+  groups: { id: DemoGroup; label: string }[];
+  situations: DemoSituation[];
+}
+
+/** What putting the demo into a situation did (`POST /demo/api/demo/situations/:id`). */
+export interface AppliedSituation {
+  scenario: Omit<DemoSituation, "group" | "blurb">;
+  /** a factual line — counts, not adjectives */
+  note: string;
+  /** where to look at it: the situation's own path, or a more exact one it decided */
+  open: string;
+}
+
 /** A seeded situation the Export page can be dropped into, for trying a build end to end. */
 export interface ExportScenario {
   id: string;

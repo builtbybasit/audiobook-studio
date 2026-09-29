@@ -8,7 +8,7 @@
 // character-for-character the source — a chunking setting that quietly drops text would be the
 // worst kind of bug to ship.
 import { computed, ref, watch } from "vue";
-import { UiNumber, UiSelect, UiTooltip } from "@/ui";
+import { UiNumber, UiSelect } from "@/ui";
 import NumberSlider from "@/components/NumberSlider.vue";
 import { ChevronLeft as PrevIcon, ChevronRight as NextIcon, Check as OkIcon } from "@lucide/vue";
 import { SPLIT_MODES, splitText } from "@/lib/split";
@@ -24,7 +24,6 @@ import {
   sizePerMinute,
   supportOf,
 } from "@/lib/audioFormat";
-import { isBackend } from "@/services/mode";
 import type { LiveActivity } from "@/views/endpoints/live";
 import type { AudioFormat, SampleRate, SplitMode } from "@/types";
 import type { UiOption } from "@/ui/types";
@@ -266,20 +265,12 @@ const limitNote = computed(() => {
               label="Rate-limit cooldown in seconds"
           /></label>
         </div>
-        <p
-          v-if="isBackend && u.kind === 'tts'"
-          class="mt-2 text-[11px] leading-relaxed text-zinc-500"
-        >
+        <p v-if="u.kind === 'tts'" class="mt-2 text-[11px] leading-relaxed text-zinc-500">
           The server uses all three from the next request. A rate limit holds every line for this
           endpoint until the cooldown ends, not only the one refused.
         </p>
-        <p v-else-if="isBackend" class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-          The server uses all three; a run keeps the ones it was queued with.
-        </p>
         <p v-else class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-          The cooldown is live: the simulated transport uses it the next time this endpoint is rate
-          limited. The timeout and retry limit are recorded and exported with your settings, but the
-          prototype’s transport doesn’t enforce them — a backend would.
+          The server uses all three; a run keeps the ones it was queued with.
         </p>
       </section>
     </div>
@@ -524,26 +515,23 @@ const limitNote = computed(() => {
           <dt class="w-24 shrink-0 font-medium text-emerald-600 dark:text-emerald-400">
             Immediately
           </dt>
-          <dd v-if="isBackend && u.kind === 'scripting'" class="text-zinc-500">
+          <dd v-if="u.kind === 'scripting'" class="text-zinc-500">
             Pause and resume: a paused endpoint can’t start a run. One already queued or going
             carries on.
           </dd>
           <dd v-else class="text-zinc-500">
             Pause and resume, and concurrency — the dispatcher reads them before every request, so
-            lowering concurrency mid-run just narrows the next batch.
-            <template v-if="u.kind === 'tts'">
-              Character limit and cut boundary too: each line is split as it goes out.</template
-            >
+            lowering concurrency mid-run just narrows the next batch. Character limit and cut
+            boundary too: each line is split as it goes out.
           </dd>
         </div>
         <div class="flex gap-2">
           <dt class="w-24 shrink-0 font-medium text-violet-600 dark:text-violet-400">Next job</dt>
           <dd class="text-zinc-500">
             <template v-if="u.kind === 'scripting'"
-              >Base URL, model, chunking, output ceiling and prices<template v-if="isBackend"
-                >, and concurrency, timeouts and retries</template
-              >. A queued job carries a snapshot of all of these, so a run finishes on the settings
-              it started with and its recorded cost stays honest.</template
+              >Base URL, model, chunking, output ceiling and prices, and concurrency, timeouts and
+              retries. A queued job carries a snapshot of all of these, so a run finishes on the
+              settings it started with and its recorded cost stays honest.</template
             >
             <template v-else
               >Base URL, model, audio format, sample rate and prices. Clips already rendered keep
@@ -552,18 +540,9 @@ const limitNote = computed(() => {
           </dd>
         </div>
       </dl>
-      <p v-if="isBackend" class="mt-2 text-[11px] text-zinc-500">
+      <p class="mt-2 text-[11px] text-zinc-500">
         Saved to the server a moment after each change, and read by the next
         {{ u.kind === "tts" ? "line" : "run" }} it sends.
-      </p>
-      <p v-else class="mt-2 flex items-center gap-1.5 text-[11px] text-zinc-500">
-        <UiTooltip
-          text="Nothing on this page is written to disk: reload and it is back to the seeded configuration."
-        >
-          <span class="cursor-help underline decoration-dotted underline-offset-2"
-            >Settings live in memory for this session only.</span
-          >
-        </UiTooltip>
       </p>
     </section>
   </div>

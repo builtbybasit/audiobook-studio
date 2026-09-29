@@ -1,4 +1,4 @@
-import type { Profile, ScriptEndpointTelemetry } from "@/types";
+import type { Profile, ScriptEndpointTelemetry, ScriptSettings } from "@/types";
 import { splitText } from "@/lib/split";
 import { isSimulated } from "@/lib/providers";
 import {
@@ -10,6 +10,15 @@ import {
   newPricing,
   pricingProblems,
 } from "@/lib/pricing";
+
+/** The settings a run starts from, until somebody picks otherwise. */
+export const makeScriptSettings = (): ScriptSettings => ({
+  profile: "openai",
+  stripWatermarks: true,
+  // a re-script over chapters somebody has been correcting by hand keeps that work unless they
+  // deliberately say otherwise
+  keepEdits: true,
+});
 
 export function newProfile(p: Partial<Profile> = {}): Profile {
   const profile: Profile = {

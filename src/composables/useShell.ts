@@ -58,8 +58,7 @@ export function useShell() {
       ].filter(
         (u) =>
           u.enabled &&
-          ((u.needsKey && !keyInPlace(u.profile ?? u.endpoint, u.slot)) ||
-            endpointErrors(u).length > 0),
+          ((u.needsKey && !keyInPlace(u.profile ?? u.endpoint)) || endpointErrors(u).length > 0),
       ).length,
   );
   /** A link to another book that lands on the page you are already on, so switching keeps your place. */

@@ -4,6 +4,7 @@
 // part that is the same — where it is, what a failure looks like, what to do when something other
 // than the API answers — is here so it is written once. A service holds one of these and says what
 // it wants in terms of paths and bodies.
+import { API_BASE } from "@/services/mode";
 import type { ApiErrorCode } from "@/types";
 
 /** A failure the API described. `detail` is the longer explanation a panel can expand to. */
@@ -85,7 +86,7 @@ function refusal(res: Response, text: string): ApiError {
 
 export class HttpClient {
   constructor(
-    readonly base = "/api",
+    readonly base = API_BASE,
     private readonly fetch: FetchLike = (input, init) => globalThis.fetch(input, init),
   ) {}
 

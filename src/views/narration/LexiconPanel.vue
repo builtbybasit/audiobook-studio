@@ -70,22 +70,23 @@ const said = (e: LexEntry) => speak(sample(e), [{ ...e, enabled: true }]).text;
 const staleChapters = computed(() =>
   libraryStore.chaptersOf(props.bookId).filter((c) => c.narration === "stale"),
 );
-// The count is the store's own list, not a second copy of it: `renarrateStale` queues
-// `changedSegments` — the stale clips *and*, in a chapter that has been narrated, the lines that
-// were never rendered — so counting only the stale ones here promised N and rendered more.
+// The count is the store's own list, not a second copy of it: `changedSegments` is the stale clips
+// *and*, in a chapter that has been narrated, the lines that were never rendered — both of which
+// the run below re-renders — so counting only the stale ones here promised N and rendered more.
 const staleLines = computed(() =>
   staleChapters.value.reduce(
     (a, c) => a + narrationStore.changedSegments(props.bookId, c.id).length,
     0,
   ),
 );
-// One `renarrateStale` per chapter rather than one `runNarration` over all of them: the `fill`
-// scope is not the same set of lines. It also takes the failed ones, it takes never-rendered lines
-// in a chapter nobody has started, and it leaves out a line whose retake is still waiting for a
-// verdict — so a single run would queue work this button never counted. The loop is safe because
-// `_expressionGuard` merges a second block into the review already open rather than replacing it.
+// One run over every stale chapter at the "missing & changed" scope, which is what
+// `renarrateStale` asks of one chapter: the server works out the lines from the clips it holds.
 function renarrate() {
-  for (const c of staleChapters.value) narrationStore.renarrateStale(props.bookId, c.id);
+  void narrationStore.runNarration(
+    props.bookId,
+    staleChapters.value.map((c) => c.id),
+    { scope: "fill" },
+  );
 }
 const overrides = computed(() => castStore.pauseOverrides(props.bookId));
 const PRESETS = [0.2, 0.35, 0.6, 1];

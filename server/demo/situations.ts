@@ -1,12 +1,17 @@
 // A Demo tools situation, applied on the server.
 //
-// The browser's demo applies a situation (`applySituation` in `src/mock/scenarios/situations.ts`)
-// through a `ScenarioContext` its stores implement. Here the same situations are applied through a
-// context over plain data: the seeded world, and beside it what a situation reaches for that the
-// world does not hold — the queue's history, the histories of chapters' scripts, scripting a book
-// had already paid for, and what the endpoints have been through. Every method does what the
-// store's does, with the browser's own helpers where the store has one, so a situation leaves the
-// server's demo exactly as it leaves the browser's (`tests/server/demoSituations.test.ts`).
+// A situation (`applySituation` in `src/mock/scenarios/situations.ts`) is applied through a
+// `ScenarioContext`. Here that is a context over plain data: the seeded world, and beside it what a
+// situation reaches for that the world does not hold — the queue's history, the histories of
+// chapters' scripts, scripting a book had already paid for, and what the endpoints have been
+// through. Every method does what the browser's demo store did when the browser applied them, with
+// the browser's own helpers where the store had one, so a situation leaves the demo as it always
+// did (`tests/server/demoSituations.test.ts` applies every one; `demoWorld.test.ts` holds the
+// seeded world to `makeWorld()`, and `demoLive.test.ts` what is set going).
+//
+// The world as it is seeded, with no situation, is not still: a few runs are set going on it
+// (`startupRuns`), so the Queue, the job indicator and the endpoints' activity are alive the first
+// time anyone looks. A situation sets going only what it describes.
 //
 // Nothing is written here. What comes back is handed to the seed (`seed.ts`), which writes the rows
 // in one transaction, and to `startLive`, which makes real what is not a row: runs in flight,
@@ -17,6 +22,7 @@ import { key } from "@/lib/scriptReview";
 import { unusedTelemetry } from "@/lib/scripting";
 import { chapterSeconds, pacingOrDefault } from "@/lib/speech";
 import { makeJobHistory } from "@/mock/fixtures/jobs";
+import { startupRuns } from "@/mock/scenarios/startup";
 import {
   applySituation,
   historyJob,
@@ -58,9 +64,10 @@ const telemetryOf = ({
 /**
  * The seeded world at `now`, with `scenario` applied to it when there is one. Every date the world
  * and the situation take from the clock is `now`, so a cooldown or a closing rate window is as
- * fresh as the request that asked for it.
+ * fresh as the request that asked for it. Without a situation the world's startup runs are set
+ * going, unless it is to be `still`.
  */
-export function situate(now: number, scenario?: DemoScenario): Situated {
+export function situate(now: number, scenario?: DemoScenario, still = false): Situated {
   const world = makeWorld(now);
   let nextJob = FIRST_JOB;
   const demo: DemoWorld = {
@@ -72,7 +79,7 @@ export function situate(now: number, scenario?: DemoScenario): Situated {
   };
   const live: DemoLive = {
     bookId: scenario?.bookId ?? "",
-    runs: scenario?.runs ?? [],
+    runs: scenario ? (scenario.runs ?? []) : still ? [] : startupRuns(),
     builds: [],
     speech: {},
     scripting: {},
@@ -90,7 +97,7 @@ export function situate(now: number, scenario?: DemoScenario): Situated {
   return { demo, live, result };
 }
 
-/** `ScenarioContext` as `useDemoStore()._scenarioContext()` implements it, over `demo` and `live`. */
+/** `ScenarioContext` as the browser's demo store implemented it, over `demo` and `live`. */
 function contextOver(
   demo: DemoWorld,
   live: DemoLive,

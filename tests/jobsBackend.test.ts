@@ -36,7 +36,7 @@ import {
 } from "@/services/endpointSettings";
 import { HttpJobsService, setJobsService } from "@/services/jobs";
 import { HttpUsageService, setUsageService } from "@/services/usage";
-import { activeLibraryService, HttpLibraryService, setLibraryService } from "@/services/library";
+import { libraryService, HttpLibraryService, setLibraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore, WRITE_DELAY_MS } from "@/stores/endpoints";
 import { useExportsStore } from "@/stores/exports";
@@ -47,7 +47,6 @@ import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-import { useUsageStore } from "@/stores/usage";
 import { readScript, writeScript } from "~/db/script";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";
@@ -55,6 +54,8 @@ import { epubFile, story } from "./support/epub";
 import { flush, testPinia, type TestPinia } from "./support/pinia";
 import { unifyEndpoint } from "@/lib/endpoints";
 import { useEndpointActivity } from "@/views/endpoints/live";
+import { useScriptActivity } from "@/queries/scriptActivity";
+import { scriptTelemetry, scriptUsageTotals } from "@/lib/scriptActivity";
 import {
   gatedProvider,
   gatedSpeechProvider,
@@ -171,7 +172,7 @@ async function scriptedAndOpen() {
   const history = pinia.run(() => useChapterHistory(id, 1));
   const cast = pinia.run(() => useCast(id));
   await settle();
-  await scriptingStore._runRemote(id, [1], { quiet: true });
+  await scriptingStore.runScripting(id, [1], { quiet: true });
   await api.runner.idle();
   await poll();
   return { id, script, history, cast };
@@ -181,7 +182,7 @@ async function scriptedAndOpen() {
 async function narrated() {
   const opened = await scriptedAndOpen();
   const narrationStore = useNarrationStore();
-  await narrationStore._runRemote(opened.id, [1], { quiet: true });
+  await narrationStore.runNarration(opened.id, [1], { quiet: true });
   await api.runner.idle();
   await poll();
   return { ...opened, narrationStore };
@@ -273,7 +274,7 @@ describe("the queue with a server answering", () => {
     const line = scriptsStore.segmentsOf(id, 1)[0];
     scriptsStore.updateSegment(id, 1, line.id, { text: "By hand." });
     await scriptsStore._settled(id, 1);
-    await scriptingStore._runRemote(id, [1], { quiet: true });
+    await scriptingStore.runScripting(id, [1], { quiet: true });
     await api.runner.idle();
     await poll();
     expect(history.versions.value.map((v) => v.origin.kind)).toEqual(["edited", "scripted"]);
@@ -283,7 +284,7 @@ describe("the queue with a server answering", () => {
 
   test("opening a scripted chapter reads its script once", async () => {
     const id = await shelved();
-    await scriptingStore._runRemote(id, [1], { quiet: true });
+    await scriptingStore.runScripting(id, [1], { quiet: true });
     await api.runner.idle();
     // a fresh store, as a reload would give: nothing until it is asked for
     wireStores();
@@ -300,7 +301,7 @@ describe("the queue with a server answering", () => {
 
   test("the first read of the queue is history, not change: nothing is fetched on its account", async () => {
     const id = await shelved();
-    await scriptingStore._runRemote(id, [1, 2], { quiet: true });
+    await scriptingStore.runScripting(id, [1, 2], { quiet: true });
     await api.runner.idle();
     // a reload: fresh stores over the same server, counting what the queue's first read asks for
     wireStores();
@@ -320,7 +321,7 @@ describe("the queue with a server answering", () => {
   test("a re-script keeps the previous script for the diff", async () => {
     const { id } = await scriptedAndOpen();
     const first = scriptsStore.segmentsOf(id, 1);
-    await scriptingStore._runRemote(id, [1], { quiet: true });
+    await scriptingStore.runScripting(id, [1], { quiet: true });
     await api.runner.idle();
     await poll();
     expect(scriptsStore._previous[key(id, 1)]).toEqual(first);
@@ -330,7 +331,7 @@ describe("the queue with a server answering", () => {
   test("chapters the server left out are said so, not waited for", async () => {
     const id = await shelved();
     await libraryStore.skipChapters(id, [2], true, { quiet: true });
-    await scriptingStore._runRemote(id, [2]);
+    await scriptingStore.runScripting(id, [2]);
     expect(toasts.at(-1)?.msg).toBe("Nothing to script");
     expect(toasts.at(-1)?.kind).toBe("warn");
     expect(jobsStore.jobs).toEqual([]);
@@ -340,7 +341,7 @@ describe("the queue with a server answering", () => {
     const gate = gatedProvider();
     wire({ scripting: gate.provider });
     const id = await shelved();
-    await scriptingStore._runRemote(id, [1, 2], { quiet: true });
+    await scriptingStore.runScripting(id, [1, 2], { quiet: true });
     await gate.started;
     await settle();
     expect(libraryStore.chapter(id, 2)?.scripting).toBe("queued");
@@ -359,7 +360,7 @@ describe("the queue with a server answering", () => {
 
   test("clearing the history and removing a job go through the server", async () => {
     const id = await shelved();
-    await scriptingStore._runRemote(id, [1, 2], { quiet: true });
+    await scriptingStore.runScripting(id, [1, 2], { quiet: true });
     await api.runner.idle();
     await poll();
     expect(jobsStore.jobs).toHaveLength(2);
@@ -373,7 +374,7 @@ describe("the queue with a server answering", () => {
 
   test("a queue that cannot be read says so and keeps what it had", async () => {
     const id = await shelved();
-    await scriptingStore._runRemote(id, [1], { quiet: true });
+    await scriptingStore.runScripting(id, [1], { quiet: true });
     await api.runner.idle();
     await poll();
     const had = jobsStore.jobs.length;
@@ -431,11 +432,11 @@ describe("editing a script with a server answering", () => {
 
   test("a refused edit reads the server's script back even when no page has the chapter open", async () => {
     const id = await shelved();
-    await scriptingStore._runRemote(id, [1], { quiet: true });
+    await scriptingStore.runScripting(id, [1], { quiet: true });
     await api.runner.idle();
     // the script was read once, by a page since closed: the store keeps the copy, the query
     // cache has nothing left to refetch
-    scriptsStore._install(id, 1, await activeLibraryService()!.chapterScript(id, 1));
+    scriptsStore._install(id, 1, await libraryService().chapterScript(id, 1));
     writeScript(api.db, id, 1, writtenElsewhere());
     scriptsStore.updateSegment(id, 1, 1, { text: "Written here." });
     await scriptsStore._settled(id, 1);
@@ -450,7 +451,7 @@ describe("editing a script with a server answering", () => {
   test("a renumbering forgets only the renumbered book's writes", async () => {
     const { id: other } = await scriptedAndOpen();
     const id = await shelved();
-    await scriptingStore._runRemote(id, [1], { quiet: true });
+    await scriptingStore.runScripting(id, [1], { quiet: true });
     await api.runner.idle();
     pinia.run(() => useChapterScript(id, 1));
     await settle();
@@ -842,7 +843,7 @@ describe("the dictionary with a server answering", () => {
     castStore.addTerm(id, "twice", "twyce");
     await settle();
     const narrationStore = useNarrationStore();
-    await narrationStore._runRemote(id, [1], { quiet: true });
+    await narrationStore.runNarration(id, [1], { quiet: true });
     await api.runner.idle();
     await poll();
     const line = twice(scriptsStore.segmentsOf(id, 1));
@@ -985,7 +986,7 @@ describe("retakes with a server answering", () => {
     narrationStore.flagSegment(id, 1, a.id, "pause", "");
     narrationStore.flagSegment(id, 1, b.id, "other", "hmm");
     await scriptsStore._settled(id, 1);
-    expect(narrationStore.retakeFlagged(id, 1)).toBe(2);
+    narrationStore.retakeFlagged(id, 1);
     await settle();
     expect(toasts.at(-1)?.msg).toBe("Retake · 2 lines");
     await api.runner.idle();
@@ -994,7 +995,7 @@ describe("retakes with a server answering", () => {
       scriptsStore.segmentsOf(id, 1).filter((s) => s.candidate?.status === "done"),
     ).toHaveLength(2);
     // asked again while both wait: nothing is queued, and the toast says why
-    expect(narrationStore.retakeFlagged(id, 1)).toBe(2);
+    narrationStore.retakeFlagged(id, 1);
     await settle();
     expect(toasts.at(-1)?.msg).toBe("Nothing to retake");
     expect(jobsStore.jobs.filter((j) => j.label === "Retake · ch 1")).toHaveLength(1);
@@ -1002,11 +1003,10 @@ describe("retakes with a server answering", () => {
 });
 
 describe("the audiobooks with a server answering", () => {
-  test("are the server's, which starts with none, and a deletion asks first", async () => {
+  test("are the server's, which starts with none", async () => {
     const id = await shelved();
     const exportsStore = useExportsStore();
     expect(exportsStore.exports).toEqual([]);
-    expect(exportsStore.asksFirst).toBe(true);
     const exports = pinia.run(() => useBookExports(id));
     await settle();
     expect(exports.status.value).toBe("success");
@@ -1085,7 +1085,7 @@ describe("spending with a server answering", () => {
     pinia.run(() => useBookSpend(id));
     await settle();
     expect(jobsStore.spent(id)).toBe(0);
-    await scriptingStore._runRemote(id, [1], { quiet: true });
+    await scriptingStore.runScripting(id, [1], { quiet: true });
     await api.runner.idle();
     await poll();
     const spend = await serverSpend(id);
@@ -1093,8 +1093,14 @@ describe("spending with a server answering", () => {
     expect(jobsStore.spent(id)).toBe(spend.spent);
     expect(jobsStore.scriptSpent(id)).toBe(spend.scriptSpent);
     expect(jobsStore.reserved(id)).toBe(spend.reserved);
-    // and none of it is the demo's ledger, which a server run never writes
-    expect(useUsageStore().scriptUsage).toEqual([]);
+    // and the Scripting page's activity figures for the profile are the same ledger rows
+    useEndpointsStore().profiles = [makeProfiles().find((p) => p.id === "openai")!];
+    const activity = pinia.run(() => useScriptActivity());
+    await settle();
+    const rows = activity.rowsOf("openai");
+    expect(rows.length).toBeGreaterThan(0);
+    expect(scriptUsageTotals(rows).cost).toBeCloseTo(spend.scriptSpent, 12);
+    expect(scriptTelemetry(rows, useEndpointsStore().profiles[0]).completed).toBe(rows.length);
   });
 
   test("a run the server refuses for its budget says the server's sentence and queues nothing", async () => {
@@ -1113,7 +1119,7 @@ describe("spending with a server answering", () => {
   test("the Endpoints page's history is the ledger's rows, not the fixture's week", async () => {
     await priced();
     const id = await shelved(["One"]);
-    await scriptingStore._runRemote(id, [1], { quiet: true });
+    await scriptingStore.runScripting(id, [1], { quiet: true });
     await api.runner.idle();
     const ep = {
       key: "scripting:openai",
@@ -1182,7 +1188,7 @@ describe("the speech endpoints' live telemetry with a server answering", () => {
     await endpointsStore.load();
     pinia.run(() => useEndpointLive());
     const { id } = await scriptedAndOpen();
-    void useNarrationStore()._runRemote(id, [1], { quiet: true });
+    void useNarrationStore().runNarration(id, [1], { quiet: true });
     await speech.started;
     await poll();
     // two lines at the gate for the endpoint, one out and one held behind it, then a rate limit

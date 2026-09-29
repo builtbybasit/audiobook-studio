@@ -12,8 +12,8 @@
 // a verdict (`candidate`) and every superseded `Take` are the same shape wearing three hats — the
 // domain types differ only in which optional fields they happen to carry. One table with a
 // discriminator means accepting a retake is an update to two rows rather than a restructure, and it
-// makes the rule in `src/stores/README.md` — that `_queueRender` can never leave a line with
-// neither its clip nor its retake — a constraint over rows that a query can actually check.
+// makes the rule that queueing a render (`queueRender` in `~/jobs/narration`) can never leave a
+// line with neither its clip nor its retake a constraint over rows that a query can actually check.
 //
 // **A version's segments are a document.** `ScriptVersion.segments` is explicitly "an independent
 // copy: nothing that happens later may reach into it". Normalising it would hand out exactly the

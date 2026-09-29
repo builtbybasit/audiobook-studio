@@ -6,6 +6,7 @@ import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 
 import { computed } from "vue";
+import { useScriptActivity } from "@/queries/scriptActivity";
 
 import { UiNumber, UiSelect, UiSwitch, UiTooltip } from "@/ui";
 import {
@@ -20,6 +21,9 @@ const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 const scriptsStore = useScriptsStore();
+// the estimate's "if cache holds" figure is read off the profile's recent requests in the ledger,
+// which the store finds in the query cache: reading them here is what puts them there
+useScriptActivity();
 const est = computed(() => scriptingStore.scriptEstimate(props.bookId, props.selected));
 const plan = computed(() => scriptingStore.scriptPlan(props.bookId, props.selected));
 const edits = computed(() =>

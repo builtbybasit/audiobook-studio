@@ -3,17 +3,13 @@
 // volume, and Remove from library.
 //
 // The script travels as a file from here too: **Export script** downloads it, **Import script…**
-// opens the page that reads one in. Both are the server's, so the demo says so on the item. When
-// some speaker's voice keeps the recordings it was cloned from, Export asks first, on the item
+// opens the page that reads one in. When some speaker's voice keeps the recordings it was cloned from, Export asks first, on the item
 // itself: **Include voice samples**, unticked every time — recordings of a person are handed over
 // only when asked for, never because they were last time.
 //
-// Removing acts at once and offers the usual Undo toast — the app's one rule for danger, see
-// `src/stores/README.md`. It used to ask first as well, which said nothing Undo did not already
-// cover; what that step explained now hangs off the item itself, where it can be read before the
-// click rather than after it. With a server answering there is no Undo — nothing puts a book back
-// in the database — so the same rule sends the item down its other branch: it asks, with a second
-// click on the item itself, and says it cannot be undone.
+// Removing has no Undo — nothing puts a book back in the database — so the app's one rule for
+// danger (`src/stores/README.md`) has the item ask, with a second click on the item itself, and
+// say it cannot be undone. What it takes hangs off the item, where it can be read before the click.
 import { useLibraryStore } from "@/stores/library";
 
 import { computed, nextTick, ref, watch } from "vue";
@@ -21,7 +17,7 @@ import { useRouter } from "vue-router";
 import { plural } from "@/views/library/shared";
 import type { Book } from "@/types";
 import { pickedFrom, type PickedFile } from "@/components/addEpub";
-import { activeLibraryService, scriptExportUrl } from "@/services/library";
+import { libraryService, scriptExportUrl } from "@/services/library";
 import { sizeLabel } from "@/lib/audioFormat";
 import { UiCheckbox } from "@/ui";
 import type { ScriptExportSamples } from "@/types";
@@ -41,11 +37,6 @@ const router = useRouter();
 const contents = computed(() => libraryStore.contentsOf(props.book.id));
 
 const menu = ref(false);
-/** Backend mode: a removal cannot be undone, so the item asks with a second click. */
-const asksFirst = computed(() => !!libraryStore._service());
-/** The script file is written and read by the server; the demo has none to ask. */
-const NEEDS_SERVER = "Needs the server — leave the demo, from the Demo chip";
-const scriptFiles = computed(() => !!libraryStore._service());
 const confirming = ref(false);
 
 // ---------- export, and the voice samples it can carry ----------
@@ -62,11 +53,10 @@ watch(menu, async (open) => {
   exporting.value = false;
   withSamples.value = false;
   samples.value = null;
-  const svc = activeLibraryService();
-  if (!open || !svc) return;
+  if (!open) return;
   checking.value = true;
   try {
-    samples.value = await svc.scriptExportSamples(props.book.id);
+    samples.value = await libraryService().scriptExportSamples(props.book.id);
   } catch {
     // answered below as no samples
   } finally {
@@ -85,8 +75,7 @@ const samplesNote = computed(() => {
 /** What the item is about to take, in the menu's own words. */
 const removeWarning = computed(
   () =>
-    `Removes “${props.book.title}”, its ${plural(contents.value.total, "chapter")}, script, cast and audiobooks. ` +
-    (asksFirst.value ? "This cannot be undone." : "Undo is offered afterwards."),
+    `Removes “${props.book.title}”, its ${plural(contents.value.total, "chapter")}, script, cast and audiobooks. This cannot be undone.`,
 );
 function go(to: string) {
   menu.value = false;
@@ -100,7 +89,7 @@ function addVolume(e: Event) {
   if (picked) emit("addVolume", picked);
 }
 async function remove() {
-  if (asksFirst.value && !confirming.value) {
+  if (!confirming.value) {
     confirming.value = true;
     return;
   }
@@ -146,7 +135,7 @@ async function remove() {
           <AddIcon class="mr-1 icon-sm" /> Add a volume…
           <input type="file" accept=".epub" class="hidden" @change="addVolume" />
         </label>
-        <template v-if="scriptFiles && sampleVoices.length">
+        <template v-if="sampleVoices.length">
           <button
             class="ui-item w-full hover:bg-violet-50 dark:hover:bg-violet-500/15"
             :aria-expanded="exporting"
@@ -174,7 +163,7 @@ async function remove() {
           </div>
         </template>
         <button
-          v-else-if="scriptFiles && checking"
+          v-else-if="checking"
           class="ui-item w-full opacity-50"
           disabled
           title="Checking whether any voice keeps its recordings"
@@ -183,7 +172,7 @@ async function remove() {
           <span class="ml-auto text-[10px] text-zinc-500">checking…</span>
         </button>
         <a
-          v-else-if="scriptFiles"
+          v-else
           class="ui-item w-full hover:bg-violet-50 dark:hover:bg-violet-500/15"
           :href="scriptExportUrl(book.id)"
           download
@@ -192,13 +181,9 @@ async function remove() {
         >
           <ExportIcon class="mr-1 icon-sm" /> Export script
         </a>
-        <button v-else class="ui-item w-full opacity-50" disabled :title="NEEDS_SERVER">
-          <ExportIcon class="mr-1 icon-sm" /> Export script
-        </button>
         <button
-          class="ui-item w-full hover:bg-violet-50 disabled:opacity-50 dark:hover:bg-violet-500/15"
-          :disabled="!scriptFiles"
-          :title="scriptFiles ? 'Read a script file into this book' : NEEDS_SERVER"
+          class="ui-item w-full hover:bg-violet-50 dark:hover:bg-violet-500/15"
+          title="Read a script file into this book"
           @click="go('script-import')"
         >
           <ImportIcon class="mr-1 icon-sm" /> Import script…
@@ -219,8 +204,8 @@ async function remove() {
           <span v-else class="text-left leading-snug"
             >Remove from library
             <span class="block text-[10px] font-normal text-zinc-500"
-              >{{ plural(contents.total, "chapter") }}, script, cast and audiobooks ·
-              {{ asksFirst ? "asks first" : "Undo offered" }}</span
+              >{{ plural(contents.total, "chapter") }}, script, cast and audiobooks · asks
+              first</span
             ></span
           >
         </button>

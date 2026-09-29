@@ -10,7 +10,7 @@
 // distance from "now": one running and ending on Friday, one that ended last week and is kept as
 // history, one that has not started yet.
 import { newProfile } from "@/lib/scripting";
-import type { Profile, Promotion, RateWindow, ScriptSettings } from "@/types";
+import type { Profile, Promotion, RateWindow } from "@/types";
 
 const HOUR = 3600e3;
 const DAY = 24 * HOUR;
@@ -172,10 +172,4 @@ export function makeProfiles(now: number = Date.now()): Profile[] {
   ];
 }
 
-export const makeScriptSettings = (): ScriptSettings => ({
-  profile: "openai",
-  stripWatermarks: true,
-  // a re-script over chapters somebody has been correcting by hand keeps that work unless they
-  // deliberately say otherwise
-  keepEdits: true,
-});
+export { makeScriptSettings } from "@/lib/scripting";

@@ -10,7 +10,6 @@ import { computed, reactive, ref, watch } from "vue";
 import { useBookId } from "@/composables/useBookId";
 import { useCast } from "@/queries";
 import { key } from "@/lib/scriptReview";
-import { activeLibraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useHistoryStore } from "@/stores/history";
@@ -40,7 +39,6 @@ const samplesStore = useSpeakerSamplesStore();
 const bookId = useBookId();
 useCast(bookId);
 
-const serverless = !activeLibraryService();
 const book = computed(() => libraryStore.bookById(bookId));
 const plan = computed(() => transferStore.planOf(bookId));
 const report = computed(() => transferStore.reportOf(bookId));
@@ -289,18 +287,8 @@ const SKIPPED = {
 
     <div class="min-h-0 flex-1 overflow-y-auto">
       <div class="mx-auto max-w-4xl space-y-4 p-4 sm:p-6">
-        <!-- no server: there is nobody to read the file -->
-        <section v-if="serverless" class="card p-4 text-sm">
-          <p class="font-medium">Importing a script needs the server.</p>
-          <p class="mt-1 text-xs text-zinc-500">
-            A script file is matched to this book's chapters by the words of their source, which the
-            server reads. Leave the demo — from the Demo chip in the header — to import one into
-            your own library.
-          </p>
-        </section>
-
         <!-- choosing the file -->
-        <section v-else-if="!plan" class="card p-6 text-center">
+        <section v-if="!plan" class="card p-6 text-center">
           <FileIcon class="mx-auto h-8 w-8 text-zinc-400" />
           <p class="mt-2 text-sm font-medium">Choose a script file</p>
           <p class="mx-auto mt-1 max-w-md text-xs text-zinc-500">

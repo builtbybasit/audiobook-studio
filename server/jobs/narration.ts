@@ -179,7 +179,7 @@ interface Target {
 }
 
 /**
- * Put one line in the queue, the store's `_queueRender` on rows.
+ * Put one line in the queue.
  *
  * A retake already waiting is not thrown away: if it rendered it joins the take list marked
  * rejected, so the comparison the listener was in the middle of is still playable afterwards. A

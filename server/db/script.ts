@@ -219,8 +219,7 @@ export function takeOf(a: SegmentAudio): Take {
  * is still playable afterwards and its number is never handed out again; one that never produced
  * a clip — failed, or dropped before it rendered — has nothing worth keeping and simply goes. The
  * clip in the book is not touched: it was never displaced, so there is nothing to put back. The
- * store's `rejectTake` on rows, and the same rule `_queueRender` applies to a retake in the way of
- * a run.
+ * same rule applies to a retake in the way of a run (`queueRender` in `~/jobs/narration`).
  */
 export function rejectCandidate(
   tx: Tx,
@@ -243,9 +242,9 @@ export function rejectCandidate(
 
 /**
  * A replacement that succeeded takes over: the retake becomes the clip in the book and the one it
- * displaces joins the take list, so the history is kept and nobody is asked for 300 verdicts. The
- * store's `_acceptReplacement` and `acceptTake`, on rows: the candidate row becomes the current
- * row with `auto` stripped, and the takes are left as they are, one more if the old clip had audio.
+ * displaces joins the take list, so the history is kept and nobody is asked for 300 verdicts, and
+ * a retake the listener kept does the same: the candidate row becomes the current row with `auto`
+ * stripped, and the takes are left as they are, one more if the old clip had audio.
  */
 export function acceptCandidate(
   tx: Tx,

@@ -1,21 +1,11 @@
-// What this endpoint is doing *right now*, read out of the running job simulator. Only in-flight
-// and waiting requests come from here: the moment one settles it is written to the usage ledger
-// (`src/stores/usage.ts`) and the page reads it from there, so a request does not vanish at the one
-// point where it finally has a receipt worth opening.
+// What this endpoint is doing *right now*: the requests in flight and waiting, shaped like the
+// ledger's rows so the Activity list shows both in one. The moment one settles the server writes it
+// to its ledger and the page reads it from there (`useEndpointHistory`), with its receipt.
 //
-// Three things end up in the same Activity list:
-//
-//   in flight          — from here, `simulated: false`, no cost yet
-//   settled this session — from the usage ledger, `simulated: false`, with its receipt
-//   `simulated: true`  — sample history invented by the fixture service (the backstory)
-//
-// All of it is make-believe in the sense that no provider is called; the flag separates "made up
-// before you got here" from "you did this", and the list labels each.
-//
-// With a server answering, a speech endpoint's busy and waiting counts are the server's gate's
-// (`endpointsStore.serverLoad`, read by `useEndpointLive`), across every job and every chapter
-// rather than the chapters this browser has open, and its cooldown is the gate's too — so the wait
-// reasons and the effective limit say what the server is actually holding the lines for.
+// A speech endpoint's busy and waiting counts are the server's gate's (`endpointsStore.serverLoad`,
+// read by `useEndpointLive`), across every job and every chapter rather than the chapters this
+// browser has open, and its cooldown is the gate's too — so the wait reasons and the effective
+// limit say what the server is actually holding the lines for.
 import { keyInPlace } from "@/services/endpointSettings";
 import type { Job, RequestRecord, WaitReason } from "@/types";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
@@ -43,28 +33,10 @@ export function useEndpointActivity() {
   const jobsStore = useJobsStore();
   const libraryStore = useLibraryStore();
   const endpointsStore = useEndpointsStore();
-  /**
-   * Lines out at this TTS endpoint and lines waiting for it: the server's gate's counts with one
-   * answering, otherwise the segments routed here, by the voice their speaker resolves to.
-   */
+  /** Lines out at this TTS endpoint and lines waiting for it, as the server's gate counts them. */
   function ttsCounts(u: UnifiedEndpoint): { active: number; queued: number } {
-    const server = endpointsStore.serverLoad(u.id);
-    if (server) return { active: server.active, queued: server.waiting };
-    let active = 0;
-    let queued = 0;
-    for (const [k, segs] of Object.entries(scriptsStore.segments)) {
-      const bookId = bookOf(k);
-      for (const s of segs)
-        for (const clip of [s.audio, s.candidate]) {
-          if (!clip) continue;
-          if (clip.status === "generating") {
-            if (clip.endpoint === u.id) active++;
-          } else if (clip.status === "queued") {
-            if (castStore.effectiveVoice(bookId, s.speaker).endpoint?.id === u.id) queued++;
-          }
-        }
-    }
-    return { active, queued };
+    const { active, waiting } = endpointsStore.serverLoad(u.id);
+    return { active, queued: waiting };
   }
 
   function scriptingCounts(u: UnifiedEndpoint): { active: number; queued: number } {
@@ -81,7 +53,7 @@ export function useEndpointActivity() {
 
   function waitReasonFor(u: UnifiedEndpoint, active: number, bookId: string | null): WaitReason {
     if (!u.enabled) return "paused";
-    if (u.needsKey && !keyInPlace(u.profile ?? u.endpoint, u.slot)) return "nokey";
+    if (u.needsKey && !keyInPlace(u.profile ?? u.endpoint)) return "nokey";
     if (u.backoffUntil > Date.now()) return "cooldown";
     if (active >= u.concurrency) return "concurrency";
     if (bookId) {
@@ -108,7 +80,7 @@ export function useEndpointActivity() {
     const effectiveLimit =
       !u.enabled ||
       u.backoffUntil > Date.now() ||
-      (u.needsKey && !keyInPlace(u.profile ?? u.endpoint, u.slot))
+      (u.needsKey && !keyInPlace(u.profile ?? u.endpoint))
         ? 0
         : u.concurrency;
     return { active, queued, waiting, effectiveLimit };

@@ -4,9 +4,10 @@
 // Deliberately out of the way — a chip in the header rather than a control on any page, so the
 // workflow screens stay the workflow. It is also the way in and out of the demo, so it is there in
 // both modes and says which one the tab is in: lit and named "Demo mode" in the demo, with the
-// situation the world is in so it can be read with the drawer closed; plain on the server's
+// situation this tab put the demo into so it can be read with the drawer closed; plain on your own
 // library. The drawer's open state lives here, in the one component the shell mounts once, so it
-// survives every route change.
+// survives every route change — and, when a situation or a reset loaded the page again with the
+// drawer open, it opens again on the new page.
 import { useDemoStore } from "@/stores/demo";
 
 import { computed, ref } from "vue";
@@ -15,14 +16,14 @@ import { isDemo } from "@/services/mode";
 import { FlaskConical as DemoIcon } from "@lucide/vue";
 
 const demoStore = useDemoStore();
-const open = ref(false);
+const open = ref(isDemo && demoStore.takeReopen());
 const chip = ref<HTMLButtonElement | null>(null);
-const active = computed(() => (isDemo ? demoStore.activeScenario : null));
+const active = computed(() => (isDemo ? demoStore.applied : null));
 const title = computed(() => {
   if (!isDemo) return "Your library, from the server · the demo opens from here";
   return active.value
     ? `Demo mode · ${active.value.name} is applied`
-    : "Demo mode · seeded scenarios and simulated costs, in this tab only";
+    : "Demo mode · a demo library on the server, simulated endpoints, nothing billed";
 });
 function close() {
   open.value = false;

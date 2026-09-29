@@ -11,9 +11,9 @@ import { defineStore } from "pinia";
 import type { RouteLocationRaw } from "vue-router";
 import { cloningOf, type CloneSupport } from "@/lib/providers";
 import {
-  activeLibraryService,
   ApiError,
   type LibraryService,
+  libraryService,
   type StoredSamples,
 } from "@/services/library";
 import type { Endpoint, KeptSample, SpeakerSamples, VoiceRef } from "@/types";
@@ -99,8 +99,8 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
     },
   },
   actions: {
-    _service(): LibraryService | null {
-      return activeLibraryService();
+    _service(): LibraryService {
+      return libraryService();
     },
     _failed(what: string, cause: unknown): void {
       const uiStore = useUiStore();
@@ -118,12 +118,10 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
     _take(bookId: string, ids: number[]): void {
       this.waiting[bookId] = (this.waiting[bookId] ?? []).filter((x) => !ids.includes(x.id));
     },
-    /** Read what waits with this book's speakers. Quietly nothing when there is no server. */
+    /** Read what waits with this book's speakers. */
     async load(bookId: string): Promise<SpeakerSamples[]> {
-      const svc = this._service();
-      if (!svc) return [];
       try {
-        this.waiting[bookId] = await svc.speakerSamples(bookId);
+        this.waiting[bookId] = await this._service().speakerSamples(bookId);
       } catch {
         // a list that could not be read offers nothing; it is asked again next time
       }
@@ -134,10 +132,9 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
      * hands what this answered to `_unstore`.
      */
     async _store(bookId: string, file: File, speakers: string[]): Promise<StoredSamples> {
-      const svc = this._service();
-      if (!svc || !speakers.length) return { stored: [], replaced: [] };
+      if (!speakers.length) return { stored: [], replaced: [] };
       try {
-        const done = await svc.storeSpeakerSamples(bookId, file, speakers);
+        const done = await this._service().storeSpeakerSamples(bookId, file, speakers);
         this._take(bookId, done.replaced);
         for (const s of done.stored) this._put(bookId, s);
         return done;
@@ -153,7 +150,6 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
     async _drop(bookId: string, ids: number[]): Promise<void> {
       const svc = this._service();
       this._take(bookId, ids);
-      if (!svc) return;
       await Promise.all(
         ids.map((id) =>
           svc.discardSpeakerSamples(bookId, id).catch((cause) => {
@@ -166,7 +162,6 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
     /** Bring rows put aside back, without a word unless one could not be. */
     async _restore(bookId: string, ids: number[]): Promise<void> {
       const svc = this._service();
-      if (!svc) return;
       await Promise.all(
         ids.map((id) =>
           svc.restoreSpeakerSamples(bookId, id).then(
@@ -190,7 +185,6 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
      */
     async discard(bookId: string, sample: SpeakerSamples): Promise<boolean> {
       const svc = this._service();
-      if (!svc) return false;
       const uiStore = useUiStore();
       try {
         await svc.discardSpeakerSamples(bookId, sample.id);
@@ -212,7 +206,6 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
     /** The samples, as files the clone form can send on. Null when they could not be read. */
     async files(bookId: string, sample: SpeakerSamples): Promise<File[] | null> {
       const svc = this._service();
-      if (!svc) return null;
       try {
         return await Promise.all(
           sample.samples.map((k) => svc.speakerSampleFile(bookId, sample.id, k)),
@@ -230,11 +223,10 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
     async afterClone(from: CloneFromSamples, voice: VoiceRef): Promise<"assigned" | "kept"> {
       const castStore = useCastStore();
       const uiStore = useUiStore();
-      const svc = this._service();
       // the Voices tab has no book open, so the cast may not have been read yet
-      if (svc && !castStore.characters[from.bookId]) {
+      if (!castStore.characters[from.bookId]) {
         try {
-          castStore._install(from.bookId, await svc.cast(from.bookId));
+          castStore._install(from.bookId, await this._service().cast(from.bookId));
         } catch {
           // judged as not found below
         }

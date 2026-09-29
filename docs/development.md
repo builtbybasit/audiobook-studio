@@ -42,21 +42,19 @@ Run an individual test file directly with Bun, for example `bun test tests/histo
 | [src/ui](../src/ui)                                               | Styled, reusable UI controls                                                                                |
 | [src/stores](../src/stores)                                       | Feature state and application actions; ownership is documented in the store guide                           |
 | [src/lib](../src/lib)                                             | Shared calculations and helpers: run plans, script comparison, pricing, wall-clock time and export planning |
-| [src/mock/fixtures](../src/mock/fixtures)                         | Hand-authored sample content and configurations                                                             |
-| [src/mock/world](../src/mock/world)                               | Expands fixtures into a coherent book library                                                               |
-| [src/mock/scenarios](../src/mock/scenarios)                       | Repeatable demo situations                                                                                  |
-| [src/mock/simulators](../src/mock/simulators)                     | Timer-driven fake requests and jobs                                                                         |
-| [src/services/endpoints.ts](../src/services/endpoints.ts)         | Endpoint service contract and fixture implementation                                                        |
+| [src/mock/fixtures](../src/mock/fixtures)                         | Hand-authored sample content and configurations the demo is seeded with                                     |
+| [src/mock/world](../src/mock/world)                               | Expands fixtures into the demo's coherent book library                                                      |
+| [src/mock/scenarios](../src/mock/scenarios)                       | The demo's repeatable situations, applied on the server                                                     |
+| [src/services](../src/services)                                   | The page's HTTP services, one base per tab: `/api`, or `/demo/api` in a demo tab                            |
 | [src/types](../src/types)                                         | Feature types, imported through `@/types`                                                                   |
 | [tests](../tests)                                                 | Bun tests for domain rules and workflows                                                                    |
 | [server](../server)                                               | The backend: EPUB import, the stored library and the job queue. Its own guide is [backend](backend.md)      |
-| [src/services](../src/services)                                   | The seams a backend plugs into: the endpoint, library and jobs services, and the demo/backend mode switch   |
 
 The scenario catalogue and shared store rules remain in their existing locations; this documentation does not introduce another state or service layer.
 
 ## State that survives a reload
 
-In a demo tab — opened from the header's **Demo** chip — books, scripts, history, jobs, usage, endpoint settings and credentials are in memory, and reloading reconstructs the seeded world. With the server the library, each chapter's script and the job queue are stored in SQLite and survive — a job the server was running when it stopped is picked up again when it starts; everything else is still in memory. See [backend](backend.md).
+Everything the page shows is the server's, in SQLite: your library in `data/library.db`, and the demo — opened from the header's **Demo** chip — in `data/demo.db`, where it stays as you left it until you reset it or pick a situation. A job the server was running when it stopped is picked up again when it starts. See [backend](backend.md) and [the demo](demo.md).
 
 Browser localStorage retains reader typography and cast-rail preferences, the Library grid/list choice, and whether Narration’s setup panel is open. Searches, filters and some navigation state are also represented in the URL. These preferences are not persistence for library data.
 

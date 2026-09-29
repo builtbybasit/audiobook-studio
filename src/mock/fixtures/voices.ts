@@ -1,7 +1,7 @@
 // The voice lists each mock endpoint exposes, plus the two catalogues a "fetch voices from server"
 // call discovers. Every consumer copies the entries it takes, so these arrays are never mutated.
 import type { FishModel } from "@/lib/endpoints";
-import type { Gender, Voice, VoiceRef } from "@/types";
+import type { Gender, Voice } from "@/types";
 
 // Voices belong to an endpoint (each TTS server exposes its own list). A character stores a voice
 // *ref* — `<endpointId>/<voiceId>` — so narration knows which endpoint must render that speaker.
@@ -145,4 +145,4 @@ export const DISCOVERABLE_VOICES: Voice[] = [
   g("zoe", "f", "Zoe"),
 ];
 
-export const voiceRef = (epId: string, voiceId: string): VoiceRef => `${epId}/${voiceId}`;
+export { voiceRef } from "@/lib/cast";

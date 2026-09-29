@@ -1,9 +1,9 @@
 // What an endpoint is on the wire: the paths each kind is reached at, the operational defaults a
 // request falls back on, and — for a speech endpoint — which provider its base URL speaks.
 //
-// Split out of `endpoints.ts` because the server calls these providers too, and that file reaches
-// for the browser's keyring. Nothing here imports Vue or holds state, so both sides share one copy
-// of the rules instead of the server keeping a second that drifts. What each provider is — its
+// Split out of `endpoints.ts` because the server calls these providers too, and that file is the
+// Endpoints page's vocabulary. Nothing here imports Vue or holds state, so both sides share one
+// copy of the rules instead of the server keeping a second that drifts. What each provider is — its
 // host, its request line, its formats, its tags — is written down once per provider in
 // `lib/providers/`; the helpers here are the questions the pages already ask of it.
 import type {

@@ -18,7 +18,7 @@ import { audioFiles, type AudioFiles } from "~/audio/files";
 import { openDb, type Db } from "~/db/client";
 import { migrate } from "~/db/migrate";
 import { startLive, type DemoLive } from "~/demo/live";
-import { pacedEncoders } from "~/demo/pace";
+import { newPace, pacedEncoders, pacedProviders } from "~/demo/pace";
 import { demoReset } from "~/demo/reset";
 import { isFresh, seedDemo } from "~/demo/seed";
 import { audiobookFiles } from "~/exports/files";
@@ -59,11 +59,18 @@ export interface LibraryOptions {
   providers?: Providers;
   /**
    * The demo: seeded when its database is fresh, given the routes that empty it and seed it again
-   * — as it began, or in a Demo tools situation — and making a seeded clip's file the first time
-   * it is read. The real library is none of these — a fresh one starts empty, and a clip file it
-   * has lost stays lost.
+   * — as it began, or in a Demo tools situation — and set how fast its simulated work runs, and
+   * making a seeded clip's file the first time it is read. The real library is none of these — a
+   * fresh one starts empty, its runs take the time they take, and a clip file it has lost stays
+   * lost.
    */
   demo?: boolean;
+  /**
+   * For the demo: seed it without the runs its world starts with (`startupRuns`), on opening and on
+   * a reset. A situation's own runs still go. For a test that reasons about the queue, which the
+   * startup runs would keep busy for the best part of a minute.
+   */
+  still?: boolean;
 }
 
 export interface Library {
@@ -76,7 +83,8 @@ export interface Library {
   readonly runner: Runner;
   /**
    * Start its queue, and then — for a demo seeded as it was opened — set going what the seed
-   * describes that is not a row: its endpoints' recent trouble, as a reset does.
+   * describes that is not a row: its endpoints' recent trouble and the runs it starts with, as a
+   * reset does.
    */
   start(): Promise<void>;
   readonly app: Hono<PinoEnv>;
@@ -105,14 +113,17 @@ export function openLibrary(options: LibraryOptions): Library {
   // Where a request goes, with what model and what key, is the Endpoints page's — read from the
   // database at the moment of each request. An endpoint or profile set to `simulated://` is
   // answered here without one, and nothing it does is billed.
-  const providers = options.providers ?? {
+  const given = options.providers ?? {
     scripting: endpointScriptingProvider(),
     speech: endpointSpeechProvider(),
   };
+  // The demo's simulated work runs at the speed its drawer sets, and its builds take the time the
+  // browser's did, so one running is seen running (`demo/pace.ts`). The real library has no pace.
+  const pace = newPace();
+  const providers = options.demo ? pacedProviders(given, pace) : given;
   const files = audioFiles(options.audioDir, base, options.demo ? demoClips(db) : undefined);
-  // the demo's builds take the time the browser's do, so one running is seen running (`demo/pace.ts`)
   const exports = {
-    encoders: options.demo ? pacedEncoders(options.encoders) : options.encoders,
+    encoders: options.demo ? pacedEncoders(options.encoders, pace) : options.encoders,
     files: audiobookFiles(options.exportDir),
   };
   const voiceFiles = voiceFilesIn(options.voiceDir);
@@ -133,20 +144,28 @@ export function openLibrary(options: LibraryOptions): Library {
   // what a seed made as the demo was opened leaves for once its queue is running
   let pending: DemoLive | null = null;
   if (options.demo && isFresh(db)) {
-    const { seeded, live: seededLive } = seedDemo(db, voiceFiles, { base, now: Date.now() });
+    const { seeded, live: seededLive } = seedDemo(db, voiceFiles, {
+      base,
+      now: Date.now(),
+      still: options.still,
+    });
     log.info(seeded, "seeded the demo");
     pending = seededLive;
   }
-  const reset = options.demo
-    ? demoReset({
-        db,
-        runner,
-        gate,
-        voiceFiles,
-        base,
-        dirs: [options.audioDir, options.exportDir, options.voiceDir],
-        live,
-      })
+  const demo = options.demo
+    ? {
+        pace,
+        reset: demoReset({
+          db,
+          runner,
+          gate,
+          voiceFiles,
+          base,
+          dirs: [options.audioDir, options.exportDir, options.voiceDir],
+          live,
+          still: options.still,
+        }),
+      }
     : undefined;
   async function start(): Promise<void> {
     runner.start();
@@ -164,7 +183,7 @@ export function openLibrary(options: LibraryOptions): Library {
     providers,
     voiceFiles,
     gate,
-    reset,
+    demo,
   });
   return {
     name,

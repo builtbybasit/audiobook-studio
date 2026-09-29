@@ -45,6 +45,13 @@ export const isDemo = mode === "demo";
 export const isBackend = mode === "backend";
 
 /**
+ * Where this tab's API answers: your library at `/api`, the demo library at `/demo/api`. Both are
+ * the same server and the same routes; the demo's are a second library with a database of its own,
+ * so nothing a demo tab does can reach yours.
+ */
+export const API_BASE = isDemo ? "/demo/api" : "/api";
+
+/**
  * Change the tab's mode and load the page again in it.
  *
  * Returns false, and does not reload, when there is no storage or it refused the write: the page

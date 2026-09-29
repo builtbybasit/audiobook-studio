@@ -1,12 +1,15 @@
+// Expression tags as the page places them: anchored in a line's text, spelled the way the endpoint
+// the line's voice is on says, and kept out of every edit of the prose around them. The stores here
+// answer to a seeded demo library, so an edit is written as the page writes it; the speech endpoint
+// the tags are configured on is one the test adds, with a model that takes bracketed tags.
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useHistoryStore } from "@/stores/history";
-import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-import { test, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
+import { test, expect, beforeEach, afterEach } from "bun:test";
 
 import {
   configErrors,
@@ -14,68 +17,87 @@ import {
   expressionParts,
   expressionSupport,
 } from "@/lib/expressions";
-import type { ExpressionTag } from "@/types";
+import { libraryService } from "@/services/library";
+import type { Endpoint, ExpressionTag } from "@/types";
+import { demoServer } from "./support/demoServer";
+import { testPinia, type TestPinia } from "./support/pinia";
 
+const BOOK = "cliche";
 const laugh: ExpressionTag = {
   id: "laughter",
   label: "Laughter",
   token: "[laughter]",
   kind: "sound",
 };
+/** A self-hosted speech endpoint, whose model takes whatever tags it is told it does. */
+const studio = (): Endpoint => ({
+  id: "studio",
+  name: "Studio Kokoro",
+  baseUrl: "http://127.0.0.1:8880/v1",
+  model: "kokoro",
+  concurrency: 2,
+  enabled: true,
+  latency: 1000,
+  failRate: 0,
+  price: 0,
+  billing: { unit: "chars", rate: 0 },
+  needsKey: false,
+  maxChars: 500,
+  splitAt: "sentence",
+  voices: [{ id: "af_heart", label: "Heart", gender: "f" }],
+  history: [],
+  failures: 0,
+  rateLimits: 0,
+  backoffUntil: 0,
+});
+let pinia: TestPinia;
 let castStore: ReturnType<typeof useCastStore>;
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
 let historyStore: ReturnType<typeof useHistoryStore>;
-let jobsStore: ReturnType<typeof useJobsStore>;
 let narrationStore: ReturnType<typeof useNarrationStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
-let uiStore: ReturnType<typeof useUiStore>;
-let timers: (() => void)[];
-let restores: (() => void)[];
-let clock: number;
-beforeEach(() => {
+beforeEach(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  setActivePinia(createPinia());
+  await demoServer();
+  pinia = testPinia();
   castStore = useCastStore();
   endpointsStore = useEndpointsStore();
   historyStore = useHistoryStore();
-  jobsStore = useJobsStore();
   narrationStore = useNarrationStore();
   scriptsStore = useScriptsStore();
-  uiStore = useUiStore();
-  jobsStore.jobs = [];
-  uiStore.toast = () => "test";
-  timers = [];
-  clock = 1000;
-  restores = [
-    spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) => {
-      timers.push(fn);
-      return timers.length;
-    }) as unknown as typeof setTimeout),
-    spyOn(Date, "now").mockImplementation(() => clock),
-    spyOn(Math, "random").mockReturnValue(0.5),
-  ].map((s) => () => s.mockRestore());
-  const ep = endpointsStore.endpoints.find((e) => e.id === "local")!;
-  ep.enabled = true;
-  ep.needsKey = false;
-  ep.backoffUntil = 0;
-  ep.failRate = 0;
-  castStore.characters.cliche.forEach((c) => {
-    c.voice = `local/${ep.voices[0].id}`;
+  const libraryStore = useLibraryStore();
+  useUiStore().toast = () => "test";
+  const svc = libraryService();
+  await Promise.all([libraryStore.load(true), endpointsStore.load()]);
+  // the endpoint is the test's own: nothing about it needs to reach the server
+  endpointsStore._detach();
+  endpointsStore.endpoints.push(studio());
+  await libraryStore.loadBook(BOOK);
+  castStore._install(BOOK, await svc.cast(BOOK));
+  for (const c of castStore.characters[BOOK]) c.voice = "studio/af_heart";
+  // chapter 1 is one line, at the revision the server holds, so the next edit of it is accepted
+  const { revision } = await svc.chapterScript(BOOK, 1);
+  scriptsStore._install(BOOK, 1, {
+    revision,
+    segments: [
+      {
+        id: 1,
+        text: "Ji Ning laughed.\n\nThen he left.",
+        speaker: "Narrator",
+        type: "narration",
+        direction: "",
+        audio: { status: "none", endpoint: null, duration: 0, ms: 0 },
+      },
+    ],
   });
-  scriptsStore.segments["cliche:1"] = [
-    {
-      id: 1,
-      text: "Ji Ning laughed.\n\nThen he left.",
-      speaker: "Narrator",
-      type: "narration",
-      direction: "",
-      audio: { status: "none", endpoint: null, duration: 0, ms: 0 },
-    },
-  ];
+  historyStore._install(BOOK, 1, await svc.chapterHistory(BOOK, 1));
 });
-afterEach(() => restores.forEach((r) => r()));
-const endpoint = () => endpointsStore.endpoints.find((e) => e.id === "local")!;
-const segment = () => scriptsStore.segmentsOf("cliche", 1)[0];
+afterEach(async () => {
+  await scriptsStore._settled(BOOK, 1);
+  pinia.stop();
+});
+const endpoint = () => endpointsStore.endpoints.find((e) => e.id === "studio")!;
+const segment = () => scriptsStore.segmentsOf(BOOK, 1)[0];
 function configure() {
   const e = endpoint();
   endpointsStore.saveExpressionConfig(e.id, {
@@ -85,18 +107,9 @@ function configure() {
     tags: [laugh],
   });
 }
-function drain() {
-  for (let guard = 0; timers.length && guard < 300; guard++) {
-    clock += 1000;
-    const due = timers;
-    timers = [];
-    due.forEach((fn) => fn());
-  }
-  expect(timers).toHaveLength(0);
-}
 function insert(at = 0) {
   configure();
-  narrationStore.addExpression("cliche", 1, 1, laugh, at);
+  narrationStore.addExpression(BOOK, 1, 1, laugh, at);
 }
 
 test("ordinary bracketed prose is unchanged, even on an unconfigured model", () => {
@@ -111,13 +124,13 @@ test("pronunciation runs on prose, expression tags stay exact and anchors follow
   insert(8);
   const s = segment();
   const original = s.text;
-  castStore.addTerm("cliche", "laughter", "HA HA");
-  const plan = narrationStore.expressionRender("cliche", s);
+  castStore.addTerm(BOOK, "laughter", "HA HA");
+  const plan = narrationStore.expressionRender(BOOK, s);
   expect(plan.text).toBe("Jee Ning [laughter] laughed.\n\nThen he left.");
   expect(s.text).toBe(original);
   expect(plan.tags).toEqual(["[laughter]"]);
-  narrationStore.updateExpression("cliche", 1, 1, 1, { at: 3 });
-  expect(narrationStore.expressionRender("cliche", s).issues[0].reason).toContain(
+  narrationStore.updateExpression(BOOK, 1, 1, 1, { at: 3 });
+  expect(narrationStore.expressionRender(BOOK, s).issues[0].reason).toContain(
     "pronunciation replacement",
   );
 });
@@ -125,148 +138,44 @@ test("pronunciation runs on prose, expression tags stay exact and anchors follow
 test("same named expression resolves to the selected model's syntax", () => {
   insert();
   endpoint().expressions!.tags[0].token = "[laugh]";
-  expect(narrationStore.expressionRender("cliche", segment()).text).toStartWith("[laugh]");
+  expect(narrationStore.expressionRender(BOOK, segment()).text).toStartWith("[laugh]");
   endpoint().model = "another-model";
   expect(expressionSupport(endpoint())).toBe("unknown");
-  expect(narrationStore.expressionRender("cliche", segment()).issues[0].reason).toContain(
+  expect(narrationStore.expressionRender(BOOK, segment()).issues[0].reason).toContain(
     "not been confirmed",
   );
   configure();
-  expect(narrationStore.expressionRender("cliche", segment()).issues).toHaveLength(0);
+  expect(narrationStore.expressionRender(BOOK, segment()).issues).toHaveLength(0);
 });
 
-test("unknown and unsupported expressions require review before any audio is changed", () => {
-  insert();
-  endpoint().expressions!.status = "unsupported";
-  const before = JSON.stringify(segment().audio);
-  // placing the annotation opened an editing session in the chapter's history; nothing else is due
-  const scheduled = timers.length;
-  narrationStore.runNarration("cliche", [1]);
-  expect(jobsStore.jobs).toHaveLength(0);
-  expect(timers).toHaveLength(scheduled);
-  expect(JSON.stringify(segment().audio)).toBe(before);
-  expect(narrationStore.expressionReview).not.toBeNull();
-  narrationStore.continueExpressionReview();
-  expect(jobsStore.jobs).toHaveLength(0);
-  expect(narrationStore.expressionReview).not.toBeNull();
-  narrationStore.omitReviewExpressions();
-  narrationStore.continueExpressionReview();
-  drain();
-  expect(jobsStore.jobs[0].status).toBe("done");
-  expect(segment().expressions![0].omitted).toBe(true);
-  expect(segment().audio.said).not.toContain("[laughter]");
-});
-
-test("an annotation put back where it already was is not an edit of the script", () => {
+test("an annotation put back where it already was is not an edit of the script", async () => {
   insert(8);
-  narrationStore.retrySegment("cliche", 1, 1);
-  drain();
-  expect(segment().audio.status).toBe("done");
-  const entries = historyStore.versionsOf("cliche", 1).length;
+  await scriptsStore._settled(BOOK, 1);
+  // the line as it stands has been rendered
+  segment().audio.status = "done";
+  const entries = historyStore.versionsOf(BOOK, 1).length;
 
   // dragging a tag home again: the script still says what the clip was rendered from
-  narrationStore.updateExpression("cliche", 1, 1, 1, { at: 8 });
+  narrationStore.updateExpression(BOOK, 1, 1, 1, { at: 8 });
   expect(segment().audio.status).toBe("done");
-  expect(historyStore.versionsOf("cliche", 1)).toHaveLength(entries);
+  await scriptsStore._settled(BOOK, 1);
+  expect(historyStore.versionsOf(BOOK, 1)).toHaveLength(entries);
 
-  // …and a real move is still an edit, with the clip marked and the session opened
-  narrationStore.updateExpression("cliche", 1, 1, 1, { at: 9 });
+  // …and a real move is still an edit, with the clip marked and the edit recorded
+  narrationStore.updateExpression(BOOK, 1, 1, 1, { at: 9 });
   expect(segment().audio.status).toBe("stale");
-  expect(historyStore.headOf("cliche", 1).origin).toMatchObject({ kind: "edited" });
-});
-
-test("omitting the reviewed expressions only touches the lines that had any", () => {
-  insert();
-  endpoint().expressions!.status = "unsupported";
-  // a second chapter in the review with nothing wrong with it: it is not edited, so it neither
-  // goes stale nor gains an entry in its own history
-  scriptsStore.segments["cliche:2"] = [
-    {
-      id: 1,
-      text: "The mountain said nothing.",
-      speaker: "Narrator",
-      type: "narration",
-      direction: "",
-      audio: { status: "done", endpoint: "local", duration: 2, ms: 900 },
-    },
-  ];
-  const clean = JSON.stringify(scriptsStore.segmentsOf("cliche", 2));
-  narrationStore.runNarration("cliche", [1]);
-  narrationStore.expressionReview!.targets.push({ chId: 2, segId: 1 });
-
-  narrationStore.omitReviewExpressions();
-  expect(segment().expressions![0].omitted).toBe(true);
-  expect(historyStore.headOf("cliche", 1).origin).toMatchObject({ kind: "edited" });
-  expect(JSON.stringify(scriptsStore.segmentsOf("cliche", 2))).toBe(clean);
-  expect(historyStore.versionsOf("cliche", 2)).toHaveLength(0);
-  expect(historyStore.headOf("cliche", 2).origin.kind).not.toBe("edited");
-});
-
-test("dispatch uses the preview, retains expressions in its audit trail and job events", () => {
-  insert();
-  const planned = narrationStore.expressionRender("cliche", segment()).text;
-  narrationStore.retrySegment("cliche", 1, 1);
-  drain();
-  expect(segment().audio.said).toBe(planned);
-  expect(segment().audio.text).toBe(segment().text);
-  expect(segment().audio.expressions).toEqual(["[laughter]"]);
-  expect(jobsStore.jobs[0].activity!.some((e) => e.detail?.expressions === "[laughter]")).toBe(
-    true,
-  );
-  expect(narrationStore.clipDrift("cliche", segment())).toEqual([]);
-});
-
-test("changing an annotation while rendering makes the returned clip stale", () => {
-  insert();
-  narrationStore.retrySegment("cliche", 1, 1);
-  expect(segment().audio.status).toBe("generating");
-  narrationStore.updateExpression("cliche", 1, 1, 1, { at: segment().text.length });
-  drain();
-  expect(segment().audio.status).toBe("stale");
-  expect(segment().audio.said).toStartWith("[laughter]");
-  // the drift names expressions as what moved under the clip
-  expect(
-    narrationStore.clipDrift("cliche", segment()).some((d) => d.startsWith("expressions")),
-  ).toBe(true);
-});
-
-test("model changes stale annotated audio and never dispatch incompatible queued tags", () => {
-  insert();
-  narrationStore.retrySegment("cliche", 1, 1);
-  drain();
-  endpoint().model = "new model";
-  narrationStore.refreshExpressionAudio();
-  expect(segment().audio.status).toBe("stale");
-  narrationStore.retrySegment("cliche", 1, 1);
-  expect(narrationStore.expressionReview).not.toBeNull();
-  expect(timers).toHaveLength(0);
-});
-
-test("queued clips recheck capabilities after the run has started", () => {
-  insert();
-  scriptsStore
-    .segmentsOf("cliche", 1)
-    .push({ ...structuredClone(JSON.parse(JSON.stringify(segment()))), id: 2 });
-  endpoint().concurrency = 1;
-  narrationStore.runNarration("cliche", [1]);
-  endpoint().model = "new model";
-  drain();
-  const second = scriptsStore.segmentsOf("cliche", 1)[1];
-  expect(second.audio.status).toBe("failed");
-  expect(second.audio.error!.message).toContain("Expression needs attention");
-  expect(jobsStore.jobs[0].activity!.some((e) => /Segment 2 blocked/.test(e.message))).toBe(true);
+  await scriptsStore._settled(BOOK, 1);
+  expect(historyStore.headOf(BOOK, 1).origin).toMatchObject({ kind: "edited" });
 });
 
 test("split and join preserve annotations at their correct positions without duplicating them", () => {
   const pos = segment().text.indexOf("Then");
   insert(pos);
   const before = segment().text;
-  const second = scriptsStore.splitSegment("cliche", 1, 1, pos)!;
+  const second = scriptsStore.splitSegment(BOOK, 1, 1, pos)!;
   expect(segment().expressions).toHaveLength(0);
-  expect(
-    scriptsStore.segmentsOf("cliche", 1).find((s) => s.id === second)!.expressions![0].at,
-  ).toBe(0);
-  scriptsStore.joinSegments("cliche", 1, 1);
+  expect(scriptsStore.segmentsOf(BOOK, 1).find((s) => s.id === second)!.expressions![0].at).toBe(0);
+  scriptsStore.joinSegments(BOOK, 1, 1);
   expect(segment().text).toBe(before);
   expect(segment().expressions).toHaveLength(1);
   expect(segment().expressions![0].at).toBe(pos);
@@ -275,18 +184,18 @@ test("split and join preserve annotations at their correct positions without dup
 test("text edits preserve distant anchors but ask for review at an edited anchor", () => {
   insert(segment().text.length);
   const original = segment().text;
-  scriptsStore.updateSegment("cliche", 1, 1, { text: "Yesterday " + original });
+  scriptsStore.updateSegment(BOOK, 1, 1, { text: "Yesterday " + original });
   expect(segment().expressions![0].at).toBe(segment().text.length);
-  narrationStore.updateExpression("cliche", 1, 1, 1, { at: 0 });
-  scriptsStore.updateSegment("cliche", 1, 1, { text: "Today " + original });
+  narrationStore.updateExpression(BOOK, 1, 1, 1, { at: 0 });
+  scriptsStore.updateSegment(BOOK, 1, 1, { text: "Today " + original });
   expect(segment().expressions![0].needsReview).toBe(true);
-  expect(narrationStore.expressionRender("cliche", segment()).issues).toHaveLength(1);
+  expect(narrationStore.expressionRender(BOOK, segment()).issues).toHaveLength(1);
 });
 
 test("request chunking never splits an expression, including tags with spaces", () => {
   insert(8);
   endpoint().expressions!.tags[0].token = "[soft laugh]";
-  const plan = narrationStore.expressionRender("cliche", segment());
+  const plan = narrationStore.expressionRender(BOOK, segment());
   for (const maxChars of [12, 13, 15, 20]) {
     const parts = expressionParts(plan, { maxChars, splitAt: "word" });
     expect(parts.map((p) => p.text).join("")).toBe(plan.text);
@@ -295,20 +204,9 @@ test("request chunking never splits an expression, including tags with spaces", 
     expect(parts.filter((p) => /\[|\]/.test(p.text))).toHaveLength(1);
   }
   endpoint().maxChars = 3;
-  expect(narrationStore.expressionRender("cliche", segment()).issues[0].reason).toContain(
+  expect(narrationStore.expressionRender(BOOK, segment()).issues[0].reason).toContain(
     "character limit",
   );
-});
-
-test("retake snapshots retain the expressions that were actually rendered", () => {
-  insert();
-  narrationStore.retrySegment("cliche", 1, 1);
-  drain();
-  narrationStore.retakeSegment("cliche", 1, 1);
-  drain();
-  narrationStore.acceptTake("cliche", 1, 1);
-  expect(segment().audio.takes![0].expressions).toEqual(["[laughter]"]);
-  expect(segment().audio.takes![0].expressionSignature).toBe(segment().audio.expressionSignature);
 });
 
 test("invalid tag definitions cannot be saved or imported", () => {
@@ -336,34 +234,7 @@ test("tags are checked against the model they are saved for, not the one the dra
 test("a deleted tag does not fall back to sending the old syntax", () => {
   insert();
   endpoint().expressions!.tags = [];
-  const plan = narrationStore.expressionRender("cliche", segment());
+  const plan = narrationStore.expressionRender(BOOK, segment());
   expect(plan.issues).toHaveLength(1);
   expect(plan.tags).toHaveLength(0);
-});
-
-test("a second chapter blocked while a review is open joins it instead of replacing it", () => {
-  // Two chapters, each with an annotation no endpoint supports. A caller that guards chapter by
-  // chapter — the lexicon panel's "re-narrate every stale chapter" — reaches the guard twice, and
-  // the second call used to overwrite the first: chapter 1's review vanished and its resume never
-  // ran, so it queued nothing and said nothing.
-  insert();
-  scriptsStore.segments["cliche:2"] = JSON.parse(JSON.stringify(scriptsStore.segments["cliche:1"]));
-  endpoint().expressions!.status = "unsupported";
-
-  const resumed: number[] = [];
-  expect(
-    narrationStore._expressionGuard("cliche", [{ chId: 1, segId: 1 }], () => resumed.push(1)),
-  ).toBe(true);
-  expect(
-    narrationStore._expressionGuard("cliche", [{ chId: 2, segId: 1 }], () => resumed.push(2)),
-  ).toBe(true);
-
-  // one review, holding both chapters' lines
-  expect(narrationStore.expressionReview!.targets).toEqual([
-    { chId: 1, segId: 1 },
-    { chId: 2, segId: 1 },
-  ]);
-  narrationStore.continueExpressionReview();
-  // …and neither chapter's work was dropped on the floor
-  expect(resumed).toEqual([1, 2]);
 });

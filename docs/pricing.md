@@ -108,9 +108,8 @@ Providers disagree about this, so nothing reads a payload directly. `normalizeUs
 [src/lib/pricing.ts](../src/lib/pricing.ts) is the one way in and knows three shapes: OpenAI's `prompt_tokens` **includes**
 `prompt_tokens_details.cached_tokens`, Anthropic's `input_tokens` **excludes**
 `cache_read_input_tokens` and `cache_creation_input_tokens`, and a plain provider reports totals and
-nothing else. [src/mock/simulators/usage.ts](../src/mock/simulators/usage.ts) builds payloads in those shapes and reads them back
-through the same normalizer, so both the live simulator and the seeded week of history exercise the
-rule rather than assert it.
+nothing else. The server reads every answer through it, and its tests feed it payloads in each
+shape, so the rule is exercised rather than asserted.
 
 - **Zero cached tokens and no cache report are different facts.** `cachedInput: 0` is a reported
   zero. `null` means the provider said nothing: the request is then charged with the whole input at
@@ -186,7 +185,7 @@ report an artificial underspend and overrun against each other.
 ### The ledger: what was spent is what was requested
 
 Every request that settles — a scripting chunk, a rendered clip, a retake, one that failed, one the
-provider refused — is appended to [src/stores/usage.ts](../src/stores/usage.ts) with the receipt it was priced from, and
+provider refused — is appended to the server's `requests` table with the receipt it was priced from, and
 nothing afterwards moves it, re-prices it or takes it out. Spending is read from there.
 
 That is a deliberate replacement for totalling the clip currently sitting on each line, which was
@@ -195,16 +194,15 @@ made the money already spent on the clip it displaced **disappear** — recorded
 and the budget handed back capacity it had genuinely used. A take carries its `SpeechCharge` into
 the take list with it, so a superseded recording still says what it cost, at what rate, and why.
 
-The same ledger is what the Endpoints **Activity** list reads for this session's own work. Reading
-it out of the running job simulator meant a request vanished from the page the moment it finished —
-the one moment its receipt is worth opening — and the page fell back to unrelated sample history.
-The list now shows in-flight requests, then this session's settled ones with their receipts, then
-the fixture service's invented week, with a violet dot marking everything this session produced.
+The same ledger is what the Endpoints **Activity** list reads. Reading it out of the running job
+meant a request vanished from the page the moment it finished —
+the one moment its receipt is worth opening. The list shows in-flight requests, then the settled
+ones with their receipts.
 
-The seeded world's own narration predates the ledger, so it is an opening balance: totalled once
-from the **pristine** world rather than from the clips a session can move, and recomputed only when
-a reset restores that world. Every clip rendered here has a row of its own instead, so the two
-halves cannot overlap and neither can be un-counted by a clip being retried, replaced or displaced.
+The demo's seeded narration predates its ledger, so it is an opening balance: totalled once, when
+the demo is seeded, from the clips as they were, and kept beside the ledger. Every clip rendered
+after that has a row of its own instead, so the two cannot overlap and neither can be un-counted by
+a clip being retried, replaced or displaced.
 
 The reported cache percentage divides like by like: cached tokens over the input of the requests
 that **reported** a cache figure, with the traffic that said nothing left out of both halves and

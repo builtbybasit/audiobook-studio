@@ -7,13 +7,15 @@ import { useEndpointsStore } from "@/stores/endpoints";
 // Listbox so arrows/Enter work. v-model is the voice ref (`endpointId/voiceId`) or null.
 import { computed, ref, watch } from "vue";
 
-import { speak } from "@/composables/usePlayer";
+import { SAMPLE_TITLE, useVoiceSample } from "@/composables/useVoiceSample";
 import type { Component } from "vue";
 import {
   Check as CheckIcon,
   ChevronDown as ChevronDownIcon,
   Dot as NeutralIcon,
+  LoaderCircle as BusyIcon,
   Mars as MaleIcon,
+  Pause as PauseIcon,
   Play as PlayIcon,
   Venus as FemaleIcon,
 } from "@lucide/vue";
@@ -86,10 +88,7 @@ function pick(v: unknown) {
   emit("update:modelValue", v === "__null__" ? null : String(v));
   open.value = false;
 }
-const sample =
-  props.speaker === "Narrator"
-    ? "The mountain mist thinned as dawn crept over the outer sect grounds."
-    : "I have not come to fight. Give me three days, that is all I ask.";
+const voiceSample = useVoiceSample();
 defineExpose({ open });
 </script>
 
@@ -183,10 +182,20 @@ defineExpose({ open });
                 <span class="ml-auto flex items-center gap-1 pl-2">
                   <button
                     class="rounded px-1 text-zinc-400 hover:bg-zinc-200 hover:text-violet-500 dark:hover:bg-zinc-700"
-                    title="demo (browser voice — the real one needs the backend)"
-                    @click.stop.prevent="speak(sample, v.id)"
+                    :title="SAMPLE_TITLE"
+                    :aria-label="`${voiceSample.playing(`${g.endpoint.id}/${v.id}`) ? 'Pause' : 'Hear'} ${v.label}`"
+                    :aria-busy="voiceSample.fetching(`${g.endpoint.id}/${v.id}`)"
+                    @click.stop.prevent="voiceSample.play(g.endpoint, v.id, v.label)"
                   >
-                    <PlayIcon class="icon-sm icon-fill" />
+                    <BusyIcon
+                      v-if="voiceSample.fetching(`${g.endpoint.id}/${v.id}`)"
+                      class="icon-sm animate-spin"
+                    />
+                    <PauseIcon
+                      v-else-if="voiceSample.playing(`${g.endpoint.id}/${v.id}`)"
+                      class="icon-sm icon-fill"
+                    />
+                    <PlayIcon v-else class="icon-sm icon-fill" />
                   </button>
                   <CheckIcon
                     v-if="modelValue === `${g.endpoint.id}/${v.id}`"

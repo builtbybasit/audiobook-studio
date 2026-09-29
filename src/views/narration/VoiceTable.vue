@@ -7,12 +7,14 @@ import { useScriptsStore } from "@/stores/scripts";
 // Narrator's voice unless given one. Search, "unassigned only", auto-assign by gender.
 import { computed, ref } from "vue";
 
-import { speak } from "@/composables/usePlayer";
+import { SAMPLE_TITLE, useVoiceSample } from "@/composables/useVoiceSample";
 import { UiSelect, UiCheckbox, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
 import {
   ChevronDown as ChevronDownIcon,
   ChevronRight as ChevronRightIcon,
+  LoaderCircle as BusyIcon,
+  Pause as PauseIcon,
   Play as PlayIcon,
   TriangleAlert as WarnIcon,
   ArrowRight as NextIcon,
@@ -73,10 +75,9 @@ const editLink = (c: Character) => ({
   path: `/book/${props.bookId}/cast`,
   query: { speaker: c.name },
 });
-const sample = (c: Character) =>
-  c.name === "Narrator"
-    ? "The mountain mist thinned as dawn crept over the outer sect grounds."
-    : "I have not come to fight. Give me three days, that is all I ask.";
+const voiceSample = useVoiceSample();
+/** The voice a speaker is read in: their own, or the Narrator's they borrow. */
+const heardRef = (c: Character) => castStore.effectiveVoice(props.bookId, c.name).ref;
 function applyAssignments() {
   castStore.autoAssignByGender(props.bookId);
   assignOpen.value = false;
@@ -180,13 +181,20 @@ function applyAssignments() {
             class="min-w-0 flex-1"
             block
           />
-          <UiTooltip text="Prototype: plays a browser voice, not the real TTS voice"
+          <UiTooltip :text="SAMPLE_TITLE"
             ><button
               class="btn-ghost btn-xs"
-              :disabled="!castStore.effectiveVoice(bookId, c.name).voice"
-              @click="speak(sample(c), castStore.effectiveVoice(bookId, c.name).voice ?? '')"
+              :aria-label="`${voiceSample.playing(heardRef(c)) ? 'Pause' : 'Hear'} ${c.name}'s voice`"
+              :disabled="
+                !castStore.effectiveVoice(bookId, c.name).voice ||
+                (!!voiceSample.loading.value && !voiceSample.fetching(heardRef(c)))
+              "
+              :aria-busy="voiceSample.fetching(heardRef(c))"
+              @click="voiceSample.playRef(heardRef(c))"
             >
-              <PlayIcon class="icon-sm icon-fill" /><span class="text-[9px] text-zinc-400"
+              <BusyIcon v-if="voiceSample.fetching(heardRef(c))" class="icon-sm animate-spin" />
+              <PauseIcon v-else-if="voiceSample.playing(heardRef(c))" class="icon-sm icon-fill" />
+              <PlayIcon v-else class="icon-sm icon-fill" /><span class="text-[9px] text-zinc-400"
                 >demo</span
               >
             </button></UiTooltip

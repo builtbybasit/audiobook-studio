@@ -716,7 +716,7 @@ service are both built on it, so that rule is written once.
 | `PUT`    | `/api/endpoints`                                 | The whole configuration, in place of what is stored            |
 | `POST`   | `/api/endpoints/test`                            | One small request to a saved endpoint with its saved key       |
 | `POST`   | `/api/endpoints/voices`                          | A saved endpoint's voices: its library, or a public search     |
-| `POST`   | `/api/endpoints/sample`                          | One saved voice saying the sample sentence: the audio itself   |
+| `POST`   | `/api/endpoints/sample`                          | One saved voice, heard: kept, its own recording, or rendered   |
 | `POST`   | `/api/endpoints/voices/clone`                    | A voice made from samples on the provider (multipart, 201)     |
 | `GET`    | `/api/endpoints/requests`                        | One endpoint's requests, newest first; `?kind&id&range`        |
 | `GET`    | `/api/endpoints/live`                            | Each speech endpoint's lines out and waiting, and its cooldown |
@@ -1135,18 +1135,31 @@ do this — is a `400`; a 4xx the provider answered, other than a timeout (408) 
 the code `upstream` and what it said. None of these messages carries the key.
 
 **A voice sample** is `POST /api/endpoints/sample` `{ id, voice }`, answering the audio itself —
-`content-type` the format it came back in, `x-audio-duration` its length in seconds. The **saved**
-endpoint says one fixed sentence (`VOICE_SAMPLE` in [endpointShapes.ts](../src/lib/endpointShapes.ts),
-which the demo's browser voice reads too) in that
-voice with its saved key, asked for the way a line is — the endpoint's format and sample rate, no
-instructions — and tried once, like a connection test. Like the voice list it goes to the endpoint
-itself, but unlike it, it is billed: a click on ▶ asks to hear the voice, and a simulated
-endpoint's tone is all that one has. So the request is priced into the ledger like any
-other, against the endpoint with no book (`Voice sample · <label>` in its Activity list). A missing
-key is a `400` before any request, and the provider's failures are split as the voice list's are.
-The browser keeps each sample it
-has heard for the session, so pressing ▶ again replays it rather than paying again, until the
-endpoint's base URL, model, format or rate changes.
+`content-type` the format it is in, `x-sample-source` `recording` or `rendered`, `x-sample-kept`
+`1` when nothing was asked of the provider this time, and `x-audio-duration` its length in seconds
+when the server knows it (a provider's recording is timed by the page, from the file). It is what
+every ▶ plays: the Voices tab's, the demo button beside a speaker on the Narration page, and the
+one beside each voice in the voice picker. It is found in this order:
+
+1. **Kept.** What was played for the voice before, from `heard/` under the library's `VOICE_DIR`
+   (one directory per endpoint, one per voice, named by hashes). Free.
+2. **The provider's own recording** of the voice, where it keeps one — Fish does, for most voices:
+   `GET /model/{id}` on the endpoint's host with its saved key, then the first sample's file, only
+   from an `https` link on Fish's own hosts. Free, and kept. Fish not answering, or knowing no
+   such voice, is not a failure: the next step is taken.
+3. **Rendered.** The **saved** endpoint says one fixed sentence (`VOICE_SAMPLE` in
+   [endpointShapes.ts](../src/lib/endpointShapes.ts)) in that voice with its saved key, asked for
+   the way a line is — the endpoint's format and sample rate, no instructions — and tried once,
+   like a connection test. This is the one that is billed, priced into the ledger against the
+   endpoint with no book (`Voice sample · <label>` in its Activity list), and kept before the
+   answer goes back, so the next press finds it. A missing key is a `400` before any request, and
+   the provider's failures are split as the voice list's are.
+
+A rendered sample is kept under a hash of the endpoint's base URL, model, format and rate and the
+sentence, so an endpoint changed in any of them has its samples made again, each replacing the old
+one. A simulated endpoint's tone is never kept: it costs nothing to make. Saving the endpoints
+removes what was kept for any endpoint no longer among them. The browser also keeps each sample it
+has heard for the session, which saves the round trip.
 
 **Cloning a voice** is `POST /api/endpoints/voices/clone`, a multipart form of the endpoint's `id`,
 the voice's `title`, the samples under `clips` and `consent=yes`, which says the person has the

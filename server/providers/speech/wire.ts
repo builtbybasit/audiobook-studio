@@ -68,6 +68,17 @@ export interface SpeechWire {
     voices: string[],
     options: SpeechCallOptions & { billsFailures: boolean },
   ): Promise<void>;
+  /**
+   * The provider's own recording of one voice, where it keeps one — a link to the file and what
+   * is said in it. Asking costs nothing, and neither does the file. Null for a voice that has none,
+   * or that the provider does not know. Only Fish keeps one with a voice.
+   */
+  recording?(
+    target: ProviderTarget,
+    voice: string,
+    signal: AbortSignal,
+    options: SpeechCallOptions,
+  ): Promise<{ url: string; text: string } | null>;
   /** One page of the provider's public catalogue, for the one provider that has one (Fish). */
   search?(
     target: ProviderTarget,

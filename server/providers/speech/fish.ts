@@ -208,6 +208,25 @@ export const fishWire: SpeechWire = {
     return { voices, total: voices.length, page: 1, hasMore: more };
   },
 
+  async recording(target, voice, signal, options) {
+    // a Fish voice is a model, asked for by its id; anything else cannot be one
+    if (!FISH_ID.test(voice)) return null;
+    try {
+      const model = await getJson<FishModel>(
+        target,
+        `${fishApiRoot(target.baseUrl)}/model/${voice.toLowerCase()}`,
+        jsonHeaders(target),
+        signal,
+        options,
+      );
+      return fishSampleOf(model);
+    } catch (e) {
+      // gone, or someone else's private voice: no recording, and the endpoint renders one
+      if (e instanceof ProviderError && (e.status === 404 || e.status === 403)) return null;
+      throw e;
+    }
+  },
+
   async search(target, query, signal, options) {
     const root = fishApiRoot(target.baseUrl);
     const words = query.query?.trim() ?? "";

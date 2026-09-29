@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { sizeLabel } from "@/lib/audioFormat";
 import { useCastStore } from "@/stores/cast";
-import { useEndpointsStore } from "@/stores/endpoints";
+import { useEndpointsStore, type HeardSample } from "@/stores/endpoints";
+import { SAMPLE_TITLE } from "@/composables/useVoiceSample";
 import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 import { useSpeakerSamplesStore, type CloneFromSamples } from "@/stores/speakerSamples";
@@ -388,8 +389,9 @@ async function forgetKept(v: Voice) {
 }
 
 // ---------- samples ----------
-// Play is the saved endpoint saying a sentence in that voice: a real, priced request, heard once and
-// replayed from then on (`endpointsStore.sampleVoice`).
+// Play is the provider's own recording of the voice where it keeps one, or else the saved endpoint
+// saying a sentence in it: a real, priced request, made once and kept by the server from then on
+// (`endpointsStore.sampleVoice`).
 const player = usePlayer();
 const sampling = ref<string | null>(null);
 const sampleId = (v: Voice) => `sample:${props.endpoint.id}/${v.id}`;
@@ -397,14 +399,19 @@ const playingSample = (v: Voice) => player.p.id === sampleId(v) && player.p.play
 const sampleTitle = computed(() =>
   needsKeyFirst.value
     ? "Save a key for this endpoint first: a sample is a real request"
-    : "Hear this voice from the provider — a real request, billed once and replayed after",
+    : SAMPLE_TITLE,
 );
+/** A sample the server timed plays at once; one only its file can time is read for it first. */
+const hear = (id: string, sample: HeardSample, title: string): Promise<void> | void =>
+  sample.duration
+    ? player.play(id, sample.duration, sample.url)
+    : player.playFile(id, sample.url, title);
 async function playSample(v: Voice) {
   if (sampling.value) return;
   sampling.value = v.id;
   try {
     const sample = await endpointsStore.sampleVoice(props.endpoint, v.id);
-    if (sample) player.play(sampleId(v), sample.duration, sample.url);
+    if (sample) await hear(sampleId(v), sample, v.label);
   } finally {
     sampling.value = null;
   }
@@ -427,7 +434,7 @@ async function playFound(v: FoundVoice) {
     if (v.sample) await player.playFile(foundId(v), v.sample.url, v.label);
     else {
       const sample = await endpointsStore.sampleVoice(props.endpoint, v.id);
-      if (sample) player.play(foundId(v), sample.duration, sample.url);
+      if (sample) await hear(foundId(v), sample, v.label);
     }
   } catch (e) {
     uiStore.toast(`Could not play the sample of ${v.label}`, {

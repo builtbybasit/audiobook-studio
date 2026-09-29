@@ -163,12 +163,19 @@ let held = "";
 let timer: ReturnType<typeof setTimeout> | null = null;
 let stopWatch: (() => void) | null = null;
 
+/** A voice heard, as an object url; `duration` is null when only the file knows it. */
+export interface HeardSample {
+  url: string;
+  duration: number | null;
+  source: "recording" | "rendered";
+}
+
 /**
- * Voice samples heard this session, as object urls, by what they were rendered with. A sample is a
- * paid request, so pressing play again replays it rather than buying it again — until the endpoint
- * is pointed at another server, model, format or rate, which would make it a different sample.
+ * Voice samples heard this session, as object urls, by what they were rendered with. The server
+ * keeps them too, so this only saves the round trip — until the endpoint is pointed at another
+ * server, model, format or rate, which would make it a different sample.
  */
-const samples = new Map<string, { url: string; duration: number }>();
+const samples = new Map<string, HeardSample>();
 const sampleKey = (ep: Endpoint, voiceId: string): string =>
   JSON.stringify([ep.id, ep.baseUrl, ep.model, encodingOf(ep), ep.sampleRate ?? null, voiceId]);
 
@@ -715,21 +722,19 @@ export const useEndpointsStore = defineStore("endpoints", {
       return added.length;
     },
     /**
-     * One of `ep`'s voices saying the sample sentence, rendered by the saved endpoint with its saved
-     * key — a real request, priced into the ledger — or the one already heard. Null when the
+     * One of `ep`'s voices, heard: the provider's own recording of it, or the saved endpoint saying
+     * the sample sentence with its saved key — a real request, priced into the ledger, that the
+     * server makes once and keeps. Heard once in this tab, it is replayed from here. Null when the
      * request failed, which has been said.
      */
-    async sampleVoice(
-      ep: Endpoint,
-      voiceId: string,
-    ): Promise<{ url: string; duration: number } | null> {
+    async sampleVoice(ep: Endpoint, voiceId: string): Promise<HeardSample | null> {
       const key = sampleKey(ep, voiceId);
       const heard = samples.get(key);
       if (heard) return heard;
       try {
         await this.flushWrites();
-        const { blob, duration } = await this._service().sampleVoice(ep.id, voiceId);
-        const sample = { url: URL.createObjectURL(blob), duration };
+        const { blob, duration, source } = await this._service().sampleVoice(ep.id, voiceId);
+        const sample = { url: URL.createObjectURL(blob), duration, source };
         samples.set(key, sample);
         return sample;
       } catch (cause) {

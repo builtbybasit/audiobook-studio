@@ -364,19 +364,3 @@ const api = {
 export function usePlayer(): typeof api {
   return api;
 }
-
-export function speak(text: string, voice: string): void {
-  // Voice preview: real audio via the browser's own TTS so the button does *something*.
-  try {
-    const u = new SpeechSynthesisUtterance(text);
-    const voices = speechSynthesis.getVoices();
-    if (voices.length) u.voice = voices[Math.abs(hash(voice)) % voices.length];
-    speechSynthesis.cancel();
-    speechSynthesis.speak(u);
-  } catch {}
-}
-function hash(s: string): number {
-  let h = 0;
-  for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0;
-  return h;
-}

@@ -14,3 +14,15 @@ const disk = log.child({ name: "disk" });
 export function inBackground(work: Promise<unknown> | undefined, what: string, fields = {}): void {
   void work?.catch((err: unknown) => disk.warn({ err, ...fields }, what));
 }
+
+/**
+ * `work` waited for, where what follows reads what it writes, but its failure still only a warning:
+ * a voice sample kept for next time, say, which plays this time whether or not it was kept.
+ */
+export async function warnIfFails(
+  work: Promise<unknown>,
+  what: string,
+  fields = {},
+): Promise<void> {
+  await work.catch((err: unknown) => disk.warn({ err, ...fields }, what));
+}

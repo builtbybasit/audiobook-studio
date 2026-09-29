@@ -285,6 +285,19 @@ export function describeOrigin(o: PromptOrigin): string {
 // ---------------------------------------------------------------------------------------------
 // Checks
 
+/** The longest a message's template may be, and a book's notes. Every character is sent, and billed, with every request. */
+export const PROMPT_MAX_CHARS = 20_000;
+export const NOTES_MAX_CHARS = 4_000;
+
+/** What stops a book's notes from being saved. */
+export function notesProblems(notes: string): string[] {
+  return notes.length > NOTES_MAX_CHARS
+    ? [
+        `The notes are ${notes.length.toLocaleString("en")} characters; the most is ${NOTES_MAX_CHARS.toLocaleString("en")}.`,
+      ]
+    : [];
+}
+
 /**
  * What stops a template from being saved. `whole` is a template that is a prompt on its own (the
  * library's, an endpoint's or a book's replacement); `append` is an endpoint's addition, which may
@@ -296,6 +309,10 @@ export function promptProblems(t: PromptTemplate, kind: "whole" | "append"): str
     ["system prompt", t.system],
     ["user message", t.user],
   ] as const) {
+    if (text.length > PROMPT_MAX_CHARS)
+      problems.push(
+        `The ${label} is ${text.length.toLocaleString("en")} characters; the most is ${PROMPT_MAX_CHARS.toLocaleString("en")}.`,
+      );
     const unknown = [...new Set(tagsIn(text).filter((n) => !TAG_NAMES.has(n)))];
     for (const n of unknown) problems.push(`The ${label} names {{${n}}}, which is not a tag.`);
   }
@@ -342,4 +359,29 @@ export function sampleVars(excerpt: string, endpoint: { name: string; model: str
     excerpt,
     endpoint,
   };
+}
+
+/**
+ * Roughly how many characters a request sends besides its excerpt: both messages rendered with an
+ * empty excerpt, a cast of ten and a paragraph of notes, the output format included. For estimates
+ * and budget holds, which are made before the cast and the chunks are known.
+ */
+export function promptOverhead(t: PromptTemplate): number {
+  const cast = Array.from({ length: 10 }, (_, i) => ({
+    name: `Speaker ${i + 1}`,
+    gender: "?" as const,
+    aliases: [],
+    description: "A typical one-sentence description of a speaker in the book.",
+  }));
+  const vars: PromptVars = {
+    book: { title: "A Typical Book Title", author: "A. Author", notes: "x".repeat(300) },
+    chapter: { title: "Chapter Twelve: A Typical Title", number: 12 },
+    part: 1,
+    parts: 1,
+    cast,
+    excerpt: "",
+    endpoint: { name: "An endpoint", model: "a-model-id" },
+  };
+  const r = renderPrompt(t, vars);
+  return r.system.length + r.user.length;
 }

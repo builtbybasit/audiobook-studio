@@ -5,7 +5,9 @@
 // look, and hand `startLive` the runs it describes and none of the demo's startup runs. What the
 // seeded world holds is `demoWorld.test.ts`'s to check, and what `startLive` makes of what it is
 // handed is `demoLive.test.ts`'s; here `startLive` is a stub that keeps what it is given, so
-// nothing runs under the situations.
+// nothing runs under the situations. The demo library's own wiring of the two — a situation put in
+// through `openLibrary`'s routes, its `startLive` and all — is what the Demo drawer's store drives
+// (`demoStore.test.ts`).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import { DEMO_GROUPS, demoScenarios } from "@/mock/scenarios/catalogue";
@@ -17,20 +19,12 @@ import type { DemoLive } from "~/demo/live";
 import { newPace } from "~/demo/pace";
 import { demoReset } from "~/demo/reset";
 import { createRunner, type Runner } from "~/jobs/runner";
-import { DEMO_BASE, openLibrary } from "~/libraries";
-import { endpointScriptingProvider } from "~/providers/endpointScripting";
-import { endpointSpeechProvider } from "~/providers/endpointSpeech";
+import { DEMO_BASE } from "~/libraries";
 import { createSpeechGate } from "~/providers/gate";
-import { wavEncoders } from "~/providers/wavEncoder";
 import { voiceFiles } from "~/voices/files";
 import { collectingLogger, tempAudioDir, tempExportDir, tempVoiceDir } from "../support/server";
 
 const SITUATIONS = demoScenarios();
-
-/** A `fetch` that fails the test: nothing the demo holds may reach the network. */
-const noNetwork = (async (url: string) => {
-  throw new Error(`the demo made a request: ${String(url)}`);
-}) as unknown as typeof globalThis.fetch;
 
 let db: Db;
 let runner: Runner;
@@ -120,35 +114,5 @@ describe("the situations' routes", () => {
     expect(res.status).toBe(404);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe("not_found");
     expect(await request<{ books: Book[] }>("/books")).toEqual(before);
-  });
-
-  test("put the demo library into a situation, its own `startLive` and all, with no network", async () => {
-    const demo = openLibrary({
-      name: "demo",
-      base: DEMO_BASE,
-      databaseUrl: ":memory:",
-      audioDir: tempAudioDir(),
-      exportDir: tempExportDir(),
-      voiceDir: tempVoiceDir(),
-      encoders: wavEncoders(),
-      log: collectingLogger().log,
-      providers: {
-        scripting: endpointScriptingProvider({ fetch: noNetwork }),
-        speech: endpointSpeechProvider({ fetch: noNetwork }),
-      },
-      demo: true,
-      still: true,
-    });
-    await demo.start();
-    const res = await demo.app.request(`http://api.test${DEMO_BASE}/demo/situations/import-clean`, {
-      method: "POST",
-    });
-    expect(res.status).toBe(200);
-    expect(((await res.json()) as { open: string }).open).toBe("/book/import-clean/contents");
-    const listed = await demo.app.request(`http://api.test${DEMO_BASE}/books`);
-    const { books } = (await listed.json()) as { books: Book[] };
-    expect(books.find((b) => b.id === "import-clean")?.importing).toBe(true);
-    await demo.runner.stop();
-    demo.db.$client.close();
   });
 });

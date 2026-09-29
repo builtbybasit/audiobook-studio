@@ -5,7 +5,7 @@
 // of silence and Ogg pages of empty Opus packets, both real files of an exact length.
 import { describe, expect, test } from "bun:test";
 
-import type { Book, Character, Endpoint, ExportItem, Segment } from "@/types";
+import type { Endpoint, ExportItem, Segment } from "@/types";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { exportFileToken } from "~/db/exports";
 import { expressionParts, expressionPlan } from "@/lib/expressions";
@@ -18,8 +18,16 @@ import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import type { SpeechInput, SpeechProvider } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 import { MP3_FRAME, oggOpus, silentMp3 } from "../support/encoded";
-import { epubFile, story } from "../support/epub";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import { story } from "../support/epub";
+import {
+  jsonBody,
+  narrateChapters,
+  saveEndpoints,
+  speechEndpoint,
+  testApi,
+  voicedBook,
+  type TestApi,
+} from "../support/server";
 
 // ---- what a provider asks for, and what it accepts ----
 
@@ -198,36 +206,38 @@ describe("an MP3 clip", () => {
 // ---- the narration job, the files and the route ----
 
 /**
- * The fake, answering in the format it is asked for: MP3 frames or Opus packets of silence as long
- * as the fake's reading of the line, rounded to a whole frame. What a real endpoint does, without one.
- */
-/**
- * Four seconds per line of a quiet tone with a sharp peak each second, as a real 44.1 kHz MP3 —
- * for what silence cannot show. The peaks are the point: speech has them, and they are what makes
- * `loudnorm` give up on linear gain for its dynamic mode, which is the one that resamples.
+ * A second per line of a quiet tone with a sharp peak in it, as a real 44.1 kHz MP3 — for what
+ * silence cannot show. The peak is the point: speech has them, and they are what makes `loudnorm`
+ * give up on linear gain for its dynamic mode, which is the one that resamples. A chapter of these
+ * still takes an unnamed output rate to 96 kHz, and one clip made once is every line's: the build
+ * is what is under test, not the tone.
  */
 function toneMp3(): SpeechProvider {
+  let made: Promise<Uint8Array> | null = null;
+  const make = async () => {
+    const proc = Bun.spawn(
+      [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "aevalsrc=0.01*sin(2*PI*330*t)+if(lt(mod(t\\,1)\\,0.002)\\,0.9\\,0):s=44100:d=1",
+        "-c:a",
+        "libmp3lame",
+        "-f",
+        "mp3",
+        "-",
+      ],
+      { stdout: "pipe" },
+    );
+    return new Uint8Array(await new Response(proc.stdout).arrayBuffer());
+  };
   return {
     name: "Tone MP3 (ffmpeg)",
     async speak() {
-      const proc = Bun.spawn(
-        [
-          "ffmpeg",
-          "-v",
-          "error",
-          "-f",
-          "lavfi",
-          "-i",
-          "aevalsrc=0.01*sin(2*PI*330*t)+if(lt(mod(t\\,1)\\,0.002)\\,0.9\\,0):s=44100:d=4",
-          "-c:a",
-          "libmp3lame",
-          "-f",
-          "mp3",
-          "-",
-        ],
-        { stdout: "pipe" },
-      );
-      const bytes = new Uint8Array(await new Response(proc.stdout).arrayBuffer());
+      const bytes = await (made ??= make());
       const { duration } = await probeClip(bytes, "mp3");
       return {
         bytes,
@@ -242,6 +252,10 @@ function toneMp3(): SpeechProvider {
   };
 }
 
+/**
+ * The fake, answering in the format it is asked for: MP3 frames or Opus packets of silence as long
+ * as the fake's reading of the line, rounded to a whole frame. What a real endpoint does, without one.
+ */
 function encodingFake(): SpeechProvider & { sent: SpeechInput[] } {
   const inner = fakeSpeechProvider();
   const sent: SpeechInput[] = [];
@@ -277,60 +291,14 @@ function encodingFake(): SpeechProvider & { sent: SpeechInput[] } {
   };
 }
 
-const TELEMETRY = { history: [], failures: 0, rateLimits: 0, backoffUntil: 0 };
-const speech = (over: Partial<Endpoint> = {}): Endpoint => ({
-  id: "studio",
-  name: "Studio speech",
-  baseUrl: "http://localhost:8880/v1",
-  model: "studio-tts",
-  concurrency: 2,
-  enabled: true,
-  latency: 0,
-  failRate: 0,
-  price: 0,
-  needsKey: false,
-  maxChars: 0,
-  splitAt: "sentence",
-  voices: [{ id: "ash", gender: "m", label: "Ash" }],
-  ...TELEMETRY,
-  ...over,
-});
-
-const saveEndpoint = (api: TestApi, endpoint: Endpoint) =>
-  api.request("/api/endpoints", {
-    ...jsonBody({ endpoints: [endpoint], profiles: [], credentials: [] }),
-    method: "PUT",
+/** A book on `endpoint`, scripted, every speaker voiced by `studio/ash`; one chapter unless named. */
+const voiced = (api: TestApi, endpoint: Endpoint, chapters = ["One"]) =>
+  voicedBook(api, {
+    endpoints: [endpoint],
+    paragraphs: ["“We are short again,” said Mara.", ...story(1)],
+    voiceOf: "studio/ash",
+    chapters,
   });
-
-/** A one-chapter book, scripted, every speaker voiced by `studio/ash`. */
-async function voiced(api: TestApi, chapters = ["One"]): Promise<string> {
-  const { body } = await api.import<{ book: Book }>(
-    await epubFile({
-      title: "Moonlight Ledger",
-      chapters: chapters.map((title) => ({
-        title,
-        paragraphs: ["“We are short again,” said Mara.", ...story(1)],
-      })),
-    }),
-  );
-  const id = body.book.id;
-  const ids = chapters.map((_, i) => i + 1);
-  await api.request(`/api/books/${id}/confirm`, { method: "POST" });
-  await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids }));
-  await api.runner.idle();
-  const cast = await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`);
-  for (const c of cast.body.characters)
-    await api.request(`/api/books/${id}/characters/${encodeURIComponent(c.name)}`, {
-      ...jsonBody({ ...c, voice: "studio/ash" }),
-      method: "PUT",
-    });
-  return id;
-}
-
-const narrate = async (api: TestApi, id: string, ids = [1]) => {
-  await api.request(`/api/books/${id}/chapters/narrate`, jsonBody({ ids }));
-  await api.runner.idle();
-};
 
 const linesOf = async (api: TestApi, id: string, ch = 1) =>
   (await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/${ch}/script`)).body
@@ -343,9 +311,8 @@ describe("a book narrated in MP3", () => {
   test("is asked for MP3, kept as .mp3 at the rate it came back at, and served as audio/mpeg in parts", async () => {
     const provider = encodingFake();
     const api = testApi({ speech: provider });
-    await saveEndpoint(api, speech({ encoding: { format: "mp3" } }));
-    const id = await voiced(api);
-    await narrate(api, id);
+    const id = await voiced(api, speechEndpoint({ encoding: { format: "mp3" } }));
+    await narrateChapters(api, id, [1]);
 
     expect(provider.sent.every((s) => s.encoding.format === "mp3")).toBe(true);
     const segments = await linesOf(api, id);
@@ -367,13 +334,12 @@ describe("a book narrated in MP3", () => {
   test("a line longer than its endpoint takes is one MP3 that plays for as long as its parts", async () => {
     const provider = encodingFake();
     const api = testApi({ speech: provider });
-    const endpoint = speech({ encoding: { format: "mp3" }, maxChars: 60 });
-    await saveEndpoint(api, endpoint);
-    const id = await voiced(api);
+    const endpoint = speechEndpoint({ encoding: { format: "mp3" }, maxChars: 60 });
+    const id = await voiced(api, endpoint);
     const before = await linesOf(api, id);
     const parts = before.map((s) => expressionParts(expressionPlan(s, endpoint), endpoint));
     expect(parts.some((p) => p.length > 1)).toBe(true);
-    await narrate(api, id);
+    await narrateChapters(api, id, [1]);
 
     expect(provider.sent).toHaveLength(parts.flat().length);
     for (const [i, s] of (await linesOf(api, id)).entries()) {
@@ -385,13 +351,12 @@ describe("a book narrated in MP3", () => {
 
   test("moving the endpoint to another format leaves the clips already in the book as they were", async () => {
     const api = testApi({ speech: encodingFake() });
-    await saveEndpoint(api, speech({ sampleRate: 44100 }));
-    const id = await voiced(api);
-    await narrate(api, id);
+    const id = await voiced(api, speechEndpoint({ sampleRate: 44100 }));
+    await narrateChapters(api, id, [1]);
     const wav = await linesOf(api, id);
     expect(wav.every((s) => s.audio.status === "done" && s.audio.url!.endsWith(".wav"))).toBe(true);
 
-    await saveEndpoint(api, speech({ sampleRate: 44100, encoding: { format: "mp3" } }));
+    await saveEndpoints(api, [speechEndpoint({ sampleRate: 44100, encoding: { format: "mp3" } })]);
     expect(await linesOf(api, id)).toEqual(wav);
     // and a run over what needs doing finds nothing: the format is not drift
     const { body } = await api.request<{ skipped: { id: number; why: string }[] }>(
@@ -406,12 +371,11 @@ describe("a book narrated in Opus", () => {
   test("is kept as .opus and served as Ogg; a line that would need parts fails before it is sent", async () => {
     const provider = encodingFake();
     const api = testApi({ speech: provider });
-    const endpoint = speech({ encoding: { format: "opus" }, maxChars: 60 });
-    await saveEndpoint(api, endpoint);
-    const id = await voiced(api);
+    const endpoint = speechEndpoint({ encoding: { format: "opus" }, maxChars: 60 });
+    const id = await voiced(api, endpoint);
     const before = await linesOf(api, id);
     const parts = before.map((s) => expressionParts(expressionPlan(s, endpoint), endpoint));
-    await narrate(api, id);
+    await narrateChapters(api, id, [1]);
 
     const segments = await linesOf(api, id);
     const whole = segments.filter((_, i) => parts[i].length === 1);
@@ -446,9 +410,8 @@ const exportsOf = async (api: TestApi, id: string) =>
 describe("building a book narrated in MP3", () => {
   test("the WAV stitcher refuses, naming the chapter and the way out, before it writes anything", async () => {
     const api = testApi({ speech: encodingFake() });
-    await saveEndpoint(api, speech({ encoding: { format: "mp3" } }));
-    const id = await voiced(api);
-    await narrate(api, id);
+    const id = await voiced(api, speechEndpoint({ encoding: { format: "mp3" } }));
+    await narrateChapters(api, id, [1]);
     await api.request(`/api/books/${id}/exports`, jsonBody({ ids: [1], settings }));
     await api.runner.idle();
 
@@ -465,11 +428,12 @@ describe("building a book narrated in MP3", () => {
     "ffmpeg decodes each clip and builds from a mix of MP3 and WAV",
     async () => {
       const api = testApi({ speech: encodingFake(), encoder: ffmpegEncoders() });
-      await saveEndpoint(api, speech({ sampleRate: 44100 }));
-      const id = await voiced(api, ["One", "Two"]);
-      await narrate(api, id, [1]);
-      await saveEndpoint(api, speech({ sampleRate: 44100, encoding: { format: "mp3" } }));
-      await narrate(api, id, [2]);
+      const id = await voiced(api, speechEndpoint({ sampleRate: 44100 }), ["One", "Two"]);
+      await narrateChapters(api, id, [1]);
+      await saveEndpoints(api, [
+        speechEndpoint({ sampleRate: 44100, encoding: { format: "mp3" } }),
+      ]);
+      await narrateChapters(api, id, [2]);
       expect((await linesOf(api, id, 2)).every((s) => s.audio.url!.endsWith(".mp3"))).toBe(true);
 
       await api.request(
@@ -514,9 +478,11 @@ describe("building a book narrated in MP3", () => {
     "a silent book builds levelled, rather than failing on a loudness of -inf",
     async () => {
       const api = testApi({ speech: encodingFake(), encoder: ffmpegEncoders() });
-      await saveEndpoint(api, speech({ sampleRate: 44100, encoding: { format: "mp3" } }));
-      const id = await voiced(api, ["One"]);
-      await narrate(api, id, [1]);
+      const id = await voiced(
+        api,
+        speechEndpoint({ sampleRate: 44100, encoding: { format: "mp3" } }),
+      );
+      await narrateChapters(api, id, [1]);
       await api.request(`/api/books/${id}/exports`, jsonBody({ ids: [1], settings }));
       await api.runner.idle();
       const [built] = await exportsOf(api, id);
@@ -531,9 +497,11 @@ describe("building a book narrated in MP3", () => {
       // Audible and 16-bit, as every real clip decodes: ffmpeg keeps an 8-bit source's rate by
       // accident, and takes a 16-bit one to 96 kHz AAC unless the output names a rate.
       const api = testApi({ speech: toneMp3(), encoder: ffmpegEncoders() });
-      await saveEndpoint(api, speech({ sampleRate: 44100, encoding: { format: "mp3" } }));
-      const id = await voiced(api, ["One"]);
-      await narrate(api, id, [1]);
+      const id = await voiced(
+        api,
+        speechEndpoint({ sampleRate: 44100, encoding: { format: "mp3" } }),
+      );
+      await narrateChapters(api, id, [1]);
       await api.request(`/api/books/${id}/exports`, jsonBody({ ids: [1], settings }));
       await api.runner.idle();
       const [built] = await exportsOf(api, id);

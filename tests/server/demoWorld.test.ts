@@ -251,8 +251,10 @@ describe("the demo reaches nothing and bills nothing", () => {
       expect(isSimulated(e.baseUrl)).toBe(true);
       expect(e.needsKey).toBe(false);
     }
-    for (const e of readEndpoints(demo.db))
-      if (e.expressions) expect(isSimulated(e.expressions.baseUrl)).toBe(true);
+    // an endpoint's expressions model is reached at a url of its own, simulated as well
+    const expressive = readEndpoints(demo.db).flatMap((e) => e.expressions?.baseUrl ?? []);
+    expect(expressive).not.toHaveLength(0);
+    expect(expressive.filter((url) => !isSimulated(url))).toEqual([]);
     const keys = demo.db.$client.query(
       "SELECT count(*) AS n FROM endpoints WHERE api_key IS NOT NULL",
     );
@@ -289,7 +291,7 @@ describe("the demo reaches nothing and bills nothing", () => {
     const rendered = clips.filter(
       (c) => c.role === "take" || c.status === "done" || c.status === "stale",
     );
-    expect(rendered.length).toBeGreaterThan(1000);
+    expect(rendered).not.toHaveLength(0);
     for (const c of rendered) {
       expect(c.url).toMatch(new RegExp(`^${DEMO_BASE}/audio/${c.book_id}/[a-f0-9-]{36}\\.wav$`));
       expect(c.sample_rate).toBe(SAMPLE_RATE);

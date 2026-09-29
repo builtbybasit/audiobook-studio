@@ -1,10 +1,12 @@
 // What a demo situation leaves running, made real on the demo library (`server/demo/live.ts`).
 //
 // The library here is put together the way `openLibrary` puts the demo together — its database
-// seeded with the browser's world, its clips made on first read, the endpoints' own providers, one
-// speech gate for its queue and its routes — but by hand, so the test holds the gate `startLive` is
-// given. Each test hands `startLive` a `DemoLive` of its own and reads the result back through the
-// demo's API, as the Endpoints, Queue and Export pages read it. The providers' `fetch` fails the
+// seeded with the browser's world, its clips made on first read, the endpoints' own providers paced
+// by the demo's speed, one speech gate for its queue and its routes — but by hand, so the test holds
+// the gate `startLive` is given and the pace. Each test hands `startLive` a `DemoLive` of its own and
+// reads the result back through the demo's API, as the Endpoints, Queue and Export pages read it.
+// What an endpoint has been through is rows and a cooldown whatever the world holds, so those tests
+// start from an empty library rather than paying for the seed. The providers' `fetch` fails the
 // test, so everything here is shown to need no network; their `random` never draws a failure, so a
 // simulated endpoint's fail rate does not make a run flaky.
 import { describe, expect, test } from "bun:test";
@@ -23,7 +25,7 @@ import { demoClips } from "~/audio/demoClips";
 import { audioFiles } from "~/audio/files";
 import { createApp } from "~/app";
 import { startLive, type DemoLive, type SpeechTelemetry } from "~/demo/live";
-import { newPace, pacedEncoders } from "~/demo/pace";
+import { newPace, pacedEncoders, pacedProviders } from "~/demo/pace";
 import { seedDemo } from "~/demo/seed";
 import { audiobookFiles } from "~/exports/files";
 import { exportHandler } from "~/jobs/export";
@@ -31,12 +33,12 @@ import { narrationHandler } from "~/jobs/narration";
 import { createRunner } from "~/jobs/runner";
 import { scriptingHandler } from "~/jobs/scripting";
 import { DEMO_BASE } from "~/libraries";
-import type { AudiobookEncoder, EncodeInput } from "~/providers/encoder";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { createSpeechGate } from "~/providers/gate";
 import { wavEncoders } from "~/providers/wavEncoder";
 import { voiceFiles } from "~/voices/files";
+import { epubFile, story } from "../support/epub";
 import {
   collectingLogger,
   jsonBody,
@@ -46,8 +48,8 @@ import {
   testDb,
 } from "../support/server";
 
-/** The demo library, seeded and running, with the parts `startLive` is handed. */
-function demoLibrary({ chapterMs = 0 } = {}) {
+/** The demo library, seeded unless the test needs none of the world, running, with the parts `startLive` is handed. */
+function demoLibrary({ chapterMs = 0, seeded = true } = {}) {
   const asked: string[] = [];
   const fetch = (async (url: string) => {
     asked.push(String(url));
@@ -56,14 +58,18 @@ function demoLibrary({ chapterMs = 0 } = {}) {
   const { log } = collectingLogger();
   const db = testDb();
   const files = audioFiles(tempAudioDir(), DEMO_BASE, demoClips(db));
+  const pace = newPace();
   const exports = {
-    encoders: pacedEncoders(wavEncoders(), newPace(), chapterMs),
+    encoders: pacedEncoders(wavEncoders(), pace, chapterMs),
     files: audiobookFiles(tempExportDir()),
   };
-  const providers = {
-    scripting: endpointScriptingProvider({ fetch, random: () => 1 }),
-    speech: endpointSpeechProvider({ fetch, random: () => 1 }),
-  };
+  const providers = pacedProviders(
+    {
+      scripting: endpointScriptingProvider({ fetch, random: () => 1 }),
+      speech: endpointSpeechProvider({ fetch, random: () => 1 }),
+    },
+    pace,
+  );
   const gate = createSpeechGate();
   const runner = createRunner(
     db,
@@ -75,7 +81,7 @@ function demoLibrary({ chapterMs = 0 } = {}) {
     { log, pollMs: 60_000 },
   );
   const voices = voiceFiles(tempVoiceDir());
-  seedDemo(db, voices, { base: DEMO_BASE, now: Date.now() });
+  if (seeded) seedDemo(db, voices, { base: DEMO_BASE, now: Date.now() });
   const app = createApp(db, {
     base: DEMO_BASE,
     log,
@@ -95,7 +101,14 @@ function demoLibrary({ chapterMs = 0 } = {}) {
     const text = await res.text();
     return { status: res.status, body: (text ? JSON.parse(text) : null) as T };
   };
-  return { asked, runner, fetch: fetchDemo, request, parts: { db, runner, gate, files, exports } };
+  return {
+    asked,
+    runner,
+    pace,
+    fetch: fetchDemo,
+    request,
+    parts: { db, runner, gate, files, exports },
+  };
 }
 
 type Demo = ReturnType<typeof demoLibrary>;
@@ -142,7 +155,7 @@ const RATE_LIMIT_BODY =
 
 describe("what an endpoint has been through", () => {
   test("a speech endpoint's history, rate limits and last error are its requests on the ledger", async () => {
-    const demo = demoLibrary();
+    const demo = demoLibrary({ seeded: false });
     const now = Date.now();
     const openai: SpeechTelemetry = {
       history: [
@@ -185,7 +198,20 @@ describe("what an endpoint has been through", () => {
   });
 
   test("a scripting profile's 429 lands on the failure it was met on, with its chapter, and holds no cooldown", async () => {
-    const demo = demoLibrary();
+    const demo = demoLibrary({ seeded: false });
+    const form = new FormData();
+    form.set(
+      "file",
+      await epubFile({
+        chapters: ["One", "Two", "Three"].map((title) => ({ title, paragraphs: story(1) })),
+      }),
+    );
+    const imported = await demo.request<{ book: Book }>("/books/import", {
+      method: "POST",
+      body: form,
+    });
+    expect(imported.status).toBe(201);
+    const bookId = imported.body.book.id;
     const now = Date.now();
     const deepseek: ScriptEndpointTelemetry = {
       completed: 0,
@@ -202,7 +228,7 @@ describe("what an endpoint has been through", () => {
         message: "Rate limited",
         body: RATE_LIMIT_BODY,
         at: now,
-        bookId: "cliche",
+        bookId,
         chapterId: 3,
         model: "deepseek-chat",
         baseUrl: "simulated://api.deepseek.com/v1",
@@ -215,7 +241,7 @@ describe("what an endpoint has been through", () => {
     expect(rows.every((r) => r.status === "failed" && r.simulated)).toBe(true);
     expect(rows[0]).toMatchObject({
       rateLimited: true,
-      bookId: "cliche",
+      bookId,
       chapterId: 3,
       label: "Script · ch 3",
       error: { code: 429, body: RATE_LIMIT_BODY },
@@ -226,7 +252,7 @@ describe("what an endpoint has been through", () => {
   });
 
   test("a speech endpoint cooling down is a cooldown the live route shows, and the next seed forgets it", async () => {
-    const demo = demoLibrary();
+    const demo = demoLibrary({ seeded: false });
     const now = Date.now();
     const fish: SpeechTelemetry = {
       history: [],
@@ -248,8 +274,8 @@ describe("what an endpoint has been through", () => {
 describe("runs in flight", () => {
   test("are queued on the book as the page queues them, and finish on the simulated endpoints", async () => {
     const demo = demoLibrary();
-    // long enough to find the narration still going, and no longer than that
-    await latency(demo, 300);
+    // the drawer's quickest, so a simulated profile's seconds a chunk do not hold the test up
+    demo.pace.speed = 16;
     const asked = Date.now();
     await startLive(
       demo.parts,
@@ -272,7 +298,8 @@ describe("runs in flight", () => {
     ]);
     expect(new Set(run.map((j) => j.bulk?.id)).size).toBe(1);
     expect(run.every((j) => j.label.endsWith("· OpenAI"))).toBe(true);
-    // a speech endpoint answers at its latency, so the narration is still going
+    // it waits behind the scripting, and a speech endpoint answers at its latency, so the narration
+    // is still going
     const narration = (await jobsOf(demo, "cliche")).filter((j) => !j.finishedAt);
     expect(narration.map((j) => [j.kind, j.chapterId])).toEqual([
       ["narration", 5],
@@ -342,33 +369,5 @@ describe("a book's builds", () => {
     const again = (await exportsOf(demo, "starforge")).find((e) => e.id === retried.body.export.id);
     expect(again?.status).toBe("done");
     expect(demo.asked).toEqual([]);
-  });
-});
-
-describe("the demo's encoder", () => {
-  test("writes the file at once and tells each chapter at its pace, in order", async () => {
-    const told: number[] = [];
-    const inner: AudiobookEncoder = {
-      ...wavEncoders().for({} as never),
-      async encode(input: EncodeInput) {
-        input.chapters.forEach((c, i) =>
-          input.onChapter?.({ id: c.id, start: 0, length: 0, seconds: 1 }, i),
-        );
-        return { bytes: 1, seconds: 3, chapters: [] };
-      },
-    };
-    const paced = pacedEncoders({ name: "inner", for: () => inner }, newPace(), 30).for(
-      {} as never,
-    );
-    const started = performance.now();
-    await paced.encode({
-      chapters: [1, 2, 3].map((id) => ({ id, title: `${id}`, parts: [] })),
-      gap: 0,
-      out: "",
-      signal: new AbortController().signal,
-      onChapter: (c) => void told.push(c.id),
-    });
-    expect(told).toEqual([1, 2, 3]);
-    expect(performance.now() - started).toBeGreaterThanOrEqual(85);
   });
 });

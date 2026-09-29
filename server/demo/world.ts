@@ -52,14 +52,9 @@ import {
   scriptHeads,
   scriptVersions,
 } from "~/db/schema";
+import { insertRows } from "~/db/prepared";
 import { replaceScript } from "~/db/script";
 import { SAMPLE_RATE } from "~/providers/fakeSpeech";
-
-/** SQLite takes its parameters one variable at a time, and a cast or an export is many rows. */
-const CHUNK = 150;
-function insertAll<T>(write: (part: T[]) => void, values: readonly T[]): void {
-  for (let i = 0; i < values.length; i += CHUNK) write(values.slice(i, i + CHUNK));
-}
 
 // ---------- the library ----------
 
@@ -81,8 +76,9 @@ export function writeBook(
 }
 
 export function writeCast(db: Db | Tx, bookId: string, cast: readonly Character[]): void {
-  insertAll(
-    (part) => db.insert(characters).values(part).run(),
+  insertRows(
+    db,
+    characters,
     cast.map((c, i) => rows.characterValues(bookId, c, i)),
   );
 }
@@ -92,18 +88,22 @@ export function writeCast(db: Db | Tx, bookId: string, cast: readonly Character[
 const exportedAt = (e: ExportItem): number => Date.parse(`${e.createdAt.replace(" ", "T")}Z`);
 
 export function writeExport(db: Db | Tx, e: ExportItem, createdAt = exportedAt(e)): void {
-  db.insert(exportItems).values(rows.exportValues(e, createdAt)).run();
-  insertAll(
-    (part) => db.insert(exportFiles).values(part).run(),
+  insertRows(db, exportItems, [rows.exportValues(e, createdAt)]);
+  insertRows(
+    db,
+    exportFiles,
     e.files.map((f, i) => rows.exportFileValues(e.id, f, i)),
   );
-  insertAll((part) => db.insert(exportChapters).values(part).run(), rows.exportChapterValues(e));
+  insertRows(db, exportChapters, rows.exportChapterValues(e));
 }
 
 export function writeJob(db: Db | Tx, job: Job): void {
-  db.insert(jobs).values(rows.jobValues(job)).run();
-  for (const e of job.activity ?? [])
-    db.insert(jobEvents).values(rows.jobEventValues(job.id, e)).run();
+  insertRows(db, jobs, [rows.jobValues(job)]);
+  insertRows(
+    db,
+    jobEvents,
+    (job.activity ?? []).map((e) => rows.jobEventValues(job.id, e)),
+  );
 }
 
 /** The versions a chapter's script has been through, and where it stands now. */
@@ -113,13 +113,12 @@ export function writeHistory(
   chapterId: number,
   history: ChapterHistory,
 ): void {
-  db.insert(scriptHeads)
-    .values(rows.scriptHeadValues(bookId, chapterId, history))
-    .run();
-  for (const v of history.versions)
-    db.insert(scriptVersions)
-      .values(rows.scriptVersionValues(bookId, chapterId, v))
-      .run();
+  insertRows(db, scriptHeads, [rows.scriptHeadValues(bookId, chapterId, history)]);
+  insertRows(
+    db,
+    scriptVersions,
+    history.versions.map((v) => rows.scriptVersionValues(bookId, chapterId, v)),
+  );
 }
 
 // ---------- the clips ----------
@@ -226,9 +225,16 @@ export function writeWorld(tx: Tx, demo: DemoWorld, { base, now }: WorldOptions)
     writeHistory(tx, bookId, chapterId, history);
   }
 
-  for (const [bookId, amount] of demo.opening)
-    tx.insert(openingSpend).values({ bookId, amount }).run();
-  for (const r of demo.requests) tx.insert(requests).values(rows.requestValues(r)).run();
+  insertRows(
+    tx,
+    openingSpend,
+    [...demo.opening].map(([bookId, amount]) => ({ bookId, amount })),
+  );
+  insertRows(
+    tx,
+    requests,
+    demo.requests.map((r) => rows.requestValues(r)),
+  );
   for (const e of world.exports) writeExport(tx, e);
   for (const job of demo.jobs) writeJob(tx, job);
 }

@@ -109,7 +109,7 @@ describe("what cannot be undone says so, and offers no Undo", () => {
   });
 
   test("discarding an import raises nothing to undo", async () => {
-    const source = await epubFile({ chapters: [{ title: "One", paragraphs: story() }] });
+    const source = await epubFile({ chapters: [{ title: "One", paragraphs: story(2) }] });
     const id = (await libraryStore.importBook({ source }))!;
     expect(libraryStore.bookById(id)?.importing).toBe(true);
     toasts = [];

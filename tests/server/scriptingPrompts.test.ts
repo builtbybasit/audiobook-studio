@@ -17,7 +17,6 @@ import type {
   Profile,
   RequestRecord,
 } from "@/types";
-import { credentials } from "@/lib/credentials";
 import { BUILT_IN_PROMPT, OUTPUT_FORMAT } from "@/lib/prompt";
 import { scriptTelemetry } from "@/lib/scriptActivity";
 import { makeProfiles } from "@/mock/fixtures/profiles";
@@ -48,12 +47,18 @@ const openai = (over: Partial<Profile> = {}): Profile => ({
   ...over,
 });
 
+/**
+ * The one credential the seeded OpenAI profile names. Spelled out rather than read from the page's
+ * registry, which a store test earlier in the same process may have refilled from a server of its own.
+ */
+const CREDENTIALS = [{ id: "openai-personal", label: "OpenAI · personal", note: "" }];
+
 const put = <T = Settings>(api: TestApi, body: Record<string, unknown>) =>
   api.request<T>("/api/endpoints", {
     ...jsonBody({
       endpoints: [],
       profiles: [],
-      credentials: credentials.map((c) => ({ ...c })),
+      credentials: CREDENTIALS,
       ...body,
     }),
     method: "PUT",
@@ -64,12 +69,13 @@ const read = async (api: TestApi) => (await api.request<Settings>("/api/endpoint
 const patchBook = <T = { book: Book }>(api: TestApi, id: string, prompt: BookPrompt | null) =>
   api.request<T>(`/api/books/${id}`, { ...jsonBody({ prompt }), method: "PATCH" });
 
-async function shelved(api: TestApi, titles = ["One"]) {
+/** A confirmed book of short chapters: one request each, unless a profile cuts them smaller. */
+async function shelved(api: TestApi, titles = ["One"], paragraphs = 2) {
   const { body } = await api.import<{ book: Book; chapters: Chapter[] }>(
     await epubFile({
       title: "Moonlight Ledger",
       author: "A. Ledger",
-      chapters: titles.map((title) => ({ title, paragraphs: story(12) })),
+      chapters: titles.map((title) => ({ title, paragraphs: story(paragraphs) })),
     }),
   );
   await api.request(`/api/books/${body.book.id}/confirm`, { method: "POST" });
@@ -273,7 +279,8 @@ describe("a run's prompt", () => {
   test("is the book's replacement, its tags and the endpoint's notes filled in for each request", async () => {
     const rec = recording();
     const api = testApi({ scripting: rec.provider });
-    const id = await shelved(api);
+    // long enough that the profile's 700 characters cut it into parts
+    const id = await shelved(api, ["One"], 6);
     api.db
       .insert(characters)
       .values({

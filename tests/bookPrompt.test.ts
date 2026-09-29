@@ -1,5 +1,8 @@
 // A book's say over the scripting prompt: its notes and its own prompt, as the store saves them,
 // as the run estimate prices them, and as the chapter's history names a run that used them.
+//
+// None of it needs the seeded demo: the stores talk to a server of this file's own, holding one
+// short book, the way a backend tab talks to `/api`.
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 import { BUILT_IN_PROMPT } from "@/lib/prompt";
@@ -11,12 +14,13 @@ import { useScriptingStore } from "@/stores/scripting";
 import { useUiStore } from "@/stores/ui";
 import { useQueryCache } from "@pinia/colada";
 import { endpointHistoryKey } from "@/queries/endpointHistory";
-import type { BookPrompt, ReasoningEffort, RequestRecord, VersionOrigin } from "@/types";
-import { demoServer } from "./support/demoServer";
+import type { Book, BookPrompt, ReasoningEffort, RequestRecord, VersionOrigin } from "@/types";
+import { backendServer } from "./support/backendServer";
 import { openDemoBook } from "./support/demoBook";
+import { epubFile, story } from "./support/epub";
 import { testPinia, type TestPinia } from "./support/pinia";
 
-const BOOK = "cliche";
+let BOOK: string;
 const none: BookPrompt = { notes: "", replace: false, system: "", user: "" };
 
 let pinia: TestPinia;
@@ -25,7 +29,12 @@ let toasts: string[];
 
 beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  await demoServer();
+  const api = backendServer();
+  const { body } = await api.import<{ book: Book }>(
+    await epubFile({ chapters: [{ title: "One", paragraphs: story(4) }] }),
+  );
+  BOOK = body.book.id;
+  await api.request(`/api/books/${BOOK}/confirm`, { method: "POST" });
 });
 beforeEach(async () => {
   pinia = testPinia();

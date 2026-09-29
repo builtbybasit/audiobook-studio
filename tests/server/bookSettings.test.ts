@@ -12,7 +12,13 @@ import { DEFAULT_PACING, silenceOf } from "@/lib/speech";
 import * as queue from "~/db/jobs";
 import { readScript } from "~/db/script";
 import { epubFile, story } from "../support/epub";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import {
+  jsonBody,
+  narrateChapters,
+  scriptChapters,
+  testApi,
+  type TestApi,
+} from "../support/server";
 
 interface BookResult {
   book: Book;
@@ -106,10 +112,8 @@ describe("a book's settings", () => {
 
   test("a pacing re-times the chapters that were narrated, and leaves the rest as they were", async () => {
     const { api, id } = await twoVolumes();
-    await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1, 2] }));
-    await api.runner.idle();
-    await api.request(`/api/books/${id}/chapters/narrate`, jsonBody({ ids: [1] }));
-    await api.runner.idle();
+    await scriptChapters(api, id, [1, 2]);
+    await narrateChapters(api, id, [1]);
     const before = (await read(api, id)).chapters;
     const segs = readScript(api.db, id, 1);
     const spoken = segs.reduce((n, s) => n + s.audio.duration, 0);
@@ -172,8 +176,7 @@ describe("a volume's place in the book", () => {
 
   test("a chapter's text, script and queued work answer to its new number", async () => {
     const { api, id } = await twoVolumes();
-    await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1] }));
-    await api.runner.idle();
+    await scriptChapters(api, id, [1]);
     const script = readScript(api.db, id, 1);
     // queued straight into the table, with no worker to pick it up, so it waits as asked
     const { job } = queue.enqueueJob(api.db, {

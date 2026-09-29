@@ -1,4 +1,9 @@
 [test]
 # every test runs as a tab that has entered the demo; see the file for why
 # and makes its temporary folders under one root that is removed afterwards
-preload = ["./tests/support/demoTab.ts", "./tests/support/tempRoot.ts"]
+# and finds the page's credential registry as the demo seeds it, whatever ran before
+preload = [
+  "./tests/support/demoTab.ts",
+  "./tests/support/tempRoot.ts",
+  "./tests/support/credentialRegistry.ts",
+]

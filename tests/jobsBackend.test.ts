@@ -7,9 +7,8 @@
 // `src/queries/`, so the tests do too: the queue is read the way the shell reads it, and a
 // chapter's script, history and cast the way the Scripting and Cast pages open them.
 //
-// What these guard is the mode rule — with a server answering, no job, script, speaker or version
-// on screen may come from `@/mock` — and that what the screens show is what the server holds, not
-// what the store assumed when it sent the request.
+// What these guard is that what the screens show is what the server holds, not what the store
+// assumed when it sent the request.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { BookSpend, Endpoint, RequestRecord, Segment } from "@/types";
@@ -30,15 +29,10 @@ import {
   useEndpointLive,
 } from "@/queries";
 import type { EndpointDescriptor } from "@/services/endpoints";
-import {
-  HttpEndpointSettingsService,
-  setEndpointSettingsService,
-} from "@/services/endpointSettings";
 import { HttpJobsService, setJobsService } from "@/services/jobs";
-import { HttpUsageService, setUsageService } from "@/services/usage";
-import { libraryService, HttpLibraryService, setLibraryService } from "@/services/library";
+import { libraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
-import { useEndpointsStore, WRITE_DELAY_MS } from "@/stores/endpoints";
+import { useEndpointsStore } from "@/stores/endpoints";
 import { useExportsStore } from "@/stores/exports";
 import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
@@ -50,6 +44,7 @@ import { useUiStore } from "@/stores/ui";
 import { readScript, writeScript } from "~/db/script";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";
+import { pointServicesAt, type ServiceWiring } from "./support/backendServer";
 import { epubFile, story } from "./support/epub";
 import { flush, testPinia, type TestPinia } from "./support/pinia";
 import { unifyEndpoint } from "@/lib/endpoints";
@@ -107,22 +102,15 @@ const poll = async () => {
   await settle();
 };
 
-function wire(options: Parameters<typeof testApi>[0] = {}, wiring: Wiring = {}) {
+/** Endpoints are left out unless asked for: most of these suites never load the endpoints store. */
+function wire(options: Parameters<typeof testApi>[0] = {}, wiring: ServiceWiring = {}) {
   api = testApi(options);
   wireStores(wiring);
 }
 
-interface Wiring {
-  /**
-   * The endpoint configuration read from the server too, as backend mode reads it. Left out, the
-   * endpoints store is the seeded one, which is what most of these suites run against.
-   */
-  endpoints?: boolean;
-}
-
 /** Fresh stores over the same server, as a reload would give. */
-function wireStores({ endpoints = false }: Wiring = {}) {
-  // the seeded world reaches for `matchMedia` as it is built; the stores must not build one at all
+function wireStores({ endpoints = false }: ServiceWiring = {}) {
+  // the ui store reaches for `matchMedia` as it is built, and Bun has no window
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   asked = [];
   sent = [];
@@ -135,11 +123,8 @@ function wireStores({ endpoints = false }: Wiring = {}) {
     return response;
   };
   // The services go in before the stores are created: a store reads its service while building
-  // its state, which is how it knows not to seed itself from the demo world.
-  setLibraryService(new HttpLibraryService("/api", fetch));
-  setJobsService(new HttpJobsService("/api", fetch));
-  setUsageService(new HttpUsageService("/api", fetch));
-  setEndpointSettingsService(endpoints ? new HttpEndpointSettingsService("/api", fetch) : null);
+  // its state.
+  pointServicesAt(fetch, { endpoints });
   pinia?.stop();
   pinia = testPinia();
   castStore = useCastStore();
@@ -202,28 +187,14 @@ const writtenElsewhere = (): Segment[] => [
 
 beforeEach(() => wire());
 
-// The services are module state, and every other suite in this repository is the seeded world.
+// The services are module state, and every other suite in this repository talks to the demo.
 afterEach(() => {
   pinia.stop();
   useEndpointsStore()._detach();
-  setLibraryService(null);
-  setJobsService(null);
-  setUsageService(null);
-  setEndpointSettingsService(null);
+  pointServicesAt(null);
 });
 
 describe("the queue with a server answering", () => {
-  test("starts empty rather than on the seeded history", async () => {
-    expect(jobsStore.jobs).toEqual([]);
-    await poll();
-    expect(jobsStore.jobs).toEqual([]);
-    expect(queue.status.value).toBe("success");
-    // and so do the other stores: a real library has no seeded scripts, cast or history
-    expect(Object.keys(scriptsStore.segments)).toEqual([]);
-    expect(Object.keys(castStore.characters)).toEqual([]);
-    expect(Object.keys(historyStore.chapters)).toEqual([]);
-  });
-
   test("a scripting run is queued on the server, and the chapters say so at once", async () => {
     const gate = gatedProvider();
     wire({ scripting: gate.provider });
@@ -238,7 +209,7 @@ describe("the queue with a server answering", () => {
     ]);
     expect(jobsStore.activeJobs).toHaveLength(2);
     expect(queue.active.value).toHaveLength(2);
-    // nothing here came from the simulator: the chapters were marked by the server's answer
+    // the chapters were marked by the server's answer, not by the store ahead of it
     expect(libraryStore.chapter(id, 1)?.scripting).toBe("running");
     expect(libraryStore.chapter(id, 2)?.scripting).toBe("queued");
     gate.release();
@@ -252,7 +223,7 @@ describe("the queue with a server answering", () => {
     const segs = scriptsStore.segmentsOf(id, 1);
     expect(segs.length).toBeGreaterThan(1);
     expect(script.segments.value).toBe(segs);
-    // the fake model's attribution, which nothing in the seeded world produces
+    // the fake model's attribution, read from the prose
     expect(segs.find((s) => s.type === "dialogue")?.speaker).toBe("Mara");
     expect(script.loaded.value).toBe(true);
     expect(scriptsStore._revision[key(id, 1)]).toBe(1);
@@ -1116,7 +1087,7 @@ describe("spending with a server answering", () => {
     expect(libraryStore.chapter(id, 1)?.scripting).toBe("none");
   });
 
-  test("the Endpoints page's history is the ledger's rows, not the fixture's week", async () => {
+  test("the Endpoints page's history is the ledger's rows", async () => {
     await priced();
     const id = await shelved(["One"]);
     await scriptingStore.runScripting(id, [1], { quiet: true });
@@ -1162,16 +1133,6 @@ describe("the speech endpoints' live telemetry with a server answering", () => {
     rateLimits: 0,
     backoffUntil: 0,
   };
-  // the credential registry is module state, and the configuration read from the server replaces
-  // it; every suite after this one saves the seeded registry
-  let registry: typeof credentials;
-  beforeEach(() => {
-    registry = clone([...credentials]);
-  });
-  afterEach(() => {
-    credentials.splice(0, credentials.length, ...registry);
-  });
-
   /**
    * A server holding one speech endpoint whose narration the test holds open, the stores reading
    * the configuration from it, and a page showing the endpoints' live telemetry.
@@ -1243,14 +1204,16 @@ describe("the speech endpoints' live telemetry with a server answering", () => {
   });
 
   test("telemetry arriving sends no save, and a save sends none of it", async () => {
-    const { ep, done } = await narrating();
+    const { endpointsStore, ep, done } = await narrating();
     await poll();
     expect(ep.backoffUntil).toBeGreaterThan(0);
-    await new Promise((r) => setTimeout(r, WRITE_DELAY_MS + 50));
+    // a write waiting behind its timer is sent now rather than after it: none is waiting
+    await endpointsStore.flushWrites();
     const saves = () => sent.filter((s) => s.path === "/api/endpoints");
     expect(saves()).toEqual([]);
     ep.concurrency = 3;
-    await new Promise((r) => setTimeout(r, WRITE_DELAY_MS + 50));
+    await settle();
+    await endpointsStore.flushWrites();
     expect(saves()).toHaveLength(1);
     const [saved] = (saves()[0].body as { endpoints: Record<string, unknown>[] }).endpoints;
     expect(saved.concurrency).toBe(3);

@@ -14,8 +14,7 @@ import {
 } from "@/lib/endpoints";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import { probeCost, probeUnits, seriesFrom } from "@/services/endpoints";
-import { maybeMoney, money, noUnits, perMillionChars, speechRates, ttsCost } from "@/lib/pricing";
-import type { BillableUnits } from "@/types";
+import { maybeMoney, money, perMillionChars, speechRates } from "@/lib/pricing";
 import type {
   Endpoint,
   MetricTotals,
@@ -86,36 +85,9 @@ const health = (u: UnifiedEndpoint, over: Partial<Parameters<typeof healthOf>[1]
 test("a rate that isn't known is never rendered as zero", () => {
   const unknown: TtsBilling = { unit: "minute", rate: null };
   expect(perMillionChars(unknown)).toBeNull();
-  expect(ttsCost(unknown, 5000, 300)).toBeNull();
   expect(maybeMoney(null)).toBe("unknown");
   expect(maybeMoney(0)).toBe("$0.00");
   expect(pricingLabel(unifyEndpoint(ttsEndpoint({ billing: unknown })))).toBe("rate not known");
-});
-
-const units = (over: Partial<BillableUnits> = {}): BillableUnits => ({
-  ...noUnits(),
-  requests: 1,
-  ...over,
-});
-
-test("each billing unit prices a request by what it actually charges for", () => {
-  expect(ttsCost({ unit: "chars", rate: 15 }, units({ chars: 2_000_000 }))).toBeCloseTo(30, 6);
-  expect(ttsCost({ unit: "bytes", rate: 15 }, units({ bytes: 2_000_000 }))).toBeCloseTo(30, 6);
-  // `tokens` is per 1M **text tokens**, not a per-character rate wearing a different label
-  expect(ttsCost({ unit: "tokens", rate: 4 }, units({ textTokens: 1_000_000 }))).toBeCloseTo(4, 6);
-  expect(ttsCost({ unit: "minute", rate: 0.3 }, units({ audioSeconds: 120 }))).toBeCloseTo(0.6, 6);
-  // a flat fee does not scale with the text
-  expect(ttsCost({ unit: "request", rate: 0.02 }, units({ chars: 10 }))).toBe(0.02);
-  expect(
-    ttsCost({ unit: "request", rate: 0.02 }, units({ chars: 100_000, audioSeconds: 900 })),
-  ).toBe(0.02);
-  // two rates, charged on two different quantities, added rather than substituted
-  expect(
-    ttsCost(
-      { unit: "audio-tokens", rate: 1, audioRate: 20 },
-      units({ textTokens: 1_000_000, audioTokens: 500_000 }),
-    ),
-  ).toBeCloseTo(1 + 10, 6);
 });
 
 test("per-request billing has no per-character equivalent for the run estimator", () => {

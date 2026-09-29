@@ -4,8 +4,10 @@
 // The store asks a seeded demo library in-process (`support/demoServer.ts`) and loads the page
 // again through a loader of the test's own, so what it would have loaded is recorded rather than
 // followed. The tab's `sessionStorage` is the suite's in-memory one; a store built again from a
-// fresh Pinia is the page after that load.
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+// fresh Pinia is the page after that load. One demo library serves the file: a test that puts it
+// into a situation or resets it seeds it again anyway, none reads the world it was left in, and the
+// speed — the one thing it keeps across a seed — is put back to 1× after each test.
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 import { DEMO_GROUPS, demoScenarios } from "@/mock/scenarios/catalogue";
 import { HttpDemoService, setDemoService } from "@/services/demo";
@@ -32,20 +34,29 @@ function freshStore() {
   return useDemoStore();
 }
 
-beforeEach(async () => {
+beforeAll(async () => {
+  server = await demoServer();
+});
+
+beforeEach(() => {
   // the ui store reads the colour scheme as it is built
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  server = await demoServer();
   setDemoService(new HttpDemoService(DEMO_BASE, server.fetch));
   loaded = [];
   toasts = [];
   setPageLoader((path) => void loaded.push(path));
 });
 
-afterEach(() => {
+afterEach(async () => {
   sessionStorage.removeItem(APPLIED_KEY);
   sessionStorage.removeItem(REOPEN_KEY);
   setDemoService(null);
+  const slowed = await server.fetch(`${DEMO_BASE}/demo/speed`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ speed: 1 }),
+  });
+  expect(slowed.status).toBe(200);
 });
 
 const shelf = async () =>

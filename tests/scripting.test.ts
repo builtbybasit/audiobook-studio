@@ -1,17 +1,19 @@
 // Scripting endpoints and what a run is estimated at before it is queued. The run itself is the
-// server's, and so is what each request is charged: see `tests/server/`.
+// server's, and so is what each request is charged: see `tests/server/`. The estimate is worked out
+// over a short book on a server of this file's own, the way a backend tab reads one.
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 import { test, expect, beforeAll, beforeEach, describe } from "bun:test";
-import { newProfile, profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
-import type { Job } from "@/types";
+import { newProfile, profileErrors, scriptParts } from "@/lib/scripting";
+import type { Book, Job } from "@/types";
 
-import { jobDiagnostics, logJob, MAX_JOB_EVENTS } from "@/lib/jobActivity";
-import { demoServer } from "./support/demoServer";
+import { jobDiagnostics } from "@/lib/jobActivity";
+import { backendServer } from "./support/backendServer";
 import { openDemoBook } from "./support/demoBook";
+import { epubFile, story } from "./support/epub";
 import { testPinia, type TestPinia } from "./support/pinia";
 
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
@@ -19,6 +21,8 @@ let libraryStore: ReturnType<typeof useLibraryStore>;
 let scriptingStore: ReturnType<typeof useScriptingStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
 let pinia: TestPinia;
+/** the book the estimates are worked out over: three chapters, the first longer than one chunk */
+let book: string;
 
 /** The one scripting endpoint each test runs against: no key, $1 in and $2 out per million. */
 function useTestProfile() {
@@ -38,7 +42,14 @@ function useTestProfile() {
 }
 beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  await demoServer();
+  const api = backendServer();
+  const { body } = await api.import<{ book: Book }>(
+    await epubFile({
+      chapters: ["One", "Two", "Three"].map((title) => ({ title, paragraphs: story(4) })),
+    }),
+  );
+  book = body.book.id;
+  await api.request(`/api/books/${book}/confirm`, { method: "POST" });
 });
 beforeEach(() => {
   pinia = testPinia();
@@ -49,60 +60,58 @@ beforeEach(() => {
   scriptsStore = useScriptsStore();
 });
 
-test("chunk boundaries are lossless and respect the chosen maximum", () => {
-  const text = "A sentence.  Another clause, and words.\n\n" + "abcdefghij".repeat(30);
-  for (const mode of ["sentence", "clause", "word", "char"] as const) {
-    const parts = scriptParts(text, newProfile({ model: "m", maxChars: 25, splitAt: mode }));
-    expect(parts.join("")).toBe(text);
-    expect(parts.every((p) => p.length <= 25 && p.length > 0)).toBe(true);
-  }
-  expect(scriptParts(text, newProfile({ model: "m", maxChars: 0 }))).toEqual([text]);
+const CHAPTER = "A sentence.  Another clause, and words.\n\n" + "abcdefghij".repeat(30);
+
+test.each(["sentence", "clause", "word", "char"] as const)(
+  "chunks cut at a %s boundary lose nothing and respect the chosen maximum",
+  (splitAt) => {
+    const parts = scriptParts(CHAPTER, newProfile({ model: "m", maxChars: 25, splitAt }));
+    expect(parts.join("")).toBe(CHAPTER);
+    expect(parts.filter((p) => p.length > 25 || p.length === 0)).toEqual([]);
+  },
+);
+
+test("with no maximum, a chapter goes as one chunk", () => {
+  expect(scriptParts(CHAPTER, newProfile({ model: "m", maxChars: 0 }))).toEqual([CHAPTER]);
 });
-test("a concurrency must be a positive whole number, however large, and the URL a base URL", () => {
-  for (const value of [-1, 0, 0.5, Infinity, NaN])
-    expect(profileErrors(newProfile({ model: "m", concurrency: value })).length).toBeGreaterThan(0);
+
+test.each([-1, 0, 0.5, Infinity, NaN])("a concurrency of %p is refused", (concurrency) => {
+  expect(profileErrors(newProfile({ model: "m", concurrency })).length).toBeGreaterThan(0);
+});
+
+test("a concurrency may be any positive whole number, however large, and the URL a base URL", () => {
   // not a slider artefact: a local server may take thousands at once
   expect(profileErrors(newProfile({ model: "m", concurrency: 2500 }))).toEqual([]);
   expect(
     profileErrors(newProfile({ model: "m", baseUrl: "https://example.com/v1/chat/completions" })),
   ).toContain("Use the base URL without /chat/completions.");
 });
-test("prices input and output at their own rates, and charges the prompt once per request", () => {
-  const p = useTestProfile(); // input $1, output $2 per million
-  const text = "a".repeat(400);
-  const t = tokenEstimate(text, p);
-  expect(t.inputCost).toBeCloseTo((t.inputTokens * p.inPrice) / 1e6, 12);
-  expect(t.outputCost).toBeCloseTo((t.outputTokens * p.outPrice) / 1e6, 12);
-  expect(t.cost).toBeCloseTo(t.inputCost + t.outputCost, 12);
-  // the same text sent in two requests carries the prompt twice
-  expect(tokenEstimate(text.slice(0, 200), p).inputTokens * 2).toBeGreaterThan(t.inputTokens);
-});
 
 describe("the estimate", () => {
   beforeEach(async () => {
-    await openDemoBook(pinia, "cliche");
+    await openDemoBook(pinia, book);
     useTestProfile();
   });
 
   test("skips excluded and active chapters and uses endpoint-specific chunking", () => {
-    libraryStore.chapter("cliche", 2)!.excluded = true;
-    libraryStore.chapter("cliche", 3)!.scripting = "running";
-    const estimate = scriptingStore.scriptEstimate("cliche", [1, 2, 3]);
+    libraryStore.chapter(book, 2)!.excluded = true;
+    libraryStore.chapter(book, 3)!.scripting = "running";
+    const estimate = scriptingStore.scriptEstimate(book, [1, 2, 3]);
     expect(estimate.chapters).toBe(1);
     expect(estimate.chunks).toBeGreaterThan(1);
     expect(estimate.chunks).toBe(
-      scriptParts(scriptsStore.rawText("cliche", 1), endpointsStore.profiles[0]).length,
+      scriptParts(scriptsStore.rawText(book, 1), endpointsStore.profiles[0]).length,
     );
   });
 
   test("a zero budget blocks paid work, and a paused endpoint blocks the run", () => {
-    libraryStore.bookById("cliche")!.scriptBudget = 0;
-    expect(scriptingStore.scriptEstimate("cliche", [1]).blockers).toContain(
+    libraryStore.bookById(book)!.scriptBudget = 0;
+    expect(scriptingStore.scriptEstimate(book, [1]).blockers).toContain(
       "Estimated cost exceeds the remaining book budget.",
     );
-    libraryStore.bookById("cliche")!.scriptBudget = null;
+    libraryStore.bookById(book)!.scriptBudget = null;
     endpointsStore.profiles[0].enabled = false;
-    expect(scriptingStore.scriptEstimate("cliche", [1]).blockers).toContain(
+    expect(scriptingStore.scriptEstimate(book, [1]).blockers).toContain(
       "This endpoint is paused. Enable it or select another.",
     );
   });
@@ -111,14 +120,14 @@ describe("the estimate", () => {
     endpointsStore.profiles[0].maxOutputTokens = 1;
     expect(
       scriptingStore
-        .scriptEstimate("cliche", [1])
+        .scriptEstimate(book, [1])
         .blockers.some((x) => x.includes("output token limit")),
     ).toBe(true);
     endpointsStore.profiles[0].maxOutputTokens = 200;
     endpointsStore.profiles[0].inPrice = 0;
     endpointsStore.profiles[0].outPrice = 0;
-    libraryStore.bookById("cliche")!.scriptBudget = 0;
-    expect(scriptingStore.scriptEstimate("cliche", [1]).blockers).toEqual([]);
+    libraryStore.bookById(book)!.scriptBudget = 0;
+    expect(scriptingStore.scriptEstimate(book, [1]).blockers).toEqual([]);
   });
 });
 
@@ -136,31 +145,28 @@ test("settings round-trip retains endpoint limits and excludes unrecognized cred
   expect(endpointsStore.profiles[0].concurrency).toBe(2500);
 });
 
-test("retained diagnostics stay bounded and omit connection snapshots and credentials", () => {
+// What the Queue's Copy diagnostics puts on the clipboard: the server keeps the log bounded
+// (`tests/server/jobs.test.ts`), and this is the allowlist that keeps a run's connection off it.
+test("copied diagnostics carry the job's log and never the connection it ran against", () => {
   const job: Job = {
     id: 1,
     kind: "scripting",
-    bookId: "cliche",
+    bookId: "b",
     chapterId: null,
     label: "Test",
-    status: "queued",
+    status: "failed",
     progress: 0,
     queuedAt: 0,
     startedAt: null,
     finishedAt: null,
     cancelled: false,
+    activity: [{ id: 1, at: 0, level: "error", message: "Gateway answered 500" }],
+    droppedEvents: 3,
   };
-  for (let i = 0; i < MAX_JOB_EVENTS + 2; i++) logJob(job, `Event ${i}`);
-  logJob(job, "Authorization: Bearer sk-examplecredential", "error", {
-    apiKey: "private",
-    inputTokens: 123,
+  Object.assign(job, {
+    scriptRun: { profile: { baseUrl: "https://private.invalid", apiKey: "sk-private" } },
   });
-  Object.assign(job, { scriptRun: { profile: { baseUrl: "https://private.invalid" } } });
-  const exported = jobDiagnostics(job);
-  expect(job.activity).toHaveLength(MAX_JOB_EVENTS);
-  expect(job.droppedEvents).toBe(3);
-  expect(exported).not.toContain("private");
-  expect(exported).not.toContain("examplecredential");
-  expect(exported).toContain('"inputTokens": 123');
-  expect(new Set(job.activity!.map((e) => e.id)).size).toBe(MAX_JOB_EVENTS);
+  const copied = JSON.parse(jobDiagnostics(job)) as Record<string, unknown>;
+  expect(copied).toMatchObject({ jobId: 1, droppedEvents: 3, activity: job.activity });
+  expect(JSON.stringify(copied)).not.toContain("private");
 });

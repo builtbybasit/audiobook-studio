@@ -1,15 +1,16 @@
 // Expression tags as the page places them: anchored in a line's text, spelled the way the endpoint
 // the line's voice is on says, and kept out of every edit of the prose around them. The stores here
-// answer to a seeded demo library, so an edit is written as the page writes it; the speech endpoint
-// the tags are configured on is one the test adds, with a model that takes bracketed tags.
+// read a seeded demo library, opened once; what an edit or a dictionary change would write is
+// answered without being written, so every test reads the demo as seeded, and what the server
+// keeps of an edit is `tests/server/scriptEdit.test.ts`'s. The speech endpoint the tags are
+// configured on is one the test adds, with a model that takes bracketed tags.
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
-import { useHistoryStore } from "@/stores/history";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-import { test, expect, beforeEach, afterEach } from "bun:test";
+import { test, expect, beforeAll, beforeEach, afterEach } from "bun:test";
 
 import {
   configErrors,
@@ -21,6 +22,7 @@ import { libraryService } from "@/services/library";
 import type { Endpoint, ExpressionTag } from "@/types";
 import { demoServer } from "./support/demoServer";
 import { testPinia, type TestPinia } from "./support/pinia";
+import { unwrittenEdits, type UnwrittenEdit } from "./support/unwrittenEdits";
 
 const BOOK = "cliche";
 const laugh: ExpressionTag = {
@@ -53,19 +55,23 @@ const studio = (): Endpoint => ({
 let pinia: TestPinia;
 let castStore: ReturnType<typeof useCastStore>;
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
-let historyStore: ReturnType<typeof useHistoryStore>;
 let narrationStore: ReturnType<typeof useNarrationStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
-beforeEach(async () => {
+/** the scripts the store asked the server to write, in the order it asked */
+let writes: UnwrittenEdit[];
+beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   await demoServer();
+  ({ writes } = unwrittenEdits({ lexicon: true }));
+});
+beforeEach(async () => {
   pinia = testPinia();
   castStore = useCastStore();
   endpointsStore = useEndpointsStore();
-  historyStore = useHistoryStore();
   narrationStore = useNarrationStore();
   scriptsStore = useScriptsStore();
   const libraryStore = useLibraryStore();
+  writes.length = 0;
   useUiStore().toast = () => "test";
   const svc = libraryService();
   await Promise.all([libraryStore.load(true), endpointsStore.load()]);
@@ -75,7 +81,7 @@ beforeEach(async () => {
   await libraryStore.loadBook(BOOK);
   castStore._install(BOOK, await svc.cast(BOOK));
   for (const c of castStore.characters[BOOK]) c.voice = "studio/af_heart";
-  // chapter 1 is one line, at the revision the server holds, so the next edit of it is accepted
+  // chapter 1 is one line, at the revision the server holds
   const { revision } = await svc.chapterScript(BOOK, 1);
   scriptsStore._install(BOOK, 1, {
     revision,
@@ -90,7 +96,6 @@ beforeEach(async () => {
       },
     ],
   });
-  historyStore._install(BOOK, 1, await svc.chapterHistory(BOOK, 1));
 });
 afterEach(async () => {
   await scriptsStore._settled(BOOK, 1);
@@ -153,19 +158,22 @@ test("an annotation put back where it already was is not an edit of the script",
   await scriptsStore._settled(BOOK, 1);
   // the line as it stands has been rendered
   segment().audio.status = "done";
-  const entries = historyStore.versionsOf(BOOK, 1).length;
+  writes.length = 0;
 
-  // dragging a tag home again: the script still says what the clip was rendered from
+  // dragging a tag home again: the script still says what the clip was rendered from, and nothing
+  // is written that would open a history entry
   narrationStore.updateExpression(BOOK, 1, 1, 1, { at: 8 });
   expect(segment().audio.status).toBe("done");
   await scriptsStore._settled(BOOK, 1);
-  expect(historyStore.versionsOf(BOOK, 1)).toHaveLength(entries);
+  expect(writes).toEqual([]);
 
-  // …and a real move is still an edit, with the clip marked and the edit recorded
+  // …and a real move is still an edit, with the clip marked and the moved tag written as one
   narrationStore.updateExpression(BOOK, 1, 1, 1, { at: 9 });
   expect(segment().audio.status).toBe("stale");
   await scriptsStore._settled(BOOK, 1);
-  expect(historyStore.headOf(BOOK, 1).origin).toMatchObject({ kind: "edited" });
+  expect(
+    writes.map((w) => [w.edit.origin, w.edit.segments[0].expressions?.map((a) => a.at)]),
+  ).toEqual([[undefined, [9]]]);
 });
 
 test("split and join preserve annotations at their correct positions without duplicating them", () => {

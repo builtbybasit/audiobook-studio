@@ -46,10 +46,12 @@ interface Failure {
   error: { code: string; message: string; detail?: string };
 }
 
+// Long enough that a chapter cut at 700 characters (`small` below) goes as several requests, and no
+// longer: every paragraph is scripted again in every test that runs one.
 const dialogue = () => [
   "The ledger lay open on the table. “We are short again,” said Mara.",
   "Rain ran down the shutters while she counted. Nobody answered her.",
-  ...story(),
+  ...story(12),
 ];
 
 /** A book on the shelf, its review done, ready for work. */
@@ -134,7 +136,7 @@ describe("scripting a chapter through the queue", () => {
   test("a book still in its contents review has nothing to script", async () => {
     const api = testApi();
     const { body } = await api.import<ImportResult>(
-      await epubFile({ chapters: [{ title: "One", paragraphs: story() }] }),
+      await epubFile({ chapters: [{ title: "One", paragraphs: story(1) }] }),
     );
     const refused = await api.request<Failure>(
       `/api/books/${body.book.id}/chapters/script`,

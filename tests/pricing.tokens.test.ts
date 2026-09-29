@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
+import { describe, expect, test } from "bun:test";
 import {
   baseRates,
   ceilingRates,
@@ -15,6 +14,7 @@ import {
   usageTrustworthy,
 } from "@/lib/pricing";
 import { scriptingPresetById } from "@/lib/endpoints";
+import { makeProfiles } from "@/mock/fixtures/profiles";
 import { newProfile, tokenEstimate } from "@/lib/scripting";
 import { clone } from "@/lib/utils";
 import { useEndpointsStore } from "@/stores/endpoints";
@@ -24,11 +24,6 @@ import { useChapterText } from "@/queries";
 import { demoServer } from "./support/demoServer";
 import { flush, testPinia } from "./support/pinia";
 import { FRI, THU, card, config, promo, utc } from "./support/pricingFixtures";
-
-beforeEach(() => {
-  Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  setActivePinia(createPinia());
-});
 
 /** The demo library's scripting profiles, read into the endpoints store as the page reads them. */
 async function seededProfiles() {
@@ -460,15 +455,16 @@ describe("historical accuracy", () => {
 });
 
 describe("the seeded world", () => {
-  test("the seeded endpoints cover every pricing case the demo claims to", async () => {
-    await demoServer();
-    const profiles = await seededProfiles();
+  // The demo library is seeded with these profiles as they are (`tests/server/demoWorld.test.ts`
+  // compares the two field for field), so they are read here without opening it.
+  test("the seeded endpoints cover every pricing case the demo claims to", () => {
+    const now = Date.now();
+    const profiles = makeProfiles(now);
     const byId = (id: string) => profiles.find((p) => p.id === id)!;
     // cached input, a schedule with a midnight-crossing window, and promotions
     expect(byId("openai").pricing!.cachedInput).toBeGreaterThan(0);
     expect(byId("openai").pricing!.windows.some((w) => w.to <= w.from)).toBe(true);
     // promotions running, ended and not started yet
-    const now = Date.now();
     const promos = byId("openai").pricing!.promotions;
     expect(promos.some((p) => promotionRunning(p, now))).toBe(true);
     expect(promos.some((p) => promotionExpired(p, now))).toBe(true);

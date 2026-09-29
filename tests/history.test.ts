@@ -5,7 +5,8 @@
 // says what really moved between two scripts. A restore keeps the audio that still belongs to the
 // restored lines, marks what no longer matches, and can be undone whole. An imported script file
 // is written the way a restore is, behind one Undo. They run against the demo library, whose first
-// chapter of The Cliché Cultivation World is scripted and narrated.
+// chapter of The Cliché Cultivation World is scripted and narrated; a comparison needs no library,
+// and a test that puts the demo into a situation is handed it rebuilt, so only the rest reset it.
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 import { readinessOf } from "@/lib/exports";
@@ -85,8 +86,7 @@ beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   demo = await demoServer();
 });
-beforeEach(async () => {
-  await demo.reset();
+beforeEach(() => {
   pinia = testPinia();
   castStore = useCastStore();
   endpointsStore = useEndpointsStore();
@@ -230,6 +230,11 @@ describe("restoring", () => {
     await open(1);
     return versions().find((v) => v.origin.kind === "checkpoint")!;
   }
+  /** The demo's first chapter as it is seeded, scripted and narrated, with no history yet. */
+  async function asSeeded() {
+    await demo.reset();
+    await open(1);
+  }
 
   test("it keeps the clips that still match, marks the rest, and leaves later versions alone", async () => {
     const checkpoint = await withHistory();
@@ -288,7 +293,7 @@ describe("restoring", () => {
   });
 
   test("a clip from a line that was joined away comes back to the line it was rendered for", async () => {
-    await open(1);
+    await asSeeded();
     const version = (await historyStore.saveCheckpoint("cliche", 1, "Before the join"))!;
     const first = segments()[0];
     const firstText = first.text;
@@ -317,7 +322,7 @@ describe("restoring", () => {
   });
 
   test("restoring the same script again does nothing at all", async () => {
-    await open(1);
+    await asSeeded();
     const version = (await historyStore.saveCheckpoint("cliche", 1, "Untouched"))!;
     expect(historyStore.restore("cliche", 1, version.id)).toBe(false);
     expect(versions()).toHaveLength(1);
@@ -385,6 +390,7 @@ describe("importing a script file", () => {
     };
   }
   const dialogue = (lines: Segment[]) => lines.filter((s) => s.type === "dialogue");
+  beforeEach(() => demo.reset());
 
   test("the script read back into the book it came from changes nothing", async () => {
     await open(1, 2);
@@ -587,6 +593,7 @@ describe("voice samples a script file carries", () => {
     replacing = [];
     lost = [];
     samplesStore._service = () => server;
+    await demo.reset();
     await open(1);
   });
   const row = (speaker: string, match: VoiceRow["match"]): VoiceRow => ({
@@ -723,6 +730,8 @@ describe("voice samples a script file carries", () => {
 });
 
 describe("the book the history belongs to", () => {
+  beforeEach(() => demo.reset());
+
   test("renumbering a book's chapters takes each history with its own chapter", async () => {
     await open();
     const first = libraryStore.bookById("cliche")!.volumes[0];

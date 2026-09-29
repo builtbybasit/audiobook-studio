@@ -277,12 +277,12 @@ function recording(): SpeechProvider & { sent: SpeechInput[] } {
   return { name: inner.name, sent, speak: (input) => (sent.push(input), inner.speak(input)) };
 }
 
-/** A two-chapter book, scripted, every speaker voiced by `studio/ash`. */
-async function voiced(api: TestApi) {
+/** A book of one chapter, or of `titles`, scripted, every speaker voiced by `studio/ash`. */
+async function voiced(api: TestApi, titles = ["One"]) {
   const { body } = await api.import<{ book: Book }>(
     await epubFile({
       title: "Moonlight Ledger",
-      chapters: ["One", "Two"].map((title) => ({
+      chapters: titles.map((title) => ({
         title,
         paragraphs: ["“We are short again,” said Mara.", ...story(2)],
       })),
@@ -290,7 +290,10 @@ async function voiced(api: TestApi) {
   );
   const id = body.book.id;
   await api.request(`/api/books/${id}/confirm`, { method: "POST" });
-  await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1, 2] }));
+  await api.request(
+    `/api/books/${id}/chapters/script`,
+    jsonBody({ ids: titles.map((_, i) => i + 1) }),
+  );
   await api.runner.idle();
   const cast = await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`);
   for (const c of cast.body.characters)
@@ -418,7 +421,7 @@ describe("a line sent through its endpoint", () => {
   test("an audiobook file will not hold two rates, and says which chapter brought the second", async () => {
     const api = testApi();
     await save(api, { endpoints: [speech({ sampleRate: 16000 })] });
-    const id = await voiced(api);
+    const id = await voiced(api, ["One", "Two"]);
     await narrate(api, id, [1]);
     await save(api, { endpoints: [speech({ sampleRate: 48000 })] });
     await narrate(api, id, [2]);

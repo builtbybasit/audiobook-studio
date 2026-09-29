@@ -1,6 +1,6 @@
-// What every cloning test builds: a saved speech endpoint, sample files by their first bytes, the
-// clone form, the route it is posted to, and cloners that answer from memory or over a `fetch`
-// that does.
+// What every cloning test builds: a saved speech endpoint and the target a cloner is handed, sample
+// files by their first bytes, the clone form, the route it is posted to, cloners that answer from
+// memory or over a `fetch` that does, and the failures a clone must not be sent again after.
 import { expect } from "bun:test";
 
 import type { ClonedVoice, Endpoint, MadeVoice } from "@/types";
@@ -10,10 +10,11 @@ import {
   type VoiceCloner,
   type VoiceClonerOptions,
 } from "~/providers/clone";
+import type { ProviderTarget } from "~/providers/target";
 import { jsonBody, type TestApi } from "./server";
 
-/** A saved speech endpoint; Fish Audio's unless `over` says otherwise. */
-export const speechEndpoint = (over: Partial<Endpoint> = {}): Endpoint => ({
+/** A saved speech endpoint that can clone a voice; Fish Audio's unless `over` says otherwise. */
+export const cloneEndpoint = (over: Partial<Endpoint> = {}): Endpoint => ({
   id: "fish",
   name: "Fish Audio",
   baseUrl: "https://api.fish.audio/v1",
@@ -32,6 +33,24 @@ export const speechEndpoint = (over: Partial<Endpoint> = {}): Endpoint => ({
   rateLimits: 0,
   backoffUntil: 0,
   apiKey: "sk-fish",
+  ...over,
+});
+
+/**
+ * What a cloner is handed for an endpoint; Fish Audio's unless `over` says otherwise. The retries
+ * and cooldown are what a narration endpoint is saved with, which a clone must not take: it goes
+ * out once whatever fails.
+ */
+export const cloneTarget = (over: Partial<ProviderTarget> = {}): ProviderTarget => ({
+  id: "fish",
+  name: "Fish Audio",
+  baseUrl: "https://api.fish.audio/v1",
+  model: "s2.1-pro",
+  apiKey: "sk-fish",
+  needsKey: true,
+  timeoutSec: 5,
+  maxRetries: 2,
+  cooldownSec: 0,
   ...over,
 });
 
@@ -131,3 +150,17 @@ export function answering(
   }) as unknown as typeof globalThis.fetch;
   return { sent, cloner: endpointVoiceCloner({ fetch, backoffMs: () => 0, ...options }) };
 }
+
+/**
+ * The failures another attempt could fix — a 5xx, a rate limit, no answer at all — each with what
+ * provider `name`'s cloner should say of it. A line of speech would be retried after each; a clone
+ * never is.
+ */
+export const unlucky = (name: string): [() => Response | Promise<Response>, string][] => [
+  [() => new Response("busy", { status: 503 }), `${name} answered 503: busy`],
+  [() => new Response("slow down", { status: 429 }), `${name} answered 429`],
+  [
+    () => Promise.reject(new TypeError("connection reset")),
+    `${name} could not be reached: connection reset`,
+  ],
+];

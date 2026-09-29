@@ -30,6 +30,15 @@ export function openDb(url: string = env.DATABASE_URL): Db {
   // writing a few hundred chapters; foreign keys are off by default in SQLite and the cascade
   // from `books` is what makes removing a book remove everything it owns.
   if (url !== ":memory:") sqlite.exec("PRAGMA journal_mode = WAL;");
+  return connect(sqlite);
+}
+
+/**
+ * The handle over a connection already open — `openDb`'s, or a test's copy of a database it
+ * migrated once. The pragmas here belong to the connection, not to the file, so every connection
+ * has to be given them.
+ */
+export function connect(sqlite: Database): Db {
   sqlite.exec("PRAGMA foreign_keys = ON;");
   // A second connection — `pnpm db:migrate` while the server is running — waits for a writer to
   // finish rather than failing on the spot with SQLITE_BUSY.

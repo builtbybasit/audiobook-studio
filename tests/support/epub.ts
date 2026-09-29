@@ -246,7 +246,7 @@ export async function epubFile(input: EpubInput, name = "book.epub"): Promise<Fi
  *
  * The default is for tests about classification. A test that narrates or builds pays for every
  * line — 24 paragraphs script to ~50 lines, each a clip, and a minute of audio for ffmpeg — so pass
- * the few it needs.
+ * the few it needs, or give each chapter one `line` instead when what it says does not matter.
  */
 export const story = (n = 24): string[] =>
   Array.from(
@@ -254,3 +254,13 @@ export const story = (n = 24): string[] =>
     (_, i) =>
       `“We settle the account tonight,” said Aurelie, and the clerk wrote the ${i + 1}th line without looking up from the ledger he had been keeping since the spring.`,
   );
+
+/**
+ * One line of dialogue that names its chapter, and who says it: a chapter a few seconds long.
+ *
+ * Named for the chapter so no two chapters say the same thing. A fake keyed on a line's text — one
+ * that answers a retake differently, say — takes a line it has heard before for a retake, so a book
+ * whose chapters repeat one line reads as retakes from its second chapter on.
+ */
+export const line = (title: string, who = "Mara"): string =>
+  `“${title} is short again,” said ${who}.`;

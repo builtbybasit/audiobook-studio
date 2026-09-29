@@ -136,11 +136,13 @@ describe("in the store", () => {
     expect(castStore.lexiconOf("cliche").find((e) => e.id === id)!.say).toBe("Jee Ning");
   });
 
-  test("a term nothing was rendered with leaves every clip alone", () => {
+  test("a term nothing was rendered with leaves every clip alone", async () => {
     const before = scriptsStore.segmentsOf("cliche", 1).map((s) => s.audio.status);
     castStore.addTerm("cliche", "zzyzx", "zizzix");
     expect(scriptsStore.segmentsOf("cliche", 1).map((s) => s.audio.status)).toEqual(before);
     expect(libraryStore.chapter("cliche", 1)!.narration).toBe("done");
+    // the demo library is this file's, not this test's: the term goes again
+    await undos.pop()!();
   });
 
   test("a pause re-times the chapter without invalidating any audio", () => {

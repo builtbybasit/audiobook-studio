@@ -10,6 +10,7 @@ import { EpubParseError } from "~/epub/parse";
 import { AppError } from "~/lib/errors";
 import { buildEpub, story } from "../support/epub";
 import { testApi } from "../support/server";
+import { claiming } from "../support/zip";
 
 const MB = 1024 * 1024;
 
@@ -22,25 +23,6 @@ async function zipOf(entries: Record<string, string | Uint8Array>): Promise<Arra
   const zip = new JSZip();
   for (const [name, data] of Object.entries(entries)) zip.file(name, data);
   return zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
-}
-
-/**
- * The same zip, claiming the named entry unzips to `size` bytes.
- *
- * Both copies of the claim are rewritten — the local header's and the central directory's — so the
- * archive agrees with itself and only inflating it shows the lie.
- */
-function claiming(bytes: ArrayBuffer, name: string, size: number): ArrayBuffer {
-  const out = Buffer.from(bytes);
-  const named = (at: number, length: number) => out.toString("utf8", at, at + length) === name;
-  for (let i = 0; i + 46 <= out.length; i++) {
-    const sig = out.readUInt32LE(i);
-    if (sig === 0x04034b50 && named(i + 30, out.readUInt16LE(i + 26)))
-      out.writeUInt32LE(size, i + 22);
-    if (sig === 0x02014b50 && named(i + 46, out.readUInt16LE(i + 28)))
-      out.writeUInt32LE(size, i + 24);
-  }
-  return out.buffer.slice(out.byteOffset, out.byteOffset + out.length);
 }
 
 /** A real EPUB whose one chapter is `bytes` long, and compresses to almost nothing. */

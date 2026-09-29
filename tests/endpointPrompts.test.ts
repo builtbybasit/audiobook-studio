@@ -7,7 +7,6 @@
 // the server stores and checks the prompt is `tests/server/`'s.
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 
-import { credentials, type Credential } from "@/lib/credentials";
 import { BUILT_IN_PROMPT, NOTES_MAX_CHARS, promptOverhead } from "@/lib/prompt";
 import { newProfile, profileErrors, reasoningEstimateNote, tokenEstimate } from "@/lib/scripting";
 import { clone } from "@/lib/utils";
@@ -167,7 +166,6 @@ class FakeService implements Partial<EndpointSettingsService> {
 let pinia: TestPinia;
 let svc: FakeService;
 let store: ReturnType<typeof useEndpointsStore>;
-let registry: Credential[];
 const realImmediate = setImmediate;
 const drain = () => new Promise<void>((r) => realImmediate(() => r()));
 const settle = async () => {
@@ -179,7 +177,6 @@ const settle = async () => {
 beforeEach(() => {
   jest.useFakeTimers();
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  registry = clone([...credentials]);
   svc = new FakeService();
   setEndpointSettingsService(svc as unknown as EndpointSettingsService);
   pinia = testPinia();
@@ -191,7 +188,6 @@ afterEach(() => {
   store._detach();
   pinia.stop();
   setEndpointSettingsService(null);
-  credentials.splice(0, credentials.length, ...registry);
   jest.useRealTimers();
 });
 

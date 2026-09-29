@@ -12,7 +12,7 @@
 // the store's side of the seam, and the route has its own tests in `tests/server/`.
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 
-import { credentials, type Credential } from "@/lib/credentials";
+import { credentials } from "@/lib/credentials";
 import { ApiError } from "@/services/http";
 import {
   HttpEndpointSettingsService,
@@ -35,7 +35,6 @@ import { testPinia, type TestPinia } from "./support/pinia";
 
 const TELEMETRY = ["history", "failures", "rateLimits", "backoffUntil", "lastError", "fetching"];
 
-/** What the server keeps, and every write it was sent. */
 /** What the server answers for one voice's kept recordings. */
 const keptOf = (voiceId: string): KeptVoiceSamples => ({
   voiceId,
@@ -46,6 +45,7 @@ const keptOf = (voiceId: string): KeptVoiceSamples => ({
   samples: [{ file: `${"a".repeat(32)}.wav`, name: "take.wav", format: "wav", bytes: 8 }],
 });
 
+/** What the server keeps, and every write it was sent. */
 class FakeService implements EndpointSettingsService {
   held: EndpointConfig | null = null;
   puts: EndpointConfig[] = [];
@@ -201,8 +201,6 @@ let pinia: TestPinia;
 let svc: FakeService;
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
 let toasts: { msg: string; kind?: string }[];
-/** the registry is module state; every test puts it back */
-let registry: Credential[];
 
 // The write-behind waits on a timer, and the clock is faked so the suite does not sit out
 // WRITE_DELAY_MS a dozen times over. Everything else here is promises, so letting them run is one
@@ -222,7 +220,6 @@ const settle = () => wait(WRITE_DELAY_MS);
 beforeEach(() => {
   jest.useFakeTimers();
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  registry = clone([...credentials]);
   svc = new FakeService();
   setEndpointSettingsService(svc);
   pinia = testPinia();
@@ -238,7 +235,6 @@ afterEach(() => {
   endpointsStore._detach();
   pinia.stop();
   setEndpointSettingsService(null);
-  credentials.splice(0, credentials.length, ...registry);
   jest.useRealTimers();
 });
 

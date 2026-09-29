@@ -327,6 +327,7 @@ describe("ElevenLabs", () => {
   });
 
   test.each([
+    ["absent", null],
     ["empty", ""],
     ["not a count", "8.5"],
     ["zero", "0"],
@@ -336,7 +337,10 @@ describe("ElevenLabs", () => {
       const f = scripted(
         () =>
           new Response(wav(24000, 600), {
-            headers: { "content-type": "audio/wav", "character-cost": cost },
+            headers: {
+              "content-type": "audio/wav",
+              ...(cost === null ? {} : { "character-cost": cost }),
+            },
           }),
       );
       const r = reports();
@@ -344,13 +348,6 @@ describe("ElevenLabs", () => {
       expect(r.got[0].reported).toBeNull();
     },
   );
-
-  test("an absent character-cost header reports nothing", async () => {
-    const f = scripted(() => wavResponse(wav(24000, 600)));
-    const r = reports();
-    await provider(f.fetch).speak(line(eleven, { sent: r.sent }));
-    expect(r.got[0].reported).toBeNull();
-  });
 
   test("a 200 that is not audio fails billed, with its character count kept", async () => {
     const f = scripted(() =>

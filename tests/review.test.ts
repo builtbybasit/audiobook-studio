@@ -7,8 +7,11 @@
 // and the row is gone on the next read. A count that only ever goes up is a count nobody trusts.
 //
 // Each reads the demo library put into one of the Demo tools' situations, with the book read in
-// whole — every scripted chapter, the cast, the audiobooks and the queue — as its pages would.
-import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+// whole — every scripted chapter, the cast, the audiobooks and the queue — as its pages would. The
+// tests are grouped by situation, and a situation is applied once for the tests that only read it:
+// each still reads it into a page of its own, and one that writes to the demo says so, so the next
+// test is handed the situation afresh.
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 import { jobsService } from "@/services/jobs";
 import { libraryService } from "@/services/library";
@@ -31,13 +34,14 @@ let jobsStore: ReturnType<typeof useJobsStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let narrationStore: ReturnType<typeof useNarrationStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
+/** The situation the demo is in with nothing written to it since, or null when a test wrote. */
+let untouched: string | null = null;
 
 beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   demo = await demoServer();
 });
-beforeEach(async () => {
-  await demo.reset();
+beforeEach(() => {
   pinia = testPinia();
   castStore = useCastStore();
   exportsStore = useExportsStore();
@@ -47,14 +51,18 @@ beforeEach(async () => {
   scriptsStore = useScriptsStore();
   useUiStore().toast = () => "test";
 });
-afterEach(async () => {
-  await demo.idle();
-  pinia.stop();
-});
+afterEach(() => pinia.stop());
+afterAll(() => demo.hold());
 
 /** The demo in situation `id`, and `bookId` read in whole. */
 async function situated(id: string, bookId: string): Promise<void> {
-  await demo.situate(id);
+  if (untouched !== id) {
+    await demo.situate(id);
+    // the runs a situation sets going would move the book on between one test's read and the
+    // next's; held, it keeps still until the next situation
+    await demo.hold();
+    untouched = id;
+  }
   const svc = libraryService();
   await libraryStore.loadBook(bookId);
   castStore._install(bookId, await svc.cast(bookId));
@@ -73,9 +81,10 @@ const group = (bookId: string, kind: string): DecisionGroup | undefined =>
   reviewInbox(bookId).find((g) => g.kind === kind);
 const kinds = (bookId: string): string[] => reviewInbox(bookId).map((g) => g.kind);
 
-describe("what the inbox gathers", () => {
-  test("the listening scenario's flags and second takes are both in it, with the ledger's own links", async () => {
-    await situated("stale-audio", "starforge");
+describe("a book with clips to listen to again", () => {
+  beforeEach(() => situated("stale-audio", "starforge"));
+
+  test("its flags and second takes are both in the inbox, with the ledger's own links", () => {
     const flagged = group("starforge", "flagged")!;
     const retakes = group("starforge", "retake")!;
     // the same segments the ledger's own chips count
@@ -100,8 +109,36 @@ describe("what the inbox gathers", () => {
     expect(retakes.items[0].detail).toMatch(/take \d/i);
   });
 
-  test("a part-way book brings its failed run, its unverified chunk and its undecided chapters together", async () => {
-    await situated("resume-book", "cliche");
+  test("the count the badges show is the number of rows the page lists", () => {
+    expect(reviewCount("starforge")).toBe(
+      reviewInbox("starforge").reduce((n, g) => n + g.items.length, 0),
+    );
+    expect(reviewInbox("starforge").every((g) => g.items.length > 0)).toBe(true);
+  });
+
+  test("accepting a retake and clearing a flag drop out of the list", async () => {
+    untouched = null; // both are written to the demo
+    const before = group("starforge", "retake")!.items.length;
+    const row = group("starforge", "retake")!.items[0];
+    const [, chId, segId] = row.id.split(":").map(Number);
+    narrationStore.acceptTake("starforge", chId, segId);
+    await until(() => (group("starforge", "retake")?.items.length ?? 0) < before);
+    expect(group("starforge", "retake")?.items.length ?? 0).toBe(before - 1);
+
+    const flag = group("starforge", "flagged")!.items[0];
+    const [, fCh, fSeg] = flag.id.split(":").map(Number);
+    const flagsBefore = group("starforge", "flagged")!.items.length;
+    narrationStore.clearFlag("starforge", fCh, fSeg);
+    expect(group("starforge", "flagged")?.items.length ?? 0).toBe(flagsBefore - 1);
+    await scriptsStore._settled("starforge", fCh);
+  });
+});
+
+describe("a book part-way through", () => {
+  // nothing here writes to the demo: what a page decides is decided on the page's own copy
+  beforeEach(() => situated("resume-book", "cliche"));
+
+  test("its failed run, its unverified chunk and its undecided chapters are brought together", () => {
     const all = kinds("cliche");
     expect(all).toContain("failed");
     expect(all).toContain("unverified");
@@ -130,40 +167,7 @@ describe("what the inbox gathers", () => {
     );
   });
 
-  test("chapters with the same notice are one decision, because one verdict settles them all", async () => {
-    // the 212-chapter serial, with updates scattered through it: a row per kind of notice, not a
-    // row per chapter, or the inbox would be longer than the book
-    await situated("import-serial", "import-serial");
-    const contents = group("import-serial", "contents")!;
-    const pending = libraryStore.noticeGroupsOf("import-serial").filter((g) => g.pending.length);
-    expect(pending.length).toBeGreaterThan(1);
-    expect(contents.items).toHaveLength(pending.length);
-    expect(contents.items.length).toBeLessThan(pending.reduce((n, g) => n + g.pending.length, 0));
-    // the link arrives with the contents review already narrowed to that kind of notice
-    expect(contents.items[0].to).toMatchObject({
-      path: "/book/import-serial/contents",
-      query: { kind: pending[0].kind },
-    });
-  });
-
-  test("an expression the script moved under is listed with the line it sits on", async () => {
-    await situated("expressions", "starforge");
-    const issues = narrationStore.expressionIssues(
-      "starforge",
-      libraryStore.chaptersOf("starforge").map((c) => c.id),
-    );
-    expect(issues.length).toBeGreaterThan(0);
-    const expressions = group("starforge", "expression")!;
-    expect(expressions.items).toHaveLength(issues.length);
-    // it is settled in the reader, on the line it is placed in
-    expect(expressions.items[0].to).toMatchObject({
-      path: "/book/starforge/scripting",
-      query: { ch: String(issues[0].chId), seg: String(issues[0].segId) },
-    });
-  });
-
-  test("broken work is listed first, and the rest follow the pipeline", async () => {
-    await situated("resume-book", "cliche");
+  test("broken work is listed first, and the rest follow the pipeline", () => {
     const all = kinds("cliche");
     expect(all[0]).toBe("failed");
     const order = [
@@ -179,34 +183,7 @@ describe("what the inbox gathers", () => {
     expect(all).toEqual(order.filter((k) => all.includes(k)));
   });
 
-  test("the count the badges show is the number of rows the page lists", async () => {
-    await situated("stale-audio", "starforge");
-    expect(reviewCount("starforge")).toBe(
-      reviewInbox("starforge").reduce((n, g) => n + g.items.length, 0),
-    );
-    expect(reviewInbox("starforge").every((g) => g.items.length > 0)).toBe(true);
-  });
-});
-
-describe("deciding one empties its row", () => {
-  test("accepting a retake and clearing a flag drop out of the list", async () => {
-    await situated("stale-audio", "starforge");
-    const before = group("starforge", "retake")!.items.length;
-    const row = group("starforge", "retake")!.items[0];
-    const [, chId, segId] = row.id.split(":").map(Number);
-    narrationStore.acceptTake("starforge", chId, segId);
-    await until(() => (group("starforge", "retake")?.items.length ?? 0) < before);
-    expect(group("starforge", "retake")?.items.length ?? 0).toBe(before - 1);
-
-    const flag = group("starforge", "flagged")!.items[0];
-    const [, fCh, fSeg] = flag.id.split(":").map(Number);
-    const flagsBefore = group("starforge", "flagged")!.items.length;
-    narrationStore.clearFlag("starforge", fCh, fSeg);
-    expect(group("starforge", "flagged")?.items.length ?? 0).toBe(flagsBefore - 1);
-  });
-
-  test("a chapter that failed and was run again stops being a decision, however long its job history is", async () => {
-    await situated("resume-book", "cliche");
+  test("a chapter that failed and was run again stops being a decision, however long its job history is", () => {
     const failed = libraryStore.chaptersOf("cliche").find((c) => c.narration === "failed")!;
     expect(
       group("cliche", "failed")!.items.some((d) => d.id === `failed:narration:${failed.id}`),
@@ -223,8 +200,7 @@ describe("deciding one empties its row", () => {
     ).toBe(false);
   });
 
-  test("a merge suggestion the user dismissed does not come back", async () => {
-    await situated("resume-book", "cliche");
+  test("a merge suggestion the user dismissed does not come back", () => {
     // the scenario is seeded with one; without it this test would check nothing
     const suggestion = castStore.mergeSuggestions("cliche")[0];
     expect(suggestion).toBeDefined();
@@ -238,6 +214,38 @@ describe("deciding one empties its row", () => {
     expect(
       (group("cliche", "merge")?.items ?? []).some((d) => d.id === `merge:${suggestion.from}`),
     ).toBe(false);
+  });
+});
+
+test("chapters with the same notice are one decision, because one verdict settles them all", async () => {
+  // the 212-chapter serial, with updates scattered through it: a row per kind of notice, not a
+  // row per chapter, or the inbox would be longer than the book
+  await situated("import-serial", "import-serial");
+  const contents = group("import-serial", "contents")!;
+  const pending = libraryStore.noticeGroupsOf("import-serial").filter((g) => g.pending.length);
+  expect(pending.length).toBeGreaterThan(1);
+  expect(contents.items).toHaveLength(pending.length);
+  expect(contents.items.length).toBeLessThan(pending.reduce((n, g) => n + g.pending.length, 0));
+  // the link arrives with the contents review already narrowed to that kind of notice
+  expect(contents.items[0].to).toMatchObject({
+    path: "/book/import-serial/contents",
+    query: { kind: pending[0].kind },
+  });
+});
+
+test("an expression the script moved under is listed with the line it sits on", async () => {
+  await situated("expressions", "starforge");
+  const issues = narrationStore.expressionIssues(
+    "starforge",
+    libraryStore.chaptersOf("starforge").map((c) => c.id),
+  );
+  expect(issues.length).toBeGreaterThan(0);
+  const expressions = group("starforge", "expression")!;
+  expect(expressions.items).toHaveLength(issues.length);
+  // it is settled in the reader, on the line it is placed in
+  expect(expressions.items[0].to).toMatchObject({
+    path: "/book/starforge/scripting",
+    query: { ch: String(issues[0].chId), seg: String(issues[0].segId) },
   });
 });
 

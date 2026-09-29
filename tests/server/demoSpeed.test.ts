@@ -3,8 +3,10 @@
 // The Demo drawer sets one speed for the demo library, and every simulated wait there — a line on
 // a simulated endpoint, a chunk on a simulated profile, a chapter of a build — is divided by it. The
 // real library is never paced, whatever the demo is set to. The libraries are the ones the server
-// boots, over private databases; their providers' `fetch` fails the test.
-import { afterEach, describe, expect, test } from "bun:test";
+// boots, over private databases; their providers' `fetch` fails the test. The tests that only set
+// the speed and time a request share one demo, put back to 1× after each; the world it holds is
+// none of their business.
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 
 import type { Job } from "@/types";
 import { SIMULATED_BASE_URL } from "@/lib/providers";
@@ -33,7 +35,14 @@ afterEach(async () => {
   await Promise.all(opened.splice(0).map((l) => l.runner.stop()));
 });
 
+/** A library of the test's own, stopped when the test is done. */
 async function open(demo: boolean, { still = true } = {}): Promise<Library> {
+  const library = await started(demo, still);
+  opened.push(library);
+  return library;
+}
+
+async function started(demo: boolean, still = true): Promise<Library> {
   const library = openLibrary({
     name: demo ? "demo" : "real",
     base: demo ? DEMO_BASE : REAL_BASE,
@@ -50,7 +59,6 @@ async function open(demo: boolean, { still = true } = {}): Promise<Library> {
     demo,
     still,
   });
-  opened.push(library);
   await library.start();
   return library;
 }
@@ -116,19 +124,9 @@ describe("the demo's speed", () => {
     expect((await request<{ speed: number }>(demo, "/demo/speed")).body.speed).toBe(16);
   });
 
-  test("divides a simulated line's wait and a simulated chunk's", async () => {
-    const demo = await open(true);
-    const [line, chunk] = await timed(demo, 320);
-    expect(line).toBeGreaterThanOrEqual(300);
-    expect(chunk).toBeGreaterThanOrEqual(300);
-    await setSpeed(demo, 16);
-    const [quickLine, quickChunk] = await timed(demo, 320);
-    expect(quickLine).toBeLessThan(150);
-    expect(quickChunk).toBeLessThan(150);
-  });
-
-  test("divides the wait for each chapter of a build", async () => {
+  test("divides the wait for each chapter of a build, told in order", async () => {
     const pace = newPace();
+    const told: number[] = [];
     const inner: AudiobookEncoder = {
       ...wavEncoders().for({} as never),
       async encode(input: EncodeInput) {
@@ -138,7 +136,7 @@ describe("the demo's speed", () => {
         return { bytes: 1, seconds: 3, chapters: [] };
       },
     };
-    const paced = pacedEncoders({ name: "inner", for: () => inner }, pace, 100).for({} as never);
+    const paced = pacedEncoders({ name: "inner", for: () => inner }, pace, 200).for({} as never);
     const build = async () => {
       const started = performance.now();
       await paced.encode({
@@ -146,18 +144,44 @@ describe("the demo's speed", () => {
         gap: 0,
         out: "",
         signal: new AbortController().signal,
+        onChapter: (c) => void told.push(c.id),
       });
       return performance.now() - started;
     };
-    expect(await build()).toBeGreaterThanOrEqual(285);
-    pace.speed = 4;
+    const slow = await build();
+    expect(slow).toBeGreaterThanOrEqual(585);
+    expect(told).toEqual([1, 2, 3]);
+    pace.speed = 10;
     const quick = await build();
-    expect(quick).toBeGreaterThanOrEqual(70);
-    expect(quick).toBeLessThan(200);
+    expect(quick).toBeGreaterThanOrEqual(55);
+    // against the same build at 1x rather than a fixed figure: a machine busy enough to fire timers
+    // late fires both builds' late, and a speed that was not applied would take as long as the first
+    expect(quick).toBeLessThan(slow / 2);
+  });
+});
+
+describe("the demo's speed, once set", () => {
+  let demo: Library;
+  beforeAll(async () => {
+    demo = await started(true);
+  });
+  afterEach(async () => {
+    expect((await setSpeed(demo, 1)).status).toBe(200);
+  });
+  afterAll(() => demo.runner.stop());
+
+  test("divides a simulated line's wait and a simulated chunk's", async () => {
+    const [line, chunk] = await timed(demo, 320);
+    expect(line).toBeGreaterThanOrEqual(300);
+    expect(chunk).toBeGreaterThanOrEqual(300);
+    await setSpeed(demo, 16);
+    const [quickLine, quickChunk] = await timed(demo, 320);
+    // against the same request at 1x, which a loaded machine slows as much
+    expect(quickLine).toBeLessThan(line / 2);
+    expect(quickChunk).toBeLessThan(chunk / 2);
   });
 
   test("is the demo's alone: the real library has no such route and is never paced", async () => {
-    const demo = await open(true);
     const real = await open(false);
     await setSpeed(demo, 16);
     expect((await request(real, "/demo/speed")).status).toBe(404);
@@ -168,7 +192,6 @@ describe("the demo's speed", () => {
   });
 
   test("outlasts a reset and a situation, being the tester's rather than the world's", async () => {
-    const demo = await open(true);
     await setSpeed(demo, 4);
     await request(demo, "/demo/reset", { method: "POST" });
     await request(demo, "/demo/situations/fresh-book", { method: "POST" });

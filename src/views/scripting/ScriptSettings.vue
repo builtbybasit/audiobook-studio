@@ -7,7 +7,7 @@ import { useScriptsStore } from "@/stores/scripts";
 
 import { computed } from "vue";
 import { useScriptActivity } from "@/queries/scriptActivity";
-import BookPromptPanel from "@/views/scripting/BookPromptPanel.vue";
+import BookPromptSummary from "@/views/scripting/BookPromptSummary.vue";
 
 import { UiNumber, UiSelect, UiSwitch, UiTooltip } from "@/ui";
 import {
@@ -218,9 +218,9 @@ const money = (n: number) =>
         />
       </div>
     </div>
-    <!-- what this book tells the scripter, and the prompt it may have of its own -->
+    <!-- what this book tells the scripter: edited on the Overview, where an editor has room -->
     <div class="border-t border-zinc-200 pt-3 dark:border-zinc-800">
-      <BookPromptPanel :key="bookId" :book-id="bookId" :selected="selected" />
+      <BookPromptSummary :book-id="bookId" />
     </div>
     <div
       v-if="est.blockers.length"

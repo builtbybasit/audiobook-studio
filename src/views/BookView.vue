@@ -7,8 +7,8 @@ import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
 
 // Book overview: volumes, pipeline progress per stage, cast summary, latest exports, and what to do next.
-import { computed, ref } from "vue";
-import { useRouter } from "vue-router";
+import { computed, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
 import { isNarrated } from "@/lib/scriptReview";
 import {
@@ -24,6 +24,7 @@ import {
 import { UiNumber } from "@/ui";
 import AddEpubDialog from "@/components/AddEpubDialog.vue";
 import BookCover from "@/components/BookCover.vue";
+import BookPromptPanel from "@/views/scripting/BookPromptPanel.vue";
 import { pendingFor, pickedFrom, type PendingAdd } from "@/components/addEpub";
 import type { Volume } from "@/types";
 import { useBookId } from "@/composables/useBookId";
@@ -37,8 +38,28 @@ const exportsStore = useExportsStore();
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
+/** The endpoint scripting runs are sent to, which the book's prompt is previewed and tried with. */
+const runProfile = computed(() =>
+  endpointsStore.profiles.find((x) => x.id === scriptingStore.scriptSettings.profile),
+);
 const bookId = useBookId();
 const router = useRouter();
+const route = useRoute();
+
+// `#prompt` — the Scripting page's "Edit on Overview" — lands on the prompt. The page scrolls inside
+// the app's <main>, not the window, so the router's own hash scrolling never sees it; and the
+// section only exists once the book has loaded, which is what the watch waits for.
+const promptSection = ref<HTMLElement | null>(null);
+// It scrolls <main> alone: `scrollIntoView` would scroll every ancestor, the app's frame included,
+// and push the header out of the window.
+watch([promptSection, () => route.hash], ([el, hash]) => {
+  const main = el?.closest("main");
+  if (!el || !main || hash !== "#prompt") return;
+  const gap = 16;
+  main.scrollTo({
+    top: main.scrollTop + el.getBoundingClientRect().top - main.getBoundingClientRect().top - gap,
+  });
+});
 // the router only reaches this view with a real book id
 const book = computed(() => libraryStore.bookById(bookId)!);
 const chapters = computed(() => libraryStore.chaptersOf(bookId));
@@ -490,29 +511,29 @@ const next = computed(() =>
         <div class="card p-4 text-xs text-zinc-500">
           <div class="label mb-1">Scripting profile</div>
           <div class="text-sm text-zinc-900 dark:text-zinc-100">
-            {{
-              endpointsStore.profiles.find((x) => x.id === scriptingStore.scriptSettings.profile)
-                ?.name
-            }}
+            {{ runProfile?.name }}
             ·
-            <span class="font-mono">{{
-              endpointsStore.profiles.find((x) => x.id === scriptingStore.scriptSettings.profile)
-                ?.model
-            }}</span>
+            <span class="font-mono">{{ runProfile?.model }}</span>
           </div>
           <div class="mt-1">
-            {{
-              (
-                endpointsStore.profiles.find((x) => x.id === scriptingStore.scriptSettings.profile)
-                  ?.maxChars ?? 0
-              ).toLocaleString()
-            }}
+            {{ (runProfile?.maxChars ?? 0).toLocaleString() }}
             chars/chunk · watermarks
             {{ scriptingStore.scriptSettings.stripWatermarks ? "stripped" : "kept" }}
           </div>
         </div>
       </div>
     </div>
+    <!-- what this book tells the scripter, and the prompt it may have of its own -->
+    <section id="prompt" ref="promptSection" class="card p-4" aria-labelledby="book-prompt-title">
+      <div class="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 id="book-prompt-title" class="label">Scripting prompt</h2>
+        <span class="text-[11px] text-zinc-500"
+          >Previewed and tried with {{ runProfile?.name ?? "no endpoint" }}, the endpoint scripting
+          runs use — chosen on the Scripting page.</span
+        >
+      </div>
+      <BookPromptPanel :key="bookId" :book-id="bookId" />
+    </section>
     <AddEpubDialog :pending="pendingAdd" @close="pendingAdd = null" />
   </div>
 </template>

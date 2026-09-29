@@ -32,7 +32,7 @@ import { UiSwitch } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
 import type { BookPrompt, RenderedPrompt } from "@/types";
 
-const props = defineProps<{ bookId: string; selected: number[] }>();
+const props = defineProps<{ bookId: string }>();
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
@@ -128,11 +128,8 @@ function addTag(owner: NotesOwner) {
   draft.value.system = withNotesLine(draft.value.system, owner);
 }
 
-// the chapter the preview is built on: the first one ticked, or the book's first
-const chapter = computed(() => {
-  const chs = libraryStore.chaptersOf(props.bookId);
-  return chs.find((c) => c.id === props.selected[0]) ?? chs[0];
-});
+// the chapter the preview is built on: the book's first; the trial below picks its own
+const chapter = computed(() => libraryStore.chaptersOf(props.bookId)[0]);
 const { text } = useChapterText(
   () => props.bookId,
   () => chapter.value?.id,
@@ -263,7 +260,7 @@ const previewOf = computed(
     <div class="rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-800">
       <PromptTrial
         :book-id="bookId"
-        :chapter-id="chapter?.id ?? null"
+        :chapter-id="null"
         :profile-id="scriptingStore.scriptSettings.profile"
         :drafts="{ book: draft }"
         :disabled="problems.length > 0"

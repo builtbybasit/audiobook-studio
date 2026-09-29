@@ -8,6 +8,7 @@
 // or the demo's, which the server holds as a second library with a database of its own.
 import type {
   Book,
+  BookPrompt,
   Chapter,
   ChapterHistory,
   Character,
@@ -40,6 +41,8 @@ export interface BookSettings {
   budget?: { cap: number | null; paused: boolean } | null;
   scriptBudget?: number | null;
   pacing?: Pacing | null;
+  /** the book's notes and its own prompt; `null` clears both */
+  prompt?: BookPrompt | null;
 }
 
 /** The two forms a chapter's prose comes in. See `LibraryService.chapterText`. */

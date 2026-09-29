@@ -2,6 +2,7 @@
 // per-book settings — the pronunciation dictionary and the pacing — that change how it sounds
 // without changing a word of it.
 import type { Gender, VoiceRef } from "@/types/common";
+import type { BookPrompt } from "@/types/scripting";
 
 /** One entry of a book's pronunciation dictionary. The book text is never rewritten: the term is
  *  swapped for `say` on the way to the endpoint, so the reader still shows the author's spelling. */
@@ -160,6 +161,8 @@ export interface Book {
   scriptBudget?: number | null;
   /** default gaps between clips; absent = the built-in pacing */
   pacing?: Pacing;
+  /** notes for the scripter, and a whole prompt of its own it may switch on; absent = neither */
+  prompt?: BookPrompt;
 }
 
 export interface Character {

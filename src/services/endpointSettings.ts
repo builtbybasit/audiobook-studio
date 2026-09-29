@@ -20,6 +20,7 @@ import type {
   FoundVoice,
   KeptVoiceSamples,
   Profile,
+  PromptTemplate,
 } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { API_BASE } from "@/services/mode";
@@ -47,6 +48,11 @@ export interface EndpointConfig {
   endpoints: StoredEndpoint[];
   profiles: Profile[];
   credentials: Credential[];
+  /**
+   * The library's default scripting prompt; null is the built-in one. Optional in a write, where
+   * leaving it out keeps what the server holds; always present in a read.
+   */
+  prompt?: PromptTemplate | null;
 }
 
 /**

@@ -92,6 +92,13 @@
       "when": 1790661066050,
       "tag": "0012_cover_urls",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1790680616858,
+      "tag": "0013_scripting_prompts",
+      "breakpoints": true
     }
   ]
 }

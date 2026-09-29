@@ -23,7 +23,9 @@ import type {
   EndpointKind,
   Gender,
   ParkedRates,
+  ProfilePrompt,
   PromotionScope,
+  ReasoningEffort,
   RateSet,
   SampleRate,
   SplitMode,
@@ -79,6 +81,15 @@ export const endpoints = sqliteTable(
     cacheWrite: real("cache_write"),
     maxOutputTokens: integer("max_output_tokens"),
     secPerChunk: real("sec_per_chunk"),
+    /** scripting only: how hard a reasoning model thinks; null leaves it to the model */
+    reasoningEffort: text("reasoning_effort").$type<ReasoningEffort>(),
+    /**
+     * scripting only: this endpoint's say over the library's prompt. Null is `default`; the two
+     * texts are kept whatever the mode, so switching back finds them again.
+     */
+    promptMode: text("prompt_mode").$type<ProfilePrompt["mode"]>(),
+    promptSystem: text("prompt_system"),
+    promptUser: text("prompt_user"),
 
     // ---- speech rates ----
     billingUnit: text("billing_unit").$type<TtsBillingUnit>(),

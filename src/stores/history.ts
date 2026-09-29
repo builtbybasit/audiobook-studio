@@ -23,6 +23,7 @@ import {
   planCapture,
   planRestore,
   restoreConsequences,
+  seededHistory,
   SESSION_IDLE_MS,
   snapshotScript,
 } from "@/lib/scriptHistory";
@@ -500,15 +501,7 @@ export const useHistoryStore = defineStore("history", {
     ): void {
       const k = key(bookId, chId);
       this._closeSession(k);
-      this.chapters[k] = {
-        versions: seeded.versions.map((v, i) => ({
-          ...v,
-          id: i + 1,
-          segments: snapshotScript(v.segments),
-        })),
-        head: clone(seeded.head),
-        nextId: seeded.versions.length + 1,
-      };
+      this.chapters[k] = seededHistory(seeded);
     },
   },
 });

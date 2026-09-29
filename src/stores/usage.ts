@@ -32,6 +32,7 @@ import type {
 } from "@/types";
 import { seedRead } from "@/stores/seed";
 import { observedCacheRate } from "@/lib/pricing";
+import { openingScriptSpend } from "@/mock/scenarios/situations";
 
 interface UsageState {
   /** append-only; the order is the order they settled in */
@@ -272,25 +273,7 @@ export const useUsageStore = defineStore("usage", {
      * as invented, which keeps it out of the Activity list while still counting against the cap.
      */
     recordOpeningScriptSpend(bookId: string, profileId: string, cost: number, at: number): void {
-      this.requests.push({
-        id: `opening-${this._n++}`,
-        endpointId: profileId,
-        kind: "scripting",
-        bookId,
-        chapterId: null,
-        label: "Earlier scripting on this book",
-        status: "done",
-        attempts: 1,
-        queuedAt: at,
-        startedAt: at,
-        finishedAt: at,
-        queueMs: 0,
-        responseMs: 0,
-        usage: {},
-        cost,
-        costBasis: "calculated",
-        simulated: true,
-      });
+      this.requests.push(openingScriptSpend(`opening-${this._n++}`, bookId, profileId, cost, at));
     },
   },
 });

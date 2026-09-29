@@ -79,8 +79,8 @@ export interface AppOptions {
    */
   gate?: SpeechGate;
   /**
-   * What `POST <base>/demo/reset` does: given to the demo library alone, so the real one has no
-   * route that empties it.
+   * What `POST <base>/demo/reset` and `POST <base>/demo/situations/:id` do: given to the demo
+   * library alone, so the real one has no route that empties it.
    */
   reset?: Reset;
 }

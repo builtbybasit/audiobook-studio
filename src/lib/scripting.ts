@@ -1,4 +1,4 @@
-import type { Profile } from "@/types";
+import type { Profile, ScriptEndpointTelemetry } from "@/types";
 import { splitText } from "@/lib/split";
 import { isSimulated } from "@/lib/providers";
 import {
@@ -154,6 +154,16 @@ export function tokenEstimate(text: string, p: Profile, at: number = Date.now())
     reserve: (inputTokens * reserveIn + p.maxOutputTokens * reserveOut) / 1e6,
   };
 }
+
+/** What a profile nothing has been sent to yet has been through: nothing. */
+export const unusedTelemetry = (): ScriptEndpointTelemetry => ({
+  completed: 0,
+  failures: 0,
+  rateLimits: 0,
+  backoffUntil: 0,
+  lastSuccess: 0,
+  history: [],
+});
 
 export function scriptingHealth(
   p: Profile,

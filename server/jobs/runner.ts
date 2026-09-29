@@ -95,6 +95,8 @@ export function createRunner(
     ended: Promise<void>;
   } | null = null;
   let draining: Promise<void> | null = null;
+  /** a kick that arrived after the worker last looked at the queue; see `kick` */
+  let missed = false;
   let stopped = false;
   let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -189,6 +191,8 @@ export function createRunner(
   async function drain(): Promise<void> {
     for (;;) {
       if (stopped) return;
+      // this look at the queue sees everything enqueued before it
+      missed = false;
       let job: Job | undefined;
       try {
         job = queue.claimNext(db);
@@ -209,14 +213,23 @@ export function createRunner(
    * its first `await` — it claims a job and starts the handler — and a `kick` arriving inside that
    * window (an enqueue from a handler, the interval) would otherwise see nothing draining and start
    * a second worker beside the first.
+   *
+   * A kick while one is draining is not dropped, though. The drain may already have found the
+   * queue empty and be on its way out — `draining` is cleared a turn after `drain` returns — and a
+   * job enqueued in that turn, the one straight after a `start`, would otherwise wait for the
+   * interval. So it is remembered, and the drain that missed it is followed by one more look.
    */
   function kick(): void {
-    if (draining) return;
+    if (draining) {
+      missed = true;
+      return;
+    }
     let done!: () => void;
     draining = new Promise<void>((r) => (done = r));
     void drain().finally(() => {
       draining = null;
       done();
+      if (missed && !stopped) kick();
     });
   }
 

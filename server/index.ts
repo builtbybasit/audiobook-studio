@@ -50,7 +50,7 @@ const demo = openLibrary({
   demo: true,
 });
 const libraries = [real, demo];
-for (const library of libraries) library.runner.start();
+for (const library of libraries) await library.start();
 
 const server = Bun.serve({
   hostname: env.HOST,

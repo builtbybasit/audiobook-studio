@@ -1,19 +1,23 @@
-// Putting the demo back the way it started: everything it holds gone, and the seed laid down again.
+// Putting the demo back the way it started, or into a Demo tools situation: everything it holds
+// gone, and the seed laid down again — with the situation applied to it, when one was asked for.
 //
 // Only the demo library is given this (`server/libraries.ts`), and it is given the demo's own
 // database, queue and folders — there is nothing here that could name the real library's.
 //
-// The queue is stopped first and started again last. A stop aborts the job that is running and
-// waits for its handler to come back, so nothing from the old world is still being written when
-// the rows go; the job it hands back to the queue is one of those rows, so nothing from the old
-// world runs again in the new one either.
+// The queue is stopped first and started again once the rows are in. A stop aborts the job that is
+// running and waits for its handler to come back, so nothing from the old world is still being
+// written when the rows go; the job it hands back to the queue is one of those rows, so nothing
+// from the old world runs again in the new one either. What the seed describes that is not a row —
+// runs in flight, builds, an endpoint's recent trouble — is set going last, on the running queue.
 import { is, sql } from "drizzle-orm";
 import { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { rm } from "node:fs/promises";
 
+import type { DemoScenario } from "@/types";
 import type { Db } from "~/db/client";
 import * as schema from "~/db/schema";
-import { seedDemo, type Seeded } from "~/demo/seed";
+import type { DemoLive } from "~/demo/live";
+import { seedDemo, type Seeding } from "~/demo/seed";
 import type { Runner } from "~/jobs/runner";
 import type { SpeechGate } from "~/providers/gate";
 import type { Reset } from "~/routes/demo";
@@ -43,26 +47,34 @@ export interface DemoParts {
   base: string;
   /** the demo's folders — its clips, its audiobooks, its voices' recordings — removed whole */
   dirs: readonly string[];
+  /** set going what a seed describes that is not a row, once the queue is running (`startLive`) */
+  live: (live: DemoLive) => Promise<void>;
 }
 
-/** The demo's reset, one at a time: a second asked for while one runs waits for it, then runs. */
-export function demoReset({ db, runner, gate, voiceFiles, base, dirs }: DemoParts): Reset {
-  async function rebuild(): Promise<Seeded> {
+/**
+ * The demo's reset, one at a time: a second asked for while one runs waits for it, then runs.
+ * Given a situation, it seeds the world with the situation applied; given none, the world as it is.
+ */
+export function demoReset({ db, runner, gate, voiceFiles, base, dirs, live }: DemoParts): Reset {
+  async function rebuild(scenario?: DemoScenario): Promise<Seeding> {
     await runner.stop();
+    let seeding: Seeding;
     try {
       wipe(db);
       await Promise.all(dirs.map((dir) => rm(dir, { recursive: true, force: true })));
-      const seeded = seedDemo(db, voiceFiles, { base });
+      // the request's own moment, so every cooldown and window the situation sets starts now
+      seeding = seedDemo(db, voiceFiles, { base, now: Date.now(), scenario });
       // the endpoints were replaced, as a save replaces them; the gate reads its limits again
       gate.changed();
-      return seeded;
     } finally {
       runner.start();
     }
+    await live(seeding.live);
+    return seeding;
   }
   let last: Promise<unknown> = Promise.resolve();
-  return () => {
-    const turn = last.then(rebuild);
+  return (scenario) => {
+    const turn = last.then(() => rebuild(scenario));
     last = turn.catch(() => undefined);
     return turn;
   };

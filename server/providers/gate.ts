@@ -52,6 +52,11 @@ export interface SpeechGate {
   rateLimited(id: string, waitMs: number): void;
   /** The configuration was saved: look again at every endpoint something is waiting on. */
   changed(): void;
+  /**
+   * Forget every rate limit and cooldown seen so far: the endpoints that met them have been
+   * replaced by ones that met none — the demo, seeded again. Lines out and waiting are untouched.
+   */
+  forget(): void;
   /** What this process has seen of each endpoint it has sent to; see the header. */
   live(): Record<string, EndpointLive>;
 }
@@ -214,6 +219,16 @@ export function createSpeechGate(now: () => number = Date.now): SpeechGate {
     },
 
     changed: pumpAll,
+
+    forget() {
+      for (const s of states.values()) {
+        if (s.timer) clearTimeout(s.timer);
+        s.timer = null;
+        s.rateLimits = 0;
+        s.backoffUntil = 0;
+      }
+      pumpAll();
+    },
 
     live() {
       const out: Record<string, EndpointLive> = {};

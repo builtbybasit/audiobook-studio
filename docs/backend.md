@@ -98,8 +98,43 @@ seeded export has no file yet either, so its download is a 404 for now.
 aborted and waited for), deletes every row of every table the schema declares, removes the demo's
 folders, seeds again at the time of the reset and starts the queue. Your library has no such route.
 
+**Situations.** `GET /demo/api/demo/situations` lists the Demo chip's situations and their groups,
+and `POST /demo/api/demo/situations/:id` rebuilds the demo with one applied, the way a reset does,
+and answers with what it did and the page to open. It runs the browser's own situation code
+([src/mock/scenarios/situations.ts](../src/mock/scenarios/situations.ts)) against the world in
+memory — `ScenarioContext` over plain data rather than stores
+([server/demo/situations.ts](../server/demo/situations.ts)) — and writes the result in one
+transaction, at the time of the request, so a ten-second cooldown or a promotion dated from now is
+fresh. The three pricing situations that read the clock's hour use the server's timezone.
+
+What a situation describes that is not a row is made real once the queue is running again
+([server/demo/live.ts](../server/demo/live.ts)), after a reset and the first seed as well:
+
+- **What the endpoints have been through** — the browser keeps it as counters and a short history
+  on each endpoint; the server keeps what it keeps for any endpoint. Each point of the history is a
+  settled request in the ledger at its moment and with its latency, the last error goes on the
+  failure it was met on, and each other rate limit is a refused request a minute before it; every
+  one costs nothing and says it was simulated. A speech endpoint still cooling down is held by the
+  speech gate for the rest of its cooldown. A scripting profile has no cooldown on the server — a
+  429 is waited out inside the one request — so its telemetry is ledger rows only.
+- **Work in flight as you arrive** — the runs a situation names are real scripting or narration
+  runs, queued through the same operations as the page's buttons, on the demo's simulated
+  endpoints.
+- **Build history** — a running build is a real one, and the demo's encoder reports its chapters
+  140 ms apart so it is still running when the page opens; a failed one is queued through the real
+  path and settled at once as failed while writing a file, so **Retry** rebuilds it; the finished
+  one is the world's. The server builds one audiobook per book at a time, so a retry while the
+  running build is going is refused.
+
+A book's opening scripting spend, which a situation such as the spent budget declares, is a row in
+the ledger, since that is what a book's scripting budget is held to.
+
+[tests/demoSituations.test.ts](../tests/demoSituations.test.ts) applies every situation on the
+server and in the browser's demo store in the same process, with the clock frozen, and compares what
+the demo API answers with what the stores hold.
+
 The page does not use the demo library yet: the **Demo** chip still opens the seeded world in the
-browser, and the situations it offers move onto the server in the slices that follow.
+browser. The last slice points it at `/demo/api` and removes the browser's copy.
 
 ## The schema
 
@@ -1674,6 +1709,7 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [simulatedScripting.test.ts](../tests/server/simulatedScripting.test.ts)     | A simulated scripting profile run through the real queue and ledger with no `fetch` made                            |
 | [libraries.test.ts](../tests/server/libraries.test.ts)                       | Your library and the demo kept apart: routing by path, addresses under each base, the demo's seed and its reset     |
 | [demoWorld.test.ts](../tests/server/demoWorld.test.ts)                       | The demo seeded with the browser demo's world, held to `makeWorld()` field by field; every endpoint simulated       |
+| [demoLive.test.ts](../tests/server/demoLive.test.ts)                         | Telemetry into ledger rows and a gate cooldown; runs in flight and builds on the simulated endpoints                |
 | [demoClips.test.ts](../tests/server/demoClips.test.ts)                       | A demo clip's file written on first read, once, whole; your library never writing one                               |
 | [libraryClient.test.ts](../tests/server/libraryClient.test.ts)               | The client and the API against each other                                                                           |
 | [schema.test.ts](../tests/server/schema.test.ts)                             | The seeded world through the schema and back                                                                        |

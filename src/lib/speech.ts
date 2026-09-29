@@ -122,6 +122,10 @@ export function silenceOf(segments: Segment[], pacing: Pacing): number {
   return heard.reduce((a, s, i) => a + pauseAfter(s, heard[i + 1], pacing), 0);
 }
 
+/** How long a chapter plays: every clip, and the silence stitched between them. */
+export const chapterSeconds = (segments: Segment[], pacing: Pacing): number =>
+  segments.reduce((a, s) => a + s.audio.duration, 0) + silenceOf(segments, pacing);
+
 /** seconds, exact but never noisy: 1s, 1.75s, 0.35s */
 export const secs = (n: number): string => `${Number(n.toFixed(2))}s`;
 

@@ -1,8 +1,10 @@
-// What the demo library starts with, and goes back to on a reset.
+// What the demo library starts with, and goes back to on a reset or a situation.
 //
 // The world the browser's demo shows (`makeWorld()`, written by `demo/world.ts`): its books, casts,
 // scripts and clips, exports and the queue's history from earlier today, and its endpoints — every
-// one simulated, so nothing in the demo reaches the network or is billed. Beside them, the
+// one simulated, so nothing in the demo reaches the network or is billed. A Demo tools situation is
+// applied to that world before any of it is written (`demo/situations.ts`), so a situation is a
+// seed like any other rather than a set of changes made to a demo already running. Beside them, the
 // Simulated speech endpoint and the Simulated scripting profile, so the preset a person would pick
 // to try a run for nothing is there too. The preset's are the presets' own `apply` — what the
 // Endpoints page fills in when the preset is picked — and every endpoint is checked by the schemas
@@ -16,10 +18,11 @@ import * as v from "valibot";
 
 import { presetById, scriptingPresetById, type Preset } from "@/lib/presets";
 import { newProfile } from "@/lib/scripting";
-import { makeJobHistory } from "@/mock/fixtures/jobs";
-import { makeWorld } from "@/mock/world";
+import type { DemoResult, DemoScenario } from "@/types";
 import type { Db } from "~/db/client";
 import { books, endpoints } from "~/db/schema";
+import type { DemoLive } from "~/demo/live";
+import { situate } from "~/demo/situations";
 import { writeWorld, worldEndpoints } from "~/demo/world";
 import { saveEndpoints } from "~/endpoints/ops";
 import { EndpointSchema, ProfileSchema } from "~/lib/schemas";
@@ -34,9 +37,6 @@ export interface Seeded {
 
 /** The id the Simulated endpoint and the Simulated profile are both kept under. */
 export const SIMULATED_ID = "simulated";
-
-/** The first id of the queue's history, as the browser's demo numbers its own. */
-const FIRST_JOB = 100;
 
 /** A preset's fields, as a copy the seed can hand on without sharing the catalogue's objects. */
 function applied<T>(preset: Preset<T> | undefined): Partial<T> {
@@ -65,30 +65,47 @@ export function isFresh(db: Db): boolean {
 export interface SeedOptions {
   /** the demo's API base, which its clips' urls are under */
   base: string;
+  /** the moment the world is seeded at: every date in it, and every date a situation sets */
+  now: number;
+  /** the Demo tools row to apply to the world before it is written */
+  scenario?: DemoScenario;
 }
 
-/** Put the demo's world and endpoints into a library with none. */
-export function seedDemo(db: Db, voiceFiles: VoiceFiles, { base }: SeedOptions): Seeded {
-  // one clock for the whole seed: the promotions are dated from it, as the browser's world is
-  const world = makeWorld(Date.now());
-  const own = worldEndpoints(world);
+export interface Seeding {
+  seeded: Seeded;
+  /** what is left for `startLive` once the queue is running: runs, builds, endpoints' trouble */
+  live: DemoLive;
+  /** what the situation did, or null for the world as it is seeded */
+  result: DemoResult | null;
+}
+
+/** Put the demo's world and endpoints into a library with none, with the situation applied. */
+export function seedDemo(
+  db: Db,
+  voiceFiles: VoiceFiles,
+  { base, now, scenario }: SeedOptions,
+): Seeding {
+  const { demo, live, result } = situate(now, scenario);
+  const own = worldEndpoints(demo.world);
   const config = {
     // the world's own first, in its order, as the browser's demo lists them
     endpoints: [...own.endpoints.map((e) => v.parse(EndpointSchema, e)), speechEndpoint()],
     profiles: [...own.profiles.map((p) => v.parse(ProfileSchema, p)), scriptingProfile()],
     credentials: own.credentials,
   };
-  let id = FIRST_JOB;
-  const jobs = makeJobHistory(() => id++);
 
   db.transaction((tx) => {
     saveEndpoints(tx, config, voiceFiles);
-    writeWorld(tx, world, { base, jobs });
+    writeWorld(tx, demo, { base, now });
   });
 
   return {
-    endpoints: config.endpoints.map((e) => e.id),
-    profiles: config.profiles.map((p) => p.id),
-    books: world.books.map((b) => b.id),
+    seeded: {
+      endpoints: config.endpoints.map((e) => e.id),
+      profiles: config.profiles.map((p) => p.id),
+      books: demo.world.books.map((b) => b.id),
+    },
+    live,
+    result,
   };
 }

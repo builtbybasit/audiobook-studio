@@ -9,7 +9,7 @@
 // world the running simulators were started against, and every simulator checks it before writing.
 // A run from the world you just left cannot finish a chapter, fail a build or spend a budget in the
 // one you are looking at now.
-import { DEFAULT_EXPORT_SETTINGS, exportKey } from "@/lib/exports";
+import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { keyring } from "@/lib/keyring";
 import { clearPageState } from "@/lib/pageState";
 import { isScripted, key } from "@/lib/scriptReview";
@@ -21,9 +21,12 @@ import {
   demoScenario,
   demoScenarios,
   exportScenarios,
+  finishedExport,
+  historyJob,
   searchDemoTarget,
   searchScenarios,
   SEEDED_KEYS,
+  shelveInto,
   STARTUP_DELAY_MS,
   startupRuns,
   type HistoryRow,
@@ -280,18 +283,7 @@ export const useDemoStore = defineStore("demo", {
         // A scenario builds its situation in one pass and reads the book id straight back, so it
         // takes the seeded world's synchronous path rather than the action that may be a request.
         importSample: (sampleId, bookId) => libraryStore._importedLocally(sampleId, { id: bookId }),
-        shelveBook: (spec) => {
-          const id = libraryStore._importedLocally(spec.sample, {
-            id: spec.id,
-            title: spec.title,
-          });
-          const book = libraryStore.bookById(id)!;
-          book.author = spec.author;
-          book.cover = spec.cover;
-          book.addedAt = spec.addedAt;
-          delete book.importing;
-          return id;
-        },
+        shelveBook: (spec) => shelveInto(libraryStore._local(), spec),
         addFinishedExport: (bookId, ids) => this._addFinishedExport(bookId, ids),
       };
     },
@@ -302,103 +294,23 @@ export const useDemoStore = defineStore("demo", {
 
       const book = libraryStore.bookById(bookId);
       if (!book) return;
-      const chapters = libraryStore.chaptersOf(bookId).filter((c) => ids.includes(c.id));
-      const duration =
-        chapters.reduce((a, c) => a + c.duration, 0) + Math.max(0, ids.length - 1) * 2;
-      const settings: ExportSettings = {
-        ...DEFAULT_EXPORT_SETTINGS,
-        title: book.title,
-        series: book.title,
-        author: book.author,
-        filename: book.title,
-      };
-      const size = Math.max(1, Math.round(((duration * settings.bitrate) / 8 / 1024) * 1.04));
-      const file = {
-        name: `${book.title}.m4b`,
-        chapterIds: ids,
-        duration,
-        size,
-        markers: ids.length,
-        volume: null,
-      };
-      exportsStore.exports.push({
-        id: Date.now() + Math.random(),
-        bookId,
-        key: exportKey(settings),
-        filename: file.name,
-        title: book.title,
-        series: book.title,
-        author: book.author,
-        narrator: "OpenAI TTS · multi-voice",
-        year: settings.year,
-        description: "",
-        format: settings.format,
-        grouping: settings.grouping,
-        files: [file],
-        chapterIds: ids,
-        chapters: ids.length,
-        duration,
-        bitrate: settings.bitrate,
-        chapterGap: settings.chapterGap,
-        normalize: settings.normalize,
-        loudness: settings.loudness,
-        size,
-        markers: ids.length,
-        createdAt: `${book.addedAt} 20:10`,
-        version: 1,
-        replaces: null,
-        status: "done",
-        settings,
-        state: exportsStore.exportStateFor(bookId, ids),
-      });
+      exportsStore.exports.push(
+        finishedExport(
+          Date.now() + Math.random(),
+          book,
+          libraryStore.chaptersOf(bookId),
+          ids,
+          exportsStore.exportStateFor(bookId, ids),
+        ),
+      );
     },
-    /**
-     * A finished row in the queue, as an earlier session would have left it — including the activity
-     * that explains it. A failed row whose log says only "Job queued" is not a failure anyone can
-     * diagnose, so the run's own account is seeded with it and dated between the row's start and its
-     * finish, in order.
-     */
+    /** A finished row in the queue, as an earlier session would have left it (`historyJob`). */
     _addHistory(row: HistoryRow): void {
       const jobsStore = useJobsStore();
 
-      const job = jobsStore.addJob(row.kind, row.bookId, row.label, row.chapterId);
-      const started = Date.now() - row.minutesAgo * 60000;
-      const finished = started + row.seconds * 1000;
-      job.status = row.status;
-      job.progress = row.status === "done" || row.status === "failed" ? 100 : 40;
-      job.queuedAt = started - 1500;
-      job.startedAt = started;
-      job.finishedAt = finished;
-      job.cancelled = row.status === "cancelled";
-      job.waitingReason = "";
-      if (row.bulk) {
-        job.bulk = { ...row.bulk };
-        // a seeded run holds its id: the next run started by hand must not be filed under it
-        jobsStore._nextRun = Math.max(jobsStore._nextRun, row.bulk.id + 1);
-      }
-      const middle = row.activity ?? [];
-      // the run's account, spread over the time it actually took
-      job.activity = [
-        { at: job.queuedAt, level: "info" as const, message: "Job queued" },
-        {
-          at: started,
-          level: "info" as const,
-          message: "Job started",
-          detail: { queueMs: 1500 },
-        },
-        ...middle.map((e, i) => ({
-          at: started + ((i + 1) * (finished - started)) / (middle.length + 1),
-          level: e.level ?? ("info" as const),
-          message: e.message,
-          ...(e.detail ? { detail: e.detail } : {}),
-        })),
-        {
-          at: finished,
-          level: row.status === "failed" ? ("error" as const) : ("info" as const),
-          message: `Job ${row.status}`,
-          detail: { elapsedMs: finished - started },
-        },
-      ].map((e, i) => ({ ...e, id: i + 1, at: Math.round(e.at) }));
+      jobsStore.jobs.push(historyJob(row, jobsStore._nextId++, Date.now()));
+      // a seeded run holds its id: the next run started by hand must not be filed under it
+      if (row.bulk) jobsStore._nextRun = Math.max(jobsStore._nextRun, row.bulk.id + 1);
     },
     /** Set the seeded runs going once, so the queue is not empty the first time you look at it. */
     demoKick(): void {

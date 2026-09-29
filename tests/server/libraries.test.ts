@@ -302,6 +302,8 @@ describe("the server's two libraries", () => {
 describe("resetting the demo", () => {
   test("empties it — books, jobs, clips on disk — and seeds it again, leaving the real library as it was", async () => {
     const s = server();
+    // started as the server starts it, so what the first seed set going is in the count too
+    await s.demo.start();
     const fresh = rowCounts(s.demo.db);
     const history = await s.jobIds(DEMO_BASE);
     await narrateOwn(s);
@@ -352,11 +354,15 @@ describe("resetting the demo", () => {
     expect((await s.request(`${DEMO_BASE}/books/${bookId}`)).status).toBe(404);
   });
 
-  test("is the demo's alone: the real library has no such route", async () => {
+  test("is the demo's alone: the real library has neither route", async () => {
     const s = server();
     await s.importTo(REAL_BASE, "Only in the library");
     const refused = await s.request(`${REAL_BASE}/demo/reset`, { method: "POST" });
     expect(refused.status).toBe(404);
+    const situation = await s.request(`${REAL_BASE}/demo/situations/fresh-book`, {
+      method: "POST",
+    });
+    expect(situation.status).toBe(404);
     expect(await s.shelf(REAL_BASE)).toEqual(["Only in the library"]);
   });
 });

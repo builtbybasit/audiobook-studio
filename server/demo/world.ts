@@ -23,11 +23,13 @@ import { credentials } from "@/lib/credentials";
 import type {
   Book,
   Chapter,
+  ChapterHistory,
   Character,
   Endpoint,
   ExportItem,
   Job,
   Profile,
+  RequestRecord,
   Segment,
   SegmentAudio,
   SegmentMap,
@@ -47,6 +49,9 @@ import {
   jobEvents,
   jobs,
   openingSpend,
+  requests,
+  scriptHeads,
+  scriptVersions,
 } from "~/db/schema";
 import { replaceScript } from "~/db/script";
 import { SAMPLE_RATE } from "~/providers/fakeSpeech";
@@ -67,8 +72,13 @@ const bodiesOf = (book: Book, chs: readonly Chapter[]) =>
   }));
 
 /** A book, its volumes, its chapters and their prose; added on the day the world says it was. */
-export function writeBook(db: Db | Tx, book: Book, chs: readonly Chapter[]): void {
-  insertBook(db, book, chs, bodiesOf(book, chs), Date.parse(book.addedAt));
+export function writeBook(
+  db: Db | Tx,
+  book: Book,
+  chs: readonly Chapter[],
+  addedAt = Date.parse(book.addedAt),
+): void {
+  insertBook(db, book, chs, bodiesOf(book, chs), addedAt);
 }
 
 export function writeCast(db: Db | Tx, bookId: string, cast: readonly Character[]): void {
@@ -95,6 +105,22 @@ export function writeJob(db: Db | Tx, job: Job): void {
   db.insert(jobs).values(rows.jobValues(job)).run();
   for (const e of job.activity ?? [])
     db.insert(jobEvents).values(rows.jobEventValues(job.id, e)).run();
+}
+
+/** The versions a chapter's script has been through, and where it stands now. */
+export function writeHistory(
+  db: Db | Tx,
+  bookId: string,
+  chapterId: number,
+  history: ChapterHistory,
+): void {
+  db.insert(scriptHeads)
+    .values(rows.scriptHeadValues(bookId, chapterId, history))
+    .run();
+  for (const v of history.versions)
+    db.insert(scriptVersions)
+      .values(rows.scriptVersionValues(bookId, chapterId, v))
+      .run();
 }
 
 // ---------- the clips ----------
@@ -126,10 +152,10 @@ const keyOf = (key: string) => {
 
 /**
  * What each book's clips had cost before the demo began: its opening balance, summed over the line
- * each clip is on now, as the browser's demo sums it (`useUsageStore`), so the two agree on what a
- * book has spent.
+ * each clip is on, as the browser's demo sums it (`useUsageStore`), so the two agree on what a book
+ * has spent. Taken from the world as it is seeded, before a situation moves any clip.
  */
-function openingOf(segments: SegmentMap): Map<string, number> {
+export function openingOf(segments: SegmentMap): Map<string, number> {
   const out = new Map<string, number>();
   for (const [key, segs] of Object.entries(segments)) {
     const { bookId } = keyOf(key);
@@ -140,21 +166,45 @@ function openingOf(segments: SegmentMap): Map<string, number> {
 
 // ---------- the whole of it ----------
 
+/** Everything the demo's database is seeded with, beside its endpoints. */
+export interface DemoWorld {
+  world: World;
+  /** the queue's history: only settled jobs, since the runner starts any job that is not */
+  jobs: Job[];
+  /** the histories a situation gave chapters' scripts, by `book:chapter` */
+  histories: Record<string, ChapterHistory>;
+  /** scripting a situation says a book had already paid for, as rows in the ledger */
+  requests: RequestRecord[];
+  /** each book's narration spending before the demo began (`openingOf`) */
+  opening: Map<string, number>;
+}
+
 export interface WorldOptions {
   /** the library's API base, which a clip's url is under */
   base: string;
-  /** the queue's history: only settled jobs, since the runner starts any job that is not */
-  jobs: readonly Job[];
+  /** when the seed is written: the day a book the world says was added "just now" was added */
+  now: number;
 }
 
+/** The day the world says a book was added, or `now` for one it says was added just now. */
+const addedAtOf = (book: Book, now: number): number => {
+  const at = Date.parse(book.addedAt);
+  return Number.isNaN(at) ? now : at;
+};
+
 /**
- * The world's books, casts, dictionaries, scripts and clips, opening balances, exports and queue
- * history, into the caller's transaction. The endpoints are not among them: they are saved as the
- * Endpoints page saves them (`worldEndpoints`).
+ * The world's books, casts, dictionaries, scripts and clips, their histories, opening balances,
+ * exports and queue history, into the caller's transaction. The endpoints are not among them: they
+ * are saved as the Endpoints page saves them (`worldEndpoints`).
+ *
+ * A book the world holds that was imported rather than seeded keeps what it has — a review still
+ * open, notes on its chapters, chapters kept and skipped — and its prose is composed from the
+ * sample it was read from, which the book names and the library does not keep.
  */
-export function writeWorld(tx: Tx, world: World, { base, jobs: history }: WorldOptions): void {
+export function writeWorld(tx: Tx, demo: DemoWorld, { base, now }: WorldOptions): void {
+  const { world } = demo;
   for (const book of world.books) {
-    writeBook(tx, book, world.chapters[book.id] ?? []);
+    writeBook(tx, book, world.chapters[book.id] ?? [], addedAtOf(book, now));
     writeCast(tx, book.id, world.characters[book.id] ?? []);
     replaceLexicon(tx, book.id, world.lexicon[book.id] ?? []);
   }
@@ -173,11 +223,16 @@ export function writeWorld(tx: Tx, world: World, { base, jobs: history }: WorldO
       segs.map((s) => withFiles(s, fileAt)),
     );
   }
+  for (const [key, history] of Object.entries(demo.histories)) {
+    const { bookId, chapterId } = keyOf(key);
+    writeHistory(tx, bookId, chapterId, history);
+  }
 
-  for (const [bookId, amount] of openingOf(world.segments))
+  for (const [bookId, amount] of demo.opening)
     tx.insert(openingSpend).values({ bookId, amount }).run();
+  for (const r of demo.requests) tx.insert(requests).values(rows.requestValues(r)).run();
   for (const e of world.exports) writeExport(tx, e);
-  for (const job of history) writeJob(tx, job);
+  for (const job of demo.jobs) writeJob(tx, job);
 }
 
 // ---------- the endpoints ----------

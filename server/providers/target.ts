@@ -109,7 +109,9 @@ function targetOf(
     cooldownSec: e.cooldownSec ?? d.cooldownSec,
     ...(isSimulated(e.baseUrl) && {
       simulation: {
-        latencyMs: "latency" in e ? Math.max(0, e.latency || 0) : 0,
+        // a profile has no latency of its own: it answers in a tenth of the time it estimates a
+        // chunk takes, the pace the browser's demo scripts at
+        latencyMs: Math.max(0, ("latency" in e ? e.latency : e.secPerChunk * 100) || 0),
         failRate: "failRate" in e ? Math.min(1, Math.max(0, e.failRate || 0)) : 0,
       },
     }),

@@ -560,6 +560,22 @@ describe("the worker keeps going", () => {
     expect(queue.listJobs(db).map((j) => j.status)).toEqual(["done", "done", "done"]);
     expect(most).toBe(1);
   });
+
+  test("work queued the moment the worker starts is run then, not at the next poll", async () => {
+    const db = testDb();
+    db.run(
+      `insert into books (id, title, author, cover_from, cover_to, added_at) values ('b0','B','A','#000','#111',0)`,
+    );
+    const runner = testRunner(db, collectingLogger().log, {
+      handlers: { export: { run: async () => {} } },
+    });
+    // the start's own look finds nothing, and is still on its way out when this arrives
+    runner.start();
+    runner.enqueue({ kind: "export", bookId: "b0", chapterId: null, label: "Build" });
+    await runner.idle();
+    expect(queue.listJobs(db).map((j) => j.status)).toEqual(["done"]);
+    await runner.stop();
+  });
 });
 
 describe("the job log", () => {

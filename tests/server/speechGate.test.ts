@@ -315,6 +315,23 @@ describe("a rate limit", () => {
     });
   });
 
+  test("forgotten, lets the held lines out at once and counts nothing, leaving the lines out alone", async () => {
+    const gate = createSpeechGate();
+    const studio = endpoint(2);
+    const already = ask(gate, "studio", studio.limits);
+    await settle();
+    gate.rateLimited("studio", 60_000);
+    const held = ask(gate, "studio", studio.limits);
+    await settle();
+    expect(held.out).toBe(false);
+    gate.forget();
+    await settle();
+    expect(held.out).toBe(true);
+    expect(gate.live().studio).toEqual({ active: 2, waiting: 0, rateLimits: 0, backoffUntil: 0 });
+    already.release();
+    expect(gate.live().studio.active).toBe(1);
+  });
+
   test("a cooldown that ends between two looks at the clock still lets the line out", async () => {
     // The gate reads the clock once to find the endpoint cooling down and again to time the
     // wake-up; a tick over the end between the two must not leave the line with no timer at all.

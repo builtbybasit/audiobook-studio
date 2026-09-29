@@ -126,8 +126,8 @@ const scriptingAccount = (t: ScriptEndpointTelemetry): Account => ({
     message: t.lastError.message,
     body: t.lastError.body,
     at: t.lastError.at,
-    bookId: t.lastError.bookId,
-    chapterId: t.lastError.chapterId,
+    bookId: t.lastError.bookId ?? undefined,
+    chapterId: t.lastError.chapterId ?? undefined,
   },
 });
 

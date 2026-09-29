@@ -1,11 +1,10 @@
 // What a book has spent and what its unfinished work holds, read into the jobs store.
 //
-// With a server answering, spending is the server's: every request a job sends is priced and
-// appended to its ledger, and every run it queued holds a reservation there. Each read is installed
-// into the jobs store (`_installSpend`), whose `spent` / `reserved` / `scriptSpent` /
-// `scriptReserved` then answer with it — so the book's budget panel, the Endpoints page's budget
-// table, the wait reasons and the run estimates all read the one figure. In the demo the jobs store
-// sums the session's own ledger and these queries have nothing to read.
+// Spending is the server's: every request a job sends is priced and appended to its ledger, and
+// every run it queued holds a reservation there. Each read is installed into the jobs store
+// (`_installSpend`), whose `spent` / `reserved` / `scriptSpent` / `scriptReserved` then answer with
+// it — so the book's budget panel, the Endpoints page's budget table, the wait reasons and the run
+// estimates all read the one figure.
 //
 // Spending moves when a job does, so the queue's poll invalidates a book's spend on every move of
 // one of its jobs (`spendMoved`), the same way it reads a chapter's script again as clips land; a
@@ -18,14 +17,12 @@ import { useQuery } from "@pinia/colada";
 import type { BookSpend } from "@/types";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
-import { activeUsageService } from "@/services/usage";
+import { usageService } from "@/services/usage";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 
-async function readSpend(bookId: string): Promise<BookSpend | null> {
-  const svc = activeUsageService();
-  if (!svc) return null;
-  const spend = await svc.bookSpend(bookId);
+async function readSpend(bookId: string): Promise<BookSpend> {
+  const spend = await usageService().bookSpend(bookId);
   useJobsStore()._installSpend(bookId, spend);
   return spend;
 }
@@ -35,13 +32,13 @@ export function useBookSpend(bookId: MaybeRefOrGetter<string | null | undefined>
   const jobsStore = useJobsStore();
   const query = useQuery(() => ({
     key: keys.spend(toValue(bookId) ?? ""),
-    enabled: !!toValue(bookId) && !!activeUsageService(),
+    enabled: !!toValue(bookId),
     staleTime: Infinity,
     query: () => readSpend(toValue(bookId)!),
   }));
   return {
     ...query,
-    /** the server's figures; null in the demo, and until the first read lands */
+    /** the server's figures; null until the first read lands */
     spend: computed(() => {
       const id = toValue(bookId);
       return id ? (jobsStore.spend[id] ?? null) : null;
@@ -57,7 +54,6 @@ export function useLibrarySpend() {
   const ids = computed(() => libraryStore.books.map((b) => b.id));
   return useQuery(() => ({
     key: [...keys.librarySpend, ids.value.join(",")],
-    enabled: !!activeUsageService(),
     staleTime: Infinity,
     query: async () => {
       const list = ids.value;

@@ -1,10 +1,9 @@
 // The queue, read into the jobs store and kept moving while anything is live.
 //
 // One query for every job, shared by whoever asks (`defineQuery`): the shell's indicator, the
-// Queue page and a book's overview all read the same poll rather than three. With a server
-// answering it polls while a job is queued or running and goes quiet when the queue does; each
-// read is installed into the jobs store, which every page reads. The seeded demo's queue is the
-// store's own, driven by the simulators, and the query only answers with it.
+// Queue page and a book's overview all read the same poll rather than three. It polls while a job
+// is queued or running and goes quiet when the queue does; each read is installed into the jobs
+// store, which every page reads.
 //
 // A job that moved is a chapter that moved. The server does not push events, so the poll is where
 // a change is noticed: a job whose status or progress changed has its book read again, a
@@ -22,7 +21,7 @@ import type { Job } from "@/types";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { spendMoved } from "@/queries/spend";
-import { activeJobsService } from "@/services/jobs";
+import { jobsService } from "@/services/jobs";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
@@ -35,11 +34,8 @@ const narrating = (jobs: readonly Job[]): boolean =>
   jobs.some((j) => j.kind === "narration" && live(j));
 
 async function readJobs(): Promise<Job[]> {
-  const jobsStore = useJobsStore();
-  const svc = activeJobsService();
-  if (!svc) return jobsStore.jobs;
-  const jobs = await svc.list();
-  jobsStore._install(jobs);
+  const jobs = await jobsService().list();
+  useJobsStore()._install(jobs);
   return jobs;
 }
 
@@ -51,14 +47,14 @@ const useJobsQuery = defineQuery(() => {
     query: readJobs,
     staleTime: POLL_MS,
     // the auto-refetch plugin reads this: poll while anything is live, and not otherwise
-    autoRefetch: (state) => (activeJobsService() && state.data?.some(live) ? POLL_MS : false),
+    autoRefetch: (state) => (state.data?.some(live) ? POLL_MS : false),
   });
 
   // A poll that finds the server down says so once, not every tick until it is back.
   watch(
     () => !!query.error.value,
     (failing) => {
-      if (failing && activeJobsService()) jobsStore._failed("read the queue", query.error.value);
+      if (failing) jobsStore._failed("read the queue", query.error.value);
     },
   );
 
@@ -67,7 +63,7 @@ const useJobsQuery = defineQuery(() => {
   // with the history. From then on a job that moved has its book read again, and one that just
   // finished scripting has what it wrote asked for again.
   watch(query.data, (next, prev) => {
-    if (!activeJobsService() || !next || !prev) return;
+    if (!next || !prev) return;
     const before = new Map(prev.map((j) => [j.id, j]));
     const books = new Set<string>();
     for (const j of next) {
@@ -112,8 +108,7 @@ const useJobsQuery = defineQuery(() => {
 /**
  * The jobs of one book, or every job when no book is named.
  *
- * `jobs` reads the store, so it is the same list the simulators move in the demo and the poll
- * installs with a server answering.
+ * `jobs` reads the store, so it is the list the poll installs.
  */
 export function useBookJobs(bookId?: MaybeRefOrGetter<string | null | undefined>) {
   const jobsStore = useJobsStore();

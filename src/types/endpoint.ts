@@ -300,9 +300,6 @@ export interface ConnectionTest {
   ms: number;
   message: string;
   detail: string;
-  /** what the probe would cost at the configured rates; null when the rate is unknown */
-  cost: number | null;
-  simulated: boolean;
 }
 
 /** The settings file written by `exportSettings` (API keys are deliberately absent). */

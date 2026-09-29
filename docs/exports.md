@@ -2,7 +2,7 @@
 
 [Back to README](../README.md) · [Demo scenarios](demo.md) · [Pacing and playback](audio.md)
 
-In demo mode builds, files, paths, loudness measurements and downloads are simulated, and references below to a version "on disk" describe the modeled workflow rather than a file. **With a server answering they are not simulated** — see [with a server](#with-a-server) at the end.
+Builds, files and downloads are real, in the demo as in your library: a build is a job on the server that stitches the chapters' clips into files on disk — see [with a server](#with-a-server) at the end.
 
 ## Building and maintaining an audiobook
 
@@ -83,8 +83,8 @@ too.
 
 Seeded scenarios live behind the **Demo** chip, as on Search: a book ready to export, ready/missing/
 stale together, the 214-chapter serial, an export that needs updating, and running/failed/finished
-builds — plus a one-shot **make the next build fail** switch for the failure path. Reset restores the
-entire seeded world, abandoning running work; see [Demo tools](demo.md#demo-tools).
+builds, where a failed one waits for **Retry**. Reset puts the demo's seed back and drops the work
+in flight; see [Demo tools](demo.md#demo-tools).
 
 [tests/exports.test.ts](../tests/exports.test.ts) covers the plan (grouping, names, track widths, MP3's missing marks, and that
 the file totals equal the plan totals), the blockers (nothing dropped, stale accepted on purpose,
@@ -94,7 +94,7 @@ fails or is cancelled, and reuses exactly the chapters whose fingerprints have n
 
 ## With a server
 
-In backend mode a build is a job the server runs, and the file at the end of it is real: the
+A build is a job the server runs, and the file at the end of it is real: the
 rendered clips are stitched together with the book's pacing inside each chapter and the export's
 gap between two, written to disk, and handed back by a download. Everything above still describes
 the page — the plan, the blockers, the versions, "needs an update" — because the server is asked

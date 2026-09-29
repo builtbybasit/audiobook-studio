@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { newProfile } from "@/lib/scripting";
 import {
   ensureOps,
@@ -13,13 +13,7 @@ import {
   voicesFromFishModels,
 } from "@/lib/endpoints";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
-import {
-  FixtureEndpointService,
-  probeCost,
-  probeUnits,
-  seriesFrom,
-  type EndpointDescriptor,
-} from "@/services/endpoints";
+import { probeCost, probeUnits, seriesFrom } from "@/services/endpoints";
 import { maybeMoney, money, noUnits, perMillionChars, speechRates, ttsCost } from "@/lib/pricing";
 import type { BillableUnits } from "@/types";
 import type {
@@ -298,131 +292,6 @@ test("operational defaults are filled in once and never overwrite what is set", 
   expect(e).toEqual(before);
 });
 
-// ---------- the fixture service ----------
-// It sleeps a few hundred milliseconds to feel like a network; the waits are skipped. The hooks
-// apply to the whole file, where nothing else sets a timer.
-let restoreTimers: () => void = () => {};
-beforeEach(() => {
-  const spy = spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) => {
-    fn();
-    return 0;
-  }) as unknown as typeof setTimeout);
-  restoreTimers = () => spy.mockRestore();
-});
-afterEach(() => restoreTimers());
-
-test("the fixture service marks everything it invents as simulated", async () => {
-  const service = new FixtureEndpointService();
-  expect(service.simulated).toBe(true);
-  const rows = await service.history(
-    {
-      key: "scripting:openai",
-      id: "openai",
-      kind: "scripting",
-      name: "OpenAI",
-      model: "gpt-4o-mini",
-      baseUrl: "https://api.openai.com/v1",
-      concurrency: 4,
-      inPrice: 0.15,
-      outPrice: 0.6,
-    },
-    "24h",
-  );
-  expect(rows.length).toBeGreaterThan(0);
-  expect(rows.every((r) => r.simulated)).toBe(true);
-  expect(rows.every((r) => r.queuedAt >= Date.now() - 25 * 3600e3)).toBe(true);
-});
-
-test("a connection test reports its own cost, and unknown when there is no rate", async () => {
-  const service = new FixtureEndpointService();
-  const priced = await service.testConnection({
-    key: "tts:a",
-    id: "a",
-    kind: "tts",
-    name: "A",
-    model: "tts-1",
-    baseUrl: "https://example.test/v1",
-    concurrency: 1,
-    billing: { unit: "chars", rate: 15 },
-  });
-  expect(priced.simulated).toBe(true);
-  // the probe line at the endpoint's own $15 per million characters
-  expect(priced.cost).toBeCloseTo((probeUnits({ unit: "chars", rate: 15 }).chars / 1e6) * 15, 12);
-
-  const unpriced = await service.testConnection({
-    key: "tts:b",
-    id: "b",
-    kind: "tts",
-    name: "B",
-    model: "tts-1",
-    baseUrl: "https://example.test/v1",
-    concurrency: 1,
-    billing: { unit: "minute", rate: null },
-  });
-  expect(unpriced.cost).toBeNull();
-});
-
-test("a busy endpoint has traffic in every range, not just the oldest day", async () => {
-  // regression: generating until a row cap was hit filled the far end of the week and left
-  // "last hour" empty on exactly the endpoints that are busiest
-  const service = new FixtureEndpointService();
-  const ep = {
-    key: "tts:local",
-    id: "local",
-    kind: "tts" as const,
-    name: "Local Kokoro",
-    model: "kokoro",
-    baseUrl: "http://127.0.0.1:8880/v1",
-    concurrency: 2,
-    billing: { unit: "chars" as const, rate: 0 },
-  };
-  const week = await service.history(ep, "7d");
-  const now = Date.now();
-  for (const [label, ms] of [
-    ["1h", 3600e3],
-    ["24h", 24 * 3600e3],
-  ] as const) {
-    const inRange = week.filter((r) => (r.finishedAt ?? r.queuedAt) >= now - ms);
-    expect(inRange.length, `expected requests within ${label}`).toBeGreaterThan(0);
-  }
-  // and the week is actually covered, not bunched at one end
-  const days = new Set(week.map((r) => Math.floor((now - (r.finishedAt ?? r.queuedAt)) / 86400e3)));
-  expect(days.size).toBeGreaterThanOrEqual(5);
-});
-
-test("an endpoint with no past has no invented history to show", async () => {
-  const service = new FixtureEndpointService();
-  const cases: [string, EndpointDescriptor][] = [
-    // seeded, but nothing has ever been sent through it
-    [
-      "seeded and never used",
-      {
-        key: "scripting:antigravity",
-        id: "antigravity",
-        kind: "scripting",
-        name: "Antigravity",
-        model: "local",
-        baseUrl: "http://localhost:8000/v1",
-        concurrency: 4,
-      },
-    ],
-    // added in this session: a past invented for it would be reported back as health
-    [
-      "added this session",
-      {
-        key: "tts:" + crypto.randomUUID(),
-        id: "new",
-        kind: "tts",
-        name: "New endpoint",
-        model: "",
-        baseUrl: "http://localhost:8880/v1",
-        concurrency: 2,
-      },
-    ],
-  ];
-  for (const [why, ep] of cases) expect(await service.history(ep, "7d"), why).toEqual([]);
-});
-
 // ---------- Fish Audio ----------
 
 test("a Fish Audio host is recognised, and a lookalike path is not", () => {
@@ -465,10 +334,9 @@ test("a model list becomes voices, dropping what cannot narrate a line", () => {
   expect(voices[3]).toEqual({ id: "xyz", label: "xyz", gender: "?" });
 });
 
-// ---------- the connection test and the estimate beside it agree ----------
+// ---------- the estimate beside the connection test ----------
 
-test("a probe is priced through the same engine the rest of the page uses", async () => {
-  const service = new FixtureEndpointService();
+test("a probe is priced through the same engine the rest of the page uses", () => {
   const config: PricingConfig = {
     cachedInput: null,
     cacheWrite: null,
@@ -482,10 +350,6 @@ test("a probe is priced through the same engine the rest of the page uses", asyn
     key: "tts:a",
     id: "a",
     kind: "tts" as const,
-    name: "A",
-    model: "tts-1",
-    baseUrl: "https://example.test/v1",
-    concurrency: 1,
     billing: { unit: "chars" as const, rate: 20 },
     pricing: { base: speechRates({ unit: "chars", rate: 20 }), config },
   };
@@ -493,8 +357,6 @@ test("a probe is priced through the same engine the rest of the page uses", asyn
   const probeChars = probeUnits(ep.billing).chars;
   const estimate = probeCost(ep);
   expect(estimate).toBeCloseTo((probeChars / 1e6) * 10, 12);
-  const result = await service.testConnection(ep);
-  expect(result.cost).toBeCloseTo(estimate!, 12);
 
   // a rate nobody knows stays unknown through the discount
   const unknown = { ...ep, billing: { unit: "minute" as const, rate: null } };
@@ -516,68 +378,16 @@ test("a scripting probe follows the schedule too", () => {
     key: "scripting:x",
     id: "x",
     kind: "scripting",
-    name: "X",
-    model: "m",
-    baseUrl: "https://example.test/v1",
-    concurrency: 1,
     pricing: { base, config: { ...config, windows: [] } },
   })!;
   const discounted = probeCost({
     key: "scripting:x",
     id: "x",
     kind: "scripting",
-    name: "X",
-    model: "m",
-    baseUrl: "https://example.test/v1",
-    concurrency: 1,
     pricing: { base, config },
   })!;
   expect(full).toBeCloseTo((24 * 2 + 8 * 8) / 1e6, 15);
   expect(discounted).toBeCloseTo(full / 2, 15);
-});
-
-test("the invented week is invented once and not re-priced on the next look", async () => {
-  const service = new FixtureEndpointService();
-  const ep = {
-    key: "scripting:openai",
-    id: "openai",
-    kind: "scripting" as const,
-    name: "OpenAI",
-    model: "gpt-4o-mini",
-    baseUrl: "https://api.openai.com/v1",
-    concurrency: 4,
-    inPrice: 0.15,
-    outPrice: 0.6,
-    pricing: {
-      base: {
-        input: 0.15,
-        output: 0.6,
-        cachedInput: null,
-        cacheWrite: null,
-        speech: null,
-      } as RateSet,
-      config: {
-        cachedInput: null,
-        cacheWrite: null,
-        timezone: "UTC",
-        windows: [],
-        promotions: [],
-      } as PricingConfig,
-    },
-  };
-  const first = await service.history(ep, "7d");
-  expect(first.length).toBeGreaterThan(0);
-  const before = first.map((r) => `${r.id}:${r.cost}`).join("|");
-
-  // the rate card is doubled, and the page is looked at again well over a minute later
-  ep.pricing.base = { ...ep.pricing.base, input: 999, output: 999 };
-  const again = await service.history(ep, "7d");
-  expect(again.map((r) => `${r.id}:${r.cost}`).join("|")).toBe(before);
-
-  // only an explicit reset — a demo reset, a scenario replacing the world — drops it
-  service.reset();
-  const after = await service.history(ep, "7d");
-  expect(after.map((r) => `${r.id}:${r.cost}`).join("|")).not.toBe(before);
 });
 
 test("a cache percentage divides by the input of the requests that reported one", () => {

@@ -323,15 +323,10 @@ const keepEdits = computed({
   set: (v: boolean) => (scriptingStore.scriptSettings.keepEdits = v),
 });
 const diff = computed(() => scriptsStore.scriptDiff(props.bookId, props.chapterId));
-/** What the run did with the manual corrections it was asked to preserve. */
-const corrections = computed(() => scriptsStore.correctionsOf(props.bookId, props.chapterId));
 const showDiff = ref(true);
 function rescript() {
   rescriptOpen.value = false;
-  scriptingStore.runScripting(props.bookId, [props.chapterId], {
-    keepEdits: keepEdits.value,
-    quiet: true,
-  });
+  void scriptingStore.runScripting(props.bookId, [props.chapterId], { quiet: true });
 }
 function jumpTo(id: number) {
   focus.value = id;
@@ -746,44 +741,6 @@ watch(open, (v) => {
             dismiss
           </button>
         </div>
-        <!-- preservation, said plainly: what came across, and what could not. A correction whose
-             line the new run rewrote is named rather than counted as preserved. -->
-        <p v-if="corrections" class="mt-1 pl-6 text-[11px] leading-snug">
-          <span v-if="corrections.asked" class="text-zinc-600 dark:text-zinc-300"
-            >Manual corrections: <b>{{ corrections.kept }}</b> re-applied<span
-              v-if="corrections.unmatched.length"
-              class="text-amber-700 dark:text-amber-400"
-            >
-              · <b>{{ corrections.unmatched.length }}</b> could not be —
-              {{ corrections.profile }} wrote
-              {{ corrections.unmatched.length === 1 ? "that line" : "those lines" }}
-              differently</span
-            >.</span
-          >
-          <span v-else class="text-amber-700 dark:text-amber-400"
-            >Manual corrections were discarded, as this run was asked to.
-            <b>{{ corrections.unmatched.length }}</b> corrected line{{
-              corrections.unmatched.length === 1 ? "" : "s"
-            }}
-            {{ corrections.unmatched.length === 1 ? "is" : "are" }} listed below; the version before
-            this run is in History.</span
-          >
-        </p>
-        <ul
-          v-if="corrections?.unmatched.length"
-          class="mt-1 max-h-24 space-y-0.5 overflow-auto pl-6 text-[11px]"
-        >
-          <li
-            v-for="(u, i) in corrections.unmatched"
-            :key="'u' + i"
-            class="flex gap-2 text-amber-700 dark:text-amber-400"
-          >
-            <span class="shrink-0 font-mono">{{ u.speaker }}</span
-            ><span class="truncate"
-              >{{ u.direction ? `“${u.direction}” · ` : "" }}{{ u.text.slice(0, 80) }}…</span
-            >
-          </li>
-        </ul>
         <ul v-if="diff.total" class="mt-1.5 max-h-28 space-y-0.5 overflow-auto pl-6">
           <li v-for="d in diff.speaker" :key="'s' + d.id" class="flex gap-2">
             <button class="font-mono text-violet-500 hover:underline" @click="jumpTo(d.id)">

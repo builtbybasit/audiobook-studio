@@ -1,14 +1,8 @@
-import { useDemoStore } from "@/stores/demo";
-import { useJobsStore } from "@/stores/jobs";
-import { useLibraryStore } from "@/stores/library";
-import { useUiStore } from "@/stores/ui";
 // The Library shelf: the one next thing a card says about a book, as a verb with a destination;
 // and the search, the filters and the order that make a shelf of twenty books usable.
-import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
+import { test, expect, describe } from "bun:test";
 
-import { SHELF_BOOKS } from "@/mock";
-import { bookFacts, type BookFacts } from "@/views/library/bookFacts";
+import type { BookFacts } from "@/views/library/bookFacts";
 import { hours, nextStepOf, updateReason } from "@/views/library/shared";
 import {
   filterCounts,
@@ -235,75 +229,5 @@ describe("finding a book on the shelf", () => {
     expect(ids("todo")).toEqual(["now", "old", "new"]);
     expect(ids("scripted")).toEqual(["old", "new", "now"]);
     expect(todoScore(facts({ next: nextStepOf(progress(), { ...quiet, exports: 1 }) }))).toBe(0);
-  });
-});
-
-// ---- the full shelf, from the demo row
-describe("a full shelf", () => {
-  let demoStore: ReturnType<typeof useDemoStore>;
-  let libraryStore: ReturnType<typeof useLibraryStore>;
-  let restore: (() => void)[] = [];
-  beforeEach(() => {
-    Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-    setActivePinia(createPinia());
-    demoStore = useDemoStore();
-    libraryStore = useLibraryStore();
-    useJobsStore();
-    useUiStore().toast = () => "test";
-    // the row starts simulated runs; they are timer-driven and not what is under test here
-    restore = [
-      spyOn(globalThis, "setInterval").mockImplementation((() => 0) as typeof setInterval),
-      spyOn(globalThis, "setTimeout").mockImplementation((() => 0) as typeof setTimeout),
-    ].map((s) => () => s.mockRestore());
-  });
-  afterEach(() => restore.forEach((f) => f()));
-
-  test("adds every book in a state the filters tell apart, and reset takes them away", () => {
-    const before = libraryStore.shelved.length;
-    expect(demoStore.applyScenario("full-shelf")).toBe("/library");
-    expect(libraryStore.shelved.length).toBe(before + SHELF_BOOKS.length);
-    expect(libraryStore.books.some((b) => b.importing)).toBe(false);
-
-    const entries: ShelfEntry[] = libraryStore.shelved.map((b) => ({
-      book: b,
-      facts: bookFacts(b.id),
-    }));
-    const by = Object.fromEntries(SHELF_BOOKS.map((b) => [b.id, b.state]));
-    const state = (e: ShelfEntry) => by[e.book.id];
-    const counts = filterCounts(entries);
-    // among the new books, exactly the ones with failed scripting need attention
-    const added = (f: "attention" | "behind" | "done") =>
-      shelfView(entries, { filter: f }).filter((e) => state(e));
-    const failed = SHELF_BOOKS.filter((b) => b.state === "failed").map((b) => b.id);
-    expect(failed.length).toBeGreaterThan(0);
-    expect(
-      added("attention")
-        .map((e) => e.book.id)
-        .sort(),
-    ).toEqual(failed.sort());
-    expect(counts.attention).toBeGreaterThanOrEqual(failed.length);
-    expect(shelfView(entries, { filter: "behind" }).map(state)).toEqual(
-      expect.arrayContaining(["behind"]),
-    );
-    expect(shelfView(entries, { filter: "done" }).map(state)).toEqual(
-      expect.arrayContaining(["built"]),
-    );
-    expect(shelfView(entries, { filter: "done" }).some((e) => state(e) === "behind")).toBe(false);
-    // and a book that is behind can say why
-    for (const e of added("behind"))
-      expect(e.facts.behindWhy).toMatch(/^\d+ chapters? not in it yet$/);
-    // the running filter finds the seeded book the row starts scripting on
-    expect(shelfView(entries, { filter: "running" }).map((e) => e.book.id)).toContain("cliche");
-    // the search reaches the new books
-    const sought = SHELF_BOOKS[0];
-    expect(shelfView(entries, { q: sought.title }).map((e) => e.book.id)).toContain(sought.id);
-    // and a review that was done leaves no chapter undecided
-    for (const b of SHELF_BOOKS)
-      expect(libraryStore.contentsOf(b.id).suggested + libraryStore.contentsOf(b.id).review).toBe(
-        0,
-      );
-
-    demoStore.resetDemo();
-    expect(libraryStore.shelved.length).toBe(before);
   });
 });

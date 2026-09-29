@@ -14,7 +14,7 @@ import { planRestore, type RestoreOptions } from "@/lib/scriptHistory";
 import { chapterNarration } from "@/lib/runPlan";
 import { newSpeaker } from "@/lib/cast";
 import { clone } from "@/lib/utils";
-import { activeLibraryService, ApiError, type ChapterLines } from "@/services/library";
+import { ApiError, libraryService, type ChapterLines } from "@/services/library";
 import type {
   Character,
   ImportChapter,
@@ -163,11 +163,9 @@ export const useTransferStore = defineStore("transfer", {
      * their current scripts read in, since what applying one does is measured against them.
      */
     async readFile(bookId: string, file: File): Promise<ScriptImportPlan | null> {
-      const svc = activeLibraryService();
-      if (!svc) return null;
       let plan: ScriptImportPlan;
       try {
-        plan = await svc.planScriptImport(bookId, file);
+        plan = await libraryService().planScriptImport(bookId, file);
       } catch (cause) {
         this._failed("read this script file", cause);
         return null;
@@ -194,8 +192,7 @@ export const useTransferStore = defineStore("transfer", {
     /** Read the scripts of these chapters that are not here yet, a few at a time. */
     async _loadScripts(bookId: string, ids: number[]): Promise<void> {
       const scriptsStore = useScriptsStore();
-      const svc = activeLibraryService();
-      if (!svc) return;
+      const svc = libraryService();
       const todo = ids.filter((id) => scriptsStore._revision[key(bookId, id)] == null);
       for (const id of todo) this.loading[key(bookId, id)] = true;
       const next = async (): Promise<void> => {
@@ -316,7 +313,6 @@ export const useTransferStore = defineStore("transfer", {
           scripting: c.scripting,
         };
         const beforeScript = clone(scriptsStore.segments[k] ?? []);
-        const historyUndo = historyStore._capture(bookId, chId, origin);
         scriptsStore.segments[k] = restore.segments;
         if (restore.scripting) c.scripting = restore.scripting;
         c.narration = restore.narration;
@@ -329,7 +325,6 @@ export const useTransferStore = defineStore("transfer", {
         report.applied.push({ chapterId: chId, title: chapter.title });
         undoChapters.push(() => {
           scriptsStore.segments[k] = beforeScript;
-          historyUndo();
           Object.assign(c, was);
           castStore._retime(bookId, chId);
           scriptsStore._commit(bookId, chId);
@@ -450,7 +445,6 @@ export const useTransferStore = defineStore("transfer", {
           };
           const lexBack = (): Promise<void> | void => {
             if (!report.terms) return;
-            if (!activeLibraryService()) return revertLex();
             return lexPushed.then(async (staled) => {
               revertLex();
               await castStore._pushLexicon(bookId, staled ?? undefined);
@@ -460,12 +454,6 @@ export const useTransferStore = defineStore("transfer", {
           // before any speaker goes: a row whose speaker is removed first cascades away under it
           const samplesBack = storing.then((done) => samplesStore._unstore(bookId, done));
           const speakers = report.speakers;
-          if (!activeLibraryService()) {
-            castStore._dropSpeakers(bookId, speakers);
-            pushBack();
-            void lexBack();
-            return;
-          }
           // The scripts go first: a speaker taken off while the server's script still names them
           // would hand their lines to the Narrator. Once the writes land, the removal moves nothing.
           pushBack();

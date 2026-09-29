@@ -1,22 +1,18 @@
 // A book's cast and pronunciation dictionary, read into the cast store.
 //
-// The cast store owns both and every change to them; this is how they arrive with a server
-// answering, and what a scripting job landing invalidates, since a run absorbs the speakers it
+// The cast store owns both and every change to them; this is how they arrive from the server, and
+// what a scripting job landing invalidates, since a run absorbs the speakers it
 // turned up into the cast on the server.
 import { computed, toValue, type MaybeRefOrGetter } from "vue";
 import { useQuery } from "@pinia/colada";
 
 import { keys } from "@/queries/keys";
-import { activeLibraryService, type Cast } from "@/services/library";
+import { libraryService, type Cast } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 
 async function readCast(bookId: string): Promise<Cast> {
-  const castStore = useCastStore();
-  const svc = activeLibraryService();
-  if (!svc)
-    return { characters: castStore.charactersOf(bookId), lexicon: castStore.lexiconOf(bookId) };
-  const cast = await svc.cast(bookId);
-  castStore._install(bookId, cast);
+  const cast = await libraryService().cast(bookId);
+  useCastStore()._install(bookId, cast);
   return cast;
 }
 

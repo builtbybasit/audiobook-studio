@@ -3,6 +3,15 @@
 // these, so the header, the filters and the import button cannot disagree about a number.
 import type { Chapter, ContentState, ContentsSummary, NoticeGroup, NoticeKind } from "@/types";
 
+/** A run of a chapter's text, marked when it is an author's note rather than the story. */
+export interface ContentPart {
+  text: string;
+  notice?: boolean;
+}
+
+/** The parts read as one text, a blank line between each. */
+export const partsText = (parts: ContentPart[]): string => parts.map((p) => p.text).join("\n\n");
+
 /** What each kind of note is called when several are decided together. */
 export const NOTICE_LABEL: Record<NoticeKind, string> = {
   hiatus: "Hiatus announcements",

@@ -69,6 +69,8 @@ export interface SeedOptions {
   now: number;
   /** the Demo tools row to apply to the world before it is written */
   scenario?: DemoScenario;
+  /** set nothing going on a world with no situation: a test that reasons about the queue */
+  still?: boolean;
 }
 
 export interface Seeding {
@@ -83,9 +85,9 @@ export interface Seeding {
 export function seedDemo(
   db: Db,
   voiceFiles: VoiceFiles,
-  { base, now, scenario }: SeedOptions,
+  { base, now, scenario, still }: SeedOptions,
 ): Seeding {
-  const { demo, live, result } = situate(now, scenario);
+  const { demo, live, result } = situate(now, scenario, still);
   const own = worldEndpoints(demo.world);
   const config = {
     // the world's own first, in its order, as the browser's demo lists them

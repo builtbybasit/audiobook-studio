@@ -157,8 +157,8 @@ when an edit affects an anchor. Request splitting keeps each expression token in
 Narration and retakes check compatibility before queuing and again before dispatch. A review dialog
 lets the user resolve unsupported annotations or explicitly omit them; omission is saved and
 reversible, never silently applied. Changes invalidate affected audio, and take snapshots and job
-events retain the expressions actually rendered. These workflows use the existing simulator; no
-real speech or provider capability verification is performed. Book annotations remain in memory.
+events retain the expressions actually rendered. The server fails a line whose expressions still need
+attention rather than sending it.
 
 ## Editing a line in place
 

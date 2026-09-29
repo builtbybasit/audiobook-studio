@@ -5,8 +5,7 @@
 // frozen receipts, finished and failed exports, endpoints with off-peak schedules and running
 // promotions. The demo library holds the same world, so the server's demo shows what the
 // browser's does; this is the one place the server reaches into `src/mock` to get it, and only the
-// demo's seed calls it. It imports the world's own modules rather than the `@/mock` barrel, which
-// would bring the browser's simulators with it.
+// demo's seed calls it.
 //
 // What the world leaves out, a library needs, and it is filled in here:
 //
@@ -152,8 +151,7 @@ const keyOf = (key: string) => {
 
 /**
  * What each book's clips had cost before the demo began: its opening balance, summed over the line
- * each clip is on, as the browser's demo sums it (`useUsageStore`), so the two agree on what a book
- * has spent. Taken from the world as it is seeded, before a situation moves any clip.
+ * each clip is on, so what a book has spent includes the narration it was seeded with. Taken from the world as it is seeded, before a situation moves any clip.
  */
 export function openingOf(segments: SegmentMap): Map<string, number> {
   const out = new Map<string, number>();

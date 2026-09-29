@@ -15,11 +15,11 @@ import type {
   MetricTotals,
   Profile,
   TtsBilling,
+  VoiceRef,
   WaitReason,
 } from "@/types";
 import { profileErrors } from "@/lib/scripting";
 import { OPS_DEFAULTS, encodingProblems } from "@/lib/endpointShapes";
-import { keyring } from "@/lib/keyring";
 import { isSimulated } from "@/lib/providers";
 import {
   baseRates,
@@ -68,15 +68,11 @@ export interface UnifiedEndpoint {
   enabled: boolean;
   needsKey: boolean;
   concurrency: number;
-  /** keyring slot this endpoint's key lives in */
-  slot: string;
   backoffUntil: number;
   /** exactly one of these is set; the tabs edit it directly */
   profile: Profile | null;
   endpoint: Endpoint | null;
 }
-
-export const scriptingSlot = (id: string): string => "profile:" + id;
 
 export function unifyProfile(p: Profile): UnifiedEndpoint {
   return {
@@ -89,7 +85,6 @@ export function unifyProfile(p: Profile): UnifiedEndpoint {
     enabled: p.enabled,
     needsKey: p.needsKey,
     concurrency: p.concurrency,
-    slot: scriptingSlot(p.id),
     backoffUntil: 0,
     profile: p,
     endpoint: null,
@@ -107,12 +102,14 @@ export function unifyEndpoint(e: Endpoint): UnifiedEndpoint {
     enabled: e.enabled,
     needsKey: e.needsKey,
     concurrency: e.concurrency,
-    slot: e.id,
     backoffUntil: e.backoffUntil,
     profile: null,
     endpoint: e,
   };
 }
+
+/** How a speaker names a voice: the speech endpoint it is on, then the voice's id there. */
+export const voiceRef = (epId: string, voiceId: string): VoiceRef => `${epId}/${voiceId}`;
 
 export const opsOf = (u: UnifiedEndpoint): EndpointOps =>
   ({ ...OPS_DEFAULTS[u.kind], ...(u.profile ?? u.endpoint) }) as EndpointOps;
@@ -399,8 +396,6 @@ export function endpointErrors(u: UnifiedEndpoint): string[] {
   errors.push(...encodingProblems(e).map((p) => p + "."));
   return errors;
 }
-
-export const hasKeyFor = (u: UnifiedEndpoint): boolean => keyring.has(u.slot);
 
 /** Redact anything that looks like a credential before an error body is shown or copied. A key
  *  echoed back in a provider's error message must not become the thing you paste into an issue. */

@@ -28,7 +28,7 @@ import { wavEncoders } from "~/providers/wavEncoder";
 import { audioRoutes } from "~/routes/audio";
 import { bookRoutes } from "~/routes/books";
 import { castRoutes } from "~/routes/cast";
-import { demoRoutes, type Reset } from "~/routes/demo";
+import { demoRoutes, type DemoControls } from "~/routes/demo";
 import { endpointRoutes } from "~/routes/endpoints";
 import { exportRoutes } from "~/routes/exports";
 import { jobRoutes } from "~/routes/jobs";
@@ -79,10 +79,11 @@ export interface AppOptions {
    */
   gate?: SpeechGate;
   /**
-   * What `POST <base>/demo/reset` and `POST <base>/demo/situations/:id` do: given to the demo
-   * library alone, so the real one has no route that empties it.
+   * What `POST <base>/demo/reset` and `POST <base>/demo/situations/:id` do, and the pace
+   * `<base>/demo/speed` sets: given to the demo library alone, so the real one has no route that
+   * empties it or speeds it up.
    */
-  reset?: Reset;
+  demo?: DemoControls;
 }
 
 export function createApp(
@@ -96,7 +97,7 @@ export function createApp(
     providers = { scripting: endpointScriptingProvider(), speech: endpointSpeechProvider() },
     voiceFiles = voiceFilesIn(env.VOICE_DIR),
     gate = createSpeechGate(),
-    reset,
+    demo,
   }: AppOptions = {},
 ): Hono<PinoEnv> {
   // Typed with the logger the middleware puts on the context, so a route reaching for
@@ -161,7 +162,7 @@ export function createApp(
   // A clip's url is served from disk, and the files it names belong to the same book routes above
   // remove — see `server/audio/files.ts` for why the path is a book and a token.
   app.route(`${base}/audio`, audioRoutes(files));
-  if (reset) app.route(`${base}/demo`, demoRoutes(reset));
+  if (demo) app.route(`${base}/demo`, demoRoutes(demo));
 
   app.notFound((c) =>
     c.json(

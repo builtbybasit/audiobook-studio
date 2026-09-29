@@ -11,7 +11,6 @@ import { computed } from "vue";
 import { UiToggleGroup, UiTooltip } from "@/ui";
 import MetricChart from "@/views/endpoints/MetricChart.vue";
 import { RANGES } from "@/services/endpoints";
-import { isDemo } from "@/services/mode";
 import {
   TEXT,
   compact,
@@ -67,8 +66,6 @@ const rangeLabel = computed(() => RANGES.find((r) => r.value === props.range)!.l
           @update:model-value="(v) => emit('update:range', v as RangeKey)"
         />
       </div>
-      <!-- with a server answering, the history is its ledger of what jobs really sent -->
-      <p v-if="isDemo" class="text-[11px] text-zinc-500">Sample history · no provider was called</p>
     </div>
 
     <div class="card p-3">

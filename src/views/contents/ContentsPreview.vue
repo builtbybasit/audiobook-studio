@@ -6,7 +6,7 @@ import { computed } from "vue";
 import { stateOf } from "@/lib/contents";
 import { STATE_CHIP, words } from "@/views/contents/shared";
 import type { Chapter, Volume } from "@/types";
-import type { ContentPart } from "@/mock";
+import type { ContentPart } from "@/lib/contents";
 import MarkdownText from "@/components/MarkdownText.vue";
 import {
   ChevronLeft as PrevIcon,

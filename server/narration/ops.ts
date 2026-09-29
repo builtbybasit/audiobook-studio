@@ -68,16 +68,15 @@ const beingNarrated = (chapterId: number, then: string) =>
 /**
  * Render another take of these lines, as one job.
  *
- * The store's `_queueRetake` and `_resume`, on rows. A line that already has a retake — waiting for
- * a verdict, or still rendering — or whose own clip is in flight is left out and said so, because
- * one comparison at a time is what a verdict is a verdict on; a line not in the script is said so
- * too. A line with a playable clip gets its retake beside it, numbered after every take the line
- * has seen; one with nothing worth keeping renders in place, which is a plain re-render and not a
- * comparison. Nothing is written when nothing is queued. A chapter with a run in flight is refused
- * rather than joined, as the demo's `_resume` returns early while the chapter is running, and the
- * queue's one-job-per-chapter rule would hand back that run's job in any case. A retake is held to
- * the book's budget exactly as a bulk run is: priced at its worst case, refused whole with a 409
- * when it does not fit, and held by its job until its lines settle.
+ * A line that already has a retake — waiting for a verdict, or still rendering — or whose own clip
+ * is in flight is left out and said so, because one comparison at a time is what a verdict is a
+ * verdict on; a line not in the script is said so too. A line with a playable clip gets its retake
+ * beside it, numbered after every take the line has seen; one with nothing worth keeping renders in
+ * place, which is a plain re-render and not a comparison. Nothing is written when nothing is
+ * queued. A chapter with a run in flight is refused rather than joined: the queue's
+ * one-job-per-chapter rule would hand back that run's job in any case. A retake is held to the
+ * book's budget exactly as a bulk run is: priced at its worst case, refused whole with a 409 when
+ * it does not fit, and held by its job until its lines settle.
  */
 export function retakeLines(
   db: Db,
@@ -137,13 +136,13 @@ export function retakeLines(
 /**
  * Keep or drop a line's retake.
  *
- * The store's `acceptTake` and `rejectTake`, on rows and in one transaction. Kept, the retake
+ * The verdict the Narration page asks for, on rows and in one transaction. Kept, the retake
  * becomes the clip in the book with the takes it displaces behind it, and the listener's complaint
  * comes off the line — the retake answered it. Dropped, the retake joins the take list marked
  * rejected if it rendered and simply goes if it did not, and the clip in the book is left exactly
- * as it was; whether that clip has drifted from its line since is the browser's reading to make,
- * as it is in the demo. Either way the chapter is settled from the clips that now play, and the
- * revision moves, since the script a client holds has a clip in it that is no longer there.
+ * as it was; whether that clip has drifted from its line since is the browser's reading to make.
+ * Either way the chapter is settled from the clips that now play, and the revision moves, since the
+ * script a client holds has a clip in it that is no longer there.
  *
  * A retake still rendering has nothing to judge yet, and one that never produced a clip cannot be
  * kept; both are refused, so a verdict is only ever on a comparison that can be heard. A chapter

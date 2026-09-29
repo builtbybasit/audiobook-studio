@@ -53,7 +53,7 @@ schedules, sponsor thanks, vote reminders, links — and an audiobook that reads
 audiobook nobody finishes. Import used to drop a file straight onto the shelf; skipping was a toggle
 buried in a peek popover, one chapter at a time. Now the file is **read, reviewed and then added**.
 
-**Import → Contents → Add.** `Add EPUB` (or a sample from **Try a sample** beside it) opens the
+**Import → Contents → Add.** `Add EPUB` opens the
 same dialog as before, and _Read the file_ lands on `/book/:id/contents` with the book marked
 `importing`: off the shelf, not the open book, nothing running on it. **Add to library · 202
 chapters** is the only way on, and it says what it adds; _Cancel import_ leaves no trace. The same
@@ -99,8 +99,8 @@ chip has an **Importing an EPUB** group, one row per sample; a reset drops the i
 **The shelf, redone (2026-09-16).** The Library used to spend a third of the viewport on a drop
 zone and a sample banner before a book appeared, and each card offered three bare numbers and a
 badge over a gradient. Now the books come first. The drop target is a one-line hint, and grows into
-a full-page target only while a file is over the window; the samples are a **Try a sample** menu
-beside **Add EPUB**. Each card says the one next thing to do as a verb with a destination
+a full-page target only while a file is over the window; sample imports are situations in the
+**Demo** drawer. Each card says the one next thing to do as a verb with a destination
 (_Narrate 9 chapters_, _Retry 2 failed chapters_, _Update the audiobook_ — `nextStepOf` in
 [src/views/library/shared.ts](../src/views/library/shared.ts)), draws progress as one segmented bar (narrated · scripted · not
 started · skipped) and nothing else — the counts behind it, scripted, narrated, in the audiobook,
@@ -116,7 +116,7 @@ a volume and Remove from library — one step, with what it takes written under 
 Undo. The numbers sit outside the
 cover button so a screen reader hears them as text; arrow keys move between covers.
 
-The shelf has a second shape. The two icons beside **Try a sample** switch between the grid of
+The shelf has a second shape. The two icons beside **Add EPUB** switch between the grid of
 covers and a table ([src/views/library/ShelfTable.vue](../src/views/library/ShelfTable.vue)) with one row per book and the pipeline as
 columns — in the audiobook, scripted, narrated, audiobook, next — with progress per stage the way
 the overview shows it, so the two pages agree. The choice sits in the URL as `?view=list` and is

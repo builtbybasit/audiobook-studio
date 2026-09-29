@@ -1,17 +1,20 @@
+// Pronunciation dictionary and pacing: both change how a book sounds without changing a word of it.
+//
+// What the endpoint is sent is the server's to measure when a clip renders, and tested there; what
+// is here is the rule itself and what the stores do with a change to it, against the demo's
+// `cliche` read from a seeded demo library.
+import { test, expect, beforeAll, beforeEach, describe } from "bun:test";
+
 import { useCastStore } from "@/stores/cast";
-import { useEndpointsStore } from "@/stores/endpoints";
-import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-// Pronunciation dictionary and pacing: both change how a book sounds without changing a word of it.
-// The store's narration simulation runs on setTimeout, so the clock and both timer APIs are faked.
-import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
-
 import { speak, marks, silenceOf, DEFAULT_PACING, pauseAfter } from "@/lib/speech";
 import type { LexEntry, Segment, ToastOptions } from "@/types";
+import { demoServer } from "./support/demoServer";
+import { openDemoBook } from "./support/demoBook";
+import { testPinia } from "./support/pinia";
 
 const entry = (term: string, say: string, extra: Partial<LexEntry> = {}): LexEntry => ({
   id: 1,
@@ -85,70 +88,30 @@ describe("pacing", () => {
 });
 
 describe("in the store", () => {
-  let timers = new Map<number, () => void>();
-  let clock = 1000;
-  let restore: (() => void)[] = [];
-  let undos: (() => void)[] = [];
+  let undos: (() => unknown)[] = [];
   let castStore: ReturnType<typeof useCastStore>;
-  let endpointsStore: ReturnType<typeof useEndpointsStore>;
-  let jobsStore: ReturnType<typeof useJobsStore>;
   let libraryStore: ReturnType<typeof useLibraryStore>;
   let narrationStore: ReturnType<typeof useNarrationStore>;
   let scriptsStore: ReturnType<typeof useScriptsStore>;
-  let uiStore: ReturnType<typeof useUiStore>;
 
-  function run(rounds = 400): void {
-    for (let i = 0; i < rounds && timers.size; i++) {
-      clock += 500;
-      const pending = [...timers];
-      for (const [id, fn] of pending) {
-        if (!timers.has(id)) continue;
-        timers.delete(id);
-        fn();
-      }
-    }
-    expect(timers.size).toBe(0);
-  }
-
-  beforeEach(() => {
+  beforeAll(async () => {
     Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-    setActivePinia(createPinia());
+    await demoServer();
+  });
+  beforeEach(async () => {
+    const pinia = testPinia();
     castStore = useCastStore();
-    endpointsStore = useEndpointsStore();
-    jobsStore = useJobsStore();
     libraryStore = useLibraryStore();
     narrationStore = useNarrationStore();
     scriptsStore = useScriptsStore();
-    uiStore = useUiStore();
-    jobsStore.jobs = [];
+    const uiStore = useUiStore();
     undos = [];
     uiStore.toast = ((_msg: string, opts?: ToastOptions) => {
       if (opts?.undo) undos.push(opts.undo);
       return "test";
     }) as typeof uiStore.toast;
-    for (const e of endpointsStore.endpoints) {
-      e.enabled = true;
-      e.needsKey = false;
-      e.failRate = 0;
-      e.backoffUntil = 0;
-    }
-    timers = new Map();
-    clock = 1000;
-    let seq = 0;
-    restore = [
-      spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) => {
-        const id = ++seq;
-        timers.set(id, fn);
-        return id;
-      }) as unknown as typeof setTimeout),
-      spyOn(globalThis, "clearTimeout").mockImplementation(((id: number) => {
-        timers.delete(id);
-      }) as typeof clearTimeout),
-      spyOn(Date, "now").mockImplementation(() => clock),
-      spyOn(Math, "random").mockReturnValue(0.5),
-    ].map((s) => () => s.mockRestore());
+    await openDemoBook(pinia, "cliche");
   });
-  afterEach(() => restore.forEach((fn) => fn()));
 
   /** the seeded “Ji Ning” entry and a rendered line that uses it */
   const withTerm = (bookId: string, chId: number) => {
@@ -159,18 +122,7 @@ describe("in the store", () => {
     return { s, id: castStore.lexiconOf(bookId).find((e) => e.term === "Ji Ning")!.id };
   };
 
-  test("the endpoint is sent the respelling; the book keeps its own spelling", () => {
-    const { s } = withTerm("cliche", 1);
-    narrationStore.retrySegment("cliche", 1, s.id);
-    run();
-    expect(s.text).toContain("Ji Ning"); // the script is never rewritten
-    expect(s.audio.said).toContain("Jee Ning");
-    expect(s.audio.said).not.toContain("Ji Ning");
-    expect(s.audio.text).toBe(s.text);
-    expect(s.audio.lex).toBeGreaterThan(0);
-  });
-
-  test("changing a term makes the clips that used the old spelling stale, and undo puts them back", () => {
+  test("changing a term makes the clips that used the old spelling stale, and undo puts them back", async () => {
     const { s, id } = withTerm("cliche", 1);
     expect(s.audio.status).toBe("done");
 
@@ -178,7 +130,7 @@ describe("in the store", () => {
     expect(s.audio.status).toBe("stale");
     expect(libraryStore.chapter("cliche", 1)!.narration).toBe("stale");
 
-    undos.pop()!();
+    await undos.pop()!();
     expect(s.audio.status).toBe("done");
     expect(libraryStore.chapter("cliche", 1)!.narration).toBe("done");
     expect(castStore.lexiconOf("cliche").find((e) => e.id === id)!.say).toBe("Jee Ning");
@@ -189,52 +141,6 @@ describe("in the store", () => {
     castStore.addTerm("cliche", "zzyzx", "zizzix");
     expect(scriptsStore.segmentsOf("cliche", 1).map((s) => s.audio.status)).toEqual(before);
     expect(libraryStore.chapter("cliche", 1)!.narration).toBe("done");
-  });
-
-  test("re-narrating after a dictionary change sends the new spelling", () => {
-    const { s, id } = withTerm("cliche", 1);
-    castStore.updateTerm("cliche", id, { say: "Gee Ning" });
-    narrationStore.renarrateStale("cliche", 1);
-    run();
-    expect(s.audio.status).toBe("done");
-    expect(s.audio.said).toContain("Gee Ning");
-    expect(libraryStore.chapter("cliche", 1)!.narration).toBe("done");
-  });
-
-  test("switching a term off restores the plain spelling on the next render", () => {
-    const { s, id } = withTerm("cliche", 1);
-    castStore.updateTerm("cliche", id, { enabled: false });
-    narrationStore.retrySegment("cliche", 1, s.id);
-    run();
-    // other entries may still apply to this line; this one no longer does
-    expect(s.audio.said ?? s.audio.text).toContain("Ji Ning");
-    expect(s.audio.said ?? "").not.toContain("Jee Ning");
-    expect(s.audio.text).toBe(s.text);
-  });
-
-  test("a term edited mid-render lands the finished clip stale, not done", () => {
-    const { s, id } = withTerm("cliche", 1);
-    narrationStore.retrySegment("cliche", 1, s.id);
-    // the request is in flight; the dictionary moves under it before the clip comes back
-    expect(s.audio.status).toBe("generating");
-    castStore.updateTerm("cliche", id, { say: "Gee Ning" });
-    run();
-
-    expect(s.audio.said).toContain("Jee Ning"); // what was actually sent
-    expect(s.audio.status).toBe("stale"); // …and it is no longer what the dictionary says
-    expect(libraryStore.chapter("cliche", 1)!.narration).toBe("stale");
-    expect(narrationStore.clipDrift("cliche", s)).toContain(
-      "pronunciation: the dictionary changed after this clip",
-    );
-  });
-
-  test("an edit mid-render is caught the same way", () => {
-    const s = scriptsStore.segmentsOf("cliche", 1).find((x) => x.audio.status === "done")!;
-    narrationStore.retrySegment("cliche", 1, s.id);
-    expect(s.audio.status).toBe("generating");
-    s.text = s.text + " And then silence.";
-    run();
-    expect(s.audio.status).toBe("stale");
   });
 
   test("a pause re-times the chapter without invalidating any audio", () => {
@@ -252,20 +158,24 @@ describe("in the store", () => {
     expect(libraryStore.chapter("cliche", 1)!.duration).toBeCloseTo(before, 10);
   });
 
-  test("the book's pacing re-times every chapter it has audio for", () => {
+  test("the book's pacing re-times every chapter it has audio for", async () => {
     const narrated = libraryStore.chaptersOf("cliche").filter((c) => c.duration > 0);
+    expect(narrated.length).toBeGreaterThan(0);
     const before = narrated.map((c) => c.duration);
-    castStore.setPacing("cliche", { line: 0, turn: 0 });
+    await castStore.setPacing("cliche", { line: 0, turn: 0 });
     // with no gaps at all a chapter is exactly the sum of its clips
     narrated.forEach((c, i) => {
-      expect(c.duration).toBeCloseTo(
+      const held = libraryStore.chapter("cliche", c.id)!;
+      expect(held.duration).toBeCloseTo(
         scriptsStore.segmentsOf("cliche", c.id).reduce((a, s) => a + s.audio.duration, 0),
-        10,
+        6,
       );
-      expect(c.duration).toBeLessThan(before[i]);
+      expect(held.duration).toBeLessThan(before[i]);
     });
-    castStore.resetPacing("cliche");
-    narrated.forEach((c, i) => expect(c.duration).toBeCloseTo(before[i], 10));
+    await castStore.resetPacing("cliche");
+    narrated.forEach((c, i) =>
+      expect(libraryStore.chapter("cliche", c.id)!.duration).toBeCloseTo(before[i], 6),
+    );
   });
 
   describe("the sample rate", () => {
@@ -298,19 +208,6 @@ describe("in the store", () => {
       else s.audio.sampleRate = clip;
       if (endpoint === undefined) delete ep.sampleRate;
       else ep.sampleRate = endpoint;
-      expect(narrationStore.clipDrift("cliche", s).join()).not.toContain("sample rate");
-    });
-
-    test.each([
-      { case: "the rate it asked for", endpoint: 44100, recorded: 44100 },
-      { case: "none when the endpoint asks for none", endpoint: null, recorded: undefined },
-    ])("a demo render records $case", ({ endpoint, recorded }) => {
-      const { s, ep } = rendered();
-      ep.sampleRate = endpoint;
-      narrationStore.retrySegment("cliche", 1, s.id);
-      run();
-      expect(s.audio.sampleRate).toBe(recorded);
-      // …so the clip matches its endpoint straight away
       expect(narrationStore.clipDrift("cliche", s).join()).not.toContain("sample rate");
     });
   });

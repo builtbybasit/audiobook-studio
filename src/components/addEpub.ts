@@ -1,15 +1,9 @@
 // The Add EPUB dialog's draft: what was dropped, and whether it becomes a new novel or a volume.
-import { sampleForFile } from "@/mock";
 
-/**
- * A file the person chose, as the dialog carries it.
- *
- * `source` is the EPUB itself and is what a server is sent; it is absent only when nothing real
- * was picked — the sample menu, which names a seeded book rather than opening a file.
- */
+/** A file the person chose, as the dialog carries it: its name, and the EPUB the server is sent. */
 export interface PickedFile {
   name: string;
-  source?: File;
+  source: File;
 }
 
 /** The file an `<input type="file">` or a drop is holding, or null when it is holding none. */
@@ -21,24 +15,16 @@ export function pickedFrom(files: FileList | null | undefined): PickedFile | nul
 export interface PendingAdd {
   /** the file's name, as the dialog and the volume row show it */
   file: string;
-  /** the EPUB itself, when there is one to send */
-  source?: File;
+  /** the EPUB itself */
+  source: File;
   mode: "new" | "volume";
   bookId: string;
   title: string;
   volName: string;
-  /** what the file turns out to contain — the seeded world parses nothing */
-  sample: string;
 }
 
-/** Start a dialog for a chosen file, or for a sample picked by name. */
-export function pendingFor(
-  picked: PickedFile | string,
-  bookId: string | null,
-  sample?: string,
-): PendingAdd {
-  const { name, source } =
-    typeof picked === "string" ? { name: picked, source: undefined } : picked;
+/** Start a dialog for a chosen file. */
+export function pendingFor({ name, source }: PickedFile, bookId: string | null): PendingAdd {
   const guess = name.replace(/\.epub$/i, "");
   return {
     file: name,
@@ -47,6 +33,5 @@ export function pendingFor(
     bookId: bookId ?? "",
     title: guess,
     volName: guess,
-    sample: sample ?? sampleForFile(name),
   };
 }

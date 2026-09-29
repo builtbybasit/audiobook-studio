@@ -1,12 +1,12 @@
 // What narration will cost before it is sent, and what a run holds against the book's cap.
 //
-// The browser's `_worstCase` on rows: every line goes to the endpoint its speaker's voice belongs
-// to, is measured as it will be spoken — after the dictionary, with the endpoint's tags written in,
-// with the instructions sent beside it, in as many requests as the endpoint's limit cuts it into —
-// and each endpoint's lines are priced together on its own card, at the **undiscounted** price,
-// because a run lasts long enough for a promotion to end inside it (`~/usage/budget`). A line with
-// no voice, or whose voice's endpoint is gone, is refused by the provider before any request, so it
-// holds nothing.
+// The figure the page's run strip checks the cap against, on rows: every line goes to the endpoint
+// its speaker's voice belongs to, is measured as it will be spoken — after the dictionary, with the
+// endpoint's tags written in, with the instructions sent beside it, in as many requests as the
+// endpoint's limit cuts it into — and each endpoint's lines are priced together on its own card, at
+// the **undiscounted** price, because a run lasts long enough for a promotion to end inside it
+// (`~/usage/budget`). A line with no voice, or whose voice's endpoint is gone, is refused by the
+// provider before any request, so it holds nothing.
 //
 // The same figure is held twice: whole, before anything is queued, to refuse a run that does not
 // fit; and line by line while the job runs, released as each line settles, so the job's check

@@ -46,17 +46,13 @@ const items = computed(() =>
     .sort((a, b) => (b.status === "building" ? 1 : 0) - (a.status === "building" ? 1 : 0)),
 );
 /**
- * Deleting an audiobook: undoable in the demo, so it acts at once; with a server answering nothing
- * puts one back, so the button asks with a second click — the rule in `src/stores/README.md`.
+ * Deleting an audiobook: nothing puts one back, so the button asks with a second click — the rule
+ * in `src/stores/README.md`.
  */
 const confirming = ref<number | null>(null);
-const deleteTitle = computed(() =>
-  exportsStore.asksFirst
-    ? "Delete this audiobook. This cannot be undone."
-    : "Delete this audiobook",
-);
+const deleteTitle = "Delete this audiobook. This cannot be undone.";
 function remove(id: number) {
-  if (exportsStore.asksFirst && confirming.value !== id) {
+  if (confirming.value !== id) {
     confirming.value = id;
     return;
   }
@@ -136,19 +132,8 @@ function copyPath(e: ExportItem) {
  * without saying so. The name is the response's and not this card's, because the encoder the
  * server ran decides the extension and a `download` attribute here would rename a `.wav` after the
  * format the settings asked for.
- *
- * In the demo there is nothing on disk to fetch, so it says that instead.
  */
 function download(e: ExportItem) {
-  if (!exportsStore.asksFirst) {
-    uiStore.toast(`${e.filename} is not a real file`, {
-      kind: "info",
-      description:
-        "This prototype simulates the build; nothing was encoded, so there is nothing to download yet.",
-      timeout: 5000,
-    });
-    return;
-  }
   for (let i = 0; i < e.files.length; i++) {
     const a = document.createElement("a");
     a.href = exportFileUrl(props.bookId, e.id, i);

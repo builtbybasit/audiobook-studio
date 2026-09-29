@@ -1,26 +1,23 @@
 // Bulk re-scripting and bulk re-narration over chapters that are already finished.
 //
-// Four properties hold this feature together, and they are what is tested here.
+// Three properties hold this feature together in the browser, and they are what is tested here.
+// The runs themselves are the server's, and what a run does to a chapter is tested there
+// (`tests/server/`).
 //
 // **The selection is legible.** What a selection contains and what pressing the button would do to
-// it are one calculation, so the summary, the label, the estimate and the work that is queued
-// cannot disagree.
+// it are one calculation, so the summary, the label and the estimate cannot disagree.
 //
-// **Nothing usable is lost to make room.** A re-script that failed, was cancelled or was overtaken
-// leaves the script it was replacing as the chapter's script; a clip being replaced keeps playing
-// until its replacement actually lands, and the clip it displaces joins the take list rather than
-// disappearing.
-//
-// **A scope means something.** "Retry failed clips" sends the failed clips and nothing else, and
+// **A scope means something.** "Retry failed clips" counts the failed clips and nothing else, and
 // the estimate counts that rather than every line in the chapter.
 //
-// **A run can be stopped and picked up again.** Cancelling keeps what finished and stops what has
-// not started; retrying a run's failures does not redo its successes.
-import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
+// **A run can be stopped and picked up again.** Cancelling asks for what has not finished and
+// nothing else; retrying a run's failures asks again for exactly those chapters, as one run, at the
+// narrowest scope that covers them.
+//
+// The book is the demo's `cliche`, read from a seeded demo library the way its pages read it.
+import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 import { useCastStore } from "@/stores/cast";
-import { useDemoStore } from "@/stores/demo";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
@@ -29,95 +26,47 @@ import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 
-import { keyring } from "@/lib/keyring";
-import { speechWhy } from "@/lib/pricing";
-import {
-  chapterNarration,
-  narrationTargets,
-  runActionLabel,
-  selectionSummary,
-  skipSummary,
-} from "@/lib/runPlan";
+import { narrationTargets, runActionLabel, selectionSummary, skipSummary } from "@/lib/runPlan";
 import { newProfile } from "@/lib/scripting";
-import { reapplyCorrections, SEEDED_KEYS } from "@/mock";
-import type { PricingConfig, Segment } from "@/types";
+import { jobsService, setJobsService, type JobsService } from "@/services/jobs";
+import type { Job, NarrationScope, PricingConfig } from "@/types";
+import { demoServer } from "./support/demoServer";
+import { openDemoBook } from "./support/demoBook";
+import { testPinia } from "./support/pinia";
 
-let timers = new Map<number, { fn: () => void; repeat: boolean }>();
-let clock = 1_000_000;
-let restore: (() => void)[] = [];
+let real: JobsService;
 let castStore: ReturnType<typeof useCastStore>;
-let demoStore: ReturnType<typeof useDemoStore>;
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
 let jobsStore: ReturnType<typeof useJobsStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let narrationStore: ReturnType<typeof useNarrationStore>;
 let scriptingStore: ReturnType<typeof useScriptingStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
-let uiStore: ReturnType<typeof useUiStore>;
+let toasts: string[];
 
-function tick() {
-  for (const [id, t] of Array.from(timers)) {
-    if (!timers.has(id)) continue;
-    if (!t.repeat) timers.delete(id);
-    t.fn();
-  }
-}
-function drain(max = 400) {
-  for (let i = 0; i < max && timers.size; i++) {
-    clock += 1000;
-    tick();
-  }
-}
-
-beforeEach(() => {
+beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  setActivePinia(createPinia());
+  await demoServer();
+  real = jobsService();
+});
+beforeEach(async () => {
+  setJobsService(real);
+  const pinia = testPinia();
   castStore = useCastStore();
-  demoStore = useDemoStore();
   endpointsStore = useEndpointsStore();
   jobsStore = useJobsStore();
   libraryStore = useLibraryStore();
   narrationStore = useNarrationStore();
   scriptingStore = useScriptingStore();
   scriptsStore = useScriptsStore();
-  uiStore = useUiStore();
-  uiStore.toast = () => "test";
-  jobsStore.jobs = [];
-  for (const [id, value] of SEEDED_KEYS) keyring.set(id, value);
-  timers = new Map();
-  clock = 1_000_000;
-  let seq = 0;
-  const add = (fn: () => void, repeat: boolean) => {
-    timers.set(++seq, { fn, repeat });
-    return seq;
-  };
-  restore = [
-    spyOn(globalThis, "setInterval").mockImplementation(((fn: () => void) =>
-      add(fn, true)) as typeof setInterval),
-    spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) =>
-      add(fn, false)) as typeof setTimeout),
-    spyOn(globalThis, "clearInterval").mockImplementation(((id: number) => {
-      timers.delete(id);
-    }) as typeof clearInterval),
-    spyOn(globalThis, "clearTimeout").mockImplementation(((id: number) => {
-      timers.delete(id);
-    }) as typeof clearTimeout),
-    spyOn(Date, "now").mockImplementation(() => clock),
-    // the middle of every simulated coin toss: no rate limits, no failures, no fallback chunks
-    spyOn(Math, "random").mockReturnValue(0.5),
-  ].map((s) => () => s.mockRestore());
+  toasts = [];
+  useUiStore().toast = (msg: string) => (toasts.push(msg), "test");
+  await openDemoBook(pinia, BOOK);
 });
-afterEach(() => restore.forEach((f) => f()));
 
 const BOOK = "cliche";
 const chapters = () => libraryStore.chaptersOf(BOOK);
-const chapter = (id: number) => libraryStore.chapter(BOOK, id)!;
 const segments = (id: number) => scriptsStore.segmentsOf(BOOK, id);
-/** A chapter's script as one comparable string: what a replacement would change. */
-const scriptOf = (id: number) =>
-  segments(id)
-    .map((s) => s.text)
-    .join("|");
 /** A scripting endpoint with no key, no price and no chunking surprises. */
 function profile(id = "test") {
   const p = newProfile({
@@ -140,7 +89,6 @@ function route() {
   const ep = endpointsStore.endpoints.find((e) => e.id === "local")!;
   ep.enabled = true;
   ep.backoffUntil = 0;
-  ep.failRate = 0;
   for (const c of castStore.characters[BOOK]) c.voice = `local/${ep.voices[0].id}`;
   return ep;
 }
@@ -185,150 +133,10 @@ describe("the selection says what it contains", () => {
   });
 });
 
-// ---------- re-scripting ----------
-
-describe("bulk re-scripting", () => {
-  test("manual corrections are preserved by default, and the ones that could not be are named", () => {
-    profile();
-    const ch = chapters().find((c) => c.scripting === "done")!;
-    for (const s of segments(ch.id).slice(0, 4)) {
-      s.direction = "by hand";
-      s.edited = true;
-    }
-    scriptingStore.runScripting(BOOK, [ch.id]);
-    drain();
-    const report = scriptsStore.correctionsOf(BOOK, ch.id)!;
-    expect(report.asked).toBe(true);
-    expect(report.kept + report.unmatched.length).toBe(4);
-    // whatever it says it kept, it really did: every re-applied correction is on the new script
-    const carried = segments(ch.id).filter((s) => s.edited && s.direction === "by hand");
-    expect(carried).toHaveLength(report.kept);
-    // and nothing it could not carry is quietly claimed as carried
-    for (const u of report.unmatched)
-      expect(segments(ch.id).some((s) => s.text === u.text && s.edited)).toBe(false);
-  });
-
-  test("turning preservation off says so rather than pretending the corrections survived", () => {
-    profile();
-    const ch = chapters().find((c) => c.scripting === "done")!;
-    for (const s of segments(ch.id).slice(0, 3)) {
-      s.direction = "by hand";
-      s.edited = true;
-    }
-    scriptingStore.runScripting(BOOK, [ch.id], { keepEdits: false });
-    drain();
-    const report = scriptsStore.correctionsOf(BOOK, ch.id)!;
-    expect(report.asked).toBe(false);
-    expect(report.kept).toBe(0);
-    expect(report.unmatched).toHaveLength(3);
-  });
-
-  test("a correction is carried by the line it was made on, once", () => {
-    const prev: Segment[] = [
-      {
-        id: 1,
-        type: "dialogue",
-        speaker: "Ji Ning",
-        text: "Say it again.",
-        direction: "flat",
-        edited: true,
-        audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
-      },
-      {
-        id: 2,
-        type: "narration",
-        speaker: "Narrator",
-        text: "The hall went quiet.",
-        direction: "",
-        edited: true,
-        audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
-      },
-    ];
-    const next: Segment[] = [
-      {
-        id: 1,
-        type: "narration",
-        speaker: "Narrator",
-        text: "Say it again.",
-        direction: "",
-        audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
-      },
-      {
-        id: 2,
-        type: "narration",
-        speaker: "Narrator",
-        text: "The hall went quiet, and stayed quiet.",
-        direction: "",
-        audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
-      },
-    ];
-    const report = reapplyCorrections(prev, next, true);
-    expect(report.kept).toBe(1);
-    expect(next[0].speaker).toBe("Ji Ning");
-    expect(next[0].direction).toBe("flat");
-    expect(report.unmatched).toHaveLength(1);
-    expect(report.unmatched[0].text).toBe("The hall went quiet.");
-  });
-
-  test("a cancelled run keeps the chapters it finished and never starts the rest", () => {
-    profile();
-    const done = chapters()
-      .filter((c) => c.scripting === "done")
-      .slice(0, 3);
-    const ids = done.map((c) => c.id);
-    const before = ids.map(scriptOf);
-    scriptingStore.runScripting(BOOK, ids);
-    // let the first chapter finish, then stop the run
-    for (let i = 0; i < 60 && chapter(ids[1]).scripting === "queued"; i++) {
-      clock += 1000;
-      tick();
-    }
-    const runId = jobsStore.jobs.find((j) => j.bulk)!.bulk!.id;
-    expect(jobsStore.cancelRun(runId)).toBeGreaterThan(0);
-    drain();
-
-    const rows = jobsStore.runJobs(runId);
-    expect(rows).toHaveLength(3);
-    expect(rows[0].status).toBe("done");
-    expect(rows.slice(1).every((j) => j.status === "cancelled")).toBe(true);
-    // the replacement that landed is kept; the chapters that never ran are untouched
-    expect(scriptOf(ids[0])).not.toBe(before[0]);
-    expect(scriptOf(ids[1])).toBe(before[1]);
-    expect(scriptOf(ids[2])).toBe(before[2]);
-    for (const c of done) expect(c.scripting).toBe("done");
-  });
-
-  test("a chapter already running is not queued twice", () => {
-    profile();
-    const ch = chapters().find((c) => c.scripting === "done")!;
-    scriptingStore.runScripting(BOOK, [ch.id]);
-    const first = jobsStore.jobs.filter((j) => j.kind === "scripting").length;
-    scriptingStore.runScripting(BOOK, [ch.id]);
-    expect(jobsStore.jobs.filter((j) => j.kind === "scripting")).toHaveLength(first);
-    drain();
-  });
-
-  test("a result from a run the chapter has moved on from is discarded", () => {
-    profile();
-    const ch = chapters().find((c) => c.scripting === "done")!;
-    scriptingStore.runScripting(BOOK, [ch.id]);
-    tick();
-    // something else claims the chapter while the requests are in flight — a newer run, a restore
-    const before = scriptOf(ch.id);
-    ch.rescript = { keepEdits: true, was: "done", token: -1 };
-    drain();
-    const job = jobsStore.jobs.at(-1)!;
-    expect(job.status).toBe("cancelled");
-    expect(job.activity!.some((e) => e.message.startsWith("Result discarded"))).toBe(true);
-    expect(scriptOf(ch.id)).toBe(before);
-    expect(ch.scripting).toBe("done");
-  });
-});
-
 // ---------- re-narrating ----------
 
-describe("bulk re-narration", () => {
-  test("a scope decides which lines run, and the estimate counts that scope", () => {
+describe("a narration scope", () => {
+  test("decides which lines run, and the estimate counts that scope", () => {
     route();
     const ch = narratedChapter();
     const segs = segments(ch.id);
@@ -352,102 +160,38 @@ describe("bulk re-narration", () => {
     expect(all.replacing).toBe(segs.filter((s) => s.audio.duration > 0).length);
   });
 
-  test("a chapter with nothing to do at this scope is left out, with the reason", () => {
+  test("a chapter with nothing to do at it is left out, with the reason, and the server agrees", async () => {
     route();
     const ch = narratedChapter();
     const plan = narrationStore.narrationRunPlan(BOOK, [ch.id], "failed", true);
     expect(plan.chapters).toHaveLength(0);
     expect(plan.skipped[0].reason).toBe("nothing");
-    narrationStore.runNarration(BOOK, [ch.id], { scope: "failed" });
-    expect(jobsStore.jobs.filter((j) => j.kind === "narration")).toHaveLength(0);
+    await narrationStore.runNarration(BOOK, [ch.id], { scope: "failed" });
+    expect(toasts).toEqual(["Nothing to narrate in this selection"]);
+    expect(libraryStore.chapter(BOOK, ch.id)!.narration).toBe("done");
   });
 
-  test("a clip keeps playing until its replacement lands, then joins the take list", () => {
+  test("a retake waiting for a verdict is counted whichever way the choice goes", () => {
     route();
     const ch = narratedChapter();
     const line = segments(ch.id).find((s) => s.audio.duration > 0)!;
-    const wasDuration = line.audio.duration;
-    const wasAt = line.audio.at;
-
-    narrationStore.runNarration(BOOK, [ch.id], { scope: "all" });
-    // the replacement renders beside the clip; the book's own clip is untouched and still playable
-    expect(line.candidate).toBeDefined();
-    expect(line.candidate!.auto).toBe(true);
-    expect(line.audio.duration).toBe(wasDuration);
-    expect(line.audio.at).toBe(wasAt);
-
-    drain();
-    expect(line.candidate).toBeUndefined();
-    expect(line.audio.duration).toBeGreaterThan(0);
-    expect(line.audio.n).toBe(2);
-    // the clip it displaced is kept rather than thrown away
-    expect(line.audio.takes).toHaveLength(1);
-    expect(line.audio.takes![0].duration).toBe(wasDuration);
-    expect(ch.narration).toBe("done");
-  });
-
-  test("a replacement that fails changes nothing, and only it is retried", () => {
-    const ep = route();
-    const ch = narratedChapter();
-    const segs = segments(ch.id);
-    const before = segs.map((s) => s.audio.duration);
-    ep.failRate = 1; // every request this run sends comes back an error
-    narrationStore.runNarration(BOOK, [ch.id], { scope: "all" });
-    drain();
-
-    expect(jobsStore.jobs.at(-1)!.status).toBe("failed");
-    // every clip in the book is exactly as it was, and the chapter still reads as narrated
-    expect(segs.map((s) => s.audio.duration)).toEqual(before);
-    expect(ch.narration).toBe("done");
-    const failed = segs.filter((s) => s.candidate?.status === "failed").length;
-    expect(failed).toBe(segs.length);
-
-    ep.failRate = 0;
-    narrationStore.retryFailed(BOOK, ch.id);
-    drain();
-    expect(segs.every((s) => !s.candidate)).toBe(true);
-    expect(segs.every((s) => s.audio.status === "done")).toBe(true);
-  });
-
-  test("a retake waiting for a verdict is left alone unless the run is told otherwise", () => {
-    route();
-    const ch = narratedChapter();
-    const line = segments(ch.id).find((s) => s.audio.duration > 0)!;
-    line.candidate = { ...line.audio, n: 2, at: clock };
-    const takeToJudge = line.candidate.duration;
+    line.candidate = { ...line.audio, n: 2, at: Date.now() };
 
     const kept = narrationStore.narrationRunPlan(BOOK, [ch.id], "all", true);
     expect(kept.pending).toBe(1);
     expect(kept.clips).toBe(segments(ch.id).length - 1);
-    narrationStore.runNarration(BOOK, [ch.id], { scope: "all", keepPending: true });
-    drain();
-    // the comparison the listener started is still theirs to judge
-    expect(line.candidate).toBeDefined();
-    expect(line.candidate!.duration).toBe(takeToJudge);
-
     // told otherwise, the line joins the run — and the plan still reports the retake, because the
     // count is what the choice is about, not what it happened to leave behind
     const replaced = narrationStore.narrationRunPlan(BOOK, [ch.id], "all", false);
     expect(replaced.pending).toBe(1);
     expect(replaced.clips).toBe(segments(ch.id).length);
-
-    narrationStore.runNarration(BOOK, [ch.id], { scope: "all", keepPending: false });
-    drain();
-    // the retake was replaced, not deleted: it is in the take list, marked as not kept, and the
-    // clip that was in the book is there too — both are still playable
-    expect(line.candidate).toBeUndefined();
-    expect(line.audio.duration).toBeGreaterThan(0);
-    const takes = line.audio.takes ?? [];
-    expect(takes.some((t) => t.duration === takeToJudge && t.rejected)).toBe(true);
-    // and the new clip did not reuse a take number the line had already handed out
-    expect(takes.every((t) => t.n !== line.audio.n)).toBe(true);
   });
 
   test("the retake choice only counts lines this scope would have rendered", () => {
     route();
     const ch = narratedChapter();
     const line = segments(ch.id).find((s) => s.audio.duration > 0)!;
-    line.candidate = { ...line.audio, n: 2, at: clock };
+    line.candidate = { ...line.audio, n: 2, at: Date.now() };
 
     // "missing & changed" has no reason to touch a line whose clip is current, so there is nothing
     // for the choice to decide there — and the plan does not claim it left anything alone
@@ -460,265 +204,145 @@ describe("bulk re-narration", () => {
     // the scope that would render it is the one that asks
     expect(narrationStore.narrationRunPlan(BOOK, [ch.id], "all", true).pending).toBe(1);
   });
+});
 
-  test("cancelling keeps the replacements that landed and starts nothing else", () => {
-    route();
-    const ch = narratedChapter();
-    const segs = segments(ch.id);
-    narrationStore.runNarration(BOOK, [ch.id], { scope: "all" });
-    tick();
-    tick();
-    const landed = segs.filter((s) => s.audio.n === 2).length;
-    jobsStore.cancelJob(jobsStore.jobs.at(-1)!.id);
-    drain();
+// ---------- stopping and picking up ----------
+//
+// What the queue holds is installed as the poll would install it, and the service records what it
+// is asked for rather than queueing it: these are about which request the store sends, and the
+// server's own tests cover what it does with one.
 
-    expect(jobsStore.jobs.at(-1)!.status).toBe("cancelled");
-    // nothing is left queued, every clip is still playable, and what did land was kept
-    expect(segs.every((s) => s.audio.duration > 0)).toBe(true);
-    expect(segs.filter((s) => s.audio.n === 2).length).toBeGreaterThanOrEqual(landed);
-    expect(segs.every((s) => !s.candidate || s.candidate.status !== "queued")).toBe(true);
-    expect(ch.narration).toBe(chapterNarration(segs));
-  });
-
-  test("a bulk run is one run in the queue, and its failures retry without its successes", () => {
-    route();
-    const narrated = chapters()
-      .filter((c) => c.narration === "done")
-      .slice(0, 2);
-    for (const s of segments(narrated[1].id).slice(0, 2)) {
-      s.audio.status = "failed";
-      s.audio.duration = 0;
-    }
-    narrated[1].narration = "failed";
-    narrationStore.runNarration(
-      BOOK,
-      narrated.map((c) => c.id),
-      { scope: "failed" },
+describe("a run can be stopped and picked up again", () => {
+  type Ask =
+    | { kind: "narrate"; ids: number[]; scope: NarrationScope }
+    | { kind: "script"; ids: number[] }
+    | { kind: "cancel"; id: number };
+  let asked: Ask[];
+  beforeEach(() => {
+    asked = [];
+    const none = { jobs: [], skipped: [], chapters: libraryStore.chaptersOf(BOOK) };
+    setJobsService(
+      Object.assign(Object.create(real) as JobsService, {
+        narrateChapters: async (_book: string, ids: number[], scope: NarrationScope) => {
+          asked.push({ kind: "narrate", ids, scope });
+          return none;
+        },
+        scriptChapters: async (_book: string, ids: number[]) => {
+          asked.push({ kind: "script", ids });
+          return none;
+        },
+        cancel: async (id: number) => {
+          asked.push({ kind: "cancel", id });
+          return jobsStore.jobs.find((j) => j.id === id)!;
+        },
+      }),
     );
-    // only the chapter with failed clips is in the run
-    const rows = jobsStore.jobs.filter((j) => j.kind === "narration" && j.bulk);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].bulk!.scope).toBe("Failed only");
-    expect(rows[0].chapterId).toBe(narrated[1].id);
-    drain();
-    expect(segments(narrated[1].id).every((s) => s.audio.status === "done")).toBe(true);
   });
 
-  test("a run whose replacements failed is picked up by Retry, which the chapter's status cannot ask for", () => {
-    const ep = route();
+  let nextId = 1000;
+  /** A job as the server lists one. Later jobs finish later, the way the queue appends them. */
+  function job(over: Partial<Job> & Pick<Job, "kind" | "chapterId" | "status">): Job {
+    const id = nextId++;
+    const settled = !["queued", "running"].includes(over.status);
+    return {
+      id,
+      bookId: BOOK,
+      label: `${over.kind} · ch ${over.chapterId}`,
+      progress: settled ? 100 : 0,
+      queuedAt: id,
+      startedAt: id,
+      finishedAt: settled ? id : null,
+      cancelled: false,
+      ...over,
+    };
+  }
+  const bulk = (id: number, index: number, total: number) => ({ id, op: "Narrate", index, total });
+
+  test("cancelling a run asks for what has not finished, and only that", () => {
+    const run = [
+      job({ kind: "narration", chapterId: 1, status: "done", bulk: bulk(7, 1, 3) }),
+      job({ kind: "narration", chapterId: 2, status: "running", bulk: bulk(7, 2, 3) }),
+      job({ kind: "narration", chapterId: 3, status: "queued", bulk: bulk(7, 3, 3) }),
+    ];
+    jobsStore._install(run);
+    expect(jobsStore.cancelRun(7)).toBe(2);
+    expect(asked).toEqual([
+      { kind: "cancel", id: run[1].id },
+      { kind: "cancel", id: run[2].id },
+    ]);
+  });
+
+  test("a run whose replacements failed is retried at the failed scope, which the chapter's status cannot ask for", () => {
     const ch = narratedChapter();
-    ep.failRate = 1;
-    narrationStore.runNarration(BOOK, [ch.id], { scope: "all" });
-    drain();
-    const job = jobsStore.jobs.at(-1)!;
-    expect(job.status).toBe("failed");
-    // the chapter still reads as narrated — its own clips were never touched — so the retry has to
-    // find the failures on the clips
+    const line = segments(ch.id).find((s) => s.audio.duration > 0)!;
+    // the replacement failed beside a clip that is still fine, so the chapter still reads as
+    // narrated and the failure is only on the clips
+    line.candidate = { ...line.audio, status: "failed", duration: 0, n: 2 };
+    const failed = job({ kind: "narration", chapterId: ch.id, status: "failed" });
+    jobsStore._install([failed]);
     expect(ch.narration).toBe("done");
 
-    ep.failRate = 0;
-    jobsStore.retryJob(job.id);
-    const retry = jobsStore.jobs.at(-1)!;
-    expect(retry.id).not.toBe(job.id);
-    expect(retry.bulk!.scope).toBe("Failed only");
-    drain();
-    expect(segments(ch.id).every((s) => !s.candidate)).toBe(true);
-    expect(segments(ch.id).every((s) => s.audio.n === 2)).toBe(true);
+    jobsStore.retryJob(failed.id);
+    expect(asked).toEqual([{ kind: "narrate", ids: [ch.id], scope: "failed" }]);
   });
 
-  test("a re-script that failed keeps the script it was replacing, and Retry all failed picks it up", () => {
-    profile();
-    const ch = chapters().find((c) => c.scripting === "done")!;
-    const before = scriptOf(ch.id);
-    const rnd = spyOn(Math, "random").mockReturnValue(0.01); // the verifier rejects this run
-    scriptingStore.runScripting(BOOK, [ch.id]);
-    drain();
-    const failed = jobsStore.jobs.at(-1)!;
-    expect(failed.status).toBe("failed");
-    // the script it was replacing is still the chapter's script, so the chapter still reads as
-    // scripted — which is why the retry cannot find this failure on the chapter's status
-    expect(scriptOf(ch.id)).toBe(before);
-    expect(ch.scripting).toBe("done");
+  test("a narration job with nothing failed left is retried as missing & changed", () => {
+    const ch = narratedChapter();
+    const cancelled = job({ kind: "narration", chapterId: ch.id, status: "cancelled" });
+    jobsStore._install([cancelled]);
+    jobsStore.retryJob(cancelled.id);
+    expect(asked).toEqual([{ kind: "narrate", ids: [ch.id], scope: "fill" }]);
+  });
 
-    rnd.mockReturnValue(0.5);
+  test("a re-script that failed is picked up by Retry all failed, and not again once a later run made it good", () => {
+    const ch = chapters().find((c) => c.scripting === "done")!;
+    const failed = job({ kind: "scripting", chapterId: ch.id, status: "failed" });
+    jobsStore._install([failed]);
+    // the script it was replacing is still the chapter's, so the chapter still reads as scripted
+    expect(jobsStore.retryableFailures().map((j) => j.id)).toEqual([failed.id]);
     jobsStore.retryAllFailed();
-    expect(jobsStore.jobs.at(-1)!.id).not.toBe(failed.id);
-    drain();
-    expect(jobsStore.jobs.at(-1)!.status).toBe("done");
-    expect(segments(ch.id).length).toBeGreaterThan(0);
-    // and a failure a later run already made good is not run a third time
-    const settled = jobsStore.jobs.length;
+    expect(asked).toEqual([{ kind: "script", ids: [ch.id] }]);
+
+    asked = [];
+    jobsStore._install([failed, job({ kind: "scripting", chapterId: ch.id, status: "done" })]);
+    expect(jobsStore._supersededBy(failed)).toBe(true);
     jobsStore.retryAllFailed();
-    expect(jobsStore.jobs.length).toBe(settled);
+    expect(asked).toEqual([]);
   });
 
   test("a chapter's newest failure is the one Retry all failed picks, not the one a later run fixed", () => {
-    const ep = route();
     const ch = narratedChapter();
-    // fail a replacement, make it good again, then fail a fresh one over the same chapter
-    ep.failRate = 1;
-    narrationStore.runNarration(BOOK, [ch.id], { scope: "all" });
-    drain();
-    const old = jobsStore.jobs.at(-1)!;
-    expect(old.status).toBe("failed");
+    segments(ch.id)[0].candidate = { ...segments(ch.id)[0].audio, status: "failed", n: 2 };
+    const old = job({ kind: "narration", chapterId: ch.id, status: "failed" });
+    const fixed = job({ kind: "narration", chapterId: ch.id, status: "done" });
+    const current = job({ kind: "narration", chapterId: ch.id, status: "failed" });
+    jobsStore._install([old, fixed, current]);
 
-    ep.failRate = 0;
-    jobsStore.retryAllFailed();
-    drain();
-    expect(jobsStore.jobs.at(-1)!.status).toBe("done");
-    // …so the first failure is now old news and must not speak for the chapter
     expect(jobsStore._supersededBy(old)).toBe(true);
-
-    ep.failRate = 1;
-    narrationStore.runNarration(BOOK, [ch.id], { scope: "all" });
-    drain();
-    const current = jobsStore.jobs.at(-1)!;
-    expect(current.status).toBe("failed");
-    expect(segments(ch.id).some((s) => s.candidate?.status === "failed")).toBe(true);
-
-    // the superseded failure must not claim the chapter and take the live one down with it
-    const retryable = jobsStore.retryableFailures();
-    expect(retryable.map((j) => j.id)).toContain(current.id);
-    expect(retryable.map((j) => j.id)).not.toContain(old.id);
-    ep.failRate = 0;
+    const retryable = jobsStore.retryableFailures().map((j) => j.id);
+    expect(retryable).toEqual([current.id]);
     jobsStore.retryAllFailed();
-    drain();
-    expect(segments(ch.id).some((s) => s.candidate?.status === "failed")).toBe(false);
+    expect(asked).toEqual([{ kind: "narrate", ids: [ch.id], scope: "failed" }]);
   });
 
   test("retrying a run's failures is one run again, not one run per chapter", () => {
-    const ep = route();
-    const narrated = chapters()
-      .filter((c) => c.narration === "done")
-      .slice(0, 3);
-    expect(narrated.length).toBeGreaterThan(1); // a run worth grouping
-    ep.failRate = 1;
-    narrationStore.runNarration(
-      BOOK,
-      narrated.map((c) => c.id),
-      { scope: "all" },
-    );
-    drain();
-    const runId = jobsStore.jobs.at(-1)!.bulk!.id;
-    const failed = jobsStore.runJobs(runId).filter((j) => j.status === "failed");
-    expect(failed.length).toBe(narrated.length);
-
-    ep.failRate = 0;
-    expect(jobsStore.retryRunFailures(runId)).toBe(failed.length);
-    const retried = jobsStore.jobs.filter((j) => j.bulk && j.bulk.id !== runId && !j.finishedAt);
-    expect(retried).toHaveLength(failed.length);
-    expect(new Set(retried.map((j) => j.bulk!.id)).size).toBe(1);
-    expect(retried.every((j) => j.bulk!.total === failed.length)).toBe(true);
-    expect(retried.every((j) => j.bulk!.scope === "Failed only")).toBe(true);
-  });
-
-  test("a replacement-only run does not claim to be finished before it starts", () => {
-    route();
-    const ch = narratedChapter();
-    narrationStore.runNarration(BOOK, [ch.id], { scope: "all" });
-    const job = jobsStore.jobs.at(-1)!;
-    // dispatch is synchronous: every playable clip is now rendering a replacement beside itself
-    const replacing = segments(ch.id).filter((s) => s.candidate?.auto).length;
-    expect(replacing).toBe(segments(ch.id).filter((s) => s.audio.duration > 0).length);
-    tick();
-    expect(job.progress).toBeLessThan(100);
-    drain();
-    expect(job.progress).toBe(100);
-  });
-});
-
-// ---------- the demo world ----------
-
-describe("the seeded situations", () => {
-  test("the mixed row really does contain every state a run has to tell apart", () => {
-    expect(demoStore.applyScenario("bulk-rework")).toBeTruthy();
-    const list = chapters().filter((c) => !c.excluded);
-    expect(list.some((c) => c.scripting === "none")).toBe(true);
-    expect(list.some((c) => c.scripting === "done")).toBe(true);
-    expect(list.some((c) => c.scripting === "failed")).toBe(true);
-    expect(list.some((c) => c.narration === "stale")).toBe(true);
-    expect(list.some((c) => c.narration === "failed")).toBe(true);
-    const all = list.flatMap((c) => segments(c.id));
-    expect(all.some((s) => s.edited)).toBe(true);
-    expect(all.some((s) => s.candidate && s.candidate.duration > 0)).toBe(true);
-  });
-
-  test("the recovery row leaves every earlier script and recording usable", () => {
-    expect(demoStore.applyScenario("bulk-recovery")).toBeTruthy();
-    const run = jobsStore.jobs.filter((j) => j.bulk?.id === 1);
-    expect(run.length).toBeGreaterThan(0);
-    // it is a recovery row: some of it went wrong, which is what makes the claim below mean anything
-    expect(new Set(run.map((j) => j.status))).toEqual(new Set(["done", "failed", "cancelled"]));
-    // the chapters whose replacement produced nothing still have a script
-    for (const j of run) {
-      const c = chapter(j.chapterId!);
-      expect(c.scripting).toBe("done");
-      expect(segments(c.id).length).toBeGreaterThan(0);
-    }
-    // and every clip whose replacement failed is still the clip in the book
-    const failedReplacements = chapters().flatMap((c) =>
-      segments(c.id).filter((s) => s.candidate?.status === "failed"),
-    );
-    expect(failedReplacements.length).toBeGreaterThan(0);
-    expect(failedReplacements.every((s) => s.audio.status === "done" && s.audio.duration > 0)).toBe(
-      true,
-    );
-  });
-
-  test("a run started by hand is never filed under a seeded run", () => {
-    profile();
-    route();
-    expect(demoStore.applyScenario("bulk-recovery")).toBeTruthy();
-    const seeded = new Set(jobsStore.jobs.map((j) => j.bulk?.id).filter((id) => id !== undefined));
-    expect(seeded.size).toBeGreaterThan(0);
-
-    const ch = chapters().find((c) => c.scripting === "done" && !c.excluded)!;
-    scriptingStore.runScripting(BOOK, [ch.id]);
-    const started = jobsStore.jobs.at(-1)!.bulk!.id;
-    expect(seeded.has(started)).toBe(false);
-    // and the run's own controls act on this run alone
-    expect(jobsStore.runJobs(started)).toHaveLength(1);
-    for (const id of seeded)
-      expect(jobsStore.runJobs(id).every((j) => j.bulk!.id === id)).toBe(true);
-  });
-
-  test("a reset clears bulk work in flight, replacements rendering beside their clips included", () => {
-    profile();
-    route();
-    const ch = chapters().find((c) => c.scripting === "done")!;
-    scriptingStore.runScripting(BOOK, [ch.id, ch.id + 1]);
-    narrationStore.runNarration(BOOK, [narratedChapter().id], { scope: "all" });
-    tick();
-    expect(jobsStore.activeJobs.length).toBeGreaterThan(0);
-
-    demoStore.resetDemo();
-    expect(jobsStore.jobs.every((j) => !!j.finishedAt)).toBe(true);
-    // nothing half-replaced survives the reset: no chapter is left queued and no replacement pending
-    expect(chapters().every((c) => !["queued", "running"].includes(c.scripting))).toBe(true);
-    expect(chapters().every((c) => !["queued", "running"].includes(c.narration))).toBe(true);
-    expect(
-      chapters().every((c) => segments(c.id).every((s) => !s.candidate || !s.candidate.auto)),
-    ).toBe(true);
-    // and the abandoned run's timers write nothing into the world that replaced it
-    const signature = chapters()
-      .map((c) => `${c.scripting}:${c.narration}`)
-      .join("|");
-    drain();
-    expect(
-      chapters()
-        .map((c) => `${c.scripting}:${c.narration}`)
-        .join("|"),
-    ).toBe(signature);
+    const run = [
+      job({ kind: "narration", chapterId: 1, status: "failed", bulk: bulk(9, 1, 3) }),
+      job({ kind: "narration", chapterId: 2, status: "done", bulk: bulk(9, 2, 3) }),
+      job({ kind: "narration", chapterId: 3, status: "failed", bulk: bulk(9, 3, 3) }),
+    ];
+    jobsStore._install(run);
+    expect(jobsStore.retryRunFailures(9)).toBe(2);
+    expect(asked).toEqual([{ kind: "narrate", ids: [1, 3], scope: "failed" }]);
   });
 });
 
 // ---------- speech pricing ----------
 //
-// A speech rate goes on discount the same way a token rate does, and the same two guarantees have
-// to hold: a clip is priced when it lands rather than when the run starts, and what it was charged
-// never moves afterwards.
+// A speech rate goes on discount the same way a token rate does. What a clip is charged when it
+// lands is the server's; what a run is estimated at before it starts is worked out here.
 
-describe("what a rendered clip is charged", () => {
+describe("what a run is estimated at", () => {
   /** The speech endpoint every seeded voice routes to, with a rate card we control. */
   function speechEndpoint(pricing: Partial<PricingConfig> = {}) {
     const ep = endpointsStore.endpoints.find((e) => e.id === "openai")!;
@@ -735,91 +359,13 @@ describe("what a rendered clip is charged", () => {
     return ep;
   }
 
-  /** Clips rendered by that endpoint. The seeded cast also routes speakers to the free local
-   *  server, and a free clip has nothing to say about a discount. */
-  const chargedByIt = (chId: number) =>
-    scriptsStore
-      .segmentsOf("cliche", chId)
-      .filter((s) => s.audio.endpoint === "openai" && s.audio.charge)
-      .map((s) => s.audio);
-
-  test("a clip keeps the rate it was charged at when the card changes afterwards", () => {
-    const ep = speechEndpoint({
-      promotions: [
-        { id: "p", label: "Half price", from: null, until: null, scope: ["model"], percent: 50 },
-      ],
-    });
-    narrationStore.runNarration("cliche", [1], { scope: "all" });
-    drain();
-    const clips = chargedByIt(1);
-    expect(clips.length).toBeGreaterThan(0);
-    const first = clips[0];
-    expect(first.charge!.lines[0].rate).toBe(6);
-    expect(first.charge!.lines[0].base).toBe(12);
-    expect(first.charge!.unit).toBe("chars");
-    expect(speechWhy(first.charge!).join(" ")).toContain("Half price");
-    expect(first.cost).toBeCloseTo(first.charge!.amount!, 12);
-    const spent = jobsStore.spent("cliche");
-
-    // the promotion ends and the card doubles, long after these clips landed
-    ep.pricing!.promotions = [];
-    ep.billing = { unit: "chars", rate: 24 };
-    expect(first.charge!.lines[0].rate).toBe(6);
-    expect(first.cost).toBeCloseTo(first.charge!.amount!, 12);
-    expect(jobsStore.spent("cliche")).toBeCloseTo(spent, 12);
-  });
-
-  test("a clip is charged at the rate in force when it lands, not when the run started", () => {
-    // Start five seconds before a whole minute, so the window closes a few clips into the run:
-    // `drain` advances the fake clock a second per round and one clip lands per round at
-    // concurrency 1, so the run demonstrably straddles the boundary rather than beating it.
-    clock = 1_015_000;
-    const to = (new Date(clock).getUTCMinutes() + 1) % 1440;
-    const ep = speechEndpoint({
-      windows: [
-        { id: "n", label: "Off-peak", days: [], from: (to - 300 + 1440) % 1440, to, percent: 50 },
-      ],
-    });
-    ep.concurrency = 1;
-    narrationStore.runNarration("cliche", [1], { scope: "all" });
-    drain();
-    const charges = chargedByIt(1).map((a) => a.charge!);
-    expect(charges.length).toBeGreaterThan(1);
-    // the run outlasts the boundary, so it is charged at two prices rather than one
-    expect(new Set(charges.map((c) => c.lines[0].rate)).size).toBe(2);
-    expect(charges.map((c) => c.lines[0].rate)).toContain(6);
-    expect(charges.map((c) => c.lines[0].rate)).toContain(12);
-    // and each clip was priced at its own landing instant, never at the run's starting price
-    for (const c of charges) expect(c.lines[0].rate).toBe(c.at < 1_020_000 ? 6 : 12);
-  });
-
-  test("an endpoint with no rate records an unknown cost, discount or no discount", () => {
-    const ep = speechEndpoint({
-      windows: [{ id: "n", label: "Night", days: [], from: 0, to: 1439, percent: 40 }],
-    });
-    ep.billing = { unit: "chars", rate: null };
-    narrationStore.runNarration("cliche", [1], { scope: "all" });
-    drain();
-    const charges = chargedByIt(1).map((a) => a.charge!);
-    expect(charges.length).toBeGreaterThan(0);
-    for (const c of charges) {
-      expect(c.lines[0].rate).toBeNull();
-      expect(c.amount).toBeNull();
-      expect(c.basis).toBe("unknown");
-      // the window applied to nothing, so it claims nothing
-      expect(speechWhy(c)).toEqual([]);
-    }
-    // an unknown cost is never counted as zero spend
-    expect(chargedByIt(1).every((a) => a.cost == null)).toBe(true);
-  });
-
-  test("the run estimate prices each endpoint on its own card and says what moved it", () => {
+  test("each endpoint is priced on its own card, and the estimate says what moved it", () => {
     speechEndpoint({
       promotions: [
         { id: "p", label: "Half price", from: null, until: null, scope: ["model"], percent: 50 },
       ],
     });
-    const est = narrationStore.estimate("cliche", [1], "all");
+    const est = narrationStore.estimate(BOOK, [1], "all");
     const row = est.per.find((e) => e.endpoint.id === "openai");
     expect(row).toBeDefined();
     expect(row!.cost).not.toBeNull();
@@ -833,7 +379,7 @@ describe("what a rendered clip is charged", () => {
   test("requests routed to an endpoint with no rate make the estimate a floor, not a price", () => {
     const ep = speechEndpoint();
     ep.billing = { unit: "chars", rate: null };
-    const est = narrationStore.estimate("cliche", [1], "all");
+    const est = narrationStore.estimate(BOOK, [1], "all");
     expect(est.unpriced).toBeGreaterThan(0);
     expect(est.per.find((e) => e.endpoint.id === "openai")?.cost).toBeNull();
     expect(est.cautions.join(" ")).toContain("floor");

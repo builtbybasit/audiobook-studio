@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { useDemoStore } from "@/stores/demo";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-import { useUsageStore } from "@/stores/usage";
 
 // Endpoints — app-wide, both kinds, one page.
 //
@@ -17,14 +15,12 @@ import { useUsageStore } from "@/stores/usage";
 //
 // Where the numbers come from:
 //   · what is running now  — the queue in the store (`live.ts`)
-//   · everything historical — `useEndpointHistory`: with a server answering, the rows of its
-//     ledger, each a request a job really sent (a fake provider's marked simulated); in the demo,
-//     `endpointService`'s invented week, where no provider is called and nothing is billed
-//   · a book's spending — the jobs store, which with a server answering holds the server's figures
+//   · everything historical — `useEndpointHistory`: the rows of the server's ledger, each a
+//     request a job really sent (a simulated endpoint's marked simulated)
+//   · a book's spending — the jobs store, which holds the server's figures
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { activeEndpointSettingsService, keyInPlace } from "@/services/endpointSettings";
-import { isDemo } from "@/services/mode";
+import { keyInPlace } from "@/services/endpointSettings";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import { UiToggleGroup, UiTooltip } from "@/ui";
 import {
@@ -47,8 +43,7 @@ import VoicesTab from "@/views/endpoints/VoicesTab.vue";
 import PricingTab from "@/views/endpoints/PricingTab.vue";
 import ActivityTab from "@/views/endpoints/ActivityTab.vue";
 import { useEndpointHistory, useEndpointLive, useLibrarySpend } from "@/queries";
-import { endpointService, probeCost, seriesFrom, RANGES } from "@/services/endpoints";
-import { activeUsageService } from "@/services/usage";
+import { probeCost, seriesFrom, RANGES } from "@/services/endpoints";
 import type { EndpointDescriptor } from "@/services/endpoints";
 import {
   DOT,
@@ -58,36 +53,30 @@ import {
   endpointErrors,
   ensureOps,
   healthOf,
-  opsOf,
   speechPricing,
   unifyEndpoint,
   unifyProfile,
 } from "@/lib/endpoints";
 import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
-import { bindCredential } from "@/lib/credentials";
 import { ensurePricing, money, pricingOf } from "@/lib/pricing";
-import { usageFormatFor } from "@/mock/simulators/usage";
 import { useEndpointActivity } from "@/views/endpoints/live";
 const { jobsUsing, liveActivity, liveRequests } = useEndpointActivity();
 import { TABS, draftDirty, filterOf, tabOf, tabsFor, ui } from "@/views/endpoints/state";
 import type { TabId } from "@/views/endpoints/state";
 import type { MetricBucket, RequestRecord, SettingsFile } from "@/types";
 
-const demoStore = useDemoStore();
 const endpointsStore = useEndpointsStore();
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
-const usageStore = useUsageStore();
 const now = ref(Date.now());
 let clock: ReturnType<typeof setInterval>;
 onMounted(() => {
   clock = setInterval(() => (now.value = Date.now()), 1000);
 });
 onUnmounted(() => clearInterval(clock));
-// with a server answering, the busy slots, waiting lines and cooldowns are its gate's, read while
-// narration runs; the demo's come from the simulator
+// the busy slots, waiting lines and cooldowns are the server's gate's, read while narration runs
 useEndpointLive();
 
 // ---------- the unified list ----------
@@ -95,7 +84,7 @@ const all = computed<UnifiedEndpoint[]>(() => [
   ...endpointsStore.profiles.map(unifyProfile),
   ...endpointsStore.endpoints.map(unifyEndpoint),
 ]);
-// fill operational defaults in, and restore any credential bindings, whenever the lists change
+// fill operational defaults in whenever the lists change
 watch(
   () => [endpointsStore.profiles.length, endpointsStore.endpoints.length] as const,
   () => {
@@ -108,10 +97,6 @@ watch(
     for (const e of endpointsStore.endpoints) {
       ensureOps(e, "tts");
       ensurePricing(e);
-    }
-    for (const u of all.value) {
-      const cred = opsOf(u).credentialId;
-      if (cred) bindCredential(u.slot, cred);
     }
   },
   { immediate: true },
@@ -138,56 +123,23 @@ const describe = (u: UnifiedEndpoint): EndpointDescriptor => ({
   key: u.key,
   id: u.id,
   kind: u.kind,
-  name: u.name,
-  model: u.model,
-  baseUrl: u.baseUrl,
-  concurrency: u.concurrency,
-  inPrice: u.profile?.inPrice,
-  outPrice: u.profile?.outPrice,
-  // the whole rate card, so the fixture prices its invented week at the schedule and promotions
-  // that were actually in force at each row's finishing time
   pricing: u.profile ? pricingOf(u.profile) : u.endpoint ? speechPricing(u.endpoint) : undefined,
-  usageFormat: u.profile ? usageFormatFor(u.profile.model, u.profile.baseUrl) : undefined,
   billing: u.endpoint ? billingOf(u.endpoint) : undefined,
-  maxChars: u.endpoint?.maxChars,
-  hasKey: keyInPlace(u.profile ?? u.endpoint, u.slot),
 });
 
 const history = useEndpointHistory(() => all.value.map(describe));
 const histories = history.histories;
 const loading = computed(() => history.status.value === "pending");
-// A demo reset or a scenario replaces the rate cards this history was priced from, and the fixture
-// service has already dropped it by the time the epoch changes — so pull it again rather than keep
-// showing a week priced against a world that is gone.
-watch(
-  () => demoStore._epoch,
-  () => void history.refetch(),
-);
 // the budget table and the wait reasons set each book's spending against its cap
 useLibrarySpend();
 
 const rangeLabel = computed(() => RANGES.find((r) => r.value === ui.range)!.label);
 
 /**
- * Every settled request against this endpoint. With a server answering, the rows of its ledger;
- * in the demo, the ones this session actually made, then the fixture service's invented week.
- *
- * The session's own rows come out of the append-only ledger rather than out of the running job
- * simulator, which only knows about work that has not finished yet. Reading the simulator alone
- * made a request disappear from this page the moment it completed — the one point at which it had
- * a receipt worth looking at — and left the page showing unrelated backstory instead.
+ * Every settled request against this endpoint: the rows of the server's append-only ledger, which
+ * keeps a request once it has settled whatever later happens to what it produced.
  */
-const settledFor = (u: UnifiedEndpoint): RequestRecord[] =>
-  // With a server answering, its ledger is every settled request, this session's included, and
-  // the session's own ledger has nothing in it.
-  activeUsageService()
-    ? (histories.value[u.key] ?? [])
-    : [
-        // by id *and* kind: a speech endpoint and a scripting profile may share an id, and the
-        // seeded world has an `openai` of each
-        ...usageStore.ofEndpoint(u.id, u.kind),
-        ...(histories.value[u.key] ?? []),
-      ];
+const settledFor = (u: UnifiedEndpoint): RequestRecord[] => histories.value[u.key] ?? [];
 
 /** Buckets for one endpoint over one range, folded from its records. */
 const seriesFor = (u: UnifiedEndpoint, range = ui.range) =>
@@ -198,7 +150,7 @@ const liveFor = (u: UnifiedEndpoint) => liveActivity(u);
 function healthFor(u: UnifiedEndpoint): Health {
   const rows = histories.value[u.key] ?? [];
   return healthOf(u, {
-    hasKey: keyInPlace(u.profile ?? u.endpoint, u.slot),
+    hasKey: keyInPlace(u.profile ?? u.endpoint),
     errors: endpointErrors(u),
     now: now.value,
     totals: loading.value ? null : seriesFor(u).totals,
@@ -252,7 +204,7 @@ const health = computed(() =>
 );
 const busyJobs = computed(() => (selected.value ? jobsUsing(selected.value) : []));
 
-/** In flight now, then what this session settled, then the sample history — newest first. */
+/** In flight now, then what has settled — newest first. */
 const activityRows = computed(() => {
   const u = selected.value;
   if (!u) return [];
@@ -267,7 +219,7 @@ const startOfToday = computed(() => {
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 });
-/** What one endpoint has been charged since midnight, this session's own requests included. */
+/** What one endpoint has been charged since midnight. */
 const spendSince = (rows: RequestRecord[]) => {
   let cost = 0;
   let unknown = 0;
@@ -337,11 +289,9 @@ const testing = ref(false);
 async function runTest(u: UnifiedEndpoint) {
   testing.value = true;
   try {
-    // With a server answering, the server sends a real request to what it has saved; the demo's
-    // fixture answers locally. See `testSaved` for why a connection draft is not saved first.
-    const result = activeEndpointSettingsService()
-      ? await endpointsStore.testSaved(u.kind, u.id)
-      : await endpointService.testConnection(describe(u));
+    // The server sends a real request to what it has saved. See `testSaved` for why a connection
+    // draft is not saved first.
+    const result = await endpointsStore.testSaved(u.kind, u.id);
     ui.tests[u.key] = result;
     uiStore.toast(result.ok ? `${u.name} answered` : `${u.name} did not answer`, {
       kind: result.ok ? "success" : "error",
@@ -458,12 +408,7 @@ function pickBucket(b: MetricBucket | null) {
     <div class="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 class="text-2xl font-semibold">Endpoints</h1>
-        <!-- the demo's numbers are invented and the server's are what its jobs sent: say which -->
-        <p v-if="isDemo" class="max-w-2xl text-sm text-zinc-500">
-          Every scripting and speech endpoint, across every book. Health, throughput and spend come
-          from a fixture service — nothing here calls a provider or is billed.
-        </p>
-        <p v-else class="max-w-2xl text-sm text-zinc-500">
+        <p class="max-w-2xl text-sm text-zinc-500">
           Every scripting and speech endpoint the server holds, across every book. Health,
           throughput and spend are what its jobs actually sent, priced as each request completed; a
           simulated endpoint is answered by the server itself, never reaches a provider and bills
@@ -793,6 +738,7 @@ function pickBucket(b: MetricBucket | null) {
               :totals="series?.totals ?? null"
               :range-label="rangeLabel"
               :today="spendTodayFor(selected)"
+              :settled="settledFor(selected)"
             />
           </TabsContent>
           <TabsContent value="expressions"

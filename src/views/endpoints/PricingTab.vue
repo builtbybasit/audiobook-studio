@@ -16,7 +16,7 @@ import { useLibraryStore } from "@/stores/library";
 // disclosures that stay shut on an endpoint that has neither, which is most of them.
 import { computed, onMounted, onUnmounted, ref } from "vue";
 
-import { UiNumber, UiSwitch, UiTooltip } from "@/ui";
+import { UiNumber, UiSwitch } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
 import { billingOf, opsOf, speechPricing } from "@/lib/endpoints";
 import {
@@ -35,8 +35,8 @@ import BillingModel from "@/views/endpoints/BillingModel.vue";
 import EffectiveRates from "@/views/endpoints/EffectiveRates.vue";
 import RatePromotions from "@/views/endpoints/RatePromotions.vue";
 import RateSchedule from "@/views/endpoints/RateSchedule.vue";
-import type { MetricTotals, TtsBilling } from "@/types";
-import { isDemo } from "@/services/mode";
+import { recentCacheRate } from "@/lib/scriptActivity";
+import type { MetricTotals, RequestRecord, TtsBilling } from "@/types";
 
 const props = defineProps<{
   u: UnifiedEndpoint;
@@ -44,6 +44,8 @@ const props = defineProps<{
   rangeLabel: string;
   /** recorded spend on this endpoint since midnight, and how many rows couldn't be priced */
   today: { cost: number; unknown: number };
+  /** this endpoint's settled requests in the server's ledger, newest first */
+  settled: RequestRecord[];
 }>();
 
 const jobsStore = useJobsStore();
@@ -91,9 +93,7 @@ const warnings = computed(() => pricingWarnings(base.value, config.value, now.va
 /** Whether the advanced sections start open: an endpoint that already uses them. */
 const hasSchedule = computed(() => !!config.value?.windows.length);
 const hasPromotions = computed(() => !!config.value?.promotions.length);
-const observed = computed(() =>
-  props.u.profile ? jobsStore.observedCache(props.u.profile.id) : null,
-);
+const observed = computed(() => (props.u.profile ? recentCacheRate(props.settled) : null));
 
 /** Turning cached pricing on needs a starting number; turning it off means "charged as input". */
 function setCached(on: boolean) {
@@ -446,7 +446,7 @@ const limitUsed = computed(() =>
             they are simply unknown, and their cost is an upper bound rather than a fact.
           </p>
           <p v-if="observed" class="mt-1 text-zinc-500">
-            This session’s own requests averaged
+            Its most recent requests averaged
             {{ Math.round(observed.hitRate * 100) }}% cached over {{ observed.samples }} requests.
             Run estimates can show that figure beside the conservative one; they never use it for a
             budget check.
@@ -569,14 +569,7 @@ const limitUsed = computed(() =>
         checked against a budget at all, which is the other reason not to leave a rate blank for a
         provider that bills you.
       </div>
-      <p v-if="isDemo" class="mt-2 text-[11px] text-zinc-500">
-        <UiTooltip text="No payment method is connected and no provider is called.">
-          <span class="cursor-help underline decoration-dotted underline-offset-2"
-            >Budgets here are bookkeeping inside the demo.</span
-          >
-        </UiTooltip>
-      </p>
-      <p v-else class="mt-2 text-[11px] text-zinc-500">
+      <p class="mt-2 text-[11px] text-zinc-500">
         The server holds these budgets against what its requests were priced at; it never sees your
         provider's invoice. A simulated endpoint's requests count against them and bill nothing.
       </p>

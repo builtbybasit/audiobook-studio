@@ -3,7 +3,6 @@ import { useCastStore } from "@/stores/cast";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
-import { useUiStore } from "@/stores/ui";
 
 // Job ledger: one compact row per segment, filterable. The row carries the line itself; speaker, voice
 // and endpoint share one column, and render latency lives in the details panel — click a row (or press
@@ -54,7 +53,6 @@ const castStore = useCastStore();
 const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
 const scriptsStore = useScriptsStore();
-const uiStore = useUiStore();
 const route = useRoute();
 const router = useRouter();
 const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterId)!);
@@ -192,13 +190,6 @@ function saveFlag(s: Segment, alsoRetake: boolean) {
   narrationStore.flagSegment(props.bookId, props.chapterId, s.id, kind.value, note.value);
   flagOpen.value = null;
   if (alsoRetake) narrationStore.retakeSegment(props.bookId, props.chapterId, s.id);
-}
-function retakeAll() {
-  const n = narrationStore.retakeFlagged(props.bookId, props.chapterId);
-  if (n)
-    uiStore.toast(`Retaking ${n} flagged segment${n === 1 ? "" : "s"}`, {
-      description: "The current clips are kept — you compare and keep one per segment.",
-    });
 }
 /** the player's name for the retake waiting beside the clip in the book — `2` plays it */
 const candId = (s: Segment) => `cand${s.id}`;
@@ -351,7 +342,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
         <button
           v-if="count('flagged') && chapter.narration !== 'running'"
           class="btn-ghost btn-xs border-amber-400 text-amber-600"
-          @click="retakeAll"
+          @click="narrationStore.retakeFlagged(bookId, chapterId)"
         >
           <FlagIcon class="icon-sm" /> Retake flagged ({{ count("flagged") }})
         </button>

@@ -23,7 +23,7 @@ import { demoClips } from "~/audio/demoClips";
 import { audioFiles } from "~/audio/files";
 import { createApp } from "~/app";
 import { startLive, type DemoLive, type SpeechTelemetry } from "~/demo/live";
-import { pacedEncoders } from "~/demo/pace";
+import { newPace, pacedEncoders } from "~/demo/pace";
 import { seedDemo } from "~/demo/seed";
 import { audiobookFiles } from "~/exports/files";
 import { exportHandler } from "~/jobs/export";
@@ -57,7 +57,7 @@ function demoLibrary({ chapterMs = 0 } = {}) {
   const db = testDb();
   const files = audioFiles(tempAudioDir(), DEMO_BASE, demoClips(db));
   const exports = {
-    encoders: pacedEncoders(wavEncoders(), chapterMs),
+    encoders: pacedEncoders(wavEncoders(), newPace(), chapterMs),
     files: audiobookFiles(tempExportDir()),
   };
   const providers = {
@@ -357,7 +357,9 @@ describe("the demo's encoder", () => {
         return { bytes: 1, seconds: 3, chapters: [] };
       },
     };
-    const paced = pacedEncoders({ name: "inner", for: () => inner }, 30).for({} as never);
+    const paced = pacedEncoders({ name: "inner", for: () => inner }, newPace(), 30).for(
+      {} as never,
+    );
     const started = performance.now();
     await paced.encode({
       chapters: [1, 2, 3].map((id) => ({ id, title: `${id}`, parts: [] })),

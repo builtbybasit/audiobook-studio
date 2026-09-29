@@ -1,18 +1,17 @@
 // Canonical script segments and editing. Every edit reaches the same audio freshness rules.
 //
-// With a server answering, this store is the working copy of each chapter's script: it is filled
-// by `useChapterScript` in `@/queries`, every edit acts on it as it does in the demo, and each
-// edit is then written back through `_commit` — the script as it now stands, with the revision
+// This store is the working copy of each chapter's script: it is filled by `useChapterScript` in
+// `@/queries`, every edit acts on it at once, and each edit is then written back through `_commit` — the script as it now stands, with the revision
 // it was read at. A write against a script that moved in the meantime (a job landed, another tab
 // wrote) is refused by the server, the way a stale job result is, and the server's script is read
-// back over the local one with a toast saying so. History is the server's there too: a write
-// answers with the history it added to, and the history store installs it.
+// back over the local one with a toast saying so. History is the server's too: a write answers
+// with the history it added to, and the history store installs it.
 import { bulkInvalidates, bulkOutcome, scriptFingerprint, segmentFingerprint } from "@/lib/bulk";
 import { remapExpressions } from "@/lib/expressions";
 import { scriptSignature } from "@/lib/scriptHistory";
 import { afterOf, beforeOf, bulkLabel, key, SKIP_SUMMARY, SKIP_TEXT } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
-import type { ContentPart } from "@/mock";
+import type { ContentPart } from "@/lib/contents";
 import { chapterPartsNow, chapterTextNow } from "@/queries/chapterText";
 import type {
   AudioStatus,
@@ -23,20 +22,18 @@ import type {
   BulkSkip,
   BulkTarget,
   NarrationStatus,
-  RescriptReport,
   ScriptDiff,
   Segment,
   SegmentFlag,
   SegmentMap,
   VersionOrigin,
 } from "@/types";
-import { activeLibraryService, ApiError, type ChapterScript } from "@/services/library";
+import { ApiError, libraryService, type ChapterScript } from "@/services/library";
 import { defineStore } from "pinia";
 import { useCastStore } from "@/stores/cast";
 import { useHistoryStore } from "@/stores/history";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
-import { seedState } from "@/stores/seed";
 import { useUiStore } from "@/stores/ui";
 /** A write in progress for one chapter, and whether another is owed once it lands. */
 interface PendingWrite {
@@ -52,22 +49,21 @@ const pending = new WeakMap<object, Map<string, PendingWrite>>();
 interface ScriptsState {
   segments: SegmentMap;
   _previous: SegmentMap;
-  /** what a re-script did with the manual corrections it was asked to preserve, keyed like `segments` */
-  _corrections: Record<string, RescriptReport>;
-  /** Backend mode: the revision each chapter's script was read at, which the next write names. */
+  /** the revision each chapter's script was read at, which the next write names */
   _revision: Record<string, number>;
-  /** Backend mode: chapters a scripting job just rewrote, whose next read is a re-script. */
+  /** chapters a scripting job just rewrote, whose next read is a re-script */
   _rescripted: Record<string, true>;
+  /** set while a batch drives the per-line actions, so it writes each chapter once, as itself */
+  _silent: boolean;
 }
 export const useScriptsStore = defineStore("scripts", {
-  // With a server answering, no script is here until it has been read from it. The seeded scripts
-  // belong to seeded books, and a real library has none of those.
+  // No script is here until it has been read from the server.
   state: (): ScriptsState => ({
-    ...(activeLibraryService() ? { segments: {} as SegmentMap } : seedState("segments")),
+    segments: {},
     _previous: {},
-    _corrections: {},
     _revision: {},
     _rescripted: {},
+    _silent: false,
   }),
   getters: {
     segmentsOf(s): (bookId: string, chId: number) => Segment[] {
@@ -77,9 +73,8 @@ export const useScriptsStore = defineStore("scripts", {
      * A chapter's source text in the order it is read, with any author note marked.
      *
      * The page that shows a chapter reads `useChapterText` in `@/queries`; this is for the callers
-     * that need the prose synchronously — the seeded world's, or whatever the query cache already
-     * holds. Text that has not been read yet is no parts at all rather than seeded prose: a real
-     * book must never be reviewed against a fixture.
+     * that need the prose synchronously — whatever the query cache already holds. Text that has not
+     * been read yet is no parts at all.
      */
     partsOf(): (bookId: string, chId: number) => ContentPart[] {
       return (bookId: string, chId: number): ContentPart[] => chapterPartsNow(bookId, chId);
@@ -87,16 +82,10 @@ export const useScriptsStore = defineStore("scripts", {
     /**
      * The chapter as anything that counts, bills or speaks it must read it.
      *
-     * With a server answering that is the `plain` reading, never the stored Markdown: the stored
-     * form would have a heading's `##` narrated, a link's address read out, and both charged for.
+     * That is the `plain` reading, never the stored Markdown: the stored form would have a heading's `##` narrated, a link's address read out, and both charged for.
      */
     rawText(): (bookId: string, chId: number) => string {
       return (bookId: string, chId: number): string => chapterTextNow(bookId, chId, "plain");
-    },
-    /** What the last re-script did with this chapter's manual corrections, while the diff is up. */
-    correctionsOf(s): (bookId: string, chId: number) => RescriptReport | null {
-      return (bookId: string, chId: number): RescriptReport | null =>
-        s._corrections[key(bookId, chId)] ?? null;
     },
     scriptDiff(s): (bookId: string, chId: number) => ScriptDiff | null {
       return (bookId: string, chId: number): ScriptDiff | null => {
@@ -210,14 +199,11 @@ export const useScriptsStore = defineStore("scripts", {
   actions: {
     // apply one direction to every line of a speaker in a chapter (marks rendered ones stale)
     applyDirection(bookId: string, chId: number, speaker: string, direction: string): number {
-      const historyStore = useHistoryStore();
       const uiStore = useUiStore();
 
-      // history is preserved before the change, so the lines are counted before they are touched
       const targets = this.segmentsOf(bookId, chId).filter(
         (s) => s.speaker === speaker && (s.direction || "") !== direction,
       );
-      if (targets.length) historyStore.noteEdit(bookId, chId);
       let n = 0;
       for (const s of targets) {
         s.direction = direction;
@@ -235,11 +221,8 @@ export const useScriptsStore = defineStore("scripts", {
       return n;
     },
     setSpeaker(bookId: string, chId: number, segId: number, speaker: string): void {
-      const historyStore = useHistoryStore();
-
       const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
       if (s && s.speaker !== speaker) {
-        historyStore.noteEdit(bookId, chId);
         s.speaker = speaker;
         s.edited = true;
         this._markStale(bookId, chId, s);
@@ -247,12 +230,9 @@ export const useScriptsStore = defineStore("scripts", {
       }
     },
     updateSegment(bookId: string, chId: number, segId: number, patch: Partial<Segment>): void {
-      const historyStore = useHistoryStore();
-
       const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
       if (!s) return;
       const changed = (Object.keys(patch) as (keyof Segment)[]).some((k) => s[k] !== patch[k]);
-      if (changed) historyStore.noteEdit(bookId, chId);
       if (patch.text != null && s.expressions && patch.expressions === undefined)
         s.expressions = remapExpressions(s.expressions, s.text, patch.text);
       Object.assign(s, patch);
@@ -269,7 +249,6 @@ export const useScriptsStore = defineStore("scripts", {
     /** Apply `action` to the lines the preview counted. Lines that already have the requested value
      *  are left alone. Returns the batch's single undo, or null when nothing changed. */
     applyBulk(bookId: string, targets: BulkTarget[], action: BulkAction): BulkResult {
-      const historyStore = useHistoryStore();
       const libraryStore = useLibraryStore();
       const narrationStore = useNarrationStore();
       const uiStore = useUiStore();
@@ -302,20 +281,15 @@ export const useScriptsStore = defineStore("scripts", {
       }[] = [];
       const chapters = new Set<number>();
       const narration = new Map<number, NarrationStatus>();
-      // Each chapter this batch rewrites keeps the script it had, under the batch's own name — one
-      // entry per chapter, taken before a single line moves. A flag batch says something about the
-      // audio without changing a word of the script, so it leaves no version behind.
+      // Each chapter this batch rewrites is written once, under the batch's own name, so its
+      // history keeps the script it had as one entry. A flag batch says something about the audio
+      // without changing a word of the script, so it leaves no version behind.
       const perChapter = new Map<number, number>();
       for (const row of preview.rows)
         if (row.changes) perChapter.set(row.chId, (perChapter.get(row.chId) ?? 0) + 1);
-      const historyUndo = touchesAudio
-        ? [...perChapter].map(([chId, lines]) =>
-            historyStore.noteBulk(bookId, chId, preview.label, lines),
-          )
-        : [];
-      // the per-line actions below each note an edit of their own; the batch has already preserved
-      // the script once, so they are silenced rather than opening an editing session per line
-      historyStore.silence(() => {
+      // the per-line actions below would each write their chapter as an edit; the batch writes each
+      // chapter once, under its own name, so they are silenced rather than opening a session a line
+      this.silence(() => {
         for (const row of preview.rows) {
           if (!row.changes) continue;
           const at = () => this.segmentsOf(bookId, row.chId).find((x) => x.id === row.segId);
@@ -345,10 +319,7 @@ export const useScriptsStore = defineStore("scripts", {
           chapters.add(row.chId);
         }
       });
-      if (!before.length) {
-        for (const undo of historyUndo) undo();
-        return empty;
-      }
+      if (!before.length) return empty;
       // one write per chapter for the whole batch — under the batch's own name when it changed
       // the script, and as the plain write it is when it only flagged lines
       for (const [chId, lines] of perChapter)
@@ -392,8 +363,6 @@ export const useScriptsStore = defineStore("scripts", {
               timeout: 7000,
             },
           );
-        // the batch is off the script, so it comes off the history with it
-        for (const undo of historyUndo) undo();
       };
       // flagging says something about a clip; it does not change what would be sent to the endpoint
       const stale = bulkInvalidates(action) ? before.filter((w) => w.status === "done").length : 0;
@@ -421,7 +390,12 @@ export const useScriptsStore = defineStore("scripts", {
     // ---------- segment boundaries ----------
     // The LLM sometimes groups two speakers into one segment, or cuts a sentence in half. These two
     // actions fix the split by hand; both are undoable and both invalidate the audio they touch.
-    _segSnapshot(bookId: string, chId: number): () => void {
+    /**
+     * One edit's undo: the chapter's script as it was, written back as an edit of its own. Taken
+     * *before* the edit, like every other snapshot. The server's history follows the script, so
+     * there is no history to put back beside it.
+     */
+    _editSnapshot(bookId: string, chId: number): () => void {
       const libraryStore = useLibraryStore();
 
       const before = clone(this.segments[key(bookId, chId)] ?? []);
@@ -438,26 +412,9 @@ export const useScriptsStore = defineStore("scripts", {
         this._commit(bookId, chId);
       };
     },
-    /**
-     * One edit's undo, for both owners it touches: the chapter's script here, and its place in the
-     * history next door. An edit that is undone has to leave the history saying what the script now
-     * is — not that a manual edit happened which no longer exists — so the two are put back
-     * together or not at all. Taken *before* the edit, like every other snapshot.
-     */
-    _editSnapshot(bookId: string, chId: number): () => void {
-      const historyStore = useHistoryStore();
-
-      const script = this._segSnapshot(bookId, chId);
-      const history = historyStore._chapterSnapshot(bookId, chId);
-      return () => {
-        script();
-        history();
-      };
-    },
     /** Cut a segment in two at character offset `at`. Returns the new segment's id. */
     splitSegment(bookId: string, chId: number, segId: number, at: number): number | null {
       const castStore = useCastStore();
-      const historyStore = useHistoryStore();
       const libraryStore = useLibraryStore();
       const uiStore = useUiStore();
 
@@ -469,7 +426,6 @@ export const useScriptsStore = defineStore("scripts", {
       const tail = s.text.slice(at).trimStart();
       if (!head || !tail) return null;
       const revert = this._editSnapshot(bookId, chId);
-      historyStore.noteEdit(bookId, chId);
       // the whitespace the cut falls in is the prose, not padding: a paragraph break has to survive
       // the split so that joining the halves back restores the source exactly
       const sep = s.text.slice(head.length, s.text.length - tail.length);
@@ -520,7 +476,6 @@ export const useScriptsStore = defineStore("scripts", {
     /** Join a segment with the one after it. The first segment's speaker, type and direction win. */
     joinSegments(bookId: string, chId: number, segId: number): boolean {
       const castStore = useCastStore();
-      const historyStore = useHistoryStore();
       const libraryStore = useLibraryStore();
       const uiStore = useUiStore();
 
@@ -528,7 +483,6 @@ export const useScriptsStore = defineStore("scripts", {
       const i = segs?.findIndex((x) => x.id === segId) ?? -1;
       if (i < 0 || i + 1 >= segs.length) return false;
       const revert = this._editSnapshot(bookId, chId);
-      historyStore.noteEdit(bookId, chId);
       const a = segs[i];
       const b = segs[i + 1];
       // put back whatever stood between them — a single space unless a split recorded otherwise
@@ -580,7 +534,6 @@ export const useScriptsStore = defineStore("scripts", {
      */
     deleteSegment(bookId: string, chId: number, segId: number): boolean {
       const castStore = useCastStore();
-      const historyStore = useHistoryStore();
       const libraryStore = useLibraryStore();
       const uiStore = useUiStore();
 
@@ -588,7 +541,6 @@ export const useScriptsStore = defineStore("scripts", {
       const i = segs?.findIndex((x) => x.id === segId) ?? -1;
       if (i < 0 || segs.length < 2) return false;
       const revert = this._editSnapshot(bookId, chId);
-      historyStore.noteEdit(bookId, chId);
       const [gone] = segs.splice(i, 1);
       // its audio goes with it, so a finished chapter no longer matches what was rendered
       const c = libraryStore.chapter(bookId, chId);
@@ -656,8 +608,7 @@ export const useScriptsStore = defineStore("scripts", {
       if (mine) for (const k of mine.keys()) if (k.startsWith(prefix)) mine.delete(k);
     },
     /**
-     * Write a chapter's script to the server as it now stands. Demo mode holds its own and does
-     * nothing here.
+     * Write a chapter's script to the server as it now stands.
      *
      * Every edit ends with this. Writes for one chapter are serialised: a second edit while one is
      * in flight marks the chapter dirty, and the write that follows sends the script as it then
@@ -667,9 +618,7 @@ export const useScriptsStore = defineStore("scripts", {
      * actions: the batch commits once, under its own name.
      */
     _commit(bookId: string, chId: number, origin?: VersionOrigin): void {
-      const historyStore = useHistoryStore();
-
-      if (!activeLibraryService() || historyStore._silent) return;
+      if (this._silent) return;
       let mine = pending.get(this);
       if (!mine) pending.set(this, (mine = new Map()));
       const k = key(bookId, chId);
@@ -682,9 +631,8 @@ export const useScriptsStore = defineStore("scripts", {
     async _flush(bookId: string, chId: number, p: PendingWrite): Promise<void> {
       const historyStore = useHistoryStore();
       const uiStore = useUiStore();
-      const svc = activeLibraryService();
+      const svc = libraryService();
       const k = key(bookId, chId);
-      if (!svc) return;
       p.inFlight = true;
       try {
         while (p.dirty) {
@@ -748,13 +696,18 @@ export const useScriptsStore = defineStore("scripts", {
       const p = pending.get(this)?.get(key(bookId, chId));
       while (p && (p.inFlight || p.dirty)) await new Promise((r) => setTimeout(r, 0));
     },
-    /** A finished re-script says what it could and could not re-apply; the reader shows both. */
-    _noteCorrections(bookId: string, chId: number, report: RescriptReport): void {
-      this._corrections[key(bookId, chId)] = report;
+    /** Run `fn` without its per-line edits each writing their chapter — a batch is one write. */
+    silence<T>(fn: () => T): T {
+      const was = this._silent;
+      this._silent = true;
+      try {
+        return fn();
+      } finally {
+        this._silent = was;
+      }
     },
     dismissDiff(bookId: string, chId: number): void {
       delete this._previous[key(bookId, chId)];
-      delete this._corrections[key(bookId, chId)];
     },
     // edited after narration → existing audio no longer matches the script
     _markStale(bookId: string, chId: number, s: Segment): void {

@@ -3,11 +3,9 @@
 // `libraryClient.test.ts` next door proves the client and the routes agree. This is the layer
 // above: the store the screens actually read, driven through the real `HttpLibraryService` against
 // the real Hono app over a private in-memory database. A store action that forgets to await, an
-// import that never sends the file, or a screen left holding seeded books in backend mode fails
-// here rather than in the browser.
-//
-// What these are really guarding is the mode rule: with a server answering, nothing on screen may
-// come from `@/mock`. Several assertions below are about what is *absent* for that reason.
+// import that never sends the file, or a screen left holding books the server does not have fails
+// here rather than in the browser. Several assertions below are about what is *absent* for that
+// reason: nothing on screen may come from anywhere but the server.
 //
 // It sits with the store tests rather than in `tests/server/` because its subject is the store.
 // That project is compiled without the DOM on purpose — it is what stops server code reaching for
@@ -53,13 +51,11 @@ const noted = () =>
   });
 
 beforeEach(() => {
-  // the seeded world reaches for `matchMedia` as it is built; the store must not build one at all
+  // the ui store reads `matchMedia` as it is built
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   const db = openDb(":memory:");
   migrate(db);
   const app = createApp(db, { log: collectingLogger().log });
-  // The service goes in before the store is created: the store reads it while building its state,
-  // which is how it knows not to seed itself from the demo world.
   asked = [];
   setLibraryService(
     new HttpLibraryService("/api", async (input, init) => {
@@ -78,16 +74,15 @@ beforeEach(() => {
   };
 });
 
-// The service is module state, and every other suite in this repository is the seeded world. Left
-// set, it would quietly put the demo tests in backend mode against a database that has gone.
+// The service is module state. Left set, it would quietly point the next suite at a database that
+// has gone.
 afterEach(() => {
   pinia.stop();
   setLibraryService(null);
 });
 
 describe("the library store with a server answering", () => {
-  test("starts empty rather than on the seeded shelf", async () => {
-    // The bug this exists for: backend mode showing fixture books that look like a real library.
+  test("starts empty, and holds what the server has", async () => {
     expect(libraryStore.books).toEqual([]);
     expect(libraryStore.shelved).toEqual([]);
     await libraryStore.load();
@@ -107,14 +102,6 @@ describe("the library store with a server answering", () => {
     // still in its review, so the shelf does not list it yet
     expect(libraryStore.bookById(id!)?.importing).toBe(true);
     expect(libraryStore.shelved).toEqual([]);
-  });
-
-  test("an import with no file asks for one instead of inventing a book", async () => {
-    expect(await libraryStore.importBook({ sample: "clean", file: "x.epub" })).toBeNull();
-    expect(libraryStore.books).toEqual([]);
-    // nothing was sent in place of the file, and the person is told
-    expect(asked).toEqual([]);
-    expect(toasts).toHaveLength(1);
   });
 
   test("a file the server will not read leaves the library alone and says why", async () => {
@@ -256,7 +243,7 @@ describe("the library store with a server answering", () => {
 describe("a server that is not answering", () => {
   // The shelf a failed read leaves is empty, and an empty shelf is what a new library looks like.
   // So the store remembers that nothing answered, and the Library says that in place of "No books
-  // yet" — and it is still backend mode: nothing here reaches for the seeded books.
+  // yet" — and nothing here stands in for the books it could not read.
   const answering = (respond: () => Promise<Response>) =>
     setLibraryService(new HttpLibraryService("/api", respond));
 
@@ -312,7 +299,7 @@ describe("chapter prose with a server answering", () => {
     const partsNow = () => pinia.run(() => scriptsStore.partsOf(id, 1));
     const rawNow = () => pinia.run(() => scriptsStore.rawText(id, 1));
 
-    // before it is read, there is nothing — not seeded prose standing in for it
+    // before it is read, there is nothing — no prose standing in for it
     expect(partsNow()).toEqual([]);
     expect(rawNow()).toBe("");
 

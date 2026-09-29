@@ -20,7 +20,7 @@ import { sql } from "drizzle-orm";
 
 import type { Job, RequestRecord, World } from "@/types";
 import { credentials } from "@/lib/credentials";
-import { makeWorld } from "@/mock";
+import { makeWorld } from "@/mock/world";
 import { openDb, type Db } from "~/db/client";
 import { deleteVolume } from "~/db/library";
 import { migrate } from "~/db/migrate";

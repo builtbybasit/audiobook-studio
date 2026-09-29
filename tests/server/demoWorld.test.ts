@@ -21,12 +21,20 @@
 //     absent (`rows/endpoints.ts`), which the page reads the same — the endpoint's own key slot;
 //   - a chapter's prose as the browser composes it on demand is compared, but not the
 //     `notice` marks between its parts, which a server's chapter never has.
+//
+// And the world itself, before any of it is written: every seed and every situation is built on a
+// fresh `makeWorld()` and changed in memory, so two worlds must share nothing, and every reference
+// in one — a voice, a volume, a speaker, an exported chapter — must point at something it holds.
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 
 import { isSimulated } from "@/lib/providers";
 import { credentials } from "@/lib/credentials";
+import { BOOK_SEEDS } from "@/mock/fixtures/books";
+import { makeEndpoints } from "@/mock/fixtures/endpoints";
 import { makeJobHistory } from "@/mock/fixtures/jobs";
+import { makeLexicon } from "@/mock/fixtures/lexicon";
+import { makeProfiles } from "@/mock/fixtures/profiles";
 import { makeWorld } from "@/mock/world";
 import { chapterParts, partsText } from "@/mock/world/text";
 import type {
@@ -253,7 +261,7 @@ describe("the demo reaches nothing and bills nothing", () => {
     expect(readEndpoints(demo.db)[0].baseUrl).toBe("simulated://api.openai.com/v1");
   });
 
-  test("nothing is left waiting or running, so the queue starts nothing when the demo opens", () => {
+  test("nothing the seed writes is left waiting or running: the runs the demo opens with are set going, not found", () => {
     const count = (sql: string) => (demo.db.$client.query(sql).get() as { n: number }).n;
     expect(
       count("SELECT count(*) AS n FROM jobs WHERE finished_at IS NULL OR active_key IS NOT NULL"),
@@ -289,5 +297,98 @@ describe("the demo reaches nothing and bills nothing", () => {
     expect(new Set(rendered.map((c) => c.url)).size).toBe(rendered.length);
     expect(clips.filter((c) => !rendered.includes(c) && c.url != null)).toEqual([]);
     expect(existsSync(audioDir) ? readdirSync(audioDir) : []).toEqual([]);
+  });
+});
+
+describe("the world the demo is seeded from is fresh", () => {
+  test("two worlds share no mutable state", () => {
+    const a = makeWorld();
+    const b = makeWorld();
+
+    a.characters.cliche[0].aliases.push("scribbled-in");
+    a.characters.cliche[0].name = "Renamed";
+    a.endpoints[0].voices.push({ id: "ghost", gender: "n", label: "Ghost" });
+    a.endpoints[0].enabled = false;
+    a.lexicon.cliche[0].say = "changed";
+    a.segments["cliche:1"][0].text = "rewritten";
+    a.chapters.cliche[0].title = "Retitled";
+
+    expect(b.characters.cliche[0].aliases).not.toContain("scribbled-in");
+    expect(b.characters.cliche[0].name).not.toBe("Renamed");
+    expect(b.endpoints[0].voices.some((v) => v.id === "ghost")).toBe(false);
+    expect(b.endpoints[0].enabled).toBe(true);
+    expect(b.lexicon.cliche[0].say).not.toBe("changed");
+    expect(b.segments["cliche:1"][0].text).not.toBe("rewritten");
+    expect(b.chapters.cliche[0].title).not.toBe("Retitled");
+  });
+
+  test("the hand-authored seeds are never written back to", () => {
+    const before = JSON.stringify(BOOK_SEEDS);
+    const w = makeWorld();
+    for (const c of w.characters.cliche) {
+      c.aliases.push("mutated");
+      c.description = "mutated";
+    }
+    expect(JSON.stringify(BOOK_SEEDS)).toBe(before);
+  });
+
+  test("every fixture factory hands back its own copy", () => {
+    expect(makeEndpoints()[0]).not.toBe(makeEndpoints()[0]);
+    expect(makeProfiles()[0]).not.toBe(makeProfiles()[0]);
+    expect(makeLexicon().cliche).not.toBe(makeLexicon().cliche);
+  });
+});
+
+describe("the world the demo is seeded from holds together", () => {
+  // these only read, so one world serves them all
+  const w = makeWorld();
+
+  test("every speaker routes to a voice that exists on an endpoint that exists", () => {
+    for (const [bookId, cast] of Object.entries(w.characters))
+      for (const c of cast) {
+        if (!c.voice) continue;
+        const [epId, voiceId] = [c.voice.slice(0, c.voice.indexOf("/")), c.voice.split("/")[1]];
+        const ep = w.endpoints.find((e) => e.id === epId);
+        expect(ep, `${bookId}/${c.name} → ${c.voice}`).toBeDefined();
+        expect(
+          ep!.voices.some((v) => v.id === voiceId),
+          `${bookId}/${c.name}`,
+        ).toBe(true);
+      }
+  });
+
+  test("every book has a Narrator, so an unvoiced speaker always has a fallback", () => {
+    for (const bookId of Object.keys(w.characters)) {
+      const narrator = w.characters[bookId].find((c) => c.name === "Narrator");
+      expect(narrator, bookId).toBeDefined();
+      expect(narrator!.voice, bookId).toBeTruthy();
+    }
+  });
+
+  test("chapters, volumes and segments agree", () => {
+    for (const b of w.books) {
+      const ids = new Set(w.chapters[b.id].map((c) => c.id));
+      for (const c of w.chapters[b.id])
+        expect(
+          b.volumes.some((v) => v.id === c.volumeId),
+          `${b.id} ch ${c.id}`,
+        ).toBe(true);
+      for (const k of Object.keys(w.segments))
+        if (k.startsWith(b.id + ":")) expect(ids.has(Number(k.split(":")[1])), k).toBe(true);
+    }
+  });
+
+  test("every speaker in a script is in the book's cast", () => {
+    for (const [k, segs] of Object.entries(w.segments)) {
+      const names = new Set(w.characters[k.split(":")[0]].map((c) => c.name));
+      for (const s of segs) expect(names.has(s.speaker), `${k} · ${s.speaker}`).toBe(true);
+    }
+  });
+
+  test("every finished export names chapters the book still has", () => {
+    for (const e of w.exports) {
+      const ids = new Set(w.chapters[e.bookId].map((c) => c.id));
+      for (const id of e.chapterIds) expect(ids.has(id), `${e.filename} ch ${id}`).toBe(true);
+    }
   });
 });

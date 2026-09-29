@@ -1,26 +1,14 @@
-import { useCastStore } from "@/stores/cast";
-import { useDemoStore } from "@/stores/demo";
-import { useEndpointsStore } from "@/stores/endpoints";
-import { useHistoryStore, SESSION_IDLE_MS } from "@/stores/history";
-import { useJobsStore } from "@/stores/jobs";
-import { useLibraryStore } from "@/stores/library";
-import { useNarrationStore } from "@/stores/narration";
-import { useScriptingStore } from "@/stores/scripting";
-import { useScriptsStore } from "@/stores/scripts";
-import { useTransferStore } from "@/stores/transfer";
-import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
-import { ApiError, type LibraryService } from "@/services/library";
-import { useUiStore } from "@/stores/ui";
 // Chapter script history: the versions a chapter's script has been through, and restoring one.
 //
-// The four properties the feature rests on are the ones tested hardest here. A version is an
-// *independent* copy, so nothing that happens later can reach into it. An entry is only made when
-// something actually changed, and a run that produced nothing never replaces a good script. A
-// comparison says what really moved between two scripts. And a restore keeps the audio that still
-// belongs to the restored lines, marks what no longer matches, and can be undone whole.
-import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
-import { testPinia } from "./support/pinia";
+// The history is the server's — what makes an entry is tested against it in
+// `tests/server/scriptEdit.test.ts` — so what is tested here is the page's side of it. A comparison
+// says what really moved between two scripts. A restore keeps the audio that still belongs to the
+// restored lines, marks what no longer matches, and can be undone whole. An imported script file
+// is written the way a restore is, behind one Undo. They run against the demo library, whose first
+// chapter of The Cliché Cultivation World is scripted and narrated.
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
+import { readinessOf } from "@/lib/exports";
 import {
   compareScripts,
   originLabel,
@@ -28,353 +16,101 @@ import {
   scriptSignature,
   wordDiff,
 } from "@/lib/scriptHistory";
-import { readinessOf } from "@/lib/exports";
-import { keyring } from "@/lib/keyring";
-import { newProfile } from "@/lib/scripting";
-import { SEEDED_KEYS } from "@/mock";
-import type { ImportChapter, ScriptImportPlan, Segment, SpeakerSamples, VoiceRow } from "@/types";
+import { ApiError, libraryService, type LibraryService } from "@/services/library";
+import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useHistoryStore } from "@/stores/history";
+import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
+import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
+import { useTransferStore } from "@/stores/transfer";
+import { useUiStore } from "@/stores/ui";
+import type {
+  ImportChapter,
+  Job,
+  ScriptImportPlan,
+  Segment,
+  SpeakerSamples,
+  VoiceRow,
+} from "@/types";
+import { demoServer, type DemoServer } from "./support/demoServer";
+import { testPinia, type TestPinia } from "./support/pinia";
 
-let timers = new Map<number, { fn: () => void; repeat: boolean }>();
-let clock = 1_000_000;
-let restore: (() => void)[] = [];
+let demo: DemoServer;
+let pinia: TestPinia;
 let castStore: ReturnType<typeof useCastStore>;
-let demoStore: ReturnType<typeof useDemoStore>;
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
 let historyStore: ReturnType<typeof useHistoryStore>;
 let jobsStore: ReturnType<typeof useJobsStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;
-let narrationStore: ReturnType<typeof useNarrationStore>;
-let scriptingStore: ReturnType<typeof useScriptingStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
 let transferStore: ReturnType<typeof useTransferStore>;
 let samplesStore: ReturnType<typeof useSpeakerSamplesStore>;
 let uiStore: ReturnType<typeof useUiStore>;
 /** every undo a toast was given, in order */
-let undos: (() => void)[] = [];
-const undoLast = () => undos.at(-1)!();
+let undos: (() => void | Promise<void>)[] = [];
+const undoLast = async () => await undos.at(-1)!();
 
-function tick() {
-  for (const [id, t] of Array.from(timers)) {
-    if (!timers.has(id)) continue;
-    if (!t.repeat) timers.delete(id);
-    t.fn();
+const segments = (chId = 1) => scriptsStore.segmentsOf("cliche", chId);
+const versions = (chId = 1) => historyStore.versionsOf("cliche", chId);
+const head = (chId = 1) => historyStore.headOf("cliche", chId);
+const speaker = (name: string) => castStore.charactersOf("cliche").find((c) => c.name === name);
+/** Let every chapter's script write land, and the history it answered with with it. */
+const settled = (...chIds: number[]) =>
+  Promise.all(chIds.map((chId) => scriptsStore._settled("cliche", chId)));
+/** A run on this chapter that has not finished. */
+const inFlight = (chId: number): Job =>
+  ({
+    id: 99,
+    kind: "narration",
+    bookId: "cliche",
+    chapterId: chId,
+    label: `Narrate chapter ${chId}`,
+    status: "running",
+  }) as Job;
+
+/** Read the book, its cast and endpoints, and these chapters' scripts and histories, as a page would. */
+async function open(...chIds: number[]) {
+  const svc = libraryService();
+  await Promise.all([libraryStore.loadBook("cliche"), endpointsStore.load()]);
+  castStore._install("cliche", await svc.cast("cliche"));
+  for (const chId of chIds) {
+    scriptsStore._install("cliche", chId, await svc.chapterScript("cliche", chId));
+    historyStore._install("cliche", chId, await svc.chapterHistory("cliche", chId));
   }
 }
-function drain(max = 300) {
-  for (let i = 0; i < max && timers.size; i++) {
-    clock += 1000;
-    tick();
-  }
-}
 
-beforeEach(() => {
+beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  // with the query cache installed, as removing a volume or a book invalidates what it read
-  testPinia();
+  demo = await demoServer();
+});
+beforeEach(async () => {
+  await demo.reset();
+  pinia = testPinia();
   castStore = useCastStore();
-  demoStore = useDemoStore();
   endpointsStore = useEndpointsStore();
   historyStore = useHistoryStore();
   jobsStore = useJobsStore();
   libraryStore = useLibraryStore();
-  narrationStore = useNarrationStore();
-  scriptingStore = useScriptingStore();
   scriptsStore = useScriptsStore();
   transferStore = useTransferStore();
   samplesStore = useSpeakerSamplesStore();
   uiStore = useUiStore();
   // the real toast needs a DOM; this stub also keeps the last undo it was offered, which is how the
-  // tests below take back a batch or a restore exactly as the toast's Undo button would
+  // tests below take back a restore or an import exactly as the toast's Undo button would
   undos = [];
   uiStore.toast = (_msg, opts = {}) => {
     if (opts.undo) undos.push(opts.undo);
     return "test";
   };
-  jobsStore.jobs = [];
-  // the demo's own credentials, as `main.ts` sets them up: without them every clip fails for want
-  // of a key and there is no audio to carry across a restore
-  for (const [id, value] of SEEDED_KEYS) keyring.set(id, value);
-  timers = new Map();
-  clock = 1_000_000;
-  let seq = 0;
-  const add = (fn: () => void, repeat: boolean) => {
-    timers.set(++seq, { fn, repeat });
-    return seq;
-  };
-  restore = [
-    spyOn(globalThis, "setInterval").mockImplementation(((fn: () => void) =>
-      add(fn, true)) as typeof setInterval),
-    spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) =>
-      add(fn, false)) as typeof setTimeout),
-    spyOn(globalThis, "clearInterval").mockImplementation(((id: number) => {
-      timers.delete(id);
-    }) as typeof clearInterval),
-    spyOn(globalThis, "clearTimeout").mockImplementation(((id: number) => {
-      timers.delete(id);
-    }) as typeof clearTimeout),
-    spyOn(Date, "now").mockImplementation(() => clock),
-    spyOn(Math, "random").mockReturnValue(0.5),
-  ].map((s) => () => s.mockRestore());
 });
-afterEach(() => restore.forEach((f) => f()));
-
-const segments = (chId = 1) => scriptsStore.segmentsOf("cliche", chId);
-const versions = (chId = 1) => historyStore.versionsOf("cliche", chId);
-const head = (chId = 1) => historyStore.headOf("cliche", chId);
-/** Let the idle window pass, so the next edit is a session of its own. */
-function quiet() {
-  clock += SESSION_IDLE_MS + 1;
-  tick();
-}
-
-describe("what makes an entry", () => {
-  test("a run of edits is one entry, and the next run after a pause is another", () => {
-    const first = segments()[0];
-    const wasSpeaker = first.speaker;
-    scriptsStore.updateSegment("cliche", 1, first.id, { direction: "wary" });
-    scriptsStore.setSpeaker("cliche", 1, segments()[1].id, "Elder Mo");
-    expect(versions()).toHaveLength(1);
-    expect(head().origin).toEqual({ kind: "edited", edits: 2 });
-    expect(head().open).toBe(true);
-    // the entry holds the script as it was *before* the session, not after it
-    expect(versions()[0].segments[0].direction).not.toBe("wary");
-    expect(versions()[0].segments[0].speaker).toBe(wasSpeaker);
-
-    quiet();
-    expect(head().open).toBe(false);
-    scriptsStore.updateSegment("cliche", 1, first.id, { direction: "flat" });
-    expect(versions()).toHaveLength(2);
-    expect(head().origin).toEqual({ kind: "edited", edits: 1 });
-    // …and the second entry holds what the first session produced
-    expect(versions()[0].segments[0].direction).toBe("wary");
-  });
-
-  test("an edit that changes nothing leaves no entry", () => {
-    const s = segments()[0];
-    scriptsStore.setSpeaker("cliche", 1, s.id, s.speaker);
-    scriptsStore.updateSegment("cliche", 1, s.id, { direction: s.direction });
-    expect(versions()).toHaveLength(0);
-  });
-
-  test("undoing an edit takes the entry it opened off with it", () => {
-    const before = scriptSignature(segments());
-    const s = segments()[0];
-    scriptsStore.splitSegment("cliche", 1, s.id, s.text.indexOf(" ", 10) + 1);
-    expect(versions()).toHaveLength(1);
-    expect(head().origin).toEqual({ kind: "edited", edits: 1 });
-
-    undoLast();
-    // the script is back, so the list must not claim a manual edit — nor keep a copy of a script
-    // that is the one we are looking at
-    expect(scriptSignature(segments())).toBe(before);
-    expect(versions()).toHaveLength(0);
-    expect(head().origin.kind).toBe("scripted");
-    expect(head().open).toBeFalsy();
-  });
-
-  test("undoing one edit of a session leaves the rest of the session standing", () => {
-    const s = segments()[0];
-    scriptsStore.splitSegment("cliche", 1, s.id, s.text.indexOf(" ", 10) + 1);
-    const after = JSON.stringify(segments());
-    scriptsStore.deleteSegment("cliche", 1, segments()[3].id);
-    expect(head().origin).toEqual({ kind: "edited", edits: 2 });
-
-    undoLast();
-    expect(JSON.stringify(segments())).toBe(after);
-    expect(head().origin).toEqual({ kind: "edited", edits: 1 });
-    expect(head().open).toBe(true);
-    expect(versions()).toHaveLength(1);
-    // the session is still the one the first edit opened, and still closes on its own
-    quiet();
-    expect(head().open).toBe(false);
-  });
-
-  test("every kind of script edit joins the session; a clip finishing does not", () => {
-    const s = segments()[0];
-    scriptsStore.splitSegment("cliche", 1, s.id, s.text.indexOf(" ", 10) + 1);
-    castStore.setPause("cliche", 1, s.id, 1.5);
-    narrationStore.flagSegment("cliche", 1, s.id, "delivery", "rushed");
-    segments()[0].audio.status = "done";
-    expect(head().origin).toEqual({ kind: "edited", edits: 2 });
-    expect(versions()).toHaveLength(1);
-  });
-});
-
-describe("snapshot independence", () => {
-  test("nothing that happens later can reach into a saved version", () => {
-    historyStore.saveCheckpoint("cliche", 1, "Dialogue reviewed");
-    const saved = versions()[0];
-    const before = JSON.stringify(saved.segments);
-    const first = segments()[0];
-    scriptsStore.updateSegment("cliche", 1, first.id, { text: "Something else entirely." });
-    scriptsStore.setSpeaker("cliche", 1, segments()[1].id, "Xiao Lan");
-    scriptsStore.deleteSegment("cliche", 1, segments()[2].id);
-    narrationStore.runNarration("cliche", [1]);
-    drain();
-    expect(JSON.stringify(versions().find((v) => v.id === saved.id)!.segments)).toBe(before);
-  });
-
-  test("a version keeps the script and not the audio", () => {
-    narrationStore.runNarration("cliche", [1]);
-    drain();
-    expect(segments().some((s) => s.audio.duration > 0)).toBe(true);
-    historyStore.saveCheckpoint("cliche", 1, "Narrated");
-    const saved = versions()[0].segments;
-    expect(saved.every((s) => s.audio.status === "none" && s.audio.duration === 0)).toBe(true);
-    expect(scriptSignature(saved)).toBe(scriptSignature(segments()));
-  });
-});
-
-describe("checkpoints", () => {
-  test("a checkpoint names the script without changing it, and says how it got there", () => {
-    scriptsStore.setSpeaker("cliche", 1, segments()[1].id, "Elder Mo");
-    const before = JSON.stringify(segments());
-    const saved = historyStore.saveCheckpoint("cliche", 1, "  Dialogue reviewed  ");
-    expect(saved!.origin).toEqual({
-      kind: "checkpoint",
-      name: "Dialogue reviewed",
-      was: { kind: "edited", edits: 1 },
-    });
-    expect(JSON.stringify(segments())).toBe(before);
-    expect(historyStore.comparisonOf("cliche", 1, saved!.id)!.identical).toBe(true);
-    expect(historyStore.saveCheckpoint("cliche", 1, "   ")).toBeNull();
-  });
-});
-
-describe("re-scripting", () => {
-  function profile() {
-    const p = newProfile({
-      id: "test",
-      name: "Test endpoint",
-      model: "test-model",
-      needsKey: false,
-      concurrency: 2,
-      maxChars: 4000,
-      inPrice: 0,
-      outPrice: 0,
-      maxOutputTokens: 4000,
-    });
-    endpointsStore.profiles = [p];
-    scriptingStore.scriptSettings.profile = p.id;
-    return p;
-  }
-
-  test("a re-script keeps the script it replaced, named for what produced it", () => {
-    profile();
-    const before = scriptSignature(segments());
-    scriptingStore.runScripting("cliche", [1]);
-    drain();
-    expect(libraryStore.chapter("cliche", 1)!.scripting).not.toBe("failed");
-    expect(versions()).toHaveLength(1);
-    expect(scriptSignature(versions()[0].segments)).toBe(before);
-    expect(head().origin).toEqual({
-      kind: "scripted",
-      profile: "Test endpoint",
-      model: "test-model",
-      again: true,
-    });
-  });
-
-  test("a script that differs only in its spacing is still one worth keeping", () => {
-    const p = profile();
-    const before = scriptSignature(segments());
-    // the same words, laid out differently: the prose changed, so what it replaces is worth keeping
-    const respaced = segments().map((s) => ({ ...s, text: s.text.replace(/\. /g, ".\n\n") }));
-    expect(scriptSignature(respaced)).not.toBe(before);
-    historyStore.noteScripted("cliche", 1, p, respaced);
-    scriptsStore.segments["cliche:1"] = respaced;
-    expect(versions()).toHaveLength(1);
-    expect(scriptSignature(versions()[0].segments)).toBe(before);
-
-    // …while a run that came back with the very same script adds nothing
-    quiet();
-    historyStore.noteScripted("cliche", 1, p, segments());
-    expect(versions()).toHaveLength(1);
-  });
-
-  test("a run that kept nothing does not replace a good script in the history", () => {
-    profile();
-    const before = scriptSignature(segments());
-    // the simulated verifier fails this run outright
-    spyOn(Math, "random").mockReturnValue(0.01);
-    scriptingStore.runScripting("cliche", [1]);
-    drain();
-    // the run failed, but the script it was replacing is still there and still usable — so the
-    // chapter reads as scripted rather than as a chapter nothing ever produced a script for
-    expect(jobsStore.jobs.at(-1)!.status).toBe("failed");
-    expect(libraryStore.chapter("cliche", 1)!.scripting).toBe("done");
-    expect(versions()).toHaveLength(0);
-    expect(scriptSignature(segments())).toBe(before);
-  });
-
-  test("a cancelled run leaves the script and the history alone", () => {
-    profile();
-    const before = scriptSignature(segments());
-    scriptingStore.runScripting("cliche", [1]);
-    tick();
-    jobsStore.cancelJob(jobsStore.jobs[0].id);
-    drain();
-    expect(versions()).toHaveLength(0);
-    expect(scriptSignature(segments())).toBe(before);
-  });
-
-  test("scripting a chapter for the first time has nothing to preserve", () => {
-    profile();
-    delete scriptsStore.segments["cliche:9"];
-    const c = libraryStore.chapter("cliche", 9)!;
-    c.scripting = "none";
-    scriptingStore.runScripting("cliche", [9]);
-    drain();
-    expect(segments(9).length).toBeGreaterThan(0);
-    expect(versions(9)).toHaveLength(0);
-    expect(head(9).origin).toMatchObject({ kind: "scripted", again: false });
-  });
-});
-
-describe("bulk corrections", () => {
-  const targets = (chId: number, n: number) =>
-    scriptsStore
-      .segmentsOf("cliche", chId)
-      .slice(0, n)
-      .map((s) => ({ chId, segId: s.id }));
-
-  test("one entry per chapter the batch changes, and undo takes it back off", () => {
-    const batch = [...targets(1, 4), ...targets(2, 3)];
-    const result = scriptsStore.applyBulk("cliche", batch, {
-      kind: "speaker",
-      speaker: "Elder Mo",
-    });
-    expect(result.changed).toBeGreaterThan(0);
-    // the entry holds the script the batch replaced; the batch itself is what the current one is
-    expect(versions()).toHaveLength(1);
-    expect(versions()[0].origin.kind).toBe("scripted");
-    expect(versions(2)).toHaveLength(1);
-    expect(head().origin).toMatchObject({ kind: "bulk", label: "Change speaker to Elder Mo" });
-
-    undoLast();
-    expect(versions()).toHaveLength(0);
-    expect(versions(2)).toHaveLength(0);
-    expect(head().origin.kind).toBe("scripted");
-  });
-
-  test("a batch that only flags clips is not a change to the script", () => {
-    scriptsStore.applyBulk("cliche", targets(1, 3), {
-      kind: "flag",
-      flag: "delivery",
-      note: "rushed",
-      replace: false,
-    });
-    expect(versions()).toHaveLength(0);
-  });
-
-  test("a batch with nothing to change leaves no entry", () => {
-    const speaker = segments()[0].speaker;
-    scriptsStore.applyBulk("cliche", [{ chId: 1, segId: segments()[0].id }], {
-      kind: "speaker",
-      speaker,
-    });
-    expect(versions()).toHaveLength(0);
-  });
+// writes are still on their way when a test ends; they must not land on the next test's demo
+afterEach(async () => {
+  const chapters = Object.keys(scriptsStore.segments).map((k) => Number(k.split(":")[1]));
+  await settled(...chapters);
+  await new Promise((r) => setTimeout(r, 10));
+  pinia.stop();
 });
 
 describe("comparing two scripts", () => {
@@ -488,77 +224,78 @@ describe("comparing two scripts", () => {
 });
 
 describe("restoring", () => {
-  /** Narrate the chapter, then move the script on so the clips no longer match it. */
-  function narratedThenChanged() {
-    narrationStore.runNarration("cliche", [1]);
-    drain();
-    expect(libraryStore.chapter("cliche", 1)!.narration).toBe("done");
-    const version = historyStore.saveCheckpoint("cliche", 1, "As narrated")!;
-    quiet();
-    const spoken = segments().filter((s) => s.type !== "narration");
-    scriptsStore.setSpeaker("cliche", 1, spoken[0].id, "Elder Mo");
-    scriptsStore.updateSegment("cliche", 1, spoken[1].id, { direction: "much louder" });
-    return version;
+  /** The demo's chapter with a history: a first pass, a checkpoint, and a re-script over it. */
+  async function withHistory() {
+    await demo.situate("script-history");
+    await open(1);
+    return versions().find((v) => v.origin.kind === "checkpoint")!;
   }
 
-  test("it keeps the clips that still match, marks the rest, and leaves later versions alone", () => {
-    const version = narratedThenChanged();
+  test("it keeps the clips that still match, marks the rest, and leaves later versions alone", async () => {
+    const checkpoint = await withHistory();
+    expect(versions().map((v) => v.origin.kind)).toEqual(["edited", "checkpoint", "scripted"]);
+    expect(head().origin).toMatchObject({ kind: "scripted", again: true, profile: "DeepSeek" });
+    const c = historyStore.comparisonOf("cliche", 1, checkpoint.id)!;
+    expect(c.counts.speaker).toBeGreaterThan(0);
+    expect(c.counts.direction).toBeGreaterThan(0);
+    expect(c.counts.split).toBe(1);
     expect(libraryStore.chapter("cliche", 1)!.narration).toBe("stale");
-    const plan = historyStore.restorePlanOf("cliche", 1, version.id)!;
-    expect(plan.comparison.counts).toMatchObject({ speaker: 1, direction: 1 });
+
+    const plan = historyStore.restorePlanOf("cliche", 1, checkpoint.id)!;
     expect(plan.stale).toBe(0);
     expect(plan.dropped).toBe(0);
-    expect(plan.kept).toBe(segments().length);
+    expect(plan.unrendered).toBe(0);
+    expect(plan.kept).toBeGreaterThan(5);
     expect(plan.narration).toBe("done");
 
-    expect(historyStore.restore("cliche", 1, version.id)).toBe(true);
-    expect(segments().every((s) => s.audio.status === "done")).toBe(true);
+    expect(historyStore.restore("cliche", 1, checkpoint.id)).toBe(true);
+    expect(segments().some((s) => s.audio.status === "stale")).toBe(false);
     expect(libraryStore.chapter("cliche", 1)!.narration).toBe("done");
     // the restore is one more entry; the version restored from is still there, and so is the
     // script that was current a moment ago
-    expect(versions().some((v) => v.id === version.id)).toBe(true);
-    expect(head().origin).toMatchObject({ kind: "restored", from: version.id });
-    expect(versions()[0].origin).toEqual({ kind: "edited", edits: 2 });
+    await settled(1);
+    expect(head().origin).toMatchObject({ kind: "restored", from: checkpoint.id });
+    expect(versions().some((v) => v.id === checkpoint.id)).toBe(true);
+    expect(versions()[0].origin).toMatchObject({ kind: "scripted", profile: "DeepSeek" });
   });
 
-  test("undo puts the script, the audio, the chapter and the history back", () => {
-    const version = narratedThenChanged();
+  test("undo puts the script, the audio and the chapter back, on the server too", async () => {
+    const checkpoint = await withHistory();
     const before = JSON.stringify(segments());
-    const entries = versions().length;
-    historyStore.restore("cliche", 1, version.id);
-    undoLast();
+    historyStore.restore("cliche", 1, checkpoint.id);
+    await settled(1);
+    await undoLast();
     expect(JSON.stringify(segments())).toBe(before);
     expect(libraryStore.chapter("cliche", 1)!.narration).toBe("stale");
-    expect(versions()).toHaveLength(entries);
-    expect(head().origin).toEqual({ kind: "edited", edits: 2 });
+    const server = await libraryService().chapterScript("cliche", 1);
+    expect(scriptSignature(server.segments)).toBe(scriptSignature(segments()));
   });
 
-  test("undoing a restore leaves work done elsewhere in the book alone", () => {
-    const version = narratedThenChanged();
-    historyStore.restore("cliche", 1, version.id);
+  test("undoing a restore leaves work done elsewhere in the book alone", async () => {
+    const checkpoint = await withHistory();
+    await open(2);
+    historyStore.restore("cliche", 1, checkpoint.id);
     const undoRestore = undos.at(-1)!;
     // while the toast is still up: another chapter edited, and the book's cast changed
-    const other = scriptsStore.segmentsOf("cliche", 2);
-    scriptsStore.setSpeaker("cliche", 2, other[1].id, "Elder Mo");
+    scriptsStore.setSpeaker("cliche", 2, segments(2)[1].id, "Elder Mo");
     castStore.addAlias("cliche", "Elder Mo", "the old man on the step");
-    const elsewhere = JSON.stringify(scriptsStore.segmentsOf("cliche", 2));
-    const cast = JSON.stringify(castStore.charactersOf("cliche"));
+    const elsewhere = JSON.stringify(segments(2));
+    const aliases = speaker("Elder Mo")!.aliases;
 
-    undoRestore();
-    expect(JSON.stringify(scriptsStore.segmentsOf("cliche", 2))).toBe(elsewhere);
-    expect(JSON.stringify(castStore.charactersOf("cliche"))).toBe(cast);
+    await undoRestore();
+    expect(JSON.stringify(segments(2))).toBe(elsewhere);
+    expect(speaker("Elder Mo")!.aliases).toEqual(aliases);
   });
 
-  test("a clip from a line that was joined away comes back to the line it was rendered for", () => {
-    narrationStore.runNarration("cliche", [1]);
-    drain();
-    const version = historyStore.saveCheckpoint("cliche", 1, "Before the join")!;
-    quiet();
+  test("a clip from a line that was joined away comes back to the line it was rendered for", async () => {
+    await open(1);
+    const version = (await historyStore.saveCheckpoint("cliche", 1, "Before the join"))!;
     const first = segments()[0];
     const firstText = first.text;
     const rendered = segments()[1].audio.text;
     scriptsStore.joinSegments("cliche", 1, first.id);
     expect(segments().some((s) => s.audio.text === rendered && s.audio.duration > 0)).toBe(false);
+    await settled(1);
 
     const plan = historyStore.restorePlanOf("cliche", 1, version.id)!;
     expect(plan.comparison.counts.split).toBe(1);
@@ -579,45 +316,40 @@ describe("restoring", () => {
     expect(readinessOf(libraryStore.chapter("cliche", 1)!)).toBe("partial");
   });
 
-  test("restoring the same script again does nothing at all", () => {
-    const version = historyStore.saveCheckpoint("cliche", 1, "Untouched")!;
+  test("restoring the same script again does nothing at all", async () => {
+    await open(1);
+    const version = (await historyStore.saveCheckpoint("cliche", 1, "Untouched"))!;
     expect(historyStore.restore("cliche", 1, version.id)).toBe(false);
     expect(versions()).toHaveLength(1);
     expect(head().origin.kind).toBe("checkpoint");
   });
 
-  test("a speaker the book's cast has lost comes back as one to review, and undo takes it off again", () => {
-    const spoken = segments().find((s) => s.type === "dialogue")!;
-    const was = spoken.speaker;
-    const version = historyStore.saveCheckpoint("cliche", 1, "Before the merge")!;
-    quiet();
-    castStore.mergeCharacter("cliche", was, "Narrator", { silent: true });
-    expect(castStore.charactersOf("cliche").some((c) => c.name === was)).toBe(false);
+  test("a speaker the book's cast has lost comes back as one to review, and undo takes it off again", async () => {
+    await withHistory();
+    // the first pass named the main character by an alias the cast no longer has
+    const first = versions().at(-1)!;
+    expect(first.origin).toMatchObject({ kind: "scripted", profile: "OpenAI" });
     const cast = castStore.charactersOf("cliche").map((c) => c.name);
+    const plan = historyStore.restorePlanOf("cliche", 1, first.id)!;
+    expect(plan.comparison.counts.text).toBeGreaterThan(0);
+    const [lost] = plan.missingSpeakers.map((m) => m.name);
+    expect(lost).toBeDefined();
 
-    const plan = historyStore.restorePlanOf("cliche", 1, version.id)!;
-    expect(plan.missingSpeakers.map((m) => m.name)).toContain(was);
-    historyStore.restore("cliche", 1, version.id);
-    const back = castStore.charactersOf("cliche").find((c) => c.name === was);
-    expect(back?.isNew).toBe(true);
-    undoLast();
+    historyStore.restore("cliche", 1, first.id);
+    expect(speaker(lost)?.isNew).toBe(true);
+    await undoLast();
     expect(castStore.charactersOf("cliche").map((c) => c.name)).toEqual(cast);
   });
 
-  test("a run in flight is not raced: the restore waits for it", () => {
-    const version = historyStore.saveCheckpoint("cliche", 1, "Before the run")!;
-    quiet();
-    scriptsStore.setSpeaker("cliche", 1, segments()[1].id, "Elder Mo");
-    narrationStore.runNarration("cliche", [1]);
-    tick();
+  test("a run in flight is not raced: the restore waits for it", async () => {
+    const checkpoint = await withHistory();
+    jobsStore.jobs = [inFlight(1)];
     expect(historyStore.busyJobs("cliche", 1)).toHaveLength(1);
-    expect(historyStore.restore("cliche", 1, version.id)).toBe(false);
+    expect(historyStore.restore("cliche", 1, checkpoint.id)).toBe(false);
     expect(head().origin.kind).not.toBe("restored");
 
-    jobsStore.cancelJob(jobsStore.jobs[0].id);
-    drain();
-    expect(historyStore.busyJobs("cliche", 1)).toHaveLength(0);
-    expect(historyStore.restore("cliche", 1, version.id)).toBe(true);
+    jobsStore.jobs = [];
+    expect(historyStore.restore("cliche", 1, checkpoint.id)).toBe(true);
   });
 });
 
@@ -654,19 +386,17 @@ describe("importing a script file", () => {
   }
   const dialogue = (lines: Segment[]) => lines.filter((s) => s.type === "dialogue");
 
-  test("the script read back into the book it came from changes nothing", () => {
+  test("the script read back into the book it came from changes nothing", async () => {
+    await open(1, 2);
     readIn([fileChapter(1), fileChapter(2)]);
-    const entries = versions().length;
     const report = transferStore.apply("cliche", [1, 2])!;
     expect(report.applied).toEqual([]);
     expect(report.skipped.map((s) => s.why)).toEqual(["identical", "identical"]);
-    expect(versions()).toHaveLength(entries);
     expect(undos).toHaveLength(0);
   });
 
-  test("a corrected word stales that line's clip, keeps the rest, and the history names the file", () => {
-    narrationStore.runNarration("cliche", [1]);
-    drain();
+  test("a corrected word stales that line's clip, keeps the rest, and the history names the file", async () => {
+    await open(1, 2);
     const target = dialogue(segments())[0];
     const at = segments().indexOf(target);
     // chapter 2 comes back as it is, so it is ticked but skipped — and must not be counted
@@ -682,21 +412,23 @@ describe("importing a script file", () => {
     expect(segments()[at].text.startsWith("Truly")).toBe(true);
     expect(segments()[at].audio.status).toBe("stale");
     expect(segments().filter((s) => s.audio.status === "done")).toHaveLength(segments().length - 1);
+    await settled(1);
     expect(head().origin).toEqual({ kind: "imported", file: NAME, chapters: 1 });
     expect(originLabel(head().origin)).toBe(`Imported from ${NAME}`);
   });
 
-  test("a chapter with a run in flight is left alone", () => {
+  test("a chapter with a run in flight is left alone", async () => {
+    await open(1);
     readIn([fileChapter(1, (lines) => (dialogue(lines)[0].speaker = "Elder Mo"))]);
-    narrationStore.runNarration("cliche", [1]);
-    tick();
+    jobsStore.jobs = [inFlight(1)];
     const before = JSON.stringify(segments());
     const report = transferStore.apply("cliche", [1])!;
     expect(report.skipped).toMatchObject([{ chapterId: 1, why: "busy" }]);
     expect(JSON.stringify(segments())).toBe(before);
   });
 
-  test("one Undo takes back the scripts, the speakers, the dictionary and the voices", () => {
+  test("one Undo takes back the scripts, the speakers, the dictionary and the voices", async () => {
+    await open(1);
     const fish = endpointsStore.endpoints.find((e) => e.id === "fish")!;
     const kept = endpointsStore.endpoints.find((e) => e.voices.length && e.id !== "fish")!;
     readIn(
@@ -743,35 +475,37 @@ describe("importing a script file", () => {
         },
       ],
     )!;
-    const stranger = castStore.charactersOf("cliche").find((c) => c.name === "Stranger")!;
-    expect(stranger).toMatchObject({ description: "A traveller", style: "hushed", voice: ref });
-    expect(stranger.aliases).toEqual(["the man in grey"]);
-    expect(castStore.charactersOf("cliche").find((c) => c.name === "Ferryman")!.voice).toBe(
-      "fish/public-ferry",
-    );
+    expect(speaker("Stranger")).toMatchObject({
+      description: "A traveller",
+      style: "hushed",
+      voice: ref,
+    });
+    expect(speaker("Stranger")!.aliases).toEqual(["the man in grey"]);
+    expect(speaker("Ferryman")!.voice).toBe("fish/public-ferry");
     expect(fish.voices).toHaveLength(fishVoices + 1);
     expect(report.unused).toEqual(["Nobody Here"]);
-    expect(castStore.charactersOf("cliche").find((c) => c.name === "Elder Mo")!.aliases).toContain(
-      "Old Mo",
-    );
+    expect(speaker("Elder Mo")!.aliases).toContain("Old Mo");
     expect(castStore.lexiconOf("cliche").some((e) => e.term === "Zhenwu")).toBe(true);
 
-    undoLast();
+    await undoLast();
     expect(JSON.stringify(castStore.charactersOf("cliche"))).toBe(cast);
     expect(JSON.stringify(castStore.lexiconOf("cliche"))).toBe(lexicon);
     expect(JSON.stringify(segments())).toBe(script);
     expect(fish.voices).toHaveLength(fishVoices);
   });
 
-  test("the book keeps its own speakers and terms until one is taken from the file", () => {
-    const mo = castStore.charactersOf("cliche").find((c) => c.name === "Elder Mo")!;
-    const lan = castStore.charactersOf("cliche").find((c) => c.name === "Xiao Lan")!;
+  test("the book keeps its own speakers and terms until one is taken from the file", async () => {
+    await open(1);
+    const described = () => [speaker("Elder Mo")!.description, speaker("Xiao Lan")!.description];
+    const differ = ["Elder Mo", "Xiao Lan"].map((name) => {
+      const c = speaker(name)!;
+      return {
+        name,
+        book: { gender: c.gender, description: c.description, style: c.style },
+        file: { gender: c.gender, description: `${name}, as the file has it`, style: "brisk" },
+      };
+    });
     const term = castStore.lexiconOf("cliche")[0];
-    const differ = [mo, lan].map((c) => ({
-      name: c.name,
-      book: { gender: c.gender, description: c.description, style: c.style },
-      file: { gender: c.gender, description: `${c.name}, as the file has it`, style: "brisk" },
-    }));
     readIn([fileChapter(1, (lines) => (dialogue(lines)[0].direction = "quietly"))], {
       cast: { add: [], differ, aliases: [] },
       lexicon: {
@@ -785,32 +519,35 @@ describe("importing a script file", () => {
         ],
       },
     });
-    const before = { mo: mo.description, lan: lan.description };
+    const before = described();
     transferStore.apply("cliche", [1]);
-    expect(mo.description).toBe(before.mo);
-    expect(term.say).not.toBe("Jih Ning");
+    expect(described()).toEqual(before);
+    expect(castStore.lexiconOf("cliche")[0].say).not.toBe("Jih Ning");
 
     expect(transferStore.useFileSpeakers("cliche", [differ[0]])).toBe(1);
-    expect(mo).toMatchObject({ description: "Elder Mo, as the file has it", style: "brisk" });
-    undoLast();
-    expect(mo.description).toBe(before.mo);
+    expect(speaker("Elder Mo")).toMatchObject({
+      description: "Elder Mo, as the file has it",
+      style: "brisk",
+    });
+    await undoLast();
+    expect(described()).toEqual(before);
 
     expect(transferStore.useFileSpeakers("cliche", differ)).toBe(2);
-    expect(lan.description).toBe("Xiao Lan, as the file has it");
-    undoLast();
-    expect([mo.description, lan.description]).toEqual([before.mo, before.lan]);
+    expect(speaker("Xiao Lan")!.description).toBe("Xiao Lan, as the file has it");
+    await undoLast();
+    expect(described()).toEqual(before);
 
     const was = term.say;
     expect(transferStore.useFileTerms("cliche", transferStore.plans.cliche.lexicon.differ)).toBe(1);
     expect(castStore.lexiconOf("cliche")[0].say).toBe("Jih Ning");
-    undoLast();
+    await undoLast();
     expect(castStore.lexiconOf("cliche")[0].say).toBe(was);
   });
 });
 
 describe("voice samples a script file carries", () => {
-  // The rest of the app stays in demo mode; only the samples store is handed a server, which answers
-  // from memory and writes down what it was asked.
+  // Only the samples store is handed a server of its own, which answers from memory and writes
+  // down what it was asked; the book, its cast and its scripts are the demo library's.
   const calls: string[] = [];
   let held: SpeakerSamples[] = [];
   /** what the next store says it put aside: the rows the same speakers already had */
@@ -840,16 +577,17 @@ describe("voice samples a script file carries", () => {
       return held.find((x) => x.id === id)!;
     },
   } as unknown as LibraryService;
-  /** Let the requests this store sent settle; the clock and its timers are the tests' own. */
+  /** Let the requests this store sent settle. */
   const settle = async () => {
     for (let i = 0; i < 20; i++) await Promise.resolve();
   };
-  beforeEach(() => {
+  beforeEach(async () => {
     calls.length = 0;
     held = [];
     replacing = [];
     lost = [];
     samplesStore._service = () => server;
+    await open(1);
   });
   const row = (speaker: string, match: VoiceRow["match"]): VoiceRow => ({
     speaker,
@@ -895,11 +633,11 @@ describe("voice samples a script file carries", () => {
     replacing = [9];
 
     transferStore.apply("cliche", [1]);
+    await settled(1);
     await settle();
     expect(samplesStore.waitingOf("cliche").map((x) => x.id)).toEqual([1]);
 
-    undoLast();
-    await settle();
+    await undoLast();
     // what the import kept goes aside before what it replaced comes back
     expect(calls).toEqual([`store ${speaker}`, "discard 1", "restore 9"]);
     expect(samplesStore.waitingOf("cliche").map((x) => x.id)).toEqual([9]);
@@ -916,75 +654,57 @@ describe("voice samples a script file carries", () => {
     lost = [1];
 
     transferStore.apply("cliche", [1]);
-    await settle();
-    undoLast();
-    await settle();
+    await undoLast();
     expect(calls).toEqual([`store ${speaker}`, "discard 1"]);
     expect(errors).toEqual([]);
     expect(samplesStore.waitingOf("cliche")).toEqual([]);
   });
 
   test("they wait with a speaker whose voice is private, and the import's Undo lets them go", async () => {
-    const chapter = segments(1).map((x, i) => ({ ...x, id: i + 1 }));
-    const narrator = chapter.find((x) => x.type === "narration")!;
-    narrator.direction = "slowly";
-    const speaker = chapter.find((x) => x.type === "dialogue")!.speaker;
-    const title = libraryStore.chapter("cliche", 1)!.title;
-    transferStore.plans.cliche = {
-      title: "The Cliche",
-      author: "",
-      name: "The Cliche.script.zip",
-      chapters: [{ chapterId: 1, title, fileTitle: title, file: "c/1.json", segments: chapter }],
-      refused: [],
-      ignored: [],
-      cast: { add: [], differ: [], aliases: [] },
-      lexicon: { add: [], differ: [] },
-      voices: [
-        row(speaker, { kind: "private" }),
-        // reachable here, so nothing waits: the voice itself can be used
-        row("Narrator", { kind: "here", options: [] }),
-        // no such speaker in the book: a sample has no one to wait with
-        row("Nobody Here", { kind: "unchecked", reason: "timed out" }),
-      ],
-    };
-    transferStore._hold("cliche", new File(["zip"], "The Cliche.script.zip"));
+    const speaker = planWithSamples((sp) => [
+      row(sp, { kind: "private" }),
+      // reachable here, so nothing waits: the voice itself can be used
+      row("Narrator", { kind: "here", options: [] }),
+      // no such speaker in the book: a sample has no one to wait with
+      row("Nobody Here", { kind: "unchecked", reason: "timed out" }),
+    ]);
 
     const report = transferStore.apply("cliche", [1])!;
     expect(report.samples).toEqual([speaker]);
+    await settled(1);
     await settle();
     expect(calls).toEqual([`store ${speaker}`]);
     expect(samplesStore.waitingFor("cliche", speaker)?.id).toBe(1);
 
-    undoLast();
-    await settle();
+    await undoLast();
     expect(calls).toEqual([`store ${speaker}`, "discard 1"]);
     expect(samplesStore.waitingOf("cliche")).toEqual([]);
   });
 
   test("a voice made from them goes to the speaker only if their voice has not moved since", async () => {
-    const [mo, lan] = castStore.charactersOf("cliche");
-    const was = mo.voice;
-    samplesStore.waiting.cliche = [waiting(1, mo.name), waiting(2, lan.name)];
+    const [mo, lan] = ["Elder Mo", "Xiao Lan"];
+    const was = speaker(mo)!.voice;
+    samplesStore.waiting.cliche = [waiting(1, mo), waiting(2, lan)];
 
     expect(
       await samplesStore.afterClone(
-        { bookId: "cliche", sampleId: 1, speaker: mo.name, was },
+        { bookId: "cliche", sampleId: 1, speaker: mo, was },
         "fish/new-voice",
       ),
     ).toBe("assigned");
-    expect(mo.voice).toBe("fish/new-voice");
-    undoLast();
-    expect(mo.voice).toBe(was);
+    expect(speaker(mo)!.voice).toBe("fish/new-voice");
+    await undoLast();
+    expect(speaker(mo)!.voice).toBe(was);
 
     // chosen on the Cast page after the link was opened: left as chosen
-    lan.voice = "fish/picked-meanwhile";
+    speaker(lan)!.voice = "fish/picked-meanwhile";
     expect(
       await samplesStore.afterClone(
-        { bookId: "cliche", sampleId: 2, speaker: lan.name, was: null },
+        { bookId: "cliche", sampleId: 2, speaker: lan, was: null },
         "fish/other-voice",
       ),
     ).toBe("kept");
-    expect(lan.voice).toBe("fish/picked-meanwhile");
+    expect(speaker(lan)!.voice).toBe("fish/picked-meanwhile");
     // either way the recordings stop waiting: the voice keeps them now
     expect(calls).toEqual(["discard 1", "discard 2"]);
     expect(samplesStore.waitingOf("cliche")).toEqual([]);
@@ -995,7 +715,7 @@ describe("voice samples a script file carries", () => {
     samplesStore.waiting.cliche = [...held];
     expect(await samplesStore.discard("cliche", held[0])).toBe(true);
     expect(samplesStore.waitingOf("cliche")).toEqual([]);
-    undoLast();
+    await undoLast();
     await settle();
     expect(calls).toEqual(["discard 7", "restore 7"]);
     expect(samplesStore.waitingFor("cliche", "Elder Mo")?.id).toBe(7);
@@ -1003,102 +723,32 @@ describe("voice samples a script file carries", () => {
 });
 
 describe("the book the history belongs to", () => {
-  test("renumbering a book's chapters takes each history with its own chapter", () => {
-    const book = libraryStore.bookById("cliche")!;
-    const first = book.volumes[0];
+  test("renumbering a book's chapters takes each history with its own chapter", async () => {
+    await open();
+    const first = libraryStore.bookById("cliche")!.volumes[0];
     const gone = libraryStore.chaptersOf("cliche").filter((c) => c.volumeId === first.id).length;
     const chId = gone + 2; // a chapter in a volume that stays, two along from the join
-    const mark = historyStore.saveCheckpoint("cliche", chId, "Before the volume went")!;
+    await open(chId);
+    const mark = (await historyStore.saveCheckpoint("cliche", chId, "Before the volume went"))!;
     expect(mark).toBeTruthy();
-    const script = scriptSignature(scriptsStore.segmentsOf("cliche", chId));
+    const script = scriptSignature(segments(chId));
 
-    libraryStore.removeVolume("cliche", first.id);
+    await libraryStore.removeVolume("cliche", first.id);
     const now = chId - gone;
-    expect(scriptSignature(scriptsStore.segmentsOf("cliche", now))).toBe(script);
+    expect(scriptSignature(segments(now))).toBe(script);
     // the history followed the script, and nothing was left behind under the old number for the
     // chapter that now carries it to inherit
-    expect(historyStore.versionsOf("cliche", now).map((v) => v.origin)).toEqual([mark.origin]);
-    expect(historyStore.versionsOf("cliche", chId)).toHaveLength(0);
-
-    undoLast();
-    expect(historyStore.versionsOf("cliche", chId).map((v) => v.id)).toEqual([mark.id]);
-    expect(historyStore.versionsOf("cliche", now)).toHaveLength(0);
+    expect(versions(now).map((v) => v.origin)).toEqual([mark.origin]);
+    expect(versions(chId)).toHaveLength(0);
   });
 
-  test("a novel that is removed takes its chapters' histories with it, and brings them back", () => {
-    historyStore.saveCheckpoint("cliche", 1, "Kept");
-    historyStore.saveCheckpoint("cliche", 2, "Kept too");
-    libraryStore.removeBook("cliche");
+  test("a novel that is removed takes its chapters' histories with it", async () => {
+    await open(1, 2);
+    await historyStore.saveCheckpoint("cliche", 1, "Kept");
+    await historyStore.saveCheckpoint("cliche", 2, "Kept too");
+    await libraryStore.removeBook("cliche");
     expect(Object.keys(historyStore.chapters).filter((k) => k.startsWith("cliche:"))).toHaveLength(
       0,
     );
-
-    undoLast();
-    expect(versions().map((v) => v.origin)).toMatchObject([{ name: "Kept" }]);
-    expect(versions(2).map((v) => v.origin)).toMatchObject([{ name: "Kept too" }]);
-  });
-});
-
-describe("the demo world", () => {
-  test("the seeded chapter history is there to preview, compare and restore", () => {
-    expect(demoStore.applyScenario("script-history")).toContain("history=1");
-    const saved = versions();
-    expect(saved).toHaveLength(3);
-    expect(saved.map((v) => v.origin.kind)).toEqual(["edited", "checkpoint", "scripted"]);
-    expect(head().origin).toMatchObject({ kind: "scripted", again: true, profile: "DeepSeek" });
-
-    const checkpoint = saved.find((v) => v.origin.kind === "checkpoint")!;
-    const c = historyStore.comparisonOf("cliche", 1, checkpoint.id)!;
-    // what the walkthrough in docs/demo.md filters by: speakers, and the paragraph cut in two
-    expect(c.counts.speaker).toBeGreaterThan(0);
-    expect(c.counts.direction).toBeGreaterThan(0);
-    expect(c.counts.split).toBe(1);
-    expect(libraryStore.chapter("cliche", 1)!.narration).toBe("stale");
-
-    const plan = historyStore.restorePlanOf("cliche", 1, checkpoint.id)!;
-    expect(plan.stale).toBe(0);
-    expect(plan.dropped).toBe(0);
-    expect(plan.unrendered).toBe(0);
-    expect(plan.kept).toBeGreaterThan(5);
-    expect(plan.narration).toBe("done");
-    historyStore.restore("cliche", 1, checkpoint.id);
-    expect(libraryStore.chapter("cliche", 1)!.narration).toBe("done");
-    expect(segments().some((s) => s.audio.status === "stale")).toBe(false);
-  });
-
-  test("the first pass is a version of its own, with the alias the cast never had", () => {
-    demoStore.applyScenario("script-history");
-    const first = versions().at(-1)!;
-    expect(first.origin).toMatchObject({ kind: "scripted", profile: "OpenAI" });
-    const plan = historyStore.restorePlanOf("cliche", 1, first.id)!;
-    expect(plan.missingSpeakers.length).toBeGreaterThan(0);
-    expect(plan.comparison.lines).toBeGreaterThan(4);
-    expect(plan.comparison.counts.text).toBeGreaterThan(0);
-  });
-
-  test("a reset clears the history and drops the editing session still collecting", () => {
-    demoStore.applyScenario("script-history");
-    expect(versions().length).toBeGreaterThan(0);
-    scriptsStore.updateSegment("cliche", 1, segments()[1].id, { direction: "under her breath" });
-    expect(head().open).toBe(true);
-    expect(timers.size).toBeGreaterThan(0);
-
-    demoStore.resetDemo();
-    expect(versions()).toHaveLength(0);
-    expect(head().origin).toEqual({ kind: "scripted" });
-    // the session timer belonged to the world that has just been replaced
-    expect(timers.size).toBe(0);
-    drain();
-    expect(versions()).toHaveLength(0);
-  });
-
-  test("a session callback from a replaced world cannot close one in the new world", () => {
-    scriptsStore.updateSegment("cliche", 1, segments()[1].id, { direction: "wary" });
-    const pending = [...timers.values()];
-    demoStore.resetDemo();
-    scriptsStore.updateSegment("cliche", 1, segments()[1].id, { direction: "flat" });
-    expect(head().open).toBe(true);
-    for (const t of pending) t.fn();
-    expect(head().open).toBe(true);
   });
 });

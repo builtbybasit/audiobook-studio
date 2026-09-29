@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useDemoStore } from "@/stores/demo";
 import { useExportsStore } from "@/stores/exports";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
@@ -36,7 +35,6 @@ import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import { Download as ExportIcon } from "@lucide/vue";
 import type { ExportSettings } from "@/types";
 
-const demoStore = useDemoStore();
 const exportsStore = useExportsStore();
 const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
@@ -47,7 +45,7 @@ const bookId = useBookId();
 // the router only reaches this view with a real book id
 const book = computed(() => libraryStore.bookById(bookId)!);
 const tab = ref(route.query.tab === "library" ? "library" : "build");
-// the finished audiobooks: read from the server when the page opens, or the seeded world's
+// the finished audiobooks, read from the server when the page opens
 useBookExports(bookId);
 
 const anyNarrated = computed(() => libraryStore.chaptersOf(bookId).some(isNarrated));
@@ -122,11 +120,6 @@ function showIssues(ids: number[]) {
 function clearIssues() {
   showIssues([]);
 }
-// a demo scenario replaces the world under the page; the form and the selection follow it
-watch(
-  () => demoStore._epoch,
-  () => reset(),
-);
 
 const exportsHere = computed(() => exportsStore.exportsOf(bookId));
 const needUpdate = computed(
@@ -168,7 +161,7 @@ function narrate(ids: number[]) {
   // *label* sent a chapter whose clips are fine but whose retake failed down the "everything" path,
   // re-rendering lines that had already succeeded and displacing good clips; "missing & changed" is
   // what this button is for — the lines with no usable clip and the ones the script has moved past.
-  narrationStore.runNarration(
+  void narrationStore.runNarration(
     bookId,
     scripted.map((c) => c.id),
     { scope: "fill" },
@@ -194,7 +187,7 @@ function useStale() {
   settings.useStale = !settings.useStale;
 }
 async function build() {
-  // with a server answering the build is a request, so the tab only moves once it has started
+  // the build is a request, so the tab only moves once it has started
   const item = await exportsStore.buildExport(bookId, selected.value, settings, {
     updates: updates.value ?? undefined,
   });

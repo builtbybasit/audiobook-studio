@@ -22,6 +22,7 @@ import type {
   ExportPlan,
   ExportPlanFile,
   ExportReview,
+  ExportScope,
   ExportSettings,
   LoudnessReport,
   Pacing,
@@ -208,19 +209,6 @@ export function coverRefusal(file: { type: string; size: number }): string | nul
   return null;
 }
 
-/**
- * A file as a `data:` URL: how the demo holds a picked cover, having nowhere to upload it. Read
- * through `arrayBuffer` rather than `FileReader`, so it is the same code in a test as on the page.
- */
-export async function dataUrlOf(file: Blob): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = "";
-  // in slices: spreading a whole image into one call overflows the argument limit
-  for (let i = 0; i < bytes.length; i += 0x8000)
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return `data:${file.type || "application/octet-stream"};base64,${btoa(binary)}`;
-}
-
 export const MARKER_PATTERNS = [
   { value: "{n}. {title}", sample: "1. The Silent Peak" },
   { value: "Chapter {n} — {title}", sample: "Chapter 1 — The Silent Peak" },
@@ -349,6 +337,28 @@ export const usable = (c: Chapter): boolean => {
   const r = readinessOf(c);
   return r === "ready" || r === "stale" || r === "partial";
 };
+
+/**
+ * What a selection *claims*, of a book whose chapters are `chapters`. Exporting everything the book
+ * can give is a standing intention — narrate another chapter and the audiobook is behind. Exporting
+ * three chapters you picked is a finished decision, and the rest of the book is not missing from
+ * it. A per-volume build claims the volumes it covers — whole, or it is a chosen handful.
+ *
+ * The page asks it of the selection it is about to send, and the server records it on the build.
+ */
+export function scopeOf(
+  chapters: readonly Chapter[],
+  ids: readonly number[],
+  grouping: ExportGrouping,
+): ExportScope {
+  const chosen = new Set(ids);
+  const all = chapters.filter((c) => !c.excluded && usable(c));
+  if (grouping === "volume") {
+    const vols = new Set(chapters.filter((c) => chosen.has(c.id)).map((c) => c.volumeId));
+    return all.every((c) => !vols.has(c.volumeId) || chosen.has(c.id)) ? "volumes" : "chosen";
+  }
+  return all.every((c) => chosen.has(c.id)) ? "book" : "chosen";
+}
 
 /**
  * Everything wrong with a selection, as a list of things to *do* rather than a list of complaints.

@@ -25,6 +25,7 @@ import {
 import { TTS_PRESETS, billingOf, endpointErrors, unifyEndpoint } from "@/lib/endpoints";
 import { useEndpointsStore } from "@/stores/endpoints";
 import type { Endpoint, TtsBilling } from "@/types";
+import { demoServer } from "./support/demoServer";
 import { THU, card, config, promo, u, utc } from "./support/pricingFixtures";
 
 /** A speech endpoint that is valid apart from whatever a test puts on its rate card. */
@@ -643,8 +644,11 @@ describe("changing the model", () => {
     expect(switchBillingUnit(chars, "chars")).toBe(chars);
   });
 
-  test("the seeded speech endpoints cover every billing model and discount case the demo claims", () => {
+  test("the seeded speech endpoints cover every billing model and discount case the demo claims", async () => {
+    await demoServer();
     const store = useEndpointsStore();
+    await store.load();
+    store._detach();
     const byId = (id: string) => store.endpoints.find((e) => e.id === id)!;
     const now = Date.now();
     expect(billingOf(byId("openai")).unit).toBe("chars");

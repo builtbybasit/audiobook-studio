@@ -47,6 +47,7 @@ import {
   planOf,
   reusedChapters,
   reviewOf,
+  scopeOf,
   setLabel,
 } from "@/lib/exports";
 import { pacingOrDefault, pauseAfter, sampleRateLabel } from "@/lib/speech";
@@ -287,6 +288,9 @@ export function enqueueBuild(
     size: 0,
     markers,
     createdAt: "",
+    // what the selection claims, so a later chapter is behind a whole-book audiobook and not a
+    // chosen handful
+    scope: scopeOf([...known.values()], ordered, settings.grouping),
     version: prev ? prev.version + 1 : 1,
     replaces: prev?.id ?? null,
     status: "building",

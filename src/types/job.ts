@@ -26,7 +26,7 @@ export interface Job {
   startedAt: number | null;
   finishedAt: number | null;
   cancelled: boolean;
-  /** Observed events from this session's simulator; absent for older sample jobs. */
+  /** What the job reported as it ran, oldest first; absent for a job that reported nothing. */
   activity?: JobEvent[];
   droppedEvents?: number;
   waitingReason?: string;

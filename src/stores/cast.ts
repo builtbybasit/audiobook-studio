@@ -1,24 +1,24 @@
 import type { Spoken } from "@/lib/speech";
 // Book cast, pronunciation and pacing. Speech text stays separate from source prose.
 //
-// With a server answering, the cast is the server's: `useCast` in `@/queries` reads it in, and
-// every change here is a request — a speaker written as stated, a rename or a merge that moves
+// The cast is the server's: `useCast` in `@/queries` reads it in, and every change here is a
+// request — a speaker written as stated, a rename or a merge that moves
 // lines in every chapter, the dictionary replaced whole — with what comes back installed in place
-// of what was here. An Undo is exact on both sides: a rename is renamed back, and a merge or a
+// of what was here. An Undo is exact: a rename is renamed back, and a merge or a
 // removal records the lines that moved and puts exactly those back (`attribute`), rather than
 // restoring a snapshot the server never saw. The dictionary works the same way: a change reports
 // the clips it staled, and its Undo names exactly those, for the server to put back to done.
 import { keyInPlace } from "@/services/endpointSettings";
 import { key, norm } from "@/lib/scriptReview";
 import { chapterSeconds, hitsIn, pacingOrDefault, speak } from "@/lib/speech";
+import { newSpeaker, voiceRef } from "@/lib/cast";
 import { clone } from "@/lib/utils";
-import { newSpeaker, voiceRef } from "@/mock";
 import {
-  activeLibraryService,
   ApiError,
   type Cast,
   type ChapterLines,
   type LibraryService,
+  libraryService,
   type MovedLines,
 } from "@/services/library";
 import type {
@@ -31,15 +31,12 @@ import type {
   Pacing,
   RoutingIssue,
   Segment,
-  SegmentMap,
   VoiceRef,
 } from "@/types";
 import { defineStore } from "pinia";
 import { useEndpointsStore } from "@/stores/endpoints";
-import { useHistoryStore } from "@/stores/history";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
-import { seedState } from "@/stores/seed";
 import { useUiStore } from "@/stores/ui";
 interface CastState {
   characters: Record<string, Character[]>;
@@ -56,12 +53,8 @@ export interface AutoVoiceAssignment {
   matchedGender: boolean;
 }
 export const useCastStore = defineStore("cast", {
-  // With a server answering, no cast is here until it has been read from it: the seeded casts
-  // belong to seeded books.
-  state: (): CastState =>
-    activeLibraryService()
-      ? { characters: {}, lexicon: {} }
-      : { ...seedState("characters", "lexicon") },
+  // No cast is here until it has been read from the server.
+  state: (): CastState => ({ characters: {}, lexicon: {} }),
   getters: {
     charactersOf(s): (id: string) => Character[] {
       return (id: string): Character[] => s.characters[id] ?? [];
@@ -145,7 +138,7 @@ export const useCastStore = defineStore("cast", {
               kind: "paused" as const,
               endpoint: r.endpoint,
             });
-          else if (r.endpoint.needsKey && !keyInPlace(r.endpoint, r.endpoint.id))
+          else if (r.endpoint.needsKey && !keyInPlace(r.endpoint))
             out.push({
               name: c.name,
               ref: c.voice,
@@ -220,8 +213,8 @@ export const useCastStore = defineStore("cast", {
   },
   actions: {
     // ---------- the seam ----------
-    _service(): LibraryService | null {
-      return activeLibraryService();
+    _service(): LibraryService {
+      return libraryService();
     },
     /** Say a request failed, and change nothing. */
     _failed(what: string, cause: unknown): void {
@@ -239,17 +232,16 @@ export const useCastStore = defineStore("cast", {
       this.lexicon[bookId] = lexicon;
     },
     /**
-     * Write one speaker to the server as they now stand here. Demo mode holds its own.
+     * Write one speaker to the server as they now stand here.
      *
      * For every change that moves no lines. What comes back is the cast as the server holds it,
      * which is what the store then holds; a change the server refused is read back over.
      */
     async _push(bookId: string, name: string): Promise<void> {
-      const svc = this._service();
       const c = this.characters[bookId]?.find((x) => x.name === name);
-      if (!svc || !c) return;
+      if (!c) return;
       try {
-        this.characters[bookId] = await svc.putCharacter(bookId, clone(c));
+        this.characters[bookId] = await this._service().putCharacter(bookId, clone(c));
       } catch (cause) {
         this._failed("save this speaker", cause);
         await this._reread(bookId);
@@ -257,10 +249,8 @@ export const useCastStore = defineStore("cast", {
     },
     /** The server's cast over whatever was here, after a request it refused. */
     async _reread(bookId: string): Promise<void> {
-      const svc = this._service();
-      if (!svc) return;
       try {
-        this._install(bookId, await svc.cast(bookId));
+        this._install(bookId, await this._service().cast(bookId));
       } catch {
         // the failure has been said once already
       }
@@ -288,25 +278,12 @@ export const useCastStore = defineStore("cast", {
         scriptsStore._revision[k] = Math.max(scriptsStore._revision[k] ?? 0, revision);
       }
     },
-    // snapshots used by undo: the cast + every segment of a book (speakers live in both)
-    _castSnapshot(bookId: string): () => void {
-      const scriptsStore = useScriptsStore();
-
-      const chars = clone(this.characters[bookId]);
-      const segs: SegmentMap = {};
-      for (const [k, v] of Object.entries(scriptsStore.segments))
-        if (k.startsWith(bookId + ":")) segs[k] = clone(v);
-      return () => {
-        this.characters[bookId] = chars;
-        for (const [k, v] of Object.entries(segs)) scriptsStore.segments[k] = v;
-      };
-    },
     /** Add any speaker this chapter uses that the cast does not have yet. Returns their names, so
      *  an undo of whatever brought them in can take exactly those back off again. */
     _absorbCast(bookId: string, chId: number): string[] {
       const scriptsStore = useScriptsStore();
 
-      const cast = this.characters[bookId];
+      const cast = (this.characters[bookId] ??= []);
       const added: string[] = [];
       for (const s of scriptsStore.segmentsOf(bookId, chId))
         if (!cast.some((c) => c.name === s.speaker)) {
@@ -329,13 +306,11 @@ export const useCastStore = defineStore("cast", {
         (c) => !dropping.includes(c),
       );
       // no line names them any more, so taking them off the server's cast moves nothing
-      const svc = this._service();
-      if (svc)
-        for (const c of dropping)
-          void svc
-            .deleteCharacter(bookId, c.name)
-            .then((r) => this._moved(bookId, r, "Narrator"))
-            .catch((cause: unknown) => this._failed("remove this speaker", cause));
+      for (const c of dropping)
+        void this._service()
+          .deleteCharacter(bookId, c.name)
+          .then((r) => this._moved(bookId, r, "Narrator"))
+          .catch((cause: unknown) => this._failed("remove this speaker", cause));
     },
     /** Chapter length is the sum of what is actually rendered, plus the silence stitched between. */
     _retime(bookId: string, chId: number): void {
@@ -408,34 +383,29 @@ export const useCastStore = defineStore("cast", {
         description: n
           ? `${n} rendered line${n === 1 ? "" : "s"} still read the old pronunciation — re-narrate to apply.`
           : "The book text is unchanged; the endpoint is sent the respelling.",
-        // Demo mode holds its own, so its Undo is as immediate as the change was. With a server
-        // answering, an Undo clicked before the change has been answered waits for it: it has to
-        // name the lines it staled, and the answer installs the new list and marks those lines
-        // here — landing after the revert, it would undo the Undo.
-        undo: () => {
-          if (!this._service()) return revert();
-          return pushed.then(async (staled) => {
+        // An Undo clicked before the change has been answered waits for it: it has to name the
+        // lines it staled, and the answer installs the new list and marks those lines here —
+        // landing after the revert, it would undo the Undo.
+        undo: () =>
+          pushed.then(async (staled) => {
             revert();
             await this._pushLexicon(bookId, staled ?? undefined);
-          });
-        },
+          }),
       });
     },
     /**
-     * The dictionary as it now stands here, written whole. Demo mode holds its own.
+     * The dictionary as it now stands here, written whole.
      *
      * The server stales every clip that now reads the old pronunciation, and puts back to done
      * those `restore` names that read this one again. Both come back with the revision each
      * chapter's script is at now, which is adopted so the next edit of it names the right one.
-     * Returns the lines it staled, for an Undo to name; null when there is no server or it refused.
+     * Returns the lines it staled, for an Undo to name; null when it refused.
      */
     async _pushLexicon(bookId: string, restore?: ChapterLines[]): Promise<ChapterLines[] | null> {
       const scriptsStore = useScriptsStore();
 
-      const svc = this._service();
-      if (!svc) return null;
       try {
-        const { entries, stale, restored } = await svc.putLexicon(
+        const { entries, stale, restored } = await this._service().putLexicon(
           bookId,
           clone(this.lexicon[bookId] ?? []),
           restore,
@@ -497,14 +467,11 @@ export const useCastStore = defineStore("cast", {
     },
     /** Silence after one line, in seconds; null goes back to the book's pacing. */
     setPause(bookId: string, chId: number, segId: number, pause: number | null): void {
-      const historyStore = useHistoryStore();
       const scriptsStore = useScriptsStore();
 
       const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
-      if (!s) return;
-      // the pacing of a line is part of the script, so a nudge joins the editing session
-      if ((s.pause ?? null) === pause) return;
-      historyStore.noteEdit(bookId, chId);
+      // the pacing of a line is part of the script, so a nudge is written as an edit of it
+      if (!s || (s.pause ?? null) === pause) return;
       if (pause == null) delete s.pause;
       else s.pause = pause;
       this._retime(bookId, chId);
@@ -529,21 +496,18 @@ export const useCastStore = defineStore("cast", {
     /**
      * The book's pacing changed here; re-time its chapters to match.
      *
-     * Demo mode holds every chapter's script, so every chapter is re-timed here. With a server
-     * answering, a chapter's clips are only here once its script has been read, and re-timing one
-     * that has not been would give it a length of nothing but silence — so only those are re-timed
-     * here, for a length that moves as the slider does, and the pacing is written to the server,
-     * which re-times every narrated chapter from its clips. The lengths it answers with are the ones
-     * the store keeps.
+     * A chapter's clips are only here once its script has been read, and re-timing one that has not
+     * been would give it a length of nothing but silence — so only those are re-timed here, for a
+     * length that moves as the slider does, and the pacing is written to the server, which re-times
+     * every narrated chapter from its clips. The lengths it answers with are the ones the store
+     * keeps.
      */
     async _pacingChanged(bookId: string, pacing: Pacing | null): Promise<void> {
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
 
-      const svc = this._service();
       for (const c of libraryStore.chaptersOf(bookId))
-        if (!svc || key(bookId, c.id) in scriptsStore.segments) this._retime(bookId, c.id);
-      if (!svc) return;
+        if (key(bookId, c.id) in scriptsStore.segments) this._retime(bookId, c.id);
       const answer = await libraryStore._writeSettings(
         bookId,
         { pacing },
@@ -580,80 +544,45 @@ export const useCastStore = defineStore("cast", {
 
       to = (to ?? "").trim();
       if (!to || from === to) return;
-      const cast = this.characters[bookId];
+      const cast = this.characters[bookId] ?? [];
       if (cast.some((c) => c.name === to)) {
         await this.mergeCharacter(bookId, from, to);
         return;
       }
-      const c = cast.find((x) => x.name === from);
-      if (!c) return;
-      const svc = this._service();
-      if (svc) {
-        // The server moves the lines in every chapter and says which; an undo renames back.
-        const undo = await this._remoteRename(bookId, from, to);
-        if (undo) uiStore.toast(`Renamed “${from}” to “${to}”`, { undo });
-        return;
-      }
-      const revert = this._castSnapshot(bookId);
-      c.name = to;
-      c.isNew = false;
-      this._replaceSpeaker(bookId, from, to);
-      uiStore.toast(`Renamed “${from}” to “${to}”`, { undo: revert });
+      if (!cast.some((x) => x.name === from)) return;
+      // The server moves the lines in every chapter and says which; an undo renames back.
+      const undo = await this._rename(bookId, from, to);
+      if (undo) uiStore.toast(`Renamed “${from}” to “${to}”`, { undo });
     },
     /** A rename on the server, applied here. Resolves to the undo — a rename back — or null. */
-    async _remoteRename(bookId: string, from: string, to: string): Promise<Undo | null> {
-      const svc = this._service();
-      if (!svc) return null;
+    async _rename(bookId: string, from: string, to: string): Promise<Undo | null> {
       try {
-        this._moved(bookId, await svc.renameCharacter(bookId, from, to), to);
+        this._moved(bookId, await this._service().renameCharacter(bookId, from, to), to);
       } catch (cause) {
         this._failed("rename this speaker", cause);
         return null;
       }
       return async () => {
-        await this._remoteRename(bookId, to, from);
+        await this._rename(bookId, to, from);
       };
     },
-    async mergeCharacter(
-      bookId: string,
-      from: string,
-      into: string,
-      { silent = false } = {},
-    ): Promise<void> {
-      const scriptsStore = useScriptsStore();
+    async mergeCharacter(bookId: string, from: string, into: string): Promise<void> {
       const uiStore = useUiStore();
 
       if (from === into) return;
-      const cast = this.characters[bookId];
-      const src = cast.find((c) => c.name === from);
-      const dst = cast.find((c) => c.name === into);
-      if (!src || !dst) return;
-      const svc = this._service();
-      if (svc) {
-        const merged = await this._remoteMerge(bookId, from, into);
-        if (merged && !silent)
-          uiStore.toast(
-            `Merged “${from}” into ${into} · ${merged.lines} line${merged.lines === 1 ? "" : "s"} moved`,
-            { undo: merged.undo },
-          );
-        return;
-      }
-      const revert = this._castSnapshot(bookId);
-      const n = scriptsStore.lineCounts(bookId)[from] ?? 0;
-      dst.aliases = [...new Set([...dst.aliases, from, ...src.aliases])];
-      this.characters[bookId] = cast.filter((c) => c !== src);
-      this._replaceSpeaker(bookId, from, into);
-      if (!silent)
-        uiStore.toast(`Merged “${from}” into ${into} · ${n} line${n === 1 ? "" : "s"} moved`, {
-          undo: revert,
-        });
+      const merged = await this._merge(bookId, from, into);
+      if (merged)
+        uiStore.toast(
+          `Merged “${from}” into ${into} · ${merged.lines} line${merged.lines === 1 ? "" : "s"} moved`,
+          { undo: merged.undo },
+        );
     },
     /**
      * A merge on the server, applied here. Resolves to how many lines moved and the undo, which
      * puts the speaker back on exactly those lines — a merge folds aliases in and cannot be told
      * apart from ones that were already there, so the undo is recorded rather than inverted.
      */
-    async _remoteMerge(
+    async _merge(
       bookId: string,
       from: string,
       into: string,
@@ -661,7 +590,7 @@ export const useCastStore = defineStore("cast", {
       const svc = this._service();
       const src = this.characters[bookId]?.find((c) => c.name === from);
       const dst = this.characters[bookId]?.find((c) => c.name === into);
-      if (!svc || !src || !dst) return null;
+      if (!src || !dst) return null;
       const was = { src: clone(src), dst: clone(dst) };
       let result: MovedLines;
       try {
@@ -691,34 +620,21 @@ export const useCastStore = defineStore("cast", {
     async mergeMany(bookId: string, names: string[], into: string): Promise<void> {
       const uiStore = useUiStore();
 
-      const svc = this._service();
-      if (svc) {
-        const merged: { lines: number; undo: Undo }[] = [];
-        for (const name of names)
-          if (name !== into) {
-            const m = await this._remoteMerge(bookId, name, into);
-            if (m) merged.push(m);
-          }
-        if (merged.length)
-          uiStore.toast(
-            `Merged ${merged.length} speaker${merged.length === 1 ? "" : "s"} into ${into}`,
-            {
-              undo: async () => {
-                for (const m of [...merged].reverse()) await m.undo();
-              },
-            },
-          );
-        return;
-      }
-      const revert = this._castSnapshot(bookId);
-      let n = 0;
+      const merged: { lines: number; undo: Undo }[] = [];
       for (const name of names)
         if (name !== into) {
-          void this.mergeCharacter(bookId, name, into, { silent: true });
-          n++;
+          const m = await this._merge(bookId, name, into);
+          if (m) merged.push(m);
         }
-      if (n)
-        uiStore.toast(`Merged ${n} speaker${n === 1 ? "" : "s"} into ${into}`, { undo: revert });
+      if (merged.length)
+        uiStore.toast(
+          `Merged ${merged.length} speaker${merged.length === 1 ? "" : "s"} into ${into}`,
+          {
+            undo: async () => {
+              for (const m of [...merged].reverse()) await m.undo();
+            },
+          },
+        );
     },
     /** A speaker typed in by hand, before any line is attributed to them — so they are not "new"
      *  in the review sense (nothing detected them, you did) and start as main cast. Returns false
@@ -739,7 +655,7 @@ export const useCastStore = defineStore("cast", {
           this.characters[bookId] = (this.characters[bookId] ?? []).filter((x) => x !== c);
           // no lines were attributed, so taking them off again moves nothing
           void this._service()
-            ?.deleteCharacter(bookId, name)
+            .deleteCharacter(bookId, name)
             .then((r) => this._moved(bookId, r, "Narrator"))
             .catch((cause: unknown) => this._failed("remove this speaker", cause));
         },
@@ -794,42 +710,29 @@ export const useCastStore = defineStore("cast", {
       });
     },
     async deleteCharacter(bookId: string, name: string): Promise<void> {
-      const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
       const svc = this._service();
-      if (svc) {
-        const c = this.characters[bookId]?.find((x) => x.name === name);
-        if (!c) return;
-        const was = clone(c);
-        let result: MovedLines;
-        try {
-          result = await svc.deleteCharacter(bookId, name);
-        } catch (cause) {
-          this._failed("remove this speaker", cause);
-          return;
-        }
-        this._moved(bookId, result, "Narrator");
-        const n = result.moved.reduce((sum, m) => sum + m.ids.length, 0);
-        uiStore.toast(
-          `Removed “${name}” · ${n} line${n === 1 ? "" : "s"} now read by the Narrator`,
-          {
-            undo: async () => {
-              try {
-                this._moved(bookId, await svc.attribute(bookId, was, result.moved), name);
-              } catch (cause) {
-                this._failed("put this speaker back", cause);
-              }
-            },
-          },
-        );
+      const c = this.characters[bookId]?.find((x) => x.name === name);
+      if (!c) return;
+      const was = clone(c);
+      let result: MovedLines;
+      try {
+        result = await svc.deleteCharacter(bookId, name);
+      } catch (cause) {
+        this._failed("remove this speaker", cause);
         return;
       }
-      const revert = this._castSnapshot(bookId);
-      const n = scriptsStore.lineCounts(bookId)[name] ?? 0;
-      void this.mergeCharacter(bookId, name, "Narrator", { silent: true });
+      this._moved(bookId, result, "Narrator");
+      const n = result.moved.reduce((sum, m) => sum + m.ids.length, 0);
       uiStore.toast(`Removed “${name}” · ${n} line${n === 1 ? "" : "s"} now read by the Narrator`, {
-        undo: revert,
+        undo: async () => {
+          try {
+            this._moved(bookId, await svc.attribute(bookId, was, result.moved), name);
+          } catch (cause) {
+            this._failed("put this speaker back", cause);
+          }
+        },
       });
     },
     autoAssignPlan(bookId: string): AutoVoiceAssignment[] {
@@ -847,7 +750,8 @@ export const useCastStore = defineStore("cast", {
       };
       const used: Partial<Record<Gender, number>> = {};
       const plan: AutoVoiceAssignment[] = [];
-      for (const c of this.characters[bookId]) {
+      // a cast that has not been read yet has no one to assign
+      for (const c of this.characters[bookId] ?? []) {
         if (c.voice || c.name === "Narrator") continue;
         const byG = byGender[c.gender];
         const pool = byG?.length ? byG : all;
@@ -870,7 +774,6 @@ export const useCastStore = defineStore("cast", {
       const uiStore = useUiStore();
       const plan = this.autoAssignPlan(bookId);
       if (!plan.length) return 0;
-      const revert = this._castSnapshot(bookId);
       const cast = this.characters[bookId];
       const assigned: string[] = [];
       for (const assignment of plan) {
@@ -884,25 +787,17 @@ export const useCastStore = defineStore("cast", {
       uiStore.toast(`${plan.length} unvoiced speaker${plan.length === 1 ? "" : "s"} assigned`, {
         kind: "success",
         description: "Existing voice assignments were left alone.",
+        // every one of them had no voice of their own, so that is what they go back to
         undo: () => {
-          revert();
-          for (const name of assigned) void this._push(bookId, name);
+          for (const name of assigned) {
+            const c = this.characters[bookId]?.find((x) => x.name === name);
+            if (!c) continue;
+            c.voice = null;
+            void this._push(bookId, name);
+          }
         },
       });
       return plan.length;
-    },
-    _replaceSpeaker(bookId: string, from: string, to: string): void {
-      const scriptsStore = useScriptsStore();
-
-      for (const k of Object.keys(scriptsStore.segments)) {
-        if (!k.startsWith(bookId + ":")) continue;
-        const chId = Number(k.split(":")[1]);
-        for (const s of scriptsStore.segments[k])
-          if (s.speaker === from) {
-            s.speaker = to;
-            scriptsStore._markStale(bookId, chId, s);
-          }
-      }
     },
   },
 });

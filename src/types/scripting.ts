@@ -1,11 +1,11 @@
-// Scripting: the LLM side. A profile is one chat endpoint, the telemetry is what this session
-// observed from it, and the estimate and the diff are what the Scripting page shows before and
-// after a run.
+// Scripting: the LLM side. A profile is one chat endpoint, the telemetry is what its requests in
+// the server's ledger say it has been through, and the estimate and the diff are what the Scripting
+// page shows before and after a run.
 import type { SplitMode } from "@/types/common";
-import type { PricedRequest, PricingConfig, RateEstimate } from "@/types/pricing";
-import type { Segment, SegmentType } from "@/types/segment";
+import type { PricingConfig, RateEstimate } from "@/types/pricing";
+import type { Segment } from "@/types/segment";
 
-/** Session-only observations from simulated scripting requests. */
+/** What a profile's settled requests say it has been through (`scriptTelemetry`). */
 export interface ScriptEndpointTelemetry {
   completed: number;
   failures: number;
@@ -18,8 +18,9 @@ export interface ScriptEndpointTelemetry {
     message: string;
     body: string;
     at: number;
-    bookId: string;
-    chapterId: number;
+    /** the chapter the request was for; null once the book or the chapter is gone */
+    bookId: string | null;
+    chapterId: number | null;
     model: string;
     baseUrl: string;
   };
@@ -93,27 +94,6 @@ export interface ScriptDiff {
   curCount: number;
 }
 
-/**
- * What happened to the manual corrections a re-script was asked to preserve. A correction is
- * re-applied when the new script still has the line it was made on; one whose line the new run
- * wrote differently cannot be, and is named here rather than quietly dropped — the reader shows
- * these so "preserved" is never claimed for a correction that was not.
- */
-export interface RescriptReport {
-  /** the endpoint that produced the new script */
-  profile: string;
-  model: string;
-  /** whether preservation was asked for at all */
-  asked: boolean;
-  kept: number;
-  unmatched: {
-    speaker: string;
-    text: string;
-    direction: string;
-    type: SegmentType;
-  }[];
-}
-
 export interface ScriptEstimate {
   chapters: number;
   chars: number;
@@ -129,15 +109,4 @@ export interface ScriptEstimate {
   blockers: string[];
   /** the same numbers priced: the alternatives, and what could move the figure before the run ends */
   rates: RateEstimate | null;
-}
-
-/** One completed scripting request, kept with the rates it was charged at. */
-export interface ScriptUsageRecord {
-  bookId: string;
-  profileId: string;
-  cost: number;
-  inputTokens: number;
-  outputTokens: number;
-  /** the receipt — usage, rates and reasoning, frozen when the request completed */
-  priced?: PricedRequest;
 }

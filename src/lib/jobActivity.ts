@@ -38,25 +38,10 @@ export function logJob(
   }
 }
 
-/** Log transitions only, not each scheduler tick. */
-export function jobWaiting(job: Job, reason: string): void {
-  if ((job.waitingReason ?? "") === reason) return;
-  job.waitingReason = reason;
-  logJob(job, reason ? `Waiting: ${reason}` : "Dispatch is available again");
-}
-
-export function startJob(job: Job): void {
-  job.status = "running";
-  if (job.startedAt !== null) return;
-  job.startedAt = Date.now();
-  logJob(job, "Job started", "info", { queueMs: job.startedAt - job.queuedAt });
-}
-
 export function jobDiagnostics(job: Job): string {
   // Deliberate allowlist: the job also contains a connection snapshot which must not be copied.
   return JSON.stringify(
     {
-      simulated: true,
       jobId: job.id,
       kind: job.kind,
       status: job.status,

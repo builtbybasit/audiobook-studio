@@ -2,8 +2,7 @@
 //
 // The prototype renders no audio, so there is nothing to decode and nothing to draw. Rather than
 // leave the compare panel empty, this invents a plausible *speech* envelope — syllable bursts with
-// breaths between them — the same way `FixtureEndpointService` invents a week of request history.
-// It is seeded by the clip's identity, so a take's shape is stable across redraws and two takes of
+// breaths between them. It is seeded by the clip's identity, so a take's shape is stable across redraws and two takes of
 // the same line look related but not identical. Everywhere it is used says the shape is invented;
 // the moment a clip has a `url`, wavesurfer decodes the real thing and none of this runs.
 

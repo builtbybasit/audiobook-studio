@@ -4,10 +4,6 @@ import { PiniaColada } from "@pinia/colada";
 import { PiniaColadaAutoRefetch } from "@pinia/colada-plugin-auto-refetch";
 import App from "@/App.vue";
 import { router } from "@/router";
-import { useDemoStore } from "@/stores/demo";
-import { keyring } from "@/lib/keyring";
-import { activeLibraryService } from "@/services/library";
-import { SEEDED_KEYS } from "@/mock";
 import "@/style.css";
 import "@/toasts.css";
 import { createToastflow } from "vue-toastflow";
@@ -47,10 +43,3 @@ createApp(App)
   .use(router)
   .use(toastflow)
   .mount("#app");
-// PROTOTYPE: the demo's own credentials live in the keyring, never in the store, and a demo reset
-// puts them back — nothing here is sent anywhere.
-for (const [id, value] of SEEDED_KEYS) keyring.set(id, value);
-// With a server answering, the queue is the server's and the shell reads it (`useBookJobs`).
-// PROTOTYPE: in the demo, start a few simulated jobs so the queue is alive on load — there are no
-// seeded books for these to run on in a real library.
-if (!activeLibraryService()) useDemoStore(pinia).demoKick();

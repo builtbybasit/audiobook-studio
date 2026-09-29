@@ -1,31 +1,15 @@
 // Shared queue and accounting across books and stages. IDs are scoped to this Pinia instance.
 //
-// This store is the queue's side of the seam in `@/services/jobs`. With a service answering, the
-// jobs are the server's: `useBookJobs` in `@/queries` reads them from it, polls while anything is
-// live and installs each read here, and a cancel, a remove or a clear is a request that then
-// invalidates that read. Without one, the seeded queue in the store is the queue, and the
-// simulators drive it. The halves are here rather than in the views.
+// This store is the queue's side of the seam in `@/services/jobs`. The jobs are the server's:
+// `useBookJobs` in `@/queries` reads them from it, polls while anything is live and installs each
+// read here, and a cancel, a remove or a clear is a request that then invalidates that read.
 import { usable } from "@/lib/exports";
-import { logJob } from "@/lib/jobActivity";
-import { chapterNarration, segmentFailed } from "@/lib/runPlan";
-import { unusedTelemetry } from "@/lib/scripting";
-import { makeJobHistory } from "@/mock";
+import { segmentFailed } from "@/lib/runPlan";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { ApiError } from "@/services/http";
-import { activeEndpointSettingsService } from "@/services/endpointSettings";
-import { activeJobsService, type JobsService } from "@/services/jobs";
-import { activeUsageService } from "@/services/usage";
-import type {
-  BookSpend,
-  EndpointLoad,
-  Eta,
-  Job,
-  JobKind,
-  JobStatus,
-  ScriptEndpointTelemetry,
-  ScriptUsageRecord,
-} from "@/types";
+import { jobsService } from "@/services/jobs";
+import type { BookSpend, EndpointLoad, Eta, Job, JobKind } from "@/types";
 import { defineStore } from "pinia";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useExportsStore } from "@/stores/exports";
@@ -34,43 +18,26 @@ import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-import { useUsageStore } from "@/stores/usage";
 const AVG_JOB: Record<JobKind, number> = { scripting: 25, narration: 60, export: 120 };
 
 interface JobsState {
   jobs: Job[];
-  scriptTelemetry: Record<string, ScriptEndpointTelemetry>;
   /**
    * What each book has spent and holds, as the server's ledger last said — what `useBookSpend`
-   * and `useLibrarySpend` install. Empty in the demo, whose spending is `useUsageStore`'s.
+   * and `useLibrarySpend` install.
    */
   spend: Record<string, BookSpend>;
-  _nextId: number;
-  /** ids for bulk runs: every chapter asked for in one press shares one */
-  _nextRun: number;
 }
 export const useJobsStore = defineStore("jobs", {
-  // With a service answering, the queue starts empty and is read from the server. The seeded
-  // history is not a starting point for a real queue — it is the other mode.
-  state: (): JobsState => {
-    let nextId = 100;
-    const jobs = activeJobsService() ? [] : makeJobHistory(() => nextId++);
-    return {
-      jobs,
-      _nextId: nextId,
-      _nextRun: 1,
-      scriptTelemetry: {},
-      spend: {},
-    };
-  },
+  // the queue starts empty and is read from the server
+  state: (): JobsState => ({ jobs: [], spend: {} }),
   getters: {
     activeJobs(s): Job[] {
       return s.jobs.filter((j) => j.status === "running" || j.status === "queued");
     },
     /**
      * Each speech endpoint's busy slots, and the clips it has done and failed in the chapters this
-     * browser has loaded. With a server answering the busy count is the server's gate's, which
-     * counts every job's lines; the demo's is its clips that are rendering.
+     * browser has loaded. The busy count is the server's gate's, which counts every job's lines.
      */
     endpointLoad(): Record<string, EndpointLoad> {
       const endpointsStore = useEndpointsStore();
@@ -87,14 +54,11 @@ export const useJobsStore = defineStore("jobs", {
           },
         ]),
       );
-      const counting = !activeEndpointSettingsService();
       for (const segs of Object.values(scriptsStore.segments))
         for (const seg of segs) {
           const l = seg.audio.endpoint ? load[seg.audio.endpoint] : undefined;
           if (!l) continue;
-          if (seg.audio.status === "generating") {
-            if (counting) l.active++;
-          } else if (seg.audio.status === "done") l.done++;
+          if (seg.audio.status === "done") l.done++;
           else if (seg.audio.status === "failed") l.failed++;
         }
       return load;
@@ -109,29 +73,14 @@ export const useJobsStore = defineStore("jobs", {
     recentJobs(s): Job[] {
       return [...s.jobs].reverse().slice(0, 12);
     },
-    /**
-     * Every scripting request this session settled, each with the receipt it was priced from.
-     * It lives in the usage ledger, which is append-only and never re-priced: that is what makes
-     * "editing a rate today does not move yesterday's spending" true rather than merely claimed.
-     */
-    scriptUsage(): ScriptUsageRecord[] {
-      return useUsageStore().scriptUsage;
-    },
-    // The four figures below are what every budget panel, gate and wait reason reads. With a server
-    // answering they are the server's (`spend`, read from its ledger and its queue), because the
-    // server prices every request and holds every reservation; the demo's ledger has nothing real
-    // in it there, and a server job carries no reservation of its own to add up here.
+    // The four figures below are what every budget panel, gate and wait reason reads. They are the
+    // server's (`spend`, read from its ledger and its queue), because the server prices every
+    // request and holds every reservation, and a job carries no reservation of its own to add up.
     scriptSpent(s): (bookId: string) => number {
-      const usageStore = useUsageStore();
-      if (activeUsageService()) return (bookId) => s.spend[bookId]?.scriptSpent ?? 0;
-      return (bookId: string): number => usageStore.scriptSpent(bookId);
+      return (bookId) => s.spend[bookId]?.scriptSpent ?? 0;
     },
     scriptReserved(s): (bookId: string) => number {
-      if (activeUsageService()) return (bookId) => s.spend[bookId]?.scriptReserved ?? 0;
-      return (bookId: string): number =>
-        s.jobs
-          .filter((j) => j.bookId === bookId && !j.finishedAt)
-          .reduce((sum, j) => sum + (j.scriptRun?.reserved ?? 0), 0);
+      return (bookId) => s.spend[bookId]?.scriptReserved ?? 0;
     },
     /**
      * Everything held against this book's cap by work that has not landed yet, of either stage.
@@ -139,43 +88,19 @@ export const useJobsStore = defineStore("jobs", {
      * so a reservation is what stops the second one rather than the first one's spending.
      */
     reserved(s): (bookId: string) => number {
-      if (activeUsageService()) return (bookId) => s.spend[bookId]?.reserved ?? 0;
-      return (bookId: string): number =>
-        s.jobs
-          .filter((j) => j.bookId === bookId && !j.finishedAt)
-          .reduce(
-            (sum, j) => sum + (j.scriptRun?.reserved ?? 0) + (j.narrationRun?.reserved ?? 0),
-            0,
-          );
-    },
-    /**
-     * How much of the input recent requests on one endpoint actually had cached.
-     *
-     * Only requests whose provider *reported* cache detail count. A provider that says nothing is
-     * left out rather than counted as a run of misses, so an endpoint that never reports returns
-     * null and the estimate simply does not offer a cache-adjusted figure.
-     */
-    observedCache(): (profileId: string) => { hitRate: number; samples: number } | null {
-      const usageStore = useUsageStore();
-      return (profileId: string) => usageStore.observedCache(profileId);
+      return (bookId) => s.spend[bookId]?.reserved ?? 0;
     },
     /**
      * What this book has cost, of both stages.
      *
-     * Read out of the append-only ledger, not off the clips the book is holding now. Totalling the
-     * current clip of each line lost every request that had been paid for and then superseded — a
-     * failed render, a rejected take, the recording a retake displaced — so accepting a retake made
-     * recorded spending *fall* and handed the budget back capacity it had really used. The seeded
-     * world's own narration predates the ledger and is added from the clips that carry no receipt;
-     * those two sets never overlap. See `useUsageStore`.
+     * Read out of the server's append-only ledger, not off the clips the book is holding now.
+     * Totalling the current clip of each line lost every request that had been paid for and then
+     * superseded — a failed render, a rejected take, the recording a retake displaced — so
+     * accepting a retake made recorded spending *fall* and handed the budget back capacity it had
+     * really used.
      */
     spent(s): (bookId: string) => number {
-      const usageStore = useUsageStore();
-      if (activeUsageService()) return (bookId) => s.spend[bookId]?.spent ?? 0;
-      return (bookId: string): number =>
-        usageStore.scriptSpent(bookId) +
-        usageStore.speechSpent(bookId) +
-        usageStore.openingNarrationSpend(bookId);
+      return (bookId) => s.spend[bookId]?.spent ?? 0;
     },
     eta(s): Eta | null {
       const hist: Partial<Record<JobKind, number[]>> = {};
@@ -201,10 +126,6 @@ export const useJobsStore = defineStore("jobs", {
   },
   actions: {
     // ---------- the seam ----------
-    /** The service answering for the queue, or null when this is the seeded demo. */
-    _service(): JobsService | null {
-      return activeJobsService();
-    },
     /** Say a request failed, and change nothing. The list stays what the server last said it was. */
     _failed(what: string, cause: unknown): void {
       const uiStore = useUiStore();
@@ -231,28 +152,6 @@ export const useJobsStore = defineStore("jobs", {
       return invalidate({ key: keys.jobs });
     },
     // ---------- shared ----------
-    addJob(kind: JobKind, bookId: string, label: string, chapterId: number | null = null): Job {
-      this.jobs.push({
-        id: this._nextId++,
-        kind,
-        bookId,
-        chapterId,
-        label,
-        status: "queued",
-        progress: 0,
-        queuedAt: Date.now(),
-        startedAt: null,
-        finishedAt: null,
-        cancelled: false,
-      });
-      const job = this.jobs[this.jobs.length - 1]; // mutate the reactive proxy
-      logJob(job, "Job queued");
-      return job;
-    },
-    /** The id every chapter of one bulk run is tagged with. */
-    _nextRunId(): number {
-      return this._nextRun++;
-    },
     /**
      * Stop the rest of a bulk run. Chapters it already finished keep their results — that is the
      * whole point of cancelling one rather than undoing it — and chapters still to come never
@@ -278,84 +177,33 @@ export const useJobsStore = defineStore("jobs", {
       if (!failed.length) return 0;
       const ids = [...new Set(failed.map((j) => j.chapterId!))];
       const { kind, bookId } = failed[0]; // one press, one book, one stage
-      if (kind === "scripting") scriptingStore.runScripting(bookId, ids, { quiet: true });
+      if (kind === "scripting") void scriptingStore.runScripting(bookId, ids, { quiet: true });
       else if (kind === "narration")
-        narrationStore.runNarration(bookId, ids, { scope: "failed", quiet: true });
+        void narrationStore.runNarration(bookId, ids, { scope: "failed", quiet: true });
       else for (const j of failed) this.retryJob(j.id);
       return failed.length;
     },
     removeJob(id: number): void {
       const j = this.jobs.find((j) => j.id === id);
       if (!j || !(j.finishedAt || j.status === "queued")) return;
-      const svc = this._service();
-      if (svc) {
-        // a queued job is cancelled first, which settles it, and then it can go
-        void (j.status === "queued" ? svc.cancel(id) : Promise.resolve())
-          .then(() => svc.remove(id))
-          .catch((cause: unknown) => this._failed("remove this job", cause))
-          // the cancel may have gone through even when the remove did not
-          .finally(() => this._changed());
-        return;
-      }
-      if (j.status === "queued") this.cancelJob(id);
-      this.jobs = this.jobs.filter((x) => x.id !== id);
-    },
-    _sequential(jobs: Job[], start: (job: Job, next: () => void) => void): void {
-      const next = () => {
-        const j = jobs.shift();
-        if (!j) return;
-        if (j.status === "cancelled") return next();
-        start(j, next);
-      };
-      next();
-    },
-    _finish(job: Job, status: JobStatus): void {
-      if (job.finishedAt !== null) return;
-      job.status = status;
-      job.finishedAt = Date.now();
-      job.waitingReason = "";
-      logJob(job, `Job ${status}`, status === "failed" ? "error" : "info", {
-        elapsedMs: job.startedAt === null ? 0 : job.finishedAt - job.startedAt,
-      });
+      const svc = jobsService();
+      // a queued job is cancelled first, which settles it, and then it can go
+      void (j.status === "queued" ? svc.cancel(id) : Promise.resolve())
+        .then(() => svc.remove(id))
+        .catch((cause: unknown) => this._failed("remove this job", cause))
+        // the cancel may have gone through even when the remove did not
+        .finally(() => this._changed());
     },
     cancelJob(id: number): void {
-      const libraryStore = useLibraryStore();
-      const scriptsStore = useScriptsStore();
-
       const job = this.jobs.find((j) => j.id === id);
       if (!job || job.finishedAt || job.cancelled) return;
-      const svc = this._service();
-      if (svc) {
-        // The server's job, so the server stops it: what comes back is the job as it now stands,
-        // and the chapter it was for is read again with it. Nothing is marked locally first — a
-        // cancel that failed to reach the server must not look like one that worked.
-        void svc
-          .cancel(id)
-          .then(() => this._changed())
-          .catch((cause: unknown) => this._failed("cancel this job", cause));
-        return;
-      }
-      job.cancelled = true;
-      logJob(job, "Cancellation requested", "warning", {
-        behavior:
-          job.kind === "narration"
-            ? "In-flight clips finish; queued clips will not start"
-            : "Stops on the next scheduler tick",
-      });
-      const c = job.chapterId ? libraryStore.chapter(job.bookId, job.chapterId) : null;
-      if (job.status === "queued") {
-        this._finish(job, "cancelled");
-        // A chapter that never started keeps what it had: a queued re-script cancelled before it
-        // dispatched must leave a finished script reading as finished, not as never scripted.
-        if (c && job.kind === "scripting") {
-          c.scripting = c.rescript?.was ?? "none";
-          c.scriptingProgress = 0;
-          delete c.rescript; // and no result of this run may land afterwards
-        }
-        if (c && job.kind === "narration")
-          c.narration = chapterNarration(scriptsStore.segmentsOf(job.bookId, c.id));
-      }
-      // running jobs notice `cancelled` on their next tick
+      // The server's job, so the server stops it: what comes back is the job as it now stands, and
+      // the chapter it was for is read again with it. Nothing is marked locally first — a cancel
+      // that failed to reach the server must not look like one that worked.
+      void jobsService()
+        .cancel(id)
+        .then(() => this._changed())
+        .catch((cause: unknown) => this._failed("cancel this job", cause));
     },
     retryJob(id: number): void {
       const exportsStore = useExportsStore();
@@ -391,7 +239,7 @@ export const useJobsStore = defineStore("jobs", {
       }
       if (job.chapterId == null) return;
       if (job.kind === "scripting")
-        scriptingStore.runScripting(job.bookId, [job.chapterId], { quiet: true });
+        void scriptingStore.runScripting(job.bookId, [job.chapterId], { quiet: true });
       if (job.kind === "narration") {
         const c = libraryStore.chapter(job.bookId, job.chapterId);
         if (!c) return;
@@ -399,7 +247,7 @@ export const useJobsStore = defineStore("jobs", {
         // as a failure even though the chapter still reads as narrated — its own clip was never
         // touched — so the failures are looked for on the clips, not on the chapter's status.
         const failed = scriptsStore.segmentsOf(job.bookId, c.id).some(segmentFailed);
-        narrationStore.runNarration(job.bookId, [c.id], {
+        void narrationStore.runNarration(job.bookId, [c.id], {
           scope: failed ? "failed" : "fill",
           quiet: true,
         });
@@ -418,15 +266,10 @@ export const useJobsStore = defineStore("jobs", {
       );
     },
     clearFinished(): void {
-      const svc = this._service();
-      if (svc) {
-        void svc
-          .clear()
-          .then(() => this._changed())
-          .catch((cause: unknown) => this._failed("clear the history", cause));
-        return;
-      }
-      this.jobs = this.jobs.filter((j) => !j.finishedAt);
+      void jobsService()
+        .clear()
+        .then(() => this._changed())
+        .catch((cause: unknown) => this._failed("clear the history", cause));
     },
     cancelAll(): void {
       for (const j of this.jobs.filter((j) => j.status === "queued")) this.cancelJob(j.id);
@@ -478,10 +321,6 @@ export const useJobsStore = defineStore("jobs", {
     },
     retryAllFailed(): void {
       for (const j of this.retryableFailures()) this.retryJob(j.id);
-    },
-    // ---------- scripting ----------
-    scriptingTelemetry(id: string): ScriptEndpointTelemetry {
-      return (this.scriptTelemetry[id] ??= unusedTelemetry());
     },
   },
 });

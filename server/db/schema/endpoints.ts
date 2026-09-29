@@ -90,6 +90,8 @@ export const endpoints = sqliteTable(
     promptMode: text("prompt_mode").$type<ProfilePrompt["mode"]>(),
     promptSystem: text("prompt_system"),
     promptUser: text("prompt_user"),
+    /** scripting only: notes for this model, placed by `{{endpoint.notes}}`; null = none */
+    promptNotes: text("prompt_notes"),
 
     // ---- speech rates ----
     billingUnit: text("billing_unit").$type<TtsBillingUnit>(),

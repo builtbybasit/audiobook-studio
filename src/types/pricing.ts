@@ -256,6 +256,8 @@ export interface TokenUsage {
   cachedInput: number | null;
   cacheWrite: number | null;
   outputTokens: number;
+  /** of `outputTokens`, spent reasoning; null or absent when the provider did not say */
+  reasoningTokens?: number | null;
   format: UsageFormat;
   problems: UsageProblem[];
   /** a charge the provider reported itself, when it reports one at all */

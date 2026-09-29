@@ -6,12 +6,15 @@
 // drift from the requests that are actually billed.
 //
 // **Three layers.** The library has a default, which is the built-in prompt until somebody edits
-// it on the Endpoints page. A scripting endpoint may append to whatever it is given (a model's
-// quirk: "keep paragraphs apart") or replace it outright. A book may carry notes, which the
-// `{{book.notes}}` tag places, and may replace the whole prompt for itself. A book's replacement
-// wins over an endpoint's, because a book's conventions are about the text and hold whichever model
-// reads it; an endpoint's append is still added after it, because a model's quirks hold whichever
-// book it reads.
+// it on the Endpoints page. A scripting endpoint may replace it outright. A book may replace the
+// whole prompt for itself, and wins over an endpoint, because a book's conventions are about the
+// text and hold whichever model reads it.
+//
+// **Notes** are the other way in, and hold whichever prompt is sent: an endpoint's (a model's
+// quirk: "keep paragraphs apart") and a book's ("dialogue is marked with em-dashes"), each kept
+// whatever its prompt mode and placed where the prompt says `{{endpoint.notes}}` or
+// `{{book.notes}}`. A prompt without the tag does not send the notes; the page says so where they
+// are typed, rather than the notes turning up somewhere nobody put them.
 //
 // **One part is not editable**: the output format. The answer is parsed as `{"lines":[…]}` and held
 // word for word against the prose (`fidelity` in `server/providers/chatScripting.ts`), so a prompt
@@ -66,7 +69,8 @@ Rules:
 5. Consecutive sentences of narration may share one line; start a new line at every change of speaker or type, and at paragraph breaks.
 6. Give a direction only when the prose itself says how a line is delivered; leave it out otherwise.
 
-Notes on this book: {{book.notes}}`,
+Notes on this book: {{book.notes}}
+Notes for this model: {{endpoint.notes}}`,
   user: `Chapter: {{chapter.title}}
 Known cast: {{cast}}
 
@@ -115,6 +119,11 @@ export const PROMPT_TAGS: readonly PromptTag[] = [
     scope: "book",
   },
   { name: "endpoint.name", about: "The endpoint's name", scope: "endpoint" },
+  {
+    name: "endpoint.notes",
+    about: "The endpoint's notes for its model; empty leaves its line out",
+    scope: "endpoint",
+  },
   { name: "model", about: "The model ID the request goes to", scope: "endpoint" },
 ];
 
@@ -146,7 +155,8 @@ export interface PromptVars {
   /** the book's speakers; the Narrator and "Unknown" are left out of both cast tags */
   cast: readonly PromptCastMember[];
   excerpt: string;
-  endpoint: { name: string; model: string };
+  /** `notes` absent is none, as for an endpoint with nothing typed */
+  endpoint: { name: string; model: string; notes?: string };
 }
 
 const GENDER: Record<Gender, string> = { m: "male", f: "female", n: "non-binary", "?": "" };
@@ -195,6 +205,8 @@ function valueOf(name: string, vars: PromptVars): string | undefined {
       return vars.endpoint.name;
     case "model":
       return vars.endpoint.model;
+    case "endpoint.notes":
+      return (vars.endpoint.notes ?? "").trim();
     default:
       return undefined;
   }
@@ -240,7 +252,7 @@ export const libraryPrompt = (saved: PromptTemplate | null | undefined): PromptT
 
 /**
  * The template one request is built from: the book's replacement, else the endpoint's, else the
- * library's default, else the built-in prompt — then the endpoint's append, if it has one.
+ * library's default, else the built-in prompt.
  */
 export function resolvePrompt(layers: {
   library: PromptTemplate | null | undefined;
@@ -254,11 +266,22 @@ export function resolvePrompt(layers: {
   else if (profile?.mode === "replace") [base, from] = [profile, "endpoint"];
   else if (library) [base, from] = [library, "library"];
   else [base, from] = [BUILT_IN_PROMPT, "built-in"];
-  const appended = profile?.mode === "append" && !!(profile.system.trim() || profile.user.trim());
-  const join = (a: string, b: string): string => (b.trim() ? `${a.trimEnd()}\n\n${b.trim()}` : a);
-  const system = appended ? join(base.system, profile.system) : base.system;
-  const user = appended ? join(base.user, profile.user) : base.user;
-  return { system, user, origin: { from, appended, fingerprint: fingerprint({ system, user }) } };
+  const { system, user } = base;
+  return { system, user, origin: { from, fingerprint: fingerprint({ system, user }) } };
+}
+
+/**
+ * Which notes a template would not send: the ones with text whose tag it does not name. What the
+ * page warns about beside the notes, so a note typed for a prompt that drops it says so.
+ */
+export function unplacedNotes(
+  t: PromptTemplate,
+  notes: { book?: string; endpoint?: string },
+): ("book" | "endpoint")[] {
+  const named = new Set([...tagsIn(t.system), ...tagsIn(t.user)]);
+  return (["book", "endpoint"] as const).filter(
+    (k) => (notes[k] ?? "").trim() && !named.has(`${k}.notes`),
+  );
 }
 
 /** A short, stable hash of a template: FNV-1a over both messages, as eight hex digits. */
@@ -279,17 +302,17 @@ export function describeOrigin(o: PromptOrigin): string {
     endpoint: "endpoint's prompt",
     book: "book's prompt",
   }[o.from];
-  return `${base}${o.appended ? " + endpoint's addition" : ""}`;
+  return base;
 }
 
 // ---------------------------------------------------------------------------------------------
 // Checks
 
-/** The longest a message's template may be, and a book's notes. Every character is sent, and billed, with every request. */
+/** The longest a message's template may be, and a book's or an endpoint's notes. Every character is sent, and billed, with every request. */
 export const PROMPT_MAX_CHARS = 20_000;
 export const NOTES_MAX_CHARS = 4_000;
 
-/** What stops a book's notes from being saved. */
+/** What stops a book's or an endpoint's notes from being saved. */
 export function notesProblems(notes: string): string[] {
   return notes.length > NOTES_MAX_CHARS
     ? [
@@ -299,11 +322,11 @@ export function notesProblems(notes: string): string[] {
 }
 
 /**
- * What stops a template from being saved. `whole` is a template that is a prompt on its own (the
- * library's, an endpoint's or a book's replacement); `append` is an endpoint's addition, which may
- * be empty and must not bring a second excerpt.
+ * What stops a template from being saved as a prompt of its own — the library's, an endpoint's or
+ * a book's replacement: unknown tags, the excerpt missing, doubled or in the system prompt, and
+ * length.
  */
-export function promptProblems(t: PromptTemplate, kind: "whole" | "append"): string[] {
+export function promptProblems(t: PromptTemplate): string[] {
   const problems = lengthProblems(t);
   for (const [label, text] of [
     ["system prompt", t.system],
@@ -314,16 +337,9 @@ export function promptProblems(t: PromptTemplate, kind: "whole" | "append"): str
   }
   const inUser = tagsIn(t.user).filter((n) => n === "excerpt").length;
   const inSystem = tagsIn(t.system).filter((n) => n === "excerpt").length;
-  if (kind === "whole") {
-    if (inSystem) problems.push("{{excerpt}} goes in the user message, not the system prompt.");
-    if (inUser === 0)
-      problems.push("The user message must include {{excerpt}}, the text to script.");
-    if (inUser > 1)
-      problems.push("{{excerpt}} may appear only once: the model would copy it twice.");
-  } else if (inUser + inSystem)
-    problems.push(
-      "An addition must not include {{excerpt}}: the prompt it adds to already has it.",
-    );
+  if (inSystem) problems.push("{{excerpt}} goes in the user message, not the system prompt.");
+  if (inUser === 0) problems.push("The user message must include {{excerpt}}, the text to script.");
+  if (inUser > 1) problems.push("{{excerpt}} may appear only once: the model would copy it twice.");
   return problems;
 }
 
@@ -344,14 +360,15 @@ export function lengthProblems(t: PromptTemplate): string[] {
 }
 
 /**
- * What stops an endpoint's say over the prompt from being saved: a replacement is a prompt on its
- * own, an addition must not bring a second excerpt, and the texts a `default` endpoint keeps for
- * later are sent nowhere, so only their length is held against them.
+ * What stops an endpoint's say over the prompt from being saved: its notes always; a replacement
+ * as a prompt on its own, and the texts a `default` endpoint keeps for later only for their
+ * length, since they are sent nowhere.
  */
 export function profilePromptProblems(p: ProfilePrompt): string[] {
-  if (p.mode === "replace") return promptProblems(p, "whole");
-  if (p.mode === "append") return promptProblems(p, "append");
-  return lengthProblems(p);
+  return [
+    ...notesProblems(p.notes),
+    ...(p.mode === "replace" ? promptProblems(p) : lengthProblems(p)),
+  ];
 }
 
 /**
@@ -360,10 +377,7 @@ export function profilePromptProblems(p: ProfilePrompt): string[] {
  * from it — but not at any length.
  */
 export function bookPromptProblems(p: BookPrompt): string[] {
-  return [
-    ...notesProblems(p.notes),
-    ...(p.replace ? promptProblems(p, "whole") : lengthProblems(p)),
-  ];
+  return [...notesProblems(p.notes), ...(p.replace ? promptProblems(p) : lengthProblems(p))];
 }
 
 /** What is allowed but costly: a tag in the system prompt that changes with every chapter. */

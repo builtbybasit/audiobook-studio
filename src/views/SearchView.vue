@@ -19,7 +19,7 @@ import { isScripted } from "@/lib/scriptReview";
 import { UiCheckbox, UiSelect, UiToggleGroup } from "@/ui";
 import { useFilter } from "reka-ui";
 import { useBookId } from "@/composables/useBookId";
-import { useCast } from "@/queries";
+import { useBookScripts, useCast } from "@/queries";
 import {
   Flag as FlagIcon,
   Megaphone as DirectionIcon,
@@ -41,6 +41,7 @@ const route = useRoute();
 const router = useRouter();
 const bookId = useBookId();
 useCast(bookId);
+useBookScripts(bookId);
 const q = ref(String(route.query.q ?? ""));
 const speaker = ref(String(route.query.speaker ?? ""));
 const TYPES = ["all", "dialogue", "narration", "thought"];

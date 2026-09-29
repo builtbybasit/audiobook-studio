@@ -10,6 +10,8 @@ import { useQuery, useQueryCache } from "@pinia/colada";
 
 import { keys } from "@/queries/keys";
 import { libraryService, type ChapterScript } from "@/services/library";
+import { isScripted } from "@/lib/scriptReview";
+import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 
 async function readScript(bookId: string, chapterId: number): Promise<ChapterScript> {
@@ -66,5 +68,20 @@ export function useChapterScripts(
           .catch(() => {});
     },
     { immediate: true },
+  );
+}
+
+/**
+ * Every scripted chapter's script of the book, for a page that reads lines across all of them —
+ * Search, the review inbox, a speaker's line count, the dictionary's uses. A chapter scripted
+ * while the page is open is read as it becomes one.
+ */
+export function useBookScripts(bookId: MaybeRefOrGetter<string>): void {
+  const libraryStore = useLibraryStore();
+  useChapterScripts(bookId, () =>
+    libraryStore
+      .chaptersOf(toValue(bookId))
+      .filter(isScripted)
+      .map((c) => c.id),
   );
 }

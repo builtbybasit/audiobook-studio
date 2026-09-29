@@ -33,7 +33,7 @@ import RunEstimate from "@/views/narration/RunEstimate.vue";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import JobLedger from "@/views/narration/JobLedger.vue";
 import { useBookId } from "@/composables/useBookId";
-import { useCast, useChapterScript, useChapterScripts } from "@/queries";
+import { useBookScripts, useCast, useChapterScript, useChapterScripts } from "@/queries";
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
@@ -147,9 +147,11 @@ function remember(id: number) {
 watch(opened, remember);
 onMounted(() => remember(opened.value));
 // The open chapter's lines are the ledger and the player; the picked chapters' are what the run
-// plan counts and the estimate prices. None of them is read in by anything else on this page.
+// plan counts and the estimate prices; the whole book's are each speaker's line count and the
+// dictionary's uses. None of them is read in by anything else on this page.
 useChapterScript(bookId, opened);
 useChapterScripts(bookId, selected);
+useBookScripts(bookId);
 const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));
 /** The tab carries the cast's progress, so the Voices panel needs no summary line of its own. */
 const voices = computed(() => {

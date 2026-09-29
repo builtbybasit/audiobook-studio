@@ -22,6 +22,6 @@ export function endpointScriptingProvider(
     name: "Scripting profiles",
     callsProfile: true,
     script: (input) => via(input.target).script(input),
-    probe: (target, signal) => via(target).probe!(target, signal),
+    probe: (target, signal, prompt) => via(target).probe!(target, signal, prompt),
   };
 }

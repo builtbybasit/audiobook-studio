@@ -9,7 +9,7 @@
 // calls the profile the run was queued with (`chatScripting.ts`). A server runs with both, and
 // sends each run to the one its profile names (`endpointScripting.ts`): a simulated profile to
 // the fake, every other to its model.
-import type { SegmentType } from "@/types";
+import type { PromptTemplate, ReasoningEffort, RenderedPrompt, SegmentType } from "@/types";
 import type { SentScript } from "~/providers/sent";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
 
@@ -17,6 +17,8 @@ import type { ProbeResult, ProviderTarget } from "~/providers/target";
 export interface ScriptTarget extends ProviderTarget {
   /** the profile's cap on output tokens; 0 = let the model decide */
   maxOutputTokens: number;
+  /** how hard a reasoning model is asked to think; absent or null sends nothing and leaves it to the model */
+  reasoning?: ReasoningEffort | null;
 }
 
 export interface ScriptInput {
@@ -38,6 +40,12 @@ export interface ScriptInput {
    * "the girl". Names only, Narrator included; a provider may ignore it.
    */
   cast: string[];
+  /**
+   * The two messages to send, rendered by the job from the prompt the run was queued with
+   * (`@/lib/prompt`). Absent, a provider that sends a prompt builds the built-in one from `title`,
+   * `cast` and `text`. The fake reads none of it.
+   */
+  prompt?: RenderedPrompt;
   /** called once for every request that reached the wire, answered or not; see `sent.ts` */
   sent?(request: SentScript): void;
 }
@@ -59,6 +67,10 @@ export interface ScriptingProvider {
    */
   readonly callsProfile?: boolean;
   script(input: ScriptInput): Promise<ScriptedLine[]>;
-  /** one small request to see the profile answers — the Test button; absent, it cannot be tested */
-  probe?(target: ScriptTarget, signal: AbortSignal): Promise<ProbeResult>;
+  /**
+   * One small request to see the profile answers — the Test button; absent, it cannot be tested.
+   * `prompt` is the template the profile's runs would be sent (the library's, with its own
+   * addition or replacement), filled in with `sampleVars`; absent, the built-in one.
+   */
+  probe?(target: ScriptTarget, signal: AbortSignal, prompt?: PromptTemplate): Promise<ProbeResult>;
 }

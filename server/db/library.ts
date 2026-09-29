@@ -6,7 +6,7 @@
 // behind for the review to choke on.
 import { and, asc, count, eq, inArray, max, sql } from "drizzle-orm";
 
-import type { Book, Chapter, ChapterCounts, Volume } from "@/types";
+import type { Book, BookPrompt, Chapter, ChapterCounts, Volume } from "@/types";
 import type { Db, Tx } from "~/db/client";
 import type { ChapterBody } from "~/import/assemble";
 import { rekeyActive } from "~/db/jobs";
@@ -461,6 +461,8 @@ export interface BookSettings {
   budget?: { cap: number | null; paused: boolean } | null;
   scriptBudget?: number | null;
   pacing?: { line: number; turn: number } | null;
+  /** the book's notes for the scripter and its own prompt; `null` clears both */
+  prompt?: BookPrompt | null;
 }
 
 /**

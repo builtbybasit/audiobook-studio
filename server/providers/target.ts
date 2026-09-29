@@ -87,6 +87,7 @@ export function scriptTarget(db: Db | Tx, p: Profile): ScriptTarget {
   return {
     ...targetOf(p, "scripting", readEndpointKey(db, "scripting", p.id)),
     maxOutputTokens: p.maxOutputTokens,
+    reasoning: p.reasoning ?? null,
   };
 }
 

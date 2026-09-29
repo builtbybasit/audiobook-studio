@@ -1,7 +1,7 @@
 // The queue. One job per chapter of work, whatever kind it is; `scriptRun` and `exportRun` carry
 // the live detail the Queue page opens up, and everything a retry needs to run it again.
 import type { ExportSettings } from "@/types/export";
-import type { Profile } from "@/types/scripting";
+import type { Profile, ResolvedPrompt } from "@/types/scripting";
 
 export type JobKind = "scripting" | "narration" | "export";
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -46,6 +46,12 @@ export interface Job {
   };
   scriptRun?: {
     profile: Profile;
+    /**
+     * The prompt the run was queued with, its layers resolved and its tags not yet filled, and the
+     * book's notes as they were then. Absent on a run queued before prompts were editable, which is
+     * sent the built-in prompt.
+     */
+    prompt?: ResolvedPrompt & { notes: string };
     requests: number;
     completed: number;
     active: number;

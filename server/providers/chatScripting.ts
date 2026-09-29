@@ -18,7 +18,8 @@
 // sentence was still billed for it. See `sent.ts`.
 import * as v from "valibot";
 
-import type { SegmentType, TokenUsage } from "@/types";
+import type { PromptTemplate, RenderedPrompt, SegmentType, TokenUsage } from "@/types";
+import { BUILT_IN_PROMPT, renderPrompt, sampleVars } from "@/lib/prompt";
 import { NARRATOR } from "@/lib/cast";
 import { normalizeUsage } from "@/lib/pricing";
 import { UNKNOWN_SPEAKER } from "~/providers/fake";
@@ -46,35 +47,24 @@ export interface ChatScriptingOptions {
   backoffMs?: CallOptions["backoffMs"];
 }
 
-/** What the model is told the job is. The user message carries the title, the cast and the text. */
-export const SYSTEM_PROMPT = `You turn an excerpt from a chapter of an English novel into an audiobook script.
-
-The script is a list of consecutive lines that together read out the excerpt from start to finish. Each line has:
-- "type": "narration" for the narrator's prose, "dialogue" for words a character says aloud, "thought" for words a character thinks (usually in italics or marked "she thought").
-- "speaker": "Narrator" for narration; for dialogue and thought, the name of the character speaking or thinking.
-- "text": the words of the line, copied verbatim from the excerpt.
-- "direction" (optional): a few words on how the line is delivered, e.g. "whispering" or "angrily" — only when the prose itself says so. Leave it out otherwise.
-
-Rules:
-1. Every word of the excerpt appears exactly once, in the original order. Add nothing, drop nothing, summarise nothing, correct nothing. Keep the punctuation of the prose.
-2. Dialogue text is the spoken words without their surrounding quotation marks. A quotation interrupted by narration becomes three lines: dialogue, narration, dialogue.
-3. Attribution tags such as "said Mara" or "he asked, frowning" are narration, read by the Narrator; they are never part of the dialogue line.
-4. Work out who is speaking from the tags and from the conversation's back-and-forth. When a speaker is one of the known cast, use exactly that name; otherwise use the name the text gives them (e.g. "Old Tobiah", "the Captain"). Use "Unknown" only when nothing in the excerpt says who speaks.
-5. Consecutive sentences of narration may share one line; start a new line at every change of speaker or type, and at paragraph breaks.
-
-Answer with JSON only, in this shape:
-{"lines":[{"type":"narration","speaker":"Narrator","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"softly"},{"type":"narration","speaker":"Narrator","text":"said Mara softly."}]}`;
-
-/** The user message: which book it is, who is known already, and the excerpt itself. */
-export function userPrompt(title: string, cast: readonly string[], text: string): string {
-  const known = cast.filter((n) => n !== NARRATOR && n !== UNKNOWN_SPEAKER);
-  return [
-    `Chapter: ${title}`,
-    `Known cast: ${known.length ? known.join(", ") : "(none yet)"}`,
-    "",
-    "Excerpt:",
-    text,
-  ].join("\n");
+/**
+ * The built-in prompt for one request, for a caller that rendered none: the chapter's title, the
+ * cast and the text, with nothing known of the book.
+ */
+export function builtInPrompt(
+  title: string,
+  cast: readonly string[],
+  text: string,
+): RenderedPrompt {
+  return renderPrompt(BUILT_IN_PROMPT, {
+    book: { title: "", author: "", notes: "" },
+    chapter: { title, number: 1 },
+    part: 1,
+    parts: 1,
+    cast: cast.map((name) => ({ name })),
+    excerpt: text,
+    endpoint: { name: "", model: "" },
+  });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -260,8 +250,7 @@ const PROBE_TEXT = "The lamp guttered in the draught. “Is someone there?” Ma
 export function chatScriptingProvider(options: ChatScriptingOptions = {}): ScriptingProvider {
   async function request(
     target: ScriptTarget,
-    title: string,
-    cast: readonly string[],
+    prompt: RenderedPrompt,
     text: string,
     signal: AbortSignal,
     sent?: (request: SentScript) => void,
@@ -270,8 +259,8 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     const body = {
       model: target.model,
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userPrompt(title, cast, text) },
+        { role: "system", content: prompt.system },
+        { role: "user", content: prompt.user },
       ],
       response_format: { type: "json_object" },
       temperature: 0.1,
@@ -376,19 +365,29 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
   return {
     name: "Chat completions",
     callsProfile: true,
-    async script({ title, text, signal, progress, target, cast, sent }: ScriptInput) {
+    async script({ title, text, signal, progress, target, cast, prompt, sent }: ScriptInput) {
       if (!target) throw new ProviderError(NO_PROFILE, 0, false);
       progress?.(0, 1);
-      const lines = await request(target, title, cast, text, signal, sent);
+      const lines = await request(
+        target,
+        prompt ?? builtInPrompt(title, cast, text),
+        text,
+        signal,
+        sent,
+      );
       progress?.(1, 1);
       return lines;
     },
-    async probe(target, signal): Promise<ProbeResult> {
+    async probe(target, signal, template?: PromptTemplate): Promise<ProbeResult> {
       const started = performance.now();
       const ms = (): number => Math.round(performance.now() - started);
       try {
         // reports nothing: a connection test belongs to no book, and the ledger is per book
-        const lines = await request(target, "Connection test", [], PROBE_TEXT, signal);
+        const prompt = renderPrompt(
+          template ?? BUILT_IN_PROMPT,
+          sampleVars(PROBE_TEXT, { name: target.name, model: target.model }),
+        );
+        const lines = await request(target, prompt, PROBE_TEXT, signal);
         const speakers = [
           ...new Set(lines.filter((l) => l.type !== "narration").map((l) => l.speaker)),
         ];

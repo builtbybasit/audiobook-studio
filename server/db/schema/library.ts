@@ -40,6 +40,12 @@ export const books = sqliteTable("books", {
   scriptBudget: real("script_budget"),
   pacingLine: real("pacing_line"),
   pacingTurn: real("pacing_turn"),
+  /** the book's notes for the scripter, which `{{book.notes}}` places; null = none */
+  promptNotes: text("prompt_notes"),
+  /** whether the two texts below are this book's whole prompt; kept either way */
+  promptReplace: integer("prompt_replace", { mode: "boolean" }),
+  promptSystem: text("prompt_system"),
+  promptUser: text("prompt_user"),
 });
 
 export const volumes = sqliteTable(

@@ -7,11 +7,19 @@
 // audio, which is carried across a restore clip by clip rather than stored twice.
 import type { NarrationStatus } from "@/types/book";
 import type { Segment } from "@/types/segment";
+import type { PromptOrigin } from "@/types/scripting";
 
 /** How one script came to be. A version is labelled by the operation that produced its content. */
 export type VersionOrigin =
   /** `again` is a run over a chapter that already had a script — a re-script rather than the first */
-  | { kind: "scripted"; profile?: string; model?: string; again?: boolean }
+  | {
+      kind: "scripted";
+      profile?: string;
+      model?: string;
+      again?: boolean;
+      /** where the run's prompt came from; absent on a version scripted before it was recorded */
+      prompt?: PromptOrigin;
+    }
   | { kind: "edited"; edits: number }
   | { kind: "bulk"; label: string; lines: number }
   | { kind: "restored"; from: number; fromAt: number }

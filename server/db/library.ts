@@ -20,7 +20,14 @@ import {
   exportItems,
   volumes,
 } from "~/db/schema";
-import { bookValues, chapterValues, toBook, toChapter, volumeValues } from "~/db/rows";
+import {
+  bookPromptValues,
+  bookValues,
+  chapterValues,
+  toBook,
+  toChapter,
+  volumeValues,
+} from "~/db/rows";
 
 /** SQLite takes its parameters one variable at a time, and a long web novel is thousands of rows. */
 const CHUNK = 200;
@@ -470,7 +477,7 @@ export interface BookSettings {
  *
  * A budget and a pacing are each one value in two columns, and are written as one: the row reads
  * back a pacing only when both of its columns are set, so writing half of one would store a value
- * that reads as the default.
+ * that reads as the default. A prompt is one value in four, the same way.
  */
 export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): void {
   const set: Partial<typeof books.$inferInsert> = {};
@@ -483,6 +490,7 @@ export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): v
     set.pacingLine = s.pacing?.line ?? null;
     set.pacingTurn = s.pacing?.turn ?? null;
   }
+  if (s.prompt !== undefined) Object.assign(set, bookPromptValues(s.prompt));
   if (!Object.keys(set).length) return;
   db.update(books).set(set).where(eq(books.id, bookId)).run();
 }

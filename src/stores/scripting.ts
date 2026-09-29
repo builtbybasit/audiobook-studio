@@ -5,6 +5,7 @@ import { scriptingPlan } from "@/lib/runPlan";
 import { ApiError } from "@/services/http";
 import { jobsService } from "@/services/jobs";
 import { baseRates, ensurePricing, estimateRates } from "@/lib/pricing";
+import { resolvePrompt } from "@/lib/prompt";
 import { makeScriptSettings, profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
 import { recentCacheRate } from "@/lib/scriptActivity";
 import { scriptActivityNow } from "@/queries/scriptActivity";
@@ -76,7 +77,15 @@ export const useScriptingStore = defineStore("scripting", {
           p && !profileErrors(p).length ? texts.map((text) => scriptParts(text, p)) : [];
         // one instant for the whole estimate, so the figures on screen agree with each other
         const at = Date.now();
-        const tokens = parts.flat().map((text) => tokenEstimate(text, p!, at));
+        // priced with the prompt the run would send: the book's, the endpoint's or the library's
+        const prompt = p
+          ? resolvePrompt({
+              library: endpointsStore.prompt,
+              profile: p.prompt,
+              book: libraryStore.bookById(bookId)?.prompt,
+            })
+          : undefined;
+        const tokens = parts.flat().map((text) => tokenEstimate(text, p!, at, prompt));
         const inputCost = tokens.reduce((n, t) => n + t.inputCost, 0);
         const outputCost = tokens.reduce((n, t) => n + t.outputCost, 0);
         const rates = p

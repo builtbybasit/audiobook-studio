@@ -10,6 +10,11 @@
 // credential registry), and a short while after it last changed sends the whole of it. What the
 // server answers is what the store then holds.
 //
+// The library's default scripting prompt travels in the same document (`prompt`, null for the
+// built-in one), but it is not bound onto anything: the page stages an edit to it and saves it on
+// purpose (`setLibraryPrompt`), as it does an endpoint's own prompt (`setProfilePrompt`), since a
+// prompt half-typed is one the server would refuse and every run would read.
+//
 // The request history, failure counts and back-off on each endpoint are not configuration. The
 // server never stores them, and neither sending nor installing a configuration touches them. The
 // rate limits and the cooldown are the server's gate's (`_installLive`), read while narration is
@@ -20,6 +25,7 @@ import { credentials } from "@/lib/credentials";
 import { isFishAudio, presetById, voiceRef } from "@/lib/endpoints";
 import { configErrors, expressionId } from "@/lib/expressions";
 import { newProfile, profileErrors } from "@/lib/scripting";
+import { BUILT_IN_PROMPT, promptProblems } from "@/lib/prompt";
 import { GENDER } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
 import {
@@ -45,6 +51,8 @@ import type {
   ExpressionConfig,
   KeptVoiceSamples,
   Profile,
+  ProfilePrompt,
+  PromptTemplate,
   ResolvedVoice,
   SettingsFile,
   Voice,
@@ -61,6 +69,8 @@ import { useUiStore } from "@/stores/ui";
 interface EndpointsState {
   endpoints: Endpoint[];
   profiles: Profile[];
+  /** The library's default scripting prompt, as saved; null is the built-in one. */
+  prompt: PromptTemplate | null;
   /** Whether the configuration has been read from the server yet. */
   loaded: boolean;
   /**
@@ -89,14 +99,38 @@ function storedOf(ep: Endpoint): StoredEndpoint {
   return out as unknown as StoredEndpoint;
 }
 
-function configOf(endpoints: Endpoint[], profiles: Profile[]): EndpointConfig {
+function configOf(
+  endpoints: Endpoint[],
+  profiles: Profile[],
+  prompt: PromptTemplate | null,
+): EndpointConfig {
   return {
     endpoints: endpoints.map(storedOf),
     // `apiKey` is never on these objects, and is dropped anyway: a key that got onto one would
     // otherwise go out with every write-behind, and a stale `""` there would forget the key
     profiles: profiles.map(({ apiKey: _apiKey, ...p }) => p),
     credentials: credentials.map((c) => ({ ...c })),
+    // always sent, so what the server holds is what the page shows
+    prompt,
   };
+}
+
+/** A template as it is kept: null when it is the built-in prompt, word for word. */
+function keptPrompt(t: PromptTemplate | null): PromptTemplate | null {
+  return !t || (t.system === BUILT_IN_PROMPT.system && t.user === BUILT_IN_PROMPT.user)
+    ? null
+    : { system: t.system, user: t.user };
+}
+
+/** Whether a settings file's default prompt is one: null, or two strings that make a whole prompt. */
+function promptOk(t: unknown): t is PromptTemplate | null {
+  if (t === null) return true;
+  const o = t as Partial<PromptTemplate> | undefined;
+  return (
+    typeof o?.system === "string" &&
+    typeof o.user === "string" &&
+    !promptProblems({ system: o.system, user: o.user }, "whole").length
+  );
 }
 
 /** What a settings file keeps of an entry: neither the key nor whether some server holds one. */
@@ -149,6 +183,7 @@ export const useEndpointsStore = defineStore("endpoints", {
   state: (): EndpointsState => ({
     endpoints: [],
     profiles: [],
+    prompt: null,
     loaded: false,
     live: {},
   }),
@@ -211,7 +246,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       });
     },
     _config(): EndpointConfig {
-      return configOf(this.endpoints, this.profiles);
+      return configOf(this.endpoints, this.profiles, this.prompt);
     },
     /**
      * Hold the configuration the server answered with, in place of this one.
@@ -234,6 +269,7 @@ export const useEndpointsStore = defineStore("endpoints", {
         return cur ? adopt(cur, p) : p;
       });
       credentials.splice(0, credentials.length, ...answer.credentials);
+      this.prompt = answer.prompt ?? null;
       // What the watch will see next is the answer, and the answer is not a change to send.
       held = JSON.stringify(this._config());
     },
@@ -332,8 +368,13 @@ export const useEndpointsStore = defineStore("endpoints", {
       if (edits !== n) return;
       // The usual case: the server holds exactly what was sent, so there is nothing to put back on
       // the objects the page is editing.
-      if (JSON.stringify({ ...answer, endpoints: answer.endpoints.map(storedOf) }) === sent)
-        held = sent;
+      const same: EndpointConfig = {
+        endpoints: answer.endpoints.map(storedOf),
+        profiles: answer.profiles,
+        credentials: answer.credentials,
+        prompt: answer.prompt ?? null,
+      };
+      if (JSON.stringify(same) === sent) held = sent;
       else this._install(answer);
     },
     /**
@@ -413,6 +454,35 @@ export const useEndpointsStore = defineStore("endpoints", {
         };
       }
     },
+    /**
+     * Save the library's default prompt; null, or the built-in prompt word for word, is kept as
+     * the built-in one. False, and nothing saved, when it is not a whole prompt. The write-behind
+     * sends it.
+     */
+    setLibraryPrompt(t: PromptTemplate | null): boolean {
+      if (t && promptProblems(t, "whole").length) return false;
+      this.prompt = keptPrompt(t);
+      return true;
+    },
+    /**
+     * Save one scripting endpoint's say over the prompt. Only the mode in use is checked — the
+     * text a Default endpoint keeps is not sent — and a Default endpoint with no text is kept as
+     * none. False, and nothing saved, when the mode in use has a problem.
+     */
+    setProfilePrompt(id: string, prompt: ProfilePrompt): boolean {
+      const p = this.profiles.find((x) => x.id === id);
+      if (!p) return false;
+      if (
+        prompt.mode !== "default" &&
+        promptProblems(prompt, prompt.mode === "append" ? "append" : "whole").length
+      )
+        return false;
+      p.prompt =
+        prompt.mode === "default" && !prompt.system.trim() && !prompt.user.trim()
+          ? null
+          : { mode: prompt.mode, system: prompt.system, user: prompt.user };
+      return true;
+    },
     saveExpressionConfig(id: string, config: ExpressionConfig): boolean {
       const narrationStore = useNarrationStore();
       const uiStore = useUiStore();
@@ -465,6 +535,7 @@ export const useEndpointsStore = defineStore("endpoints", {
           }) => portable(e),
         ),
         profiles: this.profiles.map(portable),
+        prompt: this.prompt ? { ...this.prompt } : null,
         scriptSettings: { ...scriptingStore.scriptSettings },
       };
     },
@@ -478,6 +549,9 @@ export const useEndpointsStore = defineStore("endpoints", {
           throw new Error(`Invalid expression support for ${ep.name}`);
       if (obj.profiles != null && !Array.isArray(obj.profiles))
         throw new Error("Invalid scripting endpoints");
+      // a file from before the prompt could be edited says nothing of it, and leaves this one's be
+      if (obj.prompt !== undefined && !promptOk(obj.prompt))
+        throw new Error("Invalid default prompt");
       const profiles = (obj.profiles ?? []).map((imported) => {
         const existing = this.profiles.find((p) => p.id === imported?.id);
         // what the file says about a key is dropped: `hasKey` belongs to the server that wrote it,
@@ -506,6 +580,7 @@ export const useEndpointsStore = defineStore("endpoints", {
         if (cur) Object.assign(cur, p);
         else this.profiles.push(p);
       }
+      if (obj.prompt !== undefined) this.prompt = keptPrompt(obj.prompt);
       if (obj.scriptSettings) Object.assign(scriptingStore.scriptSettings, obj.scriptSettings);
       uiStore.toast(`Imported ${n} narration and ${profiles.length} scripting endpoints`, {
         kind: "success",

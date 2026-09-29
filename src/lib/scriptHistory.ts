@@ -22,6 +22,7 @@ import type {
   SegmentAudio,
   VersionOrigin,
 } from "@/types";
+import { describeOrigin } from "@/lib/prompt";
 import { chapterNarration } from "@/lib/runPlan";
 import { clone } from "@/lib/utils";
 
@@ -190,11 +191,22 @@ export function originKindLabel(origin: VersionOrigin): string {
   }
 }
 
+/**
+ * Where a scripted version's prompt came from, with its fingerprint — "library prompt · 3f2a9c01" —
+ * so two runs with the same model and different prompts read differently. Empty for anything else,
+ * and for a version scripted before the prompt was recorded.
+ */
+export function originPrompt(origin: VersionOrigin): string {
+  return origin.kind === "scripted" && origin.prompt
+    ? `${describeOrigin(origin.prompt)} · ${origin.prompt.fingerprint}`
+    : "";
+}
+
 /** The second line: the detail that does not fit the label. */
 export function originNote(origin: VersionOrigin): string {
   switch (origin.kind) {
     case "scripted":
-      return origin.model ?? "";
+      return [origin.model, originPrompt(origin)].filter(Boolean).join(" · ");
     case "edited":
       return "one editing session";
     case "bulk":

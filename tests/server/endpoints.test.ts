@@ -37,6 +37,7 @@ interface Settings {
   endpoints: Endpoint[];
   profiles: Profile[];
   credentials: Credential[];
+  prompt: { system: string; user: string } | null;
 }
 interface Failure {
   error: { code: string; message: string; detail?: string };
@@ -94,7 +95,12 @@ const save = <T = Settings>(
 
 describe("the endpoints' configuration", () => {
   test("a server nobody has saved endpoints to has none", async () => {
-    expect(await read(testApi())).toEqual({ endpoints: [], profiles: [], credentials: [] });
+    expect(await read(testApi())).toEqual({
+      endpoints: [],
+      profiles: [],
+      credentials: [],
+      prompt: null,
+    });
   });
 
   test("the seeded configuration is kept as it was sent, and read back without its telemetry", async () => {
@@ -135,7 +141,7 @@ describe("the endpoints' configuration", () => {
 
     await save(api, { endpoints: [] });
     back = await read(api);
-    expect(back).toEqual({ endpoints: [], profiles: [], credentials: [] });
+    expect(back).toEqual({ endpoints: [], profiles: [], credentials: [], prompt: null });
   });
 
   test("a speech endpoint's sample rate is kept, and a scripting profile has none", async () => {

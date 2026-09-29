@@ -14,6 +14,8 @@ import { ChevronLeft as PrevIcon, ChevronRight as NextIcon, Check as OkIcon } fr
 import { SPLIT_MODES, splitText } from "@/lib/split";
 import { compact, opsOf } from "@/lib/endpoints";
 import { isSimulated } from "@/lib/providers";
+import { reasoningRequest } from "@/lib/reasoning";
+import { REASONING_LEVELS } from "@/lib/scripting";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import { SAMPLE_RATES, sampleRateLabel } from "@/lib/speech";
 import { FORMAT_LABEL, encodingOf, encodingProblems, speechFormats } from "@/lib/endpointShapes";
@@ -25,7 +27,7 @@ import {
   supportOf,
 } from "@/lib/audioFormat";
 import type { LiveActivity } from "@/views/endpoints/live";
-import type { AudioFormat, SampleRate, SplitMode } from "@/types";
+import type { AudioFormat, ReasoningEffort, SampleRate, SplitMode } from "@/types";
 import type { UiOption } from "@/ui/types";
 
 const props = defineProps<{
@@ -156,6 +158,15 @@ function setBitrate(v: string | number | null) {
 const simulated = computed(() =>
   props.u.endpoint && isSimulated(props.u.baseUrl) ? props.u.endpoint : null,
 );
+
+/** What the host makes of the level picked, when it can't do exactly that; a simulated profile
+ *  thinks about nothing, and is not offered the choice. */
+const reasoningNote = computed(() =>
+  props.u.profile ? reasoningRequest(props.u.baseUrl, props.u.profile.reasoning).note : null,
+);
+function setReasoning(v: string | number | null) {
+  if (props.u.profile) props.u.profile.reasoning = v == null ? null : (v as ReasoningEffort);
+}
 
 const limitNote = computed(() => {
   const l = props.live;
@@ -358,6 +369,30 @@ const limitNote = computed(() => {
             The script coming back is longer than you expect — speaker labels and directions add up.
             This ceiling is also what each request reserves against the budget before it is sent.
           </p>
+          <template v-if="!isSimulated(u.baseUrl)">
+            <label class="mt-3 flex items-center justify-between gap-3 text-sm"
+              ><span class="min-w-0"
+                >Reasoning
+                <span class="block text-[11px] text-zinc-500"
+                  >How long a model that reasons thinks before it answers. Most hosts bill the
+                  thinking as output tokens.</span
+                ></span
+              ><UiSelect
+                :model-value="u.profile.reasoning ?? null"
+                :options="REASONING_LEVELS"
+                null-value="Model default"
+                class="w-44 shrink-0"
+                aria-label="Reasoning"
+                @update:model-value="setReasoning"
+            /></label>
+            <p
+              v-if="reasoningNote"
+              class="mt-1.5 rounded bg-amber-400/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
+              role="status"
+            >
+              {{ reasoningNote }}
+            </p>
+          </template>
         </div>
       </section>
 
@@ -529,9 +564,10 @@ const limitNote = computed(() => {
           <dt class="w-24 shrink-0 font-medium text-violet-600 dark:text-violet-400">Next job</dt>
           <dd class="text-zinc-500">
             <template v-if="u.kind === 'scripting'"
-              >Base URL, model, chunking, output ceiling and prices, and concurrency, timeouts and
-              retries. A queued job carries a snapshot of all of these, so a run finishes on the
-              settings it started with and its recorded cost stays honest.</template
+              >Base URL, model, chunking, output ceiling, reasoning and prices, the prompt, and
+              concurrency, timeouts and retries. A queued job carries a snapshot of all of these, so
+              a run finishes on the settings it started with and its recorded cost stays
+              honest.</template
             >
             <template v-else
               >Base URL, model, audio format, sample rate and prices. Clips already rendered keep

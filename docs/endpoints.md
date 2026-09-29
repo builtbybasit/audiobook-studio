@@ -28,6 +28,65 @@ Scripting now has its own endpoint manager above the reader. Add named OpenAI-co
 
 Concurrent chunk requests share a limit across books on the same endpoint. Chapters remain ordered within each book. Queued jobs keep a snapshot of their endpoint, model, chunking, and prices; changing concurrency or pausing an endpoint affects dispatch immediately. In-flight requests drain while paused. New jobs never silently switch providers. The same budget and scheduling path handles fallback chunk retries. Endpoint removal has Undo, and settings import/export excludes API keys. As elsewhere in this prototype, settings, budgets, jobs, and usage are in memory; no network requests or paid provider calls occur.
 
+### The prompt
+
+What a scripting model is told is edited in the app, not in code ([src/lib/prompt.ts](../src/lib/prompt.ts)
+holds the rules; the page and the job share them, so the preview is what is sent). Three places may
+change it:
+
+- **The library's default prompt**: the **Default prompt** entry above the endpoint list on the
+  Endpoints page, a system prompt and a user message. It starts as the built-in prompt, and **Reset to
+  built-in** puts that back (a default equal to the built-in prompt is stored as none).
+- **An endpoint's Prompt tab**: _Default_ sends the library's prompt as it is; _Append_ adds this
+  endpoint's text after it (a model's quirk: "keep paragraphs apart"); _Replace_ sends this endpoint's
+  own prompt instead. The text is kept when you switch back to Default.
+- **A book's scripting settings**: **Notes for the scripter**, placed wherever the prompt says
+  `{{book.notes}}` (the page warns when the prompt in use has no such tag), and **Use this book's own
+  prompt**, which replaces the whole prompt for that book.
+
+Unlike the rest of the Endpoints page, prompt edits are not saved as you type — a half-typed prompt
+usually has no `{{excerpt}}` yet — but staged behind an **Unsaved changes** bar, whose Save stays
+disabled while the prompt has problems. A book's notes and prompt save a moment after typing stops.
+Exported settings files carry the default prompt and each endpoint's prompt and reasoning level; a
+simulated endpoint ignores both.
+
+A book's own prompt beats an endpoint's Replace, which beats the library default, which beats the
+built-in prompt. An endpoint's Append is added after whichever of those applies, because a model's
+quirks hold whatever book it reads.
+
+**Tags** are `{{name}}` and are filled in per request: `{{excerpt}}` (the text; required once, in
+the user message), `{{part}}` / `{{parts}}`, `{{chapter.title}}`, `{{chapter.number}}`, `{{cast}}`
+(the known speakers' names), `{{cast.details}}` (one line per speaker with gender, other names and
+description), `{{book.title}}`, `{{book.author}}`, `{{book.notes}}`, `{{endpoint.name}}` and
+`{{model}}`. A line whose tags all come out empty is left out, so `Notes on this book: {{book.notes}}`
+vanishes for a book without notes. An unknown tag, a missing or repeated `{{excerpt}}` or a message over
+20,000 characters stops the save. A tag that changes every chapter in the _system_ prompt is allowed,
+with a warning: it stops the provider caching the system prompt, and cached input is cheaper.
+
+**The output format is not editable.** The answer is parsed as `{"lines":[…]}` and held word for word
+against the prose, so the format and the verbatim rule are added after the system prompt of every
+request; the editor shows them read-only.
+
+A run snapshots the resolved prompt and the book's notes when it is queued, like its endpoint and
+chunking, so editing a prompt mid-run changes only later runs. The estimate and the budget hold price
+the prompt's real length. Each scripted version in a chapter's history says where its prompt came from
+and a short fingerprint of it, so two runs with different prompts can be told apart.
+
+### Reasoning level
+
+Each scripting endpoint's Requests tab has a **Reasoning** level: _Model default_ sends nothing and
+leaves it to the model; _Off_, _Low_, _Medium_ and _High_ are sent as the host spells them
+([src/lib/reasoning.ts](../src/lib/reasoning.ts)): `reasoning_effort` for OpenAI, Gemini, xAI, Ollama,
+LM Studio and unknown gateways; `reasoning: {effort}` for OpenRouter; `thinking: {type: "disabled"}` for
+off and `reasoning_effort` otherwise for DeepSeek; only `thinking: {type: "disabled"}` for off through
+Anthropic's compatibility layer, which ignores levels. Where a host can't do what was asked, the nearest
+level is sent and the page says so under the select (Gemini 3 and Grok 4.7 can't turn reasoning off;
+DeepSeek has no medium). `temperature` is left out where it is refused or ignored — OpenAI's reasoning
+models (with no level set too, since GPT-6 reasons by default), DeepSeek in thinking mode, and Claude 5
+on every request. A reasoning model's thinking counts against **max output tokens** and is billed as
+output; a cut-off answer says to raise the cap or lower the level, and the Test button reports the
+reasoning tokens a reply used. Provider docs read on 29 September 2026 are named beside each rule.
+
 Validation: `pnpm test` runs the scripting behavior tests with the installed Bun test runner. `pnpm build`, `pnpm lint`, and `pnpm fmt:check` check the application.
 
 ## Endpoints page

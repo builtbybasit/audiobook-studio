@@ -16,12 +16,16 @@
 // Every request that reaches the wire is reported through `input.sent` with the usage the answer
 // carried, whether its script was accepted or refused: a model that was cut off or dropped a
 // sentence was still billed for it. See `sent.ts`.
+//
+// The profile's reasoning level is added as its host spells it (`@/lib/reasoning`), and
+// `temperature` is left out where that host refuses or ignores it beside a reasoning level.
 import * as v from "valibot";
 
 import type { PromptTemplate, RenderedPrompt, SegmentType, TokenUsage } from "@/types";
 import { BUILT_IN_PROMPT, renderPrompt, sampleVars } from "@/lib/prompt";
 import { NARRATOR } from "@/lib/cast";
 import { normalizeUsage } from "@/lib/pricing";
+import { reasoningRequest } from "@/lib/reasoning";
 import { UNKNOWN_SPEAKER } from "~/providers/fake";
 import {
   call,
@@ -178,6 +182,24 @@ export function usageOf(body: unknown): TokenUsage | null {
   return read.success ? normalizeUsage(read.output.usage, "openai") : null;
 }
 
+/**
+ * `usage.completion_tokens_details.reasoning_tokens`: the thinking a completion was billed for, where
+ * OpenAI, OpenRouter and DeepSeek document it. Read as loosely as `Metered`, and apart from it.
+ */
+const Reasoned = v.looseObject({
+  usage: v.looseObject({
+    completion_tokens_details: v.looseObject({
+      reasoning_tokens: v.pipe(v.number(), v.integer(), v.minValue(0)),
+    }),
+  }),
+});
+
+/** The reasoning tokens a completion says it spent; null when it said nothing readable. */
+export function reasoningTokensOf(body: unknown): number | null {
+  const read = v.safeParse(Reasoned, body);
+  return read.success ? read.output.usage.completion_tokens_details.reasoning_tokens : null;
+}
+
 /** A type as a model may spell it, read as the one it means. */
 function typeOf(said: string, speaker: string): SegmentType {
   const t = said.trim().toLowerCase();
@@ -254,8 +276,9 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     text: string,
     signal: AbortSignal,
     sent?: (request: SentScript) => void,
-  ): Promise<ScriptedLine[]> {
+  ): Promise<{ lines: ScriptedLine[]; reasoningTokens: number | null }> {
     requireKey(target);
+    const reasoning = reasoningRequest(target.baseUrl, target.reasoning);
     const body = {
       model: target.model,
       messages: [
@@ -263,8 +286,9 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         { role: "user", content: prompt.user },
       ],
       response_format: { type: "json_object" },
-      temperature: 0.1,
+      ...(reasoning.omitTemperature ? {} : { temperature: 0.1 }),
       ...(target.maxOutputTokens > 0 ? { max_tokens: target.maxOutputTokens } : {}),
+      ...reasoning.fields,
     };
     const stats: CallStats = { attempts: 0, rateLimited: false };
     const startedAt = Date.now();
@@ -309,7 +333,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     try {
       const lines = readAnswer(target, text, res.status, raw);
       report(usage);
-      return lines;
+      return { lines, reasoningTokens: reasoningTokensOf(raw) };
     } catch (e) {
       if (e instanceof ProviderError) report(usage, e);
       throw e;
@@ -332,12 +356,19 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
       );
     const completion = parsed.output;
     const [choice] = completion.choices;
-    if (choice.finish_reason === "length")
+    if (choice.finish_reason === "length") {
+      const cap = target.maxOutputTokens || "the model’s own limit";
+      // a level other than off asked the model to think, and its thinking counts against the cap
+      const remedy =
+        target.reasoning && target.reasoning !== "off"
+          ? "raise it or lower the reasoning level on the Endpoints page (the model’s thinking counts against it)"
+          : "raise it on the Endpoints page (a reasoning model spends part of it thinking)";
       throw new ProviderError(
-        `${target.name}’s answer was cut off at max output tokens (${target.maxOutputTokens || "the model’s own limit"}); raise it on the Endpoints page (a reasoning model spends part of it thinking) or use smaller chunks`,
+        `${target.name}’s answer was cut off at max output tokens (${cap}); ${remedy} or use smaller chunks`,
         status,
         false,
       );
+    }
     const content = choice.message?.content ?? "";
     if (!content.trim())
       throw new ProviderError(`${target.name} answered with no script at all`, status, false);
@@ -368,7 +399,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     async script({ title, text, signal, progress, target, cast, prompt, sent }: ScriptInput) {
       if (!target) throw new ProviderError(NO_PROFILE, 0, false);
       progress?.(0, 1);
-      const lines = await request(
+      const { lines } = await request(
         target,
         prompt ?? builtInPrompt(title, cast, text),
         text,
@@ -387,13 +418,18 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
           template ?? BUILT_IN_PROMPT,
           sampleVars(PROBE_TEXT, { name: target.name, model: target.model }),
         );
-        const lines = await request(target, prompt, PROBE_TEXT, signal);
+        const { lines, reasoningTokens } = await request(target, prompt, PROBE_TEXT, signal);
         const speakers = [
           ...new Set(lines.filter((l) => l.type !== "narration").map((l) => l.speaker)),
         ];
+        // a count of none is news only to someone who picked a level, "off" above all
+        const thought =
+          reasoningTokens !== null && (reasoningTokens > 0 || target.reasoning)
+            ? `; ${reasoningTokens} reasoning token${reasoningTokens === 1 ? "" : "s"}`
+            : "";
         return {
           ok: true,
-          message: `Answered in ${ms()} ms with ${lines.length} line${lines.length === 1 ? "" : "s"}${speakers.length ? `, spoken by ${speakers.join(", ")}` : ""}`,
+          message: `Answered in ${ms()} ms with ${lines.length} line${lines.length === 1 ? "" : "s"}${speakers.length ? `, spoken by ${speakers.join(", ")}` : ""}${thought}`,
           ms: ms(),
         };
       } catch (e) {

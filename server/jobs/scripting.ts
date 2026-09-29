@@ -17,9 +17,15 @@
 // queued and refused whole if the book cannot afford it; each job holds its chapter's share while
 // it runs and asks again before every request it sends; and every request the provider reports is
 // priced into the ledger as it lands, releasing what that request held.
+//
+// The prompt is fixed when the run is queued, like the profile: the library's, the endpoint's and
+// the book's layers are resolved then (`resolvePrompt`) and kept on the run with the book's notes,
+// so an edit made while it waits reaches the next run and not this one. Its tags are filled in per
+// request, from the book, the chapter, its cast as it stands and the request's place in the chapter.
 import { and, count, eq } from "drizzle-orm";
 
-import type { Job, Profile, Segment } from "@/types";
+import type { Job, Profile, PromptTemplate, Segment } from "@/types";
+import { BUILT_IN_PROMPT, renderPrompt, resolvePrompt, type PromptVars } from "@/lib/prompt";
 import { scriptParts, tokenEstimate } from "@/lib/scripting";
 import { ensureSpeakers } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
@@ -27,7 +33,8 @@ import { capture } from "~/db/history";
 import { readProfiles } from "~/db/endpoints";
 import { activeJob, appendEvent, getJob, nextRunId, setReserved, setScriptRun } from "~/db/jobs";
 import * as library from "~/db/library";
-import { chapters, characters, segments } from "~/db/schema";
+import { books, chapters, characters, segments } from "~/db/schema";
+import { readLibraryPrompt } from "~/db/settings";
 import { ScriptConflict, readScript, replaceScript } from "~/db/script";
 import { plainText } from "~/epub/markdown";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
@@ -105,10 +112,15 @@ function chunksOf(text: string, profile: Profile | undefined): string[] {
 /**
  * What each chunk holds against the budget while it is unsettled: its worst case, at the dearest
  * rates any window or promotion on the card can reach (`ceilingRates`) with the whole output
- * ceiling (`tokenEstimate`). Nothing for a run with no profile, which has no rates to price it by.
+ * ceiling, and the prompt sent with it (`tokenEstimate`). Nothing for a run with no profile, which
+ * has no rates to price it by.
  */
-function holdsOf(chunks: readonly string[], profile: Profile | undefined): number[] {
-  return chunks.map((c) => (profile ? tokenEstimate(c, profile).reserve : 0));
+function holdsOf(
+  chunks: readonly string[],
+  profile: Profile | undefined,
+  prompt: PromptTemplate | undefined,
+): number[] {
+  return chunks.map((c) => (profile ? tokenEstimate(c, profile, Date.now(), prompt).reserve : 0));
 }
 
 export function scriptingHandler(provider: ScriptingProvider): JobHandler {
@@ -117,6 +129,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       const { job, db, signal } = ctx;
       if (job.chapterId == null) throw new Error("A scripting job is for one chapter");
       const chapter = readChapter(db, job.bookId, job.chapterId);
+      const number = job.chapterId;
       // The profile as it was when the run was queued, not as it has been edited since: a run
       // keeps the chunking it was previewed and started with.
       const queued = job.scriptRun;
@@ -125,13 +138,39 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       // key saved after pressing Script is the one used. Null for a run that named no profile,
       // which the provider refuses with a message saying so.
       const target = queued ? scriptTarget(db, queued.profile) : null;
-      // The names the book already has, so a chunk read on its own still calls Mara "Mara".
-      const cast = db
-        .select({ name: characters.name })
+      // The speakers the book already has, so a chunk read on its own still calls Mara "Mara".
+      const speakers = db
+        .select({
+          name: characters.name,
+          aliases: characters.aliases,
+          gender: characters.gender,
+          description: characters.description,
+        })
         .from(characters)
         .where(eq(characters.bookId, job.bookId))
-        .all()
-        .map((c) => c.name);
+        .all();
+      const cast = speakers.map((c) => c.name);
+      // The prompt the run was queued with; a run queued before prompts could be edited is sent
+      // the built-in one, which is what it would have been sent then.
+      const template = queued?.prompt ?? BUILT_IN_PROMPT;
+      const book = db
+        .select({ title: books.title, author: books.author })
+        .from(books)
+        .where(eq(books.id, job.bookId))
+        .get();
+      const varsFor = (i: number): PromptVars => ({
+        book: {
+          title: book?.title ?? "",
+          author: book?.author ?? "",
+          notes: queued?.prompt?.notes ?? "",
+        },
+        chapter: { title: chapter.title, number },
+        part: i + 1,
+        parts: chunks.length,
+        cast: speakers,
+        excerpt: chunks[i],
+        endpoint: { name: queued?.profile.name ?? "", model: queued?.profile.model ?? "" },
+      });
       setChapterScripting(db, job.bookId, job.chapterId, "running", 0);
       ctx.note("Scripting started", "info", {
         provider: provider.name,
@@ -160,7 +199,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       // from inside the provider and the worker counting it can never write over each other. It
       // starts holding the whole chapter's worst case — again, on a restart that picks the job
       // back up — and keeps what earlier attempts cost, which the ledger holds too.
-      const holds = holdsOf(chunks, queued?.profile);
+      const holds = holdsOf(chunks, queued?.profile, queued?.prompt);
       const run: NonNullable<Job["scriptRun"]> | undefined = queued && {
         ...queued,
         requests: chunks.length,
@@ -254,6 +293,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
               signal: stop.signal,
               target,
               cast,
+              prompt: renderPrompt(template, varsFor(i)),
               sent: (request) => settle(i, request),
               progress: (done, total) => {
                 share[i] = total ? done / total : 1;
@@ -327,6 +367,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
                 ? { model: provider.callsProfile ? queued.profile.model : provider.name }
                 : {}),
               again: previous.length > 0,
+              ...(queued?.prompt ? { prompt: queued.prompt.origin } : {}),
             },
             previous,
             segs,
@@ -425,8 +466,15 @@ export function enqueueScripting(
   const chosen = profile ? readProfiles(db).find((p) => p.id === profile) : undefined;
   // a run is named by the profile it goes to
   const via = chosen?.name ?? "no profile";
+  // The prompt is resolved once too, and kept with the notes it will fill in — the template the
+  // run was priced with is the one it sends, whatever is edited while it waits.
+  const prompt = chosen && {
+    ...resolvePrompt({ library: readLibraryPrompt(db), profile: chosen.prompt, book: book.prompt }),
+    notes: book.prompt?.notes ?? "",
+  };
   const run: Job["scriptRun"] = chosen && {
     profile: chosen,
+    prompt,
     requests: 0,
     completed: 0,
     active: 0,
@@ -446,8 +494,11 @@ export function enqueueScripting(
       return [
         id,
         {
-          reserve: holdsOf(chunks, chosen).reduce((a, b) => a + b, 0),
-          estimated: chunks.reduce((n, c) => n + tokenEstimate(c, chosen).cost, 0),
+          reserve: holdsOf(chunks, chosen, prompt).reduce((a, b) => a + b, 0),
+          estimated: chunks.reduce(
+            (n, c) => n + tokenEstimate(c, chosen, Date.now(), prompt).cost,
+            0,
+          ),
         },
       ] as const;
     }),

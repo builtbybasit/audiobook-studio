@@ -14,6 +14,7 @@
 // puts that back through `setDecisions`, rather than running the inverse rule and letting an undone
 // skip come back as "looked at".
 import { noticeGroups, plural, summarize } from "@/lib/contents";
+import { bookPromptProblems } from "@/lib/prompt";
 import { isNarrated, isScripted, key } from "@/lib/scriptReview";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
@@ -26,7 +27,15 @@ import {
   type ReviewDecision,
 } from "@/services/library";
 import { unreachable } from "@/services/http";
-import type { Book, Chapter, ContentsSummary, NoticeGroup, SegmentMap, Volume } from "@/types";
+import type {
+  Book,
+  BookPrompt,
+  Chapter,
+  ContentsSummary,
+  NoticeGroup,
+  SegmentMap,
+  Volume,
+} from "@/types";
 import { defineStore } from "pinia";
 import { useCastStore } from "@/stores/cast";
 import { useExportsStore } from "@/stores/exports";
@@ -56,6 +65,11 @@ interface LibraryState {
    * books would be, so an unreachable server never passes for an empty library.
    */
   unreachable: boolean;
+}
+
+/** A book's prompt as it is stored: null when it has no notes, is not switched on and holds no text. */
+export function storedBookPrompt(p: BookPrompt): BookPrompt | null {
+  return p.notes.trim() || p.replace || p.system.trim() || p.user.trim() ? p : null;
 }
 
 /**
@@ -439,6 +453,29 @@ export const useLibraryStore = defineStore("library", {
       b.scriptBudget = v;
       if (await this._writeSettings(bookId, { scriptBudget: v }, "save the scripting budget"))
         await this._budgetMoved(bookId);
+    },
+    /**
+     * The book's notes for the scripter and its own prompt, written whole. One that cannot be sent
+     * is refused here, with the reason, and nothing is written; the panel shows the same reasons as
+     * they are typed and only saves once there are none. Returns whether it was written.
+     */
+    async setBookPrompt(bookId: string, prompt: BookPrompt): Promise<boolean> {
+      const uiStore = useUiStore();
+
+      const b = this.bookById(bookId);
+      if (!b) return false;
+      const problems = bookPromptProblems(prompt);
+      if (problems.length) {
+        uiStore.toast("This book's prompt was not saved", {
+          kind: "error",
+          description: problems.join(" "),
+          timeout: 8000,
+        });
+        return false;
+      }
+      const stored = storedBookPrompt(prompt);
+      b.prompt = stored ? { ...stored } : undefined;
+      return !!(await this._writeSettings(bookId, { prompt: stored }, "save this book's prompt"));
     },
     _blocked(bookId: string, kind: string): boolean {
       const uiStore = useUiStore();

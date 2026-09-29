@@ -21,14 +21,22 @@ import {
   Upload as ImportIcon,
   ArrowUpRight as ArrowIcon,
 } from "@lucide/vue";
-import { profileErrors, scriptParts, tokenEstimate, scriptingHealth } from "@/lib/scripting";
+import {
+  REASONING_LEVELS,
+  profileErrors,
+  scriptParts,
+  tokenEstimate,
+  scriptingHealth,
+} from "@/lib/scripting";
+import { reasoningRequest } from "@/lib/reasoning";
+import { resolvePrompt } from "@/lib/prompt";
 import { scriptTelemetry } from "@/lib/scriptActivity";
 import { useScriptActivity } from "@/queries/scriptActivity";
 import { isSimulated } from "@/lib/providers";
 import { usePresetPicker } from "@/composables/usePresetPicker";
 import { TabsRoot, TabsList, TabsTrigger, TabsContent } from "reka-ui";
 import EndpointActivity from "@/views/scripting/EndpointActivity.vue";
-import type { Profile, SettingsFile } from "@/types";
+import type { Profile, ReasoningEffort, SettingsFile } from "@/types";
 import { SPLIT_MODES } from "@/lib/split";
 const props = defineProps<{ bookId: string; selected: number[] }>();
 const endpointsStore = useEndpointsStore();
@@ -80,7 +88,19 @@ const preview = computed(
   () => parts.value[Math.min(previewPart.value, parts.value.length - 1)] ?? "",
 );
 const tokens = computed(() =>
-  p.value && preview.value ? tokenEstimate(preview.value, p.value) : null,
+  p.value && preview.value
+    ? tokenEstimate(
+        preview.value,
+        p.value,
+        Date.now(),
+        // with the prompt this book's run would send, as the run's estimate is
+        resolvePrompt({
+          library: endpointsStore.prompt,
+          profile: p.value.prompt,
+          book: libraryStore.bookById(props.bookId)?.prompt,
+        }),
+      )
+    : null,
 );
 const money = (n: number) => "$" + n.toLocaleString("en-US", { maximumFractionDigits: 6 });
 function exportSettings() {
@@ -123,6 +143,11 @@ const {
   fill: (fields) => (p.value ? void Object.assign(p.value, fields) : false),
   next: "Check the model and prices, and add the key if it needs one.",
 });
+
+/** What the host makes of the reasoning level, when it can't do exactly that. */
+const reasoningNote = computed(() =>
+  p.value ? reasoningRequest(p.value.baseUrl, p.value.reasoning).note : null,
+);
 
 /** A `simulated:` profile is answered by the server itself, so it has no request line and no key. */
 const simulated = computed(() => !!p.value && isSimulated(p.value.baseUrl));
@@ -393,6 +418,27 @@ function remove() {
               :initial-max="16384"
               unit="/ request"
             />
+            <template v-if="!simulated">
+              <label class="flex items-center justify-between gap-3 text-sm"
+                ><span>Reasoning</span
+                ><UiSelect
+                  :model-value="p.reasoning ?? null"
+                  :options="REASONING_LEVELS"
+                  null-value="Model default"
+                  class="w-44"
+                  aria-label="Reasoning"
+                  @update:model-value="
+                    (v) => p && (p.reasoning = v == null ? null : (v as ReasoningEffort))
+                  "
+              /></label>
+              <p class="text-[11px] text-zinc-500">
+                How long a model that reasons thinks before it answers. Most hosts bill the thinking
+                as output tokens.
+                <span v-if="reasoningNote" class="text-amber-700 dark:text-amber-300">{{
+                  reasoningNote
+                }}</span>
+              </p>
+            </template>
           </div>
           <div
             class="min-w-0 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-950/50"

@@ -29,6 +29,7 @@ import {
   Play as PlayIcon,
   Plus as AddIcon,
   Download as ExportIcon,
+  MessageSquareText as PromptIcon,
   Search as SearchIcon,
   Server as EndpointIcon,
   Upload as ImportIcon,
@@ -42,6 +43,8 @@ import ExpressionsTab from "@/views/endpoints/ExpressionsTab.vue";
 import VoicesTab from "@/views/endpoints/VoicesTab.vue";
 import PricingTab from "@/views/endpoints/PricingTab.vue";
 import ActivityTab from "@/views/endpoints/ActivityTab.vue";
+import PromptTab from "@/views/endpoints/PromptTab.vue";
+import LibraryPromptPanel from "@/views/endpoints/LibraryPromptPanel.vue";
 import { useEndpointHistory, useEndpointLive, useLibrarySpend } from "@/queries";
 import { probeCost, seriesFrom, RANGES } from "@/services/endpoints";
 import type { EndpointDescriptor } from "@/services/endpoints";
@@ -61,7 +64,16 @@ import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
 import { ensurePricing, money, pricingOf } from "@/lib/pricing";
 import { useEndpointActivity } from "@/views/endpoints/live";
 const { jobsUsing, liveActivity, liveRequests } = useEndpointActivity();
-import { TABS, draftDirty, filterOf, tabOf, tabsFor, ui } from "@/views/endpoints/state";
+import {
+  TABS,
+  draftDirty,
+  filterOf,
+  libraryPromptDirty,
+  profilePromptDirty,
+  tabOf,
+  tabsFor,
+  ui,
+} from "@/views/endpoints/state";
 import type { TabId } from "@/views/endpoints/state";
 import type { MetricBucket, RequestRecord, SettingsFile } from "@/types";
 
@@ -171,13 +183,27 @@ watch(
   { immediate: true },
 );
 const detail = ref<HTMLElement | null>(null);
-async function select(u: UnifiedEndpoint) {
-  ui.selected = u.key;
+async function reveal() {
   if (window.matchMedia("(max-width: 1023px)").matches) {
     await nextTick();
     detail.value?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 }
+async function select(u: UnifiedEndpoint) {
+  ui.selected = u.key;
+  ui.showLibraryPrompt = false;
+  await reveal();
+}
+/** The library's default prompt takes the detail pane, as an endpoint would. */
+async function openLibraryPrompt() {
+  ui.showLibraryPrompt = true;
+  await reveal();
+}
+// the Prompt tab's link to the default opens it the same way
+watch(
+  () => ui.showLibraryPrompt,
+  (open) => open && void reveal(),
+);
 
 const tab = computed<TabId>({
   get: () => (selected.value ? tabOf(selected.value.key, selected.value.kind) : "overview"),
@@ -324,6 +350,7 @@ function add(kind: "scripting" | "tts") {
       : "tts:" + endpointsStore.addEndpoint().id;
   ui.selected = key;
   ui.tab[key] = "connection";
+  ui.showLibraryPrompt = false;
   ui.kind = "all";
   ui.search = "";
 }
@@ -337,6 +364,7 @@ function applyQuery() {
   const key = route.query.endpoint;
   if (typeof key !== "string" || !all.value.some((u) => u.key === key)) return;
   ui.selected = key;
+  ui.showLibraryPrompt = false;
   ui.kind = "all";
   ui.search = "";
   const wanted = route.query.tab;
@@ -511,6 +539,33 @@ function pickBucket(b: MetricBucket | null) {
             aria-label="Search endpoints by name, model or URL"
           />
         </div>
+        <!-- the default prompt: every scripting endpoint's, so it sits above them, not among them -->
+        <button
+          v-if="ui.kind !== 'tts'"
+          type="button"
+          class="flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+          :class="
+            ui.showLibraryPrompt
+              ? 'border-violet-400 bg-violet-50 dark:border-violet-500 dark:bg-violet-500/10'
+              : 'border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:bg-zinc-800/60'
+          "
+          :aria-pressed="ui.showLibraryPrompt"
+          @click="openLibraryPrompt"
+        >
+          <PromptIcon class="icon-lg text-violet-500" />
+          <span class="min-w-0 flex-1">
+            <span class="block text-sm font-medium">Default prompt</span>
+            <span class="block truncate text-[11px] text-zinc-500"
+              >what scripting endpoints send ·
+              {{ endpointsStore.prompt ? "edited" : "built-in" }}</span
+            >
+          </span>
+          <span
+            v-if="libraryPromptDirty(endpointsStore.prompt)"
+            class="h-1.5 w-1.5 shrink-0 rounded-full bg-violet-500"
+            aria-label="unsaved changes"
+          ></span>
+        </button>
         <UiToggleGroup
           v-model="ui.kind"
           :options="KIND_FILTERS"
@@ -524,7 +579,7 @@ function pickBucket(b: MetricBucket | null) {
             :u="u"
             :health="healthFor(u)"
             :live="liveFor(u)"
-            :selected="u.key === selected?.key"
+            :selected="!ui.showLibraryPrompt && u.key === selected?.key"
             @select="select(u)"
             @toggle="(v) => toggleEnabled(u, v)"
           />
@@ -545,7 +600,10 @@ function pickBucket(b: MetricBucket | null) {
       </aside>
 
       <!-- detail -->
-      <section v-if="selected" ref="detail" class="min-w-0">
+      <section v-if="ui.showLibraryPrompt" ref="detail" class="min-w-0">
+        <LibraryPromptPanel />
+      </section>
+      <section v-else-if="selected" ref="detail" class="min-w-0">
         <div class="card p-3">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0">
@@ -555,9 +613,9 @@ function pickBucket(b: MetricBucket | null) {
                 </h2>
                 <span class="chip chip-off">{{ KIND_LABEL[selected.kind] }}</span>
                 <span
-                  v-if="draftDirty(selected)"
+                  v-if="draftDirty(selected) || profilePromptDirty(selected)"
                   class="chip chip-on"
-                  title="You have unsaved connection changes"
+                  :title="`You have unsaved ${draftDirty(selected) ? 'connection' : 'prompt'} changes`"
                   >unsaved</span
                 >
               </div>
@@ -684,6 +742,11 @@ function pickBucket(b: MetricBucket | null) {
                 aria-label="unsaved changes"
               ></span>
               <span
+                v-else-if="t.id === 'prompt' && profilePromptDirty(selected)"
+                class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle"
+                aria-label="unsaved changes"
+              ></span>
+              <span
                 v-else-if="t.id === 'voices' && noVoices"
                 class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 align-middle"
                 aria-label="no voices yet"
@@ -732,6 +795,9 @@ function pickBucket(b: MetricBucket | null) {
               :sample-label="sample.label"
             />
           </TabsContent>
+          <TabsContent value="prompt"
+            ><PromptTab v-if="selected.profile" :key="selected.key" :u="selected"
+          /></TabsContent>
           <TabsContent value="pricing">
             <PricingTab
               :u="selected"

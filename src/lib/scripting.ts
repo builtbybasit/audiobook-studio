@@ -1,5 +1,12 @@
-import type { Profile, ScriptEndpointTelemetry, ScriptSettings } from "@/types";
+import type {
+  Profile,
+  PromptTemplate,
+  ReasoningEffort,
+  ScriptEndpointTelemetry,
+  ScriptSettings,
+} from "@/types";
 import { splitText } from "@/lib/split";
+import { REASONING_EFFORTS, profilePromptProblems, promptOverhead } from "@/lib/prompt";
 import { isSimulated } from "@/lib/providers";
 import {
   baseRates,
@@ -10,6 +17,18 @@ import {
   newPricing,
   pricingProblems,
 } from "@/lib/pricing";
+
+/**
+ * The reasoning levels a scripting endpoint can be set to, for its select. The model's own default
+ * is the select's empty choice (null), which sends nothing; how each level is spelled for a host is
+ * `reasoningRequest`'s.
+ */
+export const REASONING_LEVELS: { value: ReasoningEffort; label: string; hint: string }[] = [
+  { value: "off", label: "Off", hint: "answers straight away" },
+  { value: "low", label: "Low", hint: "a little thought" },
+  { value: "medium", label: "Medium", hint: "" },
+  { value: "high", label: "High", hint: "slowest, most output tokens" },
+];
 
 /** The settings a run starts from, until somebody picks otherwise. */
 export const makeScriptSettings = (): ScriptSettings => ({
@@ -42,6 +61,7 @@ export function newProfile(p: Partial<Profile> = {}): Profile {
     spendLimit: null,
     credentialId: null,
     quotaGroup: null,
+    reasoning: null,
     ...Object.fromEntries(
       Object.entries(p).filter(([key]) =>
         [
@@ -65,6 +85,8 @@ export function newProfile(p: Partial<Profile> = {}): Profile {
           "spendLimit",
           "credentialId",
           "quotaGroup",
+          "reasoning",
+          "prompt",
         ].includes(key),
       ),
     ),
@@ -115,6 +137,20 @@ export function profileErrors(p: Profile): string[] {
   if (!Number.isFinite(p.secPerChunk) || p.secPerChunk <= 0)
     errors.push("Request duration must be greater than zero.");
   if (p.pricing) errors.push(...pricingProblems(p.pricing));
+  if (p.reasoning != null && !REASONING_EFFORTS.includes(p.reasoning))
+    errors.push("Choose a valid reasoning level.");
+  // held to the rules of what it is used as: a Default endpoint's kept text only to its length
+  const prompt = p.prompt;
+  if (
+    prompt != null &&
+    (typeof prompt !== "object" ||
+      !["default", "append", "replace"].includes(prompt.mode) ||
+      typeof prompt.system !== "string" ||
+      typeof prompt.user !== "string")
+  )
+    errors.push("Invalid prompt settings.");
+  else if (prompt)
+    for (const problem of profilePromptProblems(prompt)) errors.push(`Prompt: ${problem}`);
   return errors;
 }
 // Keep original whitespace: the generic preview splitter trims its displayed pieces.
@@ -126,6 +162,10 @@ export function scriptParts(text: string, p: Profile): string[] {
 }
 /**
  * How many tokens one chunk is expected to use, and what that costs at an explicit instant.
+ *
+ * The input is the chunk and the prompt around it. Given the template a run would send, the
+ * prompt's share is what `promptOverhead` measures it at, a character count taken as tokens four to
+ * one; without one it is the flat 500 tokens the estimate used before the prompt could be edited.
  *
  * Two figures matter and they are deliberately different. `cost` is what this chunk would cost at
  * the rates in force *now*, including any off-peak window or promotion. `reserve` is what is held
@@ -142,8 +182,14 @@ export function scriptParts(text: string, p: Profile): string[] {
  * 125% of it — so reserving the whole input at the ordinary rate lets the very first request cost
  * more than it reserved and step past the cap.
  */
-export function tokenEstimate(text: string, p: Profile, at: number = Date.now()) {
-  const inputTokens = Math.ceil((text.length / 4) * 1.6) + 500;
+export function tokenEstimate(
+  text: string,
+  p: Profile,
+  at: number = Date.now(),
+  prompt?: PromptTemplate,
+) {
+  const overhead = prompt ? Math.ceil(promptOverhead(prompt) / 4) : 500;
+  const inputTokens = Math.ceil((text.length / 4) * 1.6) + overhead;
   const outputTokens = Math.ceil((text.length / 4) * 1.15);
   // a scripting profile always has both token rates; the shared card is nullable because a speech
   // card leaves them empty, so they are read back through the profile's own numbers

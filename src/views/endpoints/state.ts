@@ -8,11 +8,14 @@ import { reactive } from "vue";
 import { opsOf } from "@/lib/endpoints";
 import { encodingChanged, repairEncoding } from "@/lib/audioFormat";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
+import { libraryPrompt } from "@/lib/prompt";
 import type {
   ConnectionTest,
   Endpoint,
   EndpointKind,
   Profile,
+  ProfilePrompt,
+  PromptTemplate,
   RangeKey,
   RequestStatus,
 } from "@/types";
@@ -24,13 +27,15 @@ export type TabId =
   | "requests"
   | "pricing"
   | "activity"
-  | "expressions";
+  | "expressions"
+  | "prompt";
 
 export const TABS: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "connection", label: "Connection" },
   { id: "voices", label: "Voices" },
   { id: "requests", label: "Requests" },
+  { id: "prompt", label: "Prompt" },
   { id: "expressions", label: "Expressions" },
   { id: "pricing", label: "Pricing & budgets" },
   { id: "activity", label: "Activity" },
@@ -40,9 +45,11 @@ export const TABS: { id: TabId; label: string }[] = [
  *  expression tags. Kept here so the trigger list and the "is this tab still valid" check that
  *  guards a remembered tab can't drift apart. */
 const TTS_ONLY: TabId[] = ["voices", "expressions"];
+/** …and the one that only makes sense for a chat model: a speech endpoint is sent no prompt. */
+const SCRIPTING_ONLY: TabId[] = ["prompt"];
 
 export const tabsFor = (kind: EndpointKind): { id: TabId; label: string }[] =>
-  TABS.filter((t) => kind === "tts" || !TTS_ONLY.includes(t.id));
+  TABS.filter((t) => !(kind === "tts" ? SCRIPTING_ONLY : TTS_ONLY).includes(t.id));
 
 /** Connection changes are staged, never live-applied: switching provider under a running book is
  *  exactly the kind of silent change this page is supposed to prevent. */
@@ -87,6 +94,12 @@ interface PageState {
   metric: "throughput" | "latency" | "spend" | "errors";
   tab: Record<string, TabId>;
   drafts: Record<string, ConnectionDraft>;
+  /** a scripting endpoint's prompt being edited, by key; absent is the saved one, untouched */
+  prompts: Record<string, ProfilePrompt>;
+  /** the library's default prompt being edited; null is the saved one, untouched */
+  libraryPrompt: PromptTemplate | null;
+  /** the detail pane shows the library's default prompt rather than the selected endpoint */
+  showLibraryPrompt: boolean;
   activity: Record<string, ActivityFilter>;
   tests: Record<string, ConnectionTest>;
 }
@@ -99,6 +112,9 @@ export const ui = reactive<PageState>({
   metric: "throughput",
   tab: {},
   drafts: {},
+  prompts: {},
+  libraryPrompt: null,
+  showLibraryPrompt: false,
   activity: {},
   tests: {},
 });
@@ -211,3 +227,58 @@ export function applyDraft(u: UnifiedEndpoint): string[] {
 export function discardDraft(u: UnifiedEndpoint): void {
   delete ui.drafts[u.key];
 }
+
+// ---------- prompt drafts ----------
+// A prompt is staged too, and saved with a button: a half-typed one is usually not a prompt at all
+// (the excerpt tag deleted on the way to moving it), and the write-behind would send it to a server
+// that refuses it, then read back the saved one over what was being typed. A draft exists only once
+// something is typed, so a prompt the server changes underneath an untouched editor shows through.
+
+const sameTemplate = (a: PromptTemplate, b: PromptTemplate): boolean =>
+  a.system === b.system && a.user === b.user;
+
+/** An endpoint's say over the prompt as saved, with the text a Default one has not got filled in. */
+export const savedProfilePrompt = (p: Profile): ProfilePrompt => ({
+  mode: p.prompt?.mode ?? "default",
+  system: p.prompt?.system ?? "",
+  user: p.prompt?.user ?? "",
+});
+
+/** What the Prompt tab shows: the draft, or what is saved. */
+export const profilePromptOf = (u: UnifiedEndpoint): ProfilePrompt | null =>
+  u.profile ? (ui.prompts[u.key] ?? savedProfilePrompt(u.profile)) : null;
+
+/** Change part of an endpoint's prompt, starting a draft from the saved one. */
+export function editProfilePrompt(u: UnifiedEndpoint, change: Partial<ProfilePrompt>): void {
+  const cur = profilePromptOf(u);
+  if (cur) ui.prompts[u.key] = { ...cur, ...change };
+}
+
+export function profilePromptDirty(u: UnifiedEndpoint): boolean {
+  const d = ui.prompts[u.key];
+  if (!d || !u.profile) return false;
+  const saved = savedProfilePrompt(u.profile);
+  return d.mode !== saved.mode || !sameTemplate(d, saved);
+}
+
+export function discardProfilePrompt(u: UnifiedEndpoint): void {
+  delete ui.prompts[u.key];
+}
+
+/** What the Default prompt panel shows: the draft, or what is saved (the built-in one for none). */
+export const libraryPromptOf = (saved: PromptTemplate | null): PromptTemplate =>
+  ui.libraryPrompt ?? libraryPrompt(saved);
+
+export function editLibraryPrompt(saved: PromptTemplate | null, change: Partial<PromptTemplate>) {
+  ui.libraryPrompt = { ...libraryPromptOf(saved), ...change };
+}
+
+export const libraryPromptDirty = (saved: PromptTemplate | null): boolean =>
+  !!ui.libraryPrompt && !sameTemplate(ui.libraryPrompt, libraryPrompt(saved));
+
+/**
+ * What the prompt previews fill `{{excerpt}}` with: a short paragraph with a speaker in it, so the
+ * preview reads like a request rather than a chapter-long wall. Mara is the sample cast's one name.
+ */
+export const PROMPT_SAMPLE =
+  "The lamps were already lit when Mara reached the bridge. “You’re late,” said the keeper, not looking up. She shook the rain from her hood. Late again, she thought. “The ferry was slow,” she said.";

@@ -6,6 +6,7 @@
 // went in, and a UI that renders "null" where it should render nothing.
 import type {
   Book,
+  BookPrompt,
   Chapter,
   ChapterCounts,
   ChapterNote,
@@ -44,8 +45,38 @@ export function toBook(row: BookRow, vols: readonly VolumeRow[], counts?: Chapte
   if (row.scriptBudget != null) book.scriptBudget = row.scriptBudget;
   if (row.pacingLine != null && row.pacingTurn != null)
     book.pacing = { line: row.pacingLine, turn: row.pacingTurn };
+  const prompt = toBookPrompt(row);
+  if (prompt) book.prompt = prompt;
   return book;
 }
+
+/**
+ * A book's notes and its own prompt, or nothing when neither was ever set. The four columns are
+ * written together (`bookPromptValues`), so any one of them set is the whole value.
+ */
+function toBookPrompt(row: BookRow): BookPrompt | undefined {
+  if (
+    row.promptNotes == null &&
+    row.promptReplace == null &&
+    row.promptSystem == null &&
+    row.promptUser == null
+  )
+    return undefined;
+  return {
+    notes: row.promptNotes ?? "",
+    replace: row.promptReplace ?? false,
+    system: row.promptSystem ?? "",
+    user: row.promptUser ?? "",
+  };
+}
+
+/** A book's prompt as its four columns; nothing, all four null. */
+export const bookPromptValues = (p: BookPrompt | null | undefined) => ({
+  promptNotes: p?.notes ?? null,
+  promptReplace: p ? p.replace : null,
+  promptSystem: p?.system ?? null,
+  promptUser: p?.user ?? null,
+});
 
 export function toVolume(row: VolumeRow): Volume {
   const v: Volume = {
@@ -95,6 +126,7 @@ export function bookValues(book: Book, addedAt: number): typeof books.$inferInse
     scriptBudget: book.scriptBudget ?? null,
     pacingLine: book.pacing?.line ?? null,
     pacingTurn: book.pacing?.turn ?? null,
+    ...bookPromptValues(book.prompt),
   };
 }
 

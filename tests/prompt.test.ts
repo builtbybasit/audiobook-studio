@@ -56,7 +56,7 @@ describe("renderPrompt", () => {
   test("the built-in prompt sends today's user message and ends the system prompt with the format", () => {
     const r = renderPrompt(BUILT_IN_PROMPT, vars());
     expect(r.user).toBe(
-      "Chapter: Connection test\nKnown cast: Mara\n\nExcerpt:\n“Is someone there?” Mara whispered.",
+      "Chapter: The Bridge\nKnown cast: Mara\n\nExcerpt:\n“Is someone there?” Mara whispered.",
     );
     expect(r.system.endsWith(OUTPUT_FORMAT)).toBe(true);
     expect(r.system).not.toContain("Notes on this book");

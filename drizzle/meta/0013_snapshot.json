@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "ce59e9d4-bdb2-48a0-b3b3-5256c2fe866e",
+  "id": "e020f399-ba37-451e-9a86-0cb7e22f7550",
   "prevId": "35c142df-0ef1-436e-a58c-080c16484f8a",
   "tables": {
     "books": {
@@ -1579,6 +1579,13 @@
         },
         "prompt_user": {
           "name": "prompt_user",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "prompt_notes": {
+          "name": "prompt_notes",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -3167,6 +3174,20 @@
         "output_tokens": {
           "name": "output_tokens",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reasoning_tokens": {
+          "name": "reasoning_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "reasoning_effort": {
+          "name": "reasoning_effort",
+          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

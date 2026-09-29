@@ -13,6 +13,12 @@ export interface ScriptEndpointTelemetry {
   backoffUntil: number;
   lastSuccess: number;
   history: { at: number; ms: number; ok: boolean }[];
+  /**
+   * What the endpoint's recent requests at its current reasoning level spent thinking, as a share of
+   * their input tokens — how a run's estimate adds the thinking a reasoning model will bill as
+   * output. Absent until such a request reported its reasoning tokens.
+   */
+  reasoning?: { perInputToken: number; requests: number };
   lastError?: {
     code: number;
     message: string;
@@ -38,11 +44,13 @@ export interface PromptTemplate {
 }
 
 /**
- * A scripting endpoint's say over the prompt. `default` takes the library's (or the book's) as it
- * is; the text is kept anyway, so switching back to `append` or `replace` finds it again.
+ * A scripting endpoint's say over the prompt: its notes, which `{{endpoint.notes}}` places in
+ * whichever prompt is sent, and a whole prompt of its own it may send instead of the library's.
+ * `default` keeps the replacement's text without sending it, so switching back finds it again.
  */
 export interface ProfilePrompt extends PromptTemplate {
-  mode: "default" | "append" | "replace";
+  mode: "default" | "replace";
+  notes: string;
 }
 
 /** A book's say over the prompt: notes for `{{book.notes}}`, and a replacement it may switch on. */
@@ -56,8 +64,6 @@ export interface BookPrompt extends PromptTemplate {
 export interface PromptOrigin {
   /** whose template is the base */
   from: "built-in" | "library" | "endpoint" | "book";
-  /** the endpoint's own text was added after it */
-  appended: boolean;
   /** a short hash of the template, tags unfilled — the same text always gives the same one */
   fingerprint: string;
 }
@@ -160,4 +166,51 @@ export interface ScriptEstimate {
   blockers: string[];
   /** the same numbers priced: the alternatives, and what could move the figure before the run ends */
   rates: RateEstimate | null;
+}
+
+// ---- trying a prompt on one chunk ----
+
+/**
+ * One chunk of a chapter sent with a prompt that need not be saved yet, to see what comes back.
+ * Nothing is written to the script; the request is real, priced into the book's ledger and held to
+ * its budget like any other.
+ */
+export interface PromptTrialRequest {
+  /** the scripting endpoint to send it to, by its id */
+  profile: string;
+  chapterId: number;
+  /** which of the chapter's chunks, cut as the endpoint cuts it, 1-based; default 1 */
+  part?: number;
+  /**
+   * Drafts in place of what is saved, each layer on its own; absent sends the saved one. `null`
+   * for `library` is the built-in prompt; `null` for the others is none.
+   */
+  library?: PromptTemplate | null;
+  profilePrompt?: ProfilePrompt | null;
+  book?: BookPrompt | null;
+}
+
+/** What one trial came back with. A refused answer is a result too, not an error. */
+export interface PromptTrialResult {
+  /** the two messages exactly as they were sent */
+  prompt: RenderedPrompt;
+  part: number;
+  parts: number;
+  /** the excerpt that was sent */
+  excerpt: string;
+  /** the lines the model answered with, even when they fail the word check */
+  lines: {
+    type: "narration" | "dialogue" | "thought";
+    speaker: string;
+    text: string;
+    direction?: string;
+  }[];
+  /** the word-for-word check a run would hold them to */
+  fidelity: { words: number; missing: number; added: number; examples: string[]; ok: boolean };
+  ms: number;
+  usage: { inputTokens: number; outputTokens: number; reasoningTokens: number | null } | null;
+  /** USD, as the ledger priced it; null when it could not be priced */
+  cost: number | null;
+  /** what went wrong when there are no lines to show: the provider refused, the answer was not a script… */
+  error?: string;
 }

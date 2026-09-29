@@ -46,6 +46,11 @@ export interface ScriptInput {
    * `cast` and `text`. The fake reads none of it.
    */
   prompt?: RenderedPrompt;
+  /**
+   * Hand back the lines even when they fail the word-for-word check, instead of refusing them — for
+   * a prompt trial, which shows what came back and the check beside it. A run never sets it.
+   */
+  lenient?: boolean;
   /** called once for every request that reached the wire, answered or not; see `sent.ts` */
   sent?(request: SentScript): void;
 }

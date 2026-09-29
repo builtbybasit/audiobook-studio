@@ -17,6 +17,7 @@
 import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 import type {
+  ReasoningEffort,
   CostBasis,
   EndpointKind,
   PricedRequest,
@@ -77,6 +78,13 @@ export const requests = sqliteTable(
      */
     inputTokens: integer("input_tokens"),
     outputTokens: integer("output_tokens"),
+    /**
+     * Of `output_tokens`, spent reasoning before the answer, as the provider reported it. Null = not
+     * reported, which is not zero. What a run's estimate learns a reasoning model's thinking from.
+     */
+    reasoningTokens: integer("reasoning_tokens"),
+    /** scripting: the reasoning level the request asked for; null = none, left to the model */
+    reasoningEffort: text("reasoning_effort").$type<ReasoningEffort>(),
     /** of `input_tokens`, served from the provider's cache. Null = not reported, which is not zero. */
     cachedInput: integer("cached_input"),
     cacheWrite: integer("cache_write"),

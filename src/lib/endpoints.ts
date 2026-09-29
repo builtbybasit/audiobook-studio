@@ -20,6 +20,7 @@ import type {
 import { profileErrors } from "@/lib/scripting";
 import { OPS_DEFAULTS, encodingProblems } from "@/lib/endpointShapes";
 import { keyring } from "@/lib/keyring";
+import { isSimulated } from "@/lib/providers";
 import {
   baseRates,
   billingProblems,
@@ -371,14 +372,16 @@ export function endpointErrors(u: UnifiedEndpoint): string[] {
   if (u.profile) return profileErrors(u.profile);
   const e = u.endpoint!;
   const errors: string[] = [];
-  try {
-    const url = new URL(e.baseUrl);
-    if (!["http:", "https:"].includes(url.protocol)) throw new Error();
-    if (/\/audio\/speech\/?$/.test(url.pathname))
-      errors.push("Use the base URL without /audio/speech.");
-  } catch {
-    errors.push("Enter a valid HTTP or HTTPS base URL.");
-  }
+  // a simulated endpoint names no host — this server answers it — so it has no URL to check
+  if (!isSimulated(e.baseUrl))
+    try {
+      const url = new URL(e.baseUrl);
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error();
+      if (/\/audio\/speech\/?$/.test(url.pathname))
+        errors.push("Use the base URL without /audio/speech.");
+    } catch {
+      errors.push("Enter a valid HTTP or HTTPS base URL.");
+    }
   if (!e.name.trim()) errors.push("Give this endpoint a name.");
   if (!e.model.trim()) errors.push("Enter a model ID.");
   if (!Number.isSafeInteger(e.concurrency) || e.concurrency < 1)

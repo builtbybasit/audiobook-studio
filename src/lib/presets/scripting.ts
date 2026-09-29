@@ -1,6 +1,7 @@
 // The scripting presets: what "Start from a preset…" offers a scripting endpoint, grouped by
 // provider — every one a model that serves OpenAI's /chat/completions.
 import { presetPricing, type ScriptingPreset } from "@/lib/presets/preset";
+import { SIMULATED_BASE_URL, SIMULATED_SCRIPTING_MODEL } from "@/lib/providers";
 
 // Every hosted rate below is the provider's own published card as read on 2026-09-28, standard
 // tier, USD per million tokens. A preset leaves limits and timing at `newProfile`'s defaults: a
@@ -81,6 +82,27 @@ function openRouter(
 }
 
 export const SCRIPTING_PRESETS: ScriptingPreset[] = [
+  {
+    // first, since a fresh library has no endpoints and this is the one that works without an account
+    id: "simulated",
+    group: "Simulated",
+    label: "Simulated (free)",
+    hint: "a script read from the punctuation, answered by this server",
+    note:
+      "Answered by this server and never the network: a chapter's script is read from its " +
+      "punctuation — a quote is dialogue, spoken by whoever is named beside “said” or “asked”, " +
+      "and the rest is narration — so a run can be tried end to end without an account. " +
+      "Nothing is billed and no key is needed.",
+    apply: {
+      name: "Simulated (free)",
+      baseUrl: SIMULATED_BASE_URL,
+      model: SIMULATED_SCRIPTING_MODEL,
+      needsKey: false,
+      inPrice: 0,
+      outPrice: 0,
+      pricing: presetPricing(),
+    },
+  },
   {
     id: "openai-luna",
     group: "OpenAI",

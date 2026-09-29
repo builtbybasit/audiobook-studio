@@ -122,8 +122,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       const queued = job.scriptRun;
       const chunks = chunksOf(chapter.text, queued?.profile);
       // Where the requests go, with the profile's key read now rather than when it was queued, so a
-      // key saved after pressing Script is the one used. Null for a run that named no profile: the
-      // fake does not need one, and a real provider refuses the run with a message saying so.
+      // key saved after pressing Script is the one used. Null for a run that named no profile,
+      // which the provider refuses with a message saying so.
       const target = queued ? scriptTarget(db, queued.profile) : null;
       // The names the book already has, so a chunk read on its own still calls Mara "Mara".
       const cast = db
@@ -402,7 +402,7 @@ export function enqueueScripting(
   runner: Runner,
   bookId: string,
   ids: readonly number[],
-  { provider, profile }: { provider: string; profile?: string },
+  profile?: string,
 ): ScriptingQueued {
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
@@ -423,8 +423,8 @@ export function enqueueScripting(
   // this server was never sent is not a refusal — a fresh server has no endpoints until the page
   // saves them — so its chapters go whole, and each job says why.
   const chosen = profile ? readProfiles(db).find((p) => p.id === profile) : undefined;
-  // a real run is named by the profile it goes to; the fake by what it is
-  const via = provider === "endpoints" && chosen ? chosen.name : provider;
+  // a run is named by the profile it goes to
+  const via = chosen?.name ?? "no profile";
   const run: Job["scriptRun"] = chosen && {
     profile: chosen,
     requests: 0,

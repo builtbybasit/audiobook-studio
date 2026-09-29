@@ -19,6 +19,7 @@ export type SpeechProviderId =
   | "minimax"
   | "cartesia"
   | "qwen"
+  | "simulated"
   | "compatible";
 
 /** One format an endpoint can be asked for, and what may be asked for with it. */

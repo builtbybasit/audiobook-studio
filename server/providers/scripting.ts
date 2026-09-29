@@ -6,7 +6,9 @@
 // from the server's own environment and never leaves the process — see `docs/backend.md`.
 //
 // Two implementations: the fake, which reads the prose and never the network, and the one that
-// calls the profile the run was queued with (`SCRIPTING_PROVIDER=endpoints`).
+// calls the profile the run was queued with (`chatScripting.ts`). A server runs with both, and
+// sends each run to the one its profile names (`endpointScripting.ts`): a simulated profile to
+// the fake, every other to its model.
 import type { SegmentType } from "@/types";
 import type { SentScript } from "~/providers/sent";
 import type { ProbeResult, ProviderTarget } from "~/providers/target";
@@ -27,7 +29,8 @@ export interface ScriptInput {
   progress?(done: number, total: number): void;
   /**
    * The profile the run was queued with, and its key; null when the run named none. The fake
-   * ignores it; a real provider refuses a run without one rather than guessing where to send it.
+   * reads only its simulation; a real provider refuses a run without one rather than guessing
+   * where to send it.
    */
   target: ScriptTarget | null;
   /**
@@ -59,6 +62,3 @@ export interface ScriptingProvider {
   /** one small request to see the profile answers — the Test button; absent, it cannot be tested */
   probe?(target: ScriptTarget, signal: AbortSignal): Promise<ProbeResult>;
 }
-
-/** Which provider a server is started with; see `env.ts`. */
-export type ScriptingProviderName = "fake" | "endpoints";

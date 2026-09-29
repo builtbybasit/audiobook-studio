@@ -24,6 +24,7 @@ import {
   ArrowUpRight as ArrowIcon,
 } from "@lucide/vue";
 import { profileErrors, scriptParts, tokenEstimate, scriptingHealth } from "@/lib/scripting";
+import { isSimulated } from "@/lib/providers";
 import { usePresetPicker } from "@/composables/usePresetPicker";
 import { TabsRoot, TabsList, TabsTrigger, TabsContent } from "reka-ui";
 import EndpointActivity from "@/views/scripting/EndpointActivity.vue";
@@ -127,6 +128,14 @@ const {
   endpoint: selectedId,
   fill: (fields) => (p.value ? void Object.assign(p.value, fields) : false),
   next: "Check the model and prices, and add the key if it needs one.",
+});
+
+/** A `simulated:` profile is answered by the server itself, so it has no request line and no key. */
+const simulated = computed(() => !!p.value && isSimulated(p.value.baseUrl));
+// Typing a simulated base URL over a hosted one turns the key off with it, since the key switch is
+// hidden for it. Selecting another profile changes nothing.
+watch([selectedId, simulated], ([id, now], [was]) => {
+  if (id === was && now && p.value) p.value.needsKey = false;
 });
 
 function add() {
@@ -330,12 +339,15 @@ function remove() {
               class="input w-full font-mono"
               placeholder="https://your-provider.com/v1"
               spellcheck="false"
-            /><span class="block text-[11px] font-normal text-zinc-500"
+            /><span v-if="simulated" class="block text-[11px] font-normal text-zinc-500"
+              >Simulated: this server answers it and nothing is sent anywhere, so it needs no key
+              and costs nothing.</span
+            ><span v-else class="block text-[11px] font-normal text-zinc-500"
               >Requests append /chat/completions. Include /v1 only if your provider requires
               it.</span
             ></label
           >
-          <div class="space-y-2">
+          <div v-if="!simulated" class="space-y-2">
             <UiSwitch v-model="p.needsKey" label="Requires an API key" />
             <!-- with a server answering, the key is the server's: see ServerKeyField -->
             <ServerKeyField

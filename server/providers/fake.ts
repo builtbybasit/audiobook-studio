@@ -13,7 +13,12 @@
 // Each call reports one simulated request, with token counts worked out from the text (four
 // characters to a token), so a priced profile puts real-looking rows in the ledger and a budget can
 // be run out — in a test or a demo — without spending anything.
+//
+// It is what a simulated profile (`simulated://…`) is answered by, and there it is held to the
+// target's `simulation`: each chunk takes as long as that says, and fails as often. A test hands
+// it options instead, and a target with no simulation is answered at once, every time.
 import { normalizeUsage } from "@/lib/pricing";
+import { ProviderError } from "~/providers/http";
 import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -22,6 +27,8 @@ export interface FakeScriptingOptions {
   delayMs?: number;
   /** throw with this message instead of answering, to exercise the failure path */
   failWith?: string;
+  /** what a simulated failure is drawn against; `Math.random` unless a test wants it fixed */
+  random?: () => number;
 }
 
 /** Whoever the narration around a quote names next to a speech verb. */
@@ -79,11 +86,19 @@ export function sleep(ms: number, signal: AbortSignal): Promise<void> {
 const tokensIn = (text: string): number => Math.ceil(text.length / 4);
 
 export function fakeScriptingProvider(options: FakeScriptingOptions = {}): ScriptingProvider {
+  const random = options.random ?? Math.random;
   return {
-    name: "Fake scripting (local)",
-    async script({ text, signal, progress, sent }: ScriptInput): Promise<ScriptedLine[]> {
+    name: "Simulated scripting",
+    async script({ text, signal, progress, sent, target }: ScriptInput): Promise<ScriptedLine[]> {
       const startedAt = Date.now();
-      if (options.failWith) {
+      const simulation = target?.simulation;
+      if (simulation?.latencyMs) await sleep(simulation.latencyMs, signal);
+      const failure =
+        options.failWith ??
+        (simulation && random() < simulation.failRate
+          ? `${target!.name} failed this request on purpose: it fails ${Math.round(simulation.failRate * 100)}% of them`
+          : null);
+      if (failure) {
         // a refusal, as a provider that answered with an error would report it: nothing was used
         sent?.({
           startedAt,
@@ -91,11 +106,12 @@ export function fakeScriptingProvider(options: FakeScriptingOptions = {}): Scrip
           attempts: 1,
           rateLimited: false,
           status: "failed",
-          error: { code: 0, message: options.failWith },
+          error: { code: 0, message: failure },
           simulated: true,
           usage: null,
         });
-        throw new Error(options.failWith);
+        // what a server error is, so a simulated one is retried as a real one would be
+        throw options.failWith ? new Error(failure) : new ProviderError(failure, 500, true);
       }
       const paragraphs = text
         .split(/\n\s*\n/)
@@ -127,11 +143,7 @@ export function fakeScriptingProvider(options: FakeScriptingOptions = {}): Scrip
       return out;
     },
     async probe() {
-      return {
-        ok: true,
-        message: "The fake answers without a request: SCRIPTING_PROVIDER=fake",
-        ms: 0,
-      };
+      return { ok: true, message: "Simulated: answered here, without a request", ms: 0 };
     },
   };
 }

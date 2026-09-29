@@ -10,7 +10,7 @@ import { useUiStore } from "@/stores/ui";
 // Renaming a configuration is harmless. Changing its base URL, model or credential points it at a
 // different provider, so edits are staged and applied deliberately, and when work is in flight the
 // Save button says what will and won't move.
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { keyring } from "@/lib/keyring";
 import { activeEndpointSettingsService, keyInPlace } from "@/services/endpointSettings";
 import ServerKeyField from "@/views/endpoints/ServerKeyField.vue";
@@ -30,6 +30,7 @@ import {
   ttsRequestPath,
 } from "@/lib/endpoints";
 import { maybeMoney } from "@/lib/pricing";
+import { isSimulated } from "@/lib/providers";
 import { encodingSummary } from "@/lib/audioFormat";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import {
@@ -164,10 +165,22 @@ const {
   fill: (fields, preset) => stagePreset(props.u, preset.label, fields),
   next: "Review it below, then Save — its prices and limits go on with it. Discard puts everything back.",
 });
+/** A `simulated:` base URL is answered by the server itself: there is no request line, no key and
+ *  no account, so the form says that instead of asking for them. */
+const simulated = computed(() => isSimulated(draft.value.baseUrl));
+// Typing a simulated base URL over a hosted one stages "needs no key" with it, so the endpoint is
+// not left waiting on a key it will never be asked for. Selecting another endpoint changes nothing.
+watch([() => props.u.key, simulated], ([key, now], [was]) => {
+  if (key === was && now) draft.value.needsKey = false;
+});
 /** Where a request actually goes. Fish Audio serves /tts, not the OpenAI-style /audio/speech, so
  *  this follows the draft and updates the moment a preset or a hand-typed base URL changes it. */
 const path = computed(() =>
-  props.u.kind === "tts" ? ttsRequestPath(draft.value) : KIND_PATH[props.u.kind],
+  simulated.value
+    ? ""
+    : props.u.kind === "tts"
+      ? ttsRequestPath(draft.value)
+      : KIND_PATH[props.u.kind],
 );
 /** The staged changes as the banner lists them; a preset's prices and limits are one of them. */
 const changeList = computed(() =>
@@ -286,79 +299,88 @@ function newCredential() {
               spellcheck="false"
               placeholder="https://your-provider.com/v1"
             />
-            <span class="block text-[11px] font-normal text-zinc-500"
+            <span v-if="simulated" class="block text-[11px] font-normal text-zinc-500"
+              >Simulated: this server answers it and nothing is sent anywhere, so it needs no key
+              and costs nothing.</span
+            >
+            <span v-else class="block text-[11px] font-normal text-zinc-500"
               >Any OpenAI-compatible server. Requests append
               <code class="font-mono">{{ path }}</code
               >; include <code class="font-mono">/v1</code> only if your provider needs it.</span
             ></label
           >
 
-          <div class="space-y-1 text-xs font-medium">
-            <span id="cred-label">Credential</span>
-            <div class="flex items-center gap-2">
-              <UiSelect
-                v-model="credential"
-                :options="CRED_OPTIONS"
-                size="xs"
-                class="min-w-0 flex-1"
-                aria-labelledby="cred-label"
-              />
-              <button class="btn-ghost btn-xs shrink-0" type="button" @click="newCredential">
-                <AddIcon class="icon-sm" /> New
-              </button>
+          <template v-if="!simulated">
+            <div class="space-y-1 text-xs font-medium">
+              <span id="cred-label">Credential</span>
+              <div class="flex items-center gap-2">
+                <UiSelect
+                  v-model="credential"
+                  :options="CRED_OPTIONS"
+                  size="xs"
+                  class="min-w-0 flex-1"
+                  aria-labelledby="cred-label"
+                />
+                <button class="btn-ghost btn-xs shrink-0" type="button" @click="newCredential">
+                  <AddIcon class="icon-sm" /> New
+                </button>
+              </div>
+              <p v-if="onServer" class="text-[11px] font-normal text-zinc-500">
+                A named credential says which account this endpoint uses. The server keeps one key
+                per endpoint, so each endpoint on the account has its key saved below.
+              </p>
+              <p v-else class="text-[11px] font-normal text-zinc-500">
+                A named credential can be shared by several endpoints; the key itself is kept in
+                memory only and never written to a settings export.
+              </p>
             </div>
-            <p v-if="onServer" class="text-[11px] font-normal text-zinc-500">
-              A named credential says which account this endpoint uses. The server keeps one key per
-              endpoint, so each endpoint on the account has its key saved below.
-            </p>
-            <p v-else class="text-[11px] font-normal text-zinc-500">
-              A named credential can be shared by several endpoints; the key itself is kept in
-              memory only and never written to a settings export.
-            </p>
-          </div>
 
-          <ServerKeyField
-            v-if="onServer"
-            :kind="u.kind"
-            :id="u.id"
-            :name="u.name"
-            :has-key="keyHeld"
-            :needs-key="draft.needsKey"
-          />
-          <label v-else-if="draft.credentialId" class="block space-y-1 text-xs font-medium"
-            ><span>{{ credentialById(draft.credentialId)?.label }} key</span
-            ><input
-              :value="credentialSecret(draft.credentialId)"
-              type="password"
-              autocomplete="off"
-              class="input w-full font-mono"
-              placeholder="Paste the API key"
-              @input="
-                setCredentialSecret(draft.credentialId!, ($event.target as HTMLInputElement).value)
-              "
+            <ServerKeyField
+              v-if="onServer"
+              :kind="u.kind"
+              :id="u.id"
+              :name="u.name"
+              :has-key="keyHeld"
+              :needs-key="draft.needsKey"
             />
-            <span class="block text-[11px] font-normal text-zinc-500"
-              >Changing this changes it everywhere the credential is used.</span
-            ></label
-          >
-          <label v-else class="block space-y-1 text-xs font-medium"
-            ><span>API key</span
-            ><input
-              :value="keyring.get(u.slot)"
-              type="password"
-              autocomplete="off"
-              class="input w-full font-mono"
-              :placeholder="draft.needsKey ? 'Paste the API key' : 'not required'"
-              @input="keyring.set(u.slot, ($event.target as HTMLInputElement).value)"
-          /></label>
-          <UiSwitch v-model="draft.needsKey" label="This endpoint requires a key" />
-          <p
-            v-if="!onServer && draft.needsKey && !keyHeld"
-            class="rounded bg-amber-400/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
-          >
-            <WarnIcon class="icon-sm" /> No key set — requests routed here fail with a “no API key”
-            error until one is added.
-          </p>
+            <label v-else-if="draft.credentialId" class="block space-y-1 text-xs font-medium"
+              ><span>{{ credentialById(draft.credentialId)?.label }} key</span
+              ><input
+                :value="credentialSecret(draft.credentialId)"
+                type="password"
+                autocomplete="off"
+                class="input w-full font-mono"
+                placeholder="Paste the API key"
+                @input="
+                  setCredentialSecret(
+                    draft.credentialId!,
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
+              />
+              <span class="block text-[11px] font-normal text-zinc-500"
+                >Changing this changes it everywhere the credential is used.</span
+              ></label
+            >
+            <label v-else class="block space-y-1 text-xs font-medium"
+              ><span>API key</span
+              ><input
+                :value="keyring.get(u.slot)"
+                type="password"
+                autocomplete="off"
+                class="input w-full font-mono"
+                :placeholder="draft.needsKey ? 'Paste the API key' : 'not required'"
+                @input="keyring.set(u.slot, ($event.target as HTMLInputElement).value)"
+            /></label>
+            <UiSwitch v-model="draft.needsKey" label="This endpoint requires a key" />
+            <p
+              v-if="!onServer && draft.needsKey && !keyHeld"
+              class="rounded bg-amber-400/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
+            >
+              <WarnIcon class="icon-sm" /> No key set — requests routed here fail with a “no API
+              key” error until one is added.
+            </p>
+          </template>
         </div>
       </section>
     </div>
@@ -404,7 +426,13 @@ function newCredential() {
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0">
           <h3 class="label mb-1">Connection test</h3>
-          <p class="break-words text-[11px] leading-relaxed text-zinc-500">
+          <p v-if="isSimulated(u.baseUrl)" class="text-[11px] leading-relaxed text-zinc-500">
+            Asks this server’s simulated provider for <b>one</b> answer<template v-if="u.endpoint">
+              in <b>{{ encodingSummary(u.endpoint) }}</b></template
+            >. Nothing reaches the network, and it touches no book, queues no job and writes nothing
+            to any chapter.
+          </p>
+          <p v-else class="break-words text-[11px] leading-relaxed text-zinc-500">
             Sends <b>one</b> request to
             <code class="font-mono">{{ (u.baseUrl || "…").replace(/\/$/, "") }}{{ path }}</code>
             <template v-if="u.endpoint">
@@ -485,8 +513,8 @@ function newCredential() {
         class="mt-2 border-t border-zinc-100 pt-2 text-[11px] text-zinc-500 dark:border-zinc-800"
       >
         The server sends this request itself, from the settings and key it has saved, and the
-        provider may bill it. A server running the fake provider answers without calling anyone and
-        says so.
+        provider may bill it. A simulated endpoint is answered by the server without calling anyone,
+        and says so.
       </p>
       <p
         v-else

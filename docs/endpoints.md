@@ -55,7 +55,14 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   requests in that bucket — chart and list are folded from one array of records. SVG bars can't hold
   focus, so the plot is a keyboard control too: focus it and `←`/`→` walk the buckets, `Enter` picks
   one, `Esc` clears, and the readout under the chart is a live region that announces each one.
-- **Connection** — starts with **Start from a preset…**, for both kinds: a speech provider
+- **Connection** — starts with **Start from a preset…**, for both kinds. First in each list is
+  **Simulated (free)**, base URL `simulated://local`: the server answers it itself — a quiet tone
+  per line, or a script read from the prose's punctuation — and it never reaches the network and
+  needs no key. Its requests are priced at its rate card, which the preset leaves at zero, and every
+  one is marked simulated: nothing is billed. The speech one comes with its six voices, so it can
+  render before anything is fetched; it answers WAV only, one line at a time, cannot clone, and its
+  failures are retryable server errors. With a simulated base URL the tab shows no request line, credential or key field, and
+  typing one over a hosted URL turns the key off with it. After it, a speech provider
   (Fish Audio; OpenAI's gpt-4o-mini-tts, tts-1 and tts-1-hd; Gemini 3.8 Flash and Flash-Lite TTS
   and the legacy 3.1; ElevenLabs Eleven v3, Multilingual v2 and Flash v2.5; BreezeBlue Breeze TTS 2
   and 2 Multilingual; MiniMax Speech 2.8 HD and Turbo; Cartesia Sonic 3.6; Alibaba Qwen-Audio 3.0
@@ -138,7 +145,10 @@ side behind tabs: five for scripting, with Voices and Expressions also available
   type (2,500 is as easy to set as 4), and three separate readouts: configured, in flight now, and
   the effective limit actually in force (zero while paused, cooling down or missing a key).
   Timeouts, retry limit and rate-limit cooldown; maximum characters, cut boundary and the scripting
-  output-token ceiling. The split preview runs the real splitter and asserts the pieces rejoin the
+  output-token ceiling. A simulated speech endpoint also has **Simulated answers**: how long each
+  answer takes, in milliseconds, and the share that fail, in percent (stored as `latency` and
+  `failRate`, 0–1), so a run on it moves and fails like one on a real provider. A simulated
+  scripting profile has neither; it answers at once. The split preview runs the real splitter and asserts the pieces rejoin the
   source character for character. A footer says which settings apply immediately and which apply to
   the next job.
 - **Pricing & budgets** — scripting keeps separate input/output prices per million tokens, with

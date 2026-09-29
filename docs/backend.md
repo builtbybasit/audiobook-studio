@@ -7,19 +7,23 @@ stores real books. **The first slice is the library: import, the contents review
 second is the queue: scripting a chapter is a job the server runs, and the Queue page shows it. The
 third is what a scripted chapter owns: its script can be edited over HTTP, its history and the
 book's cast are written by the run that made them, and the frontend reads all of it through
-queries. The fourth is narration: rendering a chapter is a job the server runs against a fake
-speech model, the clips are files the server keeps and serves, the player hears them, and a
-retake is judged and kept or discarded. The fifth is export: building an audiobook is a job too,
+queries. The fourth is narration: rendering a chapter is a job the server runs against the speech
+endpoints its voices belong to, the clips are files the server keeps and serves, the player hears
+them, and a retake is judged and kept or discarded. The fifth is export: building an audiobook is a job too,
 and what it writes is a file on disk that can be downloaded and played.** The endpoints are
 saved on the server too, and narration reads its expression tags, its sample rate and its
 per-request limit from them;
 pricing is still the seeded demo's and is untouched by all of it.
 
-Nothing in the server contacts a provider or spends money. The only scripting model it can be
-started with is the fake one ([the queue](#the-queue) says what it does), there are no credentials
-in its configuration, and there is no code path from an import to a paid request. The one request
-that spends whatever `SPEECH_PROVIDER` says is a voice sample, which a click on ▶ in the Voices tab
-asks for — see [voice samples](#the-providers-and-where-a-key-lives).
+The server sends work to what the Endpoints page holds, and nothing else: a chapter to the
+scripting profile its run was queued with, a line to the speech endpoint its speaker's voice
+belongs to. No setting switches the whole server onto fakes. A **simulated** endpoint is one kind
+of endpoint instead — **Simulated (free)** among the presets of either kind, picked by its base
+URL, `simulated://…` — which the server answers itself, without the network and without charge
+([the providers](#the-providers-and-where-a-key-lives) says how). A fresh library has no endpoints
+at all, so nothing is sent anywhere until you add one; add a simulated one to try a run without an
+account. There are no credentials in the server's configuration, and no code path from an import
+to a paid request.
 
 ## Run it
 
@@ -813,26 +817,35 @@ its model. Every request is priced into the ledger and the run is held against t
 see [what a request costs](#what-a-request-costs-and-what-a-book-may-spend).
 
 A cut can fall inside a quotation or between a line and the "said Mara" that names its speaker —
-the preview shows where — and the fake then reads each side on its own, so a quoted line can come
-back as narration or `Unknown`. That is what the Scripting page's "smaller chunks" button and the
-preview are for; a real provider will want the same care.
+the preview shows where — and a simulated profile then reads each side on its own, so a quoted
+line can come back as narration or `Unknown`. That is what the Scripting page's "smaller chunks"
+button and the preview are for; a real provider will want the same care.
 
 ### The providers, and where a key lives
 
 A scripting job hands a [`ScriptingProvider`](../server/providers/scripting.ts) a chapter's prose —
 the `plain` reading, never the stored Markdown — and gets back lines with speakers; a narration job
 hands a [`SpeechProvider`](../server/providers/speech.ts) one line and gets back a WAV. That is the
-whole contract. Which of two implementations answers is the one thing the environment decides:
+whole contract. Which answers is decided per request, by the endpoint's base URL:
 
-- **`fake`**, the default for both, never reaches the network. [The scripting fake](../server/providers/fake.ts)
-  makes a paragraph narration and a quoted span dialogue, spoken by whoever the paragraph names
-  beside a speech verb — "…," said Mara — or `Unknown`; [the speech fake](../server/providers/fakeSpeech.ts)
-  renders a quiet tone per speaker. A fresh clone and the test suite cannot spend money whatever
-  the Endpoints page holds, and this is the "fake AI provider" the
-  [demo requirements](demo.md#future-backend-integration-requirements) ask for.
-- **`endpoints`** (`SCRIPTING_PROVIDER=endpoints`, `SPEECH_PROVIDER=endpoints`) calls what the
-  Endpoints page configured. A chapter goes to the scripting profile its run was queued with; a
-  line goes to the endpoint its speaker's voice belongs to (`<endpointId>/<voiceId>`).
+- **A simulated endpoint** (`simulated://…`, the **Simulated (free)** preset) never reaches the
+  network. [The scripting fake](../server/providers/fake.ts) makes a paragraph narration and a
+  quoted span dialogue, spoken by whoever the paragraph names beside a speech verb — "…," said
+  Mara — or `Unknown`; [the speech fake](../server/providers/fakeSpeech.ts) renders a quiet tone
+  per speaker, through [simulatedSpeech.ts](../server/providers/simulatedSpeech.ts), which also
+  answers its Test button, its six voices and a sample without a request. A simulated speech
+  endpoint waits its `latency` (milliseconds) before each answer and fails its `failRate` (0–1)
+  share of lines as a server error worth another try, so a run on it moves, and fails, the way a
+  run on a real endpoint can; the Requests tab edits both, and only shows them for a simulated
+  endpoint. It needs no key, and the preset's card is zero.
+- **Every other endpoint** is called: a chapter goes to its profile's chat-completions model
+  ([endpointScripting.ts](../server/providers/endpointScripting.ts) chooses), a line to the
+  endpoint its voice names (`<endpointId>/<voiceId>`).
+
+The tests hand the app the fakes directly, in place of the endpoints' own providers, over an
+in-memory database ([tests/support/server.ts](../tests/support/server.ts)), so no test reaches the
+network whatever it saves. That is the "fake AI provider" the
+[demo requirements](demo.md#future-backend-integration-requirements) ask for.
 
 **Nothing about a provider is in the environment.** Base URL, model, timeout, retries and key are
 the endpoint's, saved with it. The `.env` variables `SCRIPTING_PROVIDER_URL`, `…_MODEL`, `…_TOKEN`,
@@ -984,15 +997,16 @@ output_format }`, answered with the audio. It reports no usage. Voices are `GET 
   frames end to end with every tag and Xing/Info frame dropped
   ([mp3.ts](../server/audio/mp3.ts)). An Opus line that would need parts fails before any request:
   chained Ogg streams are legal, but players seek them badly and report the first one's length.
-- The fake answers WAV whatever it is asked for, and the clip is kept as what it is.
+- The fake answers WAV whatever it is asked for, and the clip is kept as what it is; a simulated
+  endpoint offers WAV alone.
 - Changing an endpoint's format stales nothing: it applies to the next line rendered.
 
 **Voices** come from `POST /api/endpoints/voices` `{ id, source, query?, language?, page? }`,
 answering `{ voices, total, page, hasMore }` ([voices.ts](../server/providers/voices.ts), which
 asks the endpoint's wire module). The saved
-endpoint and key are used and the request is made **whatever `SPEECH_PROVIDER` says**: listing
-voices spends nothing and reads the account, it does not narrate. For Fish, `library` is every
-model in your workspace (`self=true`, every page up to a thousand) and `public` one page of Fish's
+endpoint and key are used, even by a test that narrates through the fakes: listing voices spends
+nothing and reads the account, it does not narrate. A simulated endpoint is asked nothing and
+answers with the voices it names. For Fish, `library` is every model in your workspace (`self=true`, every page up to a thousand) and `public` one page of Fish's
 public catalogue by title and language, TTS models only; a pasted 32-character id is looked up
 directly. A public voice carries Fish's own recording of it as `sample: { url, text }` when the
 model has one at an `https` link — the Voices tab plays it straight from Fish's CDN, free — and adding
@@ -1010,9 +1024,9 @@ the code `upstream` and what it said. None of these messages carries the key.
 endpoint says one fixed sentence (`VOICE_SAMPLE` in [endpointShapes.ts](../src/lib/endpointShapes.ts),
 which the demo's browser voice reads too) in that
 voice with its saved key, asked for the way a line is — the endpoint's format and sample rate, no
-instructions — and tried once, like a connection test. Like the voice list it goes to the real
-endpoint **whatever `SPEECH_PROVIDER` says**, but unlike it, it is billed: a click on ▶ asks to
-hear the voice, and the fake's tone is not it. So the request is priced into the ledger like any
+instructions — and tried once, like a connection test. Like the voice list it goes to the endpoint
+itself, but unlike it, it is billed: a click on ▶ asks to hear the voice, and a simulated
+endpoint's tone is all that one has. So the request is priced into the ledger like any
 other, against the endpoint with no book (`Voice sample · <label>` in its Activity list). A missing
 key is a `400` before any request, and the provider's failures are split as the voice list's are.
 The browser keeps each sample it
@@ -1101,8 +1115,8 @@ keeps samples for a voice already saved — the clone's form, the endpoint's lim
 nothing sent to the provider — and `DELETE` forgets them and keeps the voice.
 
 **Test connection** is `POST /api/endpoints/test` `{ kind, id }`, answering `{ ok, message, ms }`:
-one small request to the **saved** endpoint with its saved key, through the provider the server
-runs — the fakes say so without a request. Scripting sends a two-sentence excerpt through the same
+one small request to the **saved** endpoint with its saved key, through the provider its runs go
+through — a simulated endpoint says it answered without one. Scripting sends a two-sentence excerpt through the same
 path a chapter takes; Fish lists the account's models, which proves the key and costs nothing; an
 OpenAI-shaped server lists `/models`. The page sends any edit still waiting to be written first,
 but not an unsaved connection draft: saving one can move queued work, which asks first.
@@ -1136,8 +1150,9 @@ cannot be asked for, a model Fish does not document — never happened, and has 
 request cancelled mid-flight, since what the provider made of it is not knowable.
 
 **The fakes are metered too.** They report what they were given and what they answered, marked
-`simulated`, and the rows are priced at the endpoints' cards like any other. A fresh clone still
-spends nothing, and a budget can be run into, tested and shown without a key.
+`simulated`, and the rows are priced at the endpoint's card like any other — nothing, on the
+Simulated preset's zero card. A simulated endpoint still spends no money, and a budget can be run
+into, tested and shown without a key.
 
 **A book's budget is enforced here, by one question asked twice.**
 [budget.ts](../server/usage/budget.ts) asks whether some work fits: a paused book fits nothing; a
@@ -1304,9 +1319,8 @@ than timing it in silence. The route serves nothing whose name is not a token it
 made, so there is no path a request can build to a file that is not a clip. Removing a book
 removes its directory; removing a volume removes the clips its chapters rendered.
 
-Only [the fake speech model](../server/providers/fakeSpeech.ts) exists, and `SPEECH_PROVIDER=fake`
-is the only value [env.ts](../server/env.ts) accepts, for the reason the scripting side gives.
-It writes a real WAV file — a short, quiet tone whose pitch depends on the speaker, long enough to
+[The fake speech model](../server/providers/fakeSpeech.ts) is what a simulated endpoint answers
+with and what the tests narrate through. It writes a real WAV file — a short, quiet tone whose pitch depends on the speaker, long enough to
 say the line at a reading pace — so what the tests, the Narration page and the player exercise
 is a file being fetched and played, not a duration being counted down. It is deterministic, it
 honours a cancel, and a test can tell it which lines to fail.
@@ -1520,7 +1534,7 @@ a running job before a request that no longer fits (see
 (`useBookSpend` for the open book, `useLibrarySpend` for the Endpoints page's budgets table), read
 again as the book's jobs move and after a budget is written; the Endpoints page's Activity list,
 charts and spent-today read `GET /api/endpoints/requests` (`useEndpointHistory`). A row a real
-provider answered is marked as such, and one from the fakes as simulated.
+provider answered is marked as such, and one from a simulated endpoint as simulated.
 
 ## Four things the EPUB library does on import
 
@@ -1607,6 +1621,8 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [endpointSpeech.test.ts](../tests/server/endpointSpeech.test.ts)             | Fish and OpenAI-shaped requests, a streamed header made plain, refusals, billed or not, probe                       |
 | [speechProviders.test.ts](../tests/server/speechProviders.test.ts)           | Every other provider's request and answer from its docs; what each reports billed, and the usage kept               |
 | [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)                 | What the fake models produce — attributions, a valid WAV — and that they abort                                      |
+| [simulatedSpeech.test.ts](../tests/server/simulatedSpeech.test.ts)           | A simulated speech endpoint: its latency, its failures, its voices, and a chapter narrated with no `fetch` made     |
+| [simulatedScripting.test.ts](../tests/server/simulatedScripting.test.ts)     | A simulated scripting profile run through the real queue and ledger with no `fetch` made                            |
 | [libraryClient.test.ts](../tests/server/libraryClient.test.ts)               | The client and the API against each other                                                                           |
 | [schema.test.ts](../tests/server/schema.test.ts)                             | The seeded world through the schema and back                                                                        |
 | [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)                 | The library store, with a server answering                                                                          |

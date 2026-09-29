@@ -21,7 +21,7 @@
 import type { MadeVoice } from "@/types";
 import { speechProviderOf, type SampleFormat } from "@/lib/providers";
 import { ProviderError, requireKey, type CallOptions } from "~/providers/http";
-import { SPEECH_WIRES } from "~/providers/speech/registry";
+import { wireOf } from "~/providers/speech/registry";
 import type { ProviderTarget } from "~/providers/target";
 
 export type { SampleFormat } from "@/lib/providers";
@@ -119,8 +119,9 @@ export function endpointVoiceCloner(options: VoiceClonerOptions = {}): VoiceClon
   return {
     async clone(target, request, signal) {
       const shape = speechProviderOf(target);
-      const clone = SPEECH_WIRES[shape.id].clone;
-      if (!shape.cloning || !clone)
+      // a provider described without cloning is never asked for its wire: a simulated one has none
+      const clone = shape.cloning && wireOf(target).wire.clone;
+      if (!clone)
         throw new ProviderError(
           `${target.name} cannot make a voice from samples: ${shape.label} has no cloning this app speaks to`,
           0,

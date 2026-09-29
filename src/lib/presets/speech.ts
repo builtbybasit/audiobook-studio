@@ -5,6 +5,7 @@
 // Where a provider documents only a request rate, or none, the comment beside it says why.
 import type { ExpressionTag } from "@/types";
 import { presetPricing, type TtsPreset } from "@/lib/presets/preset";
+import { SIMULATED_BASE_URL, SIMULATED_SPEECH_MODEL, SIMULATED_VOICES } from "@/lib/providers";
 
 /**
  * OpenAI's first two speech models, still offered: billed per character of input, so a line's cost
@@ -291,6 +292,34 @@ function gemini38Tts(
 }
 
 export const TTS_PRESETS: TtsPreset[] = [
+  {
+    // first, since a fresh library has no endpoints and this is the one that works without an
+    // account: its voices come with it, so a line can be rendered before anything is fetched
+    id: "simulated",
+    group: "Simulated",
+    label: "Simulated (free)",
+    hint: "a tone per line, answered by this server",
+    note:
+      "Answered by this server and never the network: each line comes back as a quiet tone, " +
+      "pitched by its speaker, so a run can be tried end to end without an account. Nothing is " +
+      "billed and no key is needed. How long an answer takes and how often one fails are set on " +
+      "the Requests tab.",
+    apply: {
+      name: "Simulated (free)",
+      baseUrl: SIMULATED_BASE_URL,
+      model: SIMULATED_SPEECH_MODEL,
+      needsKey: false,
+      price: 0,
+      billing: { unit: "chars", rate: 0 },
+      voices: SIMULATED_VOICES.map((v) => ({ ...v })),
+      encoding: { format: "wav" },
+      maxChars: 0,
+      splitAt: "sentence",
+      concurrency: 4,
+      latency: 800,
+      failRate: 0,
+    },
+  },
   {
     id: "fish-free",
     group: "Fish Audio",

@@ -80,20 +80,6 @@ const Env = v.object({
     v.minValue(1),
   ),
   /**
-   * Whether scripting calls a real model.
-   *
-   * `fake` is the default: it reads the prose and never the network, so a fresh clone and the
-   * tests cannot spend money whatever the Endpoints page holds. `endpoints` sends each chapter to
-   * the scripting profile its run was queued with — its base URL, its model and the key kept for
-   * it on the server. Nothing about a provider is configured here: that is the Endpoints page's.
-   */
-  SCRIPTING_PROVIDER: v.optional(v.picklist(["fake", "endpoints"]), "fake"),
-  /**
-   * Whether narration calls a real model. The same arrangement: `fake` renders a tone and never
-   * reaches the network; `endpoints` sends each line to the endpoint its speaker's voice belongs to.
-   */
-  SPEECH_PROVIDER: v.optional(v.picklist(["fake", "endpoints"]), "fake"),
-  /**
    * Where rendered clips are kept: one directory per book under this one, and a file per render.
    * A clip's url points here and nowhere else, so moving the directory means moving the files
    * with it.

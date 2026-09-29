@@ -8,7 +8,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { baseRates, effectiveRates, pricingProblems, speechRates } from "@/lib/pricing";
-import { presetsOf, SCRIPTING_PRESETS, scriptingPresetById, TTS_PRESETS } from "@/lib/endpoints";
+import {
+  endpointErrors,
+  presetsOf,
+  SCRIPTING_PRESETS,
+  scriptingPresetById,
+  TTS_PRESETS,
+  unifyEndpoint,
+} from "@/lib/endpoints";
+import { isSimulated } from "@/lib/providers";
 import { configErrors, expressionSupport } from "@/lib/expressions";
 import { newProfile, profileErrors } from "@/lib/scripting";
 import { clone } from "@/lib/utils";
@@ -17,6 +25,8 @@ import type { Endpoint } from "@/types";
 import { testPinia, type TestPinia } from "./support/pinia";
 
 const LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/)/;
+/** A server of your own, or this one's simulated provider: neither is a hosted account. */
+const unhosted = (baseUrl = ""): boolean => LOCAL.test(baseUrl) || isSimulated(baseUrl);
 
 describe("scripting presets", () => {
   test("each makes a profile the scripting queue accepts, with a rate card that reads", () => {
@@ -39,7 +49,7 @@ describe("scripting presets", () => {
 
   test("a hosted provider needs a key and is priced; a server of your own is neither", () => {
     for (const { id, apply } of SCRIPTING_PRESETS) {
-      const local = LOCAL.test(apply.baseUrl ?? "");
+      const local = unhosted(apply.baseUrl);
       expect({ id, needsKey: apply.needsKey }).toEqual({ id, needsKey: !local });
       if (local)
         expect({ id, in: apply.inPrice, out: apply.outPrice }).toEqual({ id, in: 0, out: 0 });
@@ -139,7 +149,7 @@ describe("what a preset says and sets", () => {
 
   test("every priced hosted preset says which day its rates were read", () => {
     for (const { id, note, apply } of ALL) {
-      if (LOCAL.test(apply.baseUrl ?? "")) continue;
+      if (unhosted(apply.baseUrl)) continue;
       expect({ id, dated: note?.includes("as published on 28 September 2026") }).toEqual({
         id,
         dated: true,
@@ -191,6 +201,35 @@ describe("what a preset says and sets", () => {
         expect({ id, note }).not.toMatchObject({ note: expect.stringContaining("passes") });
         expect({ id, note }).not.toMatchObject({ note: expect.stringContaining("most-used") });
       }
+  });
+});
+
+describe("the Simulated presets", () => {
+  let pinia: TestPinia;
+  beforeEach(() => {
+    pinia = testPinia();
+  });
+  afterEach(() => pinia.stop());
+
+  test("make a speech endpoint ready to render as it stands: voices, no key, no charge", () => {
+    const ep = useEndpointsStore().addEndpoint("simulated");
+    expect(endpointErrors(unifyEndpoint(ep))).toEqual([]);
+    expect(isSimulated(ep.baseUrl)).toBe(true);
+    expect(ep.voices.length).toBeGreaterThan(0);
+    expect(ep).toMatchObject({ needsKey: false, billing: { rate: 0 }, failRate: 0 });
+  });
+
+  test("make a scripting profile the queue accepts, with no key and no charge", () => {
+    const profile = newProfile(clone(scriptingPresetById("simulated")!.apply));
+    expect(profileErrors(profile)).toEqual([]);
+    expect(profile).toMatchObject({ needsKey: false, inPrice: 0, outPrice: 0 });
+  });
+
+  test("are listed first, under their own heading", () => {
+    for (const presets of [TTS_PRESETS, SCRIPTING_PRESETS]) {
+      expect(presets[0]).toMatchObject({ id: "simulated", group: "Simulated" });
+      expect(presets.filter((p) => p.group === "Simulated")).toHaveLength(1);
+    }
   });
 });
 

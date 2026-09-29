@@ -1,11 +1,13 @@
 // A speech provider that renders a tone and never the network.
 //
 // It exists so the narration job, the audio files and the route that serves them can be exercised
-// end to end without a request leaving the machine. It is deterministic on its input, so a test
-// can say what it will produce, and it is honest about what it is: every clip is a quiet sine tone
-// whose pitch comes from the speaker's name, so two speakers sound different and nothing sounds
-// like speech. The duration follows the demo simulator's reading-speed rule, so a chapter timed
-// here is timed the way the seeded world times it.
+// end to end without a request leaving the machine. The tests hand it to the server in place of
+// the real provider; a person who wants the same sets an endpoint to simulated, and the real
+// provider answers that with this tone (`speakTone`, `simulatedSpeech.ts`). It is deterministic on
+// its input, so a test can say what it will produce, and it is honest about what it is: every clip
+// is a quiet sine tone whose pitch comes from the speaker's name, so two speakers sound different
+// and nothing sounds like speech. The duration follows the demo simulator's reading-speed rule, so
+// a chapter timed here is timed the way the seeded world times it.
 //
 // The file it writes is a real WAV — PCM, 8-bit, mono, 8000 Hz unless the endpoint asked for
 // another rate — because the point of the fake is that a browser's audio element plays what the
@@ -24,6 +26,8 @@
 // endpoint be metered and held to a cap without spending anything. A line it was told to fail is
 // reported failed and not billed, the way a request refused on the wire is; a cancel reports
 // nothing.
+import { AUDIO_MIME } from "@/lib/endpointShapes";
+import type { AnsweredAudio } from "~/providers/answer";
 import { sleep } from "~/providers/fake";
 import type { SentSpeech } from "~/providers/sent";
 import { ProviderError } from "~/providers/http";
@@ -101,68 +105,72 @@ export function toneWav(hz: number, seconds: number, rate: number = SAMPLE_RATE)
   return bytes;
 }
 
+/**
+ * One line said as a tone: as long as the line takes to read, at the rate the line asks for, and
+ * reported through `sent` as simulated — or, given a `failure`, reported failed and not billed, the
+ * way a request refused on the wire is, and thrown. What the fake and a simulated endpoint
+ * (`simulatedSpeech.ts`) have in common; when each waits and which lines each fails are its own.
+ */
+export function speakTone(input: SpeechInput, startedAt: number, failure?: Error): AnsweredAudio {
+  const { text, speaker, instructions, sampleRate, sent } = input;
+  const report = (rest: Pick<SentSpeech, "status" | "audioSeconds" | "error" | "billed">): void =>
+    sent?.({
+      startedAt,
+      finishedAt: Date.now(),
+      attempts: 1,
+      rateLimited: false,
+      simulated: true,
+      text,
+      instructions: instructions.trim(),
+      reported: null,
+      ...rest,
+    });
+  if (failure) {
+    report({
+      status: "failed",
+      audioSeconds: 0,
+      error: {
+        code: failure instanceof ProviderError ? failure.status : 0,
+        message: failure.message,
+      },
+      billed: false,
+    });
+    throw failure;
+  }
+  const duration = fakeDuration(text);
+  report({ status: "done", audioSeconds: duration, billed: true });
+  return {
+    bytes: toneWav(toneOf(speaker), duration, sampleRate ?? SAMPLE_RATE),
+    format: "wav",
+    mime: AUDIO_MIME.wav,
+    duration,
+  };
+}
+
 export function fakeSpeechProvider(options: FakeSpeechOptions = {}): SpeechProvider {
   const retried = new Set<string>();
   let dropped = false;
   const provider: SpeechProvider = {
     name: "Fake speech (local)",
-    async speak({
-      text,
-      speaker,
-      instructions,
-      voiceRef,
-      sampleRate,
-      signal,
-      sent,
-    }: SpeechInput): Promise<RenderedClip> {
+    async speak(input: SpeechInput): Promise<RenderedClip> {
+      const { text, voiceRef, signal } = input;
       const startedAt = Date.now();
       if (options.delayMs) await sleep(options.delayMs, signal);
       if (signal.aborted) throw signal.reason;
-      const report = (
-        rest: Pick<SentSpeech, "status" | "audioSeconds" | "error" | "billed">,
-      ): void =>
-        sent?.({
-          startedAt,
-          finishedAt: Date.now(),
-          attempts: 1,
-          rateLimited: false,
-          simulated: true,
-          text,
-          instructions: instructions.trim(),
-          reported: null,
-          ...rest,
-        });
       const failure =
         options.failWith ??
         (options.failLines?.(text) ? `The fake could not render “${text}”` : null);
-      if (failure) {
-        report({
-          status: "failed",
-          audioSeconds: 0,
-          error: { code: 0, message: failure },
-          billed: false,
-        });
-        throw new Error(failure);
-      }
-      const duration = fakeDuration(text);
-      report({ status: "done", audioSeconds: duration, billed: true });
+      const audio = speakTone(input, startedAt, failure ? new Error(failure) : undefined);
       return {
-        bytes: toneWav(toneOf(speaker), duration, sampleRate ?? SAMPLE_RATE),
-        format: "wav",
-        mime: "audio/wav",
-        duration,
+        ...audio,
         // a made-up latency that still grows with the line, so the Queue page has something to show
-        ms: Math.round((duration * 1000) / 4) + text.length,
+        ms: Math.round((audio.duration * 1000) / 4) + text.length,
         model: "fake-tts-1",
         voice: voiceRef ? voiceRef.slice(voiceRef.indexOf("/") + 1) : null,
       };
     },
     async probe() {
-      return {
-        ok: true,
-        message: "The fake answers without a request: SPEECH_PROVIDER=fake",
-        ms: 0,
-      };
+      return { ok: true, message: "The fake answers without a request", ms: 0 };
     },
   };
   const { batch } = options;

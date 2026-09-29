@@ -276,10 +276,7 @@ export function bookRoutes(
     validate("json", ScriptIds),
     (c) => {
       const { ids, profile } = c.req.valid("json");
-      const result = enqueueScripting(db, runner, c.req.valid("param").id, ids, {
-        provider: env.SCRIPTING_PROVIDER,
-        profile,
-      });
+      const result = enqueueScripting(db, runner, c.req.valid("param").id, ids, profile);
       c.var.logger.info(
         { run: result.runId, jobs: result.jobs.length, skipped: result.skipped.length },
         "scripting queued",

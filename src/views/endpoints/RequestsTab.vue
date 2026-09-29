@@ -13,6 +13,7 @@ import NumberSlider from "@/components/NumberSlider.vue";
 import { ChevronLeft as PrevIcon, ChevronRight as NextIcon, Check as OkIcon } from "@lucide/vue";
 import { SPLIT_MODES, splitText } from "@/lib/split";
 import { compact, opsOf } from "@/lib/endpoints";
+import { isSimulated } from "@/lib/providers";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import { SAMPLE_RATES, sampleRateLabel } from "@/lib/speech";
 import { FORMAT_LABEL, encodingOf, encodingProblems, speechFormats } from "@/lib/endpointShapes";
@@ -151,6 +152,12 @@ function setBitrate(v: string | number | null) {
   repairNotes.value = [];
 }
 
+/** A simulated speech endpoint has no provider to be slow or to fail, so it is told how to be: how
+ *  long each answer takes and what share fail. A scripting profile has neither setting. */
+const simulated = computed(() =>
+  props.u.endpoint && isSimulated(props.u.baseUrl) ? props.u.endpoint : null,
+);
+
 const limitNote = computed(() => {
   const l = props.live;
   if (l.effectiveLimit >= props.u.concurrency) return null;
@@ -278,6 +285,49 @@ const limitNote = computed(() => {
     </div>
 
     <div class="space-y-3">
+      <!-- how a simulated endpoint answers -->
+      <section v-if="simulated" class="card p-3">
+        <h3 class="label mb-2">Simulated answers</h3>
+        <div class="space-y-2.5 text-sm">
+          <label class="flex items-center justify-between gap-3"
+            ><span class="min-w-0"
+              >Answer takes
+              <span class="block text-[11px] text-zinc-500"
+                >How long each request waits before its tone comes back.</span
+              ></span
+            ><UiNumber
+              :model-value="simulated.latency"
+              @update:model-value="(v) => (simulated!.latency = v ?? 0)"
+              class="w-28 shrink-0"
+              :min="0"
+              :max="60000"
+              :step="100"
+              unit="ms"
+              label="Answer takes, in milliseconds"
+          /></label>
+          <label class="flex items-center justify-between gap-3"
+            ><span class="min-w-0"
+              >Fails
+              <span class="block text-[11px] text-zinc-500"
+                >The share of requests that fail, to watch a run retry and recover.</span
+              ></span
+            ><UiNumber
+              :model-value="Math.round(simulated.failRate * 1000) / 10"
+              @update:model-value="(v) => (simulated!.failRate = (v ?? 0) / 100)"
+              class="w-28 shrink-0"
+              :min="0"
+              :max="100"
+              :step="1"
+              unit="%"
+              label="Fails, as a percentage of requests"
+          /></label>
+        </div>
+        <p class="mt-2 text-[11px] leading-relaxed text-zinc-500">
+          Nothing is sent anywhere and nothing is billed, a failure included. Both apply from the
+          next request.
+        </p>
+      </section>
+
       <!-- input limits -->
       <section class="card p-3">
         <h3 class="label mb-2">Input limits</h3>

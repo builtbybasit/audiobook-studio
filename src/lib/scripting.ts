@@ -1,5 +1,6 @@
 import type { Profile } from "@/types";
 import { splitText } from "@/lib/split";
+import { isSimulated } from "@/lib/providers";
 import {
   baseRates,
   ceilingRates,
@@ -65,21 +66,23 @@ export function newProfile(p: Partial<Profile> = {}): Profile {
 }
 export function profileErrors(p: Profile): string[] {
   const errors: string[] = [];
-  try {
-    const url = new URL(p.baseUrl);
-    if (
-      !["http:", "https:"].includes(url.protocol) ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash
-    )
-      throw new Error();
-    if (/\/chat\/completions\/?$/.test(url.pathname))
-      errors.push("Use the base URL without /chat/completions.");
-  } catch {
-    errors.push("Enter a valid HTTP or HTTPS base URL.");
-  }
+  // a simulated profile names no host — this server answers it — so it has no URL to check
+  if (!isSimulated(String(p.baseUrl)))
+    try {
+      const url = new URL(p.baseUrl);
+      if (
+        !["http:", "https:"].includes(url.protocol) ||
+        url.username ||
+        url.password ||
+        url.search ||
+        url.hash
+      )
+        throw new Error();
+      if (/\/chat\/completions\/?$/.test(url.pathname))
+        errors.push("Use the base URL without /chat/completions.");
+    } catch {
+      errors.push("Enter a valid HTTP or HTTPS base URL.");
+    }
   if (typeof p.name !== "string" || !p.name.trim()) errors.push("Give this endpoint a name.");
   if (typeof p.model !== "string" || !p.model.trim()) errors.push("Enter a model ID.");
   for (const [label, value, min] of [

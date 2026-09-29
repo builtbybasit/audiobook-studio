@@ -469,7 +469,8 @@ const duplicate = computed(
               <td class="py-1 pr-2">
                 <VoicePicker
                   :ref="(el) => (pickers[c.name] = el as { open: boolean } | null)"
-                  v-model="c.voice"
+                  :model-value="c.voice"
+                  @update:model-value="(v) => castStore.setVoice(bookId, c.name, v)"
                   :book-id="bookId"
                   :speaker="c.name"
                   size="xs"
@@ -549,7 +550,12 @@ const duplicate = computed(
                     </p>
                     <label class="block space-y-1 text-xs font-medium"
                       ><span>Voice</span>
-                      <VoicePicker v-model="c.voice" :book-id="bookId" :speaker="c.name" block
+                      <VoicePicker
+                        :model-value="c.voice"
+                        @update:model-value="(v) => castStore.setVoice(bookId, c.name, v)"
+                        :book-id="bookId"
+                        :speaker="c.name"
+                        block
                     /></label>
                     <div
                       v-for="w in waiting(c.name)"

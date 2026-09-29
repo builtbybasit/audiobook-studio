@@ -13,6 +13,7 @@ import { bookFacts } from "@/views/library/bookFacts";
 import { useReviewInbox, type DecisionKind, type DecisionTone } from "@/views/review/inbox";
 import EmptyState from "@/components/EmptyState.vue";
 import { useBookId } from "@/composables/useBookId";
+import { useCast } from "@/queries";
 import {
   ArrowRight as NextIcon,
   CircleCheck as DoneIcon,
@@ -29,6 +30,7 @@ import type { Component } from "vue";
 
 const libraryStore = useLibraryStore();
 const bookId = useBookId();
+useCast(bookId);
 // the router only reaches this view with a real book id
 const book = computed(() => libraryStore.bookById(bookId)!);
 const groups = useReviewInbox(bookId);

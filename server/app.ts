@@ -148,7 +148,7 @@ export function createApp(
   // Everything a book owns is addressed under it. The library's own routes come first; the cast,
   // the scripts and the audiobooks each have a file of their own so that a route reads as one call
   // on the operations of the part of the app that owns the table.
-  app.route(`${base}/books`, bookRoutes(db, runner, files, exports.files));
+  app.route(`${base}/books`, bookRoutes(db, runner, files, exports.files, providers.scripting));
   app.route(`${base}/books`, castRoutes(db));
   app.route(`${base}/books`, scriptRoutes(db, runner));
   app.route(`${base}/books`, exportRoutes(db, runner, exports, coverFiles(files)));

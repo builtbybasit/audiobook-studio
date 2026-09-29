@@ -237,18 +237,19 @@ export function discardDraft(u: UnifiedEndpoint): void {
 const sameTemplate = (a: PromptTemplate, b: PromptTemplate): boolean =>
   a.system === b.system && a.user === b.user;
 
-/** An endpoint's say over the prompt as saved, with the text a Default one has not got filled in. */
+/** An endpoint's say over the prompt as saved, with the text and notes it has not got filled in. */
 export const savedProfilePrompt = (p: Profile): ProfilePrompt => ({
   mode: p.prompt?.mode ?? "default",
   system: p.prompt?.system ?? "",
   user: p.prompt?.user ?? "",
+  notes: p.prompt?.notes ?? "",
 });
 
 /** What the Prompt tab shows: the draft, or what is saved. */
 export const profilePromptOf = (u: UnifiedEndpoint): ProfilePrompt | null =>
   u.profile ? (ui.prompts[u.key] ?? savedProfilePrompt(u.profile)) : null;
 
-/** Change part of an endpoint's prompt, starting a draft from the saved one. */
+/** Change part of an endpoint's prompt — its mode, texts or notes — starting a draft from the saved one. */
 export function editProfilePrompt(u: UnifiedEndpoint, change: Partial<ProfilePrompt>): void {
   const cur = profilePromptOf(u);
   if (cur) ui.prompts[u.key] = { ...cur, ...change };
@@ -258,7 +259,7 @@ export function profilePromptDirty(u: UnifiedEndpoint): boolean {
   const d = ui.prompts[u.key];
   if (!d || !u.profile) return false;
   const saved = savedProfilePrompt(u.profile);
-  return d.mode !== saved.mode || !sameTemplate(d, saved);
+  return d.mode !== saved.mode || d.notes !== saved.notes || !sameTemplate(d, saved);
 }
 
 export function discardProfilePrompt(u: UnifiedEndpoint): void {

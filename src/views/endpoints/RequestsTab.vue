@@ -6,7 +6,9 @@
 //
 // The split preview runs the real splitter, and checks that the pieces put back together are
 // character-for-character the source — a chunking setting that quietly drops text would be the
-// worst kind of bug to ship.
+// worst kind of bug to ship. For a scripting endpoint it also says what the piece shown is
+// expected to use, with the prompt this endpoint sends and, for a model that reasons, the thinking
+// its recent requests at this level were seen to spend.
 import { computed, ref, watch } from "vue";
 import { UiNumber, UiSelect } from "@/ui";
 import NumberSlider from "@/components/NumberSlider.vue";
@@ -15,7 +17,10 @@ import { SPLIT_MODES, splitText } from "@/lib/split";
 import { compact, opsOf } from "@/lib/endpoints";
 import { isSimulated } from "@/lib/providers";
 import { reasoningRequest } from "@/lib/reasoning";
-import { REASONING_LEVELS } from "@/lib/scripting";
+import { REASONING_LEVELS, reasoningEstimateNote, tokenEstimate } from "@/lib/scripting";
+import { resolvePrompt } from "@/lib/prompt";
+import { money } from "@/lib/pricing";
+import { useEndpointsStore } from "@/stores/endpoints";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import { SAMPLE_RATES, sampleRateLabel } from "@/lib/speech";
 import { FORMAT_LABEL, encodingOf, encodingProblems, speechFormats } from "@/lib/endpointShapes";
@@ -27,7 +32,13 @@ import {
   supportOf,
 } from "@/lib/audioFormat";
 import type { LiveActivity } from "@/views/endpoints/live";
-import type { AudioFormat, ReasoningEffort, SampleRate, SplitMode } from "@/types";
+import type {
+  AudioFormat,
+  ReasoningEffort,
+  SampleRate,
+  ScriptEndpointTelemetry,
+  SplitMode,
+} from "@/types";
 import type { UiOption } from "@/ui/types";
 
 const props = defineProps<{
@@ -36,7 +47,11 @@ const props = defineProps<{
   /** a real chapter when a book is open, otherwise a built-in paragraph */
   sample: string;
   sampleLabel: string;
+  /** a scripting endpoint's thinking per input token at its current level, once a request said */
+  reasoning?: ScriptEndpointTelemetry["reasoning"];
 }>();
+
+const endpointsStore = useEndpointsStore();
 
 const ep = computed(() => (props.u.profile ?? props.u.endpoint)!);
 const ops = computed(() => opsOf(props.u));
@@ -58,6 +73,28 @@ watch(parts, () => {
   at.value = Math.min(at.value, Math.max(0, parts.value.length - 1));
 });
 const part = computed(() => parts.value[Math.min(at.value, parts.value.length - 1)]);
+
+/**
+ * What the piece shown would use as one scripting request: the prompt this endpoint sends for a
+ * book without its own, and the thinking its requests at this level were seen to spend.
+ */
+const tokens = computed(() => {
+  const p = props.u.profile;
+  if (!p || !part.value?.text) return null;
+  return tokenEstimate(part.value.text, p, Date.now(), {
+    prompt: resolvePrompt({ library: endpointsStore.prompt, profile: p.prompt }),
+    reasoningPerInputToken: props.reasoning?.perInputToken,
+  });
+});
+const thinkingNote = computed(() =>
+  props.u.profile && tokens.value && !isSimulated(props.u.baseUrl)
+    ? reasoningEstimateNote(
+        props.u.profile.reasoning,
+        props.reasoning,
+        tokens.value.reasoningTokens,
+      )
+    : null,
+);
 
 const AT_LABEL: Record<SplitMode, string> = {
   sentence: "sentence end",
@@ -526,6 +563,13 @@ const limitNote = computed(() => {
         <pre
           class="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-zinc-50 p-2 font-serif text-xs leading-relaxed dark:bg-zinc-950/50"
           >{{ part?.text }}</pre>
+        <p v-if="tokens" class="mt-2 text-[11px] text-zinc-500">
+          ~{{ tokens.inputTokens.toLocaleString() }} input + ~{{
+            tokens.outputTokens.toLocaleString()
+          }}
+          output tokens · {{ money(tokens.cost) }} for this piece, with this endpoint’s prompt
+          <span v-if="thinkingNote" class="block text-zinc-400">{{ thinkingNote }}</span>
+        </p>
         <p
           class="mt-2 text-[11px]"
           :class="preserved ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600'"

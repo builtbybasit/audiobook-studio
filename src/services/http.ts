@@ -94,6 +94,8 @@ export class HttpClient {
     try {
       return await this.fetch(`${this.base}${path}`, init);
     } catch (cause) {
+      // a request the page cancelled was not the server failing to answer
+      if (init?.signal?.aborted) throw init.signal.reason;
       // The server is not answering. Saying so is the whole point: the alternative is a UI that
       // looks like an empty library rather than one that cannot be reached.
       throw new ApiError(UNREACHABLE, 0, cause instanceof Error ? cause.message : undefined);

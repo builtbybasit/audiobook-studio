@@ -204,17 +204,29 @@ export const PROFILE_KEY = "scripting:";
 export const profileKey = (id: string): string => PROFILE_KEY + id;
 
 /**
- * A profile's say over the prompt, or nothing when it has never had one. Any of the three columns
- * set means it has: a `default` endpoint keeps its texts for when it is switched back, and a mode
- * left null reads as the `default` it stands for.
+ * A profile's say over the prompt, or nothing when it has never had one. Any of the four columns
+ * set means it has: a `default` endpoint keeps its replacement's texts for when it is switched back,
+ * and a mode left null reads as the `default` it stands for.
+ *
+ * A mode that is neither is an `append` row from before an endpoint's notes took Append's place. It
+ * reads as `default`, its appended text moved into the notes — which is where that text now goes,
+ * placed by `{{endpoint.notes}}` — so nothing typed is lost and nothing needs migrating.
  */
 function toProfilePrompt(row: EndpointRow): ProfilePrompt | undefined {
-  if (row.promptMode == null && row.promptSystem == null && row.promptUser == null)
+  const { promptSystem, promptUser, promptNotes } = row;
+  // typed as the modes it should hold; read as the text it may hold
+  const promptMode: string | null = row.promptMode;
+  if (promptMode == null && promptSystem == null && promptUser == null && promptNotes == null)
     return undefined;
+  if (promptMode != null && promptMode !== "default" && promptMode !== "replace") {
+    const appended = [promptNotes, promptSystem, promptUser].filter((t) => t?.trim());
+    return { mode: "default", system: "", user: "", notes: appended.join("\n\n") };
+  }
   return {
-    mode: row.promptMode ?? "default",
-    system: row.promptSystem ?? "",
-    user: row.promptUser ?? "",
+    mode: promptMode === "replace" ? "replace" : "default",
+    system: promptSystem ?? "",
+    user: promptUser ?? "",
+    notes: promptNotes ?? "",
   };
 }
 
@@ -327,6 +339,7 @@ export function profileValues(
     promptMode: p.prompt?.mode ?? null,
     promptSystem: p.prompt?.system ?? null,
     promptUser: p.prompt?.user ?? null,
+    promptNotes: p.prompt?.notes ?? null,
   };
 }
 

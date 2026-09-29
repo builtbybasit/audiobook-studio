@@ -8,17 +8,20 @@
 //
 // Reading is here too, because a total that does not come from the same rows the Activity list
 // shows is a second opinion about what was spent.
-import { and, desc, eq, gte, isNull, sql, sum } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, isNull, sql, sum } from "drizzle-orm";
 
 import type { CloneFee } from "@/lib/providers";
+import { REASONING_SAMPLE, recentReasoning } from "@/lib/scriptActivity";
 import type {
   BookSpend,
   Endpoint,
   EndpointKind,
   Profile,
+  ReasoningEffort,
   ReqError,
   RequestRecord,
   RequestUsage,
+  ScriptEndpointTelemetry,
   SpeechCharge,
 } from "@/types";
 import { billingOf } from "@/lib/endpoints";
@@ -49,6 +52,11 @@ export interface RequestFor {
    * spoken in a cloned voice whose provider charges at first use settles that fee too.
    */
   voiceRef?: string;
+  /**
+   * The reasoning level a scripting request asked for, as the run it belongs to was queued with —
+   * not the profile's now. What its reasoning tokens are read against for the next estimate.
+   */
+  reasoning?: ReasoningEffort | null;
 }
 
 const errorOf = (sent: SentScript | SentSpeech): ReqError | undefined =>
@@ -108,6 +116,9 @@ export function settleScript(
         outputTokens: sent.usage.outputTokens,
         ...(sent.usage.cachedInput != null ? { cachedInput: sent.usage.cachedInput } : {}),
         ...(sent.usage.cacheWrite != null ? { cacheWrite: sent.usage.cacheWrite } : {}),
+        ...(sent.usage.reasoningTokens != null
+          ? { reasoningTokens: sent.usage.reasoningTokens }
+          : {}),
       }
     : {};
   const error = errorOf(sent);
@@ -122,6 +133,7 @@ export function settleScript(
       attempts: sent.attempts,
       ...timing(sent, work),
       usage,
+      ...(work.reasoning ? { reasoningEffort: work.reasoning } : {}),
       cost: priced ? priced.total : 0,
       costBasis: priced ? priced.basis : "calculated",
       ...(priced ? { priced } : {}),
@@ -373,4 +385,33 @@ export function endpointRequests(
     .limit(limit)
     .all()
     .map(({ row, chapterId }) => toRequestRecord(row, chapterId ?? null));
+}
+
+/**
+ * What a scripting profile's recent requests at its current reasoning level spent thinking, per
+ * input token — the same figure its telemetry shows (`recentReasoning`), read off only the rows it
+ * is worked out from. What a run's estimate adds for the thinking a reasoning model bills as output.
+ */
+export function scriptReasoning(
+  db: Db | Tx,
+  profile: Pick<Profile, "id" | "reasoning">,
+): ScriptEndpointTelemetry["reasoning"] | null {
+  const level = profile.reasoning ?? null;
+  const rows = db
+    .select()
+    .from(requests)
+    .where(
+      and(
+        eq(requests.kind, "scripting"),
+        eq(requests.endpointId, profile.id),
+        eq(requests.status, "done"),
+        isNotNull(requests.reasoningTokens),
+        level == null ? isNull(requests.reasoningEffort) : eq(requests.reasoningEffort, level),
+      ),
+    )
+    .orderBy(desc(requests.finishedAt))
+    .limit(REASONING_SAMPLE)
+    .all()
+    .map((row) => toRequestRecord(row));
+  return recentReasoning(rows, level);
 }

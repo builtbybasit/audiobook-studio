@@ -280,6 +280,42 @@ describe("a refusal", () => {
   });
 });
 
+describe("a lenient request (a prompt trial)", () => {
+  test("hands back lines that fail the word check, reported as answered", async () => {
+    const { provider } = gateway(() => completion(fenced(LINES.slice(0, 2)), "stop", USAGE));
+    const { sent, input } = reported({ lenient: true });
+    const lines = await provider.script(input);
+    expect(lines).toHaveLength(2);
+    expect(fidelity(TEXT, lines)).toMatchObject({ ok: false, missing: 3 });
+    expect(sent).toMatchObject([{ status: "done", usage: { inputTokens: 1200 } }]);
+  });
+
+  test("still refuses an answer that is not a script, or was cut off", async () => {
+    const chat = gateway(() => completion("Sorry, I can't help with that."));
+    await expect(chat.provider.script(input({ lenient: true }))).rejects.toThrow(
+      /did not answer with a script/,
+    );
+    const cut = gateway(() => completion('```json\n{"lines":[{"type":', "length", USAGE));
+    await expect(cut.provider.script(input({ lenient: true }))).rejects.toThrow(
+      /cut off at max output tokens/,
+    );
+  });
+});
+
+describe("a request's reasoning tokens", () => {
+  test("ride on the usage it reports", async () => {
+    const { provider } = gateway(() =>
+      Response.json({
+        choices: [{ message: { content: fenced(LINES) }, finish_reason: "stop" }],
+        usage: { ...USAGE, completion_tokens_details: { reasoning_tokens: 120 } },
+      }),
+    );
+    const { sent, input } = reported();
+    await provider.script(input);
+    expect(sent[0].usage?.reasoningTokens).toBe(120);
+  });
+});
+
 describe("the Test button", () => {
   test("answers ok with how long it took and who spoke", async () => {
     const { provider } = gateway(() =>

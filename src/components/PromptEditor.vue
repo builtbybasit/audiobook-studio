@@ -24,8 +24,6 @@ const props = withDefaults(
   defineProps<{
     system: string;
     user: string;
-    /** `whole`: a prompt on its own; `append`: an endpoint's addition to one */
-    kind: "whole" | "append";
     /** the messages as they would be sent, rendered by the parent; none hides the preview */
     preview?: RenderedPrompt | null;
     /** what the reset button puts back; none hides the button */
@@ -45,7 +43,7 @@ const els: Record<"system" | "user", HTMLTextAreaElement | null> = { system: nul
 const last = ref<"system" | "user">("user");
 
 const template = computed<PromptTemplate>(() => ({ system: props.system, user: props.user }));
-const problems = computed(() => promptProblems(template.value, props.kind));
+const problems = computed(() => promptProblems(template.value));
 const warnings = computed(() => promptWarnings(template.value));
 const atReset = computed(
   () =>

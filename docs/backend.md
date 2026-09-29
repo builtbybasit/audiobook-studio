@@ -976,7 +976,8 @@ provider, so a failure never spends tokens twice without anyone asking.
 **The prompt it sends is not in this file.** It has three layers ([src/lib/prompt.ts](../src/lib/prompt.ts)):
 the library's default, kept in `settings` under `prompt` (no row is the built-in prompt) and saved with
 the Endpoints `PUT` (`prompt` absent keeps it, `null` resets it); each scripting profile's `prompt`
-(`default` / `append` / `replace`, its texts kept whatever the mode) and `reasoning`, in the endpoint
+(its notes for `{{endpoint.notes}}`, and `default` / `replace` with the replacement kept whatever
+the mode) and `reasoning`, in the endpoint
 row's `prompt_*` and `reasoning_effort` columns; and each book's `prompt` (notes, and a whole
 replacement it may switch on), in the book row's `prompt_*` columns, set by `PATCH /api/books/:id`.
 Saves are checked with the same rules the editor shows (`profilePromptProblems`, `bookPromptProblems`)
@@ -988,7 +989,13 @@ after queueing reach only later runs. At dispatch each request's tags are filled
 chapter, the cast as it stands and the request's part, the locked output format is added after the
 system prompt, and the provider sends the two messages it is handed. The scripted history version
 records the prompt's origin and fingerprint; the connection test sends the library prompt with the
-profile's own layer, filled with a made-up book. The reasoning level becomes the host's own fields
+profile's own layer, filled with a made-up book. `POST /api/books/:id/script-trial` ([server/script/trial.ts](../server/script/trial.ts)) sends one
+chunk with draft layers over the saved ones and `lenient` set, so the provider hands back lines that
+fail `fidelity` instead of refusing them; it writes nothing but a ledger row, checks the book's budget
+first, answers a provider refusal as a result with `error` (200), and is cancelled with the request.
+Scripting ledger rows keep `reasoning_tokens` (null = not reported) and `reasoning_effort`, and
+`scriptReasoning` turns an endpoint's latest 20 at its current level into the thinking-per-input-token
+share the estimates add to output. The reasoning level becomes the host's own fields
 in [src/lib/reasoning.ts](../src/lib/reasoning.ts), shared with the page so the note under the select
 is about what is actually sent.
 

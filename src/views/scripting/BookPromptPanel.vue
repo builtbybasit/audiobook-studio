@@ -3,26 +3,31 @@
 // and a whole prompt of its own it may switch on in place of the library's (and any endpoint's
 // replacement). See `@/lib/prompt` for how the layers are put together.
 //
+// Notes are only sent where the prompt in force names their tag, so the panel says when the
+// prompt this book would be sent drops its notes, or the chosen endpoint's, and offers to add the
+// tag when that prompt is the book's own. Under it, the draft can be tried on one chunk.
+//
 // The panel edits a draft and writes it whole when the typing stops, or the focus leaves: a
 // keystroke's worth of notes is not worth a request. A draft that could not be sent — notes too
 // long, a replacement without its excerpt — stays here with the reasons and is not written.
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { storedBookPrompt, useLibraryStore } from "@/stores/library";
-import { bookPromptProblems } from "@/lib/prompt";
 import { useScriptingStore } from "@/stores/scripting";
 import { useCast, useChapterText } from "@/queries";
 import {
+  bookPromptProblems,
   describeOrigin,
   libraryPrompt,
   NOTES_MAX_CHARS,
   notesProblems,
   renderPrompt,
   resolvePrompt,
-  tagsIn,
 } from "@/lib/prompt";
+import { droppedNotes, withNotesLine, type NotesOwner } from "@/lib/promptNotes";
 import { scriptParts } from "@/lib/scripting";
 import PromptEditor from "@/components/PromptEditor.vue";
+import PromptTrial from "@/components/PromptTrial.vue";
 import { UiSwitch } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
 import type { BookPrompt, RenderedPrompt } from "@/types";
@@ -36,6 +41,7 @@ const scriptingStore = useScriptingStore();
 const SAVE_AFTER_MS = 800;
 /** Built here: a literal pair of braces in the template would end the interpolation it sits in. */
 const NOTES_TAG = "{{book.notes}}";
+const ENDPOINT_NOTES_TAG = "{{endpoint.notes}}";
 
 const book = computed(() => libraryStore.bookById(props.bookId));
 const EMPTY: BookPrompt = { notes: "", replace: false, system: "", user: "" };
@@ -108,12 +114,19 @@ const resolved = computed(() =>
     book: draft.value,
   }),
 );
-/** The notes would not be sent: the prompt in force never says where to put them. */
-const notesUnplaced = computed(
-  () =>
-    !!draft.value.notes.trim() &&
-    ![...tagsIn(resolved.value.system), ...tagsIn(resolved.value.user)].includes("book.notes"),
+/** Notes the prompt in force never says where to put, the book's or the endpoint's: not sent. */
+const dropped = computed(() =>
+  droppedNotes(
+    resolved.value,
+    { book: draft.value.notes, endpoint: profile.value?.prompt?.notes },
+    profile.value?.name ?? "",
+    "book",
+  ),
 );
+/** Put the line that places `owner`'s notes at the end of this book's system prompt. */
+function addTag(owner: NotesOwner) {
+  draft.value.system = withNotesLine(draft.value.system, owner);
+}
 
 // the chapter the preview is built on: the first one ticked, or the book's first
 const chapter = computed(() => {
@@ -147,7 +160,11 @@ const preview = computed<RenderedPrompt | null>(() => {
       description: c.description,
     })),
     excerpt: parts.value[0] ?? "",
-    endpoint: { name: profile.value?.name ?? "", model: profile.value?.model ?? "" },
+    endpoint: {
+      name: profile.value?.name ?? "",
+      model: profile.value?.model ?? "",
+      notes: profile.value?.prompt?.notes ?? "",
+    },
   });
 });
 const previewOf = computed(
@@ -184,15 +201,22 @@ const previewOf = computed(
       >
     </p>
     <p
-      v-if="notesUnplaced"
+      v-for="d in dropped"
+      :key="d.owner"
       class="flex gap-1.5 text-[11px] leading-snug text-amber-700 dark:text-amber-400"
       role="status"
     >
       <WarnIcon class="icon-sm mt-px shrink-0" />
       <span
-        >The {{ describeOrigin(resolved.origin) }} has no
-        <code class="font-mono">{{ NOTES_TAG }}</code
-        >, so these notes are not sent. Add the tag where they belong.</span
+        >{{ d.text }} <template v-if="d.fixElsewhere">Add the tag in {{ d.fixElsewhere }}.</template
+        ><button
+          v-else
+          type="button"
+          class="font-medium underline decoration-dotted underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200"
+          @click="addTag(d.owner)"
+        >
+          Add the tag
+        </button></span
       >
     </p>
 
@@ -200,12 +224,14 @@ const previewOf = computed(
       <UiSwitch v-model="replace" label="Use this book's own prompt" />
       <p class="mt-1 text-[11px] leading-snug text-zinc-500">
         <template v-if="replace"
-          >In place of the library's prompt and any endpoint's replacement, for this book only. An
-          endpoint's Append is still added after it.</template
+          >In place of the library's prompt and any endpoint's own, for this book only. Notes are
+          sent where it names <code class="font-mono">{{ NOTES_TAG }}</code> and
+          <code class="font-mono">{{ ENDPOINT_NOTES_TAG }}</code
+          >.</template
         >
         <template v-else
           >This book is sent the {{ describeOrigin(resolved.origin) }}. Switch on to write one for
-          this book alone; an endpoint's Append would still be added after it.</template
+          this book alone.</template
         >
       </p>
     </div>
@@ -214,7 +240,6 @@ const previewOf = computed(
       v-if="replace"
       v-model:system="draft.system"
       v-model:user="draft.user"
-      kind="whole"
       :preview="preview"
       :reset-to="libraryDefault"
       reset-label="Reset to the library's prompt"
@@ -234,6 +259,17 @@ const previewOf = computed(
     <p v-if="replace && preview" class="text-[11px] leading-snug text-zinc-500">
       The preview is {{ previewOf }}.
     </p>
+
+    <div class="rounded-lg border border-zinc-200 p-2.5 dark:border-zinc-800">
+      <PromptTrial
+        :book-id="bookId"
+        :chapter-id="chapter?.id ?? null"
+        :profile-id="scriptingStore.scriptSettings.profile"
+        :drafts="{ book: draft }"
+        :disabled="problems.length > 0"
+        disabled-reason="Fix the problems above to try this prompt."
+      />
+    </div>
 
     <p
       v-if="dirty && problems.length"

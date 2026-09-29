@@ -93,7 +93,29 @@ export function newProfile(p: Partial<Profile> = {}): Profile {
   };
   // a profile handed a partial `pricing` (an imported settings file, a fixture) gets the rest
   ensurePricing(profile);
+  // …and one handed a prompt written before notes gets it as it is kept now
+  if (profile.prompt != null)
+    profile.prompt = upgradeProfilePrompt(profile.prompt) as Profile["prompt"];
   return profile;
+}
+
+/**
+ * An endpoint's prompt as it is kept now, from one written before `{{endpoint.notes}}`: an
+ * `append` — the old way a model's quirks got in — becomes Default with its texts as the notes,
+ * and one without notes has none. Anything else is handed back for `profileErrors` to judge.
+ */
+export function upgradeProfilePrompt(prompt: unknown): unknown {
+  if (!prompt || typeof prompt !== "object") return prompt;
+  const o = prompt as Record<string, unknown>;
+  const text = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+  if (o.mode === "append")
+    return {
+      mode: "default",
+      system: "",
+      user: "",
+      notes: [o.notes, o.system, o.user].map(text).filter(Boolean).join("\n\n"),
+    };
+  return o.notes === undefined ? { ...o, notes: "" } : o;
 }
 export function profileErrors(p: Profile): string[] {
   const errors: string[] = [];
@@ -139,14 +161,16 @@ export function profileErrors(p: Profile): string[] {
   if (p.pricing) errors.push(...pricingProblems(p.pricing));
   if (p.reasoning != null && !REASONING_EFFORTS.includes(p.reasoning))
     errors.push("Choose a valid reasoning level.");
-  // held to the rules of what it is used as: a Default endpoint's kept text only to its length
+  // held to the rules of what it is used as: a Default endpoint's kept text only to its length,
+  // its notes always
   const prompt = p.prompt;
   if (
     prompt != null &&
     (typeof prompt !== "object" ||
-      !["default", "append", "replace"].includes(prompt.mode) ||
+      !["default", "replace"].includes(prompt.mode) ||
       typeof prompt.system !== "string" ||
-      typeof prompt.user !== "string")
+      typeof prompt.user !== "string" ||
+      typeof prompt.notes !== "string")
   )
     errors.push("Invalid prompt settings.");
   else if (prompt)
@@ -163,18 +187,26 @@ export function scriptParts(text: string, p: Profile): string[] {
 /**
  * How many tokens one chunk is expected to use, and what that costs at an explicit instant.
  *
- * The input is the chunk and the prompt around it. Given the template a run would send, the
- * prompt's share is what `promptOverhead` measures it at, a character count taken as tokens four to
- * one; without one it is the flat 500 tokens the estimate used before the prompt could be edited.
+ * The input is the chunk and the prompt around it. Given the template a run would send
+ * (`opts.prompt`), the prompt's share is what `promptOverhead` measures it at, a character count
+ * taken as tokens four to one; without one it is the flat 500 tokens the estimate used before the
+ * prompt could be edited.
+ *
+ * The output is the script, and for a model that reasons, the thinking it bills as output too:
+ * `opts.reasoningPerInputToken` is what the endpoint's recent requests at its current reasoning
+ * level thought per input token (`ScriptEndpointTelemetry.reasoning`), and adds that share of this
+ * chunk's input. Without it nothing is added — a level nobody has measured yet is not guessed at.
  *
  * Two figures matter and they are deliberately different. `cost` is what this chunk would cost at
  * the rates in force *now*, including any off-peak window or promotion. `reserve` is what is held
  * against the budget while it is in flight, and it is worked out at the **dearest** rates the card
- * can reach (`ceilingRates`) with the whole output ceiling: a budget must survive a promotion
- * expiring or an off-peak window closing mid-run, so a reservation is never allowed to lean on a
- * discount that may be gone by the time the request is actually sent. The base card is not that
- * ceiling — DeepSeek's card is its off-peak price, and its peak windows double it. No cache saving
- * is assumed either way — cache use is not knowable before the answer comes back.
+ * can reach (`ceilingRates`) with the whole output ceiling, so the reasoning share moves the
+ * estimate but never the reservation: a budget must survive a promotion expiring or an off-peak
+ * window closing mid-run, so a reservation is never allowed to lean on a discount that may be gone
+ * by the time the request is actually sent.
+ * The base card is not that ceiling — DeepSeek's card is its off-peak price, and its peak windows
+ * double it. No cache saving is assumed either way — cache use is not knowable before the answer
+ * comes back.
  *
  * The input side of the reservation is taken at the **dearest** rate any input token could be
  * charged at, not at the ordinary input rate. Cached and cache-write tokens are slices of the
@@ -186,11 +218,13 @@ export function tokenEstimate(
   text: string,
   p: Profile,
   at: number = Date.now(),
-  prompt?: PromptTemplate,
+  opts: { prompt?: PromptTemplate; reasoningPerInputToken?: number } = {},
 ) {
-  const overhead = prompt ? Math.ceil(promptOverhead(prompt) / 4) : 500;
+  const overhead = opts.prompt ? Math.ceil(promptOverhead(opts.prompt) / 4) : 500;
   const inputTokens = Math.ceil((text.length / 4) * 1.6) + overhead;
-  const outputTokens = Math.ceil((text.length / 4) * 1.15);
+  /** of `outputTokens`, the thinking a reasoning model is expected to bill as output */
+  const reasoningTokens = Math.ceil(inputTokens * (opts.reasoningPerInputToken ?? 0));
+  const outputTokens = Math.ceil((text.length / 4) * 1.15) + reasoningTokens;
   // a scripting profile always has both token rates; the shared card is nullable because a speech
   // card leaves them empty, so they are read back through the profile's own numbers
   const base = baseRates(p);
@@ -203,11 +237,34 @@ export function tokenEstimate(
   return {
     inputTokens,
     outputTokens,
+    reasoningTokens,
     inputCost: (inputTokens * inRate) / 1e6,
     outputCost: (outputTokens * outRate) / 1e6,
     cost: (inputTokens * inRate + outputTokens * outRate) / 1e6,
     reserve: (inputTokens * reserveIn + p.maxOutputTokens * reserveOut) / 1e6,
   };
+}
+
+/**
+ * What an endpoint's own estimate says of thinking, under its token figures: how many thinking
+ * tokens a chunk is counted at (`tokenEstimate`'s `reasoningTokens`) and what that was learnt from,
+ * or, with a level set that nothing has measured yet, that none is counted. Null when there is
+ * nothing to say — no level asked for and nothing seen, or thinking switched off.
+ */
+export function reasoningEstimateNote(
+  level: ReasoningEffort | null | undefined,
+  seen: ScriptEndpointTelemetry["reasoning"],
+  thinkingTokens: number,
+): string | null {
+  if (seen) {
+    const from = `from the last ${seen.requests === 1 ? "request" : `${seen.requests.toLocaleString("en")} requests`} at this level`;
+    return thinkingTokens > 0
+      ? `incl. ~${thinkingTokens.toLocaleString("en")} thinking tokens a chunk, ${from}`
+      : `no thinking tokens counted, ${from}`;
+  }
+  if (level && level !== "off")
+    return "Thinking isn’t counted yet — no request at this level has reported it.";
+  return null;
 }
 
 /** What a profile nothing has been sent to yet has been through: nothing. */

@@ -74,8 +74,12 @@ export interface ScriptingProvider {
   script(input: ScriptInput): Promise<ScriptedLine[]>;
   /**
    * One small request to see the profile answers — the Test button; absent, it cannot be tested.
-   * `prompt` is the template the profile's runs would be sent (the library's, with its own
-   * addition or replacement), filled in with `sampleVars`; absent, the built-in one.
+   * `prompt` is the template the profile's runs would be sent (the library's, or its own
+   * replacement) and the profile's notes, filled in with `sampleVars`; absent, the built-in one.
    */
-  probe?(target: ScriptTarget, signal: AbortSignal, prompt?: PromptTemplate): Promise<ProbeResult>;
+  probe?(
+    target: ScriptTarget,
+    signal: AbortSignal,
+    prompt?: { template: PromptTemplate; notes: string },
+  ): Promise<ProbeResult>;
 }

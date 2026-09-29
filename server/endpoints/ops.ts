@@ -90,7 +90,7 @@ function check(config: EndpointConfig): void {
     }
     if (p.prompt) refusePrompt(`“${p.name || p.id}”'s prompt`, profilePromptProblems(p.prompt));
   }
-  if (config.prompt) refusePrompt("The library's prompt", promptProblems(config.prompt, "whole"));
+  if (config.prompt) refusePrompt("The library's prompt", promptProblems(config.prompt));
 }
 
 /**
@@ -147,7 +147,10 @@ export async function testEndpoint(
     library: readLibraryPrompt(db),
     profile: profile.prompt,
   });
-  return probe.call(providers.scripting, scriptTarget(db, profile), signal, { system, user });
+  return probe.call(providers.scripting, scriptTarget(db, profile), signal, {
+    template: { system, user },
+    notes: profile.prompt?.notes ?? "",
+  });
 }
 
 const untestable = (name: string): ProbeResult => ({

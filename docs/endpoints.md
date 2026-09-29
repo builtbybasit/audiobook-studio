@@ -37,9 +37,10 @@ change it:
 - **The library's default prompt**: the **Default prompt** entry above the endpoint list on the
   Endpoints page, a system prompt and a user message. It starts as the built-in prompt, and **Reset to
   built-in** puts that back (a default equal to the built-in prompt is stored as none).
-- **An endpoint's Prompt tab**: _Default_ sends the library's prompt as it is; _Append_ adds this
-  endpoint's text after it (a model's quirk: "keep paragraphs apart"); _Replace_ sends this endpoint's
-  own prompt instead. The text is kept when you switch back to Default.
+- **An endpoint's Prompt tab**: **Notes for this model** (a model's quirk: "keep paragraphs apart"),
+  placed wherever the prompt says `{{endpoint.notes}}` and kept whatever the prompt mode; then
+  _Default_, which sends the library's prompt, or _Replace_, which sends this endpoint's own prompt
+  instead. The replacement's text is kept when you switch back to Default.
 - **A book's scripting settings**: **Notes for the scripter**, placed wherever the prompt says
   `{{book.notes}}` (the page warns when the prompt in use has no such tag), and **Use this book's own
   prompt**, which replaces the whole prompt for that book.
@@ -51,14 +52,17 @@ Exported settings files carry the default prompt and each endpoint's prompt and 
 simulated endpoint ignores both.
 
 A book's own prompt beats an endpoint's Replace, which beats the library default, which beats the
-built-in prompt. An endpoint's Append is added after whichever of those applies, because a model's
-quirks hold whatever book it reads.
+built-in prompt. **Notes go only where a tag puts them**: the built-in prompt has a line for each
+(`Notes on this book: {{book.notes}}`, `Notes for this model: {{endpoint.notes}}`), and a prompt you
+write decides for itself — a book's own prompt pulls an endpoint's notes in by naming
+`{{endpoint.notes}}`. Notes that the prompt in use has no tag for are not sent, and the page says so
+where they are typed, with a button that adds the tag.
 
 **Tags** are `{{name}}` and are filled in per request: `{{excerpt}}` (the text; required once, in
 the user message), `{{part}}` / `{{parts}}`, `{{chapter.title}}`, `{{chapter.number}}`, `{{cast}}`
 (the known speakers' names), `{{cast.details}}` (one line per speaker with gender, other names and
-description), `{{book.title}}`, `{{book.author}}`, `{{book.notes}}`, `{{endpoint.name}}` and
-`{{model}}`. A line whose tags all come out empty is left out, so `Notes on this book: {{book.notes}}`
+description), `{{book.title}}`, `{{book.author}}`, `{{book.notes}}`, `{{endpoint.name}}`,
+`{{endpoint.notes}}` and `{{model}}`. A line whose tags all come out empty is left out, so `Notes on this book: {{book.notes}}`
 vanishes for a book without notes. An unknown tag, a missing or repeated `{{excerpt}}` or a message over
 20,000 characters stops the save. A tag that changes every chapter in the _system_ prompt is allowed,
 with a warning: it stops the provider caching the system prompt, and cached input is cheaper.
@@ -71,6 +75,19 @@ A run snapshots the resolved prompt and the book's notes when it is queued, like
 chunking, so editing a prompt mid-run changes only later runs. The estimate and the budget hold price
 the prompt's real length. Each scripted version in a chapter's history says where its prompt came from
 and a short fingerprint of it, so two runs with different prompts can be told apart.
+
+### Trying a prompt on one chunk
+
+**Try it on one chunk** sits under a book's prompt (with the book's chapter and the run's endpoint)
+and on an endpoint's Prompt tab (with a book and chapter to pick). It sends the prompt as it stands in
+the editor — saved or not — with one chunk of a real chapter, cut as the endpoint cuts it, and shows
+what came back: the lines, the word-for-word check a run would hold them to (an answer a run would
+refuse is shown rather than refused), the time, the input, output and thinking tokens, and the cost,
+with the two messages exactly as sent. Nothing is written — not the script, its history or the cast.
+The request is real: it is held to the book's budget at its worst case first and priced into the
+book's ledger as `Prompt trial · ch N · part P/T` (a simulated endpoint bills nothing). The last
+result stays, dimmed, when the prompt, part or endpoint it was made with changes. Cancel stops the
+request on the server, though a provider may still bill one that had already reached the model.
 
 ### Reasoning level
 
@@ -85,7 +102,12 @@ DeepSeek has no medium). `temperature` is left out where it is refused or ignore
 models (with no level set too, since GPT-6 reasons by default), DeepSeek in thinking mode, and Claude 5
 on every request. A reasoning model's thinking counts against **max output tokens** and is billed as
 output; a cut-off answer says to raise the cap or lower the level, and the Test button reports the
-reasoning tokens a reply used. Provider docs read on 29 September 2026 are named beside each rule.
+reasoning tokens a reply used. **Estimates count the thinking**: each request's reasoning tokens and
+level are kept in the ledger, and an endpoint's recent requests at its current level (the last 20 that
+reported any) give its thinking as a share of input tokens, which a run's estimate, the chunk preview
+and a trial add to the output ("incl. ~1,240 thinking tokens a chunk, from the last 12 requests at
+this level"). Until such a request has been made the estimate says it isn't counted yet. The budget
+hold still reserves the whole max-output ceiling, which already covers any thinking. Provider docs read on 29 September 2026 are named beside each rule.
 
 Validation: `pnpm test` runs the scripting behavior tests with the installed Bun test runner. `pnpm build`, `pnpm lint`, and `pnpm fmt:check` check the application.
 

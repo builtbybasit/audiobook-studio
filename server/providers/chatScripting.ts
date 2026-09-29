@@ -11,7 +11,8 @@
 // prose: drop a sentence it thought redundant, summarise a paragraph, fix a word. An audiobook
 // that silently skips text is the worst thing this app could make, so every answer is checked word
 // for word against what was sent (`fidelity`) and refused, saying how much went missing, when it
-// does not match.
+// does not match — except for a prompt trial (`input.lenient`), which is shown the lines and the
+// check beside them rather than the refusal. Every other refusal holds for a trial too.
 //
 // Every request that reaches the wire is reported through `input.sent` with the usage the answer
 // carried, whether its script was accepted or refused: a model that was cut off or dropped a
@@ -21,7 +22,7 @@
 // `temperature` is left out where that host refuses or ignores it beside a reasoning level.
 import * as v from "valibot";
 
-import type { PromptTemplate, RenderedPrompt, SegmentType, TokenUsage } from "@/types";
+import type { RenderedPrompt, SegmentType, TokenUsage } from "@/types";
 import { BUILT_IN_PROMPT, renderPrompt, sampleVars } from "@/lib/prompt";
 import { NARRATOR } from "@/lib/cast";
 import { normalizeUsage } from "@/lib/pricing";
@@ -276,6 +277,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     text: string,
     signal: AbortSignal,
     sent?: (request: SentScript) => void,
+    lenient = false,
   ): Promise<{ lines: ScriptedLine[]; reasoningTokens: number | null }> {
     requireKey(target);
     const reasoning = reasoningRequest(target.baseUrl, target.reasoning);
@@ -330,22 +332,27 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     }
     if (signal.aborted) throw signal.reason;
     const usage = usageOf(raw);
+    const reasoningTokens = reasoningTokensOf(raw);
     try {
-      const lines = readAnswer(target, text, res.status, raw);
+      const lines = readAnswer(target, text, res.status, raw, lenient);
       report(usage);
-      return { lines, reasoningTokens: reasoningTokensOf(raw) };
+      return { lines, reasoningTokens };
     } catch (e) {
       if (e instanceof ProviderError) report(usage, e);
       throw e;
     }
   }
 
-  /** The script an answer holds, checked against the prose it was sent; throws what is wrong. */
+  /**
+   * The script an answer holds, checked against the prose it was sent; throws what is wrong. A
+   * lenient read hands back lines that fail the word check instead of refusing them.
+   */
   function readAnswer(
     target: ScriptTarget,
     text: string,
     status: number,
     raw: unknown,
+    lenient: boolean,
   ): ScriptedLine[] {
     const parsed = v.safeParse(Completion, raw);
     if (!parsed.success)
@@ -376,7 +383,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     if (!lines.length)
       throw new ProviderError(`${target.name} answered with a script of no lines`, status, false);
     const check = fidelity(text, lines);
-    if (!check.ok) {
+    if (!check.ok && !lenient) {
       const parts = [
         check.missing ? `left out ${check.missing} of ${check.words} words` : "",
         check.added ? `added ${check.added} that are not in the text` : "",
@@ -396,7 +403,17 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
   return {
     name: "Chat completions",
     callsProfile: true,
-    async script({ title, text, signal, progress, target, cast, prompt, sent }: ScriptInput) {
+    async script({
+      title,
+      text,
+      signal,
+      progress,
+      target,
+      cast,
+      prompt,
+      lenient,
+      sent,
+    }: ScriptInput) {
       if (!target) throw new ProviderError(NO_PROFILE, 0, false);
       progress?.(0, 1);
       const { lines } = await request(
@@ -405,18 +422,19 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         text,
         signal,
         sent,
+        lenient,
       );
       progress?.(1, 1);
       return lines;
     },
-    async probe(target, signal, template?: PromptTemplate): Promise<ProbeResult> {
+    async probe(target, signal, given): Promise<ProbeResult> {
       const started = performance.now();
       const ms = (): number => Math.round(performance.now() - started);
       try {
         // reports nothing: a connection test belongs to no book, and the ledger is per book
         const prompt = renderPrompt(
-          template ?? BUILT_IN_PROMPT,
-          sampleVars(PROBE_TEXT, { name: target.name, model: target.model }),
+          given?.template ?? BUILT_IN_PROMPT,
+          sampleVars(PROBE_TEXT, { name: target.name, model: target.model, notes: given?.notes }),
         );
         const { lines, reasoningTokens } = await request(target, prompt, PROBE_TEXT, signal);
         const speakers = [

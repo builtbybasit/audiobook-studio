@@ -25,7 +25,13 @@
 import { and, count, eq } from "drizzle-orm";
 
 import type { Job, Profile, PromptTemplate, Segment } from "@/types";
-import { BUILT_IN_PROMPT, renderPrompt, resolvePrompt, type PromptVars } from "@/lib/prompt";
+import {
+  BUILT_IN_PROMPT,
+  renderPrompt,
+  resolvePrompt,
+  type PromptCastMember,
+  type PromptVars,
+} from "@/lib/prompt";
 import { scriptParts, tokenEstimate } from "@/lib/scripting";
 import { ensureSpeakers } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
@@ -43,7 +49,7 @@ import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
 import { assertWithinBudget, budgetProblem } from "~/usage/budget";
-import { settleScript } from "~/usage/ledger";
+import { scriptReasoning, settleScript } from "~/usage/ledger";
 
 /** The status a chapter reads as when no job is running on it: asked of its script, not remembered. */
 export function settledScriptingStatus(
@@ -104,9 +110,26 @@ export function locate(db: Db | Tx, uid: string): { bookId: string; id: number }
  * them: `scriptParts` is the demo's own call, with the source's whitespace kept so the pieces
  * rejoin to the chapter. No profile, or a limit of 0, is the chapter whole.
  */
-function chunksOf(text: string, profile: Profile | undefined): string[] {
+export function chunksOf(text: string, profile: Profile | undefined): string[] {
   const parts = profile ? scriptParts(text, profile) : [];
   return parts.length ? parts : [text];
+}
+
+/**
+ * The speakers the book already has, as the prompt's cast tags read them, so a chunk read on its
+ * own still calls Mara "Mara".
+ */
+export function readSpeakers(db: Db, bookId: string): PromptCastMember[] {
+  return db
+    .select({
+      name: characters.name,
+      aliases: characters.aliases,
+      gender: characters.gender,
+      description: characters.description,
+    })
+    .from(characters)
+    .where(eq(characters.bookId, bookId))
+    .all();
 }
 
 /**
@@ -120,7 +143,9 @@ function holdsOf(
   profile: Profile | undefined,
   prompt: PromptTemplate | undefined,
 ): number[] {
-  return chunks.map((c) => (profile ? tokenEstimate(c, profile, Date.now(), prompt).reserve : 0));
+  return chunks.map((c) =>
+    profile ? tokenEstimate(c, profile, Date.now(), { prompt }).reserve : 0,
+  );
 }
 
 export function scriptingHandler(provider: ScriptingProvider): JobHandler {
@@ -138,17 +163,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       // key saved after pressing Script is the one used. Null for a run that named no profile,
       // which the provider refuses with a message saying so.
       const target = queued ? scriptTarget(db, queued.profile) : null;
-      // The speakers the book already has, so a chunk read on its own still calls Mara "Mara".
-      const speakers = db
-        .select({
-          name: characters.name,
-          aliases: characters.aliases,
-          gender: characters.gender,
-          description: characters.description,
-        })
-        .from(characters)
-        .where(eq(characters.bookId, job.bookId))
-        .all();
+      const speakers = readSpeakers(db, job.bookId);
       const cast = speakers.map((c) => c.name);
       // The prompt the run was queued with; a run queued before prompts could be edited is sent
       // the built-in one, which is what it would have been sent then.
@@ -169,7 +184,11 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         parts: chunks.length,
         cast: speakers,
         excerpt: chunks[i],
-        endpoint: { name: queued?.profile.name ?? "", model: queued?.profile.model ?? "" },
+        endpoint: {
+          name: queued?.profile.name ?? "",
+          model: queued?.profile.model ?? "",
+          notes: queued?.profile.prompt?.notes ?? "",
+        },
       });
       setChapterScripting(db, job.bookId, job.chapterId, "running", 0);
       ctx.note("Scripting started", "info", {
@@ -239,6 +258,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
               chapterUid: at ? chapter.uid : null,
               label: `Script chunk ${i + 1} · ch ${at?.id ?? job.chapterId}`,
               queuedAt: job.queuedAt,
+              reasoning: run.profile.reasoning ?? null,
             },
             sent,
           );
@@ -472,6 +492,9 @@ export function enqueueScripting(
     ...resolvePrompt({ library: readLibraryPrompt(db), profile: chosen.prompt, book: book.prompt }),
     notes: book.prompt?.notes ?? "",
   };
+  // What the endpoint's recent requests at its reasoning level spent thinking, which the estimate
+  // adds to the output it expects; the hold needs none of it, being the whole output ceiling.
+  const reasoningPerInputToken = chosen ? scriptReasoning(db, chosen)?.perInputToken : undefined;
   const run: Job["scriptRun"] = chosen && {
     profile: chosen,
     prompt,
@@ -496,7 +519,8 @@ export function enqueueScripting(
         {
           reserve: holdsOf(chunks, chosen, prompt).reduce((a, b) => a + b, 0),
           estimated: chunks.reduce(
-            (n, c) => n + tokenEstimate(c, chosen, Date.now(), prompt).cost,
+            (n, c) =>
+              n + tokenEstimate(c, chosen, Date.now(), { prompt, reasoningPerInputToken }).cost,
             0,
           ),
         },

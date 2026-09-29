@@ -1,12 +1,20 @@
 <script setup lang="ts">
 // The library's default scripting prompt: what every scripting endpoint sends for every book, until
-// an endpoint replaces it or adds to it (its Prompt tab), or a book brings its own (the book's
-// Scripting page). The built-in prompt until somebody edits it here, and again after Reset.
+// an endpoint replaces it (its Prompt tab), or a book brings its own (the book's Scripting page).
+// The built-in prompt until somebody edits it here, and again after Reset. An endpoint's notes and a
+// book's go where this says `{{endpoint.notes}}` and `{{book.notes}}`; a draft without a tag says
+// whose notes it would stop sending.
 //
 // Staged and saved with a button, like an endpoint's own prompt; see `state.ts` for why.
 import { computed } from "vue";
 import PromptEditor from "@/components/PromptEditor.vue";
-import { BUILT_IN_PROMPT, promptProblems, renderPrompt, sampleVars } from "@/lib/prompt";
+import {
+  BUILT_IN_PROMPT,
+  promptProblems,
+  renderPrompt,
+  sampleVars,
+  unplacedNotes,
+} from "@/lib/prompt";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 import {
@@ -22,29 +30,44 @@ const uiStore = useUiStore();
 
 const draft = computed(() => libraryPromptOf(endpointsStore.prompt));
 const dirty = computed(() => libraryPromptDirty(endpointsStore.prompt));
-const problems = computed(() => promptProblems(draft.value, "whole"));
+const problems = computed(() => promptProblems(draft.value));
 const builtIn = computed(
   () => draft.value.system === BUILT_IN_PROMPT.system && draft.value.user === BUILT_IN_PROMPT.user,
 );
 
 /** Written here: a pair of braces in the template would end the interpolation it sits in. */
 const NOTES_TAG = "{{book.notes}}";
+const ENDPOINT_NOTES_TAG = "{{endpoint.notes}}";
 
-/** The endpoints that do not send the default as it is, and what they do instead. */
+/** The endpoints that send a prompt of their own instead of this one. */
 const replacing = computed(() =>
   endpointsStore.profiles.filter((p) => p.prompt?.mode === "replace").map((p) => p.name),
 );
-const appending = computed(() =>
-  endpointsStore.profiles.filter((p) => p.prompt?.mode === "append").map((p) => p.name),
+/**
+ * The endpoints that send this prompt and have notes it would not place: saved notes, since a
+ * draft on an endpoint's tab is not sent by anything yet.
+ */
+const notesDropped = computed(() =>
+  endpointsStore.profiles
+    .filter(
+      (p) =>
+        p.prompt?.mode !== "replace" &&
+        unplacedNotes(draft.value, { endpoint: p.prompt?.notes }).includes("endpoint"),
+    )
+    .map((p) => p.name),
 );
 
-/** Filled in for the first scripting endpoint, so `{{model}}` shows something real. */
+/** Filled in for the first scripting endpoint, so `{{model}}` and its notes show something real. */
 const preview = computed(() => {
   const p = endpointsStore.profiles[0];
-  return renderPrompt(
-    draft.value,
-    sampleVars(PROMPT_SAMPLE, { name: p?.name ?? "An endpoint", model: p?.model ?? "a-model-id" }),
-  );
+  const vars = sampleVars(PROMPT_SAMPLE, {
+    name: p?.name ?? "An endpoint",
+    model: p?.model ?? "a-model-id",
+  });
+  return renderPrompt(draft.value, {
+    ...vars,
+    endpoint: { ...vars.endpoint, notes: p?.prompt?.notes },
+  });
 });
 
 function save() {
@@ -70,17 +93,22 @@ function save() {
         >
       </div>
       <p class="mt-1 max-w-3xl text-xs leading-relaxed text-zinc-500">
-        What every scripting endpoint tells the model, for every book. An endpoint can add to it or
-        replace it on its Prompt tab; a book can replace it, or give notes for
+        What every scripting endpoint tells the model, for every book. An endpoint can replace it,
+        or give notes for <code class="font-mono">{{ ENDPOINT_NOTES_TAG }}</code
+        >, on its Prompt tab; a book can replace it, or give notes for
         <code class="font-mono">{{ NOTES_TAG }}</code
         >, on its Scripting page.
       </p>
+      <p v-if="replacing.length" class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
+        Replaced on {{ replacing.join(", ") }}.
+      </p>
       <p
-        v-if="replacing.length || appending.length"
-        class="mt-1.5 text-[11px] leading-relaxed text-zinc-500"
+        v-if="notesDropped.length"
+        class="mt-1.5 rounded-md bg-amber-400/10 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300"
+        role="status"
       >
-        <template v-if="replacing.length">Replaced on {{ replacing.join(", ") }}. </template>
-        <template v-if="appending.length">Added to on {{ appending.join(", ") }}.</template>
+        This prompt has no <code class="font-mono">{{ ENDPOINT_NOTES_TAG }}</code
+        >, so it would not send the notes for {{ notesDropped.join(", ") }}.
       </p>
     </div>
 
@@ -109,7 +137,6 @@ function save() {
       <PromptEditor
         :system="draft.system"
         :user="draft.user"
-        kind="whole"
         :reset-to="BUILT_IN_PROMPT"
         :preview="preview"
         @update:system="(system) => editLibraryPrompt(endpointsStore.prompt, { system })"

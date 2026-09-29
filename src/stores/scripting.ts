@@ -7,7 +7,7 @@ import { jobsService } from "@/services/jobs";
 import { baseRates, ensurePricing, estimateRates } from "@/lib/pricing";
 import { resolvePrompt } from "@/lib/prompt";
 import { makeScriptSettings, profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
-import { recentCacheRate } from "@/lib/scriptActivity";
+import { recentCacheRate, scriptTelemetry } from "@/lib/scriptActivity";
 import { scriptActivityNow } from "@/queries/scriptActivity";
 import type { RunPlan, ScriptEstimate, ScriptSettings } from "@/types";
 import { defineStore } from "pinia";
@@ -42,11 +42,16 @@ export const useScriptingStore = defineStore("scripting", {
         );
       };
     },
+    /**
+     * What running the selection would cost. `reasoningTokens` is the share of the output a
+     * reasoning model is expected to spend thinking, from what the endpoint's recent requests at
+     * its current level reported — none until one did.
+     */
     scriptEstimate(): (
       bookId: string,
       ids: number[],
       retrySegmentId?: number | null,
-    ) => ScriptEstimate {
+    ) => ScriptEstimate & { reasoningTokens: number } {
       const endpointsStore = useEndpointsStore();
       const jobsStore = useJobsStore();
       const libraryStore = useLibraryStore();
@@ -56,7 +61,7 @@ export const useScriptingStore = defineStore("scripting", {
         bookId: string,
         ids: number[],
         retrySegmentId: number | null = null,
-      ): ScriptEstimate => {
+      ): ScriptEstimate & { reasoningTokens: number } => {
         // the plan decides which chapters a run would touch; the estimate prices exactly those
         const chs = this.scriptPlan(bookId, ids).chapters.map((row) =>
           libraryStore.chapter(bookId, row.id)!,
@@ -85,7 +90,13 @@ export const useScriptingStore = defineStore("scripting", {
               book: libraryStore.bookById(bookId)?.prompt,
             })
           : undefined;
-        const tokens = parts.flat().map((text) => tokenEstimate(text, p!, at, prompt));
+        // what the ledger says this endpoint thinks per input token, when a page has read it
+        const reasoningPerInputToken = p
+          ? scriptTelemetry(scriptActivityNow(p.id), p).reasoning?.perInputToken
+          : undefined;
+        const tokens = parts
+          .flat()
+          .map((text) => tokenEstimate(text, p!, at, { prompt, reasoningPerInputToken }));
         const inputCost = tokens.reduce((n, t) => n + t.inputCost, 0);
         const outputCost = tokens.reduce((n, t) => n + t.outputCost, 0);
         const rates = p
@@ -133,6 +144,7 @@ export const useScriptingStore = defineStore("scripting", {
           chunks: tokens.length,
           inputTokens: tokens.reduce((n, t) => n + t.inputTokens, 0),
           outputTokens: tokens.reduce((n, t) => n + t.outputTokens, 0),
+          reasoningTokens: tokens.reduce((n, t) => n + t.reasoningTokens, 0),
           inputCost,
           outputCost,
           cost: inputCost + outputCost,

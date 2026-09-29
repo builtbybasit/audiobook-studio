@@ -24,6 +24,7 @@ import {
 import {
   REASONING_LEVELS,
   profileErrors,
+  reasoningEstimateNote,
   scriptParts,
   tokenEstimate,
   scriptingHealth,
@@ -87,19 +88,28 @@ const previewPart = ref(0);
 const preview = computed(
   () => parts.value[Math.min(previewPart.value, parts.value.length - 1)] ?? "",
 );
+/** What the selected endpoint's recent requests at its reasoning level spent thinking, if any said. */
+const reasoningSeen = computed(() =>
+  p.value && !isSimulated(p.value.baseUrl)
+    ? scriptTelemetry(activity.rowsOf(p.value.id), p.value).reasoning
+    : undefined,
+);
 const tokens = computed(() =>
   p.value && preview.value
-    ? tokenEstimate(
-        preview.value,
-        p.value,
-        Date.now(),
+    ? tokenEstimate(preview.value, p.value, Date.now(), {
         // with the prompt this book's run would send, as the run's estimate is
-        resolvePrompt({
+        prompt: resolvePrompt({
           library: endpointsStore.prompt,
           profile: p.value.prompt,
           book: libraryStore.bookById(props.bookId)?.prompt,
         }),
-      )
+        reasoningPerInputToken: reasoningSeen.value?.perInputToken,
+      })
+    : null,
+);
+const thinkingNote = computed(() =>
+  p.value && tokens.value && !isSimulated(p.value.baseUrl)
+    ? reasoningEstimateNote(p.value.reasoning, reasoningSeen.value, tokens.value.reasoningTokens)
     : null,
 );
 const money = (n: number) => "$" + n.toLocaleString("en-US", { maximumFractionDigits: 6 });
@@ -478,6 +488,7 @@ function remove() {
                 tokens.outputTokens.toLocaleString()
               }}
               output tokens · {{ money(tokens.cost) }}
+              <span v-if="thinkingNote" class="block text-zinc-400">{{ thinkingNote }}</span>
             </p>
           </div>
         </TabsContent>

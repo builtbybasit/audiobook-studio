@@ -113,10 +113,10 @@ export function saveEndpoints(
 }
 
 /**
- * Ask a saved endpoint one small question with its saved key, through the provider the server was
- * started with — so under the fakes a test says so rather than pretending a request went out, and
- * under `endpoints` it is the request a real run would make. What is tested is what is saved: an
- * edit on the page is not the endpoint until it is.
+ * Ask a saved endpoint one small question with its saved key, through the provider its runs go
+ * through — so it is the request a real run would make, and a simulated endpoint says it answered
+ * without one rather than pretending a request went out. What is tested is what is saved: an edit
+ * on the page is not the endpoint until it is.
  */
 export async function testEndpoint(
   db: Db,
@@ -169,10 +169,10 @@ export function providerFailure(e: ProviderError): AppError {
 /**
  * The voices a saved speech endpoint offers, asked with its saved key.
  *
- * Always of the real endpoint, whichever provider the server was started with: the fakes are there
- * so nothing is spent by accident, and a list of voices costs nothing and changes nothing — while a
- * list the fakes made up would be voices no real request could use. The answer is only shown;
- * putting a voice on the endpoint is the page's own whole-configuration save.
+ * Always of the endpoint itself — only a test hands over a lister that answers from memory: a list
+ * of voices costs nothing and changes nothing, and a simulated endpoint answers with the few voices
+ * it names. The answer is only shown; putting a voice on the endpoint is the page's own
+ * whole-configuration save.
  */
 export async function listVoices(
   db: Db,
@@ -195,8 +195,8 @@ export async function listVoices(
  * One voice of a saved speech endpoint saying the sample sentence (`VOICE_SAMPLE`), asked for with
  * its saved key.
  *
- * Always of the real endpoint, like `listVoices` and for the opposite reason: a sample is not free,
- * but it is a click that asks to hear this voice, and a tone from the fakes would not be it. It is
+ * Always of the endpoint itself, like `listVoices`, whatever a test runs its narration through: a
+ * sample is a click that asks to hear this voice, and a simulated endpoint's is its tone. It is
  * asked for the way a line of narration is — the endpoint's format and sample rate — so what is
  * heard is what a chapter would sound like, and the request is priced into the ledger against the
  * endpoint with no book. One attempt, like a connection test: a failure says so at once.

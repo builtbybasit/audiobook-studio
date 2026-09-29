@@ -7,9 +7,10 @@
 // the job prices into the ledger (`sent.ts`). A key, when there is one, is read by the
 // provider from the server's own environment and never leaves the process — see `docs/backend.md`.
 //
-// Two implementations: the fake, which renders a tone and never the network, and the one that
-// calls the endpoint a line's voice belongs to (`SPEECH_PROVIDER=endpoints`), in whichever
-// provider's shape its base URL speaks (`endpointSpeech.ts`).
+// One implementation the server runs: the one that calls the endpoint a line's voice belongs to, in
+// whichever provider's shape its base URL speaks, and answers a simulated endpoint itself with a
+// tone (`endpointSpeech.ts`). The tests hand over the fake, which renders the same tone for every
+// line whatever its endpoint (`fakeSpeech.ts`).
 //
 // A line is asked for in the endpoint's format — WAV, MP3 or Opus — and the clip says which format
 // it really came back in, because that is what it is kept as and served as. The fake answers WAV
@@ -130,6 +131,3 @@ export interface SpeechProvider {
    */
   speakBatch?(batch: SpeechBatch): Promise<void>;
 }
-
-/** Which provider a server is started with; see `env.ts`. */
-export type SpeechProviderName = "fake" | "endpoints";

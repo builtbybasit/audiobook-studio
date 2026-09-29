@@ -1,7 +1,7 @@
 // A voice sample on the Endpoints page: one saved voice saying one sentence.
 //
-// It is the one speech request no book asks for, and the one that goes to the real endpoint
-// whatever `SPEECH_PROVIDER` says — so what these guard is that it is asked for the way a line of
+// It is the one speech request no book asks for, and the one that goes to the endpoint itself
+// whatever a test narrates through — so what these guard is that it is asked for the way a line of
 // narration would be (the endpoint's voice, format and rate, with its saved key), that the audio
 // comes back as the file it is with its length beside it, that the request lands in the ledger
 // against the endpoint with no book, and that a sample that cannot be asked for says why.

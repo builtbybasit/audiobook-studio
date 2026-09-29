@@ -4,7 +4,7 @@
 
 ## Setup and commands
 
-Use Node.js compatible with the installed Vite version, pnpm for the checked-in `pnpm-lock.yaml`, and Bun for the existing test runner. No provider keys are required: the server starts on fake models.
+Use Node.js compatible with the installed Vite version, pnpm for the checked-in `pnpm-lock.yaml`, and Bun for the existing test runner. No provider keys are required: a fresh library has no endpoints, and the **Simulated (free)** preset on the Endpoints page adds one the server answers itself, without the network or a charge.
 
 ```sh
 pnpm install

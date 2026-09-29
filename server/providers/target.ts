@@ -7,6 +7,7 @@
 // a log record in the first place.
 import type { Endpoint, EndpointOps, Profile } from "@/types";
 import { OPS_DEFAULTS } from "@/lib/endpointShapes";
+import { isSimulated } from "@/lib/providers";
 import type { Db, Tx } from "~/db/client";
 import { readEndpointKey } from "~/db/endpoints";
 import type { ScriptTarget, ScriptingProvider } from "~/providers/scripting";
@@ -19,16 +20,14 @@ export interface Providers {
   scripting: ScriptingProvider;
   speech: SpeechProvider;
   /**
-   * Where the Voices tab's lists come from. Not chosen by `SPEECH_PROVIDER` like the pair above:
-   * listing voices spends nothing, so the real lister is the default everywhere and only a test
-   * hands over another.
+   * Where the Voices tab's lists come from. Listing voices spends nothing, so the endpoints' own
+   * lister is the default everywhere and only a test hands over another.
    */
   voices?: VoiceLister;
   /**
-   * What renders the Voices tab's samples. Not chosen by `SPEECH_PROVIDER` either: a sample is a
-   * click on one voice that asks to hear the real thing, and the fake's tone would answer a
-   * question nobody asked. So the real provider is the default, the request is priced into the
-   * ledger like any other, and only a test hands over another.
+   * What renders the Voices tab's samples: the endpoints' own provider unless a test hands over
+   * another, so a sample is the endpoint's voice — a tone for a simulated one — and its request is
+   * priced into the ledger like any other.
    */
   samples?: SpeechProvider;
   /**
@@ -54,6 +53,19 @@ export interface ProviderTarget {
   maxRetries: EndpointOps["maxRetries"];
   /** how long to hold off after a 429 that names no Retry-After */
   cooldownSec: EndpointOps["cooldownSec"];
+  /**
+   * For a simulated endpoint or profile (`isSimulated(baseUrl)`), how it behaves in place of a
+   * server: how long each answer takes and how often one fails. Absent for every other target.
+   */
+  simulation?: Simulation;
+}
+
+/** How a simulated target behaves: what the endpoint's `latency` and `failRate` say. */
+export interface Simulation {
+  /** how long each answer takes, in milliseconds */
+  latencyMs: number;
+  /** the share of requests that fail, 0 to 1 */
+  failRate: number;
 }
 
 /** What a connection test found. `ok: false` is an answer, not an error: the route reports it. */
@@ -90,9 +102,16 @@ function targetOf(
     baseUrl: e.baseUrl.trim().replace(/\/+$/, ""),
     model: e.model,
     apiKey,
-    needsKey: e.needsKey,
+    // a simulated one is answered here, so a key it was saved as needing would only refuse it
+    needsKey: e.needsKey && !isSimulated(e.baseUrl),
     timeoutSec: e.timeoutSec ?? d.timeoutSec,
     maxRetries: e.maxRetries ?? d.maxRetries,
     cooldownSec: e.cooldownSec ?? d.cooldownSec,
+    ...(isSimulated(e.baseUrl) && {
+      simulation: {
+        latencyMs: "latency" in e ? Math.max(0, e.latency || 0) : 0,
+        failRate: "failRate" in e ? Math.min(1, Math.max(0, e.failRate || 0)) : 0,
+      },
+    }),
   };
 }

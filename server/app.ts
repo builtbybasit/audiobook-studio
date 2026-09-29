@@ -18,8 +18,8 @@ import type { Logger } from "~/log";
 import { log as defaultLog } from "~/log";
 import type { ExportPorts } from "~/providers/encoder";
 import { createSpeechGate, type SpeechGate } from "~/providers/gate";
-import { fakeScriptingProvider } from "~/providers/fake";
-import { fakeSpeechProvider } from "~/providers/fakeSpeech";
+import { endpointScriptingProvider } from "~/providers/endpointScripting";
+import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import type { Providers } from "~/providers/target";
 import { wavEncoders } from "~/providers/wavEncoder";
 import { audioRoutes } from "~/routes/audio";
@@ -57,7 +57,8 @@ export interface AppOptions {
   exports?: ExportPorts;
   /**
    * The models a connection test asks — the same pair the runner's handlers send work to. The
-   * fakes by default, which answer a test without a request.
+   * endpoints' own by default, as a running server has them: a simulated endpoint answers here,
+   * every other over the network.
    */
   providers?: Providers;
   /** where the recordings a cloned voice was made from are kept; the configured directory by default */
@@ -77,7 +78,7 @@ export function createApp(
     runner = createRunner(db, {}, { log }),
     files = audioFiles(env.AUDIO_DIR),
     exports = { encoders: wavEncoders(), files: audiobookFiles(env.EXPORT_DIR) },
-    providers = { scripting: fakeScriptingProvider(), speech: fakeSpeechProvider() },
+    providers = { scripting: endpointScriptingProvider(), speech: endpointSpeechProvider() },
     voiceFiles = voiceFilesIn(env.VOICE_DIR),
     gate = createSpeechGate(),
   }: AppOptions = {},

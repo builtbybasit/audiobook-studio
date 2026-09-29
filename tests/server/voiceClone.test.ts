@@ -39,7 +39,10 @@ import { jsonBody, tempVoiceDir, testApi, type TestApi } from "../support/server
 describe("which providers clone", () => {
   test("a provider described with cloning has a clone in its wire module, and only those", () => {
     for (const p of SPEECH_PROVIDERS)
-      expect([p.id, !!p.cloning]).toEqual([p.id, typeof SPEECH_WIRES[p.id].clone === "function"]);
+      expect([p.id, !!p.cloning]).toEqual([
+        p.id,
+        p.id !== "simulated" && typeof SPEECH_WIRES[p.id].clone === "function",
+      ]);
   });
 
   test("no provider's limits reach past the server's own", () => {

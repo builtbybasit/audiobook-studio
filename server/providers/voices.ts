@@ -6,12 +6,16 @@
 // page after the last voice of the one before. Gemini's prebuilt voices, OpenAI's built-in ones and
 // each Qwen model's system voices are written down in their docs, so they are answered without a
 // request; any other OpenAI-shaped server is asked `GET /audio/voices`. Fish also has a public
-// catalogue, searched a page at a time, and is the only provider that has one.
+// catalogue, searched a page at a time, and is the only provider that has one. A simulated endpoint
+// is asked nothing: its voices are the few it names (`simulatedSpeech.ts`), and it has no key to
+// need.
 //
-// Listing spends nothing and changes nothing, which is why the route calls this whatever
-// `SPEECH_PROVIDER` says: the fakes stand in for requests that cost money, and this is not one.
+// Listing spends nothing and changes nothing, which is why the route always calls the real lister:
+// only a test hands over one that answers from memory.
 import type { FoundVoice } from "@/types";
+import { isSimulated } from "@/lib/providers";
 import { ProviderError, requireKey, type CallOptions } from "~/providers/http";
+import { simulatedVoices } from "~/providers/simulatedSpeech";
 import { wireOf } from "~/providers/speech/registry";
 import type { ProviderTarget } from "~/providers/target";
 
@@ -45,20 +49,27 @@ export interface VoiceLister {
   list(target: ProviderTarget, query: VoiceQuery, signal: AbortSignal): Promise<VoicePage>;
 }
 
+/** A search of a provider that has no public catalogue — every one but Fish. */
+const noCatalogue = (target: ProviderTarget): ProviderError =>
+  new ProviderError(
+    `${target.name} has no public voice catalogue to search; only Fish Audio has one.`,
+    0,
+    false,
+  );
+
 export function endpointVoiceLister(
   options: Pick<CallOptions, "fetch" | "backoffMs"> = {},
 ): VoiceLister {
   return {
     async list(target, query, signal) {
+      if (isSimulated(target.baseUrl)) {
+        if (query.source === "library") return simulatedVoices();
+        throw noCatalogue(target);
+      }
       requireKey(target);
       const { wire } = wireOf(target);
       if (query.source === "library") return wire.voices(target, signal, options);
-      if (!wire.search)
-        throw new ProviderError(
-          `${target.name} has no public voice catalogue to search; only Fish Audio has one.`,
-          0,
-          false,
-        );
+      if (!wire.search) throw noCatalogue(target);
       return wire.search(target, query, signal, options);
     },
   };

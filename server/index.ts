@@ -14,10 +14,8 @@ import { narrationHandler } from "~/jobs/narration";
 import { createRunner } from "~/jobs/runner";
 import { scriptingHandler } from "~/jobs/scripting";
 import { log } from "~/log";
-import { chatScriptingProvider } from "~/providers/chatScripting";
+import { endpointScriptingProvider } from "~/providers/endpointScripting";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
-import { fakeScriptingProvider } from "~/providers/fake";
-import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import { createSpeechGate } from "~/providers/gate";
 import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { wavEncoders } from "~/providers/wavEncoder";
@@ -33,13 +31,11 @@ boot.debug(
   "migrations applied",
 );
 
-// The providers are chosen once, here: the fakes unless the environment asks for the real thing.
-// Where a real one sends a request, with what model and what key, is the Endpoints page's — read
-// from the database at the moment of each request, and never out of this process but to it.
-const scripting =
-  env.SCRIPTING_PROVIDER === "endpoints" ? chatScriptingProvider() : fakeScriptingProvider();
-const speech =
-  env.SPEECH_PROVIDER === "endpoints" ? endpointSpeechProvider() : fakeSpeechProvider();
+// Where a request goes, with what model and what key, is the Endpoints page's — read from the
+// database at the moment of each request, and never out of this process but to it. An endpoint or
+// profile set to `simulated://` is answered here without one, and nothing it does is billed.
+const scripting = endpointScriptingProvider();
+const speech = endpointSpeechProvider();
 const files = audioFiles(env.AUDIO_DIR);
 // An encoder that shells out is the one thing here that needs something outside this process, so
 // it is checked now rather than at the first build: a server that cannot write an audiobook says

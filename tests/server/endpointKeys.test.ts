@@ -170,7 +170,7 @@ describe("testing a saved endpoint", () => {
       jsonBody({ kind: "tts", id: "fish" }),
     );
     expect(fake.body.ok).toBe(true);
-    expect(fake.body.message).toContain("SPEECH_PROVIDER=fake");
+    expect(fake.body.message).toContain("without a request");
   });
 });
 

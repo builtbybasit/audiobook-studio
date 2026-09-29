@@ -14,7 +14,15 @@ import { gemini } from "@/lib/providers/gemini";
 import { minimax } from "@/lib/providers/minimax";
 import { compatible, openai } from "@/lib/providers/openai";
 import { qwen } from "@/lib/providers/qwen";
+import { simulated } from "@/lib/providers/simulated";
 import type { CloneSupport, SpeechProviderShape, TagSyntax } from "@/lib/providers/types";
+export {
+  isSimulated,
+  SIMULATED_BASE_URL,
+  SIMULATED_SCRIPTING_MODEL,
+  SIMULATED_SPEECH_MODEL,
+  SIMULATED_VOICES,
+} from "@/lib/providers/simulated";
 
 export type {
   CloneFee,
@@ -27,6 +35,7 @@ export type {
 } from "@/lib/providers/types";
 
 export const SPEECH_PROVIDERS: readonly SpeechProviderShape[] = [
+  simulated,
   fish,
   gemini,
   elevenlabs,

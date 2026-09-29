@@ -10,3 +10,6 @@ dist
 
 # local database and imported files
 data
+
+# Playwright test state
+.playwright-mcp

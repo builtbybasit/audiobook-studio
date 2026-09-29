@@ -5,11 +5,13 @@ import {
   OUTPUT_FORMAT,
   fill,
   fingerprint,
+  profilePromptProblems,
   promptProblems,
   promptWarnings,
   renderPrompt,
   resolvePrompt,
   sampleVars,
+  unplacedNotes,
   type PromptVars,
 } from "@/lib/prompt";
 
@@ -80,19 +82,26 @@ describe("resolvePrompt", () => {
     expect(resolvePrompt({ library, book: { ...book, replace: false } }).system).toBe("LIB");
   });
 
-  test("an endpoint's addition follows whatever it is given, a book's replacement included", () => {
-    const append = { mode: "append" as const, system: "Keep paragraphs apart.", user: "" };
-    const r = resolvePrompt({ library, profile: append, book });
-    expect(r.system).toBe("BOOK\n\nKeep paragraphs apart.");
-    expect(r.user).toBe("BOOK {{excerpt}}");
-    expect(r.origin).toMatchObject({ from: "book", appended: true });
+  test("an endpoint's kept replacement changes nothing while it is on Default", () => {
+    const kept = resolvePrompt({
+      library,
+      profile: { mode: "default", system: "X", user: "Y", notes: "" },
+    });
+    expect(kept.system).toBe("LIB");
+    expect(kept.origin).toEqual({ from: "library", fingerprint: fingerprint(library) });
   });
 
-  test("an empty addition and a default endpoint's kept text change nothing", () => {
-    const blank = resolvePrompt({ library, profile: { mode: "append", system: " ", user: "" } });
-    expect(blank.origin.appended).toBe(false);
-    const kept = resolvePrompt({ library, profile: { mode: "default", system: "X", user: "Y" } });
-    expect(kept.system).toBe("LIB");
+  test("notes are placed by their tags, and a template without one drops them", () => {
+    const withEndpoint = vars({
+      endpoint: { name: "DeepSeek", model: "deepseek-chat", notes: "Keep paragraphs apart." },
+    });
+    expect(renderPrompt(BUILT_IN_PROMPT, withEndpoint).system).toContain(
+      "Notes for this model: Keep paragraphs apart.",
+    );
+    expect(renderPrompt(BUILT_IN_PROMPT, vars()).system).not.toContain("Notes for this model");
+    const bare = { system: "S", user: "{{excerpt}}" };
+    expect(unplacedNotes(bare, { book: "B", endpoint: "E" })).toEqual(["book", "endpoint"]);
+    expect(unplacedNotes(BUILT_IN_PROMPT, { book: "B", endpoint: " " })).toEqual([]);
   });
 
   test("the fingerprint follows the text and nothing else", () => {
@@ -104,28 +113,31 @@ describe("resolvePrompt", () => {
 
 describe("checks", () => {
   test("the built-in prompt passes", () => {
-    expect(promptProblems(BUILT_IN_PROMPT, "whole")).toEqual([]);
+    expect(promptProblems(BUILT_IN_PROMPT)).toEqual([]);
     expect(promptWarnings(BUILT_IN_PROMPT)).toEqual([]);
   });
 
   test("a whole prompt needs one excerpt, in the user message, and known tags", () => {
-    expect(promptProblems({ system: "", user: "no text" }, "whole")).toEqual([
+    expect(promptProblems({ system: "", user: "no text" })).toEqual([
       "The user message must include {{excerpt}}, the text to script.",
     ]);
-    expect(promptProblems({ system: "{{excerpt}}", user: "{{excerpt}}" }, "whole")[0]).toContain(
+    expect(promptProblems({ system: "{{excerpt}}", user: "{{excerpt}}" })[0]).toContain(
       "not the system prompt",
     );
-    expect(promptProblems({ system: "", user: "{{excerpt}}{{excerpt}}" }, "whole")[0]).toContain(
+    expect(promptProblems({ system: "", user: "{{excerpt}}{{excerpt}}" })[0]).toContain(
       "only once",
     );
-    expect(promptProblems({ system: "{{book.name}}", user: "{{excerpt}}" }, "whole")).toEqual([
+    expect(promptProblems({ system: "{{book.name}}", user: "{{excerpt}}" })).toEqual([
       "The system prompt names {{book.name}}, which is not a tag.",
     ]);
   });
 
-  test("an addition may be empty and must not bring a second excerpt", () => {
-    expect(promptProblems({ system: "", user: "" }, "append")).toEqual([]);
-    expect(promptProblems({ system: "", user: "{{excerpt}}" }, "append")).toHaveLength(1);
+  test("an endpoint's notes are held to their length, and its kept text only to its own", () => {
+    const notes = "x".repeat(4_001);
+    expect(profilePromptProblems({ mode: "default", system: "", user: "", notes })).toHaveLength(1);
+    const kept = { mode: "default" as const, system: "no excerpt", user: "", notes: "" };
+    expect(profilePromptProblems(kept)).toEqual([]);
+    expect(profilePromptProblems({ ...kept, mode: "replace" })).not.toEqual([]);
   });
 
   test("a tag that moves every chapter in the system prompt is a warning", () => {

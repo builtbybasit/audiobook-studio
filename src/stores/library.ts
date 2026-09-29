@@ -33,6 +33,8 @@ import type {
   Chapter,
   ContentsSummary,
   NoticeGroup,
+  PromptTrialRequest,
+  PromptTrialResult,
   SegmentMap,
   Volume,
 } from "@/types";
@@ -70,6 +72,17 @@ interface LibraryState {
 /** A book's prompt as it is stored: null when it has no notes, is not switched on and holds no text. */
 export function storedBookPrompt(p: BookPrompt): BookPrompt | null {
   return p.notes.trim() || p.replace || p.system.trim() || p.user.trim() ? p : null;
+}
+
+/** A promise that rejects with an `AbortError` as soon as `signal` fires, whatever it was waiting on. */
+function abortable<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return p;
+  return new Promise<T>((resolve, reject) => {
+    const stop = () => reject(new DOMException("Cancelled", "AbortError"));
+    if (signal.aborted) return stop();
+    signal.addEventListener("abort", stop, { once: true });
+    p.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+  });
 }
 
 /**
@@ -476,6 +489,29 @@ export const useLibraryStore = defineStore("library", {
       const stored = storedBookPrompt(prompt);
       b.prompt = stored ? { ...stored } : undefined;
       return !!(await this._writeSettings(bookId, { prompt: stored }, "save this book's prompt"));
+    },
+    /**
+     * Send one chunk of a chapter with a prompt that need not be saved yet, and hand back what came
+     * back. Nothing is written to the script, but the request is real: the server prices it into
+     * the book's ledger and holds it to the book's budget, so once it settles the book's spend and
+     * the endpoint's activity are read again. A refusal (a budget that has no room, an endpoint
+     * that cannot be reached) is thrown for the caller to show; a model's bad answer is a result.
+     *
+     * `signal` stops waiting for it: the trial's panel is cancelled at once, and nothing that
+     * comes back afterwards is shown.
+     */
+    tryPrompt(
+      bookId: string,
+      request: PromptTrialRequest,
+      signal?: AbortSignal,
+    ): Promise<PromptTrialResult> {
+      const sent = this._service().tryPrompt(bookId, request, signal);
+      void sent
+        .catch(() => undefined)
+        .finally(() =>
+          Promise.all([this._budgetMoved(bookId), invalidate({ key: keys.endpointRequests })]),
+        );
+      return abortable(sent, signal);
     },
     _blocked(bookId: string, kind: string): boolean {
       const uiStore = useUiStore();

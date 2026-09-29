@@ -122,6 +122,14 @@ const money = (n: number) =>
       <dd class="text-right font-mono">{{ money(est.inputCost) }}</dd>
       <dt class="text-zinc-500">Output · ~{{ est.outputTokens.toLocaleString() }} tokens</dt>
       <dd class="text-right font-mono">{{ money(est.outputCost) }}</dd>
+      <!-- a reasoning model bills its thinking as output: how much, from its recent requests -->
+      <dd
+        v-if="est.reasoningTokens"
+        class="col-span-2 -mt-1 text-[11px] leading-snug text-zinc-400"
+      >
+        incl. ~{{ est.reasoningTokens.toLocaleString() }} thinking tokens, going by
+        {{ est.profile?.name ?? "this endpoint" }}'s recent requests
+      </dd>
       <dt class="font-medium">Estimated total</dt>
       <dd class="text-right font-mono font-semibold">{{ money(est.cost) }}</dd>
       <!-- The conservative figure is the one with the weight. The cheaper ones sit under it,

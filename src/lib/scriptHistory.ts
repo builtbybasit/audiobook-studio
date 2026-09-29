@@ -193,13 +193,17 @@ export function originKindLabel(origin: VersionOrigin): string {
 
 /**
  * Where a scripted version's prompt came from, with its fingerprint — "library prompt · 3f2a9c01" —
- * so two runs with the same model and different prompts read differently. Empty for anything else,
- * and for a version scripted before the prompt was recorded.
+ * so two runs with the same model and different prompts read differently. An endpoint's own prompt
+ * is named after the endpoint the version was scripted with ("Luna's prompt"). Empty for anything
+ * else, and for a version scripted before the prompt was recorded.
  */
 export function originPrompt(origin: VersionOrigin): string {
-  return origin.kind === "scripted" && origin.prompt
-    ? `${describeOrigin(origin.prompt)} · ${origin.prompt.fingerprint}`
-    : "";
+  if (origin.kind !== "scripted" || !origin.prompt) return "";
+  const from =
+    origin.prompt.from === "endpoint" && origin.profile
+      ? `${origin.profile}'s prompt`
+      : describeOrigin(origin.prompt);
+  return `${from} · ${origin.prompt.fingerprint}`;
 }
 
 /** The second line: the detail that does not fit the label. */

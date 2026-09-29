@@ -115,7 +115,6 @@ export const VersionOriginSchema = v.variant("kind", [
     prompt: v.optional(
       v.object({
         from: v.picklist(["built-in", "library", "endpoint", "book"]),
-        appended: v.boolean(),
         fingerprint: v.string(),
       }),
     ),
@@ -406,8 +405,9 @@ export const PromptTemplateSchema = v.object({
   user: v.string(),
 }) satisfies v.GenericSchema<unknown, PromptTemplate>;
 
-const ProfilePromptSchema = v.object({
-  mode: v.picklist(["default", "append", "replace"]),
+export const ProfilePromptSchema = v.object({
+  mode: v.picklist(["default", "replace"]),
+  notes: v.string(),
   ...PromptTemplateSchema.entries,
 }) satisfies v.GenericSchema<unknown, ProfilePrompt>;
 

@@ -1,17 +1,31 @@
 // The scripting prompt on the server: the three places it is kept — the library's default, an
-// endpoint's say over it, a book's notes and replacement — saved, refused and read back; a run
-// snapshotting the layers resolved when it is queued and filling in each request's tags; the
-// chapter's history naming where its prompt came from; and the Test button asking with the prompt
-// the profile's runs would be sent.
+// endpoint's notes and replacement, a book's notes and replacement — saved, refused and read back;
+// a run snapshotting the layers resolved when it is queued and filling in each request's tags; the
+// chapter's history naming where its prompt came from; the Test button asking with the prompt the
+// profile's runs would be sent; and what a reasoning model spent thinking, kept in the ledger at the
+// level it was asked for and read back into the next run's estimate.
 import { describe, expect, test } from "bun:test";
 
-import type { Book, BookPrompt, Chapter, ChapterHistory, Job, Profile } from "@/types";
+import { eq } from "drizzle-orm";
+
+import type {
+  Book,
+  BookPrompt,
+  Chapter,
+  ChapterHistory,
+  Job,
+  Profile,
+  RequestRecord,
+} from "@/types";
 import { credentials } from "@/lib/credentials";
 import { BUILT_IN_PROMPT, OUTPUT_FORMAT } from "@/lib/prompt";
+import { scriptTelemetry } from "@/lib/scriptActivity";
 import { makeProfiles } from "@/mock/fixtures/profiles";
-import { characters } from "~/db/schema";
+import { characters, endpoints, requests } from "~/db/schema";
+import { profileKey } from "~/db/rows/endpoints";
 import { fakeScriptingProvider } from "~/providers/fake";
 import type { ScriptInput, ScriptingProvider } from "~/providers/scripting";
+import { append, scriptReasoning } from "~/usage/ledger";
 import { epubFile, story } from "../support/epub";
 import { jsonBody, testApi, type TestApi } from "../support/server";
 
@@ -62,8 +76,12 @@ async function shelved(api: TestApi, titles = ["One"]) {
   return body.book.id;
 }
 
-/** The fake, keeping every request's input; `hold` keeps the first one waiting until `release`. */
-function recording(hold = false) {
+/**
+ * The fake, keeping every request's input; `hold` keeps the first one waiting until `release`, and
+ * `thinking` is what each request reports it spent reasoning.
+ */
+function recording(hold = false, thought?: number) {
+  let thinking = thought;
   const inner = fakeScriptingProvider();
   const inputs: ScriptInput[] = [];
   const probes: unknown[] = [];
@@ -79,20 +97,40 @@ function recording(hold = false) {
         started();
         if (hold) await gate;
       }
-      return inner.script(input);
+      return inner.script({
+        ...input,
+        sent: (r) =>
+          input.sent?.(
+            thinking != null && r.usage
+              ? { ...r, usage: { ...r.usage, reasoningTokens: thinking } }
+              : r,
+          ),
+      });
     },
     async probe(_target, _signal, prompt) {
       probes.push(prompt);
       return { ok: true, message: "answered", ms: 1 };
     },
   };
-  return { provider, inputs, probes, first, release };
+  return {
+    provider,
+    inputs,
+    probes,
+    first,
+    release,
+    thinking: (n: number) => (thinking = n),
+  };
 }
 
 describe("an endpoint's reasoning and prompt", () => {
   test("are kept as they were sent, and a profile without them reads back without them", async () => {
     const api = testApi();
-    const prompt = { mode: "append" as const, system: "Keep paragraphs apart.", user: "" };
+    const prompt = {
+      mode: "replace" as const,
+      system: "Rules. {{endpoint.notes}}",
+      user: "{{excerpt}}",
+      notes: "Keep paragraphs apart.",
+    };
     const { status } = await put(api, {
       profiles: [
         openai({ reasoning: "high", prompt }),
@@ -110,17 +148,17 @@ describe("an endpoint's reasoning and prompt", () => {
   test.each([
     {
       why: "a replacement without {{excerpt}}",
-      prompt: { mode: "replace", system: "Rules.", user: "{{chapter.title}}" },
+      prompt: { mode: "replace", system: "Rules.", user: "{{chapter.title}}", notes: "" },
       said: "“OpenAI”'s prompt: The user message must include {{excerpt}}, the text to script.",
     },
     {
-      why: "an addition that brings a second excerpt",
-      prompt: { mode: "append", system: "", user: "{{excerpt}}" },
-      said: "“OpenAI”'s prompt: An addition must not include {{excerpt}}: the prompt it adds to already has it.",
+      why: "notes over the limit",
+      prompt: { mode: "default", system: "", user: "", notes: "x".repeat(4_001) },
+      said: "“OpenAI”'s prompt: The notes are 4,001 characters; the most is 4,000.",
     },
     {
       why: "a kept text too long to be sent",
-      prompt: { mode: "default", system: "x".repeat(20_001), user: "" },
+      prompt: { mode: "default", system: "x".repeat(20_001), user: "", notes: "" },
       said: "“OpenAI”'s prompt: The system prompt is 20,001 characters; the most is 20,000.",
     },
   ])("refuses $why, saying what to change", async ({ prompt, said }) => {
@@ -132,8 +170,28 @@ describe("an endpoint's reasoning and prompt", () => {
   });
 
   test("a default endpoint's kept texts are not held to the rules of a prompt", async () => {
-    const prompt = { mode: "default" as const, system: "{{nonsense}}", user: "" };
+    const prompt = { mode: "default" as const, system: "{{nonsense}}", user: "", notes: "" };
     expect((await put(testApi(), { profiles: [openai({ prompt })] })).status).toBe(200);
+  });
+
+  test("one kept in Append's place reads as default, what it appended now its notes", async () => {
+    const api = testApi();
+    await put(api, { profiles: [openai()] });
+    api.db
+      .update(endpoints)
+      .set({
+        promptMode: "append" as never,
+        promptSystem: "Keep paragraphs apart.",
+        promptUser: "Name every speaker.",
+      })
+      .where(eq(endpoints.id, profileKey("openai")))
+      .run();
+    expect((await read(api)).profiles[0].prompt).toEqual({
+      mode: "default",
+      system: "",
+      user: "",
+      notes: "Keep paragraphs apart.\n\nName every speaker.",
+    });
   });
 });
 
@@ -205,13 +263,14 @@ describe("a run's prompt", () => {
     system: "Book rules for {{book.title}} by {{book.author}}.\nNotes: {{book.notes}}",
     user: "Part {{part}} of {{parts}}, chapter {{chapter.number}}: {{chapter.title}}\n{{cast.details}}\n{{excerpt}}",
   };
-  const APPEND = {
-    mode: "append" as const,
-    system: "Sent to {{endpoint.name}} ({{model}}).",
+  const NOTES = {
+    mode: "default" as const,
+    system: "",
     user: "",
+    notes: "Sent to {{endpoint.name}}, kept as typed.",
   };
 
-  test("is the book's replacement with the endpoint's addition, its tags filled in for each request", async () => {
+  test("is the book's replacement, its tags and the endpoint's notes filled in for each request", async () => {
     const rec = recording();
     const api = testApi({ scripting: rec.provider });
     const id = await shelved(api);
@@ -226,9 +285,12 @@ describe("a run's prompt", () => {
         color: "#c33",
       })
       .run();
-    const profile = openai({ maxChars: 700, splitAt: "sentence", concurrency: 1, prompt: APPEND });
+    const profile = openai({ maxChars: 700, splitAt: "sentence", concurrency: 1, prompt: NOTES });
     await put(api, { profiles: [profile], prompt: LIBRARY });
-    await patchBook(api, id, BOOK);
+    await patchBook(api, id, {
+      ...BOOK,
+      system: `${BOOK.system}\nFor {{endpoint.name}} ({{model}}): {{endpoint.notes}}`,
+    });
 
     const queued = await api.request<{ jobs: Job[] }>(
       `/api/books/${id}/chapters/script`,
@@ -240,20 +302,36 @@ describe("a run's prompt", () => {
     expect(parts).toBeGreaterThan(1);
     for (const [i, input] of rec.inputs.entries()) {
       expect(input.prompt!.system).toBe(
-        `Book rules for Moonlight Ledger by A. Ledger.\nNotes: Mara never shouts.\n\nSent to OpenAI (${profile.model}).\n\n${OUTPUT_FORMAT}`,
+        `Book rules for Moonlight Ledger by A. Ledger.\nNotes: Mara never shouts.\nFor OpenAI (${profile.model}): Sent to {{endpoint.name}}, kept as typed.\n\n${OUTPUT_FORMAT}`,
       );
       expect(input.prompt!.user).toBe(
         `Part ${i + 1} of ${parts}, chapter 1: One\n- Mara (female; also called M): Keeps the ledger.\n${input.text}`.trim(),
       );
     }
 
-    const origin = { from: "book", appended: true, fingerprint: expect.any(String) };
+    const origin = { from: "book", fingerprint: expect.any(String) };
     const job = (await api.request<{ job: Job }>(`/api/jobs/${queued.body.jobs[0].id}`)).body.job;
     expect(job.scriptRun?.prompt).toMatchObject({ origin, notes: "Mara never shouts." });
     const { history } = (
       await api.request<{ history: ChapterHistory }>(`/api/books/${id}/chapters/1/history`)
     ).body;
     expect(history.head.origin).toMatchObject({ kind: "scripted", prompt: origin });
+    expect(history.head.origin).not.toHaveProperty("prompt.appended");
+  });
+
+  test("does not send the endpoint's notes when the prompt has no place for them", async () => {
+    const rec = recording();
+    const api = testApi({ scripting: rec.provider });
+    const id = await shelved(api);
+    await put(api, { profiles: [openai({ maxChars: 0, prompt: NOTES })] });
+    await patchBook(api, id, BOOK);
+    await api.request(
+      `/api/books/${id}/chapters/script`,
+      jsonBody({ ids: [1], profile: "openai" }),
+    );
+    await api.runner.idle();
+    expect(rec.inputs).toHaveLength(1);
+    expect(rec.inputs[0].prompt!.system).not.toContain("kept as typed");
   });
 
   test("is the one the run was queued with, whatever is edited while it waits", async () => {
@@ -291,22 +369,121 @@ describe("a run's prompt", () => {
 });
 
 describe("the connection test", () => {
-  test("asks with the library's prompt and the endpoint's addition", async () => {
+  test("asks with the prompt the endpoint's runs would be sent", async () => {
     const rec = recording();
     const api = testApi({ scripting: rec.provider });
+    const replaced = { system: "Mine. {{endpoint.notes}}", user: "{{excerpt}}" };
     await put(api, {
       profiles: [
-        openai({ prompt: { mode: "append", system: "Keep paragraphs apart.", user: "" } }),
+        openai({ id: "kept", prompt: { mode: "default", ...replaced, notes: "Short." } }),
+        openai({ id: "own", prompt: { mode: "replace", ...replaced, notes: "Short." } }),
       ],
       prompt: LIBRARY,
     });
-    const { status } = await api.request(
-      "/api/endpoints/test",
-      jsonBody({ kind: "scripting", id: "openai" }),
-    );
-    expect(status).toBe(200);
+    for (const id of ["kept", "own"])
+      expect(
+        (await api.request("/api/endpoints/test", jsonBody({ kind: "scripting", id }))).status,
+      ).toBe(200);
     expect(rec.probes).toEqual([
-      { system: `${LIBRARY.system}\n\nKeep paragraphs apart.`, user: LIBRARY.user },
+      { template: LIBRARY, notes: "Short." },
+      { template: replaced, notes: "Short." },
     ]);
+  });
+});
+
+describe("what a reasoning model spent thinking", () => {
+  test("is kept on each request with the level the run asked for", async () => {
+    const rec = recording(false, 120);
+    const api = testApi({ scripting: rec.provider });
+    const id = await shelved(api);
+    await put(api, { profiles: [openai({ maxChars: 0, reasoning: "high" })] });
+    await api.request(
+      `/api/books/${id}/chapters/script`,
+      jsonBody({ ids: [1], profile: "openai" }),
+    );
+    await api.runner.idle();
+    const rows = api.db.select().from(requests).where(eq(requests.kind, "scripting")).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ reasoningTokens: 120, reasoningEffort: "high" });
+  });
+
+  test("is added to the output the next run's estimate expects", async () => {
+    const rec = recording(false, 0);
+    const api = testApi({ scripting: rec.provider });
+    const id = await shelved(api);
+    await put(api, { profiles: [openai({ maxChars: 0, reasoning: "high" })] });
+    const estimate = async () => {
+      const { body } = await api.request<{ jobs: Job[] }>(
+        `/api/books/${id}/chapters/script`,
+        jsonBody({ ids: [1], profile: "openai" }),
+      );
+      await api.runner.idle();
+      return body.jobs[0].scriptRun!.estimated!;
+    };
+    // the first run thought for nothing, which is what the second expects
+    const first = await estimate();
+    expect(await estimate()).toBeCloseTo(first, 12);
+    rec.thinking(2000);
+    await estimate();
+    expect(await estimate()).toBeGreaterThan(first);
+  });
+
+  test("is read, per input token, only off answered requests at the endpoint's level now", async () => {
+    const api = testApi();
+    await put(api, { profiles: [openai()] });
+    const now = Date.now();
+    const row = (
+      at: number,
+      input: number,
+      thinking: number | undefined,
+      level: "high" | "low" | undefined,
+      status: "done" | "failed" = "done",
+    ) =>
+      append(
+        api.db,
+        {
+          endpointId: "openai",
+          kind: "scripting",
+          bookId: null,
+          label: "Script chunk",
+          status,
+          attempts: 1,
+          queuedAt: now - 1000 + at,
+          startedAt: now - 1000 + at,
+          finishedAt: now - 1000 + at,
+          queueMs: 0,
+          responseMs: 10,
+          usage: {
+            inputTokens: input,
+            outputTokens: 50,
+            ...(thinking != null ? { reasoningTokens: thinking } : {}),
+          },
+          ...(level ? { reasoningEffort: level } : {}),
+          cost: 0,
+          costBasis: "calculated",
+          simulated: true,
+        },
+        null,
+      );
+    row(1, 1000, 500, "high");
+    row(2, 1000, 900, "low");
+    row(3, 1000, 300, undefined);
+    row(4, 1000, undefined, "high");
+    row(5, 1000, 9000, "high", "failed");
+    row(6, 3000, 700, "high");
+
+    const high = { perInputToken: 1200 / 4000, requests: 2 };
+    expect(scriptReasoning(api.db, { id: "openai", reasoning: "high" })).toEqual(high);
+    expect(scriptReasoning(api.db, { id: "openai", reasoning: null })).toEqual({
+      perInputToken: 0.3,
+      requests: 1,
+    });
+    expect(scriptReasoning(api.db, { id: "openai", reasoning: "medium" })).toBeNull();
+
+    // the Scripting page reads the same figure off the rows the server sends it
+    const { body } = await api.request<{ requests: RequestRecord[] }>(
+      "/api/endpoints/requests?kind=scripting&id=openai",
+    );
+    expect(scriptTelemetry(body.requests, openai({ reasoning: "high" })).reasoning).toEqual(high);
   });
 });

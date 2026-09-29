@@ -25,7 +25,7 @@ import { credentials } from "@/lib/credentials";
 import { isFishAudio, presetById, voiceRef } from "@/lib/endpoints";
 import { configErrors, expressionId } from "@/lib/expressions";
 import { newProfile, profileErrors } from "@/lib/scripting";
-import { BUILT_IN_PROMPT, promptProblems } from "@/lib/prompt";
+import { BUILT_IN_PROMPT, profilePromptProblems, promptProblems } from "@/lib/prompt";
 import { GENDER } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
 import {
@@ -129,7 +129,7 @@ function promptOk(t: unknown): t is PromptTemplate | null {
   return (
     typeof o?.system === "string" &&
     typeof o.user === "string" &&
-    !promptProblems({ system: o.system, user: o.user }, "whole").length
+    !promptProblems({ system: o.system, user: o.user }).length
   );
 }
 
@@ -460,27 +460,25 @@ export const useEndpointsStore = defineStore("endpoints", {
      * sends it.
      */
     setLibraryPrompt(t: PromptTemplate | null): boolean {
-      if (t && promptProblems(t, "whole").length) return false;
+      if (t && promptProblems(t).length) return false;
       this.prompt = keptPrompt(t);
       return true;
     },
     /**
-     * Save one scripting endpoint's say over the prompt. Only the mode in use is checked — the
-     * text a Default endpoint keeps is not sent — and a Default endpoint with no text is kept as
-     * none. False, and nothing saved, when the mode in use has a problem.
+     * Save one scripting endpoint's say over the prompt. Its notes are always checked, and its
+     * texts as a whole prompt only while it replaces — the text a Default endpoint keeps is not
+     * sent — and a Default endpoint with neither text nor notes is kept as none. False, and nothing
+     * saved, when something checked has a problem.
      */
     setProfilePrompt(id: string, prompt: ProfilePrompt): boolean {
       const p = this.profiles.find((x) => x.id === id);
       if (!p) return false;
-      if (
-        prompt.mode !== "default" &&
-        promptProblems(prompt, prompt.mode === "append" ? "append" : "whole").length
-      )
-        return false;
+      if (profilePromptProblems(prompt).length) return false;
+      const { mode, system, user, notes } = prompt;
       p.prompt =
-        prompt.mode === "default" && !prompt.system.trim() && !prompt.user.trim()
+        mode === "default" && !system.trim() && !user.trim() && !notes.trim()
           ? null
-          : { mode: prompt.mode, system: prompt.system, user: prompt.user };
+          : { mode, system, user, notes };
       return true;
     },
     saveExpressionConfig(id: string, config: ExpressionConfig): boolean {
@@ -552,6 +550,8 @@ export const useEndpointsStore = defineStore("endpoints", {
       // a file from before the prompt could be edited says nothing of it, and leaves this one's be
       if (obj.prompt !== undefined && !promptOk(obj.prompt))
         throw new Error("Invalid default prompt");
+      // an endpoint's `append` prompt, from a file written before notes, comes in as its notes
+      // (`newProfile` upgrades it)
       const profiles = (obj.profiles ?? []).map((imported) => {
         const existing = this.profiles.find((p) => p.id === imported?.id);
         // what the file says about a key is dropped: `hasKey` belongs to the server that wrote it,

@@ -398,7 +398,7 @@ export function promptWarnings(t: PromptTemplate): string[] {
 // Fixed values
 
 /** What the Endpoints page previews and the connection test sends: a made-up book. */
-export function sampleVars(excerpt: string, endpoint: { name: string; model: string }): PromptVars {
+export function sampleVars(excerpt: string, endpoint: PromptVars["endpoint"]): PromptVars {
   return {
     book: { title: "The Lamplighter", author: "A. N. Author", notes: "" },
     chapter: { title: "The Bridge", number: 1 },
@@ -412,7 +412,7 @@ export function sampleVars(excerpt: string, endpoint: { name: string; model: str
 
 /**
  * Roughly how many characters a request sends besides its excerpt: both messages rendered with an
- * empty excerpt, a cast of ten and a paragraph of notes, the output format included. For estimates
+ * empty excerpt, a cast of ten and a paragraph of each kind of notes, the output format included. For estimates
  * and budget holds, which are made before the cast and the chunks are known.
  */
 export function promptOverhead(t: PromptTemplate): number {
@@ -429,7 +429,7 @@ export function promptOverhead(t: PromptTemplate): number {
     parts: 1,
     cast,
     excerpt: "",
-    endpoint: { name: "An endpoint", model: "a-model-id" },
+    endpoint: { name: "An endpoint", model: "a-model-id", notes: "x".repeat(300) },
   };
   const r = renderPrompt(t, vars);
   return r.system.length + r.user.length;

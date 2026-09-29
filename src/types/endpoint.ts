@@ -16,7 +16,7 @@ import type {
 } from "@/types/pricing";
 import type { Voice } from "@/types/voice";
 import type { ExpressionConfig } from "@/types/expression";
-import type { Profile, PromptTemplate, ScriptSettings } from "@/types/scripting";
+import type { Profile, PromptTemplate, ReasoningEffort, ScriptSettings } from "@/types/scripting";
 
 export type { TtsBilling, TtsBillingUnit } from "@/types/pricing";
 
@@ -176,6 +176,8 @@ export interface RequestUsage {
   cachedInput?: number;
   /** of `inputTokens`, written into the provider's cache; absent = not reported */
   cacheWrite?: number;
+  /** of `outputTokens`, spent reasoning before the answer; absent = not reported */
+  reasoningTokens?: number;
   /**
    * The speech side. Four different quantities, never conversions of one another: a request is so
    * many characters *and* so many UTF-8 bytes *and* so many text tokens, and only the one its
@@ -212,6 +214,8 @@ export interface RequestRecord {
   responseMs: number;
   waiting?: WaitReason;
   usage: RequestUsage;
+  /** scripting: the reasoning level the request asked for; absent = none, left to the model */
+  reasoningEffort?: ReasoningEffort;
   /** null when the endpoint's rate is unknown */
   cost: number | null;
   costBasis: CostBasis;
@@ -307,6 +311,7 @@ export interface SettingsFile {
   version: number;
   exportedAt: string;
   endpoints: Partial<Endpoint>[];
+  /** an older file's `append` prompt on one is read in as that endpoint's notes (`upgradeProfilePrompt`) */
   profiles: Profile[];
   /** the library's default scripting prompt; null is the built-in one, absent (an older file) leaves it be */
   prompt?: PromptTemplate | null;

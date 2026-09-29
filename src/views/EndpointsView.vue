@@ -62,6 +62,7 @@ import {
 } from "@/lib/endpoints";
 import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
 import { ensurePricing, money, pricingOf } from "@/lib/pricing";
+import { scriptTelemetry } from "@/lib/scriptActivity";
 import { useEndpointActivity } from "@/views/endpoints/live";
 const { jobsUsing, liveActivity, liveRequests } = useEndpointActivity();
 import {
@@ -158,6 +159,10 @@ const seriesFor = (u: UnifiedEndpoint, range = ui.range) =>
   seriesFrom(settledFor(u), u.kind, range, now.value);
 
 const liveFor = (u: UnifiedEndpoint) => liveActivity(u);
+
+/** What a scripting endpoint's recent requests at its reasoning level spent thinking, once one said. */
+const reasoningFor = (u: UnifiedEndpoint) =>
+  u.profile ? scriptTelemetry(settledFor(u), u.profile).reasoning : undefined;
 
 function healthFor(u: UnifiedEndpoint): Health {
   const rows = histories.value[u.key] ?? [];
@@ -793,6 +798,7 @@ function pickBucket(b: MetricBucket | null) {
               :live="live"
               :sample="sample.text"
               :sample-label="sample.label"
+              :reasoning="reasoningFor(selected)"
             />
           </TabsContent>
           <TabsContent value="prompt"

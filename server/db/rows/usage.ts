@@ -14,6 +14,7 @@ function toUsage(row: RequestRow): RequestUsage {
     ...(row.outputTokens != null ? { outputTokens: row.outputTokens } : {}),
     ...(row.cachedInput != null ? { cachedInput: row.cachedInput } : {}),
     ...(row.cacheWrite != null ? { cacheWrite: row.cacheWrite } : {}),
+    ...(row.reasoningTokens != null ? { reasoningTokens: row.reasoningTokens } : {}),
     ...(row.chars != null ? { chars: row.chars } : {}),
     ...(row.bytes != null ? { bytes: row.bytes } : {}),
     ...(row.textTokens != null ? { textTokens: row.textTokens } : {}),
@@ -50,6 +51,7 @@ export function toRequestRecord(row: RequestRow, chapterId: number | null = null
     costBasis: row.costBasis,
     simulated: row.simulated,
   };
+  if (row.reasoningEffort != null) r.reasoningEffort = row.reasoningEffort;
   if (row.waiting != null) r.waiting = row.waiting;
   if (row.priced != null) r.priced = row.priced;
   if (row.speech != null) r.speech = row.speech;
@@ -88,6 +90,8 @@ export function requestValues(
     outputTokens: u.outputTokens ?? null,
     cachedInput: u.cachedInput ?? null,
     cacheWrite: u.cacheWrite ?? null,
+    reasoningTokens: u.reasoningTokens ?? null,
+    reasoningEffort: r.reasoningEffort ?? null,
     chars: u.chars ?? null,
     bytes: u.bytes ?? null,
     textTokens: u.textTokens ?? null,

@@ -16,6 +16,8 @@ import type {
   KeptSample,
   LexEntry,
   Pacing,
+  PromptTrialRequest,
+  PromptTrialResult,
   ScriptExportSamples,
   ScriptImportPlan,
   ScriptVersion,
@@ -173,6 +175,20 @@ export interface LibraryService {
    * way a stale job result is, and nothing is written.
    */
   editScript(bookId: string, chapterId: number, edit: ScriptEdit): Promise<EditedScript>;
+  /**
+   * Send one chunk of a chapter with a prompt that need not be saved, and see what comes back.
+   * Nothing is written to the script; the request is priced into the book's ledger and held to its
+   * budget. A refused answer comes back as a result with `error`, not as a rejection.
+   */
+  /**
+   * Send one chunk with a prompt that need not be saved, and see what comes back; nothing is
+   * written. Aborting `signal` cancels the request on the server too, before or while it is sent.
+   */
+  tryPrompt(
+    bookId: string,
+    request: PromptTrialRequest,
+    signal?: AbortSignal,
+  ): Promise<PromptTrialResult>;
   chapterHistory(bookId: string, chapterId: number): Promise<ChapterHistory>;
   /** Name the script as it stands and keep a copy. The script itself is untouched. */
   saveCheckpoint(
@@ -352,6 +368,19 @@ export class HttpLibraryService implements LibraryService {
 
   editScript(bookId: string, chapterId: number, edit: ScriptEdit): Promise<EditedScript> {
     return this.http.put<EditedScript>(`/books/${seg(bookId)}/chapters/${chapterId}/script`, edit);
+  }
+
+  tryPrompt(
+    bookId: string,
+    request: PromptTrialRequest,
+    signal?: AbortSignal,
+  ): Promise<PromptTrialResult> {
+    return this.http.send<PromptTrialResult>(`/books/${seg(bookId)}/script-trial`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+      signal,
+    });
   }
 
   async chapterHistory(bookId: string, chapterId: number): Promise<ChapterHistory> {

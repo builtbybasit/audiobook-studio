@@ -9,6 +9,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
+import type { PromptTrialRequest } from "@/types";
 import type { AudioFiles } from "~/audio/files";
 import { coverFiles, MAX_COVER_BYTES } from "~/covers/files";
 import type { AudiobookFiles } from "~/exports/files";
@@ -20,10 +21,18 @@ import { enqueueScripting } from "~/jobs/scripting";
 import { fail, notFound } from "~/lib/errors";
 import { IdParam } from "~/lib/http";
 import { bookPromptProblems } from "@/lib/prompt";
-import { BookPromptSchema, refusePrompt } from "~/lib/schemas";
+import {
+  BookPromptSchema,
+  ProfilePromptSchema,
+  PromptTemplateSchema,
+  refusePrompt,
+} from "~/lib/schemas";
 import { fileResponse } from "~/lib/serve";
 import { validate } from "~/lib/validate";
 import * as ops from "~/library/ops";
+import { endpointScriptingProvider } from "~/providers/endpointScripting";
+import type { ScriptingProvider } from "~/providers/scripting";
+import { tryPrompt } from "~/script/trial";
 
 const Ids = v.object({
   ids: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
@@ -83,6 +92,16 @@ const VolumeOrder = v.object({
   order: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
 });
 
+/** One chunk to try a prompt on, and the drafts to try; see `PromptTrialRequest`. */
+const PromptTrial = v.object({
+  profile: v.pipe(v.string(), v.nonEmpty("must not be empty"), v.maxLength(200)),
+  chapterId: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  part: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
+  library: v.optional(v.nullable(PromptTemplateSchema)),
+  profilePrompt: v.optional(v.nullable(ProfilePromptSchema)),
+  book: v.optional(v.nullable(BookPromptSchema)),
+}) satisfies v.GenericSchema<unknown, PromptTrialRequest>;
+
 const BookParam = v.object({ id: v.string() });
 const ChapterParam = v.object({ id: v.string(), chapterId: IdParam });
 const VolumeParam = v.object({ id: v.string(), volumeId: IdParam });
@@ -118,6 +137,8 @@ export function bookRoutes(
   runner: Runner,
   files?: AudioFiles,
   built?: AudiobookFiles,
+  /** what a prompt trial is sent to; the endpoints' own, as a running server has it, by default */
+  scripting: ScriptingProvider = endpointScriptingProvider(),
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
   // A book's covers are kept beside its clips, so they go when its directory does.
@@ -290,6 +311,37 @@ export function bookRoutes(
         { ...result, chapters: ops.bookWithChapters(db, c.req.valid("param").id).chapters },
         202,
       );
+    },
+  );
+
+  /**
+   * Try a prompt on one chunk of a chapter: the drafts sent over what is saved, and the answer
+   * shown, not written. A refused answer is a result (200, with `error`); a request the book cannot
+   * afford is refused (409) before it goes. Closing the request cancels it.
+   */
+  app.post(
+    "/:id/script-trial",
+    validate("param", BookParam),
+    validate("json", PromptTrial),
+    async (c) => {
+      const body = c.req.valid("json");
+      const result = await tryPrompt(
+        db,
+        scripting,
+        c.req.valid("param").id,
+        body,
+        c.req.raw.signal,
+      );
+      c.var.logger.info(
+        {
+          profile: body.profile,
+          chapter: body.chapterId,
+          part: result.part,
+          ok: result.fidelity.ok && !result.error,
+        },
+        "prompt tried",
+      );
+      return c.json(result);
     },
   );
 

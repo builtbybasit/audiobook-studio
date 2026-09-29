@@ -988,6 +988,18 @@ export function normalizeUsage(raw: Record<string, unknown>, format: UsageFormat
   let cachedInput: number | null = null;
   let cacheWrite: number | null = null;
   let output: number | null = null;
+  // Of the output, what was spent thinking: `completion_tokens_details.reasoning_tokens`, where
+  // OpenAI, OpenRouter and DeepSeek report it. Already inside the output tokens, so it is never
+  // priced on its own; it is kept for what a reasoning model's thinking adds to the next estimate.
+  let reasoning: number | null = null;
+  const completionDetails = raw.completion_tokens_details;
+  if (format === "openai" || format === "plain")
+    reasoning =
+      completionDetails && typeof completionDetails === "object"
+        ? num((completionDetails as Record<string, unknown>).reasoning_tokens)
+        : null;
+  else if (format === "internal") reasoning = num(raw.reasoningTokens);
+  if (reasoning != null && reasoning < 0) reasoning = null;
 
   if (format === "openai") {
     const details = raw.prompt_tokens_details as Record<string, unknown> | undefined;
@@ -1050,6 +1062,7 @@ export function normalizeUsage(raw: Record<string, unknown>, format: UsageFormat
     cachedInput,
     cacheWrite,
     outputTokens: output,
+    reasoningTokens: reasoning,
     format,
     problems,
     ...(reportedCost != null ? { reportedCost } : {}),

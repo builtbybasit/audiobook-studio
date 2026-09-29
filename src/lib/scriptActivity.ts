@@ -7,7 +7,7 @@
 // arrive newest first, as the server sends them (`usageService().requests`).
 import { OPS_DEFAULTS } from "@/lib/endpointShapes";
 import { observedCacheRate } from "@/lib/pricing";
-import type { Profile, RequestRecord, ScriptEndpointTelemetry } from "@/types";
+import type { Profile, ReasoningEffort, RequestRecord, ScriptEndpointTelemetry } from "@/types";
 import { unusedTelemetry } from "@/lib/scripting";
 
 /** How many of the latest requests the latency history keeps: what the sparkline has room for. */
@@ -15,6 +15,9 @@ const HISTORY = 30;
 
 /** How many of the latest priced requests the observed cache rate is read from. */
 const CACHE_SAMPLE = 40;
+
+/** How many of the latest requests at the endpoint's reasoning level its thinking share is read from. */
+export const REASONING_SAMPLE = 20;
 
 /** A request that has an outcome; one still queued or running says nothing about the profile yet. */
 const settled = (r: RequestRecord): boolean => r.status === "done" || r.status === "failed";
@@ -31,7 +34,7 @@ const at = (r: RequestRecord): number => r.finishedAt ?? r.queuedAt;
  */
 export function scriptTelemetry(
   rows: readonly RequestRecord[],
-  p: Pick<Profile, "model" | "baseUrl" | "cooldownSec">,
+  p: Pick<Profile, "model" | "baseUrl" | "cooldownSec" | "reasoning">,
 ): ScriptEndpointTelemetry {
   const done = rows.filter(settled);
   const telemetry = unusedTelemetry();
@@ -63,7 +66,34 @@ export function scriptTelemetry(
     const wait = latest.error?.retryAfter ?? p.cooldownSec ?? OPS_DEFAULTS.scripting.cooldownSec;
     telemetry.backoffUntil = at(latest) + wait * 1000;
   }
+  const reasoning = recentReasoning(done, p.reasoning);
+  if (reasoning) telemetry.reasoning = reasoning;
   return telemetry;
+}
+
+/**
+ * What a profile's recent answered requests spent thinking, as a share of their input tokens —
+ * only those sent at `level`, the one it is set to now, and only those whose provider said how
+ * many of the output tokens were reasoning. Null until one did. A level changed since is a new
+ * model as far as thinking goes, so its older requests say nothing about it.
+ */
+export function recentReasoning(
+  rows: readonly RequestRecord[],
+  level: ReasoningEffort | null | undefined,
+): { perInputToken: number; requests: number } | null {
+  const sample = rows
+    .filter(
+      (r) =>
+        r.status === "done" &&
+        (r.reasoningEffort ?? null) === (level ?? null) &&
+        r.usage.reasoningTokens != null &&
+        (r.usage.inputTokens ?? 0) > 0,
+    )
+    .slice(0, REASONING_SAMPLE);
+  if (!sample.length) return null;
+  const input = sample.reduce((n, r) => n + r.usage.inputTokens!, 0);
+  const thinking = sample.reduce((n, r) => n + r.usage.reasoningTokens!, 0);
+  return { perInputToken: thinking / input, requests: sample.length };
 }
 
 /** What a profile's requests used and cost, all books together. */

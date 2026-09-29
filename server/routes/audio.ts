@@ -1,6 +1,6 @@
 // Rendered clips over HTTP: the file a clip's `url` names, and nothing else.
 //
-// The route trusts `AudioFiles.path` to decide what a request may read, and answers a request it
+// The route trusts `AudioFiles.ready` to decide what a request may read, and answers a request it
 // refuses with the same 404 a missing file gets — a caller learns that there is no such clip, not
 // which of the two reasons applies. A token is never reused, so what is served under a url never
 // changes and the browser is told it may keep it. A clip is served as the format its extension
@@ -22,9 +22,10 @@ export function audioRoutes(files: AudioFiles): Hono<PinoEnv> {
 
   app.get("/:bookId/:file", validate("param", FileParam), async (c) => {
     const { bookId, file } = c.req.valid("param");
-    const path = files.path(bookId, file);
     const format = formatOfFile(file);
-    const found = path && format ? Bun.file(path) : null;
+    // `ready`, not `path`: a demo clip nobody has played yet is made now, before it is looked for
+    const path = format ? await files.ready(bookId, file) : null;
+    const found = path ? Bun.file(path) : null;
     if (!found || !format || !(await found.exists())) throw notFound("No such audio file");
     // A part at a time when the player asks for one, which is how it seeks; see `fileResponse`.
     return fileResponse(c.req.raw, found, {

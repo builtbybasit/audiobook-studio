@@ -337,9 +337,9 @@ export function enqueueBuild(
 // ---------- running one ----------
 
 export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFiles): JobHandler {
-  /** The clip's file on disk, from the url its row carries. */
-  const clipPath = (bookId: string, url: string | undefined): string | null =>
-    url ? clips.path(bookId, basename(url)) : null;
+  /** The clip's file on disk, from the url its row carries — made first if it is a demo clip not yet made. */
+  const clipPath = async (bookId: string, url: string | undefined): Promise<string | null> =>
+    url ? clips.ready(bookId, basename(url)) : null;
   const covers = coverFiles(clips);
 
   async function build(ctx: JobContext, entry: ExportItem): Promise<void> {
@@ -509,7 +509,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         );
         const parts: FreshPart[] = [];
         for (const [i, s] of lines.entries()) {
-          const at = clipPath(job.bookId, s.audio.url);
+          const at = await clipPath(job.bookId, s.audio.url);
           if (!at)
             throw new Error(
               `“${chapter.title}” has a line whose audio is not a file on this server; narrate it again`,

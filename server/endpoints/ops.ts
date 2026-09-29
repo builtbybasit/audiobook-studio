@@ -9,7 +9,7 @@
 // not in the registry being saved with it.
 import type { Credential } from "@/lib/credentials";
 import { encodingOf, VOICE_SAMPLE } from "@/lib/endpointShapes";
-import type { Db } from "~/db/client";
+import type { Db, Tx } from "~/db/client";
 import {
   readEndpoint,
   readProfiles,
@@ -29,7 +29,7 @@ import type { VoiceFiles } from "~/voices/files";
 import { removeDropped } from "~/voices/ops";
 
 /** What the page reads: the configuration as saved, or none on a server nobody has saved to. */
-export function endpointSettings(db: Db): EndpointConfig {
+export function endpointSettings(db: Db | Tx): EndpointConfig {
   return readEndpointConfig(db);
 }
 
@@ -96,7 +96,7 @@ function check(config: EndpointConfig): void {
  * without this having to find them.
  */
 export function saveEndpoints(
-  db: Db,
+  db: Db | Tx,
   config: EndpointConfig,
   voiceFiles: VoiceFiles,
 ): EndpointConfig {

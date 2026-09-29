@@ -132,7 +132,7 @@ export function freeBookId(db: Db, base: string): string {
 
 /** Write a whole imported book. All of it, or none of it. */
 export function insertBook(
-  db: Db,
+  db: Db | Tx,
   book: Book,
   chs: readonly Chapter[],
   bodies: readonly ChapterBody[],

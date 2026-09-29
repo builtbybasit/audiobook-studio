@@ -31,6 +31,7 @@
     "tests/support/encoded.ts",
     "tests/support/cloning.ts",
     "tests/support/batchServer.ts",
+    "tests/support/tempRoot.ts",
     "src/types/**/*.ts",
     "src/lib/**/*.ts",
     "src/ui/types.ts",

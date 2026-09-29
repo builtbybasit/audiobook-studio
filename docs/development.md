@@ -25,14 +25,14 @@ The scripts are defined in [package.json](../package.json):
 | `pnpm lint:fix`    | Apply lint fixes; review the resulting diff  |
 | `pnpm fmt:check`   | Check formatting with Oxfmt                  |
 | `pnpm fmt`         | Format files; review the resulting diff      |
-| `pnpm test`        | Run the existing suite with `bun test tests` |
+| `pnpm test`        | Run the suite, one worker per core           |
 | `pnpm build`       | Typecheck and build with Vite                |
 | `pnpm preview`     | Serve the production build locally           |
 | `pnpm db:generate` | Generate SQL after editing the server schema |
 | `pnpm db:migrate`  | Apply migrations without starting the server |
 | `pnpm db:studio`   | Browse the database with Drizzle Studio      |
 
-Run an individual test file directly with Bun, for example `bun test tests/history.test.ts`. Installing dependencies does not install the Bun executable used by the test script.
+Run an individual test file directly with Bun, for example `bun test tests/history.test.ts`. Installing dependencies does not install the Bun executable used by the test script; `pnpm test` needs Bun 1.4 or later for `--parallel`, which runs each file in a worker of its own. The seeded demo takes about half a second to open, and a test that opens it can pass 5 s when every core is busy, so the script allows each test 20 s. Tests make their temporary folders under one root per file, removed when the file is done ([tests/support/tempRoot.ts](../tests/support/tempRoot.ts)); make yours with `mkdtemp(tmpdir())` so they land there.
 
 ## Code map
 

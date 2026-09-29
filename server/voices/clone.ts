@@ -61,7 +61,7 @@ export async function readSamples(files: File[], cloning: CloneSupport): Promise
   if (files.length > maxSamplesOf(cloning)) fail(400, tooManySaid(cloning));
   const samples: SampleUpload[] = [];
   for (const f of files) {
-    // Bun's parser drops an empty file's name, so a refusal cannot always quote it
+    // a file can reach the form without a name, and a refusal still has to say which one
     const named = f.name || "One of the samples";
     if (f.size > maxSampleBytesOf(cloning)) fail(413, tooLargeSaid(named, cloning));
     if (!f.size) fail(400, `${named} is empty`);

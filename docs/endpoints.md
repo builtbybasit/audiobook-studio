@@ -41,7 +41,8 @@ change it:
   placed wherever the prompt says `{{endpoint.notes}}` and kept whatever the prompt mode; then
   _Default_, which sends the library's prompt, or _Replace_, which sends this endpoint's own prompt
   instead. The replacement's text is kept when you switch back to Default.
-- **A book's scripting settings**: **Notes for the scripter**, placed wherever the prompt says
+- **A book's Overview**, in its **Scripting prompt** card (the Scripting page shows a one-line summary
+  and an _Edit on Overview_ link): **Notes for the scripter**, placed wherever the prompt says
   `{{book.notes}}` (the page warns when the prompt in use has no such tag), and **Use this book's own
   prompt**, which replaces the whole prompt for that book.
 
@@ -78,7 +79,8 @@ and a short fingerprint of it, so two runs with different prompts can be told ap
 
 ### Trying a prompt on one chunk
 
-**Try it on one chunk** sits under a book's prompt (with the book's chapter and the run's endpoint)
+**Try it on one chunk** sits under a book's prompt (a chapter to pick, and the endpoint the Scripting
+page's runs use)
 and on an endpoint's Prompt tab (with a book and chapter to pick). It sends the prompt as it stands in
 the editor — saved or not — with one chunk of a real chapter, cut as the endpoint cuts it, and shows
 what came back: the lines, the word-for-word check a run would hold them to (an answer a run would

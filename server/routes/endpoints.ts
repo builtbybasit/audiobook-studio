@@ -134,18 +134,23 @@ export function endpointRoutes(
   });
 
   /**
-   * One voice of a saved speech endpoint saying the sample sentence: the audio itself, in the
-   * format the endpoint answered with, and how long it plays. A real request, priced into the ledger.
+   * One voice of a saved speech endpoint, heard: the audio itself, in the format it was made in.
+   * Kept from before, or the provider's own recording of the voice, or the endpoint saying the
+   * sample sentence — a real request, priced into the ledger, made once and kept (`sampleVoice`).
+   * `x-sample-source` says which of the last two it is, `x-sample-kept` whether nothing was asked
+   * of the provider this time, and `x-audio-duration` how long it plays when that is known.
    */
   app.post("/sample", validate("json", Sample), async (c) => {
     const { id, voice } = c.req.valid("json");
-    const clip = await ops.sampleVoice(db, providers, id, voice, c.req.raw.signal);
-    c.var.logger.info({ id, voice, ms: clip.ms, format: clip.format }, "voice sampled");
+    const sample = await ops.sampleVoice(db, providers, voiceFiles, id, voice, c.req.raw.signal);
+    c.var.logger.info({ id, voice, source: sample.source, kept: sample.kept }, "voice sampled");
     // copied onto a plain ArrayBuffer, which is what a response body is typed to take
-    return c.body(new Uint8Array(clip.bytes), 200, {
-      "content-type": clip.mime,
+    return c.body(new Uint8Array(sample.bytes), 200, {
+      "content-type": sample.mime,
       "cache-control": "no-store",
-      "x-audio-duration": String(clip.duration),
+      "x-sample-source": sample.source,
+      "x-sample-kept": sample.kept ? "1" : "0",
+      ...(sample.duration != null ? { "x-audio-duration": String(sample.duration) } : {}),
     });
   });
 

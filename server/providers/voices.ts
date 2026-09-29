@@ -14,6 +14,7 @@
 // only a test hands over one that answers from memory.
 import type { FoundVoice } from "@/types";
 import { isSimulated } from "@/lib/providers";
+import { sniffSample, type SampleFormat } from "~/providers/clone";
 import { ProviderError, requireKey, type CallOptions } from "~/providers/http";
 import { simulatedVoices } from "~/providers/simulatedSpeech";
 import { wireOf } from "~/providers/speech/registry";
@@ -44,9 +45,30 @@ export interface VoicePage {
   hasMore: boolean;
 }
 
+/** A provider's own recording of a voice, fetched: the file as it was served, and what it says. */
+export interface VoiceRecording {
+  bytes: Uint8Array;
+  format: SampleFormat;
+  text: string;
+}
+
+/** The largest recording fetched; Fish's run to a few hundred kilobytes. */
+const RECORDING_BYTES = 10 * 1024 * 1024;
+/** How long fetching one may take, on top of whatever the request's own signal allows. */
+const RECORDING_MS = 30_000;
+
 /** The port the route lists through; a test hands over one that answers from memory. */
 export interface VoiceLister {
   list(target: ProviderTarget, query: VoiceQuery, signal: AbortSignal): Promise<VoicePage>;
+  /**
+   * The provider's own recording of one voice, fetched, when it keeps one (`SpeechWire.recording`)
+   * — null otherwise, and for a simulated endpoint. Nothing here is billed.
+   */
+  recording?(
+    target: ProviderTarget,
+    voice: string,
+    signal: AbortSignal,
+  ): Promise<VoiceRecording | null>;
 }
 
 /** A search of a provider that has no public catalogue — every one but Fish. */
@@ -71,6 +93,31 @@ export function endpointVoiceLister(
       if (query.source === "library") return wire.voices(target, signal, options);
       if (!wire.search) throw noCatalogue(target);
       return wire.search(target, query, signal, options);
+    },
+
+    async recording(target, voice, signal) {
+      if (isSimulated(target.baseUrl)) return null;
+      const { wire } = wireOf(target);
+      if (!wire.recording) return null;
+      requireKey(target);
+      const found = await wire.recording(target, voice, signal, options);
+      if (!found) return null;
+      // The link is on the provider's own host (`fishSampleOf`), and holds no key: fetched as it is.
+      const res = await (options.fetch ?? fetch)(found.url, {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(RECORDING_MS)]),
+      });
+      if (!res.ok)
+        throw new ProviderError(
+          `${target.name}'s recording of this voice could not be fetched (HTTP ${res.status})`,
+          res.status,
+          false,
+        );
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.length > RECORDING_BYTES)
+        throw new ProviderError(`${target.name}'s recording of this voice is too large`, 0, false);
+      const format = sniffSample(bytes);
+      // a file that is not audio this server can name is no recording to play
+      return format ? { bytes, format, text: found.text } : null;
     },
   };
 }

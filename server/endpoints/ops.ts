@@ -8,8 +8,10 @@
 // voices or tags under one id on one endpoint, and an endpoint pointing at a credential that is
 // not in the registry being saved with it. The scripting prompts saved with them — the library's
 // default, and each profile's say over it — are held to the rules the editor shows (`@/lib/prompt`).
+import type { Endpoint } from "@/types";
 import type { Credential } from "@/lib/credentials";
 import { profilePromptProblems, promptProblems, resolvePrompt } from "@/lib/prompt";
+import { isSimulated } from "@/lib/providers";
 import { encodingOf, VOICE_SAMPLE } from "@/lib/endpointShapes";
 import type { Db, Tx } from "~/db/client";
 import {
@@ -21,11 +23,12 @@ import {
 } from "~/db/endpoints";
 import { readLibraryPrompt } from "~/db/settings";
 import { reconcileClones } from "~/db/voiceSamples";
+import { inBackground, warnIfFails } from "~/lib/background";
 import { AppError, badRequest, notFound } from "~/lib/errors";
 import { refusePrompt } from "~/lib/schemas";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { ProviderError } from "~/providers/http";
-import type { RenderedClip } from "~/providers/speech";
+import { SAMPLE_MIME, type SampleFormat } from "~/providers/clone";
 import { scriptTarget, speechTarget, type ProbeResult, type Providers } from "~/providers/target";
 import { endpointVoiceLister, type VoicePage, type VoiceQuery } from "~/providers/voices";
 import { settleSpeech } from "~/usage/ledger";
@@ -115,6 +118,11 @@ export function saveEndpoints(
     return reconcileClones(tx, config, Date.now());
   });
   removeDropped(voiceFiles, gone);
+  // what the demo buttons played for an endpoint that is gone goes with it
+  inBackground(
+    voiceFiles.heard.keepOnly(config.endpoints.map((e) => e.id)),
+    "voice samples of removed endpoints left on disk",
+  );
   return endpointSettings(db);
 }
 
@@ -205,30 +213,93 @@ export async function listVoices(
   }
 }
 
+/** What a demo button plays: the audio, and where it came from. */
+export interface VoiceSampleAudio {
+  bytes: Uint8Array;
+  mime: string;
+  /** seconds, when known — a provider's recording is played for as long as its file says */
+  duration: number | null;
+  /** the provider's own recording of the voice, or the endpoint saying `VOICE_SAMPLE` */
+  source: "recording" | "rendered";
+  /** served from what was kept, so nothing was asked of the provider this time */
+  kept: boolean;
+}
+
+/** What a provider's own recording of a voice is kept under: it is the same whatever the endpoint. */
+const RECORDING = "recording";
+
 /**
- * One voice of a saved speech endpoint saying the sample sentence (`VOICE_SAMPLE`), asked for with
- * its saved key.
+ * What a rendered sample is kept under: everything that changes how it sounds. An endpoint moved to
+ * another model, format or rate has a sample made again, not the old one played.
+ */
+const renderedAs = (ep: Endpoint): string =>
+  JSON.stringify([
+    "rendered",
+    ep.baseUrl,
+    ep.model,
+    encodingOf(ep),
+    ep.sampleRate ?? null,
+    VOICE_SAMPLE,
+  ]);
+
+/**
+ * One voice of a saved speech endpoint, heard: what the demo buttons and the Voices tab play.
  *
- * Always of the endpoint itself, like `listVoices`, whatever a test runs its narration through: a
- * sample is a click that asks to hear this voice, and a simulated endpoint's is its tone. It is
- * asked for the way a line of narration is — the endpoint's format and sample rate — so what is
- * heard is what a chapter would sound like, and the request is priced into the ledger against the
- * endpoint with no book. One attempt, like a connection test: a failure says so at once.
+ * What was played for the voice before is played again from disk, free (`VoiceFiles.heard`).
+ * Otherwise the provider's own recording of the voice, where it keeps one — Fish does, for most of
+ * its voices — is fetched and kept; that costs nothing either. Failing both, the endpoint says the
+ * sample sentence (`VOICE_SAMPLE`) with its saved key, and that is kept: a real request, the one
+ * that is billed, once.
+ *
+ * A rendered sample is always of the endpoint itself, like `listVoices`, whatever a test runs its
+ * narration through, and a simulated endpoint's is its tone — never kept, as it costs nothing to
+ * make again. It is asked for the way a line of narration is — the endpoint's format and sample
+ * rate — so what is heard is what a chapter would sound like, and the request is priced into the
+ * ledger against the endpoint with no book. One attempt, like a connection test: a failure says so
+ * at once.
  */
 export async function sampleVoice(
   db: Db,
   providers: Providers,
+  files: VoiceFiles,
   id: string,
   voiceId: string,
   signal: AbortSignal,
-): Promise<RenderedClip> {
+): Promise<VoiceSampleAudio> {
   const ep = readEndpoint(db, id);
   if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
+  const simulated = isSimulated(ep.baseUrl);
+  const rendered = renderedAs(ep);
+  const heard = (
+    bytes: Uint8Array,
+    format: SampleFormat,
+    made: string,
+    kept: boolean,
+    duration: number | null = null,
+  ): VoiceSampleAudio => ({
+    bytes,
+    mime: SAMPLE_MIME[format],
+    duration,
+    source: made === RECORDING ? "recording" : "rendered",
+    kept,
+  });
+
+  if (!simulated) {
+    const kept = await files.heard.read(ep.id, voiceId, [RECORDING, rendered]);
+    if (kept) return heard(kept.bytes, kept.format, kept.made, true);
+    const recording = await ownRecording(db, providers, ep, voiceId, signal);
+    if (recording) {
+      await files.heard.keep(ep.id, voiceId, RECORDING, recording.bytes, recording.format);
+      return heard(recording.bytes, recording.format, RECORDING, false);
+    }
+  }
+
   const voice = ep.voices.find((v) => v.id === voiceId);
   const speaker = voice?.label || voiceId;
   const provider = providers.samples ?? endpointSpeechProvider();
+  let clip;
   try {
-    return await provider.speak({
+    clip = await provider.speak({
       text: VOICE_SAMPLE,
       speaker,
       type: "narration",
@@ -254,5 +325,36 @@ export async function sampleVoice(
     });
   } catch (e) {
     throw e instanceof ProviderError ? providerFailure(e) : e;
+  }
+  // Paid for, so kept — before answering, so the next press finds it. A sample that could not be
+  // kept still plays, and the log says so.
+  if (!simulated)
+    await warnIfFails(
+      files.heard.keep(ep.id, voiceId, rendered, clip.bytes, clip.format),
+      "voice sample not kept",
+      { id, voiceId },
+    );
+  return heard(clip.bytes, clip.format, rendered, false, clip.duration);
+}
+
+/**
+ * The provider's own recording of the voice, when it keeps one. A failure to find one — no key, the
+ * provider down — is not the sample's failure: the endpoint is asked to say the sentence instead,
+ * and that request says what is wrong if anything is.
+ */
+async function ownRecording(
+  db: Db,
+  providers: Providers,
+  ep: Endpoint,
+  voiceId: string,
+  signal: AbortSignal,
+) {
+  const lister = providers.voices ?? endpointVoiceLister();
+  if (!lister.recording) return null;
+  try {
+    return await lister.recording(speechTarget(db, ep), voiceId, signal);
+  } catch (e) {
+    if (signal.aborted) throw e;
+    return null;
   }
 }

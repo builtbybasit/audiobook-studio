@@ -99,8 +99,10 @@ export interface VoiceListPage {
 /** One voice saying the server's sample sentence: the audio as the endpoint answered, and its length. */
 export interface VoiceSample {
   blob: Blob;
-  /** seconds */
-  duration: number;
+  /** seconds, when the server knows; a provider's own recording is timed by the file */
+  duration: number | null;
+  /** the provider's own recording of the voice, or the endpoint saying the sample sentence */
+  source: "recording" | "rendered";
 }
 
 export interface EndpointSettingsService {
@@ -214,7 +216,11 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
 
   async sampleVoice(id: string, voice: string): Promise<VoiceSample> {
     const { blob, headers } = await this.http.postForFile("/endpoints/sample", { id, voice });
-    return { blob, duration: Number(headers.get("x-audio-duration")) || 0 };
+    return {
+      blob,
+      duration: Number(headers.get("x-audio-duration")) || null,
+      source: headers.get("x-sample-source") === "recording" ? "recording" : "rendered",
+    };
   }
 }
 

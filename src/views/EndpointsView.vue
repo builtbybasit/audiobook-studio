@@ -24,6 +24,7 @@ import { useUsageStore } from "@/stores/usage";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { activeEndpointSettingsService, keyInPlace } from "@/services/endpointSettings";
+import { isDemo } from "@/services/mode";
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import { UiToggleGroup, UiTooltip } from "@/ui";
 import {
@@ -457,9 +458,16 @@ function pickBucket(b: MetricBucket | null) {
     <div class="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 class="text-2xl font-semibold">Endpoints</h1>
-        <p class="max-w-2xl text-sm text-zinc-500">
+        <!-- the demo's numbers are invented and the server's are what its jobs sent: say which -->
+        <p v-if="isDemo" class="max-w-2xl text-sm text-zinc-500">
           Every scripting and speech endpoint, across every book. Health, throughput and spend come
           from a fixture service — nothing here calls a provider or is billed.
+        </p>
+        <p v-else class="max-w-2xl text-sm text-zinc-500">
+          Every scripting and speech endpoint the server holds, across every book. Health,
+          throughput and spend are what its jobs actually sent, priced as each request completed; a
+          simulated endpoint is answered by the server itself, never reaches a provider and bills
+          nothing.
         </p>
       </div>
       <div class="flex flex-wrap gap-2">

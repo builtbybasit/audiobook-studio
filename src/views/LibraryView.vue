@@ -14,6 +14,10 @@ import { useUiStore } from "@/stores/ui";
 // (`?view=list&q=harbour&filter=attention&sort=todo`) like the rest of the workspace state, so a
 // narrowed shelf can be linked to and survives a reload; the shape is remembered for the next
 // visit as well.
+//
+// With the server not answering, the shelf is not empty but unknown, so the page says that where
+// the books would be — how to start the server, and a retry — and stays on the server's library;
+// the demo is one chip away, never somewhere it goes by itself.
 import { useStorage } from "@vueuse/core";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -24,6 +28,7 @@ import AddEpubDialog from "@/components/AddEpubDialog.vue";
 import { pendingFor, pickedFrom, type PendingAdd, type PickedFile } from "@/components/addEpub";
 import ImportingCard from "@/views/library/ImportingCard.vue";
 import SampleMenu from "@/views/library/SampleMenu.vue";
+import { isDemo } from "@/services/mode";
 import ShelfGrid from "@/views/library/ShelfGrid.vue";
 import ShelfTable from "@/views/library/ShelfTable.vue";
 import { bookFacts } from "@/views/library/bookFacts";
@@ -45,7 +50,9 @@ import {
   Library as LibraryIcon,
   Plus as AddIcon,
   Rows3 as ListIcon,
+  RotateCw as RetryIcon,
   Search as SearchIcon,
+  ServerOff as OfflineIcon,
   Upload as DropIcon,
   X as ClearIcon,
 } from "@lucide/vue";
@@ -65,6 +72,7 @@ const running = computed(
       .size,
 );
 const subtitle = computed(() => {
+  if (libraryStore.unreachable) return "Your library is on the server, which is not answering.";
   if (!shelved.value.length) return "Add an EPUB, or try a sample, to start.";
   const parts = [plural(shelved.value.length, "book")];
   if (running.value) parts.push(`${running.value} running`);
@@ -137,6 +145,9 @@ function clear() {
   q.value = "";
   filter.value = "all";
 }
+// Loading the page again reads everything a server that just started has: the shelf, the
+// endpoints and the queue alike.
+const retry = () => location.reload();
 
 // `/` puts the cursor in the search, as in the contents review
 const searchBox = ref<HTMLInputElement | null>(null);
@@ -243,7 +254,8 @@ onUnmounted(() => {
             <component :is="v.icon" class="icon" />
           </button>
         </div>
-        <SampleMenu @pick="addSample" />
+        <!-- a sample has no file behind it, so only the demo can add one -->
+        <SampleMenu v-if="isDemo" @pick="addSample" />
         <label class="btn-primary cursor-pointer"
           ><AddIcon class="icon" /> Add EPUB<input
             type="file"
@@ -256,14 +268,42 @@ onUnmounted(() => {
 
     <!-- the standing hint: one line, out of the way -->
     <p
+      v-if="!libraryStore.unreachable"
       class="mb-4 flex items-center gap-2 rounded-lg border border-dashed border-zinc-300 px-3 py-1.5 text-xs text-zinc-500 dark:border-zinc-700"
     >
       <DropIcon class="icon-sm text-zinc-400" />
       Drop an .epub anywhere on this page — a new novel, or another volume of one you already have.
     </p>
 
+    <!-- no server: a library that cannot be read is not an empty one -->
+    <div
+      v-if="libraryStore.unreachable"
+      role="alert"
+      class="card grid place-items-center p-8 text-center"
+    >
+      <div class="max-w-md">
+        <div
+          class="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-xl bg-red-50 text-red-500 dark:bg-red-500/10"
+        >
+          <OfflineIcon class="h-6 w-6" />
+        </div>
+        <div class="text-lg font-medium">The server is not running</div>
+        <p class="mt-1 text-sm text-zinc-500">
+          Your books, scripts and audio are kept by the server, and nothing answered for it. Start
+          it with <code class="font-mono">pnpm dev</code>, which runs it beside this page, then try
+          again.
+        </p>
+        <button class="btn-primary mt-4" @click="retry">
+          <RetryIcon class="icon" /> Try again
+        </button>
+        <p class="mt-4 text-xs text-zinc-500">
+          To look around without it, the Demo chip in the header opens a seeded demo in this tab.
+        </p>
+      </div>
+    </div>
+
     <EmptyState
-      v-if="!shelved.length && !importing.length"
+      v-else-if="!shelved.length && !importing.length"
       :icon="LibraryIcon"
       title="No books yet"
       body="Each EPUB becomes a novel, or a volume of one you already have. You review what goes in the audiobook before it is added."
@@ -275,7 +315,7 @@ onUnmounted(() => {
           class="hidden"
           @change="onPick"
       /></label>
-      <SampleMenu @pick="addSample" />
+      <SampleMenu v-if="isDemo" @pick="addSample" />
     </EmptyState>
 
     <template v-else>

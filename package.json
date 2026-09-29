@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently --kill-others --names api,web --prefix-colors blue,green \"LOG_FORMAT=pretty FORCE_COLOR=1 pnpm dev:server\" \"pnpm dev:web\"",
-    "dev:web": "VITE_MODE=backend vite",
+    "dev:web": "vite",
     "dev:server": "bun --watch server/index.ts",
     "typecheck": "vue-tsc --build",
     "lint": "oxlint",

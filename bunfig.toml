@@ -1,0 +1,3 @@
+[test]
+# every test runs as a tab that has entered the demo; see the file for why
+preload = ["./tests/support/demoTab.ts"]

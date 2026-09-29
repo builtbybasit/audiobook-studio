@@ -2,6 +2,8 @@
 //
 // Built around a database handle rather than importing one, so a test can hand it a private
 // `:memory:` database and drive the real routes end to end without a server listening anywhere.
+// Everything is under one base, `/api` by default: the demo library is the same app over its own
+// database, under `/demo/api` (`server/libraries.ts`).
 import { Hono } from "hono";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
@@ -9,6 +11,7 @@ import { secureHeaders } from "hono/secure-headers";
 import { pinoLogger, type Env as PinoEnv } from "hono-pino";
 
 import { audioFiles, type AudioFiles } from "~/audio/files";
+import { coverFiles } from "~/covers/files";
 import type { Db } from "~/db/client";
 import { env } from "~/env";
 import { audiobookFiles } from "~/exports/files";
@@ -25,6 +28,7 @@ import { wavEncoders } from "~/providers/wavEncoder";
 import { audioRoutes } from "~/routes/audio";
 import { bookRoutes } from "~/routes/books";
 import { castRoutes } from "~/routes/cast";
+import { demoRoutes, type Reset } from "~/routes/demo";
 import { endpointRoutes } from "~/routes/endpoints";
 import { exportRoutes } from "~/routes/exports";
 import { jobRoutes } from "~/routes/jobs";
@@ -40,6 +44,11 @@ const REFUSED: Partial<Record<number, string>> = {
 };
 
 export interface AppOptions {
+  /**
+   * The path every route is under, and the one the urls of clips and covers are written with:
+   * `/api` for the real library, `/demo/api` for the demo.
+   */
+  base?: string;
   /** the logger requests are recorded against; a test hands over a silent one */
   log?: Logger;
   /**
@@ -69,18 +78,25 @@ export interface AppOptions {
    * nothing sends through — right for a test that is not about narration.
    */
   gate?: SpeechGate;
+  /**
+   * What `POST <base>/demo/reset` does: given to the demo library alone, so the real one has no
+   * route that empties it.
+   */
+  reset?: Reset;
 }
 
 export function createApp(
   db: Db,
   {
+    base = "/api",
     log = defaultLog,
     runner = createRunner(db, {}, { log }),
-    files = audioFiles(env.AUDIO_DIR),
+    files = audioFiles(env.AUDIO_DIR, base),
     exports = { encoders: wavEncoders(), files: audiobookFiles(env.EXPORT_DIR) },
     providers = { scripting: endpointScriptingProvider(), speech: endpointSpeechProvider() },
     voiceFiles = voiceFilesIn(env.VOICE_DIR),
     gate = createSpeechGate(),
+    reset,
   }: AppOptions = {},
 ): Hono<PinoEnv> {
   // Typed with the logger the middleware puts on the context, so a route reaching for
@@ -120,31 +136,32 @@ export function createApp(
   // Only a browser is asked. Its requests carry `Origin` or `Sec-Fetch-Site`, and one with neither
   // is a script, a test or `curl`, which is on this machine already and forges nothing.
   const sameSite = csrf();
-  app.use("/api/*", (c, next) =>
+  app.use(`${base}/*`, (c, next) =>
     c.req.header("origin") || c.req.header("sec-fetch-site") ? sameSite(c, next) : next(),
   );
   // The standard set: no sniffing a clip as something else, no framing, no borrowing a response
   // from another origin.
-  app.use("/api/*", secureHeaders());
+  app.use(`${base}/*`, secureHeaders());
 
-  app.get("/api/health", (c) => c.json({ ok: true }));
+  app.get(`${base}/health`, (c) => c.json({ ok: true }));
   // Everything a book owns is addressed under it. The library's own routes come first; the cast,
   // the scripts and the audiobooks each have a file of their own so that a route reads as one call
   // on the operations of the part of the app that owns the table.
-  app.route("/api/books", bookRoutes(db, runner, files, exports.files));
-  app.route("/api/books", castRoutes(db));
-  app.route("/api/books", scriptRoutes(db, runner));
-  app.route("/api/books", exportRoutes(db, runner, exports));
-  app.route("/api/books", transferRoutes(db, providers, files, voiceFiles));
-  app.route("/api/books", speakerSampleRoutes(db, files));
-  app.route("/api/books", bookUsageRoutes(db));
-  app.route("/api/jobs", jobRoutes(db, runner));
+  app.route(`${base}/books`, bookRoutes(db, runner, files, exports.files));
+  app.route(`${base}/books`, castRoutes(db));
+  app.route(`${base}/books`, scriptRoutes(db, runner));
+  app.route(`${base}/books`, exportRoutes(db, runner, exports, coverFiles(files)));
+  app.route(`${base}/books`, transferRoutes(db, providers, files, voiceFiles));
+  app.route(`${base}/books`, speakerSampleRoutes(db, files));
+  app.route(`${base}/books`, bookUsageRoutes(db));
+  app.route(`${base}/jobs`, jobRoutes(db, runner));
   // The endpoints belong to the installation rather than to a book.
-  app.route("/api/endpoints", endpointRoutes(db, providers, voiceFiles, gate));
-  app.route("/api/endpoints", endpointUsageRoutes(db));
+  app.route(`${base}/endpoints`, endpointRoutes(db, providers, voiceFiles, gate));
+  app.route(`${base}/endpoints`, endpointUsageRoutes(db));
   // A clip's url is served from disk, and the files it names belong to the same book routes above
   // remove — see `server/audio/files.ts` for why the path is a book and a token.
-  app.route("/api/audio", audioRoutes(files));
+  app.route(`${base}/audio`, audioRoutes(files));
+  if (reset) app.route(`${base}/demo`, demoRoutes(reset));
 
   app.notFound((c) =>
     c.json(

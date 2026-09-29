@@ -51,7 +51,7 @@ export interface ExportSettings {
   description: string;
   /**
    * The image written into the audiobook in place of the EPUB's own cover, or null for the EPUB's.
-   * With a server it is the url the image was uploaded to (`/api/books/:id/covers/…`); the demo
+   * With a server it is the url the image was uploaded to (`/api/books/:id/covers/…`, or `/demo/api/…` in the demo library); the demo
    * has no server and holds the picked file as a data URL instead.
    */
   cover: string | null;

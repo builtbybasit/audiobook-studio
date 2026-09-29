@@ -19,6 +19,7 @@ import {
 import { X as CloseIcon, Copy as CopyIcon, ArrowUpRight as OpenIcon } from "@lucide/vue";
 
 import { duration } from "@/lib/endpoints";
+import { isDemo } from "@/services/mode";
 import { jobDiagnostics } from "@/lib/jobActivity";
 import type { Job } from "@/types";
 
@@ -245,7 +246,7 @@ async function copy() {
             >
               {{ job.waitingReason }}. Active requests can still finish.
             </p>
-            <p class="mt-3 text-xs text-zinc-500">
+            <p v-if="isDemo" class="mt-3 text-xs text-zinc-500">
               Simulated · session only · no provider calls or charges
             </p>
           </header>

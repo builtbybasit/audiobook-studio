@@ -31,7 +31,7 @@ to a paid request.
 pnpm dev          # both at once: the API on :8787, the frontend on :5173 proxying /api to it
 ```
 
-That is `pnpm dev:server` and `pnpm dev:web` (Vite with `VITE_MODE=backend`) side by side through
+That is `pnpm dev:server` and `pnpm dev:web` (plain Vite) side by side through
 `concurrently`, each line prefixed `api` or `web`; stopping either stops both. Settings and their defaults are in
 [.env.example](../.env.example); every one has a working default, so no `.env` is also fine.
 
@@ -43,18 +43,48 @@ That is `pnpm dev:server` and `pnpm dev:web` (Vite with `VITE_MODE=backend`) sid
 | `pnpm db:migrate`  | Apply migrations without starting the server        |
 | `pnpm db:studio`   | Browse the database with Drizzle Studio             |
 
-## Demo or backend, chosen once
+## Demo or backend, chosen as the page loads
 
-`VITE_MODE` selects which of the two the frontend runs, and
-[src/services/mode.ts](../src/services/mode.ts) reads it once at startup. Demo is the default and
-stays the default: it is the mode with no backend, no credentials and no paid requests, which is
-what makes it the safe thing to land on.
+The frontend talks to the server. The header's **Demo** chip opens the seeded demo instead, for
+that tab only: **Enter demo** sets `audiobook-studio:mode` in `sessionStorage` and reloads, and
+[src/services/mode.ts](../src/services/mode.ts) reads it once as the page loads. **Leave demo**
+clears it and reloads, and nothing done in the demo goes with it; a new tab opens on the library.
+The choice is made at load rather than live because the stores build their state once, from the
+service they find: switching in place would mean tearing down every store and cached query.
 
 **Neither mode ever silently becomes the other.** A backend that is down is an error the person
-sees, not a quiet slide into seeded books that look real. `libraryService()` throws in demo mode
+sees — the Library says the server is not running and how to start it — not a quiet slide into
+seeded books that look real. `libraryService()` throws in demo mode
 rather than handing back something that would pass for a backend, and the HTTP client reports a
 server it cannot reach as exactly that, rather than as an empty library. The rules this enforces
 are in [future backend integration requirements](demo.md#future-backend-integration-requirements).
+
+## Two libraries: yours and the demo
+
+One server holds two libraries, built by the same function (`openLibrary` in
+[server/libraries.ts](../server/libraries.ts)) from different settings, so they differ only in
+what they are given — and neither is given anything of the other's:
+
+| Library | API under   | Database (`.env`)                             | Clips, audiobooks, voice recordings                                     |
+| ------- | ----------- | --------------------------------------------- | ----------------------------------------------------------------------- |
+| Yours   | `/api`      | `DATABASE_URL`, default `./data/library.db`   | `AUDIO_DIR`, `EXPORT_DIR`, `VOICE_DIR`                                  |
+| Demo    | `/demo/api` | `DEMO_DATABASE_URL`, default `./data/demo.db` | `audio/`, `exports/`, `voices/` under `DEMO_DIR`, default `./data/demo` |
+
+Each has its own queue and its own speech gate. A request goes to the demo when its path is under
+`/demo/api` and to your library otherwise, and every address a library writes down — a clip's, a
+cover's — is under its own base, so what the demo made is only ever served by the demo. The demo
+cannot touch your library because nothing in it holds a handle to your database.
+
+Your library is never seeded: a fresh one starts with no books and no endpoints. The demo is
+seeded when its database is fresh (no endpoints and no books) and left as it is otherwise: the
+**Simulated (free)** speech endpoint and scripting profile, from the same presets the Endpoints
+page offers, and one short book, _The Lamp at Gull Rock_, on the shelf and ready to script.
+`POST /demo/api/demo/reset` puts it back: it stops the demo's queue (the running job is aborted and
+waited for), deletes every row of every table the schema declares, removes the demo's folders, seeds
+again and starts the queue. Your library has no such route.
+
+The page does not use the demo library yet: the **Demo** chip still opens the seeded world in the
+browser, and the situations it offers move onto the server in the slices that follow.
 
 ## The schema
 
@@ -195,7 +225,9 @@ found.
 
 | Location                                                  | Responsibility                                                                                           |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| [server/index.ts](../server/index.ts)                     | Boot: open the database, migrate, recover the queue, listen                                              |
+| [server/index.ts](../server/index.ts)                     | Boot: open both libraries, start their queues, listen                                                    |
+| [server/libraries.ts](../server/libraries.ts)             | One library — database, queue, gate, files, API under its base — and the fetch that picks one by path    |
+| [server/demo/](../server/demo/)                           | The demo library's seed, and the reset that empties it and lays the seed down again                      |
 | [server/app.ts](../server/app.ts)                         | The API as a value, built around a database and a queue so tests can drive it                            |
 | [server/env.ts](../server/env.ts)                         | Configuration, validated once at startup                                                                 |
 | [server/routes/](../server/routes/)                       | HTTP: a request turned into one operation, and its result turned into JSON                               |
@@ -304,8 +336,10 @@ Things the parse is deliberate about:
   marked `cover-image`) or the EPUB 2 way (`<meta name="cover">`), and the parser reads those bytes
   from the archive once the chapters are done. A new book keeps them when they are a JPEG or a PNG
   of at most 10 MB, sniffed from the bytes rather than taken from the manifest's media type, in
-  `<AUDIO_DIR>/<bookId>/covers/` under a hash of its contents; the book answers with
-  `coverImage`, the address it is served from. Anything else — a GIF, an SVG, a cover the manifest
+  `<AUDIO_DIR>/<bookId>/covers/` under a hash of its contents; the book keeps, and answers with as
+  `coverImage`, the address it is served from — as a clip keeps its own, so the address names the
+  library that serves it (a cover kept before migration 0012 was a bare file name, and was
+  rewritten to its `/api` address). Anything else — a GIF, an SVG, a cover the manifest
   promises and the zip lacks — leaves the book without one, and the log says why. A volume added
   later does not bring its cover: that is another edition's as often as the same one, and swapping
   the shelf's picture unasked would be a surprise.
@@ -1623,6 +1657,7 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)                 | What the fake models produce — attributions, a valid WAV — and that they abort                                      |
 | [simulatedSpeech.test.ts](../tests/server/simulatedSpeech.test.ts)           | A simulated speech endpoint: its latency, its failures, its voices, and a chapter narrated with no `fetch` made     |
 | [simulatedScripting.test.ts](../tests/server/simulatedScripting.test.ts)     | A simulated scripting profile run through the real queue and ledger with no `fetch` made                            |
+| [libraries.test.ts](../tests/server/libraries.test.ts)                       | Your library and the demo kept apart: routing by path, addresses under each base, the demo's seed and its reset     |
 | [libraryClient.test.ts](../tests/server/libraryClient.test.ts)               | The client and the API against each other                                                                           |
 | [schema.test.ts](../tests/server/schema.test.ts)                             | The seeded world through the schema and back                                                                        |
 | [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)                 | The library store, with a server answering                                                                          |

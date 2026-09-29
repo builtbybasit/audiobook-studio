@@ -7,7 +7,7 @@
 import * as v from "valibot";
 
 const Env = v.object({
-  /** where the server listens; the Vite dev server proxies /api here */
+  /** where the server listens; the Vite dev server proxies /api and /demo/api here */
   PORT: v.pipe(
     v.optional(v.string(), "8787"),
     v.transform(Number),
@@ -18,6 +18,13 @@ const Env = v.object({
   ),
   /** the SQLite file. `:memory:` is how the tests get a private database per run. */
   DATABASE_URL: v.optional(v.string(), "./data/library.db"),
+  /**
+   * The demo library's SQLite file. A database of its own rather than rows beside the real ones:
+   * the demo is emptied and seeded again on request, and what does that is never given the real
+   * library's database to do it to. Seeded at boot while it holds no endpoint and no book, and
+   * left as it is once it does.
+   */
+  DEMO_DATABASE_URL: v.optional(v.string(), "./data/demo.db"),
   /** how much is logged: trace, debug, info, warn, error, fatal, or silent */
   LOG_LEVEL: v.optional(
     v.picklist(["trace", "debug", "info", "warn", "error", "fatal", "silent"]),
@@ -113,6 +120,11 @@ const Env = v.object({
    * this server rendered — measured, backed up and cleared on their own terms.
    */
   VOICE_DIR: v.optional(v.string(), "./data/voices"),
+  /**
+   * Where the demo library keeps its files: `audio/`, `exports/` and `voices/` under this one, the
+   * demo's own versions of the three above. A reset of the demo removes all three.
+   */
+  DEMO_DIR: v.optional(v.string(), "./data/demo"),
 });
 
 export type Env = v.InferOutput<typeof Env>;

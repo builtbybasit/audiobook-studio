@@ -44,7 +44,7 @@ const menu = ref(false);
 /** Backend mode: a removal cannot be undone, so the item asks with a second click. */
 const asksFirst = computed(() => !!libraryStore._service());
 /** The script file is written and read by the server; the demo has none to ask. */
-const NEEDS_SERVER = "Needs the server — start the app with pnpm dev";
+const NEEDS_SERVER = "Needs the server — leave the demo, from the Demo chip";
 const scriptFiles = computed(() => !!libraryStore._service());
 const confirming = ref(false);
 

@@ -1,42 +1,21 @@
 // The server, started.
 //
-// Migrations run before the first request is served, so a checkout that has just pulled a schema
-// change is usable without a separate step. The queue starts after them and before the listener,
-// so a job the last process was holding is back in the queue before anything can ask about it.
-import { createApp } from "~/app";
-import { audioFiles } from "~/audio/files";
-import { openDb } from "~/db/client";
-import { migrate } from "~/db/migrate";
+// Two libraries in one process (`server/libraries.ts`): the real one under `/api`, and the demo
+// under `/demo/api` with a database and folders of its own. Each library's migrations run as it is
+// opened, before the first request is served. The queues start after them and before the
+// listener, so a job the last process was holding is back in its queue before anything can ask
+// about it.
+import { join } from "node:path";
+
 import { env, importBodyBytes, scriptBodyBytes } from "~/env";
-import { audiobookFiles } from "~/exports/files";
-import { exportHandler } from "~/jobs/export";
-import { narrationHandler } from "~/jobs/narration";
-import { createRunner } from "~/jobs/runner";
-import { scriptingHandler } from "~/jobs/scripting";
+import { DEMO_BASE, openLibrary, REAL_BASE, serveLibraries } from "~/libraries";
 import { log } from "~/log";
-import { endpointScriptingProvider } from "~/providers/endpointScripting";
-import { endpointSpeechProvider } from "~/providers/endpointSpeech";
-import { createSpeechGate } from "~/providers/gate";
 import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { wavEncoders } from "~/providers/wavEncoder";
 import { CLONE_BODY_BYTES } from "~/routes/endpoints";
 
 const boot = log.child({ name: "boot" });
 
-const db = openDb();
-const started = performance.now();
-migrate(db);
-boot.debug(
-  { database: env.DATABASE_URL, ms: Math.round(performance.now() - started) },
-  "migrations applied",
-);
-
-// Where a request goes, with what model and what key, is the Endpoints page's — read from the
-// database at the moment of each request, and never out of this process but to it. An endpoint or
-// profile set to `simulated://` is answered here without one, and nothing it does is billed.
-const scripting = endpointScriptingProvider();
-const speech = endpointSpeechProvider();
-const files = audioFiles(env.AUDIO_DIR);
 // An encoder that shells out is the one thing here that needs something outside this process, so
 // it is checked now rather than at the first build: a server that cannot write an audiobook says
 // so at boot, naming the binary, instead of queueing work that was always going to fail.
@@ -49,23 +28,29 @@ if (env.EXPORT_ENCODER === "ffmpeg") {
     );
   boot.debug({ ffmpeg: version }, "encoder found");
 }
-const exports = {
-  encoders: env.EXPORT_ENCODER === "ffmpeg" ? ffmpegEncoders(env.FFMPEG_BIN) : wavEncoders(),
-  files: audiobookFiles(env.EXPORT_DIR),
-};
-// One gate for every line this process sends to a speech endpoint, shared by the narration handler
-// and the routes that save the endpoints and show what they are doing (`providers/gate.ts`).
-const gate = createSpeechGate();
-const runner = createRunner(
-  db,
-  {
-    scripting: scriptingHandler(scripting),
-    narration: narrationHandler(speech, files, gate),
-    export: exportHandler(exports, files),
-  },
-  { log },
-);
-runner.start();
+const encoders = env.EXPORT_ENCODER === "ffmpeg" ? ffmpegEncoders(env.FFMPEG_BIN) : wavEncoders();
+
+const real = openLibrary({
+  name: "real",
+  databaseUrl: env.DATABASE_URL,
+  base: REAL_BASE,
+  audioDir: env.AUDIO_DIR,
+  exportDir: env.EXPORT_DIR,
+  voiceDir: env.VOICE_DIR,
+  encoders,
+});
+const demo = openLibrary({
+  name: "demo",
+  databaseUrl: env.DEMO_DATABASE_URL,
+  base: DEMO_BASE,
+  audioDir: join(env.DEMO_DIR, "audio"),
+  exportDir: join(env.DEMO_DIR, "exports"),
+  voiceDir: join(env.DEMO_DIR, "voices"),
+  encoders,
+  demo: true,
+});
+const libraries = [real, demo];
+for (const library of libraries) library.runner.start();
 
 const server = Bun.serve({
   hostname: env.HOST,
@@ -76,29 +61,35 @@ const server = Bun.serve({
   // only catches what gets past it.
   maxRequestBodySize:
     Math.max(importBodyBytes(), scriptBodyBytes(), CLONE_BODY_BYTES) + 1024 * 1024,
-  fetch: createApp(db, { runner, files, exports, providers: { scripting, speech }, gate }).fetch,
+  fetch: serveLibraries(real, demo),
 });
 
 boot.info(
   {
     url: server.url.href,
-    database: env.DATABASE_URL,
     uploadMb: env.MAX_UPLOAD_MB,
-    scripting: scripting.name,
-    speech: speech.name,
-    encoder: exports.encoders.name,
-    audio: files.dir,
-    audiobooks: exports.files.dir,
+    encoder: encoders.name,
+    libraries: Object.fromEntries(
+      libraries.map((l) => [
+        l.name,
+        {
+          base: l.base,
+          database: l.database,
+          audio: l.files.dir,
+          audiobooks: l.exports.files.dir,
+        },
+      ]),
+    ),
   },
   "audiobook-studio api is listening",
 );
 
-// A running job is handed back to the queue rather than abandoned mid-write, and the listener
-// closes after it, so a `pnpm dev:server` restart loses nothing.
+// A running job is handed back to its queue rather than abandoned mid-write, and the listener
+// closes after both queues have, so a `pnpm dev:server` restart loses nothing.
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.once(signal, () => {
     boot.info({ signal }, "stopping");
-    void runner.stop().then(() => {
+    void Promise.all(libraries.map((l) => l.runner.stop())).then(() => {
       server.stop(true);
       process.exit(0);
     });

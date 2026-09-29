@@ -118,7 +118,7 @@ export function bookRoutes(
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
   // A book's covers are kept beside its clips, so they go when its directory does.
-  const covers = files ? coverFiles(files.dir) : undefined;
+  const covers = files ? coverFiles(files) : undefined;
 
   // ---------- reading ----------
   app.get("/", (c) => c.json({ books: ops.listBooks(db) }));

@@ -52,7 +52,7 @@ import {
 import { pacingOrDefault, pauseAfter, sampleRateLabel } from "@/lib/speech";
 import { FORMAT_LABEL } from "@/lib/endpointShapes";
 import { formatOfFile, type AudioFiles } from "~/audio/files";
-import { coverFiles, coverFileOf } from "~/covers/files";
+import { coverFiles, type CoverFiles } from "~/covers/files";
 import type { Db, Tx } from "~/db/client";
 import * as exports from "~/db/exports";
 import { activeJob, getJob, setRun } from "~/db/jobs";
@@ -200,6 +200,7 @@ export function enqueueBuild(
   db: Db,
   runner: Runner,
   { encoders }: ExportPorts,
+  covers: CoverFiles,
   bookId: string,
   { ids, settings, updates = null }: BuildInput,
 ): BuildQueued {
@@ -208,10 +209,10 @@ export function enqueueBuild(
   if (!book) throw notFound("No such book");
   if (book.importing) throw conflict("Finish the contents review before building this book");
   // A cover is named by the url it was uploaded to. Anything else — the demo's data URL, another
-  // book's image, a path that is not one — is a cover this server could never find, and is said
-  // now rather than as a build that fails once it gets there. Whether the file is still on disk is
-  // asked by the build itself, which is when it has to be.
-  if (settings.cover != null && !coverFileOf(bookId, settings.cover))
+  // book's image, another library's, a path that is not one — is a cover this library could never
+  // find, and is said now rather than as a build that fails once it gets there. Whether the file is
+  // still on disk is asked by the build itself, which is when it has to be.
+  if (settings.cover != null && !covers.fileOf(bookId, settings.cover))
     throw badRequest(
       "The cover image is not one this server holds; choose it again",
       "A cover is uploaded to the book first, and the build names it by the address it was given.",
@@ -339,7 +340,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
   /** The clip's file on disk, from the url its row carries. */
   const clipPath = (bookId: string, url: string | undefined): string | null =>
     url ? clips.path(bookId, basename(url)) : null;
-  const covers = coverFiles(clips.dir);
+  const covers = coverFiles(clips);
 
   async function build(ctx: JobContext, entry: ExportItem): Promise<void> {
     const { job, db, signal } = ctx;

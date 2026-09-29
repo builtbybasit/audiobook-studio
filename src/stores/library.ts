@@ -30,6 +30,7 @@ import {
   type LibraryService,
   type ReviewDecision,
 } from "@/services/library";
+import { unreachable } from "@/services/http";
 import type { Book, Chapter, ContentsSummary, NoticeGroup, SegmentMap, Volume } from "@/types";
 import { defineStore } from "pinia";
 import { useCastStore } from "@/stores/cast";
@@ -64,6 +65,11 @@ interface LibraryState {
   chapters: Record<string, Chapter[]>;
   /** Backend mode: whether the shelf has been read from the server yet. */
   loaded: boolean;
+  /**
+   * Backend mode: the last read of the shelf found nothing answering for the API. The Library
+   * says so where the books would be, so an unreachable server never passes for an empty library.
+   */
+  unreachable: boolean;
 }
 
 /**
@@ -80,6 +86,7 @@ export const useLibraryStore = defineStore("library", {
       ? { books: [] as Book[], chapters: {} as Record<string, Chapter[]> }
       : seedState("books", "chapters")),
     loaded: false,
+    unreachable: false,
   }),
   getters: {
     book(s): Book | undefined {
@@ -223,8 +230,11 @@ export const useLibraryStore = defineStore("library", {
       try {
         this.books = await svc.books();
         this.loaded = true;
+        this.unreachable = false;
       } catch (cause) {
-        this._failed("read the library", cause);
+        // the page says this one where the books would be; a toast on top would say it twice
+        this.unreachable = unreachable(cause);
+        if (!this.unreachable) this._failed("read the library", cause);
       }
     },
     /**

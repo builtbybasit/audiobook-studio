@@ -57,6 +57,7 @@ describe("removing a book whose files will not go", () => {
       tried,
       files: {
         dir: "/nowhere",
+        base: "/api",
         write: async () => ({ url: "/api/audio/x/y.wav" }),
         path: () => null,
         remove: () => refuse("some clips"),

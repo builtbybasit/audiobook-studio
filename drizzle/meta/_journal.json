@@ -85,6 +85,13 @@
       "when": 1790614992544,
       "tag": "0011_cloudy_sabretooth",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1790661066050,
+      "tag": "0012_cover_urls",
+      "breakpoints": true
     }
   ]
 }

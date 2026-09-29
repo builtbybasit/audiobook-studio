@@ -253,6 +253,56 @@ describe("the library store with a server answering", () => {
   });
 });
 
+describe("a server that is not answering", () => {
+  // The shelf a failed read leaves is empty, and an empty shelf is what a new library looks like.
+  // So the store remembers that nothing answered, and the Library says that in place of "No books
+  // yet" — and it is still backend mode: nothing here reaches for the seeded books.
+  const answering = (respond: () => Promise<Response>) =>
+    setLibraryService(new HttpLibraryService("/api", respond));
+
+  test("a refused connection is the server not running, said on the page rather than toasted", async () => {
+    answering(() => Promise.reject(new Error("ECONNREFUSED")));
+    await libraryStore.load();
+    expect(libraryStore.unreachable).toBe(true);
+    expect(libraryStore.loaded).toBe(false);
+    expect(libraryStore.books).toEqual([]);
+    expect(toasts).toEqual([]);
+  });
+
+  test("so is the dev proxy's bare 502 for an API it could not reach", async () => {
+    answering(() =>
+      Promise.resolve(new Response("", { status: 502, headers: { "content-type": "text/plain" } })),
+    );
+    await libraryStore.load();
+    expect(libraryStore.unreachable).toBe(true);
+    expect(toasts).toEqual([]);
+  });
+
+  test("the API's own failure is not that: it is toasted in its words", async () => {
+    answering(() =>
+      Promise.resolve(
+        Response.json(
+          { error: { code: "internal", message: "The database is locked" } },
+          { status: 500 },
+        ),
+      ),
+    );
+    await libraryStore.load();
+    expect(libraryStore.unreachable).toBe(false);
+    expect(toasts.at(-1)?.msg).toBe("The database is locked");
+  });
+
+  test("a read that gets through again clears it", async () => {
+    answering(() => Promise.reject(new Error("ECONNREFUSED")));
+    await libraryStore.load();
+    expect(libraryStore.unreachable).toBe(true);
+    answering(() => Promise.resolve(Response.json({ books: [] })));
+    await libraryStore.load();
+    expect(libraryStore.unreachable).toBe(false);
+    expect(libraryStore.loaded).toBe(true);
+  });
+});
+
 describe("chapter prose with a server answering", () => {
   test("is the server's, in both readings, and never a fixture", async () => {
     const id = (await libraryStore.importBook({ source: await volume(["One"]) }))!;

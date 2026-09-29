@@ -143,7 +143,7 @@ export interface Book {
   /** two-stop gradient for the generated cover */
   cover: [string, string];
   /**
-   * The cover image the EPUB carried, where the server can serve it from — `/api/books/:id/covers/…`.
+   * The cover image the EPUB carried, where the server can serve it from — `/api/books/:id/covers/…`, or under `/demo/api` for the demo library's books.
    * Absent when the book had none, and in the demo, which has no files; the gradient stands in.
    */
   coverImage?: string;

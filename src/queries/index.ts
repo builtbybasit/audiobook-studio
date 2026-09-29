@@ -6,7 +6,7 @@
 export { keys } from "@/queries/keys";
 export { invalidate } from "@/queries/invalidate";
 export { useChapterText, chapterTextNow, chapterPartsNow } from "@/queries/chapterText";
-export { useChapterScript, useChapterScripts } from "@/queries/chapterScript";
+export { useBookScripts, useChapterScript, useChapterScripts } from "@/queries/chapterScript";
 export { useChapterHistory } from "@/queries/history";
 export { useCast } from "@/queries/cast";
 export { useBookExports } from "@/queries/exports";

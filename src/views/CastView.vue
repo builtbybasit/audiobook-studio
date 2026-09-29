@@ -17,7 +17,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import { useBookId } from "@/composables/useBookId";
-import { useCast } from "@/queries";
+import { useBookScripts, useCast } from "@/queries";
 import { UiSelect, UiCombobox, UiCheckbox, UiSwitch, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
 import {
@@ -44,6 +44,8 @@ const voiceOpts = computed(() => endpointsStore.voiceOptions);
 const bookId = useBookId();
 // the cast: read from the server when the page opens, or the seeded world's
 const { characters: cast } = useCast(bookId);
+// every speaker's line count, and the chapters they appear in, are read across the whole book
+useBookScripts(bookId);
 const stats = computed(() => castStore.castStats(bookId));
 const suggestions = computed(() => castStore.mergeSuggestions(bookId));
 const q = ref("");

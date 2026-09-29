@@ -76,12 +76,27 @@ cover's — is under its own base, so what the demo made is only ever served by 
 cannot touch your library because nothing in it holds a handle to your database.
 
 Your library is never seeded: a fresh one starts with no books and no endpoints. The demo is
-seeded when its database is fresh (no endpoints and no books) and left as it is otherwise: the
-**Simulated (free)** speech endpoint and scripting profile, from the same presets the Endpoints
-page offers, and one short book, _The Lamp at Gull Rock_, on the shelf and ready to script.
-`POST /demo/api/demo/reset` puts it back: it stops the demo's queue (the running job is aborted and
-waited for), deletes every row of every table the schema declares, removes the demo's folders, seeds
-again and starts the queue. Your library has no such route.
+seeded when its database is fresh (no endpoints and no books) and left as it is otherwise, with the
+world the browser's demo is built on — `makeWorld()` from [src/mock/world/](../src/mock/world/),
+written in one transaction by [server/demo/world.ts](../server/demo/world.ts), the one place the
+server reaches into `src/mock`: four books with their volumes, notices and prose, their casts and
+dictionaries, some six thousand script lines with their clips and receipts, the finished and failed
+exports, each book's spend so far, and the finished job history. Its endpoints and profiles are the
+world's, with each base URL moved to `simulated://` in front of the same host and path (OpenAI's is
+`simulated://api.openai.com/v1`), so they keep their names, rates and voices and none of them can
+reach the network; the **Simulated (free)** endpoint and profile are there beside them.
+[tests/server/demoWorld.test.ts](../tests/server/demoWorld.test.ts) holds the demo API to
+`makeWorld()`, field by field, and says which fields it leaves out.
+
+A seeded clip has an address and no file. The demo writes a clip's WAV — the simulated tone, as long
+as the clip's row says and at its rate — the first time the audio route or a build reads it
+([server/audio/demoClips.ts](../server/audio/demoClips.ts)), rather than six thousand of them at
+seed time; your library never makes a file it does not have, so a missing one is a 404 there. A
+seeded export has no file yet either, so its download is a 404 for now.
+
+`POST /demo/api/demo/reset` puts the demo back: it stops the demo's queue (the running job is
+aborted and waited for), deletes every row of every table the schema declares, removes the demo's
+folders, seeds again at the time of the reset and starts the queue. Your library has no such route.
 
 The page does not use the demo library yet: the **Demo** chip still opens the seeded world in the
 browser, and the situations it offers move onto the server in the slices that follow.
@@ -1658,6 +1673,8 @@ holds several chapters, and whether a file the package promises is in the archiv
 | [simulatedSpeech.test.ts](../tests/server/simulatedSpeech.test.ts)           | A simulated speech endpoint: its latency, its failures, its voices, and a chapter narrated with no `fetch` made     |
 | [simulatedScripting.test.ts](../tests/server/simulatedScripting.test.ts)     | A simulated scripting profile run through the real queue and ledger with no `fetch` made                            |
 | [libraries.test.ts](../tests/server/libraries.test.ts)                       | Your library and the demo kept apart: routing by path, addresses under each base, the demo's seed and its reset     |
+| [demoWorld.test.ts](../tests/server/demoWorld.test.ts)                       | The demo seeded with the browser demo's world, held to `makeWorld()` field by field; every endpoint simulated       |
+| [demoClips.test.ts](../tests/server/demoClips.test.ts)                       | A demo clip's file written on first read, once, whole; your library never writing one                               |
 | [libraryClient.test.ts](../tests/server/libraryClient.test.ts)               | The client and the API against each other                                                                           |
 | [schema.test.ts](../tests/server/schema.test.ts)                             | The seeded world through the schema and back                                                                        |
 | [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)                 | The library store, with a server answering                                                                          |

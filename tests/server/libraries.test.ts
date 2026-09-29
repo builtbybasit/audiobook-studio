@@ -5,7 +5,9 @@
 // uses — so what is proved here is the routing a browser meets. What the demo makes stays in the
 // demo: its books, its clips and covers, whose urls only the demo answers; and its reset empties
 // it and seeds it again without the real library noticing. Both libraries are handed providers
-// whose `fetch` fails the test, so the demo's Simulated endpoints are shown to need no network.
+// whose `fetch` fails the test, so the demo's endpoints are shown to need no network. What the
+// seed holds — the browser's whole demo world — is `demoWorld.test.ts`'s to check; the runs here
+// are on a small book of the test's own, so they are quick.
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +15,8 @@ import { join } from "node:path";
 
 import type { Book, Character, Endpoint, ExportSettings, Job, Profile, Segment } from "@/types";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
-import { SIMULATED_BASE_URL } from "@/lib/providers";
+import { isSimulated, SIMULATED_BASE_URL } from "@/lib/providers";
+import { makeWorld } from "@/mock/world";
 import type { Db } from "~/db/client";
 import { SIMULATED_ID } from "~/demo/seed";
 import { DEMO_BASE, openLibrary, REAL_BASE, serveLibraries, type Library } from "~/libraries";
@@ -82,9 +85,16 @@ function server() {
     const text = await res.text();
     return { status: res.status, body: (text ? JSON.parse(text) : null) as T };
   };
-  const importTo = async (base: string, title: string) => {
+  const importTo = async (base: string, title: string, chapters = 1) => {
     const form = new FormData();
-    form.set("file", await epubFile({ title, chapters: [{ title: "One", paragraphs: story(2) }] }));
+    const paragraphs = story(2);
+    form.set(
+      "file",
+      await epubFile({
+        title,
+        chapters: Array.from({ length: chapters }, (_, i) => ({ title: `${i + 1}`, paragraphs })),
+      }),
+    );
     const { status, body } = await request<{ book: Book }>(`${base}/books/import`, {
       method: "POST",
       body: form,
@@ -95,7 +105,9 @@ function server() {
   };
   const shelf = async (base: string) =>
     (await request<{ books: Book[] }>(`${base}/books`)).body.books.map((b) => b.title);
-  return { net, real, demo, fetch, request, importTo, shelf };
+  const jobIds = async (base: string) =>
+    (await request<{ jobs: Job[] }>(`${base}/jobs`)).body.jobs.map((j) => j.id);
+  return { net, real, demo, fetch, request, importTo, shelf, jobIds };
 }
 
 type Server = ReturnType<typeof server>;
@@ -123,14 +135,14 @@ const filesUnder = (dir: string): string[] =>
         .map((d) => d.name)
     : [];
 
-const SEEDED_TITLE = "The Lamp at Gull Rock";
+/** The seeded world's books, as the demo's shelf lists them. */
+const SEEDED_TITLES = makeWorld().books.map((b) => b.title);
 
-/** Script the seeded book's first chapter, give every speaker a voice, and narrate it. */
-async function narrateSeeded(s: Server): Promise<{ bookId: string; segments: Segment[] }> {
-  const bookId = (await s.request<{ books: Book[] }>(`${DEMO_BASE}/books`)).body.books[0].id;
+/** Script chapters of a book, and give every speaker the Simulated endpoint's voice. */
+async function scriptAndCast(s: Server, bookId: string, ids: number[]): Promise<void> {
   await s.request(
     `${DEMO_BASE}/books/${bookId}/chapters/script`,
-    jsonBody({ ids: [1], profile: SIMULATED_ID }),
+    jsonBody({ ids, profile: SIMULATED_ID }),
   );
   await s.demo.runner.idle();
   const cast = await s.request<{ characters: Character[] }>(`${DEMO_BASE}/books/${bookId}/cast`);
@@ -139,6 +151,12 @@ async function narrateSeeded(s: Server): Promise<{ bookId: string; segments: Seg
       ...jsonBody({ ...c, voice: `${SIMULATED_ID}/ash` }),
       method: "PUT",
     });
+}
+
+/** Import a short book into the demo, script its first chapter, and narrate it. */
+async function narrateOwn(s: Server): Promise<{ bookId: string; segments: Segment[] }> {
+  const bookId = (await s.importTo(DEMO_BASE, "A Book of the Test's Own")).id;
+  await scriptAndCast(s, bookId, [1]);
   const queued = await s.request<{ jobs: Job[] }>(
     `${DEMO_BASE}/books/${bookId}/chapters/narrate`,
     jsonBody({ ids: [1] }),
@@ -155,7 +173,7 @@ async function narrateSeeded(s: Server): Promise<{ bookId: string; segments: Seg
 describe("the server's two libraries", () => {
   test("a path under /demo/api goes to the demo, and every other path to the real library", async () => {
     const s = server();
-    expect(await s.shelf(DEMO_BASE)).toEqual([SEEDED_TITLE]);
+    expect(await s.shelf(DEMO_BASE)).toEqual(SEEDED_TITLES);
     expect(await s.shelf(REAL_BASE)).toEqual([]);
     expect((await s.request(`${DEMO_BASE}/health`)).body).toEqual({ ok: true });
 
@@ -168,21 +186,24 @@ describe("the server's two libraries", () => {
     expect((await s.request("/api/demo/api/books")).status).toBe(404);
   });
 
-  test("a fresh demo is seeded with the Simulated endpoints and a book, and a fresh real library with nothing", async () => {
+  test("a fresh demo is seeded with the world and the Simulated preset, every endpoint simulated, and a fresh real library with nothing", async () => {
     const s = server();
     const demo = await s.request<{ endpoints: Endpoint[]; profiles: Profile[] }>(
       `${DEMO_BASE}/endpoints`,
     );
-    expect(demo.body.endpoints.map((e) => [e.id, e.name, e.baseUrl, e.enabled])).toEqual([
-      [SIMULATED_ID, "Simulated (free)", SIMULATED_BASE_URL, true],
-    ]);
-    expect(demo.body.endpoints[0].voices.length).toBeGreaterThan(0);
-    expect(demo.body.profiles.map((p) => [p.id, p.name, p.baseUrl, p.enabled])).toEqual([
-      [SIMULATED_ID, "Simulated (free)", SIMULATED_BASE_URL, true],
-    ]);
-    const [book] = (await s.request<{ books: Book[] }>(`${DEMO_BASE}/books`)).body.books;
-    expect(book.importing).toBeUndefined();
-    expect(book.chapters?.total).toBe(2);
+    for (const list of [demo.body.endpoints, demo.body.profiles]) {
+      expect(list.map((e) => e.id)).toContain(SIMULATED_ID);
+      expect(list.filter((e) => !isSimulated(e.baseUrl))).toEqual([]);
+      const preset = list.find((e) => e.id === SIMULATED_ID)!;
+      expect([preset.name, preset.baseUrl, preset.enabled]).toEqual([
+        "Simulated (free)",
+        SIMULATED_BASE_URL,
+        true,
+      ]);
+    }
+    const books = (await s.request<{ books: Book[] }>(`${DEMO_BASE}/books`)).body.books;
+    expect(books.map((b) => b.title)).toEqual(SEEDED_TITLES);
+    expect(books.every((b) => !b.importing && b.chapters!.total > 0)).toBe(true);
 
     const real = await s.request<{ endpoints: Endpoint[]; profiles: Profile[] }>(
       `${REAL_BASE}/endpoints`,
@@ -200,24 +221,25 @@ describe("the server's two libraries", () => {
     await first.app.request(`http://api.test${DEMO_BASE}/books/${books[0].id}`, {
       method: "DELETE",
     });
+    const left = rowCounts(first.db);
     first.db.$client.close();
 
     const again = open("demo", DEMO_BASE, net.fetch, { demo: true, databaseUrl });
-    expect(rowCounts(again.db).books).toBe(0);
-    expect(rowCounts(again.db).endpoints).toBe(2);
+    expect(rowCounts(again.db)).toEqual(left);
+    expect(left.books).toBe(books.length - 1);
   });
 
   test("a book imported into one library is not on the other's shelf", async () => {
     const s = server();
     await s.importTo(DEMO_BASE, "Only in the demo");
     await s.importTo(REAL_BASE, "Only in the library");
-    expect(await s.shelf(DEMO_BASE)).toEqual([SEEDED_TITLE, "Only in the demo"]);
+    expect(await s.shelf(DEMO_BASE)).toEqual([...SEEDED_TITLES, "Only in the demo"]);
     expect(await s.shelf(REAL_BASE)).toEqual(["Only in the library"]);
   });
 
-  test("the demo's seed scripts and narrates with no network, and its clips are the demo's to serve", async () => {
+  test("the demo scripts and narrates with no network, and its clips are the demo's to serve", async () => {
     const s = server();
-    const { bookId, segments } = await narrateSeeded(s);
+    const { bookId, segments } = await narrateOwn(s);
     expect(segments.length).toBeGreaterThan(2);
     for (const seg of segments) {
       expect(seg.audio.status).toBe("done");
@@ -281,7 +303,8 @@ describe("resetting the demo", () => {
   test("empties it — books, jobs, clips on disk — and seeds it again, leaving the real library as it was", async () => {
     const s = server();
     const fresh = rowCounts(s.demo.db);
-    await narrateSeeded(s);
+    const history = await s.jobIds(DEMO_BASE);
+    await narrateOwn(s);
     await s.importTo(DEMO_BASE, "Only in the demo");
     await s.importTo(REAL_BASE, "Only in the library");
     const real = rowCounts(s.real.db);
@@ -291,52 +314,42 @@ describe("resetting the demo", () => {
       method: "POST",
     });
     expect(reset.status).toBe(200);
+    const world = makeWorld();
     expect(reset.body.seeded).toEqual({
-      endpoints: [SIMULATED_ID],
-      profiles: [SIMULATED_ID],
-      books: ["the-lamp-at-gull-rock"],
+      endpoints: [...world.endpoints.map((e) => e.id), SIMULATED_ID],
+      profiles: [...world.profiles.map((p) => p.id), SIMULATED_ID],
+      books: world.books.map((b) => b.id),
     });
 
-    // row for row what a fresh demo holds, and not a file left from before
+    // row for row what a fresh demo holds, the queue's history as it began, and not a file left
+    // from before
     expect(rowCounts(s.demo.db)).toEqual(fresh);
-    expect(await s.shelf(DEMO_BASE)).toEqual([SEEDED_TITLE]);
-    expect((await s.request<{ jobs: Job[] }>(`${DEMO_BASE}/jobs`)).body.jobs).toEqual([]);
+    expect(await s.shelf(DEMO_BASE)).toEqual(SEEDED_TITLES);
+    expect(await s.jobIds(DEMO_BASE)).toEqual(history);
     expect(filesUnder(s.demo.audioDir)).toEqual([]);
 
     expect(rowCounts(s.real.db)).toEqual(real);
     expect(await s.shelf(REAL_BASE)).toEqual(["Only in the library"]);
 
     // and the demo's queue runs again afterwards
-    await narrateSeeded(s);
+    await narrateOwn(s);
     expect(s.net.asked).toEqual([]);
   }, 20_000);
 
   test("abandons the job it finds running, so nothing from before lands after", async () => {
     const s = server();
-    const bookId = (await s.request<{ books: Book[] }>(`${DEMO_BASE}/books`)).body.books[0].id;
-    await s.request(
-      `${DEMO_BASE}/books/${bookId}/chapters/script`,
-      jsonBody({ ids: [1, 2], profile: SIMULATED_ID }),
-    );
-    await s.demo.runner.idle();
-    const cast = await s.request<{ characters: Character[] }>(`${DEMO_BASE}/books/${bookId}/cast`);
-    for (const c of cast.body.characters)
-      await s.request(`${DEMO_BASE}/books/${bookId}/characters/${encodeURIComponent(c.name)}`, {
-        ...jsonBody({ ...c, voice: `${SIMULATED_ID}/ash` }),
-        method: "PUT",
-      });
+    const history = await s.jobIds(DEMO_BASE);
+    const bookId = (await s.importTo(DEMO_BASE, "Two Chapters", 2)).id;
+    await scriptAndCast(s, bookId, [1, 2]);
     // the Simulated endpoint takes most of a second a line, so the first job is still running
     await s.request(`${DEMO_BASE}/books/${bookId}/chapters/narrate`, jsonBody({ ids: [1, 2] }));
     expect(s.demo.runner.running?.kind).toBe("narration");
 
     expect((await s.request(`${DEMO_BASE}/demo/reset`, { method: "POST" })).status).toBe(200);
     await s.demo.runner.idle();
-    expect((await s.request<{ jobs: Job[] }>(`${DEMO_BASE}/jobs`)).body.jobs).toEqual([]);
+    expect(await s.jobIds(DEMO_BASE)).toEqual(history);
     expect(filesUnder(s.demo.audioDir)).toEqual([]);
-    const script = await s.request<{ segments: Segment[] }>(
-      `${DEMO_BASE}/books/${bookId}/chapters/1/script`,
-    );
-    expect(script.body.segments ?? []).toEqual([]);
+    expect((await s.request(`${DEMO_BASE}/books/${bookId}`)).status).toBe(404);
   });
 
   test("is the demo's alone: the real library has no such route", async () => {

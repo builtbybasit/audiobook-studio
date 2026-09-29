@@ -39,18 +39,20 @@ export interface DemoParts {
   runner: Runner;
   gate: SpeechGate;
   voiceFiles: VoiceFiles;
+  /** the demo's API base, which the seed writes its clips' urls under */
+  base: string;
   /** the demo's folders — its clips, its audiobooks, its voices' recordings — removed whole */
   dirs: readonly string[];
 }
 
 /** The demo's reset, one at a time: a second asked for while one runs waits for it, then runs. */
-export function demoReset({ db, runner, gate, voiceFiles, dirs }: DemoParts): Reset {
+export function demoReset({ db, runner, gate, voiceFiles, base, dirs }: DemoParts): Reset {
   async function rebuild(): Promise<Seeded> {
     await runner.stop();
     try {
       wipe(db);
       await Promise.all(dirs.map((dir) => rm(dir, { recursive: true, force: true })));
-      const seeded = seedDemo(db, voiceFiles);
+      const seeded = seedDemo(db, voiceFiles, { base });
       // the endpoints were replaced, as a save replaces them; the gate reads its limits again
       gate.changed();
       return seeded;

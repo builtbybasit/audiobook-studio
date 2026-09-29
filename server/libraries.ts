@@ -13,6 +13,7 @@ import type { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 
 import { createApp } from "~/app";
+import { demoClips } from "~/audio/demoClips";
 import { audioFiles, type AudioFiles } from "~/audio/files";
 import { openDb, type Db } from "~/db/client";
 import { migrate } from "~/db/migrate";
@@ -55,8 +56,9 @@ export interface LibraryOptions {
    */
   providers?: Providers;
   /**
-   * The demo: seeded when its database is fresh, and given the route that empties it and seeds it
-   * again. The real library is neither — a fresh one starts empty.
+   * The demo: seeded when its database is fresh, given the route that empties it and seeds it
+   * again, and making a seeded clip's file the first time it is read. The real library is none of
+   * these — a fresh one starts empty, and a clip file it has lost stays lost.
    */
   demo?: boolean;
 }
@@ -99,7 +101,7 @@ export function openLibrary(options: LibraryOptions): Library {
     scripting: endpointScriptingProvider(),
     speech: endpointSpeechProvider(),
   };
-  const files = audioFiles(options.audioDir, base);
+  const files = audioFiles(options.audioDir, base, options.demo ? demoClips(db) : undefined);
   const exports = { encoders: options.encoders, files: audiobookFiles(options.exportDir) };
   const voiceFiles = voiceFilesIn(options.voiceDir);
   // One gate for every line this library sends to a speech endpoint, shared by the narration
@@ -115,13 +117,14 @@ export function openLibrary(options: LibraryOptions): Library {
     { log },
   );
 
-  if (options.demo && isFresh(db)) log.info(seedDemo(db, voiceFiles), "seeded the demo");
+  if (options.demo && isFresh(db)) log.info(seedDemo(db, voiceFiles, { base }), "seeded the demo");
   const reset = options.demo
     ? demoReset({
         db,
         runner,
         gate,
         voiceFiles,
+        base,
         dirs: [options.audioDir, options.exportDir, options.voiceDir],
       })
     : undefined;

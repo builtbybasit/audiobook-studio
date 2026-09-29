@@ -1,13 +1,13 @@
 // Writing a whole world into the schema, and reading it back out.
 //
 // This exists for one question — does the schema actually hold the domain — and the seeded world is
-// the reference answer, because it is the same data every screen in the app is built against. It is
-// test support rather than product code: nothing in the server imports the demo world, and the
-// backend has no feature that would.
+// the reference answer, because it is the same data every screen in the app is built against. The
+// world's own parts are written by the demo library's seed (`server/demo/world.ts`), which writes
+// the same world into the demo's database, so the round trip proves the writer the demo uses; what
+// the world does not hold — a chapter's history, a ledger row — is written here.
 import { and, asc, eq } from "drizzle-orm";
 
 import type {
-  Book,
   Chapter,
   Character,
   ChapterHistory,
@@ -19,6 +19,10 @@ import type {
 import type { Db } from "~/db/client";
 import * as rows from "~/db/rows";
 
+// the world's books, casts, exports and jobs, as the demo's seed writes them
+export { writeBook, writeCast, writeExport, writeJob } from "~/demo/world";
+// the dictionary, by the module the lexicon route writes through
+export { replaceLexicon as writeLexicon } from "~/db/cast";
 // A chapter's script is read and written by the server's own module; the round-trip test drives
 // the same code the scripting job does rather than a copy of it.
 export { readScript, writeScript } from "~/db/script";
@@ -31,7 +35,6 @@ export {
   writeProfile,
 } from "~/db/endpoints";
 import {
-  books,
   chapters,
   characters,
   exportChapters,
@@ -43,45 +46,9 @@ import {
   requests,
   scriptHeads,
   scriptVersions,
-  volumes,
 } from "~/db/schema";
 
-const CHUNK = 150;
-function insertAll<T>(write: (part: T[]) => void, values: readonly T[]): void {
-  for (let i = 0; i < values.length; i += CHUNK) write(values.slice(i, i + CHUNK));
-}
-
 // ---------- writing ----------
-
-export function writeBook(db: Db, book: Book, chs: readonly Chapter[], addedAt = Date.now()): void {
-  db.insert(books).values(rows.bookValues(book, addedAt)).run();
-  book.volumes.forEach((v, i) =>
-    db
-      .insert(volumes)
-      .values(rows.volumeValues(book.id, v, i))
-      .run(),
-  );
-  insertAll(
-    (part) => db.insert(chapters).values(part).run(),
-    chs.map((c) => rows.chapterValues(book.id, c)),
-  );
-}
-
-export function writeCast(db: Db, bookId: string, cast: readonly Character[]): void {
-  if (!cast.length) return;
-  insertAll(
-    (part) => db.insert(characters).values(part).run(),
-    cast.map((c, i) => rows.characterValues(bookId, c, i)),
-  );
-}
-
-export function writeLexicon(db: Db, bookId: string, entries: readonly LexEntry[]): void {
-  if (!entries.length) return;
-  insertAll(
-    (part) => db.insert(lexiconEntries).values(part).run(),
-    entries.map((e, i) => rows.lexiconValues(bookId, e, i)),
-  );
-}
 
 export function writeHistory(
   db: Db,
@@ -96,25 +63,6 @@ export function writeHistory(
     db.insert(scriptVersions)
       .values(rows.scriptVersionValues(bookId, chapterId, v))
       .run();
-}
-
-export function writeExport(db: Db, e: ExportItem, createdAt = Date.now()): void {
-  db.insert(exportItems).values(rows.exportValues(e, createdAt)).run();
-  e.files.forEach((f, i) =>
-    db
-      .insert(exportFiles)
-      .values(rows.exportFileValues(e.id, f, i))
-      .run(),
-  );
-  const chapterRows = rows.exportChapterValues(e);
-  if (chapterRows.length)
-    insertAll((part) => db.insert(exportChapters).values(part).run(), chapterRows);
-}
-
-export function writeJob(db: Db, job: Job): void {
-  db.insert(jobs).values(rows.jobValues(job)).run();
-  for (const e of job.activity ?? [])
-    db.insert(jobEvents).values(rows.jobEventValues(job.id, e)).run();
 }
 
 /**

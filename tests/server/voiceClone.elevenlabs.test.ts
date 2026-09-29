@@ -14,16 +14,18 @@ import {
   agreed,
   answering,
   cloneForm,
+  cloneTarget,
   HEADS,
   postClone,
   sampleFile,
   saved,
-  speechEndpoint,
+  cloneEndpoint,
+  unlucky,
 } from "../support/cloning";
 import { testApi } from "../support/server";
 
 const endpoint = (over: Partial<Endpoint>): Endpoint =>
-  speechEndpoint({
+  cloneEndpoint({
     id: "elevenlabs",
     name: "ElevenLabs",
     baseUrl: "https://api.elevenlabs.io/v1",
@@ -32,19 +34,15 @@ const endpoint = (over: Partial<Endpoint>): Endpoint =>
     ...over,
   });
 
-const target = (over: Partial<ProviderTarget> = {}): ProviderTarget => ({
-  id: "elevenlabs",
-  name: "ElevenLabs",
-  baseUrl: "https://api.elevenlabs.io/v1",
-  model: "eleven_multilingual_v2",
-  apiKey: "sk-eleven",
-  needsKey: true,
-  timeoutSec: 5,
-  // what a narration endpoint is saved with: the upload must not take them
-  maxRetries: 2,
-  cooldownSec: 0,
-  ...over,
-});
+const target = (over: Partial<ProviderTarget> = {}): ProviderTarget =>
+  cloneTarget({
+    id: "elevenlabs",
+    name: "ElevenLabs",
+    baseUrl: "https://api.elevenlabs.io/v1",
+    model: "eleven_multilingual_v2",
+    apiKey: "sk-eleven",
+    ...over,
+  });
 
 const breeze = (over: Partial<ProviderTarget> = {}): ProviderTarget =>
   target({
@@ -73,16 +71,6 @@ const request: CloneRequest = {
     },
   ],
 };
-
-/** A request's failures that another attempt could fix, none of which may bring one. */
-const unlucky = (name: string): [() => Response | Promise<Response>, string][] => [
-  [() => new Response("busy", { status: 503 }), `${name} answered 503: busy`],
-  [() => new Response("slow down", { status: 429 }), `${name} answered 429`],
-  [
-    () => Promise.reject(new TypeError("connection reset")),
-    `${name} could not be reached: connection reset`,
-  ],
-];
 
 // ---------- ElevenLabs ----------
 

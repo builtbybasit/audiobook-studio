@@ -2,12 +2,9 @@
 // words. And the endpoint whose model reads expressions, so the gesture has something to place.
 import { test, expect, describe } from "bun:test";
 
-import { EXPRESSION_TAGS } from "@/mock/fixtures/endpoints";
+import { EXPRESSION_TAGS, makeEndpoints } from "@/mock/fixtures/endpoints";
 import { expressionSupport } from "@/lib/expressions";
 import { gapLabel, gapsOf, tokensOf } from "@/lib/gaps";
-import { useEndpointsStore } from "@/stores/endpoints";
-import { demoServer } from "./support/demoServer";
-import { testPinia } from "./support/pinia";
 
 describe("the gaps between words", () => {
   const text = "I am not asking. Doctor, sit down.";
@@ -44,12 +41,10 @@ describe("the gaps between words", () => {
 });
 
 describe("expressions placed in a line", () => {
-  test("Fish's S2 model ships with tags, so a line read by it can be annotated at once", async () => {
-    await demoServer();
-    testPinia();
-    const endpointsStore = useEndpointsStore();
-    await endpointsStore.load();
-    const ep = endpointsStore.endpoints.find((e) => e.id === "fish")!;
+  // The seeded endpoint as the demo is built from it; that the demo library serves it unchanged,
+  // tags and all, is `tests/server/demoWorld.test.ts`'s to hold.
+  test("Fish's S2 model ships with tags, so a line read by it can be annotated at once", () => {
+    const ep = makeEndpoints().find((e) => e.id === "fish")!;
     expect(expressionSupport(ep)).toBe("supported");
     expect(ep.expressions?.tags.map((t) => t.id)).toEqual(EXPRESSION_TAGS.map((t) => t.id));
     expect(EXPRESSION_TAGS.some((t) => t.kind === "sound")).toBe(true);

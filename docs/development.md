@@ -86,6 +86,16 @@ single files take a minute. Replace a real wait with a gated provider or fake ti
 providers; no test makes a paid or network call. The real encoder runs only where it is the point,
 and skips where `ffmpeg` is not installed.
 
+Open the seeded demo (`demoServer()`) only when a test reads the seeded world: a store test of the
+server's routes takes `backendServer()` and a book of its own, and a server test takes `testApi()`,
+whose database is migrated once per file and copied. Tests that only read the demo share one opened
+in `beforeAll`; a test that changes it applies a situation, which rebuilds it whole, so a `reset()`
+just before a `situate()` is wasted. A store test about what an edit sends can record it with
+`unwrittenEdits()` rather than reseed the demo after every write. For a narrated book, reach for
+`voicedBook`, `narratedBook` and `line()` in [tests/support](../tests/support) rather than a local
+import-script-narrate helper. `pnpm test` runs every file in a worker of its own; a plain serial
+`bun test` shares one process, so leave module state the way you found it.
+
 Never guard an assertion behind an `if`: a condition the test needs in order to mean anything is
 itself an assertion, and a test that skips its own point reports green while checking nothing. Assert
 the rule rather than the fixture — an exact seeded count, an exact toast string or an array order the
@@ -99,7 +109,7 @@ guide already names — no file-length or test-count target is imposed, in eithe
 Layout, wording and visual changes get browser verification plus lint and typecheck, not another unit
 test.
 
-The topic guides name the relevant tests beside the behavior they explain. Cross-feature coverage includes [tests/stores.test.ts](../tests/stores.test.ts), [tests/demo.test.ts](../tests/demo.test.ts), [tests/history.test.ts](../tests/history.test.ts), [tests/bulkRuns.test.ts](../tests/bulkRuns.test.ts), the three pricing files — [tests/pricing.rates.test.ts](../tests/pricing.rates.test.ts) for the rate in force at a given instant, [tests/pricing.tokens.test.ts](../tests/pricing.tokens.test.ts) for the scripting side and [tests/pricing.speech.test.ts](../tests/pricing.speech.test.ts) for the speech side — and [tests/usageLedger.test.ts](../tests/usageLedger.test.ts). The [demo walkthroughs](demo.md#things-to-try) are the manual testing entry point.
+The topic guides name the relevant tests beside the behavior they explain. Cross-feature coverage includes [tests/stores.test.ts](../tests/stores.test.ts), [tests/demoStore.test.ts](../tests/demoStore.test.ts) and [tests/server/demoSituations.test.ts](../tests/server/demoSituations.test.ts), [tests/history.test.ts](../tests/history.test.ts), [tests/bulkRuns.test.ts](../tests/bulkRuns.test.ts), the three pricing files — [tests/pricing.rates.test.ts](../tests/pricing.rates.test.ts) for the rate in force at a given instant, [tests/pricing.tokens.test.ts](../tests/pricing.tokens.test.ts) for the scripting side and [tests/pricing.speech.test.ts](../tests/pricing.speech.test.ts) for the speech side — and [tests/server/usage.test.ts](../tests/server/usage.test.ts) for the ledger. The [demo walkthroughs](demo.md#things-to-try) are the manual testing entry point.
 
 ## Keeping documentation useful
 

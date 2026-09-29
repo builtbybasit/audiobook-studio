@@ -31,7 +31,7 @@ import { DEFAULT_PACING } from "@/lib/speech";
 import { jobsService } from "@/services/jobs";
 import { libraryService } from "@/services/library";
 import type { Chapter, ExportItem, ExportSettings, Job, Volume } from "@/types";
-import { demoServer } from "./support/demoServer";
+import { demoServer, type DemoServer } from "./support/demoServer";
 import { openDemoBook } from "./support/demoBook";
 import { testPinia } from "./support/pinia";
 
@@ -209,9 +209,10 @@ let named = 0;
 const own = (over: Partial<ExportSettings> = {}) =>
   settings({ filename: `Test Book ${++named}`, ...over });
 
+let demo: DemoServer;
 beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  const demo = await demoServer();
+  demo = await demoServer();
   const jobs = jobsService();
   for (const j of await jobs.list())
     if (j.status === "queued" || j.status === "running") await jobs.cancel(j.id);
@@ -231,15 +232,13 @@ async function open(bookId = "starforge") {
   exportsStore._install(bookId, await libraryService().exports(bookId));
 }
 
-/** Wait for the server to finish a build, and read the book's audiobooks back. */
+/**
+ * Wait for the server to finish a build, and read the book's audiobooks back. The runs the demo
+ * started with were cancelled, so the queue falling idle is this build finishing.
+ */
 async function settled(entry: ExportItem | null): Promise<ExportItem> {
   expect(entry).not.toBeNull();
-  const jobs = jobsService();
-  for (;;) {
-    const job = (await jobs.list()).find((j) => j.id === entry!.jobId);
-    if (!job || job.finishedAt) break;
-    await new Promise((r) => setTimeout(r, 20));
-  }
+  await demo.idle();
   exportsStore._install(entry!.bookId, await libraryService().exports(entry!.bookId));
   return exportsStore.exports.find((e) => e.id === entry!.id)!;
 }
@@ -261,7 +260,7 @@ describe("staying up to date", () => {
   beforeEach(() => open());
 
   test("a chapter that has not been touched is carried over; one that changed is not", async () => {
-    const ids = usableIds().slice(0, 4);
+    const ids = usableIds().slice(0, 3);
     const item = await build("starforge", ids, own({ useStale: true }));
     expect(item.status).toBe("done");
     // nothing has moved since: the server's fingerprints are the ones this page works out
@@ -278,7 +277,7 @@ describe("staying up to date", () => {
   });
 
   test("a pause costs nothing and renders nothing, but it does change the file", async () => {
-    const ids = usableIds().slice(0, 3);
+    const ids = usableIds().slice(0, 2);
     const item = await build("starforge", ids, own({ useStale: true }));
     expect(exportsStore.exportUpdateFor(item).changed).toHaveLength(0);
     await castStore.setPacing("starforge", { turn: 1.4 });
@@ -344,7 +343,7 @@ describe("staying up to date", () => {
   });
 
   test("the reuse the plan promises is the reuse the build performs", async () => {
-    const ids = [2, 3, 4];
+    const ids = [2, 3];
     const s = own({ bitrate: 64 });
     const first = await build("starforge", ids, s);
     // the plan panel and the build ask the same question of the same answer

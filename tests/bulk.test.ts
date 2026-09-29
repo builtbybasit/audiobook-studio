@@ -1,22 +1,24 @@
 // Bulk script corrections from the Search page: previewing changes nothing, applying touches exactly
 // the lines the preview counted, and one undo puts the batch back without stepping on later edits.
 // They run on the demo library's The Cliché Cultivation World, whose first chapter is narrated.
+//
+// What a batch does here is the store's; what the server keeps of the write it sends is
+// `tests/server/scriptEdit.test.ts`'s. So the write is recorded rather than sent, and the seeded
+// demo is opened once and never changed: every test reads the same book.
 import { test, expect, beforeAll, beforeEach, afterEach, mock } from "bun:test";
 import { bulkOutcome, segmentFingerprint, directionOptions } from "@/lib/bulk";
 import { libraryService } from "@/services/library";
 import type { BulkTarget, Segment, UndoEntry } from "@/types";
-import { demoServer, type DemoServer } from "./support/demoServer";
+import { demoServer } from "./support/demoServer";
 import { testPinia, type TestPinia } from "./support/pinia";
+import { unwrittenEdits, type UnwrittenEdit } from "./support/unwrittenEdits";
 
 // The batch undo is the store's own undo stack, and that stack lives on a toast. Swap the toast
 // library for a silent one so `revertEntry` can be exercised for real.
-const toasts: { title: string }[] = [];
+let shown = 0;
 mock.module("vue-toastflow", () => ({
   toast: {
-    show: (o: { title: string }) => {
-      toasts.push(o);
-      return String(toasts.length);
-    },
+    show: () => String(++shown),
     dismiss: () => {},
     loading: (f: () => Promise<unknown>) => f(),
   },
@@ -27,33 +29,34 @@ const { useNarrationStore } = await import("@/stores/narration");
 const { useScriptsStore } = await import("@/stores/scripts");
 const { useUiStore } = await import("@/stores/ui");
 
-let demo: DemoServer;
 let pinia: TestPinia;
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let narrationStore: ReturnType<typeof useNarrationStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
 let uiStore: ReturnType<typeof useUiStore>;
+/** the scripts the store asked the server to write, in the order it asked */
+let writes: UnwrittenEdit[];
 /** the chapters these read: narrated, narrated with stale lines, and scripted only */
 const CHAPTERS = [1, 2, 5];
 
 beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  demo = await demoServer();
+  await demoServer();
+  ({ writes } = unwrittenEdits());
 });
 beforeEach(async () => {
-  await demo.reset();
   pinia = testPinia();
   libraryStore = useLibraryStore();
   narrationStore = useNarrationStore();
   scriptsStore = useScriptsStore();
   uiStore = useUiStore();
-  toasts.length = 0;
+  writes.length = 0;
   const svc = libraryService();
   await libraryStore.loadBook("cliche");
   for (const chId of CHAPTERS)
     scriptsStore._install("cliche", chId, await svc.chapterScript("cliche", chId));
 });
-// a batch's writes are still on their way when a test ends; they must not land on the next demo
+// a batch's write is still being answered when a test ends; it must not land in the next test
 afterEach(async () => {
   await Promise.all(CHAPTERS.map((chId) => scriptsStore._settled("cliche", chId)));
   pinia.stop();
@@ -124,6 +127,10 @@ test("changing the speaker in bulk edits only the counted lines and stales their
   expect(libraryStore.chapter("cliche", 1)!.narration).toBe("stale");
   // a chapter nobody selected is left alone
   expect(scriptsStore.segmentsOf("cliche", 2).map((s) => s.audio.status)).toEqual(untouched);
+  // the batch is written once, under its own name, so the history keeps it as one entry
+  expect(writes.map((w) => [w.chId, w.edit.origin])).toEqual([
+    [1, { kind: "bulk", label: p.label, lines: p.changing }],
+  ]);
 });
 
 test("undo restores speakers, edited marks, clip status and the chapter's narration state", () => {
@@ -142,6 +149,27 @@ test("undo restores speakers, edited marks, clip status and the chapter's narrat
   expect(scriptsStore.segmentsOf("cliche", 1).map((s) => s.edited)).toEqual(edits);
   expect(libraryStore.chapter("cliche", 1)!.narration).toBe(narration);
   expect(uiStore.undoPending(res.entry)).toBe(false); // the batch's undo is taken once
+});
+
+test("undoing a batch writes every chapter it changed back as it was", async () => {
+  // a batch across two chapters, so a chapter the undo forgets to write is one the other hides
+  const targets = [...all(1), ...all(5)];
+  const original = [1, 5].map((chId) =>
+    JSON.parse(JSON.stringify(scriptsStore.segmentsOf("cliche", chId))),
+  );
+  const res = scriptsStore.applyBulk("cliche", targets, { kind: "speaker", speaker: "Elder Mo" });
+  await Promise.all([1, 5].map((chId) => scriptsStore._settled("cliche", chId)));
+  const batch = writes.length;
+
+  uiStore.revertEntry(res.entry as UndoEntry);
+  await Promise.all([1, 5].map((chId) => scriptsStore._settled("cliche", chId)));
+
+  // undo is on the page at once, but it is only kept if it reaches the server: without these
+  // writes the next read of the book would hand the batch back
+  const back = writes.slice(batch);
+  expect(back.map((w) => w.chId).toSorted()).toEqual([1, 5]);
+  for (const [i, chId] of [1, 5].entries())
+    expect(back.find((w) => w.chId === chId)!.edit.segments).toEqual(original[i]);
 });
 
 test("undo leaves alone a line that was edited after the batch", () => {
@@ -191,6 +219,16 @@ test("setting a direction replaces existing ones; clearing is its own action", (
 
 test("a bulk correction leaves the prose and its expression annotations untouched", () => {
   const targets = all(1);
+  seg(1, targets[0].segId).expressions = [
+    {
+      id: "laughter",
+      label: "Laughter",
+      token: "[laughter]",
+      kind: "sound",
+      annotationId: 1,
+      at: 0,
+    },
+  ];
   const text = scriptsStore.segmentsOf("cliche", 1).map((s) => s.text);
   const marks = scriptsStore
     .segmentsOf("cliche", 1)

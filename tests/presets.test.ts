@@ -35,24 +35,19 @@ describe("scripting presets", () => {
       const profile = newProfile(clone(preset.apply));
       // a local server's model is whatever you pulled, so that preset leaves it for you to type
       const expected = preset.apply.model === "" ? ["Enter a model ID."] : [];
-      expect({ preset: preset.id, errors: profileErrors(profile) }).toEqual({
+      expect({
         preset: preset.id,
-        errors: expected,
-      });
-      if (profile.pricing)
-        expect({ preset: preset.id, problems: pricingProblems(profile.pricing) }).toEqual({
-          preset: preset.id,
-          problems: [],
-        });
+        errors: profileErrors(profile),
+        problems: pricingProblems(profile.pricing!),
+      }).toEqual({ preset: preset.id, errors: expected, problems: [] });
     }
   });
 
   test("a hosted provider needs a key and is priced; a server of your own is neither", () => {
     for (const { id, apply } of SCRIPTING_PRESETS) {
       const local = unhosted(apply.baseUrl);
-      expect({ id, needsKey: apply.needsKey }).toEqual({ id, needsKey: !local });
-      if (local)
-        expect({ id, in: apply.inPrice, out: apply.outPrice }).toEqual({ id, in: 0, out: 0 });
+      const free = apply.inPrice === 0 && apply.outPrice === 0;
+      expect({ id, needsKey: apply.needsKey, free }).toEqual({ id, needsKey: !local, free: local });
     }
   });
 
@@ -131,9 +126,10 @@ describe("speech presets", () => {
   test("each has a rate card that reads, and ids are unique", () => {
     const ids = TTS_PRESETS.map((p) => p.id);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const { id, apply } of TTS_PRESETS)
-      if (apply.pricing)
-        expect({ id, problems: pricingProblems(apply.pricing) }).toEqual({ id, problems: [] });
+    const priced = TTS_PRESETS.filter((p) => p.apply.pricing);
+    expect(priced.length).toBeGreaterThan(0);
+    for (const { id, apply } of priced)
+      expect({ id, problems: pricingProblems(apply.pricing!) }).toEqual({ id, problems: [] });
   });
 });
 
@@ -142,19 +138,16 @@ describe("what a preset says and sets", () => {
   const tts = (id: string) => TTS_PRESETS.find((p) => p.id === id)!;
 
   test("each rate card is read in UTC, whatever the timezone of the machine that loads it", () => {
-    for (const { id, apply } of ALL)
-      if (apply.pricing)
-        expect({ id, timezone: apply.pricing.timezone }).toEqual({ id, timezone: "UTC" });
+    for (const { id, apply } of ALL.filter((p) => p.apply.pricing))
+      expect({ id, timezone: apply.pricing!.timezone }).toEqual({ id, timezone: "UTC" });
   });
 
   test("every priced hosted preset says which day its rates were read", () => {
-    for (const { id, note, apply } of ALL) {
-      if (unhosted(apply.baseUrl)) continue;
+    for (const { id, note } of ALL.filter((p) => !unhosted(p.apply.baseUrl)))
       expect({ id, dated: note?.includes("as published on 28 September 2026") }).toEqual({
         id,
         dated: true,
       });
-    }
   });
 
   test("a preset's seeded tags are ones its own provider takes", () => {
@@ -196,11 +189,12 @@ describe("what a preset says and sets", () => {
   });
 
   test("OpenRouter's presets do not claim its prices are the provider's", () => {
-    for (const { id, note, group } of SCRIPTING_PRESETS)
-      if (group === "OpenRouter") {
-        expect({ id, note }).not.toMatchObject({ note: expect.stringContaining("passes") });
-        expect({ id, note }).not.toMatchObject({ note: expect.stringContaining("most-used") });
-      }
+    const openRouter = SCRIPTING_PRESETS.filter((p) => p.group === "OpenRouter");
+    expect(openRouter.length).toBeGreaterThan(0);
+    for (const { id, note } of openRouter) {
+      expect({ id, note }).not.toMatchObject({ note: expect.stringContaining("passes") });
+      expect({ id, note }).not.toMatchObject({ note: expect.stringContaining("most-used") });
+    }
   });
 });
 

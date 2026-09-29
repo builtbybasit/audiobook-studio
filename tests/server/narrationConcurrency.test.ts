@@ -8,74 +8,43 @@
 // overlap; a count that never passes the limit holds however the timing falls.
 import { describe, expect, test } from "bun:test";
 
-import type { Book, Character, Endpoint, Job, Segment } from "@/types";
+import type { Endpoint, Job, Segment } from "@/types";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";
-import { epubFile, story } from "../support/epub";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import { story } from "../support/epub";
+import {
+  jsonBody,
+  saveEndpoints,
+  speechEndpoint,
+  testApi,
+  voicedBook,
+  type TestApi,
+} from "../support/server";
 
-const TELEMETRY = { history: [], failures: 0, rateLimits: 0, backoffUntil: 0 };
-const speech = (id: string, over: Partial<Endpoint> = {}): Endpoint => ({
-  id,
-  name: `Speech ${id}`,
-  baseUrl: `http://localhost:8880/${id}/v1`,
-  model: "studio-tts",
-  concurrency: 1,
-  enabled: true,
-  latency: 0,
-  failRate: 0,
-  price: 0,
-  needsKey: false,
-  maxChars: 0,
-  splitAt: "sentence",
-  voices: [{ id: "ash", gender: "m", label: "Ash" }],
-  ...TELEMETRY,
-  ...over,
-});
-
-const save = (api: TestApi, endpoints: Endpoint[]) =>
-  api.request("/api/endpoints", {
-    ...jsonBody({ endpoints, profiles: [], credentials: [] }),
-    method: "PUT",
-  });
+// One line at a time unless a test says otherwise: the limit is what every test here is about.
+const speech = (id: string, over: Partial<Endpoint> = {}): Endpoint =>
+  speechEndpoint({ id, concurrency: 1, ...over });
 
 /**
  * A scripted one-chapter book whose speakers are cast by `voiceOf`, the endpoints saved first. The
- * chapter is two spoken lines and eight lines of narration.
+ * chapter is its title, two spoken lines with their tags and four of the story's paragraphs — a
+ * dozen lines, enough to fill any limit here with lines still waiting, and at the one-at-a-time
+ * pace of a concurrency of one no longer than it needs to be.
  */
-async function book(
+const book = (
   api: TestApi,
   endpoints: Endpoint[],
   voiceOf: (name: string) => string = () => `${endpoints[0].id}/ash`,
-): Promise<string> {
-  await save(api, endpoints);
-  const { body } = await api.import<{ book: Book }>(
-    await epubFile({
-      title: "Moonlight Ledger",
-      chapters: [
-        {
-          title: "One",
-          paragraphs: [
-            "“We are short again,” said Mara.",
-            "“Then we count it twice,” said Tobin.",
-            ...story(8),
-          ],
-        },
-      ],
-    }),
-  );
-  const id = body.book.id;
-  await api.request(`/api/books/${id}/confirm`, { method: "POST" });
-  await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1] }));
-  await api.runner.idle();
-  const cast = await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`);
-  for (const c of cast.body.characters)
-    await api.request(`/api/books/${id}/characters/${encodeURIComponent(c.name)}`, {
-      ...jsonBody({ ...c, voice: voiceOf(c.name) }),
-      method: "PUT",
-    });
-  return id;
-}
+) =>
+  voicedBook(api, {
+    endpoints,
+    paragraphs: [
+      "“We are short again,” said Mara.",
+      "“Then we count it twice,” said Tobin.",
+      ...story(4),
+    ],
+    voiceOf,
+  });
 
 const narrate = async (api: TestApi, id: string) =>
   (await api.request<{ jobs: Job[] }>(`/api/books/${id}/chapters/narrate`, jsonBody({ ids: [1] })))
@@ -170,7 +139,7 @@ describe("narrating at an endpoint's concurrency", () => {
     const id = await book(api, [speech("a")]);
     await narrate(api, id);
     await until("the first line to go out", () => count.starts.length > 0);
-    await save(api, [speech("a", { concurrency: 4 })]);
+    await saveEndpoints(api, [speech("a", { concurrency: 4 })]);
     await api.runner.idle();
     expect(count.most.get("a")).toBe(4);
   });
@@ -178,7 +147,8 @@ describe("narrating at an endpoint's concurrency", () => {
 
 describe("an endpoint that is paused", () => {
   test("holds its lines, queued, until it is resumed — and the job says why it waits", async () => {
-    const count = counting();
+    // no pause per line: nothing here is about lines overlapping, only about none going out
+    const count = counting(0);
     const api = testApi({ speech: count.provider });
     const id = await book(api, [speech("a", { enabled: false })]);
     const job = await narrate(api, id);
@@ -192,7 +162,7 @@ describe("an endpoint that is paused", () => {
     expect(api.gate.live().a).toMatchObject({ active: 0 });
     expect(api.gate.live().a.waiting).toBeGreaterThan(0);
 
-    await save(api, [speech("a")]);
+    await saveEndpoints(api, [speech("a")]);
     await api.runner.idle();
     expect((await jobById(api, job.id)).status).toBe("done");
     const waits = (await jobById(api, job.id)).activity!.filter((e) =>

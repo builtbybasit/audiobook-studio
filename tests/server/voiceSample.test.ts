@@ -18,6 +18,7 @@ import { voiceFiles } from "~/voices/files";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { SpeechInput, SpeechProvider } from "~/providers/speech";
 import { readWavHeader } from "~/providers/wavEncoder";
+import { saved } from "../support/cloning";
 import { jsonBody, testApi, type TestApi } from "../support/server";
 
 const speech = (over: Partial<Endpoint> = {}): Endpoint => ({
@@ -51,16 +52,25 @@ function recording(): { provider: SpeechProvider; asked: SpeechInput[] } {
   };
 }
 
-async function saved(api: TestApi, ep: Endpoint = speech()): Promise<void> {
-  const { status } = await api.request("/api/endpoints", {
-    ...jsonBody({ endpoints: [ep], profiles: [], credentials: [] }),
-    method: "PUT",
-  });
-  expect(status).toBe(200);
-}
-
 const sample = (api: TestApi, id: string, voice: string) =>
   api.fetch("/api/endpoints/sample", jsonBody({ id, voice }));
+
+const ledger = async (api: TestApi, id = "studio") =>
+  (
+    await api.request<{ requests: RequestRecord[] }>(
+      `/api/endpoints/requests?kind=tts&id=${id}&range=1h`,
+    )
+  ).body.requests;
+
+/** What the server keeps a sample of Ash under, as `speech()` renders it. */
+const ASH_RENDERED = JSON.stringify([
+  "rendered",
+  "http://localhost:8880/v1",
+  "studio-tts",
+  { format: "wav" },
+  null,
+  VOICE_SAMPLE,
+]);
 
 describe("a voice sample", () => {
   test("is the saved voice saying the sample, asked for as the endpoint asks for a line", async () => {
@@ -88,14 +98,12 @@ describe("a voice sample", () => {
 
   test("is a row in the ledger against the endpoint, with no book", async () => {
     const api = testApi({ samples: fakeSpeechProvider() });
-    await saved(api);
+    await saved(api, speech());
     expect((await sample(api, "studio", "ash")).status).toBe(200);
 
-    const { body } = await api.request<{ requests: RequestRecord[] }>(
-      "/api/endpoints/requests?kind=tts&id=studio&range=1h",
-    );
-    expect(body.requests).toHaveLength(1);
-    const [row] = body.requests;
+    const requests = await ledger(api);
+    expect(requests).toHaveLength(1);
+    const [row] = requests;
     expect([row.kind, row.bookId, row.chapterId, row.status]).toEqual(["tts", null, null, "done"]);
     expect(row.label).toBe("Voice sample · Ash");
     expect(row.usage.chars).toBe(VOICE_SAMPLE.length);
@@ -117,31 +125,21 @@ describe("a voice sample", () => {
     expect(res.status).toBe(400);
     const { error } = (await res.json()) as { error: { message: string } };
     expect(error.message).toContain("needs an API key");
-    const { body } = await api.request<{ requests: RequestRecord[] }>(
-      "/api/endpoints/requests?kind=tts&id=studio&range=1h",
-    );
-    expect(body.requests).toEqual([]);
+    expect(await ledger(api)).toEqual([]);
   });
 
   test("without a voice is refused by the route", async () => {
     const api = testApi({ samples: fakeSpeechProvider() });
-    await saved(api);
+    await saved(api, speech());
     expect((await sample(api, "studio", "")).status).toBe(400);
   });
 });
-
-const ledger = async (api: TestApi, id = "studio") =>
-  (
-    await api.request<{ requests: RequestRecord[] }>(
-      `/api/endpoints/requests?kind=tts&id=${id}&range=1h`,
-    )
-  ).body.requests;
 
 describe("a voice heard before", () => {
   test("is played from what the server kept, and the provider is asked once", async () => {
     const { provider, asked } = recording();
     const api = testApi({ samples: provider });
-    await saved(api);
+    await saved(api, speech());
 
     const first = await sample(api, "studio", "ash");
     expect(first.headers.get("x-sample-source")).toBe("rendered");
@@ -161,7 +159,7 @@ describe("a voice heard before", () => {
   test("is made again once the endpoint would sound different, in place of the old one", async () => {
     const { provider, asked } = recording();
     const api = testApi({ samples: provider });
-    await saved(api);
+    await saved(api, speech());
     await sample(api, "studio", "ash");
 
     await saved(api, speech({ sampleRate: 16000 }));
@@ -171,17 +169,7 @@ describe("a voice heard before", () => {
     expect(asked).toHaveLength(2);
 
     // the one made at the old rate is gone, not kept beside it
-    const heard = await voiceFiles(api.voiceDir).heard.read("studio", "ash", [
-      JSON.stringify([
-        "rendered",
-        "http://localhost:8880/v1",
-        "studio-tts",
-        { format: "wav" },
-        null,
-        VOICE_SAMPLE,
-      ]),
-    ]);
-    expect(heard).toBeNull();
+    expect(await voiceFiles(api.voiceDir).heard.read("studio", "ash", [ASH_RENDERED])).toBeNull();
   });
 
   test("of a simulated endpoint is never kept: its tone costs nothing to make again", async () => {
@@ -196,20 +184,10 @@ describe("a voice heard before", () => {
 
   test("goes with its endpoint when the endpoint is removed", async () => {
     const api = testApi({ samples: fakeSpeechProvider() });
-    await saved(api);
+    await saved(api, speech());
     await sample(api, "studio", "ash");
     const files = voiceFiles(api.voiceDir);
-    const kept = () =>
-      files.heard.read("studio", "ash", [
-        JSON.stringify([
-          "rendered",
-          "http://localhost:8880/v1",
-          "studio-tts",
-          { format: "wav" },
-          null,
-          VOICE_SAMPLE,
-        ]),
-      ]);
+    const kept = () => files.heard.read("studio", "ash", [ASH_RENDERED]);
     expect(await kept()).not.toBeNull();
 
     const { status } = await api.request("/api/endpoints", {

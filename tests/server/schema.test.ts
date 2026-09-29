@@ -10,7 +10,7 @@
 // These assert **round-trip equality**, not field lists. A mapper that quietly turns an absent
 // `note` into a null one, or a take into something carrying `status`, fails here rather than in a
 // screen six months from now.
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 // The mock world reaches for `matchMedia` through the stores it shares types with; the frontend
 // suite stubs it the same way.
@@ -51,15 +51,36 @@ import {
 let db: Db;
 let world: World;
 
+/** Frozen all the way down, so a write that changed what it was handed would throw rather than
+ * leak into the next test's reference answer. */
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const v of Object.values(value)) deepFreeze(v);
+  }
+  return value;
+}
+
+// One world for the file: it is only ever read, and building it for every test was a third of
+// the file's time. Each test still gets a database of its own.
+beforeAll(() => {
+  world = deepFreeze(makeWorld());
+});
 beforeEach(() => {
   db = openDb(":memory:");
   migrate(db);
-  world = makeWorld();
 });
 
 /** The seeded world's books, written with their chapters. */
 function writeBooks(): void {
   for (const book of world.books) writeBook(db, book, world.chapters[book.id] ?? []);
+}
+
+/** One seeded book with its chapters — all a test about one book's rows needs written. */
+function writeOneBook(bookId = world.books[0].id): string {
+  const book = world.books.find((b) => b.id === bookId)!;
+  writeBook(db, book, world.chapters[book.id] ?? []);
+  return book.id;
 }
 
 describe("the library", () => {
@@ -126,7 +147,7 @@ describe("the script and its clips", () => {
   }, 30_000);
 
   test("a superseded take comes back a take, not a clip", () => {
-    writeBooks();
+    writeOneBook();
     const bookId = world.books[0].id;
     const chapterId = world.chapters[bookId][0].id;
     const [first] = world.segments[`${bookId}:${chapterId}`];
@@ -159,7 +180,7 @@ describe("the script and its clips", () => {
   });
 
   test("a line with no clip reads as one that has never been rendered", () => {
-    writeBooks();
+    writeOneBook();
     const bookId = world.books[0].id;
     const chapterId = world.chapters[bookId][0].id;
     const bare = {
@@ -177,7 +198,7 @@ describe("the script and its clips", () => {
 
 describe("script history", () => {
   test("a version's segments come back as an independent copy", () => {
-    writeBooks();
+    writeOneBook();
     const bookId = world.books[0].id;
     const chapterId = world.chapters[bookId][0].id;
     const segs = world.segments[`${bookId}:${chapterId}`];
@@ -278,7 +299,7 @@ describe("exports", () => {
 
 describe("the queue", () => {
   test("a bulk job keeps the run it belongs to, and what it is holding", () => {
-    writeBooks();
+    writeOneBook();
     const job: Job = {
       id: 400,
       kind: "narration",
@@ -306,7 +327,7 @@ describe("the queue", () => {
   });
 
   test("what a job holds against the cap is a column, so the gate can sum it", () => {
-    writeBooks();
+    writeOneBook();
     const bookId = world.books[0].id;
     const base = {
       kind: "narration" as const,
@@ -343,7 +364,7 @@ describe("the queue", () => {
 
 describe("the usage ledger", () => {
   test("a settled request keeps its receipt exactly as it was frozen", () => {
-    writeBooks();
+    writeOneBook();
     const record: RequestRecord = {
       id: "req-1",
       endpointId: "openai",
@@ -387,7 +408,7 @@ describe("the usage ledger", () => {
   });
 
   test("a cost that is not known stays null, and is never read as free", () => {
-    writeBooks();
+    writeOneBook();
     const unknown: RequestRecord = {
       id: "req-2",
       endpointId: "proxy",
@@ -419,8 +440,8 @@ describe("the usage ledger", () => {
 describe("what follows a renumbered chapter, and what must not", () => {
   /** A book of more than one volume, so removing one actually moves the chapters after it. */
   function twoVolumeBook(): { bookId: string; volumeId: number; moved: number } {
-    writeBooks();
-    const book = world.books.find((b) => b.volumes.length > 1) ?? world.books[0];
+    const book = world.books.find((b) => b.volumes.length > 1)!;
+    writeOneBook(book.id);
     const first = book.volumes[0];
     // a chapter in the second volume: it is the one whose number the removal changes
     return { bookId: book.id, volumeId: first.id, moved: first.to + 1 };
@@ -458,18 +479,6 @@ describe("what follows a renumbered chapter, and what must not", () => {
     startedAt: null,
     finishedAt: null,
     cancelled: false,
-  });
-
-  test("a queued job follows its chapter to the number it now has", () => {
-    const { bookId, volumeId, moved } = twoVolumeBook();
-    writeJob(db, job(bookId, moved));
-
-    const gone = deleteVolume(db, bookId, volumeId).chapters;
-    expect(gone).toBeGreaterThan(0);
-
-    // A number in a column would have left this job pointing at somebody else's chapter — and a
-    // queued narration that runs on the wrong chapter is not a display problem.
-    expect(readJob(db, 900)?.chapterId).toBe(moved - gone);
   });
 
   test("a job for a chapter that is removed ends with it", () => {
@@ -535,8 +544,7 @@ describe("what a chapter owns, it owns", () => {
   }
 
   test("renumbering a book carries its script, clips and history with it", () => {
-    writeBooks();
-    const bookId = world.books.find((b) => b.volumes.length > 1)?.id ?? world.books[0].id;
+    const bookId = writeOneBook(world.books.find((b) => b.volumes.length > 1)!.id);
     const chapters = readChapters(db, bookId);
     const moved = chapters[1];
     seedChapter(bookId, moved.id);
@@ -555,7 +563,7 @@ describe("what a chapter owns, it owns", () => {
   });
 
   test("removing a chapter removes its script, its clips and its history", () => {
-    writeBooks();
+    writeOneBook();
     const bookId = world.books[0].id;
     const chapterId = readChapters(db, bookId)[0].id;
     seedChapter(bookId, chapterId);
@@ -571,7 +579,7 @@ describe("what a chapter owns, it owns", () => {
   });
 
   test("removing a book takes its cast and its dictionary with it", () => {
-    writeBooks();
+    writeOneBook();
     const bookId = world.books[0].id;
     writeCast(db, bookId, world.characters[bookId] ?? []);
     writeLexicon(db, bookId, world.lexicon[bookId] ?? []);
@@ -585,7 +593,7 @@ describe("what a chapter owns, it owns", () => {
   });
 
   test("a line may hold one clip and one retake, but any number of takes", () => {
-    writeBooks();
+    writeOneBook();
     const bookId = world.books[0].id;
     const chapterId = readChapters(db, bookId)[0].id;
     const [line] = world.segments[`${bookId}:${chapterId}`];

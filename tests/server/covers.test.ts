@@ -16,9 +16,9 @@ import type { Book, ExportItem, ExportSettings, Job } from "@/types";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { exportFileToken } from "~/db/exports";
 import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
-import { epubFile, story, type EpubInput } from "../support/epub";
+import { epubFile, line, type EpubInput } from "../support/epub";
 import { ffmpegJpeg, GIF, JPEG_HEAD, PNG } from "../support/images";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import { jsonBody, narratedBook, testApi, type TestApi } from "../support/server";
 
 interface Imported {
   book: Book;
@@ -27,12 +27,13 @@ interface Failure {
   error: { code: string; message: string; detail?: string };
 }
 
-// Two short chapters: long enough to read as story rather than a notice, short enough that an
-// ffmpeg build of them takes a fraction of a second — the length of the audio is the build's cost.
-const chapters = ["One", "Two"].map((title) => ({
-  title,
-  paragraphs: ["“We are short again,” said Mara.", ...story(1)],
-}));
+// Two chapters of one line each, a few seconds of audio: the length of the audio is an ffmpeg
+// build's cost, and nothing here is about how long a chapter is.
+const TWO: [string, string][] = [
+  ["One", line("One")],
+  ["Two", line("Two")],
+];
+const chapters = TWO.map(([title, said]) => ({ title, paragraphs: [said] }));
 
 async function imported(api: TestApi, input: Partial<EpubInput> = {}): Promise<Book> {
   const { status, body } = await api.import<Imported>(await epubFile({ chapters, ...input }));
@@ -176,16 +177,8 @@ const settingsFor = (over: Partial<ExportSettings> = {}): ExportSettings => ({
   ...over,
 });
 
-/** A book with a cover of its own, scripted and narrated, ready to build. */
-async function narrated(api: TestApi, input: Partial<EpubInput> = { cover: { bytes: PNG } }) {
-  const book = await imported(api, input);
-  await api.request(`/api/books/${book.id}/confirm`, { method: "POST" });
-  await api.request(`/api/books/${book.id}/chapters/script`, jsonBody({ ids: [1, 2] }));
-  await api.runner.idle();
-  await api.request(`/api/books/${book.id}/chapters/narrate`, jsonBody({ ids: [1, 2] }));
-  await api.runner.idle();
-  return book;
-}
+/** A cover of the book's own, in its EPUB. */
+const covered = { cover: { bytes: PNG } };
 
 const build = (api: TestApi, id: string, settings: ExportSettings) =>
   api.request<{ job: Job; export: ExportItem } & Failure>(
@@ -221,7 +214,7 @@ describe("a build and its cover", () => {
 
   test("the stitcher writes no picture and no tags, and the build says so rather than leaving the promise", async () => {
     const api = testApi();
-    const book = await narrated(api);
+    const { book } = await narratedBook(api, { chapters: TWO, epub: covered });
     const queued = await build(api, book.id, settingsFor());
     expect(queued.status).toBe(202);
     await api.runner.idle();
@@ -235,7 +228,7 @@ describe("a build and its cover", () => {
 
   test("a chosen cover gone from the server fails the build that names it", async () => {
     const api = testApi();
-    const book = await narrated(api);
+    const { book } = await narratedBook(api, { chapters: TWO, epub: covered });
     const { cover } = (await upload(api, book.id, JPEG_HEAD, "c.jpg")).body;
     rmSync(join(api.audioDir, book.id, "covers", cover.split("/").at(-1)!));
     await build(api, book.id, settingsFor({ cover }));
@@ -295,7 +288,7 @@ const details = {
 describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
   test("an M4B carries the EPUB's cover as its picture, and the book's details as its tags", async () => {
     const api = testApi({ encoder: ffmpegEncoders() });
-    const book = await narrated(api);
+    const { book } = await narratedBook(api, { chapters: TWO, epub: covered });
     const queued = await build(api, book.id, settingsFor(details));
     await api.runner.idle();
     const done = await lastExport(api, book.id);
@@ -323,7 +316,7 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
 
   test("an MP3 per chapter is tagged with its chapter and its place in the set, and a book with no cover gets no picture", async () => {
     const api = testApi({ encoder: ffmpegEncoders() });
-    const book = await narrated(api, {});
+    const { book } = await narratedBook(api, { chapters: TWO });
     // A blank title is the book's own, and a blank narrator is left out rather than written empty.
     await build(
       api,
@@ -351,7 +344,7 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
 
   test("an MP3 carries the image chosen for it in place of the EPUB's", async () => {
     const api = testApi({ encoder: ffmpegEncoders() });
-    const book = await narrated(api);
+    const { book } = await narratedBook(api, { chapters: TWO, epub: covered });
     const { cover } = (await upload(api, book.id, await ffmpegJpeg(), "mine.jpg")).body;
     await build(api, book.id, settingsFor({ format: "mp3", cover }));
     await api.runner.idle();

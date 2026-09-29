@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
+import { describe, expect, test } from "bun:test";
 import {
   billableChars,
   billingProblems,
@@ -23,9 +22,8 @@ import {
   utf8Bytes,
 } from "@/lib/pricing";
 import { TTS_PRESETS, billingOf, endpointErrors, unifyEndpoint } from "@/lib/endpoints";
-import { useEndpointsStore } from "@/stores/endpoints";
+import { makeEndpoints } from "@/mock/fixtures/endpoints";
 import type { Endpoint, TtsBilling } from "@/types";
-import { demoServer } from "./support/demoServer";
 import { THU, card, config, promo, u, utc } from "./support/pricingFixtures";
 
 /** A speech endpoint that is valid apart from whatever a test puts on its rate card. */
@@ -55,11 +53,6 @@ const speechCard = (over: Partial<TtsBilling> = {}): TtsBilling => ({
   unit: "chars",
   rate: 12,
   ...over,
-});
-
-beforeEach(() => {
-  Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  setActivePinia(createPinia());
 });
 
 describe("speech endpoints", () => {
@@ -108,7 +101,7 @@ describe("speech endpoints", () => {
     const cfg = config({
       windows: [{ id: "n", label: "Off-peak", days: [], from: 22 * 60, to: 6 * 60, percent: 50 }],
     });
-    const measured = u({ chars: 1_000_000, audioSeconds: 600, requests: 3 });
+    const measured = u({ chars: 1_000_000, textTokens: 250_000, audioSeconds: 600, requests: 3 });
 
     const perChar = priceSpeechRequest(speechCard({ unit: "chars", rate: 12 }), cfg, measured, {
       at: utc(THU, "23:00"),
@@ -122,6 +115,12 @@ describe("speech endpoints", () => {
       at: utc(THU, "23:00"),
     });
     expect(perMinute.amount).toBeCloseTo((600 / 60) * 0.15, 12);
+
+    // per text token: the tokens counted, not a per-character rate wearing a different label
+    const perToken = priceSpeechRequest(speechCard({ unit: "tokens", rate: 4 }), cfg, measured, {
+      at: utc(THU, "23:00"),
+    });
+    expect(perToken.amount).toBeCloseTo((250_000 / 1e6) * 2, 12);
 
     // a flat fee per call is charged for every piece a split line became
     const perRequest = priceSpeechRequest(
@@ -644,13 +643,12 @@ describe("changing the model", () => {
     expect(switchBillingUnit(chars, "chars")).toBe(chars);
   });
 
-  test("the seeded speech endpoints cover every billing model and discount case the demo claims", async () => {
-    await demoServer();
-    const store = useEndpointsStore();
-    await store.load();
-    store._detach();
-    const byId = (id: string) => store.endpoints.find((e) => e.id === id)!;
+  // The demo library is seeded with these endpoints as they are (`tests/server/demoWorld.test.ts`
+  // compares the two field for field), so they are read here without opening it.
+  test("the seeded speech endpoints cover every billing model and discount case the demo claims", () => {
     const now = Date.now();
+    const endpoints = makeEndpoints(now);
+    const byId = (id: string) => endpoints.find((e) => e.id === id)!;
     expect(billingOf(byId("openai")).unit).toBe("chars");
     // a nightly window that runs past midnight, and a promotion on top of it
     expect(byId("openai").pricing!.windows.some((w) => w.to <= w.from)).toBe(true);

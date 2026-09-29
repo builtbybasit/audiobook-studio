@@ -302,7 +302,7 @@ voices.
   and retitled book still pairs; one changed source word refuses; duplicate hashes pair in order; a
   chapter over 2% `fidelity` refused. The route writes nothing.
 - `tests/server/epubImport.test.ts` unchanged and passing after the extraction.
-- `tests/scriptImport.test.ts` (stores): export then import into the same book adds no history
+- `tests/history.test.ts` (stores, "importing a script file"): export then import into the same book adds no history
   entry; a corrected word keeps the other clips and stales that one; the entry reads "imported";
   a chapter with a run in flight is skipped; Undo restores scripts, cast, dictionary and voices;
   cast add/keep/alias union; **Use the file's** and **Replace all** with their undo; voice defaults;

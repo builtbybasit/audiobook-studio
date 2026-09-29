@@ -10,6 +10,7 @@ import type { Book, BookPrompt, Chapter, ChapterCounts, Volume } from "@/types";
 import type { Db, Tx } from "~/db/client";
 import type { ChapterBody } from "~/import/assemble";
 import { rekeyActive } from "~/db/jobs";
+import { insertRows } from "~/db/prepared";
 import {
   books,
   chapters,
@@ -147,20 +148,21 @@ export function insertBook(
 ): void {
   db.transaction((tx) => {
     tx.insert(books).values(bookValues(book, addedAt)).run();
-    book.volumes.forEach((v, i) =>
-      tx
-        .insert(volumes)
-        .values(volumeValues(book.id, v, i))
-        .run(),
+    insertRows(
+      tx,
+      volumes,
+      book.volumes.map((v, i) => volumeValues(book.id, v, i)),
     );
-    for (const part of chunked(chs))
-      tx.insert(chapters)
-        .values(part.map((c) => chapterValues(book.id, c)))
-        .run();
-    for (const part of chunked(bodies))
-      tx.insert(chapterTexts)
-        .values(part.map((b) => ({ bookId: book.id, chapterId: b.chapterId, body: b.body })))
-        .run();
+    insertRows(
+      tx,
+      chapters,
+      chs.map((c) => chapterValues(book.id, c)),
+    );
+    insertRows(
+      tx,
+      chapterTexts,
+      bodies.map((b) => ({ bookId: book.id, chapterId: b.chapterId, body: b.body })),
+    );
   });
 }
 
@@ -182,14 +184,16 @@ export function insertVolume(
     tx.insert(volumes)
       .values(volumeValues(bookId, volume, position))
       .run();
-    for (const part of chunked(chs))
-      tx.insert(chapters)
-        .values(part.map((c) => chapterValues(bookId, c)))
-        .run();
-    for (const part of chunked(bodies))
-      tx.insert(chapterTexts)
-        .values(part.map((b) => ({ bookId, chapterId: b.chapterId, body: b.body })))
-        .run();
+    insertRows(
+      tx,
+      chapters,
+      chs.map((c) => chapterValues(bookId, c)),
+    );
+    insertRows(
+      tx,
+      chapterTexts,
+      bodies.map((b) => ({ bookId, chapterId: b.chapterId, body: b.body })),
+    );
   });
 }
 

@@ -9,6 +9,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import type { Segment, SegmentAudio, Take } from "@/types";
 import { snapshotTake } from "@/lib/takes";
+import { insertRows, prepared } from "~/db/prepared";
 import type { Db, Tx } from "~/db/client";
 import { chapters, clips, segments } from "~/db/schema";
 import { clipValues, segmentClipValues, segmentValues, toSegment, toSegmentAudio } from "~/db/rows";
@@ -41,15 +42,24 @@ export function readScript(db: Db | Tx, bookId: string, chapterId: number): Segm
   return segRows.map((s) => toSegment(s, bySegment.get(s.id) ?? []));
 }
 
+/** One chapter, named by placeholders, for the statements a script write repeats per chapter. */
+type At = { bookId: string; chapterId: number };
+const atBook = sql.placeholder("bookId");
+const atChapter = sql.placeholder("chapterId");
+/** The keys `replaceScript`'s own statements are kept under (`prepared`). */
+const dropScript = Symbol("drop a chapter's script");
+const moveRevision = Symbol("move a chapter's revision");
+
 /** How many times this chapter's script has been written, or null when there is no such chapter. */
 export function scriptRevision(db: Db | Tx, bookId: string, chapterId: number): number | null {
-  return (
-    db
+  const query = prepared(db, scriptRevision, (h) =>
+    h
       .select({ revision: chapters.scriptRevision })
       .from(chapters)
-      .where(and(eq(chapters.bookId, bookId), eq(chapters.id, chapterId)))
-      .get()?.revision ?? null
+      .where(and(eq(chapters.bookId, atBook), eq(chapters.id, atChapter)))
+      .prepare(),
   );
+  return query.get({ bookId, chapterId } satisfies At)?.revision ?? null;
 }
 
 export class ScriptConflict extends Error {
@@ -85,18 +95,35 @@ export function replaceScript(
   if (current == null) throw new ScriptConflict(ifRevision ?? 0, null);
   if (ifRevision != null && current !== ifRevision) throw new ScriptConflict(ifRevision, current);
 
-  const where = and(eq(segments.bookId, bookId), eq(segments.chapterId, chapterId));
+  // the demo's seed writes some three hundred chapters in one transaction: each of these is
+  // compiled once for it, rather than built and compiled again for every chapter
+  const at: At = { bookId, chapterId };
   // clips cascade from their segment
-  tx.delete(segments).where(where).run();
-  for (const part of chunked(segs.map((s, i) => segmentValues(bookId, chapterId, s, i))))
-    tx.insert(segments).values(part).run();
-  const clipRows = segs.flatMap((s) => segmentClipValues(bookId, chapterId, s));
-  for (const part of chunked(clipRows)) tx.insert(clips).values(part).run();
+  prepared(tx, dropScript, (h) =>
+    h
+      .delete(segments)
+      .where(and(eq(segments.bookId, atBook), eq(segments.chapterId, atChapter)))
+      .prepare(),
+  ).run(at);
+  // a script is hundreds of rows, and a demo seed thousands: one statement each, compiled once
+  insertRows(
+    tx,
+    segments,
+    segs.map((s, i) => segmentValues(bookId, chapterId, s, i)),
+  );
+  insertRows(
+    tx,
+    clips,
+    segs.flatMap((s) => segmentClipValues(bookId, chapterId, s)),
+  );
 
-  tx.update(chapters)
-    .set({ scriptRevision: sql`${chapters.scriptRevision} + 1` })
-    .where(and(eq(chapters.bookId, bookId), eq(chapters.id, chapterId)))
-    .run();
+  prepared(tx, moveRevision, (h) =>
+    h
+      .update(chapters)
+      .set({ scriptRevision: sql`${chapters.scriptRevision} + 1` })
+      .where(and(eq(chapters.bookId, atBook), eq(chapters.id, atChapter)))
+      .prepare(),
+  ).run(at);
   return { revision: current + 1 };
 }
 

@@ -12,32 +12,28 @@ import { minimax } from "@/lib/providers/minimax";
 import { clonedVoices } from "~/db/schema";
 import type { CloneRequest, VoiceCloner, VoiceClonerOptions } from "~/providers/clone";
 import { miniMaxVoiceId } from "~/providers/speech/minimax";
-import type { ProviderTarget } from "~/providers/target";
 import {
   agreed,
   answering,
   cloneForm,
+  cloneTarget,
   HEADS,
   postClone,
   sampleFile,
   saved,
-  speechEndpoint,
+  cloneEndpoint,
+  unlucky,
 } from "../support/cloning";
 import { testApi, type TestApi } from "../support/server";
 
-const target: ProviderTarget = {
+const target = cloneTarget({
   id: "minimax",
   name: "MiniMax",
   // its regional host, with the path it was saved with: the requests go to its own `/v1`
   baseUrl: "https://api.minimax.chat/v1/t2a_v2",
   model: "speech-2.8-hd",
   apiKey: "sk-minimax",
-  needsKey: true,
-  timeoutSec: 5,
-  // what a narration endpoint is saved with: a clone must not take them
-  maxRetries: 2,
-  cooldownSec: 0,
-};
+});
 
 const request: CloneRequest = {
   title: "Narrator — Mara",
@@ -146,12 +142,7 @@ describe("the MiniMax cloner", () => {
 
   test("each request goes out once: a 5xx, a rate limit or no answer is not sent again", async () => {
     const failures: [() => Response | Promise<Response>, string][] = [
-      [() => new Response("busy", { status: 503 }), "MiniMax answered 503: busy"],
-      [() => new Response("slow down", { status: 429 }), "MiniMax answered 429"],
-      [
-        () => Promise.reject(new TypeError("connection reset")),
-        "MiniMax could not be reached: connection reset",
-      ],
+      ...unlucky("MiniMax"),
       // a limit said inside a 200, which a line would be retried after
       [
         () => Response.json({ base_resp: { status_code: 1002, status_msg: "rate limit" } }),
@@ -252,7 +243,7 @@ async function routeWith(cloner: VoiceCloner): Promise<TestApi> {
   const api = testApi({ cloner });
   await saved(
     api,
-    speechEndpoint({
+    cloneEndpoint({
       id: "minimax",
       name: "MiniMax",
       baseUrl: "https://api.minimax.io/v1",

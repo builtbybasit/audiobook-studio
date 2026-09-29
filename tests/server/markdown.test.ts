@@ -142,17 +142,18 @@ describe("reading the stored Markdown back", () => {
 describe("reading a long chapter back", () => {
   test("a single-file novel reads back in time proportional to its length", () => {
     // Under Bun, `marked`'s lexer took 30 seconds over 4,000 paragraphs, and asking the growing
-    // prose whether it ended in a blank line was quadratic on its own. 64,000 paragraphs — a whole
-    // long novel in one file — now reads in a few hundred milliseconds; the bound is loose enough
-    // for a machine running the suite on every core, and far below either of those.
+    // prose whether it ended in a blank line was quadratic on its own. 16,000 paragraphs — a long
+    // novel in one file, four times the length that took half a minute — now read in well under a
+    // second; quadratic, they would take many minutes. The bound is loose enough for a machine
+    // running the suite on every core, and far below either of those.
     const md = Array.from(
-      { length: 64_000 },
+      { length: 16_000 },
       (_, i) => `Paragraph ${i} has *stress* and **more** in it, as prose does.`,
     ).join("\n\n");
     const started = performance.now();
     const { text, emphasis } = parseEmphasis(md);
-    expect(performance.now() - started).toBeLessThan(15_000);
-    expect(emphasis).toHaveLength(128_000);
+    expect(performance.now() - started).toBeLessThan(10_000);
+    expect(emphasis).toHaveLength(32_000);
     expect(text.startsWith("Paragraph 0 has stress and more in it")).toBe(true);
   });
 });

@@ -7,56 +7,41 @@
 // first so nothing here passes by assuming the order they were sent in.
 import { describe, expect, test } from "bun:test";
 
-import type { Book, Character, Endpoint, Job, Segment } from "@/types";
+import type { Endpoint, Job, Segment } from "@/types";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { fakeDuration, fakeSpeechProvider, type FakeSpeechOptions } from "~/providers/fakeSpeech";
 import { endpointRequests } from "~/usage/ledger";
-import { epubFile, story } from "../support/epub";
+import { story } from "../support/epub";
 import { batchServer } from "../support/batchServer";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import {
+  jsonBody,
+  narrateChapters,
+  speechEndpoint,
+  testApi,
+  voicedBook,
+  type TestApi,
+} from "../support/server";
 
-const TELEMETRY = { history: [], failures: 0, rateLimits: 0, backoffUntil: 0 };
-const speech = (over: Partial<Endpoint> = {}): Endpoint => ({
-  id: "local",
-  name: "Local speech",
-  baseUrl: "http://localhost:8880/v1",
-  model: "omnivoice",
-  concurrency: 1,
-  enabled: true,
-  latency: 0,
-  failRate: 0,
-  price: 15,
-  billing: { unit: "chars", rate: 15 },
-  needsKey: false,
-  maxChars: 0,
-  splitAt: "sentence",
-  maxRetries: 2,
-  voices: [{ id: "mara", gender: "f", label: "Mara" }],
-  ...TELEMETRY,
-  ...over,
-});
-
-/** A scripted, cast one-chapter book of `paragraphs` lines on `endpoint`. */
-async function book(api: TestApi, endpoint: Endpoint, paragraphs = story(9)): Promise<string> {
-  await api.request("/api/endpoints", {
-    ...jsonBody({ endpoints: [endpoint], profiles: [], credentials: [] }),
-    method: "PUT",
+// One batch out at a time unless a test says otherwise, so a line sent again goes in the next one;
+// the batch server's model and its one voice; and priced, so every item is a charge of its own.
+const speech = (over: Partial<Endpoint> = {}): Endpoint =>
+  speechEndpoint({
+    id: "local",
+    model: "omnivoice",
+    concurrency: 1,
+    price: 15,
+    billing: { unit: "chars", rate: 15 },
+    maxRetries: 2,
+    voices: [{ id: "mara", gender: "f", label: "Mara" }],
+    ...over,
   });
-  const { body } = await api.import<{ book: Book }>(
-    await epubFile({ title: "Moonlight Ledger", chapters: [{ title: "One", paragraphs }] }),
-  );
-  const id = body.book.id;
-  await api.request(`/api/books/${id}/confirm`, { method: "POST" });
-  await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1] }));
-  await api.runner.idle();
-  const cast = await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`);
-  for (const c of cast.body.characters)
-    await api.request(`/api/books/${id}/characters/${encodeURIComponent(c.name)}`, {
-      ...jsonBody({ ...c, voice: `${endpoint.id}/mara` }),
-      method: "PUT",
-    });
-  return id;
-}
+
+/**
+ * A scripted, cast one-chapter book of `paragraphs` on `endpoint`. The story's five make eleven
+ * lines with the title: three batches of four, the last one short.
+ */
+const book = (api: TestApi, endpoint: Endpoint, paragraphs = story(5)) =>
+  voicedBook(api, { endpoints: [endpoint], paragraphs, voiceOf: "local/mara" });
 
 /** Narrate chapter 1 to the end with a batching fake; what it was sent, and how it went. */
 async function run(
@@ -73,12 +58,8 @@ async function run(
     }),
   });
   const id = await book(api, endpoint, paragraphs);
-  const queued = await api.request<{ jobs: Job[] }>(
-    `/api/books/${id}/chapters/narrate`,
-    jsonBody({ ids: [1] }),
-  );
-  await api.runner.idle();
-  const job = (await api.request<{ job: Job }>(`/api/jobs/${queued.body.jobs[0].id}`)).body.job;
+  const [queued] = await narrateChapters(api, id, [1]);
+  const job = (await api.request<{ job: Job }>(`/api/jobs/${queued.id}`)).body.job;
   const lines = (await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`))
     .body.segments;
   return { api, id, job, lines, batches };
@@ -224,13 +205,9 @@ describe("narrating through an endpoint that takes batches", () => {
       speech: endpointSpeechProvider({ fetch: server.fetch, backoffMs: () => 0 }),
     });
     const id = await book(api, speech());
-    const { body } = await api.request<{ jobs: Job[] }>(
-      `/api/books/${id}/chapters/narrate`,
-      jsonBody({ ids: [1] }),
-    );
-    await api.runner.idle();
+    const [queued] = await narrateChapters(api, id, [1]);
 
-    const job = (await api.request<{ job: Job }>(`/api/jobs/${body.jobs[0].id}`)).body.job;
+    const job = (await api.request<{ job: Job }>(`/api/jobs/${queued.id}`)).body.job;
     expect(job.status).toBe("done");
     const lines = (await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`))
       .body.segments;

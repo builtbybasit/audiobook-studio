@@ -482,24 +482,6 @@ export function perMillionChars(billing: TtsBilling): number | null {
 }
 
 /**
- * What a speech request costs, given what it submitted and what came back.
- *
- * Every billing model goes through the same two steps — pick the quantity this component is
- * charged on, multiply by its rate — so none of them can quietly acquire arithmetic of its own.
- * `null` = a rate this model needs is not known, which is never the same as free.
- */
-export function ttsCost(billing: TtsBilling, units: BillableUnits): number | null {
-  const rates = speechRates(billing);
-  let total = 0;
-  for (const c of speechComponents(billing.unit)) {
-    const amount = componentAmount(c, billing.unit, quantityFor(c, billing.unit, units), rates[c]);
-    if (amount == null) return null;
-    total += amount;
-  }
-  return total;
-}
-
-/**
  * Does this promotion touch this component?
  *
  * `speech` is the speech side as a whole rather than one named component: a promotion written when

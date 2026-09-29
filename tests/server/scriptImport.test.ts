@@ -2,8 +2,10 @@
 //
 // Every test imports a real EPUB into a private database, then hands the planner a zip built here
 // with the fingerprints of that book's own chapters — so what is checked is the reading, the
-// matching and the diffs, never a fixture that agrees with itself.
-import { beforeEach, describe, expect, test } from "bun:test";
+// matching and the diffs, never a fixture that agrees with itself. The planner writes nothing (the
+// cast and dictionary's last test holds it to that), so the groups that only plan share one book;
+// a group that puts a speaker, a term or an endpoint in first shelves a fresh one for each test.
+import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import JSZip from "jszip";
 
 import type {
@@ -30,6 +32,7 @@ import { sourceHash } from "~/script/transfer";
 import { SAMPLE_LIMITS } from "~/speakerSamples/folder";
 import { epubFile } from "../support/epub";
 import { jsonBody, testApi, type TestApi } from "../support/server";
+import { claiming } from "../support/zip";
 
 const MB = 1024 * 1024;
 
@@ -55,8 +58,6 @@ async function shelve(titles = ["One", "Two", "Three"], text = (i: number) => pr
   await api.request(`/api/books/${id}/confirm`, { method: "POST" });
   bodies = new Map(body.chapters.map((c) => [c.id, getChapterBody(api.db, id, c.id)!]));
 }
-
-beforeEach(() => shelve());
 
 /** A chapter file for chapter `n` of the shelved book: its fingerprint, and its words as one line. */
 function chapterOf(
@@ -125,6 +126,8 @@ const silent: VoiceLister = {
 };
 
 describe("reading the file", () => {
+  beforeAll(() => shelve());
+
   test("a zip Finder wrapped in a folder, with its __MACOSX and .DS_Store, reads as if it were not", async () => {
     const got = await plan(
       await zipOf({
@@ -162,9 +165,9 @@ describe("reading the file", () => {
   });
 
   test("a zip that unzips past the limit on one document is refused by the shared guard", async () => {
-    const e = await plan(
-      await zipOf({ extra: { "chapters/0001.json": "a".repeat(33 * MB) } }),
-    ).catch((e: unknown) => e);
+    // a chapter that says it unzips to 33 MB, past the 32 MB limit on one document
+    const zip = await zipOf({ extra: { "chapters/0001.json": "{}" } });
+    const e = await plan(claiming(zip, "chapters/0001.json", 33 * MB)).catch((e: unknown) => e);
     expect(refusal(e).status).toBe(413);
     expect((e as AppError).message).toBe("A file inside that script file is too large to read");
   });
@@ -225,6 +228,8 @@ describe("reading the file", () => {
 });
 
 describe("matching chapters", () => {
+  beforeAll(() => shelve());
+
   test("pairs on the words of the source, not the title or the number", async () => {
     // The file was made from a copy numbered and titled differently: its chapter 3 is our 1.
     const got = await plan(
@@ -246,19 +251,6 @@ describe("matching chapters", () => {
     const got = await plan(await zipOf({ chapters: [chapterOf(2, { sourceHash: theirs.hash })] }));
     expect(got.chapters).toEqual([]);
     expect(got.refused.map((r) => r.reason)).toEqual(["unmatched"]);
-  });
-
-  test("two chapters with the same words pair in reading order", async () => {
-    // the chapter's heading is part of its words, so the two notes share a title as well
-    await shelve(["Note", "Story", "Note"], (i) => (i === 1 ? prose(9) : prose(0)));
-    const a = chapterOf(1, { title: "first note" });
-    const b = chapterOf(3, { title: "second note" });
-    expect(a.sourceHash).toBe(b.sourceHash);
-    const got = await plan(await zipOf({ chapters: [a, b] }));
-    expect(got.chapters.map((c) => [c.chapterId, c.fileTitle])).toEqual([
-      [1, "first note"],
-      [3, "second note"],
-    ]);
   });
 
   test("an honest correction passes the check on the lines; a rewritten chapter does not", async () => {
@@ -298,7 +290,25 @@ describe("matching chapters", () => {
   });
 });
 
+describe("two chapters with the same words", () => {
+  // the chapter's heading is part of its words, so the two notes share a title as well
+  beforeAll(() => shelve(["Note", "Story", "Note"], (i) => (i === 1 ? prose(9) : prose(0))));
+
+  test("pair in reading order", async () => {
+    const a = chapterOf(1, { title: "first note" });
+    const b = chapterOf(3, { title: "second note" });
+    expect(a.sourceHash).toBe(b.sourceHash);
+    const got = await plan(await zipOf({ chapters: [a, b] }));
+    expect(got.chapters.map((c) => [c.chapterId, c.fileTitle])).toEqual([
+      [1, "first note"],
+      [3, "second note"],
+    ]);
+  });
+});
+
 describe("the cast and the dictionary", () => {
+  beforeEach(() => shelve());
+
   const speaker = (over: Partial<ScriptFileSpeaker>): ScriptFileSpeaker => ({
     name: "Mara",
     aliases: [],
@@ -378,6 +388,8 @@ describe("the cast and the dictionary", () => {
 });
 
 describe("voices", () => {
+  beforeEach(() => shelve());
+
   const endpoint = (over: Partial<Endpoint>): Endpoint => ({
     id: "fish",
     name: "Fish Audio",
@@ -427,34 +439,35 @@ describe("voices", () => {
     }),
   });
 
-  test.each([
+  const here: VoiceMatch = {
+    kind: "here",
+    options: [{ endpointId: "fish", endpointName: "Fish Audio", ref: "fish/v1" }],
+  };
+  const privateVoice: VoiceMatch = { kind: "private" };
+
+  test.each<[string, Endpoint["voices"], boolean, VoiceMatch]>([
     [
       "the same id and label on an enabled endpoint is here",
-      [{ id: "v1", label: "Sera", gender: "f" as const }],
+      [{ id: "v1", label: "Sera", gender: "f" }],
       true,
-      "here",
+      here,
     ],
     [
       "the same id under another label is someone else",
-      [{ id: "v1", label: "Doran", gender: "m" as const }],
+      [{ id: "v1", label: "Doran", gender: "m" }],
       true,
-      "private",
+      privateVoice,
     ],
     [
       "the voice on a disabled endpoint is not offered",
-      [{ id: "v1", label: "Sera", gender: "f" as const }],
+      [{ id: "v1", label: "Sera", gender: "f" }],
       false,
-      "private",
+      privateVoice,
     ],
-  ])("%s", async (_, voices, enabled, kind) => {
+  ])("%s", async (_, voices, enabled, match) => {
     await save([endpoint({ voices, enabled })]);
     const got = await plan(await zipOf({ cast: [withVoice("Tobin", "v1")] }));
-    expect(got.voices.map((r) => r.match.kind)).toEqual([kind as VoiceMatch["kind"]]);
-    if (kind === "here")
-      expect(got.voices[0].match).toEqual({
-        kind: "here",
-        options: [{ endpointId: "fish", endpointName: "Fish Audio", ref: "fish/v1" }],
-      });
+    expect(got.voices.map((r) => r.match)).toEqual([match]);
   });
 
   /** A lister that answers `found` as the account's own library, and nothing in public. */
@@ -467,24 +480,23 @@ describe("voices", () => {
     }),
   });
   const sera = { id: "a".repeat(32), label: "Sera", gender: "f" as const };
+  const publicSera: VoiceMatch = {
+    kind: "public",
+    endpointId: "fish",
+    endpointName: "Fish Audio",
+    voice: sera,
+  };
 
   test.each([
-    ["Fish's public catalogue", publicOnly, "Sera", "public"],
-    ["the account's own library", libraryOnly, "Sera", "public"],
-    ["the library, under another label", libraryOnly, "Doran", "private"],
-  ] as const)("a voice found in %s with label %s is %s", async (_, lister, label, kind) => {
+    ["Fish's public catalogue", "Sera", publicOnly, publicSera],
+    ["the account's own library", "Sera", libraryOnly, publicSera],
+    ["the account's own library", "Doran", libraryOnly, privateVoice],
+  ] as const)("a voice found in %s, under the label %s", async (_, label, lister, match) => {
     await save([endpoint({})]);
     const got = await plan(await zipOf({ cast: [withVoice("Tobin", sera.id, label)] }), {
       voices: lister([{ ...sera, sample: { url: "x", text: "y" } }]),
     });
-    expect(got.voices[0].match.kind).toBe(kind);
-    if (kind === "public")
-      expect(got.voices[0].match).toEqual({
-        kind: "public",
-        endpointId: "fish",
-        endpointName: "Fish Audio",
-        voice: sera,
-      });
+    expect(got.voices[0].match).toEqual(match);
   });
 
   test.each([
@@ -496,7 +508,7 @@ describe("voices", () => {
       await save([endpoint({})]);
       const got = await plan(await zipOf({ cast: [withVoice("Tobin", "v9")] }), {
         voices,
-        lookupMs: 50,
+        lookupMs: 5,
       });
       expect(got.voices[0].match).toEqual({
         kind: "unchecked",
@@ -538,6 +550,8 @@ describe("voices", () => {
 });
 
 describe("voice samples in the file", () => {
+  beforeAll(() => shelve());
+
   // a WAV header is all a recording needs to be here: it is sniffed, never decoded
   const wav = (tag: string) =>
     new Uint8Array([...`RIFF\0\0\0\0WAVEfmt ${tag}`].map((c) => c.charCodeAt(0)));

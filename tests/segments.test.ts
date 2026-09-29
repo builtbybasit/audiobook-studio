@@ -1,7 +1,9 @@
 // Segment boundary corrections: splitting a line in two, joining two, deleting one. Each is an
 // edit of the chapter's script the store makes at once and writes behind, so these read the demo
 // library's narrated first chapter of The Cliché Cultivation World and check what the edit left
-// here; what the server keeps of an edit is `tests/server/scriptEdit.test.ts`'s.
+// here; what the server keeps of an edit is `tests/server/scriptEdit.test.ts`'s. The write is
+// answered without being written, so the seeded demo is opened once and every test reads it as
+// seeded.
 import { afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 
 import { silenceOf } from "@/lib/speech";
@@ -12,10 +14,10 @@ import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 import type { Segment, ToastOptions } from "@/types";
-import { demoServer, type DemoServer } from "./support/demoServer";
+import { demoServer } from "./support/demoServer";
 import { testPinia, type TestPinia } from "./support/pinia";
+import { unwrittenEdits } from "./support/unwrittenEdits";
 
-let demo: DemoServer;
 let pinia: TestPinia;
 let undos: (() => void)[] = [];
 let castStore: ReturnType<typeof useCastStore>;
@@ -25,10 +27,10 @@ let scriptsStore: ReturnType<typeof useScriptsStore>;
 
 beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  demo = await demoServer();
+  await demoServer();
+  unwrittenEdits();
 });
 beforeEach(async () => {
-  await demo.reset();
   pinia = testPinia();
   castStore = useCastStore();
   libraryStore = useLibraryStore();
@@ -45,7 +47,7 @@ beforeEach(async () => {
   for (const chId of [1, 7])
     scriptsStore._install("cliche", chId, await svc.chapterScript("cliche", chId));
 });
-// an edit's write is still on its way when a test ends; it must not land on the next test's demo
+// an edit's write is still being answered when a test ends; it must not land in the next test
 afterEach(async () => {
   await Promise.all([1, 7].map((chId) => scriptsStore._settled("cliche", chId)));
   pinia.stop();

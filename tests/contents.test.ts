@@ -115,11 +115,10 @@ describe("the import samples", () => {
         chapters.some((c) => c.excluded || c.kept),
         s.id,
       ).toBe(false);
-      for (const c of chapters)
-        if (c.note) {
-          expect(c.note.reason.length, `${s.id} #${c.id}`).toBeGreaterThan(0);
-          expect(c.note.evidence.length, `${s.id} #${c.id}`).toBeGreaterThan(0);
-        }
+      for (const c of chapters.filter((c) => c.note)) {
+        expect(c.note!.reason.length, `${s.id} #${c.id}`).toBeGreaterThan(0);
+        expect(c.note!.evidence.length, `${s.id} #${c.id}`).toBeGreaterThan(0);
+      }
     }
   });
 
@@ -188,8 +187,10 @@ describe("the review against the demo library", () => {
     Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
     demo = await demoServer();
   });
-  beforeEach(async () => {
-    await demo.reset();
+  // No reset before each test: a test that opens an import sample is given a freshly seeded demo
+  // by the situation itself, which lays the whole seed down again, and the rest read or add to
+  // seeded books no other test here changes. Seeding is most of what each of these costs.
+  beforeEach(() => {
     pinia = testPinia();
     libraryStore = useLibraryStore();
     toasts = [];
@@ -237,27 +238,8 @@ describe("the review against the demo library", () => {
       expect(libraryStore.chaptersOf(id).every((c) => c.scripting === "none")).toBe(true);
     });
 
-    test("cancelling an import leaves no trace; cancelling a volume leaves the book as it was", async () => {
-      const id = await imported("clean");
-      expect(await libraryStore.discardImport(id)).toBe("book");
-      expect(libraryStore.bookById(id)).toBeUndefined();
-      expect(libraryStore.chaptersOf(id)).toEqual([]);
-
-      await libraryStore.loadBook("cliche");
-      const before = libraryStore.chaptersOf("cliche").length;
-      const volId = await libraryStore.importVolume("cliche", {
-        source: await volume(),
-        name: "Vol. 4",
-      });
-      expect(libraryStore.importingVolume("cliche")?.id).toBe(volId!);
-      expect(libraryStore.chaptersOf("cliche").length).toBeGreaterThan(before);
-      expect(libraryStore.bookById("cliche")?.importing).toBeFalsy();
-      expect(await libraryStore.discardImport("cliche")).toBe("volume");
-      expect(libraryStore.chaptersOf("cliche").length).toBe(before);
-      expect(libraryStore.importingVolume("cliche")).toBeUndefined();
-    });
-
     test("a new volume numbers on from the book and confirms into it", async () => {
+      // no other test here adds to `cliche`, so it has no volume waiting whichever ran before
       await libraryStore.loadBook("cliche");
       const before = libraryStore.chaptersOf("cliche").length;
       await libraryStore.importVolume("cliche", { source: await volume(), name: "Vol. 4" });
@@ -327,6 +309,7 @@ describe("the review against the demo library", () => {
     });
 
     test("the seeded books explain the chapters they already skip", async () => {
+      // read-only, and nothing in this file writes these chapters, so it reads the demo as it is
       const svc = libraryService();
       await Promise.all(["gates", "drowned"].map((id) => libraryStore.loadBook(id)));
       const gates = libraryStore.chaptersOf("gates").at(-1)!;

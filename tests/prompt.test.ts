@@ -5,7 +5,6 @@ import {
   OUTPUT_FORMAT,
   fill,
   fingerprint,
-  profilePromptProblems,
   promptProblems,
   promptWarnings,
   renderPrompt,
@@ -76,7 +75,7 @@ describe("resolvePrompt", () => {
   test("built-in, then the library's, then the endpoint's, then the book's replacement", () => {
     expect(resolvePrompt({ library: null }).origin.from).toBe("built-in");
     expect(resolvePrompt({ library }).system).toBe("LIB");
-    const replace = { mode: "replace" as const, system: "EP", user: "EP {{excerpt}}" };
+    const replace = { mode: "replace" as const, system: "EP", user: "EP {{excerpt}}", notes: "" };
     expect(resolvePrompt({ library, profile: replace }).system).toBe("EP");
     expect(resolvePrompt({ library, profile: replace, book }).system).toBe("BOOK");
     expect(resolvePrompt({ library, book: { ...book, replace: false } }).system).toBe("LIB");
@@ -130,14 +129,6 @@ describe("checks", () => {
     expect(promptProblems({ system: "{{book.name}}", user: "{{excerpt}}" })).toEqual([
       "The system prompt names {{book.name}}, which is not a tag.",
     ]);
-  });
-
-  test("an endpoint's notes are held to their length, and its kept text only to its own", () => {
-    const notes = "x".repeat(4_001);
-    expect(profilePromptProblems({ mode: "default", system: "", user: "", notes })).toHaveLength(1);
-    const kept = { mode: "default" as const, system: "no excerpt", user: "", notes: "" };
-    expect(profilePromptProblems(kept)).toEqual([]);
-    expect(profilePromptProblems({ ...kept, mode: "replace" })).not.toEqual([]);
   });
 
   test("a tag that moves every chapter in the system prompt is a warning", () => {

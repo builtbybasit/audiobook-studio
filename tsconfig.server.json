@@ -32,6 +32,8 @@
     "tests/support/cloning.ts",
     "tests/support/batchServer.ts",
     "tests/support/tempRoot.ts",
+    "tests/support/credentialRegistry.ts",
+    "tests/support/zip.ts",
     "src/types/**/*.ts",
     "src/lib/**/*.ts",
     "src/ui/types.ts",

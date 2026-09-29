@@ -16,9 +16,9 @@ import type { SpeechProvider } from "~/providers/speech";
 import type { AudiobookEncoder } from "~/providers/encoder";
 import { ffmpegAvailable, ffmpegEncoder, ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { byteRate, readWavHeader, wavEncoder } from "~/providers/wavEncoder";
-import { epubFile, story } from "../support/epub";
+import { epubFile, line, story } from "../support/epub";
 import { writeExport } from "../support/persist";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import { jsonBody, narratedBook, testApi, type TestApi } from "../support/server";
 
 interface ImportResult {
   book: Book;
@@ -27,6 +27,13 @@ interface ImportResult {
 interface Failure {
   error: { code: string; message: string; detail?: string };
 }
+
+/** A finished export of the seeded world's, read once: building the world is the costly part. */
+let seededExport: ExportItem | undefined;
+const seededDone = (): ExportItem =>
+  (seededExport ??= makeWorld().exports.find(
+    (e) => e.status === "done" && e.chapterIds.length <= 3,
+  )!);
 
 /** A shelved book, and a seeded export re-keyed onto it. */
 async function withExport() {
@@ -38,7 +45,7 @@ async function withExport() {
   );
   const id = body.book.id;
   await api.request(`/api/books/${id}/confirm`, { method: "POST" });
-  const seeded = makeWorld().exports.find((e) => e.status === "done" && e.chapterIds.length <= 3)!;
+  const seeded = seededDone();
   const exported: ExportItem = {
     ...seeded,
     id: 1,
@@ -223,30 +230,18 @@ const jobById = async (api: TestApi, id: number) =>
   (await api.request<{ job: Job }>(`/api/jobs/${id}`)).body.job;
 
 /**
- * A three-chapter book, scripted and narrated, ready to build.
+ * A three-chapter book to narrate and build, one line of dialogue and its attribution a chapter.
  *
- * A chapter is a handful of lines, well under a minute of audio: the length of what is narrated is
- * what every build here costs, and under ffmpeg nearly all of it. At `story()`'s full length the
- * two ffmpeg builds were most of the whole suite's running time and proved nothing more.
+ * A few seconds of audio a chapter: the length of what is narrated is what every build here costs,
+ * and under ffmpeg nearly all of it. At `story()`'s full length the two ffmpeg builds were most of
+ * the whole suite's running time and proved nothing more. No line is repeated from one chapter to
+ * the next, so `slowerOnRetake` lengthens only the chapter a test reads again.
  */
-async function narrated(api = testApi()) {
-  const { body } = await api.import<ImportResult>(
-    await epubFile({
-      title: "Moonlight Ledger",
-      chapters: ["One", "Two", "Three"].map((title) => ({
-        title,
-        paragraphs: ["\u201cWe are short again,\u201d said Mara.", ...story(1)],
-      })),
-    }),
-  );
-  const id = body.book.id;
-  await api.request(`/api/books/${id}/confirm`, { method: "POST" });
-  await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1, 2, 3] }));
-  await api.runner.idle();
-  await api.request(`/api/books/${id}/chapters/narrate`, jsonBody({ ids: [1, 2, 3] }));
-  await api.runner.idle();
-  return { api, id };
-}
+const THREE: [string, string][] = [
+  ["One", line("One")],
+  ["Two", line("Two", "Tomas")],
+  ["Three", line("Three", "Ines")],
+];
 
 /** Where one output file of an export landed on disk. */
 const filePath = (api: TestApi, bookId: string, exportId: number, position = 0): string => {
@@ -276,7 +271,8 @@ async function untilGone(path: string): Promise<boolean> {
 
 describe("building an audiobook", () => {
   test("writes one real file, and the row describes what is in it", async () => {
-    const { api, id } = await narrated();
+    const api = testApi();
+    const { id } = await narratedBook(api, { chapters: THREE });
     const settings = settingsFor();
     const queued = await build(api, id, { ids: [1, 2, 3], settings });
     expect(queued.status).toBe(202);
@@ -300,7 +296,8 @@ describe("building an audiobook", () => {
   });
 
   test("the layout the page drew is the set of files that was written", async () => {
-    const { api, id } = await narrated();
+    const api = testApi();
+    const { id } = await narratedBook(api, { chapters: THREE });
     await build(api, id, { ids: [1, 2, 3], settings: settingsFor({ grouping: "chapter" }) });
     await api.runner.idle();
 
@@ -321,7 +318,8 @@ describe("building an audiobook", () => {
   test("a finished file downloads under its name, even one no header can carry, and answers a range", async () => {
     // A header is Latin-1. An em dash, a curly apostrophe or a Chinese title in it used to make
     // `Headers` throw, and the download a 500.
-    const { api, id } = await narrated();
+    const api = testApi();
+    const { id } = await narratedBook(api, { chapters: THREE });
     const name = "The Philosopher’s Stone — 三体";
     await build(api, id, { ids: [1, 2], settings: settingsFor({ filename: name }) });
     await api.runner.idle();
@@ -350,17 +348,7 @@ describe("building an audiobook", () => {
 
   test("a chapter with no audio refuses the build in the page's own words", async () => {
     const api = testApi();
-    const { body } = await api.import<ImportResult>(
-      await epubFile({
-        chapters: ["One", "Two"].map((title) => ({ title, paragraphs: story(1) })),
-      }),
-    );
-    const id = body.book.id;
-    await api.request(`/api/books/${id}/confirm`, { method: "POST" });
-    await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1, 2] }));
-    await api.runner.idle();
-    await api.request(`/api/books/${id}/chapters/narrate`, jsonBody({ ids: [1] }));
-    await api.runner.idle();
+    const { id } = await narratedBook(api, { chapters: THREE.slice(0, 2), ids: [1] });
 
     const refused = await api.request<Failure>(
       `/api/books/${id}/exports`,
@@ -374,7 +362,7 @@ describe("building an audiobook", () => {
 
   test("an update carries over what has not moved and reads again what has", async () => {
     const api = testApi({ speech: slowerOnRetake() });
-    const { id } = await narrated(api);
+    const { id } = await narratedBook(api, { chapters: THREE });
     const settings = settingsFor();
     await build(api, id, { ids: [1, 2, 3], settings });
     await api.runner.idle();
@@ -424,7 +412,7 @@ describe("building an audiobook", () => {
   test("removing the version an update copies from costs its chapters the shortcut, not the build", async () => {
     const encoder = controlledEncoder();
     const api = testApi({ encoder, speech: slowerOnRetake() });
-    const { id } = await narrated(api);
+    const { id } = await narratedBook(api, { chapters: THREE });
     const settings = settingsFor();
     await build(api, id, { ids: [1, 2, 3], settings });
     await api.runner.idle();
@@ -478,7 +466,8 @@ describe("building an audiobook", () => {
         return result;
       },
     };
-    const { api, id } = await narrated(testApi({ encoder }));
+    const api = testApi({ encoder });
+    const { id } = await narratedBook(api, { chapters: THREE });
     const settings = settingsFor();
     await build(api, id, { ids: [1, 2], settings });
     await api.runner.idle();
@@ -499,7 +488,8 @@ describe("building an audiobook", () => {
 
   test("a cancelled build leaves nothing behind, and the version on disk still plays", async () => {
     const encoder = controlledEncoder();
-    const { api, id } = await narrated(testApi({ encoder }));
+    const api = testApi({ encoder });
+    const { id } = await narratedBook(api, { chapters: THREE });
     const settings = settingsFor();
     await build(api, id, { ids: [1, 2], settings });
     await api.runner.idle();
@@ -524,7 +514,8 @@ describe("building an audiobook", () => {
 
   test("a build that fails keeps its reason, and the audiobook already there is untouched", async () => {
     const encoder = controlledEncoder();
-    const { api, id } = await narrated(testApi({ encoder }));
+    const api = testApi({ encoder });
+    const { id } = await narratedBook(api, { chapters: THREE });
     const settings = settingsFor();
     await build(api, id, { ids: [1, 2], settings });
     await api.runner.idle();
@@ -547,7 +538,8 @@ describe("building an audiobook", () => {
 
   test("one build at a time per book, and one being built cannot be forgotten", async () => {
     const encoder = controlledEncoder();
-    const { api, id } = await narrated(testApi({ encoder }));
+    const api = testApi({ encoder });
+    const { id } = await narratedBook(api, { chapters: THREE });
     const inside = encoder.hold();
     const first = await build(api, id, { ids: [1, 2], settings: settingsFor() });
     await inside;
@@ -571,7 +563,8 @@ describe("building an audiobook", () => {
   });
 
   test("removing a book takes its audiobooks off the disk with it", async () => {
-    const { api, id } = await narrated();
+    const api = testApi();
+    const { id } = await narratedBook(api, { chapters: THREE });
     await build(api, id, { ids: [1, 2], settings: settingsFor() });
     await api.runner.idle();
     const [done] = await exportsOf(api, id);
@@ -608,7 +601,8 @@ describe("building an audiobook", () => {
         return result;
       },
     };
-    const { api, id } = await narrated(testApi({ encoder }));
+    const api = testApi({ encoder });
+    const { id } = await narratedBook(api, { chapters: THREE });
     await build(api, id, { ids: [1, 2], settings: settingsFor({ grouping: "chapter" }) });
     await between;
 
@@ -620,7 +614,8 @@ describe("building an audiobook", () => {
   });
 
   test("forgetting an audiobook takes its files with it", async () => {
-    const { api, id } = await narrated();
+    const api = testApi();
+    const { id } = await narratedBook(api, { chapters: THREE });
     await build(api, id, { ids: [1, 2], settings: settingsFor() });
     await api.runner.idle();
     const [done] = await exportsOf(api, id);
@@ -715,7 +710,8 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
   }, 30_000);
 
   test("writes the format that was asked for, with the chapter marks in it", async () => {
-    const { api, id } = await narrated(testApi({ encoder: ffmpegEncoders() }));
+    const api = testApi({ encoder: ffmpegEncoders() });
+    const { id } = await narratedBook(api, { chapters: THREE });
     await build(api, id, {
       ids: [1, 2, 3],
       settings: settingsFor({ markerPattern: "{n}. {title}" }),
@@ -742,7 +738,7 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
 
   test("an update re-encodes the whole audiobook, and says why", async () => {
     const api = testApi({ encoder: ffmpegEncoders(), speech: slowerOnRetake() });
-    const { id } = await narrated(api);
+    const { id } = await narratedBook(api, { chapters: THREE });
     // the levels are left alone here: this is about what was copied, and a two-pass loudnorm
     // over a whole audiobook twice over is minutes of a test suite for nothing
     const settings = settingsFor({ normalize: false });

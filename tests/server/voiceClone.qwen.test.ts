@@ -11,33 +11,29 @@ import { qwen } from "@/lib/providers/qwen";
 import type { CloneRequest } from "~/providers/clone";
 import type { SpeechInput } from "~/providers/speech";
 import { qwenPreferredName, qwenWire } from "~/providers/speech/qwen";
-import type { ProviderTarget } from "~/providers/target";
 import {
   agreed,
   answering,
   cloneForm,
+  cloneTarget,
   HEADS,
   postClone,
   sampleFile,
   saved,
-  speechEndpoint,
+  cloneEndpoint,
+  unlucky,
 } from "../support/cloning";
 import { testApi } from "../support/server";
 
 const CLONE_MODEL = "qwen3-tts-vc-2026-01-22";
 
-const target: ProviderTarget = {
+const target = cloneTarget({
   id: "qwen",
   name: "Qwen VC",
   baseUrl: "https://dashscope-intl.aliyuncs.com/api/v1",
   model: CLONE_MODEL,
   apiKey: "sk-qwen",
-  needsKey: true,
-  timeoutSec: 5,
-  // what a narration endpoint is saved with: the clone must not take them
-  maxRetries: 2,
-  cooldownSec: 0,
-};
+});
 
 const signal = () => new AbortController().signal;
 
@@ -107,14 +103,11 @@ describe("the Model Studio cloner", () => {
 
   test("a clone goes out once: a 5xx, a rate limit or no answer is not sent again", async () => {
     const failures: [() => Response | Promise<Response>, string][] = [
-      [() => new Response("busy", { status: 503 }), "Qwen VC answered 503: busy"],
+      ...unlucky("Qwen VC"),
+      // and Model Studio's own throttling answer, whose message is read out
       [
         () => Response.json({ code: "Throttling", message: "Requests throttled" }, { status: 429 }),
         "Qwen VC answered 429: Requests throttled",
-      ],
-      [
-        () => Promise.reject(new TypeError("connection reset")),
-        "Qwen VC could not be reached: connection reset",
       ],
     ];
     for (const [answer, said] of failures) {
@@ -240,7 +233,7 @@ describe("a voice-cloning model", () => {
 // ---------- the route, before anything leaves ----------
 
 const qwenEndpoint = (over: Partial<Endpoint> = {}): Endpoint =>
-  speechEndpoint({
+  cloneEndpoint({
     id: "qwen",
     name: "Qwen VC",
     baseUrl: "https://dashscope-intl.aliyuncs.com/api/v1",

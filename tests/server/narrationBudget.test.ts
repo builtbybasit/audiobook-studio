@@ -8,33 +8,24 @@
 // a millionth of a dollar is one no line fits.
 import { describe, expect, test } from "bun:test";
 
-import type { Book, Character, Endpoint, Job, Segment } from "@/types";
+import type { Endpoint, Job, Segment } from "@/types";
 import { expressionParts, expressionPlan } from "@/lib/expressions";
 import { narrationCost } from "~/narration/cost";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import { bookSpend, endpointRequests } from "~/usage/ledger";
-import { epubFile, story } from "../support/epub";
-import { gatedSpeechProvider, jsonBody, testApi, type TestApi } from "../support/server";
+import { story } from "../support/epub";
+import {
+  gatedSpeechProvider,
+  jsonBody,
+  speechEndpoint,
+  testApi,
+  voicedBook,
+  type TestApi,
+} from "../support/server";
 
-const TELEMETRY = { history: [], failures: 0, rateLimits: 0, backoffUntil: 0 };
-const speech = (over: Partial<Endpoint> = {}): Endpoint => ({
-  id: "studio",
-  name: "Studio speech",
-  baseUrl: "http://localhost:8880/v1",
-  model: "studio-tts",
-  concurrency: 2,
-  enabled: true,
-  latency: 0,
-  failRate: 0,
-  price: 15,
-  billing: { unit: "chars", rate: 15 },
-  needsKey: false,
-  maxChars: 0,
-  splitAt: "sentence",
-  voices: [{ id: "ash", gender: "m", label: "Ash" }],
-  ...TELEMETRY,
-  ...over,
-});
+// $15 per million characters, billed by the character: see the top of the file.
+const speech = (over: Partial<Endpoint> = {}): Endpoint =>
+  speechEndpoint({ price: 15, billing: { unit: "chars", rate: 15 }, ...over });
 
 interface Queued {
   jobs: Job[];
@@ -44,29 +35,12 @@ interface Failure {
 }
 
 /** A one-chapter book, scripted, every speaker voiced by `studio/ash` on a priced endpoint. */
-async function voiced(api: TestApi, endpoint = speech()): Promise<string> {
-  await api.request("/api/endpoints", {
-    ...jsonBody({ endpoints: [endpoint], profiles: [], credentials: [] }),
-    method: "PUT",
+const voiced = (api: TestApi, endpoint = speech()) =>
+  voicedBook(api, {
+    endpoints: [endpoint],
+    paragraphs: ["“We are short again,” said Mara.", ...story(2)],
+    voiceOf: "studio/ash",
   });
-  const { body } = await api.import<{ book: Book }>(
-    await epubFile({
-      title: "Moonlight Ledger",
-      chapters: [{ title: "One", paragraphs: ["“We are short again,” said Mara.", ...story(2)] }],
-    }),
-  );
-  const id = body.book.id;
-  await api.request(`/api/books/${id}/confirm`, { method: "POST" });
-  await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1] }));
-  await api.runner.idle();
-  const cast = await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`);
-  for (const c of cast.body.characters)
-    await api.request(`/api/books/${id}/characters/${encodeURIComponent(c.name)}`, {
-      ...jsonBody({ ...c, voice: "studio/ash" }),
-      method: "PUT",
-    });
-  return id;
-}
 
 const narrate = (api: TestApi, id: string) =>
   api.request<Queued | Failure>(`/api/books/${id}/chapters/narrate`, jsonBody({ ids: [1] }));

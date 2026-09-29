@@ -355,21 +355,22 @@ describe("a batch", () => {
   });
 
   test("outlives the endpoint's timeout while the server keeps talking", async () => {
-    // four items at 150 ms each is 600 ms, three times the timeout; the pings say it is alive
-    const target = { ...omni, timeoutSec: 0.2 };
-    const s = server({ itemDelayMs: 150, pingEveryMs: 40 });
+    // four items at 75 ms each is 300 ms, two and a half times the timeout; the pings say it is
+    // alive, five to a timeout, so a slow turn of a busy machine does not read as silence
+    const target = { ...omni, timeoutSec: 0.12 };
+    const s = server({ itemDelayMs: 75, pingEveryMs: 20 });
     const r = await send(s, TEXTS, { target });
     expect(r.thrown).toBeNull();
     expect(r.answered).toHaveLength(TEXTS.length);
   });
 
   test("gives up on a server that goes quiet for longer than the timeout", async () => {
-    const target = { ...omni, timeoutSec: 0.2 };
-    const s = server({ itemDelayMs: 600 });
+    const target = { ...omni, timeoutSec: 0.1 };
+    const s = server({ itemDelayMs: 400 });
     const r = await send(s, TEXTS.slice(0, 2), { target });
     expect(r.thrown).toBeInstanceOf(ProviderError);
     expect((r.thrown as ProviderError).retryable).toBe(true);
-    expect((r.thrown as ProviderError).message).toContain("sent nothing for 0.2 s");
+    expect((r.thrown as ProviderError).message).toContain("sent nothing for 0.1 s");
     expect(r.answered).toEqual([]);
     for (const rows of r.reports)
       expect(rows).toEqual([expect.objectContaining({ status: "failed", billed: false })]);

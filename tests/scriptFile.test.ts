@@ -83,12 +83,15 @@ describe("markers", () => {
     ["a marker opened inside another", "Go {sigh {whisper} now.", 3],
     ["an empty marker", "Go {} now.", 3],
   ])("%s is refused with where it broke", (_, marked, where) => {
-    expect(() => readMarkers(marked)).toThrow(MarkerError);
-    try {
-      readMarkers(marked);
-    } catch (e) {
-      expect((e as MarkerError).at).toBe(where);
-    }
+    const refused = (() => {
+      try {
+        readMarkers(marked);
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect(refused).toBeInstanceOf(MarkerError);
+    expect((refused as MarkerError).at).toBe(where);
   });
 });
 

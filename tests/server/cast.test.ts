@@ -48,6 +48,15 @@ async function scripted(api = testApi()) {
   return { api, id };
 }
 
+/** A shelved book nothing has scripted, for what does not need a cast. */
+async function shelved(api = testApi()) {
+  const { body } = await api.import<ImportResult>(
+    await epubFile({ chapters: [{ title: "One", paragraphs: story(2) }] }),
+  );
+  await api.request(`/api/books/${body.book.id}/confirm`, { method: "POST" });
+  return { api, id: body.book.id };
+}
+
 const castOf = async (api: TestApi, id: string) =>
   (await api.request<Cast>(`/api/books/${id}/cast`)).body;
 const names = (cs: Character[]) => cs.map((c) => c.name);
@@ -67,11 +76,8 @@ describe("the cast a scripting job leaves behind", () => {
   });
 
   test("a book nothing has scripted has no cast, and a book that does not exist is not found", async () => {
-    const api = testApi();
-    const { body } = await api.import<ImportResult>(
-      await epubFile({ chapters: [{ title: "One", paragraphs: story() }] }),
-    );
-    expect(await castOf(api, body.book.id)).toEqual({ characters: [], lexicon: [] });
+    const { api, id } = await shelved();
+    expect(await castOf(api, id)).toEqual({ characters: [], lexicon: [] });
     expect((await api.request<Failure>("/api/books/nope/cast")).status).toBe(404);
   });
 });
@@ -241,7 +247,7 @@ describe("renaming and merging", () => {
 
 describe("the pronunciation dictionary", () => {
   test("is written whole and read back in the order it was written", async () => {
-    const { api, id } = await scripted();
+    const { api, id } = await shelved();
     const entries: LexEntry[] = [
       { id: 2, term: "Voss", say: "Voss", ipa: "vɒs", enabled: true },
       { id: 1, term: "ledger", say: "ledj-er", enabled: false, matchCase: true },
@@ -258,7 +264,7 @@ describe("the pronunciation dictionary", () => {
   });
 
   test("refuses two entries with one id", async () => {
-    const { api, id } = await scripted();
+    const { api, id } = await shelved();
     const { status } = await api.request<Failure>(
       `/api/books/${id}/lexicon`,
       put({

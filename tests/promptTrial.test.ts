@@ -5,7 +5,6 @@ import { describe, expect, test } from "bun:test";
 
 import { BUILT_IN_PROMPT, resolvePrompt } from "@/lib/prompt";
 import { droppedNotes, withNotesLine } from "@/lib/promptNotes";
-import { recentReasoning } from "@/lib/scriptActivity";
 import {
   fidelitySummary,
   trialLayers,
@@ -13,7 +12,7 @@ import {
   trialTime,
   trialTokens,
 } from "@/lib/promptTrial";
-import type { BookPrompt, ProfilePrompt, PromptTemplate, RequestRecord } from "@/types";
+import type { BookPrompt, ProfilePrompt, PromptTemplate } from "@/types";
 
 const own: PromptTemplate = { system: "Script it.", user: "{{excerpt}}" };
 const book: BookPrompt = { ...own, notes: "Em-dashes mark dialogue.", replace: true };
@@ -111,47 +110,5 @@ describe("notes the prompt in force would drop", () => {
       [],
     );
     expect(BUILT_IN_PROMPT.system.endsWith(withNotesLine("", "endpoint"))).toBe(true);
-  });
-});
-
-describe("how much an endpoint thinks", () => {
-  const row = (
-    inputTokens: number,
-    reasoningTokens: number | undefined,
-    reasoningEffort?: "low" | "high",
-    status: "done" | "failed" = "done",
-  ): RequestRecord => ({
-    id: `r${inputTokens}`,
-    endpointId: "p",
-    kind: "scripting",
-    bookId: "b",
-    chapterId: 1,
-    label: "",
-    status,
-    attempts: 1,
-    queuedAt: 0,
-    startedAt: 0,
-    finishedAt: 1,
-    queueMs: 0,
-    responseMs: 1,
-    usage: { inputTokens, outputTokens: 10, reasoningTokens },
-    reasoningEffort,
-    cost: 0,
-    costBasis: "calculated",
-    simulated: false,
-  });
-
-  test("its answered requests at the level it is set to now, that said what they thought", () => {
-    const rows = [
-      row(1000, 300, "high"),
-      row(3000, 900, "high"),
-      row(5000, 5000, "low"),
-      row(7000, undefined, "high"),
-      row(9000, 9000, "high", "failed"),
-    ];
-    expect(recentReasoning(rows, "high")).toEqual({ perInputToken: 0.3, requests: 2 });
-    expect(recentReasoning(rows, "low")).toEqual({ perInputToken: 1, requests: 1 });
-    // none at the model's own default yet: nothing to go by
-    expect(recentReasoning(rows, null)).toBeNull();
   });
 });

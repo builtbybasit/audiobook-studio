@@ -5,31 +5,9 @@
 // voices that can narrate, labelled to pick from, and a refusal said in words.
 import { describe, expect, test } from "bun:test";
 
-import type { Endpoint } from "@/types";
 import { endpointVoiceLister, OPENAI_VOICES, type VoicePage } from "~/providers/voices";
+import { saved, cloneEndpoint } from "../support/cloning";
 import { jsonBody, testApi, type TestApi } from "../support/server";
-
-const speech = (over: Partial<Endpoint> = {}): Endpoint => ({
-  id: "fish",
-  name: "Fish Audio",
-  baseUrl: "https://api.fish.audio/v1",
-  model: "s2.1-pro",
-  concurrency: 1,
-  enabled: true,
-  latency: 0,
-  failRate: 0,
-  price: 0,
-  needsKey: true,
-  maxChars: 0,
-  splitAt: "sentence",
-  voices: [],
-  history: [],
-  failures: 0,
-  rateLimits: 0,
-  backoffUntil: 0,
-  apiKey: "sk-fish",
-  ...over,
-});
 
 const model = (id: string, over: Record<string, unknown> = {}) => ({
   _id: id,
@@ -50,7 +28,7 @@ interface Seen {
 /** An API whose voice lister's `fetch` is `answer`, recording every request. */
 async function api(
   answer: (url: URL) => Response,
-  endpoint = speech(),
+  endpoint = cloneEndpoint(),
 ): Promise<{ api: TestApi; seen: Seen[] }> {
   const seen: Seen[] = [];
   const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -59,10 +37,7 @@ async function api(
     return answer(url);
   }) as typeof globalThis.fetch;
   const t = testApi({ voices: endpointVoiceLister({ fetch, backoffMs: () => 0 }) });
-  await t.request("/api/endpoints", {
-    ...jsonBody({ endpoints: [endpoint], profiles: [], credentials: [] }),
-    method: "PUT",
-  });
+  await saved(t, endpoint);
   return { api: t, seen };
 }
 
@@ -201,7 +176,7 @@ describe("Gemini and ElevenLabs", () => {
   test("Gemini's prebuilt voices are its guide's thirty, asked of nobody", async () => {
     const { api: t, seen } = await api(
       () => json({}),
-      speech({
+      cloneEndpoint({
         id: "fish",
         name: "Gemini 3.8 Flash TTS",
         baseUrl: "https://generativelanguage.googleapis.com/v1beta",
@@ -230,7 +205,7 @@ describe("Gemini and ElevenLabs", () => {
               has_more: true,
               next_page_token: "p2",
             }),
-      speech({
+      cloneEndpoint({
         id: "fish",
         name: "ElevenLabs",
         baseUrl: "https://api.elevenlabs.io/v1",
@@ -257,7 +232,7 @@ describe("Gemini and ElevenLabs", () => {
 
 describe("BreezeBlue, MiniMax, Cartesia and Qwen", () => {
   const at = (baseUrl: string, model: string) =>
-    speech({ id: "fish", name: "Voices", baseUrl, model, apiKey: "k" });
+    cloneEndpoint({ id: "fish", name: "Voices", baseUrl, model, apiKey: "k" });
 
   test("BreezeBlue pages through GET /v1/voices, its gender a field of its own", async () => {
     const { api: t, seen } = await api(
@@ -347,7 +322,10 @@ describe("listing refusals", () => {
   });
 
   test("an endpoint that needs a key and has none is refused before any request", async () => {
-    const { api: t, seen } = await api(() => json({ items: [] }), speech({ apiKey: undefined }));
+    const { api: t, seen } = await api(
+      () => json({ items: [] }),
+      cloneEndpoint({ apiKey: undefined }),
+    );
     const { status, body } = await list(t, { source: "library" });
     expect(status).toBe(400);
     expect(body.error?.message).toContain("needs an API key");
@@ -364,7 +342,7 @@ describe("listing refusals", () => {
   test("an OpenAI-shaped endpoint has no public catalogue", async () => {
     const { api: t, seen } = await api(
       () => json({}),
-      speech({ baseUrl: "http://localhost:8880/v1", needsKey: false }),
+      cloneEndpoint({ baseUrl: "http://localhost:8880/v1", needsKey: false }),
     );
     const { status, body } = await list(t, { source: "public", query: "bella" });
     expect(status).toBe(400);
@@ -377,7 +355,7 @@ describe("an OpenAI-shaped endpoint's list", () => {
   test("OpenAI's own is its documented voices, asked of nobody", async () => {
     const { api: t, seen } = await api(
       () => json({}),
-      speech({ baseUrl: "https://api.openai.com/v1" }),
+      cloneEndpoint({ baseUrl: "https://api.openai.com/v1" }),
     );
     const { body } = await list(t, { source: "library" });
     expect(body.voices.map((v) => v.id)).toEqual([...OPENAI_VOICES]);
@@ -388,7 +366,7 @@ describe("an OpenAI-shaped endpoint's list", () => {
   test("a local server is asked GET /audio/voices, and Kokoro's names give a gender", async () => {
     const { api: t, seen } = await api(
       () => json({ voices: ["af_bella", "am_adam", "narrator"] }),
-      speech({ baseUrl: "http://localhost:8880/v1", needsKey: false, apiKey: undefined }),
+      cloneEndpoint({ baseUrl: "http://localhost:8880/v1", needsKey: false, apiKey: undefined }),
     );
     const { body } = await list(t, { source: "library" });
     expect(seen[0].url.href).toBe("http://localhost:8880/v1/audio/voices");
@@ -402,7 +380,7 @@ describe("an OpenAI-shaped endpoint's list", () => {
   test("a server with no list says so", async () => {
     const { api: t } = await api(
       () => json({ detail: "Not Found" }, 404),
-      speech({ baseUrl: "http://localhost:8880/v1", needsKey: false }),
+      cloneEndpoint({ baseUrl: "http://localhost:8880/v1", needsKey: false }),
     );
     const { status, body } = await list(t, { source: "library" });
     expect(status).toBe(400);

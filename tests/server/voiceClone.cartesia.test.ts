@@ -8,31 +8,27 @@ import { describe, expect, test } from "bun:test";
 
 import type { CloneRequest } from "~/providers/clone";
 import { CARTESIA_VERSION, cartesiaWire } from "~/providers/speech/cartesia";
-import type { ProviderTarget } from "~/providers/target";
 import {
   agreed,
   answering,
   cloneForm,
+  cloneTarget,
   HEADS,
   postClone,
   sampleFile,
   saved,
-  speechEndpoint,
+  cloneEndpoint,
+  unlucky,
 } from "../support/cloning";
 import { testApi } from "../support/server";
 
-const target: ProviderTarget = {
+const target = cloneTarget({
   id: "cartesia",
   name: "Cartesia",
   baseUrl: "https://api.cartesia.ai",
   model: "sonic-3.6",
   apiKey: "sk_car_key",
-  needsKey: true,
-  timeoutSec: 5,
-  // what a narration endpoint is saved with: the upload must not take them
-  maxRetries: 2,
-  cooldownSec: 0,
-};
+});
 
 /** What Cartesia answers a clone with: the new voice's metadata, as its reference's example. */
 const made = (over: Record<string, unknown> = {}) =>
@@ -97,15 +93,7 @@ describe("the Cartesia cloner", () => {
   });
 
   test("a clone goes out once: a 5xx, a rate limit or no answer is not sent again", async () => {
-    const failures: [() => Response | Promise<Response>, string][] = [
-      [() => new Response("busy", { status: 503 }), "Cartesia answered 503: busy"],
-      [() => new Response("slow down", { status: 429 }), "Cartesia answered 429"],
-      [
-        () => Promise.reject(new TypeError("connection reset")),
-        "Cartesia could not be reached: connection reset",
-      ],
-    ];
-    for (const [answer, said] of failures) {
+    for (const [answer, said] of unlucky("Cartesia")) {
       const f = answering(answer);
       await expect(f.cloner.clone(target, request, signal())).rejects.toThrow(said);
       expect(f.sent).toHaveLength(1);
@@ -180,7 +168,7 @@ describe("a Cartesia clone, through the route", () => {
     const api = testApi({ cloner: f.cloner });
     await saved(
       api,
-      speechEndpoint({
+      cloneEndpoint({
         id: "cartesia",
         name: "Cartesia",
         baseUrl: "https://api.cartesia.ai",
@@ -199,39 +187,28 @@ describe("a Cartesia clone, through the route", () => {
     expect(sent).toHaveLength(1);
   });
 
-  test("a second sample is refused before anything is sent: Cartesia takes one", async () => {
-    const { status, message, sent } = await cloningAgainst(
-      () => made(),
-      [sampleFile("a.wav"), sampleFile("b.wav")],
-    );
-    expect([status, message]).toEqual([
+  test.each<[string, () => File[], number, string]>([
+    [
+      "a second sample, since Cartesia takes one,",
+      () => [sampleFile("a.wav"), sampleFile("b.wav")],
       400,
       "Use one sample: this provider makes a voice from a single file",
-    ]);
-    expect(sent).toEqual([]);
-  });
-
-  test("M4A, which Cartesia does not list, is refused before anything is sent", async () => {
-    const { status, message, sent } = await cloningAgainst(
-      () => made(),
-      [sampleFile("memo.m4a", HEADS.m4a, "audio/mp4")],
-    );
-    expect([status, message]).toEqual([
+    ],
+    [
+      "M4A, which Cartesia does not list,",
+      () => [sampleFile("memo.m4a", HEADS.m4a, "audio/mp4")],
       415,
       "memo.m4a is M4A audio, which this provider does not make a voice from",
-    ]);
-    expect(sent).toEqual([]);
-  });
-
-  test("a sample over Cartesia's 16 MB is refused before anything is sent", async () => {
-    const { status, message, sent } = await cloningAgainst(
-      () => made(),
-      [sampleFile("long.wav", HEADS.wav, "audio/wav", 16 * 1024 * 1024 + 1)],
-    );
-    expect([status, message]).toEqual([
+    ],
+    [
+      "a sample over Cartesia's 16 MB",
+      () => [sampleFile("long.wav", HEADS.wav, "audio/wav", 16 * 1024 * 1024 + 1)],
       413,
       "long.wav is larger than 16 MB, the most this provider takes for one sample",
-    ]);
+    ],
+  ])("%s is refused before anything is sent", async (_, samples, code, said) => {
+    const { status, message, sent } = await cloningAgainst(() => made(), samples());
+    expect([status, message]).toEqual([code, said]);
     expect(sent).toEqual([]);
   });
 

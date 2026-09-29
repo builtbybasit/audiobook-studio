@@ -8,7 +8,7 @@
 // `fetch` the server was given failing the test if it is ever called.
 import { describe, expect, test } from "bun:test";
 
-import type { Book, Character, Endpoint, Job, Segment } from "@/types";
+import type { Endpoint, Job, Segment } from "@/types";
 import { SIMULATED_BASE_URL, SIMULATED_SPEECH_MODEL, SIMULATED_VOICES } from "@/lib/providers";
 import { endpointVoiceCloner } from "~/providers/clone";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
@@ -20,8 +20,15 @@ import type { ProviderTarget } from "~/providers/target";
 import { endpointVoiceLister } from "~/providers/voices";
 import { readWavHeader } from "~/providers/wavEncoder";
 import { endpointRequests } from "~/usage/ledger";
-import { epubFile, story } from "../support/epub";
-import { jsonBody, testApi } from "../support/server";
+import { story } from "../support/epub";
+import {
+  jsonBody,
+  narrateChapters,
+  saveEndpoints,
+  speechEndpoint,
+  testApi,
+  voicedBook,
+} from "../support/server";
 
 /** A `fetch` that fails the test, and remembers where it was asked to go. */
 function noNetwork() {
@@ -218,32 +225,15 @@ describe("narrating through a simulated endpoint", () => {
       samples: endpointSpeechProvider({ fetch: net.fetch }),
       voices: endpointVoiceLister({ fetch: net.fetch }),
     });
-    const endpoint: Endpoint = {
+    const endpoint = speechEndpoint({
       id: "sim",
       name: "Simulated speech",
       baseUrl: SIMULATED_BASE_URL,
       model: SIMULATED_SPEECH_MODEL,
-      concurrency: 2,
-      enabled: true,
-      latency: 0,
-      failRate: 0,
-      price: 0,
-      needsKey: false,
-      maxChars: 0,
-      splitAt: "sentence",
       sampleRate: 22050,
       voices: [],
-      history: [],
-      failures: 0,
-      rateLimits: 0,
-      backoffUntil: 0,
-    };
-    const save = (e: Endpoint) =>
-      api.request("/api/endpoints", {
-        ...jsonBody({ endpoints: [e], profiles: [], credentials: [] }),
-        method: "PUT",
-      });
-    expect((await save(endpoint)).status).toBe(200);
+    });
+    expect((await saveEndpoints(api, [endpoint])).status).toBe(200);
 
     const tested = await api.request<{ ok: boolean; message: string }>(
       "/api/endpoints/test",
@@ -258,7 +248,9 @@ describe("narrating through a simulated endpoint", () => {
     );
     expect(listed.status).toBe(200);
     expect(listed.body.voices.map((v) => v.id)).toContain("birch");
-    expect((await save({ ...endpoint, voices: listed.body.voices })).status).toBe(200);
+    expect((await saveEndpoints(api, [{ ...endpoint, voices: listed.body.voices }])).status).toBe(
+      200,
+    );
 
     // the Voices tab's sample is the tone, at the endpoint's rate
     const sample = await api.fetch(
@@ -269,29 +261,14 @@ describe("narrating through a simulated endpoint", () => {
     expect(sample.headers.get("content-type")).toBe("audio/wav");
     expect(readWavHeader(new Uint8Array(await sample.arrayBuffer())).sampleRate).toBe(22050);
 
-    const { body } = await api.import<{ book: Book }>(
-      await epubFile({
-        title: "Moonlight Ledger",
-        chapters: [{ title: "One", paragraphs: ["“We are short again,” said Mara.", ...story(3)] }],
-      }),
-    );
-    const id = body.book.id;
-    await api.request(`/api/books/${id}/confirm`, { method: "POST" });
-    await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1] }));
-    await api.runner.idle();
-    const cast = await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`);
-    for (const c of cast.body.characters)
-      await api.request(`/api/books/${id}/characters/${encodeURIComponent(c.name)}`, {
-        ...jsonBody({ ...c, voice: "sim/birch" }),
-        method: "PUT",
-      });
+    // the endpoint as saved above, with its voices: the book is cast with one of them
+    const id = await voicedBook(api, {
+      paragraphs: ["“We are short again,” said Mara.", ...story(3)],
+      voiceOf: "sim/birch",
+    });
 
-    const queued = await api.request<{ jobs: Job[] }>(
-      `/api/books/${id}/chapters/narrate`,
-      jsonBody({ ids: [1] }),
-    );
-    await api.runner.idle();
-    const job = (await api.request<{ job: Job }>(`/api/jobs/${queued.body.jobs[0].id}`)).body.job;
+    const [queued] = await narrateChapters(api, id, [1]);
+    const job = (await api.request<{ job: Job }>(`/api/jobs/${queued.id}`)).body.job;
     expect(job.status).toBe("done");
 
     const { segments } = (

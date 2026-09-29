@@ -7,8 +7,9 @@
 // it and seeds it again without the real library noticing. Both libraries are handed providers
 // whose `fetch` fails the test, so the demo's endpoints are shown to need no network. What the
 // seed holds — the browser's whole demo world — is `demoWorld.test.ts`'s to check; the runs here
-// are on a small book of the test's own, so they are quick.
-import { describe, expect, test } from "bun:test";
+// are on a small book of the test's own at the demo's quickest speed, so they are quick. Only the
+// tests that change nothing share a server; every other one opens its own.
+import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -87,7 +88,7 @@ function server() {
     const text = await res.text();
     return { status: res.status, body: (text ? JSON.parse(text) : null) as T };
   };
-  const importTo = async (base: string, title: string, chapters = 1) => {
+  const importTo = async (base: string, title: string, { chapters = 1, cover = false } = {}) => {
     const form = new FormData();
     const paragraphs = story(2);
     form.set(
@@ -95,6 +96,7 @@ function server() {
       await epubFile({
         title,
         chapters: Array.from({ length: chapters }, (_, i) => ({ title: `${i + 1}`, paragraphs })),
+        ...(cover ? { cover: { bytes: PNG } } : {}),
       }),
     );
     const { status, body } = await request<{ book: Book }>(`${base}/books/import`, {
@@ -109,7 +111,13 @@ function server() {
     (await request<{ books: Book[] }>(`${base}/books`)).body.books.map((b) => b.title);
   const jobIds = async (base: string) =>
     (await request<{ jobs: Job[] }>(`${base}/jobs`)).body.jobs.map((j) => j.id);
-  return { net, real, demo, fetch, request, importTo, shelf, jobIds };
+  /** The demo's speed, as the Demo drawer sets it: 16× where a run only has to have finished. */
+  const speed = async (value: 1 | 16) =>
+    expect(
+      (await request(`${DEMO_BASE}/demo/speed`, { ...jsonBody({ speed: value }), method: "PUT" }))
+        .status,
+    ).toBe(200);
+  return { net, real, demo, fetch, request, importTo, shelf, jobIds, speed };
 }
 
 type Server = ReturnType<typeof server>;
@@ -155,8 +163,9 @@ async function scriptAndCast(s: Server, bookId: string, ids: number[]): Promise<
     });
 }
 
-/** Import a short book into the demo, script its first chapter, and narrate it. */
+/** Import a short book into the demo, script its first chapter, and narrate it, at 16×. */
 async function narrateOwn(s: Server): Promise<{ bookId: string; segments: Segment[] }> {
+  await s.speed(16);
   const bookId = (await s.importTo(DEMO_BASE, "A Book of the Test's Own")).id;
   await scriptAndCast(s, bookId, [1]);
   const queued = await s.request<{ jobs: Job[] }>(
@@ -172,9 +181,14 @@ async function narrateOwn(s: Server): Promise<{ bookId: string; segments: Segmen
   return { bookId, segments: script.body.segments };
 }
 
-describe("the server's two libraries", () => {
+describe("the server's two libraries, as they are opened", () => {
+  // these only read, so one server serves them both
+  let s: Server;
+  beforeAll(() => {
+    s = server();
+  });
+
   test("a path under /demo/api goes to the demo, and every other path to the real library", async () => {
-    const s = server();
     expect(await s.shelf(DEMO_BASE)).toEqual(SEEDED_TITLES);
     expect(await s.shelf(REAL_BASE)).toEqual([]);
     expect((await s.request(`${DEMO_BASE}/health`)).body).toEqual({ ok: true });
@@ -189,7 +203,6 @@ describe("the server's two libraries", () => {
   });
 
   test("a fresh demo is seeded with the world and the Simulated preset, every endpoint simulated, and a fresh real library with nothing", async () => {
-    const s = server();
     const demo = await s.request<{ endpoints: Endpoint[]; profiles: Profile[] }>(
       `${DEMO_BASE}/endpoints`,
     );
@@ -203,17 +216,15 @@ describe("the server's two libraries", () => {
         true,
       ]);
     }
-    const books = (await s.request<{ books: Book[] }>(`${DEMO_BASE}/books`)).body.books;
-    expect(books.map((b) => b.title)).toEqual(SEEDED_TITLES);
-    expect(books.every((b) => !b.importing && b.chapters!.total > 0)).toBe(true);
-
     const real = await s.request<{ endpoints: Endpoint[]; profiles: Profile[] }>(
       `${REAL_BASE}/endpoints`,
     );
     expect(real.body.endpoints).toEqual([]);
     expect(real.body.profiles).toEqual([]);
   });
+});
 
+describe("the server's two libraries", () => {
   test("a demo that is not fresh is left as it is when it is opened again", async () => {
     const net = noNetwork();
     const databaseUrl = join(mkdtempSync(join(tmpdir(), "audiobook-demo-")), "demo.db");
@@ -231,12 +242,16 @@ describe("the server's two libraries", () => {
     expect(left.books).toBe(books.length - 1);
   });
 
-  test("a book imported into one library is not on the other's shelf", async () => {
+  test("a book imported into one library is not on the other's shelf, and its cover is under its own base", async () => {
     const s = server();
-    await s.importTo(DEMO_BASE, "Only in the demo");
+    const book = await s.importTo(DEMO_BASE, "Only in the demo", { cover: true });
     await s.importTo(REAL_BASE, "Only in the library");
     expect(await s.shelf(DEMO_BASE)).toEqual([...SEEDED_TITLES, "Only in the demo"]);
     expect(await s.shelf(REAL_BASE)).toEqual(["Only in the library"]);
+
+    expect(book.coverImage).toMatch(new RegExp(`^${DEMO_BASE}/books/${book.id}/covers/`));
+    expect((await s.fetch(book.coverImage!)).status).toBe(200);
+    expect((await s.fetch(book.coverImage!.slice("/demo".length))).status).toBe(404);
   });
 
   test("the demo scripts and narrates with no network, and its clips are the demo's to serve", async () => {
@@ -284,21 +299,6 @@ describe("the server's two libraries", () => {
     expect((await build(body.cover.slice("/demo".length))).body.error?.message).toBe(REFUSED);
     expect((await build(body.cover)).body.error?.message).not.toBe(REFUSED);
   });
-
-  test("an EPUB's cover imported into the demo is kept under the demo's base", async () => {
-    const s = server();
-    const form = new FormData();
-    form.set(
-      "file",
-      await epubFile({ chapters: [{ title: "One", paragraphs: story(1) }], cover: { bytes: PNG } }),
-    );
-    const { body } = await s.request<{ book: Book }>(`${DEMO_BASE}/books/import`, {
-      method: "POST",
-      body: form,
-    });
-    expect(body.book.coverImage).toMatch(new RegExp(`^${DEMO_BASE}/books/${body.book.id}/covers/`));
-    expect((await s.fetch(body.book.coverImage!)).status).toBe(200);
-  });
 });
 
 describe("resetting the demo", () => {
@@ -343,9 +343,11 @@ describe("resetting the demo", () => {
   test("abandons the job it finds running, so nothing from before lands after", async () => {
     const s = server();
     const history = await s.jobIds(DEMO_BASE);
-    const bookId = (await s.importTo(DEMO_BASE, "Two Chapters", 2)).id;
+    const bookId = (await s.importTo(DEMO_BASE, "Two Chapters", { chapters: 2 })).id;
+    await s.speed(16);
     await scriptAndCast(s, bookId, [1, 2]);
-    // the Simulated endpoint takes most of a second a line, so the first job is still running
+    // at 1× the Simulated endpoint takes most of a second a line, so the first job is still running
+    await s.speed(1);
     await s.request(`${DEMO_BASE}/books/${bookId}/chapters/narrate`, jsonBody({ ids: [1, 2] }));
     expect(s.demo.runner.running?.kind).toBe("narration");
 
@@ -357,14 +359,21 @@ describe("resetting the demo", () => {
   });
 
   test("is the demo's alone: the real library has neither route", async () => {
-    const s = server();
-    await s.importTo(REAL_BASE, "Only in the library");
-    const refused = await s.request(`${REAL_BASE}/demo/reset`, { method: "POST" });
-    expect(refused.status).toBe(404);
-    const situation = await s.request(`${REAL_BASE}/demo/situations/fresh-book`, {
+    // the real library on its own: nothing here needs the demo opened beside it
+    const real = open("real", REAL_BASE, noNetwork().fetch);
+    const post = async (path: string) =>
+      (await real.app.request(`http://api.test${REAL_BASE}${path}`, { method: "POST" })).status;
+    const form = new FormData();
+    form.set("file", await epubFile({ chapters: [{ title: "One", paragraphs: story(1) }] }));
+    const imported = await real.app.request(`http://api.test${REAL_BASE}/books/import`, {
       method: "POST",
+      body: form,
     });
-    expect(situation.status).toBe(404);
-    expect(await s.shelf(REAL_BASE)).toEqual(["Only in the library"]);
+    expect(imported.status).toBe(201);
+
+    expect(await post("/demo/reset")).toBe(404);
+    expect(await post("/demo/situations/fresh-book")).toBe(404);
+    const listed = await real.app.request(`http://api.test${REAL_BASE}/books`);
+    expect(((await listed.json()) as { books: Book[] }).books).toHaveLength(1);
   });
 });

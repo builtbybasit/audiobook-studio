@@ -16,17 +16,17 @@ import {
   remembering,
   sampleFile,
   saved,
-  speechEndpoint,
+  cloneEndpoint,
 } from "../support/cloning";
 import { testApi, type TestApi } from "../support/server";
 
-const qwen = speechEndpoint({
+const qwen = cloneEndpoint({
   id: "qwen",
   name: "Qwen VC",
   baseUrl: "https://dashscope-intl.aliyuncs.com/api/v1",
   model: "qwen3-tts-vc-2026-01-22",
 });
-const minimax = speechEndpoint({
+const minimax = cloneEndpoint({
   id: "minimax",
   name: "MiniMax",
   baseUrl: "https://api.minimax.io/v1",
@@ -85,7 +85,7 @@ describe("what a clone costs", () => {
   });
 
   test("a provider that charges nothing leaves nothing in the ledger", async () => {
-    const api = await cloned(speechEndpoint());
+    const api = await cloned(cloneEndpoint());
     expect(ledger(api)).toEqual([]);
   });
 
@@ -138,7 +138,7 @@ describe("what the provider says beside the voice", () => {
     const warning = "Verify this voice on ElevenLabs before a line is spoken with it.";
     const { cloner } = remembering({ warning });
     const api = testApi({ cloner });
-    await saved(api, speechEndpoint());
+    await saved(api, cloneEndpoint());
     const { body } = await postClone(api, cloneForm(agreed(), [sampleFile()]));
     expect(body).toEqual({
       id: "new-voice-id",
@@ -159,6 +159,6 @@ describe("a provider that clones for some of its models", () => {
     expect(cloneModelsFor(audio)).toEqual(["qwen3-tts-vc-2026-01-22"]);
     // a provider that clones for every model, and one that clones for none, name nothing
     expect(cloneModelsFor(minimax)).toEqual([]);
-    expect(cloneModelsFor(speechEndpoint({ baseUrl: "https://api.openai.com/v1" }))).toEqual([]);
+    expect(cloneModelsFor(cloneEndpoint({ baseUrl: "https://api.openai.com/v1" }))).toEqual([]);
   });
 });

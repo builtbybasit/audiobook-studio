@@ -1,12 +1,13 @@
 // A server to test against: the real routes, the real schema, the real queue, a database that
 // lives in memory and goes away with the test.
+import { Database } from "bun:sqlite";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createApp } from "~/app";
 import { audioFiles, type AudioFiles } from "~/audio/files";
-import { openDb, type Db } from "~/db/client";
+import { connect, openDb, type Db } from "~/db/client";
 import { migrate } from "~/db/migrate";
 import { audiobookFiles } from "~/exports/files";
 import { exportHandler } from "~/jobs/export";
@@ -25,6 +26,8 @@ import type { VoiceCloner } from "~/providers/clone";
 import type { VoiceLister } from "~/providers/voices";
 import { voiceFiles } from "~/voices/files";
 import type { FetchLike } from "@/services/http";
+import type { Book, Character, Endpoint, Job } from "@/types";
+import { epubFile, type EpubInput } from "./epub";
 
 export interface TestApi {
   db: Db;
@@ -133,11 +136,17 @@ const noCloner: VoiceCloner = {
   clone: () => Promise.reject(noFake("cloner")),
 };
 
-/** A private database with the schema applied. */
+/** A database migrated once per file, copied for each test that asks — migrating is 25 ms a time. */
+let migrated: Uint8Array | undefined;
+
 export function testDb(): Db {
-  const db = openDb(":memory:");
-  migrate(db);
-  return db;
+  if (!migrated) {
+    const db = openDb(":memory:");
+    migrate(db);
+    migrated = db.$client.serialize();
+    db.$client.close();
+  }
+  return connect(Database.deserialize(migrated));
 }
 
 export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): Runner {
@@ -214,6 +223,126 @@ export const jsonBody = (body: unknown): RequestInit => ({
   headers: { "content-type": "application/json" },
   body: JSON.stringify(body),
 });
+
+/**
+ * A speech endpoint as the Endpoints page saves one: free, two lines at a time, every line whole,
+ * one voice (`studio/ash`), and no history. `over` is what a test is about — a price, a
+ * concurrency, a format — so it reads at the call site.
+ */
+export const speechEndpoint = (over: Partial<Endpoint> = {}): Endpoint => ({
+  id: "studio",
+  name: "Studio speech",
+  baseUrl: "http://localhost:8880/v1",
+  model: "studio-tts",
+  concurrency: 2,
+  enabled: true,
+  latency: 0,
+  failRate: 0,
+  price: 0,
+  needsKey: false,
+  maxChars: 0,
+  splitAt: "sentence",
+  voices: [{ id: "ash", gender: "m", label: "Ash" }],
+  history: [],
+  failures: 0,
+  rateLimits: 0,
+  backoffUntil: 0,
+  ...over,
+});
+
+/** Save these as the library's speech endpoints, as the Endpoints page does, replacing any. */
+export const saveEndpoints = (api: TestApi, endpoints: Endpoint[]) =>
+  api.request("/api/endpoints", {
+    ...jsonBody({ endpoints, profiles: [], credentials: [] }),
+    method: "PUT",
+  });
+
+/** Script these chapters and wait for the runner to finish. */
+export async function scriptChapters(api: TestApi, id: string, ids: number[]): Promise<void> {
+  await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids }));
+  await api.runner.idle();
+}
+
+/** Narrate these chapters and wait for the runner to finish; the jobs the request queued. */
+export async function narrateChapters(api: TestApi, id: string, ids: number[]): Promise<Job[]> {
+  const { body } = await api.request<{ jobs: Job[] }>(
+    `/api/books/${id}/chapters/narrate`,
+    jsonBody({ ids }),
+  );
+  await api.runner.idle();
+  return body.jobs;
+}
+
+/** Import an EPUB and shelve it; the book. Fails here, saying why, if the import was refused. */
+async function shelved(api: TestApi, input: EpubInput): Promise<Book> {
+  const { status, body } = await api.import<{ book: Book }>(await epubFile(input));
+  if (status !== 201)
+    throw new Error(`the import was refused (${status}): ${JSON.stringify(body)}`);
+  await api.request(`/api/books/${body.book.id}/confirm`, { method: "POST" });
+  return body.book;
+}
+
+export interface VoicedBookOptions {
+  /** saved first, as the library's speech endpoints; left out, whatever the test saved stands */
+  endpoints?: Endpoint[];
+  /** every chapter's paragraphs */
+  paragraphs: string[];
+  /** the voice every speaker is cast with — `studio/ash` — or one per speaker */
+  voiceOf: string | ((speaker: string) => string);
+  /** the chapters' titles, each with the same paragraphs; one chapter, "One", by default */
+  chapters?: string[];
+}
+
+/**
+ * A book ready to narrate: imported, shelved, every chapter scripted, and every speaker the script
+ * found cast. Nothing is narrated; the book's id.
+ */
+export async function voicedBook(
+  api: TestApi,
+  { endpoints, paragraphs, voiceOf, chapters = ["One"] }: VoicedBookOptions,
+): Promise<string> {
+  if (endpoints) await saveEndpoints(api, endpoints);
+  const { id } = await shelved(api, {
+    chapters: chapters.map((title) => ({ title, paragraphs })),
+  });
+  const all = chapters.map((_, i) => i + 1);
+  await scriptChapters(api, id, all);
+  const cast = await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`);
+  for (const c of cast.body.characters)
+    await api.request(`/api/books/${id}/characters/${encodeURIComponent(c.name)}`, {
+      ...jsonBody({ ...c, voice: typeof voiceOf === "string" ? voiceOf : voiceOf(c.name) }),
+      method: "PUT",
+    });
+  return id;
+}
+
+export interface NarratedBookOptions {
+  /** one chapter per pair, its title and its one paragraph — `line(title)` from `./epub` */
+  chapters: [title: string, line: string][];
+  /** the chapters to narrate; every one by default. Every chapter is scripted either way. */
+  ids?: number[];
+  /** the rest of the EPUB — a title, a cover */
+  epub?: Omit<EpubInput, "chapters">;
+}
+
+/**
+ * A book narrated, ready to build: imported, shelved, every chapter scripted, and `ids` narrated
+ * by the speech the API was given. A chapter is one paragraph, a few seconds of audio: what a build
+ * costs is the length of what it reads, and under ffmpeg nearly all of it.
+ */
+export async function narratedBook(
+  api: TestApi,
+  { chapters, ids, epub = {} }: NarratedBookOptions,
+): Promise<{ id: string; book: Book }> {
+  const book = await shelved(api, {
+    ...epub,
+    chapters: chapters.map(([title, line]) => ({ title, paragraphs: [line] })),
+  });
+  const all = chapters.map((_, i) => i + 1);
+  await scriptChapters(api, book.id, all);
+  await narrateChapters(api, book.id, ids ?? all);
+  return { id: book.id, book };
+}
 
 /**
  * A scripting provider a test holds the door on.

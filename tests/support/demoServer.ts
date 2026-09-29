@@ -30,12 +30,20 @@ export interface DemoServer {
   library: Library;
   /** the page's `fetch`, answered by the demo library */
   fetch: FetchLike;
-  /** `POST /demo/api/demo/situations/:id`, as the Demo drawer sends it */
+  /**
+   * `POST /demo/api/demo/situations/:id`, as the Demo drawer sends it. A situation rebuilds the
+   * demo whole, so a `reset()` right before one is wasted.
+   */
   situate(id: string): Promise<{ note: string; open: string }>;
   /** `POST /demo/api/demo/reset` */
   reset(): Promise<void>;
   /** let every job the demo's queue holds finish */
   idle(): Promise<void>;
+  /**
+   * Stop the queue, so the runs a situation set going no longer move the demo on between one
+   * read and the next. The next reset or situation starts it again.
+   */
+  hold(): Promise<void>;
 }
 
 /**
@@ -80,5 +88,6 @@ export async function demoServer(): Promise<DemoServer> {
     situate: (id) => post(`/demo/situations/${encodeURIComponent(id)}`),
     reset: async () => void (await post("/demo/reset")),
     idle: () => library.runner.idle(),
+    hold: () => library.runner.stop(),
   };
 }

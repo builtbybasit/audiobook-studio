@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-import { createPinia, setActivePinia } from "pinia";
+import { describe, expect, test } from "bun:test";
 import {
   activeWindow,
   baseRates,
@@ -16,11 +15,6 @@ import { calendarDay, endOfDay, endOfDayAfter, localClock, startOfDay } from "@/
 import { newProfile, tokenEstimate } from "@/lib/scripting";
 import type { RateWindow } from "@/types";
 import { FRI, SAT, THU, card, config, promo, utc } from "./support/pricingFixtures";
-
-beforeEach(() => {
-  Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  setActivePinia(createPinia());
-});
 
 describe("schedule boundaries", () => {
   test("a window that runs past midnight covers both sides of it", () => {

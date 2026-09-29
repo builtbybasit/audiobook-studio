@@ -1,6 +1,6 @@
 // The library store against the real API.
 //
-// `libraryClient.test.ts` next door proves the client and the routes agree. This is the layer
+// `tests/server/libraryClient.test.ts` proves the client and the routes agree. This is the layer
 // above: the store the screens actually read, driven through the real `HttpLibraryService` against
 // the real Hono app over a private in-memory database. A store action that forgets to await, an
 // import that never sends the file, or a screen left holding books the server does not have fails
@@ -203,6 +203,7 @@ describe("the library store with a server answering", () => {
     const id = (await libraryStore.importBook({ source: await volume(["One"]) }))!;
     expect(await libraryStore.discardImport(id)).toBe("book");
     expect(libraryStore.bookById(id)).toBeUndefined();
+    expect(libraryStore.chaptersOf(id)).toEqual([]);
     await libraryStore.load(true);
     expect(libraryStore.books).toEqual([]);
   });
@@ -216,9 +217,14 @@ describe("the library store with a server answering", () => {
     });
     expect(volId).not.toBeNull();
     expect(libraryStore.chaptersOf(id).map((c) => c.id)).toEqual([1, 2, 3]);
+    expect(libraryStore.importingVolume(id)?.id).toBe(volId!);
     expect(libraryStore.importingVolume(id)?.name).toBe("Vol. 2");
+    // the volume waits in the review; the book it joins stays on the shelf
+    expect(libraryStore.bookById(id)?.importing).toBeFalsy();
+    // and discarding it leaves the book as it was
     expect(await libraryStore.discardImport(id)).toBe("volume");
     expect(libraryStore.chaptersOf(id).map((c) => c.id)).toEqual([1, 2]);
+    expect(libraryStore.importingVolume(id)).toBeUndefined();
   });
 
   test("removing a book is permanent, and the toast does not pretend otherwise", async () => {

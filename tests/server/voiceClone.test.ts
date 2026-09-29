@@ -149,10 +149,9 @@ describe("the clone route", () => {
         Array.from({ length: 21 }, (_, i) => sampleFile(`t${i}.wav`)),
       ),
     ).toEqual([400, "Use at most 20 samples"]);
-    // Bun's form parser drops an empty file's name
     expect(
       await refused(agreed(), [sampleFile("silence.wav", new Uint8Array(), "audio/wav", 0)]),
-    ).toEqual([400, "One of the samples is empty"]);
+    ).toEqual([400, "silence.wav is empty"]);
     expect(asked).toEqual([]);
   });
 

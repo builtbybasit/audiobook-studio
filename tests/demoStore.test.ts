@@ -9,7 +9,7 @@
 // speed — the one thing it keeps across a seed — is put back to 1× after each test.
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
-import { DEMO_GROUPS, demoScenarios } from "@/mock/scenarios/catalogue";
+import { DEMO_GROUPS, demoScenarios } from "~/demo/seed/scenarios/catalogue";
 import { HttpDemoService, setDemoService } from "@/services/demo";
 import { APPLIED_KEY, REOPEN_KEY, setPageLoader, useDemoStore } from "@/stores/demo";
 import { useUiStore } from "@/stores/ui";

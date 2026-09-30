@@ -30,19 +30,16 @@
 // on ElevenLabs' site. It is answered all the same, named so it says what is left to do — failing
 // here would leave the voice made on the account, the recordings and the consent unkept, and a
 // second try would make a second voice.
-import type { SpeechUsage, Voice } from "@/types";
+import type { EndpointProbe, SpeechUsage, Voice } from "@/types";
 import { normalizeSpeechUsage } from "@/lib/pricing";
+import { elevenlabs } from "@/lib/providers/elevenlabs";
+import { formatDefaults, type SpeechProviderShape } from "@/lib/providers/types";
 import { audioAnswer } from "~/providers/answer";
 import { call, ProviderError } from "~/providers/http";
 import type { SpeechCallOptions, SpeechRequest } from "~/providers/send";
 import type { SpeechInput } from "~/providers/speech";
-import type { ProbeResult, ProviderTarget } from "~/providers/target";
+import type { ProviderTarget } from "~/providers/target";
 import type { SpeechWire } from "~/providers/speech/wire";
-
-/** What this app asks for when the endpoint names no rate: 24 kHz, which every plan may ask for. */
-const WAV_RATE = 24000;
-const MP3_RATE = 44100;
-const MP3_BITRATE = 128;
 
 /** A voice list is read whole, a hundred a page where the page size can be asked for. */
 const VOICE_PAGE = 100;
@@ -69,13 +66,19 @@ export function elevenLabsHeaders(target: ProviderTarget): Record<string, string
 export const verifyFirst = (target: ProviderTarget): string =>
   `Verify this voice on ${target.name} before a line is spoken with it.`;
 
-/** The `output_format` a line is asked for, from the endpoint's format, rate and bitrate. */
+/**
+ * The `output_format` a line is asked for, from the endpoint's format, rate and bitrate, and what
+ * `shape` gives the rest: for WAV, 24 kHz, which every ElevenLabs plan may ask for.
+ */
 export function elevenLabsOutputFormat(
   input: Pick<SpeechInput, "encoding" | "sampleRate">,
+  shape: SpeechProviderShape = elevenlabs,
 ): string {
   const { format, bitrate } = input.encoding;
-  if (format === "mp3") return `mp3_${input.sampleRate ?? MP3_RATE}_${bitrate ?? MP3_BITRATE}`;
-  return `wav_${input.sampleRate ?? WAV_RATE}`;
+  const defaults = formatDefaults(shape, format);
+  const rate = input.sampleRate ?? defaults.rate;
+  if (format === "mp3") return `mp3_${rate}_${bitrate ?? defaults.bitrate}`;
+  return `wav_${rate}`;
 }
 
 /** The characters an answer's `character-cost` header counts, when it holds a count. */
@@ -85,17 +88,22 @@ function characterCost(res: Response): SpeechUsage | null {
   return characters > 0 ? normalizeSpeechUsage({ characters }, "plain") : null;
 }
 
-/** One line as either API takes it; `instructions` is what goes beside the words, or nothing. */
+/**
+ * One line as either API takes it, `shape` saying which; `instructions` is what goes beside the
+ * words, or nothing.
+ */
 export function elevenLabsRequest(
+  shape: SpeechProviderShape,
   input: SpeechInput,
   target: ProviderTarget,
   voice: string,
   instructions: string,
 ): SpeechRequest {
   const { format } = input.encoding;
-  const query = new URLSearchParams({ output_format: elevenLabsOutputFormat(input) });
+  const query = new URLSearchParams({ output_format: elevenLabsOutputFormat(input, shape) });
+  const path = shape.requestPath(target.model, encodeURIComponent(voice));
   return {
-    url: `${elevenLabsRoot(target.baseUrl)}/text-to-speech/${encodeURIComponent(voice)}?${query}`,
+    url: `${elevenLabsRoot(target.baseUrl)}${path}?${query}`,
     init: {
       method: "POST",
       headers: elevenLabsHeaders(target),
@@ -124,7 +132,7 @@ export async function modelsProbe(
   target: ProviderTarget,
   signal: AbortSignal,
   options: SpeechCallOptions,
-): Promise<ProbeResult> {
+): Promise<EndpointProbe> {
   const started = Date.now();
   const res = await call(
     target,
@@ -188,7 +196,7 @@ export const elevenLabsWire: SpeechWire = {
   },
 
   // ElevenLabs has no instructions field, so nothing is sent beside the words, and none is billed
-  request: (input, target, voice) => elevenLabsRequest(input, target, voice, ""),
+  request: (input, target, voice) => elevenLabsRequest(elevenlabs, input, target, voice, ""),
   probe: modelsProbe,
 
   /** Gender is one of a voice's free-form labels, when it has it. */

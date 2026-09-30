@@ -8,6 +8,7 @@ import { and, asc, eq, max } from "drizzle-orm";
 
 import type { Character, LexEntry } from "@/types";
 import { NARRATOR, narrator, newSpeaker } from "@/lib/cast";
+import type { PromptCastMember } from "@/lib/prompt";
 import type { Db, Tx } from "~/db/client";
 import { characters, lexiconEntries } from "~/db/schema";
 import { characterValues, lexiconValues, toCharacter, toLexEntry } from "~/db/rows";
@@ -20,6 +21,23 @@ export function readCast(db: Db | Tx, bookId: string): Character[] {
     .orderBy(asc(characters.position), asc(characters.name))
     .all()
     .map(toCharacter);
+}
+
+/**
+ * The speakers the book already has, as the prompt's cast tags read them, so a chunk read on its
+ * own still calls Mara "Mara". A scripting run and a prompt trial both send it.
+ */
+export function readSpeakers(db: Db | Tx, bookId: string): PromptCastMember[] {
+  return db
+    .select({
+      name: characters.name,
+      aliases: characters.aliases,
+      gender: characters.gender,
+      description: characters.description,
+    })
+    .from(characters)
+    .where(eq(characters.bookId, bookId))
+    .all();
 }
 
 export function getCharacter(db: Db | Tx, bookId: string, name: string): Character | undefined {

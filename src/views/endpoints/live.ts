@@ -6,9 +6,8 @@
 // read by `useEndpointLive`), across every job and every chapter rather than the chapters this
 // browser has open, and its cooldown is the gate's too — so the wait reasons and the effective
 // limit say what the server is actually holding the lines for.
-import { keyInPlace } from "@/services/endpointSettings";
 import type { Job, RequestRecord, WaitReason } from "@/types";
-import type { UnifiedEndpoint } from "@/lib/endpoints";
+import { speechReadiness, type UnifiedEndpoint } from "@/lib/endpoints";
 
 import { useScriptsStore } from "@/stores/scripts";
 import { useCastStore } from "@/stores/cast";
@@ -51,22 +50,32 @@ export function useEndpointActivity() {
     };
   }
 
+  /** What holds this endpoint's work before any slot or budget does: `speechReadiness`. */
+  const readiness = (u: UnifiedEndpoint) => speechReadiness(u.profile ?? u.endpoint!, Date.now());
+
   function waitReasonFor(u: UnifiedEndpoint, active: number, bookId: string | null): WaitReason {
-    if (!u.enabled) return "paused";
-    if (u.needsKey && !keyInPlace(u.profile ?? u.endpoint)) return "nokey";
-    if (u.backoffUntil > Date.now()) return "cooldown";
+    const { state } = readiness(u);
+    if (state === "paused" || state === "nokey" || state === "cooldown") return state;
     if (active >= u.concurrency) return "concurrency";
     if (bookId) {
       const book = libraryStore.bookById(bookId);
       const cap = book?.budget?.cap;
       // what is spent *and* what work already in flight has reserved: a queued request is waiting
       // on the budget as soon as the cap is committed, not only once it has been charged
-      if (cap != null && jobsStore.spent(bookId) + jobsStore.reserved(bookId) >= cap)
+      // A book whose spending has not been read is not said to be waiting on its budget: that
+      // would be a guess, where the server's own answer says so once it is read.
+      const spent = jobsStore.spent(bookId);
+      const reserved = jobsStore.reserved(bookId);
+      if (cap != null && spent != null && reserved != null && spent + reserved >= cap)
         return "budget";
+      const scriptSpent = jobsStore.scriptSpent(bookId);
+      const scriptReserved = jobsStore.scriptReserved(bookId);
       if (
         u.kind === "scripting" &&
         book?.scriptBudget != null &&
-        jobsStore.scriptSpent(bookId) + jobsStore.scriptReserved(bookId) >= book.scriptBudget
+        scriptSpent != null &&
+        scriptReserved != null &&
+        scriptSpent + scriptReserved >= book.scriptBudget
       )
         return "budget";
     }
@@ -76,13 +85,10 @@ export function useEndpointActivity() {
   function liveActivity(u: UnifiedEndpoint): LiveActivity {
     const { active, queued } = u.kind === "scripting" ? scriptingCounts(u) : ttsCounts(u);
     const waiting = queued ? waitReasonFor(u, active, null) : null;
-    // pausing or a cooldown drops the ceiling that is actually in force to zero
+    // pausing, a missing key or a cooldown drops the ceiling that is actually in force to zero
+    const { state } = readiness(u);
     const effectiveLimit =
-      !u.enabled ||
-      u.backoffUntil > Date.now() ||
-      (u.needsKey && !keyInPlace(u.profile ?? u.endpoint))
-        ? 0
-        : u.concurrency;
+      state === "paused" || state === "nokey" || state === "cooldown" ? 0 : u.concurrency;
     return { active, queued, waiting, effectiveLimit };
   }
 

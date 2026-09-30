@@ -24,14 +24,15 @@
 // asked for; one answered `failed` is not, unless the provider bills failures; so is every item of
 // a batch refused whole after the retries, and every item a stream that was cut off never reached,
 // with the reason. A cancel reports nothing more: what the server made of the items it was still
-// rendering is not knowable.
+// rendering is not knowable. A cut is thrown as a `BatchCut`, whose lines the job may send again,
+// and a refusal as the `ProviderError` `call` gave up with, whose lines it does not.
 import type { AudioFormat, SpeechUsage } from "@/types";
 import { normalizeSpeechUsage } from "@/lib/pricing";
 import { audioClip } from "~/providers/answer";
 import { call, jsonHeaders, ProviderError, type CallStats } from "~/providers/http";
 import type { SpeechCallOptions } from "~/providers/send";
 import type { SentSpeech } from "~/providers/sent";
-import type { BatchLimits, SpeechBatch } from "~/providers/speech";
+import { BatchCut, type BatchLimits, type SpeechBatch } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 
 /** What a server answers when it has no capabilities route: no batches, and no promises. */
@@ -368,10 +369,8 @@ export async function sendBatch(
         ? "said a batch was done"
         : "stopped sending a batch before it said it was done";
   return failOpen(
-    new ProviderError(
+    new BatchCut(
       `${target.name} ${why}, leaving ${open.size} of its ${items.length} lines unanswered`,
-      0,
-      true,
     ),
     billsFailures,
   );

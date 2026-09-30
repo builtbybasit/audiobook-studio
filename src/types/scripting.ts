@@ -127,10 +127,8 @@ export interface Profile {
 }
 
 export interface ScriptSettings {
-  profile: string;
-  stripWatermarks: boolean;
-  /** re-apply the manual corrections of the script a run replaces, where the line still matches */
-  keepEdits: boolean;
+  /** the profile runs go to, by id; null until one is picked, when the first usable one is used */
+  profile: string | null;
 }
 
 /** One segment whose speaker or direction moved between two script runs. */
@@ -166,6 +164,14 @@ export interface ScriptEstimate {
   blockers: string[];
   /** the same numbers priced: the alternatives, and what could move the figure before the run ends */
   rates: RateEstimate | null;
+  /**
+   * What the book may still spend on scripting: the lower of its scripting budget and its overall
+   * cap, less what is spent and held. Infinity when neither is set; below zero when overspent;
+   * NaN while the book's spending has not been read, which blocks the run until it has.
+   */
+  remaining: number;
+  /** chapters whose text has not been read yet, so nothing above counts them: not ready to run */
+  reading: number;
 }
 
 // ---- trying a prompt on one chunk ----

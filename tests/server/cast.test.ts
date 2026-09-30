@@ -5,23 +5,11 @@
 // from prose that names two speakers.
 import { describe, expect, test } from "bun:test";
 
-import type { Book, Chapter, Character, LexEntry, Segment } from "@/types";
+import type { Cast, Character, ImportedBook, LexEntry, MovedLines, Segment } from "@/types";
 import { readScript, scriptRevision } from "~/db/script";
 import { epubFile, story } from "../support/epub";
 import { jsonBody, testApi, type TestApi } from "../support/server";
 
-interface ImportResult {
-  book: Book;
-  chapters: Chapter[];
-}
-interface Cast {
-  characters: Character[];
-  lexicon: LexEntry[];
-}
-interface Moved {
-  characters: Character[];
-  moved: { chapterId: number; ids: number[]; revision: number }[];
-}
 interface Failure {
   error: { code: string; message: string; detail?: string };
 }
@@ -35,7 +23,7 @@ const dialogue = () => [
 
 /** A shelved book whose first two chapters the fake model has scripted. */
 async function scripted(api = testApi()) {
-  const { body } = await api.import<ImportResult>(
+  const { body } = await api.import<ImportedBook>(
     await epubFile({
       title: "Moonlight Ledger",
       chapters: ["One", "Two", "Three"].map((title) => ({ title, paragraphs: dialogue() })),
@@ -50,7 +38,7 @@ async function scripted(api = testApi()) {
 
 /** A shelved book nothing has scripted, for what does not need a cast. */
 async function shelved(api = testApi()) {
-  const { body } = await api.import<ImportResult>(
+  const { body } = await api.import<ImportedBook>(
     await epubFile({ chapters: [{ title: "One", paragraphs: story(2) }] }),
   );
   await api.request(`/api/books/${body.book.id}/confirm`, { method: "POST" });
@@ -133,7 +121,7 @@ describe("renaming and merging", () => {
   test("a rename moves every line in every chapter, and moves each chapter's revision on", async () => {
     const { api, id } = await scripted();
     const before = [scriptRevision(api.db, id, 1), scriptRevision(api.db, id, 2)];
-    const { status, body } = await api.request<Moved>(
+    const { status, body } = await api.request<MovedLines>(
       `/api/books/${id}/characters/Mara/rename`,
       jsonBody({ to: "Mara Voss" }),
     );
@@ -164,7 +152,7 @@ describe("renaming and merging", () => {
 
   test("a merge folds the name and its aliases into the speaker that stays", async () => {
     const { api, id } = await scripted();
-    const { body } = await api.request<Moved>(
+    const { body } = await api.request<MovedLines>(
       `/api/books/${id}/characters/Tobin/merge`,
       jsonBody({ into: "Mara" }),
     );
@@ -176,7 +164,7 @@ describe("renaming and merging", () => {
 
   test("removing a speaker hands their lines to the Narrator, who cannot be removed", async () => {
     const { api, id } = await scripted();
-    const { body } = await api.request<Moved>(`/api/books/${id}/characters/Tobin`, {
+    const { body } = await api.request<MovedLines>(`/api/books/${id}/characters/Tobin`, {
       method: "DELETE",
     });
     expect(names(body.characters)).toEqual(["Narrator", "Mara"]);
@@ -203,7 +191,7 @@ describe("renaming and merging", () => {
     expect(merged.body.error.detail).toContain("into the Narrator");
     expect(names((await castOf(api, id)).characters)).toEqual(["Narrator", "Mara", "Tobin"]);
     expect(speakersOf(readScript(api.db, id, 1))).toEqual(["Narrator", "Mara", "Tobin"]);
-    const into = await api.request<Moved>(
+    const into = await api.request<MovedLines>(
       `/api/books/${id}/characters/Tobin/merge`,
       jsonBody({ into: "Narrator" }),
     );
@@ -214,12 +202,12 @@ describe("renaming and merging", () => {
   test("an undo puts exactly the lines that moved back, and the speaker with them", async () => {
     const { api, id } = await scripted();
     const tobin = (await castOf(api, id)).characters[2];
-    const { body: merged } = await api.request<Moved>(
+    const { body: merged } = await api.request<MovedLines>(
       `/api/books/${id}/characters/Tobin/merge`,
       jsonBody({ into: "Mara" }),
     );
     // the lines Mara always had stay hers, because the undo names only the lines that moved
-    const { body: restored } = await api.request<Moved>(
+    const { body: restored } = await api.request<MovedLines>(
       `/api/books/${id}/characters/attribute`,
       jsonBody({
         character: tobin,

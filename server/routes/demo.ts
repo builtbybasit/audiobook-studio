@@ -8,7 +8,7 @@ import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
 import { SPEEDS } from "@/lib/demoSpeed";
-import { DEMO_GROUPS, demoScenario, demoScenarios } from "@/mock/scenarios/catalogue";
+import { DEMO_GROUPS, demoScenario, demoScenarios } from "~/demo/seed/scenarios/catalogue";
 import type { AppliedSituation, DemoScenario, DemoSituation, DemoSituations } from "@/types";
 import type { Pace } from "~/demo/pace";
 import type { Seeding } from "~/demo/seed";

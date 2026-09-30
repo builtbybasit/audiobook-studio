@@ -5,12 +5,12 @@
 // choice of provider the registry's (`registry.ts`). What the page also needs to know about a
 // provider without a request is its description in `lib/providers/`.
 import { call, ProviderError } from "~/providers/http";
-import type { MadeVoice } from "@/types";
+import type { EndpointProbe, MadeVoice, VoiceListPage } from "@/types";
 import type { CloneRequest } from "~/providers/clone";
 import type { SpeechCallOptions, SpeechRequest } from "~/providers/send";
 import type { BatchLimits, SpeechBatch, SpeechInput } from "~/providers/speech";
-import type { ProbeResult, ProviderTarget } from "~/providers/target";
-import type { VoicePage, VoiceQuery } from "~/providers/voices";
+import type { ProviderTarget } from "~/providers/target";
+import type { VoiceQuery } from "~/providers/voices";
 
 export interface SpeechWire {
   /**
@@ -24,13 +24,13 @@ export interface SpeechWire {
     target: ProviderTarget,
     signal: AbortSignal,
     options: SpeechCallOptions,
-  ): Promise<ProbeResult>;
+  ): Promise<EndpointProbe>;
   /** The account's own voices, every page up to a cap — the Voices tab's "Fetch from server". */
   voices(
     target: ProviderTarget,
     signal: AbortSignal,
     options: SpeechCallOptions,
-  ): Promise<VoicePage>;
+  ): Promise<VoiceListPage>;
   /**
    * A voice made from someone's samples and kept on the account, answered as a voice a line can
    * then be spoken with by id — for a provider whose description has `cloning`, and only those.
@@ -85,11 +85,11 @@ export interface SpeechWire {
     query: VoiceQuery,
     signal: AbortSignal,
     options: SpeechCallOptions,
-  ): Promise<VoicePage>;
+  ): Promise<VoiceListPage>;
 }
 
 /** A list answered in one go, as a page: every voice, nothing more to fetch. */
-export const onePage = (voices: VoicePage["voices"]): VoicePage => ({
+export const onePage = (voices: VoiceListPage["voices"]): VoiceListPage => ({
   voices,
   total: voices.length,
   page: 1,

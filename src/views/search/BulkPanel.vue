@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
+import { plural } from "@/lib/contents";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useScriptsStore } from "@/stores/scripts";
 
@@ -133,7 +134,7 @@ const facts = computed<Fact[]>(() => {
   const out: Fact[] = [
     {
       label: "selected",
-      value: `${p.selected} line${p.selected === 1 ? "" : "s"}`,
+      value: `${plural(p.selected, "line")}`,
       hint: `in ${chapters.value} ch`,
     },
     {
@@ -300,8 +301,8 @@ function apply() {
       >
         <WarnIcon class="icon shrink-0" />
         <span
-          >{{ preview.stale }} rendered clip{{ preview.stale === 1 ? "" : "s" }} will need
-          regeneration — the audio is kept for comparison until you re-narrate.</span
+          >{{ plural(preview.stale, "rendered clip") }} will need regeneration — the audio is kept
+          for comparison until you re-narrate.</span
         >
       </div>
       <div
@@ -320,14 +321,14 @@ function apply() {
       >
         <span class="text-[9px] uppercase tracking-wider text-zinc-400">replaces</span>
         <span class="ml-1.5"
-          >{{ withDirection }} selected line{{ withDirection === 1 ? "" : "s" }} already
+          >{{ plural(withDirection, "selected line") }} already
           {{ withDirection === 1 ? "carries" : "carry" }} a direction</span
         >
       </div>
       <div v-if="kind === 'flag' && alreadyFlagged" class="mt-2 rounded bg-violet-500/5 px-2 py-1">
         <span class="text-[9px] uppercase tracking-wider text-zinc-400">already flagged</span>
         <span class="ml-1.5"
-          >{{ alreadyFlagged }} selected line{{ alreadyFlagged === 1 ? "" : "s" }} —
+          >{{ plural(alreadyFlagged, "selected line") }} —
           {{
             replace
               ? "their flags and notes will be replaced"

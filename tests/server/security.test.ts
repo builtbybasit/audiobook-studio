@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 
 import JSZip from "jszip";
 
+import { env } from "~/env";
 import { checkArchive } from "~/epub/archive";
 import { EpubParseError } from "~/epub/parse";
 import { AppError } from "~/lib/errors";
@@ -215,5 +216,13 @@ describe("what every response carries, and how a malformed request is answered",
     expect(status).toBe(413);
     expect(body.error.code).toBe("too_large");
     expect(body.error.detail).toContain("MAX_UPLOAD_MB");
+  });
+
+  test("a file one byte over the limit is refused, though its body is inside the envelope's allowance", async () => {
+    const over = new Uint8Array(env.MAX_UPLOAD_MB * MB + 1);
+    const { status, body } = await testApi().import<Refusal>(upload(over.buffer, "big.epub"));
+    expect(status).toBe(413);
+    expect(body.error.message).toBe(`That file is larger than the ${env.MAX_UPLOAD_MB} MB limit`);
+    expect(body.error.detail).toContain(`big.epub is ${env.MAX_UPLOAD_MB}.0 MB`);
   });
 });

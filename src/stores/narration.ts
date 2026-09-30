@@ -41,11 +41,28 @@ import { effectiveRates } from "@/lib/pricing";
 import { sampleRateLabel, speechInstructions } from "@/lib/speech";
 import { plural } from "@/lib/contents";
 import { key } from "@/lib/scriptReview";
-import { ApiError } from "@/services/http";
 import { jobsService } from "@/services/jobs";
 import { libraryService } from "@/services/library";
+import { fetchCast } from "@/queries/cast";
+import { fetchScript } from "@/queries/chapterScript";
+import { fetchSpend } from "@/queries/spend";
 import type { BillableUnits, SpeechEstimate } from "@/types";
+import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
+
+/**
+ * Take the revision a one-line write moved a chapter's script to — but only when it is the very next
+ * one after the revision this copy was read at. Further on, something else wrote the chapter in
+ * between (a clip landed) that this copy has not read, and naming that revision would let the next
+ * edit write over it; the chapter's next read brings both, and an edit before then is refused and
+ * reads it.
+ */
+function stepRevision(bookId: string, chId: number, revision: number): void {
+  const scriptsStore = useScriptsStore();
+  if (scriptsStore._revision[key(bookId, chId)] === revision - 1)
+    scriptsStore._adoptRevision(bookId, chId, revision);
+}
+
 export const useNarrationStore = defineStore("narration", {
   getters: {
     expressionRender(): (bookId: string, segment: Segment) => ExpressionPlan {
@@ -83,7 +100,6 @@ export const useNarrationStore = defineStore("narration", {
           ),
         );
     },
-    // speakers whose voice can't be rendered right now: voice/endpoint gone, endpoint paused, key missing
     /** Everything a clip was rendered with that the script no longer says — empty means "still current".
      *  One definition, so the ledger's amber line, a rejected retake and a finished render agree. */
     clipDrift(): (bookId: string, s: Segment, a?: SegmentAudio) => string[] {
@@ -145,7 +161,10 @@ export const useNarrationStore = defineStore("narration", {
       };
     },
     /**
-     * Why this run cannot start, in the sentences the run strip shows — or empty when it can.
+     * Why this run cannot start, in the sentences the run strip shows and in the order worth
+     * fixing — or empty when it can: the Narrator's voice and the book's pause, then what the
+     * estimate says of this run, then the voices the cast routes to. `startRun` refuses on the
+     * same list, so a press the strip would refuse is refused wherever it comes from.
      *
      * In the store rather than in whichever panel has an estimate, and built on the estimate's
      * `worstCase` — the figure the server reserves against the cap, from the same
@@ -153,40 +172,48 @@ export const useNarrationStore = defineStore("narration", {
      * green-lights a run the server then refuses. Note the cap is compared against a per-endpoint
      * sum of undiscounted prices, never a single max over the aggregate: two endpoints on different
      * discounts do not add up the same way.
+     *
+     * It takes the estimate rather than working one out: the page already has it, and the strip
+     * re-renders on every progress tick while a run is in flight, so a second pass here would cost
+     * two `expressionRender` calls per line, several times a second, for a number already in hand.
      */
-    blockers(): (
-      bookId: string,
-      ids: number[],
-      scope?: NarrationScope,
-      keepPending?: boolean,
-    ) => string[] {
+    blockers(): (bookId: string, est: NarrationEstimate) => string[] {
+      const castStore = useCastStore();
       const jobsStore = useJobsStore();
       const libraryStore = useLibraryStore();
 
-      return (bookId, ids, scope = "all", keepPending = true) => {
-        // one estimate pass: it already grouped and priced this run's lines per endpoint, and
-        // carries the cap's own figure on `worstCase`. This strip re-renders on every progress tick
-        // while a run is in flight, so a second grouping here would cost two `expressionRender`
-        // calls per line, several times a second, for a number already in hand.
-        const est = this.estimate(bookId, ids, scope, keepPending);
+      return (bookId, est) => {
         const out: string[] = [];
-        if (!est.segments) return out;
+        if (!castStore.charactersOf(bookId).find((c) => c.name === "Narrator")?.voice)
+          out.push("Assign the Narrator’s voice to start.");
+        const book = libraryStore.bookById(bookId);
+        if (book?.budget?.paused) out.push("This book is paused (overview → resume).");
         if (est.unrouted)
           out.push(
             `${est.unrouted} line${est.unrouted === 1 ? "" : "s"} have no voice to render with. Assign one on Cast first.`,
           );
-        const cap = libraryStore.bookById(bookId)?.budget?.cap;
-        if (cap != null) {
+        const cap = book?.budget?.cap;
+        if (est.segments && cap != null) {
           const cost = est.worstCase;
-          const spent = jobsStore.spent(bookId);
-          const held = jobsStore.reserved(bookId);
-          if (spent + held + cost > cap)
+          // the ledger's sums, or nothing while they have not been read — never a zero standing
+          // in for spending nobody has counted yet
+          const spent: number | undefined = jobsStore.spent(bookId);
+          const held: number | undefined = jobsStore.reserved(bookId);
+          if (spent == null || held == null)
+            out.push("Reading what this book has spent, to check this run against its cap…");
+          else if (spent + held + cost > cap)
             out.push(
               `Over the book's $${cap.toFixed(2)} cap: $${spent.toFixed(2)} spent` +
                 (held > 0 ? `, $${held.toFixed(2)} held by work already running` : "") +
                 `, ${money(cost)} for this — priced without today's discounts, because they can end mid-run.`,
             );
         }
+        const byReason: Record<string, string[]> = {};
+        for (const i of castStore.routingIssues(bookId)) (byReason[i.reason] ??= []).push(i.name);
+        for (const [reason, names] of Object.entries(byReason))
+          out.push(
+            `${names.slice(0, 3).join(", ")}${names.length > 3 ? ` +${names.length - 3}` : ""}: ${reason}.`,
+          );
         return out;
       };
     },
@@ -321,14 +348,26 @@ export const useNarrationStore = defineStore("narration", {
       scope?: NarrationScope,
       keepPending?: boolean,
     ) => NarrationEstimate {
-      const endpointsStore = useEndpointsStore();
+      return (bookId, ids, scope = "all", keepPending = true) =>
+        this.estimateOf(
+          bookId,
+          this.narrationRunPlan(bookId, ids, scope, keepPending),
+          keepPending,
+        );
+    },
+    /**
+     * What running `plan` would cost: `estimate` for a page that already has the plan in hand, so
+     * the picker, the strip and the panel read one plan and one estimate rather than each working
+     * out their own.
+     */
+    estimateOf(): (bookId: string, plan: RunPlan, keepPending?: boolean) => NarrationEstimate {
       const scriptsStore = useScriptsStore();
 
-      return (bookId, ids, scope = "all", keepPending = true) => {
+      return (bookId, plan, keepPending = true) => {
+        const scope = plan.scope ?? "all";
         // The plan decides which chapters are in the run and which are left out; the estimate prices
         // what it chose. Re-deriving the eligibility cascade here is how the panel and the button
         // start disagreeing about the same press.
-        const plan = this.narrationRunPlan(bookId, ids, scope, keepPending);
         const lines: Segment[] = [];
         let chars = 0;
         let stale = 0;
@@ -404,7 +443,6 @@ export const useNarrationStore = defineStore("narration", {
           unrouted,
           requests: rows.reduce((a, e) => a + e.requests, 0),
           split: rows.reduce((a, e) => a + e.split, 0),
-          endpoints: endpointsStore.endpoints.filter((e) => e.enabled).length,
           per: rows,
         };
       };
@@ -505,23 +543,26 @@ export const useNarrationStore = defineStore("narration", {
      * clip renders its replacement beside it, and the clip in the book keeps playing until the
      * replacement lands. The server marks the chapters it queued and the response carries them as
      * they now stand; a chapter it left out — skipped for the audiobook, not scripted, already being
-     * narrated, or with nothing in the scope — is said so in the toast.
+     * narrated, or with nothing in the scope — is said so in the toast. True when anything was
+     * queued.
+     *
+     * This checks nothing the run strip shows as a blocker: a retry goes through `startRun`.
      */
     async runNarration(
       bookId: string,
       ids: number[],
       { scope = "all", quiet = false }: { scope?: NarrationScope; quiet?: boolean } = {},
-    ): Promise<void> {
+    ): Promise<boolean> {
       const jobsStore = useJobsStore();
       const libraryStore = useLibraryStore();
       const uiStore = useUiStore();
 
-      if (libraryStore._blocked(bookId, "narrate")) return;
+      if (libraryStore._blocked(bookId, "narrate")) return false;
       try {
         const { jobs, skipped, chapters } = await jobsService().narrateChapters(bookId, ids, scope);
         libraryStore.chapters[bookId] = chapters;
         await jobsStore._changed();
-        if (quiet) return;
+        if (quiet) return jobs.length > 0;
         const count = (why: (typeof skipped)[number]["why"]) =>
           skipped.filter((s) => s.why === why).length;
         const notes = [
@@ -540,7 +581,7 @@ export const useNarrationStore = defineStore("narration", {
             description:
               notes.join("; ") || "The selection had no chapters the server could narrate.",
           });
-          return;
+          return false;
         }
         const replacing = jobs.filter((j) => j.bulk?.op === "Re-narrate").length;
         uiStore.toast(
@@ -554,16 +595,54 @@ export const useNarrationStore = defineStore("narration", {
             timeout: 8000,
           },
         );
+        return true;
       } catch (cause) {
-        this._failed("queue narration", cause);
+        toastFailure("queue narration", cause);
+        return false;
       }
+    },
+    /**
+     * Start a run the way the run strip would, refusing — and saying why — while it has any
+     * blocker (`blockers`). A retry from the Queue may be of a book no page has open, so what the
+     * blockers are worked out from is read first when it is not here: the chapters' scripts, the
+     * cast and the book's spending. True when anything was queued.
+     */
+    async startRun(
+      bookId: string,
+      ids: number[],
+      opts: { scope?: NarrationScope; quiet?: boolean } = {},
+    ): Promise<boolean> {
+      const castStore = useCastStore();
+      const jobsStore = useJobsStore();
+      const scriptsStore = useScriptsStore();
+      const uiStore = useUiStore();
+
+      // a read that fails leaves its part unread, and the blockers below then say so
+      const quietly = (read: Promise<unknown>) => read.catch(() => {});
+      await Promise.all([
+        ...ids
+          .filter((chId) => !scriptsStore.held(bookId, chId))
+          .map((chId) => quietly(fetchScript(bookId, chId))),
+        castStore.held(bookId) ? undefined : quietly(fetchCast(bookId)),
+        jobsStore.spendOf(bookId) ? undefined : quietly(fetchSpend(bookId)),
+      ]);
+      const blockers = this.blockers(bookId, this.estimate(bookId, ids, opts.scope));
+      if (blockers.length) {
+        uiStore.toast("Narration can’t start yet", {
+          kind: "warn",
+          description: blockers.join(" "),
+          timeout: 8000,
+        });
+        return false;
+      }
+      return this.runNarration(bookId, ids, opts);
     },
     /**
      * The lines the script has moved past, as the server counts them from the clips it holds: the
      * "missing & changed" scope over one chapter.
      */
     renarrateStale(bookId: string, chId: number): void {
-      void this.runNarration(bookId, [chId], { scope: "fill" });
+      void this.startRun(bookId, [chId], { scope: "fill" });
     },
     /**
      * One line, asked for by hand. The server's smallest unit of work is a chapter at a scope: a
@@ -574,12 +653,12 @@ export const useNarrationStore = defineStore("narration", {
       const scriptsStore = useScriptsStore();
 
       const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
-      if (s && segmentFailed(s)) void this.runNarration(bookId, [chId], { scope: "failed" });
+      if (s && segmentFailed(s)) void this.startRun(bookId, [chId], { scope: "failed" });
       else this._unavailable("Re-renders of one line");
     },
     /** Every request in this chapter that failed, and only those — a replacement that failed too. */
     retryFailed(bookId: string, chId: number): void {
-      void this.runNarration(bookId, [chId], { scope: "failed" });
+      void this.startRun(bookId, [chId], { scope: "failed" });
     },
     /** Say what the server cannot do yet, and change nothing. */
     _unavailable(what: string): void {
@@ -591,44 +670,81 @@ export const useNarrationStore = defineStore("narration", {
         timeout: 8000,
       });
     },
-    /** Say a request failed, and change nothing. */
-    _failed(what: string, cause: unknown): void {
-      const uiStore = useUiStore();
-      const api = cause instanceof ApiError ? cause : null;
-      uiStore.toast(api ? api.message : `Could not ${what}`, {
-        kind: "error",
-        description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
-        timeout: 8000,
-      });
-    },
     // ---------- audio review & retakes ----------
     // A request can succeed and still sound wrong. The listener flags what is wrong, asks for another
     // take, then plays the two against each other and keeps one; the loser stays in the take list.
     // A retake renders into `segment.candidate`, never into `segment.audio`: the clip in the book keeps
     // playing, timing the chapter and going into the export until the listener actually accepts the
     // new one. Nothing about the book changes on the strength of a request that merely succeeded.
+    /**
+     * Raise or replace a line's flag. It shows at once, and the server writes it to that line alone
+     * (`_writeFlag`) — a bulk flag too, one line at a time. Resolves once the server has answered.
+     */
     flagSegment(
       bookId: string,
       chId: number,
       segId: number,
       kind: FlagKind,
       note: string = "",
-    ): void {
+    ): Promise<void> {
       const scriptsStore = useScriptsStore();
 
       const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
-      if (!s) return;
+      if (!s) return Promise.resolve();
+      const was = s.flag;
       s.flag = { kind, note: note.trim(), at: Date.now() } satisfies SegmentFlag;
-      // a flag is written with the script it is on; it changes nothing a version keeps
-      scriptsStore._commit(bookId, chId);
+      return this._writeFlag(bookId, chId, segId, { kind, note: s.flag.note }, was);
     },
-    clearFlag(bookId: string, chId: number, segId: number): void {
+    clearFlag(bookId: string, chId: number, segId: number): Promise<void> {
       const scriptsStore = useScriptsStore();
 
       const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
-      if (!s?.flag) return;
+      if (!s?.flag) return Promise.resolve();
+      const was = s.flag;
       delete s.flag;
-      scriptsStore._commit(bookId, chId);
+      return this._writeFlag(bookId, chId, segId, null, was);
+    },
+    /**
+     * Write one line's flag, and nothing else of its script.
+     *
+     * A flag changes nothing a version keeps and nothing a run renders, so it names no revision.
+     * Sent as the whole script, as an edit is, it named the revision it was read at, and a run
+     * landing clips in the chapter moves that on with every clip — so a flag raised while the
+     * chapter narrated was refused and lost. The answer carries the flag as written, which replaces
+     * the one shown; a refusal puts back what was there.
+     *
+     * It does move the revision on, though, so it takes its turn among the chapter's writes
+     * (`scripts._writeLine`): an edit already on its way goes first, and one made while the flag is
+     * out waits for it and names the revision it answers with.
+     */
+    async _writeFlag(
+      bookId: string,
+      chId: number,
+      segId: number,
+      flag: Pick<SegmentFlag, "kind" | "note"> | null,
+      was: SegmentFlag | undefined,
+    ): Promise<void> {
+      const scriptsStore = useScriptsStore();
+      const line = () => scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
+      try {
+        await scriptsStore._writeLine(bookId, chId, async () => {
+          const answer = await libraryService().flagLine(bookId, chId, segId, flag);
+          // taken before the chapter's next write goes, so that one sends it and names its revision
+          const s = line();
+          if (s) {
+            if (answer.flag) s.flag = answer.flag;
+            else delete s.flag;
+          }
+          stepRevision(bookId, chId, answer.revision);
+        });
+      } catch (cause) {
+        const s = line();
+        if (s) {
+          if (was) s.flag = was;
+          else delete s.flag;
+        }
+        toastFailure(flag ? "flag this line" : "clear this flag", cause);
+      }
     },
     /** Queue another render of one segment, keeping the current clip to compare against. */
     retakeSegment(bookId: string, chId: number, segId: number): void {
@@ -683,7 +799,7 @@ export const useNarrationStore = defineStore("narration", {
           });
         return queued.length;
       } catch (cause) {
-        this._failed("queue the retake", cause);
+        toastFailure("queue the retake", cause);
         return 0;
       }
     },
@@ -727,7 +843,7 @@ export const useNarrationStore = defineStore("narration", {
         const segs = scriptsStore.segments[k];
         const i = segs?.findIndex((x) => x.id === segId) ?? -1;
         if (i >= 0) segs.splice(i, 1, segment);
-        scriptsStore._revision[k] = Math.max(scriptsStore._revision[k] ?? 0, revision);
+        stepRevision(bookId, chId, revision);
         const c = libraryStore.chapter(bookId, chId);
         if (c) Object.assign(c, chapter);
         if (verdict === "accept") {
@@ -757,7 +873,7 @@ export const useNarrationStore = defineStore("narration", {
           },
         );
       } catch (cause) {
-        this._failed(verdict === "accept" ? "keep this take" : "discard this take", cause);
+        toastFailure(verdict === "accept" ? "keep this take" : "discard this take", cause);
       }
     },
   },

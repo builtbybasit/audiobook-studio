@@ -35,14 +35,12 @@ import type { SpeechUsage } from "@/types";
 import { AUDIO_MIME } from "@/lib/endpointShapes";
 import { normalizeSpeechUsage } from "@/lib/pricing";
 import { isQwenTts, qwen, QWEN_CLONE_MODELS } from "@/lib/providers/qwen";
+import { formatDefaults } from "@/lib/providers/types";
 import { audioAnswer, jsonAnswer } from "~/providers/answer";
 import { call, jsonHeaders, ProviderError } from "~/providers/http";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 import { onePage, type SpeechWire } from "~/providers/speech/wire";
-
-/** The rate Alibaba's own example asks for, and the only one offered until others are tried. */
-const RATE = 24000;
 
 const apiRoot = (baseUrl: string): string => `${new URL(baseUrl).origin}/api/v1`;
 
@@ -60,7 +58,12 @@ export function qwenBody(
   if (isQwenTts(model)) return { model, input: { text: input.text, voice } };
   return {
     model,
-    input: { text: input.text, voice, format: "wav", sample_rate: input.sampleRate ?? RATE },
+    input: {
+      text: input.text,
+      voice,
+      format: "wav",
+      sample_rate: input.sampleRate ?? formatDefaults(qwen, "wav").rate,
+    },
   };
 }
 

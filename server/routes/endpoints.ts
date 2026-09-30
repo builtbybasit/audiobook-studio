@@ -5,19 +5,22 @@ import { bodyLimit } from "hono/body-limit";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
-import type { ClonedVoice } from "@/types";
+import type { ClonedVoice, EndpointProbe, KeptVoiceSamples, VoiceListPage } from "@/types";
 import { CLONE_CONSENT } from "@/lib/endpointShapes";
-import { MAX_SAMPLES_BYTES, tooMuchSaid } from "@/lib/voiceSamples";
+import { tooMuchSaid } from "@/lib/voiceSamples";
 import type { Db } from "~/db/client";
+import { clipsByEndpoint } from "~/db/script";
+import { CLONE_BODY_BYTES } from "~/env";
 import * as ops from "~/endpoints/ops";
-import { fail, notFound } from "~/lib/errors";
+import { fail } from "~/lib/errors";
 import {
   CredentialSchema,
   EndpointSchema,
   ProfileSchema,
   PromptTemplateSchema,
+  ScriptSettingsSchema,
 } from "~/lib/schemas";
-import { fileResponse } from "~/lib/serve";
+import { serveFile } from "~/lib/serve";
 import type { SpeechGate } from "~/providers/gate";
 import { validate } from "~/lib/validate";
 import type { Providers } from "~/providers/target";
@@ -31,6 +34,8 @@ const Config = v.object({
   credentials: v.array(CredentialSchema),
   /** the library's default scripting prompt: left out keeps it, null goes back to the built-in one */
   prompt: v.optional(v.nullable(PromptTemplateSchema)),
+  /** which profile scripting runs go to: left out keeps what is stored */
+  script: v.optional(ScriptSettingsSchema),
 });
 
 const Probe = v.object({
@@ -42,13 +47,6 @@ const Sample = v.object({
   id: v.pipe(v.string(), v.nonEmpty()),
   voice: v.pipe(v.string(), v.nonEmpty(), v.maxLength(200)),
 });
-
-/**
- * The largest body the clone and keep routes read: the samples, and a little over for the multipart
- * envelope around them. The server's own ceiling (`maxRequestBodySize`) is set above it, so these
- * routes are the ones that answer.
- */
-export const CLONE_BODY_BYTES = MAX_SAMPLES_BYTES + 256 * 1024;
 
 /** The most a consent sentence sent with the form may be; the form sends `CLONE_CONSENT`. */
 const MAX_CONSENT_CHARS = 500;
@@ -111,7 +109,17 @@ export function endpointRoutes(
    * What this process has seen of each speech endpoint it has sent to: lines out and waiting, rate
    * limits, the end of a cooldown. An endpoint nothing has been sent to is not in it.
    */
-  app.get("/live", (c) => c.json({ endpoints: gate.live() }));
+  app.get("/live", (c) => {
+    // what the gate has seen, with the clips each endpoint rendered that the library plays counted
+    // beside it — the Queue's pool shows those for every book, not the chapters it has read
+    const live = gate.live();
+    for (const [id, counts] of clipsByEndpoint(db))
+      live[id] = {
+        ...(live[id] ?? { active: 0, waiting: 0, rateLimits: 0, backoffUntil: 0 }),
+        ...counts,
+      };
+    return c.json({ endpoints: live });
+  });
 
   /** The whole configuration, in place of what is stored. */
   app.put("/", validate("json", Config), (c) => {
@@ -130,7 +138,7 @@ export function endpointRoutes(
     const { kind, id } = c.req.valid("json");
     const answer = await ops.testEndpoint(db, providers, kind, id, c.req.raw.signal);
     c.var.logger.info({ kind, id, ok: answer.ok, ms: answer.ms }, "endpoint tested");
-    return c.json(answer);
+    return c.json(answer satisfies EndpointProbe);
   });
 
   /**
@@ -210,24 +218,22 @@ export function endpointRoutes(
 
   /** Every voice of a saved endpoint that has the recordings it was made from kept. */
   app.get("/:id/samples", validate("param", v.object({ id: VoiceParam.entries.id })), (c) =>
-    c.json(samples.keptFor(db, c.req.valid("param").id)),
+    c.json(samples.keptFor(db, c.req.valid("param").id) satisfies KeptVoiceSamples[]),
   );
 
   /** One voice's kept recordings, and when and to what consent was given. */
   app.get("/:id/voices/:voice/samples", validate("param", VoiceParam), (c) => {
     const { id, voice } = c.req.valid("param");
-    return c.json(samples.keptOf(db, id, voice));
+    return c.json(samples.keptOf(db, id, voice) satisfies KeptVoiceSamples);
   });
 
   /** One kept recording, as it was picked. Named by its bytes, so it may be cached for good. */
   app.get("/:id/voices/:voice/samples/:file", validate("param", SampleParam), async (c) => {
     const { id, voice, file } = c.req.valid("param");
     const { path, type } = samples.sampleFile(db, voiceFiles, id, voice, file);
-    const found = Bun.file(path);
-    if (!(await found.exists())) throw notFound("There is no such recording", `file: ${file}`);
-    return fileResponse(c.req.raw, found, {
-      "content-type": type,
-      "cache-control": "private, max-age=31536000, immutable",
+    return serveFile(c, path, type, {
+      missing: "There is no such recording",
+      detail: `file: ${file}`,
     });
   });
 
@@ -250,7 +256,7 @@ export function endpointRoutes(
       { id, voice, samples: kept.samples.length, consent: true },
       "voice samples kept",
     );
-    return c.json(kept);
+    return c.json(kept satisfies KeptVoiceSamples);
   });
 
   /** Forget one voice's recordings; the voice stays, and the forget can be taken back for a while. */
@@ -266,7 +272,7 @@ export function endpointRoutes(
     const { id, voice } = c.req.valid("param");
     const kept = samples.restoreSampleFiles(db, id, voice);
     c.var.logger.info({ id, voice }, "voice samples restored");
-    return c.json(kept);
+    return c.json(kept satisfies KeptVoiceSamples);
   });
 
   /**
@@ -280,7 +286,7 @@ export function endpointRoutes(
       { id, source: query.source, voices: answer.voices.length, page: answer.page },
       "voices listed",
     );
-    return c.json(answer);
+    return c.json(answer satisfies VoiceListPage);
   });
 
   return app;

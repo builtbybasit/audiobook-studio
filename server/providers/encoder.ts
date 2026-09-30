@@ -101,6 +101,11 @@ export interface EncodedFile {
   /** how long it plays, as written rather than as estimated */
   seconds: number;
   chapters: EncodedChapter[];
+  /**
+   * The integrated loudness of what went in, LUFS, where the encoder measured it before levelling
+   * it to the build's target; absent when nothing was measured.
+   */
+  measuredLufs?: number;
 }
 
 export interface AudiobookEncoder {

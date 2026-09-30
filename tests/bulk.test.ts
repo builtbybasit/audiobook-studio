@@ -11,7 +11,7 @@ import { libraryService } from "@/services/library";
 import type { BulkTarget, Segment, UndoEntry } from "@/types";
 import { demoServer } from "./support/demoServer";
 import { testPinia, type TestPinia } from "./support/pinia";
-import { unwrittenEdits, type UnwrittenEdit } from "./support/unwrittenEdits";
+import { unwrittenEdits, type UnwrittenEdit, type UnwrittenFlag } from "./support/unwrittenEdits";
 
 // The batch undo is the store's own undo stack, and that stack lives on a toast. Swap the toast
 // library for a silent one so `revertEntry` can be exercised for real.
@@ -36,13 +36,15 @@ let scriptsStore: ReturnType<typeof useScriptsStore>;
 let uiStore: ReturnType<typeof useUiStore>;
 /** the scripts the store asked the server to write, in the order it asked */
 let writes: UnwrittenEdit[];
+/** the lines' flags it asked to write */
+let flags: UnwrittenFlag[];
 /** the chapters these read: narrated, narrated with stale lines, and scripted only */
 const CHAPTERS = [1, 2, 5];
 
 beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   await demoServer();
-  ({ writes } = unwrittenEdits());
+  ({ writes, flags } = unwrittenEdits());
 });
 beforeEach(async () => {
   pinia = testPinia();
@@ -51,6 +53,7 @@ beforeEach(async () => {
   scriptsStore = useScriptsStore();
   uiStore = useUiStore();
   writes.length = 0;
+  flags.length = 0;
   const svc = libraryService();
   await libraryStore.loadBook("cliche");
   for (const chId of CHAPTERS)
@@ -322,6 +325,27 @@ test("a clip finishing in the background does not invalidate an open preview, bu
   // someone editing one of the selected lines is
   scriptsStore.updateSegment("cliche", 1, targets[0].segId, { direction: "cold and clipped" });
   expect(scriptsStore.bulkPreview("cliche", targets, action).signature).not.toBe(first);
+});
+
+// A narration run moves the chapter's revision on with every clip, so a flag batch sent as the
+// script, naming the revision it read, was refused while the chapter narrated.
+test("a flag batch writes each line's flag alone and no script, and its undo takes them down the same way", async () => {
+  const targets = all(5);
+  const res = scriptsStore.applyBulk("cliche", targets, {
+    kind: "flag",
+    flag: "pause",
+    note: "check the beat",
+    replace: false,
+  });
+  await scriptsStore._settled("cliche", 5);
+  expect(writes).toEqual([]);
+  expect(flags.map((f) => [f.segId, f.flag?.kind])).toEqual(targets.map((t) => [t.segId, "pause"]));
+
+  flags.length = 0;
+  uiStore.revertEntry(res.entry as UndoEntry);
+  await scriptsStore._settled("cliche", 5);
+  expect(writes).toEqual([]);
+  expect(flags.map((f) => [f.segId, f.flag])).toEqual(targets.map((t) => [t.segId, null]));
 });
 
 test("undoing a flag batch survives a clip that rendered in the meantime", () => {

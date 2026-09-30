@@ -2,89 +2,74 @@
 import { useCastStore } from "@/stores/cast";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
-import { useScriptsStore } from "@/stores/scripts";
 
 // Job ledger: one compact row per segment, filterable. The row carries the line itself; speaker, voice
 // and endpoint share one column, and render latency lives in the details panel — click a row (or press
 // `i`) for its audit trail. The row actions are one icon size in fixed slots: play stays visible, the
 // rest appear on hover or keyboard focus (and always on touch, which has no hover), so a raised flag is
 // the only standing mark on a row.
-// The table, the filters and the flag popover are this file's subject; the three things a row can
-// *open* are their own components, because none of them is about the list: `RenderDetails` is one
-// clip's audit trail (i), `TakeCompare` is two takes of one line waiting for a verdict, and
-// `ChapterTransport` is the stitched chapter at the bottom. The current row is highlighted and kept
-// in view whichever of them is driving the player. Stale rows (edited after narration) can be
-// re-rendered on their own.
+// The table and the filters are this file's subject; what a row can *open* is its own component,
+// because none of it is about the list: `FlagPopover` says what is wrong with a clip,
+// `RenderDetails` is one clip's audit trail (i), `TakeCompare` is two takes of one line waiting for a
+// verdict, and `ChapterTransport` is the stitched chapter at the bottom. The current row is
+// highlighted and kept in view whichever of them is driving the player. Stale rows (edited after
+// narration) can be re-rendered on their own.
 // A clip can come back fine and still sound wrong, so any rendered row can be flagged (wrong
 // pronunciation / bad delivery / awkward pause) and retaken: the old clip is kept, the new one is
 // rendered beside it, and nothing is decided until the listener plays both and keeps one. The
 // verdict is taken here rather than in the comparison panel, because it moves to the next retake in
-// the book — which can be in another chapter.
+// the book — which can be in another chapter (`useRetakeReview`).
 // Keyboard: j/k move, ↵/p play, r retry, t retake, a keep new, x keep previous, i details, e edit the line.
 import { computed, nextTick, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
-import { useJob, STATUS_BG, fmt } from "@/views/narration/shared";
+import { useRouter } from "vue-router";
+import { useJob, STATUS_BG, candId, fmt, lineLink, onClip } from "@/views/narration/shared";
+import { useRetakeReview } from "@/views/narration/useRetakeReview";
 import { FLAG_LABEL } from "@/lib/scriptReview";
-import { queryIdSet } from "@/lib/query";
 import { defaultPause, secs, silenceOf } from "@/lib/speech";
 import { usePlayer } from "@/composables/usePlayer";
+import { enumParam, idSetParam, useQueryParam } from "@/composables/useQueryParam";
 import { segmentStart } from "@/composables/useChapterQueue";
 import ChapterTransport from "@/views/narration/ChapterTransport.vue";
 import ExpressionText from "@/components/ExpressionText.vue";
+import FlagPopover from "@/views/narration/FlagPopover.vue";
 import RenderDetails, { hasDetails } from "@/views/narration/RenderDetails.vue";
 import TakeCompare from "@/views/narration/TakeCompare.vue";
-import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
-import { UiToggleGroup } from "@/ui";
 import {
-  BookA as DictionaryIcon,
   Flag as FlagIcon,
   Pause as PauseIcon,
   Play as PlayIcon,
   SkipForward as PlayFromIcon,
   RotateCcw as RetryIcon,
 } from "@lucide/vue";
-import type { FlagKind, Segment, SegmentAudio } from "@/types";
+import type { Segment } from "@/types";
 
 const props = defineProps<{ bookId: string; chapterId: number }>();
 /** a word the listener wants respelled, handed up to the pronunciation dictionary */
 const emit = defineEmits<{ pronounce: [word: string] }>();
-const { segments, colorOf, voiceOf, epName, stats } = useJob(props);
+const { segments, colorOf, voiceOf, epName, drift } = useJob(props);
+const { reviewable, bookReviewable, reviewPosition, decideTake, focusReview } = useRetakeReview(
+  props,
+  segments,
+);
 const castStore = useCastStore();
 const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
-const scriptsStore = useScriptsStore();
-const route = useRoute();
 const router = useRouter();
 const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterId)!);
 const { p, play } = usePlayer();
 const FILTERS = ["all", "done", "generating", "queued", "failed", "stale", "flagged", "review"];
-const filter = ref(
-  FILTERS.includes(String(route.query.filter)) ? String(route.query.filter) : "all",
-);
-watch(
-  () => route.query.filter,
-  (value) => {
-    const next = String(value ?? "all");
-    filter.value = FILTERS.includes(next) ? next : "all";
-  },
-);
-const expanded = ref(queryIdSet(route.query.seg));
-function rememberExpanded() {
-  const seg = [...expanded.value].sort((a, b) => a - b).join(",");
-  void router.replace({ query: { ...route.query, seg: seg || undefined } });
-}
+const filter = useQueryParam("filter", enumParam(FILTERS, "all"));
+/** the rows whose render details are open, kept in the URL (`?seg=`) so a link can open one */
+const expanded = useQueryParam("seg", idSetParam());
 const toggleDetails = (id: number) => {
   const n = new Set(expanded.value);
   if (n.has(id)) n.delete(id);
   else n.add(id);
   expanded.value = n;
-  rememberExpanded();
 };
 watch(
-  () => route.query.seg,
-  async (value) => {
-    const next = queryIdSet(value);
-    expanded.value = next;
+  expanded,
+  async (next) => {
     const id = [...next][0];
     if (id) {
       await nextTick();
@@ -94,17 +79,21 @@ watch(
   { immediate: true },
 );
 const FILTER_LABEL: Record<string, string> = { done: "current audio", generating: "running" };
-const matches = (s: Segment, f: string) =>
-  f === "all"
-    ? true
-    : f === "flagged"
-      ? !!s.flag
-      : f === "review"
-        ? !!s.candidate
-        : s.audio.status === f || s.candidate?.status === f;
-const rows = computed(() => segments.value.filter((s) => matches(s, filter.value)));
-const count = (f: string) =>
-  f === "all" ? stats.value.total : segments.value.filter((s) => matches(s, f)).length;
+/** The filters a line falls under: its clip's status and its retake's, a flag, a retake to judge. */
+function filtersOf(s: Segment): Set<string> {
+  const on = new Set(["all", s.audio.status]);
+  if (s.candidate) on.add(s.candidate.status);
+  if (s.flag) on.add("flagged");
+  if (s.candidate) on.add("review");
+  return on;
+}
+const rows = computed(() => segments.value.filter((s) => filtersOf(s).has(filter.value)));
+/** How many lines each filter button would show — one pass over the chapter, not one per button. */
+const counts = computed(() => {
+  const n: Record<string, number> = Object.fromEntries(FILTERS.map((f) => [f, 0]));
+  for (const s of segments.value) for (const f of filtersOf(s)) if (f in n) n[f]++;
+  return n;
+});
 // "Re-narrate changed (N)" queues `renarrateStale`, which renders `changedSegments` — so N is that
 // list and not a second count of it. The difference is real: a never-rendered line only counts once
 // the chapter has been narrated at all, and counting them in a chapter nobody has started offered a
@@ -128,8 +117,6 @@ const nextOf = computed(() => {
   return at;
 });
 const bookGap = (s: Segment) => defaultPause(s, nextOf.value.get(s.id), pacing.value);
-/** the clip under the playhead is this one — true whether it is playing alone or inside the chapter */
-const onClip = (id: string) => p.clipId === id && p.playing;
 
 const transport = ref<InstanceType<typeof ChapterTransport> | null>(null);
 const currentId = computed(() => (p.clipId?.startsWith("seg") ? Number(p.clipId.slice(3)) : null));
@@ -143,106 +130,10 @@ function playFrom(s: Segment) {
   if (at != null) transport.value?.playChapter(at);
 }
 
-// what differs between the clip and the script now (the reason a row is stale, made explicit)
-const drift = (s: Segment, a?: SegmentAudio) => narrationStore.clipDrift(props.bookId, s, a);
-/** The line itself, in the reader — where a wrong speaker, direction or word is fixed before a
- *  retake would read the same request again. The same deep link Search uses. */
-const lineLink = (s: Segment) => ({
-  path: `/book/${props.bookId}/scripting`,
-  query: { ch: String(props.chapterId), seg: String(s.id) },
-});
-// ---- flags and retakes
-const KINDS: FlagKind[] = ["pronunciation", "delivery", "pause", "other"];
-const KIND_SHORT: Record<FlagKind, string> = {
-  pronunciation: "pronunciation",
-  delivery: "delivery",
-  pause: "pause",
-  other: "other",
-};
+// ---- flags
 const flagOpen = ref<number | null>(null);
-const kind = ref<FlagKind>("delivery");
-const note = ref("");
-const word = ref("");
-/** the word a TTS engine most likely tripped on: a capitalised one that doesn't open the line */
-function candidate(s: Segment): string {
-  const words = s.text
-    .split(/\s+/)
-    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
-    .filter(Boolean);
-  return (
-    words.slice(1).find((w) => /^\p{Lu}/u.test(w)) ??
-    [...words].sort((a, b) => b.length - a.length)[0] ??
-    ""
-  );
-}
-function openFlag(s: Segment) {
-  kind.value = s.flag?.kind ?? "delivery";
-  note.value = s.flag?.note ?? "";
-  word.value = candidate(s);
-  flagOpen.value = s.id;
-}
-/** flag it, then jump to the dictionary with the word already in the box */
-function toDictionary(s: Segment) {
-  saveFlag(s, false);
-  if (word.value.trim()) emit("pronounce", word.value.trim());
-}
-function saveFlag(s: Segment, alsoRetake: boolean) {
-  narrationStore.flagSegment(props.bookId, props.chapterId, s.id, kind.value, note.value);
-  flagOpen.value = null;
-  if (alsoRetake) narrationStore.retakeSegment(props.bookId, props.chapterId, s.id);
-}
-/** the player's name for the retake waiting beside the clip in the book — `2` plays it */
-const candId = (s: Segment) => `cand${s.id}`;
-const reviewable = computed(() =>
-  segments.value.filter(
-    (s) => s.candidate?.duration && !["queued", "generating"].includes(s.candidate.status),
-  ),
-);
-const bookReviewable = computed(() =>
-  libraryStore.chaptersOf(props.bookId).flatMap((chapter) =>
-    scriptsStore
-      .segmentsOf(props.bookId, chapter.id)
-      .filter(
-        (s) => s.candidate?.duration && !["queued", "generating"].includes(s.candidate.status),
-      )
-      .map((segment) => ({ chId: chapter.id, segment })),
-  ),
-);
-const reviewPosition = (s: Segment) =>
-  bookReviewable.value.findIndex((row) => row.chId === props.chapterId && row.segment.id === s.id) +
-  1;
-function focusReview(id: number | undefined) {
-  if (!id) return;
-  nextTick(() => {
-    const row = document.getElementById(`row-${id}`);
-    row?.focus();
-    row?.scrollIntoView({ block: "center", behavior: "smooth" });
-  });
-}
-/** A verdict removes this comparison, so remember its neighbour before changing the store. */
-async function decideTake(s: Segment, keep: "current" | "new") {
-  const reviews = bookReviewable.value;
-  const at = reviews.findIndex((row) => row.chId === props.chapterId && row.segment.id === s.id);
-  const nextReview = reviews[at + 1] ?? reviews[at - 1];
-  if (keep === "new") narrationStore.acceptTake(props.bookId, props.chapterId, s.id);
-  else narrationStore.rejectTake(props.bookId, props.chapterId, s.id);
-  if (!nextReview) {
-    await router.replace({ query: { ...route.query, seg: undefined } });
-    return;
-  }
-  await router.replace({
-    query: {
-      ...route.query,
-      ch: String(nextReview.chId),
-      filter: "review",
-      seg: String(nextReview.segment.id),
-    },
-  });
-  if (nextReview.chId === props.chapterId) focusReview(nextReview.segment.id);
-}
 function chooseFilter(next: string) {
   filter.value = next;
-  void router.replace({ query: { ...route.query, filter: next === "all" ? undefined : next } });
   if (next === "review") focusReview(reviewable.value[0]?.id);
 }
 function onRowKey(e: KeyboardEvent, s: Segment) {
@@ -268,11 +159,11 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
   } else if (e.key === "2" && s.candidate?.duration) {
     e.preventDefault();
     play(candId(s), s.candidate.duration, s.candidate.url);
-  } else if (e.key === "a" && s.candidate?.duration) decideTake(s, "new");
-  else if (e.key === "x" && s.candidate) decideTake(s, "current");
-  else if (e.key === "f" && s.audio.duration) openFlag(s);
+  } else if (e.key === "a" && s.candidate?.duration) void decideTake(s, "new");
+  else if (e.key === "x" && s.candidate) void decideTake(s, "current");
+  else if (e.key === "f" && s.audio.duration) flagOpen.value = s.id;
   else if (e.key === "i" && hasDetails(s)) toggleDetails(s.id);
-  else if (e.key === "e") void router.push(lineLink(s));
+  else if (e.key === "e") void router.push(lineLink(props, s));
 }
 </script>
 
@@ -294,19 +185,19 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
         <div
           class="text-lg font-semibold leading-tight"
           :class="{
-            'text-red-500': f === 'failed' && count(f),
+            'text-red-500': f === 'failed' && counts[f],
             'text-emerald-500': f === 'done',
             'text-violet-500': f === 'generating',
-            'text-amber-500': (f === 'stale' || f === 'flagged') && count(f),
-            'text-sky-500': f === 'review' && count(f),
+            'text-amber-500': (f === 'stale' || f === 'flagged') && counts[f],
+            'text-sky-500': f === 'review' && counts[f],
           }"
         >
-          {{ count(f) }}
+          {{ counts[f] }}
         </div>
       </button>
     </div>
     <div
-      v-if="filter === 'review' && count('review')"
+      v-if="filter === 'review' && counts.review"
       class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200"
     >
       <b>{{ bookReviewable.length }} ready in this book</b>
@@ -332,7 +223,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
           class="btn-primary btn-xs"
           :title="
             unrendered
-              ? `${count('stale')} edited after narration, ${unrendered} never rendered (new halves of a split)`
+              ? `${counts.stale} edited after narration, ${unrendered} never rendered (new halves of a split)`
               : 'lines edited after narration'
           "
           @click="narrationStore.renarrateStale(bookId, chapterId)"
@@ -340,25 +231,25 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
           <RetryIcon class="icon-sm" /> Re-narrate changed ({{ changed }})
         </button>
         <button
-          v-if="count('flagged') && chapter.narration !== 'running'"
+          v-if="counts.flagged && chapter.narration !== 'running'"
           class="btn-ghost btn-xs border-amber-400 text-amber-600"
           @click="narrationStore.retakeFlagged(bookId, chapterId)"
         >
-          <FlagIcon class="icon-sm" /> Retake flagged ({{ count("flagged") }})
+          <FlagIcon class="icon-sm" /> Retake flagged ({{ counts.flagged }})
         </button>
         <button
-          v-if="count('failed') && chapter.narration !== 'running'"
+          v-if="counts.failed && chapter.narration !== 'running'"
           class="btn-ghost btn-xs"
           title="render only the requests that failed — finished clips are not touched"
           @click="narrationStore.retryFailed(bookId, chapterId)"
         >
-          Retry failed ({{ count("failed") }})
+          Retry failed ({{ counts.failed }})
         </button>
         <button
           v-if="chapter.narration !== 'running'"
           class="btn-ghost btn-xs"
           title="render every line again — each clip in the book keeps playing until its replacement lands, and the clip it displaces joins that line’s take list"
-          @click="narrationStore.runNarration(bookId, [chapterId], { scope: 'all' })"
+          @click="narrationStore.startRun(bookId, [chapterId], { scope: 'all' })"
         >
           Re-narrate all
         </button>
@@ -447,7 +338,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                     }}<span v-if="s.flag.note" class="font-normal"> — {{ s.flag.note }}</span></span
                   ><span v-if="s.fallback" class="text-amber-600">unverified chunk</span
                   ><span v-if="s.audio.error" class="truncate text-red-500"
-                    >{{ s.audio.error.code ? "HTTP " + s.audio.error.code + " · " : ""
+                    >{{ s.audio.error.code ? `HTTP ${s.audio.error.code} · ` : ""
                     }}{{ s.audio.error.message
                     }}<span v-if="s.audio.error.part">
                       (part {{ s.audio.error.part }}/{{ s.audio.parts }})</span
@@ -535,102 +426,15 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                     </button>
                   </span>
                   <span class="grid w-5 place-items-center">
-                    <PopoverRoot
+                    <FlagPopover
                       v-if="s.audio.duration"
+                      :book-id="bookId"
+                      :chapter-id="chapterId"
+                      :segment="s"
                       :open="flagOpen === s.id"
                       @update:open="(v: boolean) => (flagOpen = v ? s.id : null)"
-                    >
-                      <PopoverTrigger
-                        class="icon-btn"
-                        :class="
-                          s.flag
-                            ? 'icon-btn-flag'
-                            : 'row-tool hover:!border-amber-400 hover:!text-amber-600'
-                        "
-                        :title="
-                          s.flag
-                            ? `flagged: ${FLAG_LABEL[s.flag.kind]}${s.flag.note ? ' — ' + s.flag.note : ''}`
-                            : 'flag what is wrong with this clip (f)'
-                        "
-                        @click="openFlag(s)"
-                        ><FlagIcon class="icon-sm"
-                      /></PopoverTrigger>
-                      <PopoverPortal>
-                        <PopoverContent
-                          :side-offset="6"
-                          align="end"
-                          class="ui-popup w-80 p-3 text-xs"
-                        >
-                          <div class="label mb-2">What is wrong with #{{ s.id }}?</div>
-                          <UiToggleGroup
-                            :model-value="kind"
-                            block
-                            :options="KINDS.map((k) => ({ value: k, label: KIND_SHORT[k] }))"
-                            @update:model-value="
-                              (v: string | number | null) => (kind = v as FlagKind)
-                            "
-                          />
-                          <input
-                            v-model="note"
-                            class="input mt-2 w-full py-1"
-                            placeholder="e.g. “Kael” is read as two words"
-                            @keydown.enter="saveFlag(s, false)"
-                          />
-                          <div
-                            v-if="kind === 'pronunciation'"
-                            class="mt-2 rounded bg-violet-500/5 p-2"
-                          >
-                            <div class="mb-1.5 text-[11px] text-zinc-500">
-                              A retake reads the same spelling. Teach the book instead — the prose
-                              keeps the author’s spelling, the endpoint gets yours.
-                            </div>
-                            <div class="flex items-center gap-1.5">
-                              <input
-                                v-model="word"
-                                class="input min-w-0 flex-1 py-1"
-                                placeholder="the word"
-                                aria-label="Word to add to the dictionary"
-                              />
-                              <button
-                                class="btn-ghost btn-xs shrink-0"
-                                :disabled="!word.trim()"
-                                @click="toDictionary(s)"
-                              >
-                                <DictionaryIcon class="icon-sm" /> Add to dictionary
-                              </button>
-                            </div>
-                          </div>
-                          <p v-else class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-                            A retake keeps this clip: you play both and decide. If the request was
-                            wrong rather than the render, change the voice, direction or the line
-                            itself first —
-                            <RouterLink
-                              :to="lineLink(s)"
-                              class="text-violet-600 underline hover:text-violet-500 dark:text-violet-400"
-                              >edit the line in the reader</RouterLink
-                            >.
-                          </p>
-                          <div class="mt-3 flex items-center gap-2">
-                            <button
-                              v-if="s.flag"
-                              class="btn-ghost btn-xs mr-auto"
-                              @click="
-                                ((flagOpen = null),
-                                narrationStore.clearFlag(bookId, chapterId, s.id))
-                              "
-                            >
-                              Clear flag
-                            </button>
-                            <button class="btn-ghost btn-xs ml-auto" @click="saveFlag(s, false)">
-                              Flag only
-                            </button>
-                            <button class="btn-primary btn-xs" @click="saveFlag(s, true)">
-                              Flag &amp; retake
-                            </button>
-                          </div>
-                        </PopoverContent>
-                      </PopoverPortal>
-                    </PopoverRoot>
+                      @pronounce="(word: string) => emit('pronounce', word)"
+                    />
                   </span>
                 </div>
               </td>
@@ -640,7 +444,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
               :segment="s"
               :position="reviewPosition(s)"
               :total="bookReviewable.length"
-              @decide="(keep) => decideTake(s, keep)"
+              @decide="(keep) => void decideTake(s, keep)"
             />
             <RenderDetails
               v-if="expanded.has(s.id)"
@@ -653,7 +457,11 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
         </tbody>
       </table>
       <div v-if="!rows.length" class="p-8 text-center text-sm text-zinc-500">
-        No {{ filter }} segments.
+        {{
+          filter === "all"
+            ? "This chapter has no lines."
+            : `No lines under “${FILTER_LABEL[filter] ?? filter}”.`
+        }}
       </div>
     </div>
 

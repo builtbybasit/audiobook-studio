@@ -13,20 +13,22 @@ import { TriangleAlert as WarnIcon } from "@lucide/vue";
 // rounding that to "$0.00" is the same lie as showing an unknown rate as free.
 import { billingOf } from "@/lib/endpoints";
 import { billingUnitLabel, money } from "@/lib/pricing";
-import type { EndpointEstimate, NarrationScope } from "@/types";
-// `blockers` is worked out by the view, not here: the run strip says how many there are and this
-// panel lists them, and one calculation is how those two stay in agreement.
-const props = defineProps<{ bookId: string; selected: number[]; blockers: string[] }>();
+import type { EndpointEstimate, NarrationEstimate, NarrationScope, RunPlan } from "@/types";
+// The plan, the estimate and the blockers are worked out by the view, not here: the run strip says
+// how many blockers there are and what the run costs, and this panel lists and itemises them, and
+// one calculation is how those two stay in agreement.
+const props = defineProps<{
+  bookId: string;
+  plan: RunPlan;
+  est: NarrationEstimate;
+  blockers: string[];
+}>();
 const scope = defineModel<NarrationScope>("scope", { default: "fill" });
 const keepPending = defineModel<boolean>("keepPending", { default: true });
 const castStore = useCastStore();
 const narrationStore = useNarrationStore();
-const est = computed(() =>
-  narrationStore.estimate(props.bookId, props.selected, scope.value, keepPending.value),
-);
-const plan = computed(() =>
-  narrationStore.narrationRunPlan(props.bookId, props.selected, scope.value, keepPending.value),
-);
+const est = computed(() => props.est);
+const plan = computed(() => props.plan);
 const scopes: { value: NarrationScope; label: string }[] = (
   ["fill", "failed", "all"] as NarrationScope[]
 ).map((value) => ({ value, label: SCOPE_LABEL[value] }));
@@ -73,7 +75,6 @@ function rowTitle(e: EndpointEstimate): string {
       : "";
   return split + (e.why.length ? e.why.join(" → ") : "at this endpoint’s card rate");
 }
-defineExpose({ scope, keepPending, plan });
 </script>
 <template>
   <div class="text-xs">

@@ -1,8 +1,8 @@
 // Endpoints and scripting profiles, between rows and the shapes the app configures.
 //
 // **Configuration is stored; telemetry is not.** An `Endpoint` carries both — `history`,
-// `failures`, `rateLimits`, `backoffUntil`, `lastError` and `fetching` are what this session has
-// observed, not what anybody configured. None of it is persisted here, and reading an endpoint back
+// `failures`, `rateLimits`, `backoffUntil`, `lastError` and `fetching` (`ENDPOINT_TELEMETRY`) are
+// what this session has observed, not what anybody configured. None of it is persisted here, and reading an endpoint back
 // returns those fields empty, because the durable record of what an endpoint has done is the
 // `requests` ledger. Writing a backoff deadline to disk would mean a server restart could resurrect
 // a cooldown for a rate limit that expired days ago.
@@ -18,6 +18,7 @@ import type {
   TtsBilling,
   Voice,
 } from "@/types";
+import type { StoredEndpoint } from "@/lib/endpointTelemetry";
 import type { endpoints, expressionTags, promotions, rateWindows, voices } from "~/db/schema";
 
 type EndpointRow = typeof endpoints.$inferSelect;
@@ -25,15 +26,6 @@ type VoiceRow = typeof voices.$inferSelect;
 type WindowRow = typeof rateWindows.$inferSelect;
 type PromotionRow = typeof promotions.$inferSelect;
 type TagRow = typeof expressionTags.$inferSelect;
-
-/**
- * A speech endpoint as it is configured: everything but what this session observed of it, which
- * is what a save sends and what `endpointValues` writes.
- */
-export type EndpointSettings = Omit<
-  Endpoint,
-  "history" | "failures" | "rateLimits" | "backoffUntil" | "lastError" | "fetching"
->;
 
 /** Everything an endpoint owns besides its own row. */
 export interface EndpointParts {
@@ -260,7 +252,7 @@ export function toProfile(row: EndpointRow, parts: EndpointParts): Profile {
   };
 }
 
-const opsValues = (e: Partial<EndpointSettings>) => ({
+const opsValues = (e: Partial<StoredEndpoint>) => ({
   timeoutSec: e.timeoutSec ?? null,
   maxRetries: e.maxRetries ?? null,
   cooldownSec: e.cooldownSec ?? null,
@@ -270,7 +262,7 @@ const opsValues = (e: Partial<EndpointSettings>) => ({
 });
 
 export function endpointValues(
-  e: EndpointSettings,
+  e: StoredEndpoint,
   position: number,
   apiKey: string | null = null,
 ): typeof endpoints.$inferInsert {

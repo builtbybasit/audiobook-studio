@@ -1,6 +1,6 @@
 // A Demo tools situation, applied on the server.
 //
-// A situation (`applySituation` in `src/mock/scenarios/situations.ts`) is applied through a
+// A situation (`applySituation` in `server/demo/seed/scenarios/situations.ts`) is applied through a
 // `ScenarioContext`. Here that is a context over plain data: the seeded world, and beside it what a
 // situation reaches for that the world does not hold — the queue's history, the histories of
 // chapters' scripts, scripting a book had already paid for, and what the endpoints have been
@@ -21,17 +21,17 @@ import { seededHistory } from "@/lib/scriptHistory";
 import { key } from "@/lib/scriptReview";
 import { unusedTelemetry } from "@/lib/scripting";
 import { chapterSeconds, pacingOrDefault } from "@/lib/speech";
-import { makeJobHistory } from "@/mock/fixtures/jobs";
-import { startupRuns } from "@/mock/scenarios/startup";
+import { makeJobHistory } from "~/demo/seed/fixtures/jobs";
+import { startupRuns } from "~/demo/seed/scenarios/startup";
 import {
   applySituation,
   historyJob,
   openingScriptSpend,
   type ScenarioContext,
-} from "@/mock/scenarios/situations";
-import { makeWorld } from "@/mock/world";
-import { finishedExport } from "@/mock/world/exports";
-import { importInto, shelveInto } from "@/mock/world/imports";
+} from "~/demo/seed/scenarios/situations";
+import { makeWorld } from "~/demo/seed/world";
+import { finishedExport } from "~/demo/seed/world/exports";
+import { importInto, shelveInto } from "~/demo/seed/world/imports";
 import type { DemoResult, DemoScenario, Endpoint } from "@/types";
 import type { DemoLive, SpeechTelemetry } from "~/demo/live";
 import { openingOf, type DemoWorld } from "~/demo/world";

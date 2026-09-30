@@ -29,19 +29,20 @@ import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:
 import { existsSync, readdirSync } from "node:fs";
 
 import { isSimulated } from "@/lib/providers";
-import { credentials } from "@/lib/credentials";
-import { BOOK_SEEDS } from "@/mock/fixtures/books";
-import { makeEndpoints } from "@/mock/fixtures/endpoints";
-import { makeJobHistory } from "@/mock/fixtures/jobs";
-import { makeLexicon } from "@/mock/fixtures/lexicon";
-import { makeProfiles } from "@/mock/fixtures/profiles";
-import { makeWorld } from "@/mock/world";
-import { chapterParts, partsText } from "@/mock/world/text";
+import { makeCredentials } from "~/demo/seed/fixtures/credentials";
+import { BOOK_SEEDS } from "~/demo/seed/fixtures/books";
+import { makeEndpoints } from "~/demo/seed/fixtures/endpoints";
+import { makeJobHistory } from "~/demo/seed/fixtures/jobs";
+import { makeLexicon } from "~/demo/seed/fixtures/lexicon";
+import { makeProfiles } from "~/demo/seed/fixtures/profiles";
+import { makeWorld } from "~/demo/seed/world";
+import { chapterParts, partsText } from "~/demo/seed/world/text";
 import type {
   Book,
   BookSpend,
   Chapter,
   Character,
+  Credential,
   Endpoint,
   ExportItem,
   Job,
@@ -124,7 +125,8 @@ describe("the demo's library is the browser's world", () => {
   test("every book's chapters, notes and all, and the prose each one reads as", async () => {
     for (const book of world.books) {
       const { chapters } = await get<{ chapters: Chapter[] }>(`/books/${book.id}`);
-      expect(chapters).toEqual(chaptersOf(book.id));
+      // the line counts are the server's, counted from the scripts, and not part of the world
+      expect(chapters.map(({ lines: _lines, ...c }) => c)).toEqual(chaptersOf(book.id));
       for (const c of chapters) {
         const { text } = await get<{ text: string }>(
           `/books/${book.id}/chapters/${c.id}/text?format=markdown`,
@@ -203,7 +205,8 @@ describe("the demo's library is the browser's world", () => {
     const config = await get<{
       endpoints: Endpoint[];
       profiles: Profile[];
-      credentials: typeof credentials;
+      credentials: Credential[];
+      script: { profile: string | null };
     }>("/endpoints");
     const settings = ({
       history: _h,
@@ -239,7 +242,9 @@ describe("the demo's library is the browser's world", () => {
       SIMULATED_ID,
     ]);
     expect(config.profiles.slice(0, -1).map(profile)).toEqual(world.profiles.map(profile));
-    expect(config.credentials).toEqual(credentials.map((c) => ({ ...c })));
+    expect(config.credentials).toEqual(makeCredentials());
+    // runs go to the world's first profile, as the Scripting page shows from the start
+    expect(config.script.profile).toBe(world.profiles[0].id);
   });
 });
 

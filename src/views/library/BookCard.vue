@@ -4,7 +4,8 @@
 // running or broken, and the audiobook built from it with what has changed since. The numbers sit outside the button, so a screen reader hears them as
 // text rather than as part of "Open …".
 import { computed, ref } from "vue";
-import { hours, plural, TONE } from "@/views/library/shared";
+import { plural } from "@/lib/contents";
+import { hours, TONE } from "@/views/library/shared";
 import { useBookFacts } from "@/views/library/bookFacts";
 import BookMenu from "@/views/library/BookMenu.vue";
 import BookCover from "@/components/BookCover.vue";

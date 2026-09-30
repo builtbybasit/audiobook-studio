@@ -1,20 +1,16 @@
 <script setup lang="ts">
-import { useEndpointsStore } from "@/stores/endpoints";
-import { useJobsStore } from "@/stores/jobs";
-import { useLibraryStore } from "@/stores/library";
-import { useNarrationStore } from "@/stores/narration";
 import { useUiStore } from "@/stores/ui";
 
 // App shell. Desktop: an icon rail on the left (AppRail; widens on request), the open book in the
 // header — its selector in the top row (BookSelector), its pages and stages as a tab row under it
 // (BookTabs). Narrow (< lg): a top bar with a menu button that opens the rail as a drawer, where
 // the book's pages live instead of the tab row. Also hosts the palette, toasts, the shortcuts
-// dialog, global ⌘Z / ? keys, the "book finished" notifications and the document title (active
-// job count).
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+// dialog and the global ⌘Z / ? keys; what runs behind every page — the "book finished"
+// notifications, the document title (active job count), the theme — is `useAppEffects`.
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
+import { useAppEffects } from "@/composables/useAppEffects";
 import { usePlayer } from "@/composables/usePlayer";
-import { useBookJobs, useBookSpend } from "@/queries";
 import JobIndicator from "@/components/JobIndicator.vue";
 import CommandPalette from "@/components/CommandPalette.vue";
 import DemoTools from "@/components/DemoTools.vue";
@@ -33,97 +29,23 @@ import AppRail from "@/components/AppRail.vue";
 import BookSelector from "@/components/BookSelector.vue";
 import BookTabs from "@/components/BookTabs.vue";
 import { useShell } from "@/composables/useShell";
+import { modKey } from "@/lib/format";
 import { isDemo } from "@/services/mode";
 import { TooltipProvider } from "reka-ui";
 
-const endpointsStore = useEndpointsStore();
-const jobsStore = useJobsStore();
-const libraryStore = useLibraryStore();
-const narrationStore = useNarrationStore();
 const uiStore = useUiStore();
 const player = usePlayer();
 const route = useRoute();
 const drawer = ref(false);
 const shortcuts = ref(false);
-// The shell reads the queue for as long as the app is open, which with a server answering is what
-// keeps it polling while a job is live: the indicator, the title and the notifications all follow.
-useBookJobs();
-// …and the open book's spending, which every page of it sets against the book's budget: the
-// overview's panel, the scripting estimate and the narration run's cap check. With a server
-// answering it is the server's ledger, read again as the book's jobs move.
-useBookSpend(() => uiStore.currentBookId);
-watch(
-  () =>
-    endpointsStore.endpoints.map((e) => JSON.stringify([e.id, e.model, e.baseUrl, e.expressions])),
-  () => narrationStore.refreshExpressionAudio(),
-);
+useAppEffects();
 
-watch(
-  () => route.params.bookId,
-  (id) => {
-    // a book still in its contents review is not on the shelf yet, so it is not the open book
-    if (id && !libraryStore.bookById(String(id))?.importing) uiStore.currentBookId = String(id);
-  },
-  { immediate: true },
-);
 watch(
   () => route.fullPath,
   () => {
     drawer.value = false;
   },
 );
-watch(
-  () => uiStore.dark,
-  (d) => document.documentElement.classList.toggle("dark", d),
-  { immediate: true },
-);
-watch(
-  () => jobsStore.activeJobs.length,
-  (n) => {
-    // the mode is the tab's, so the tab says which one it is
-    document.title =
-      (n ? `(${n}) ` : "") + (isDemo ? "Audiobook Studio · demo" : "Audiobook Studio");
-  },
-  { immediate: true },
-);
-
-// a book's run finished (it had active jobs, now none) → toast, and a browser notification if enabled
-const activeByBook = computed(() => {
-  const m: Record<string, number> = {};
-  for (const j of jobsStore.activeJobs) m[j.bookId] = (m[j.bookId] ?? 0) + 1;
-  return m;
-});
-watch(activeByBook, (now, before) => {
-  for (const id of Object.keys(before ?? {})) {
-    if (now[id]) continue;
-    const b = libraryStore.bookById(id);
-    if (!b) continue;
-    const recent = jobsStore.jobs.filter(
-      (j) => j.bookId === id && j.finishedAt && Date.now() - j.finishedAt < 5 * 60000,
-    );
-    const failed = recent.filter((j) => j.status === "failed").length;
-    const cancelled = recent.filter((j) => j.status === "cancelled").length;
-    if (recent.length && recent.every((j) => j.status === "cancelled")) continue;
-    const desc = `${recent.length - failed - cancelled} done${failed ? ` · ${failed} failed` : ""}`;
-    uiStore.toast(`${b.title}: run finished`, {
-      kind: failed ? "warn" : "success",
-      description: desc,
-      action: {
-        label: failed ? "See what failed" : "Open queue",
-        run: () => router.push("/queue"),
-      },
-    });
-    if (
-      uiStore.notify &&
-      "Notification" in window &&
-      Notification.permission === "granted" &&
-      document.hidden
-    )
-      new Notification("Audiobook Studio", { body: `${b.title}: run finished · ${desc}` });
-  }
-});
-import { useRouter } from "vue-router";
-const router = useRouter();
 
 function onKey(e: KeyboardEvent) {
   const t = e.target as HTMLElement;
@@ -154,7 +76,6 @@ onUnmounted(() => {
 
 const shell = useShell();
 const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
-const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
 </script>
 
 <template>

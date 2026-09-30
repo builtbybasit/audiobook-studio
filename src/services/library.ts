@@ -9,12 +9,21 @@
 import type {
   Book,
   BookPrompt,
+  Cast,
   Chapter,
   ChapterHistory,
+  ChapterLines,
+  ChapterScript,
   Character,
+  EditedScript,
   ExportItem,
+  Flagged,
+  ImportedBook,
+  Judged,
   KeptSample,
   LexEntry,
+  LexiconSaved,
+  MovedLines,
   Pacing,
   PromptTrialRequest,
   PromptTrialResult,
@@ -22,18 +31,25 @@ import type {
   ScriptImportPlan,
   ScriptVersion,
   Segment,
+  SegmentFlag,
   SpeakerSamples,
+  StoredSamples,
   VersionOrigin,
 } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { API_BASE } from "@/services/mode";
 
 export { ApiError, type FetchLike } from "@/services/http";
-
-export interface ImportedBook {
-  book: Book;
-  chapters: Chapter[];
-}
+// The answers are declared in `@/types` with the server that writes them; these are named here too
+// for the stores and queries that read them beside the service.
+export type {
+  Cast,
+  ChapterLines,
+  ChapterScript,
+  ImportedBook,
+  MovedLines,
+  StoredSamples,
+} from "@/types";
 
 /**
  * A book's settings, any of them. A key left out is left alone; `null` clears it — for `pacing`,
@@ -57,12 +73,6 @@ export interface ReviewDecision {
   kept?: boolean;
 }
 
-/** A chapter's script as the server holds it, and the revision a later write has to name. */
-export interface ChapterScript {
-  segments: Segment[];
-  revision: number;
-}
-
 /** What an edit sends: the script as it now stands, the revision it read, and what produced it. */
 export interface ScriptEdit {
   segments: Segment[];
@@ -71,53 +81,7 @@ export interface ScriptEdit {
   origin?: VersionOrigin;
 }
 
-/** What an edit comes back with: the script, its new revision, and the history it added to. */
-export interface EditedScript extends ChapterScript {
-  history: ChapterHistory;
-}
-
-/** A book's cast and its pronunciation dictionary. */
-export interface Cast {
-  characters: Character[];
-  lexicon: LexEntry[];
-}
-
-/** Lines of one chapter, named by number. */
-export interface ChapterLines {
-  chapterId: number;
-  ids: number[];
-}
-
-/**
- * Lines that changed hands when a speaker was renamed, merged or removed, with the revision each
- * chapter's script is at now that they have, and the cast after it.
- */
-export interface MovedLines {
-  characters: Character[];
-  moved: (ChapterLines & { revision: number })[];
-}
-
-/**
- * The dictionary as the server now holds it, and the clips the change reached: those whose
- * recorded pronunciation it no longer matches (`stale`), and those an Undo named that match it
- * again (`restored`). Each chapter comes with the revision its script is at after the change.
- */
-export interface LexiconSaved {
-  entries: LexEntry[];
-  stale: (ChapterLines & { revision: number })[];
-  restored: (ChapterLines & { revision: number })[];
-}
-
-/** A verdict on a retake: the line as it now stands, and the chapter whose clip changed. */
-export interface Judged {
-  segment: Segment;
-  revision: number;
-  chapter: Chapter;
-}
-
 export interface LibraryService {
-  /** false only when these books come from somewhere real */
-  readonly simulated: boolean;
   books(): Promise<Book[]>;
   /** A book and its chapters, as the contents review needs them. */
   book(id: string): Promise<ImportedBook>;
@@ -224,6 +188,16 @@ export interface LibraryService {
     segmentId: number,
     verdict: "accept" | "reject",
   ): Promise<Judged>;
+  /**
+   * Raise, replace or take down one line's flag, and nothing else about the script — so it names
+   * no revision, and a run writing clips beside it cannot make it refuse.
+   */
+  flagLine(
+    bookId: string,
+    chapterId: number,
+    segmentId: number,
+    flag: Pick<SegmentFlag, "kind" | "note"> | null,
+  ): Promise<Flagged>;
 
   // ---------- finished audiobooks ----------
   /**
@@ -264,14 +238,7 @@ export interface LibraryService {
   restoreSpeakerSamples(bookId: string, sampleId: number): Promise<SpeakerSamples>;
 }
 
-/** What keeping an import's voice samples did: the rows it made, and the ones it put aside. */
-export interface StoredSamples {
-  stored: SpeakerSamples[];
-  replaced: number[];
-}
-
 export class HttpLibraryService implements LibraryService {
-  readonly simulated = false;
   private readonly http: HttpClient;
   constructor(base = API_BASE, fetch?: FetchLike) {
     this.http = new HttpClient(base, fetch);
@@ -462,6 +429,16 @@ export class HttpLibraryService implements LibraryService {
       `/books/${seg(bookId)}/chapters/${chapterId}/lines/${segmentId}/verdict`,
       { verdict },
     );
+  }
+
+  flagLine(
+    bookId: string,
+    chapterId: number,
+    segmentId: number,
+    flag: Pick<SegmentFlag, "kind" | "note"> | null,
+  ): Promise<Flagged> {
+    const path = `/books/${seg(bookId)}/chapters/${chapterId}/lines/${segmentId}/flag`;
+    return flag ? this.http.put<Flagged>(path, flag) : this.http.delete<Flagged>(path);
   }
 
   uploadCover(bookId: string, file: File): Promise<{ cover: string }> {

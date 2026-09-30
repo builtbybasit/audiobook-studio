@@ -42,6 +42,7 @@ import {
   tokenChargeLines,
   uncachedInput,
 } from "@/lib/pricing";
+import { hhmm } from "@/lib/format";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import type { ActivityFilter } from "@/views/endpoints/state";
 import type { RequestRecord } from "@/types";
@@ -104,9 +105,6 @@ function toggle(id: string) {
   expanded.value = next;
 }
 const bookTitle = (id: string | null) => (id ? (libraryStore.bookById(id)?.title ?? id) : "—");
-/** hour and minute only — the seconds live in the row's detail strip, and the column is tight */
-const hhmm = (ts: number) =>
-  new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 /** The instant a receipt read its rates at, shown to the second: it is the whole point of it. */
 const pricedAt = (ts: number) =>
   new Date(ts).toLocaleString([], {

@@ -29,6 +29,7 @@
 import { basename } from "node:path";
 
 import type {
+  BuildQueued,
   Chapter,
   ExportFile,
   ExportItem,
@@ -69,12 +70,6 @@ import type {
   FreshPart,
 } from "~/providers/encoder";
 import { inBackground } from "~/lib/background";
-
-export interface BuildQueued {
-  job: Job;
-  /** the version that is now building, so the page can show it arriving */
-  export: ExportItem;
-}
 
 export interface BuildInput {
   ids: readonly number[];
@@ -596,6 +591,13 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       ctx.note(`${file.name} is written`, "info", {
         seconds: Math.round(result.seconds),
         sizeMB: mb(result.bytes),
+        // what the file measured before it was levelled, which is the figure the Export page
+        // cannot know until a build has read the audio
+        ...(result.measuredLufs != null
+          ? {
+              loudness: `${result.measuredLufs.toFixed(1)} LUFS in, levelled to ${run.settings.loudness}`,
+            }
+          : {}),
       });
     }
 

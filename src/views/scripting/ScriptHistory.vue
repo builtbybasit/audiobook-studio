@@ -10,7 +10,8 @@ import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
 import { useScriptsStore } from "@/stores/scripts";
 
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
+import { useNow } from "@vueuse/core";
 import { relative } from "@/lib/endpoints";
 import {
   originKindLabel,
@@ -25,6 +26,8 @@ import ScriptHistoryDiff from "@/views/scripting/ScriptHistoryDiff.vue";
 import { useScript } from "@/views/scripting/shared";
 import { useChapterHistory } from "@/queries";
 import { secs } from "@/lib/speech";
+import { hhmm } from "@/lib/format";
+import { plural } from "@/lib/contents";
 import {
   ArrowLeft as BackIcon,
   BookmarkPlus as CheckpointIcon,
@@ -52,16 +55,17 @@ const selectedId = ref<number | null>(null);
 /** the version whose restore plan is open under it */
 const planFor = ref<number | null>(null);
 const checkpoint = ref("");
-const now = ref(Date.now());
-let clock: ReturnType<typeof setInterval>;
-onMounted(() => (clock = setInterval(() => (now.value = Date.now()), 15000)));
-onUnmounted(() => clearInterval(clock));
+// "4 min ago" moves on while the panel is open
+const clock = useNow({ interval: 15000 });
+const now = computed(() => clock.value.getTime());
 
 // the chapter's history: read from the server when the panel opens, or the store's own
-const { versions, head } = useChapterHistory(
+const { versions, head, status } = useChapterHistory(
   () => props.bookId,
   () => props.chapterId,
 );
+/** the history has been read: an empty list before then is not a chapter with no history */
+const loaded = computed(() => status.value === "success");
 const current = computed(() => scriptsStore.segmentsOf(props.bookId, props.chapterId));
 const selected = computed(() => versions.value.find((v) => v.id === selectedId.value) ?? null);
 const comparison = computed(() =>
@@ -83,9 +87,7 @@ function differences(v: ScriptVersion): number | null {
   return c ? c.lines : null;
 }
 const when = (at: number): string =>
-  at
-    ? `${new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${relative(at, now.value)}`
-    : "before this session";
+  at ? `${hhmm(at)} · ${relative(at, now.value)}` : "before this session";
 
 function preview(v: ScriptVersion) {
   selectedId.value = v.id;
@@ -167,9 +169,9 @@ watch(
         class="icon shrink-0"
       />
       <span v-if="mode === 'list'" class="min-w-0 flex-1">
-        <b>Script history</b> · chapter {{ chapterId }} · {{ versions.length }} saved version{{
-          versions.length === 1 ? "" : "s"
-        }}. The current script is untouched while you are in here.
+        <b>Script history</b> · chapter {{ chapterId }} ·
+        {{ loaded ? plural(versions.length, "saved version") : "reading the saved versions…" }}. The
+        current script is untouched while you are in here.
       </span>
       <span v-else-if="mode === 'preview'" class="min-w-0 flex-1">
         <b>Previewing v{{ selected?.id }}</b> — {{ originLabel(selected!.origin) }}, read-only. This
@@ -258,7 +260,10 @@ watch(
         <!-- everything before it -->
         <div>
           <div class="label mb-2">Earlier versions · newest first</div>
-          <p v-if="!versions.length" class="text-xs leading-relaxed text-zinc-500">
+          <p v-if="!loaded" class="text-xs text-zinc-500" role="status">
+            Reading this chapter's history…
+          </p>
+          <p v-else-if="!versions.length" class="text-xs leading-relaxed text-zinc-500">
             Nothing has replaced this chapter's script yet, so there is nothing earlier to go back
             to. Save a checkpoint before you try something, or just start editing — the script as it
             stands is preserved the moment you do.

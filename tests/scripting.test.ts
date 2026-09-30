@@ -10,17 +10,24 @@ import { test, expect, beforeAll, beforeEach, describe } from "bun:test";
 import { newProfile, profileErrors, scriptParts } from "@/lib/scripting";
 import type { Book, Job } from "@/types";
 
+import { computed, nextTick } from "vue";
+import { useQueryCache } from "@pinia/colada";
 import { jobDiagnostics } from "@/lib/jobActivity";
+import { keys } from "@/queries/keys";
+import { useBookSpend } from "@/queries/spend";
+import { useJobsStore } from "@/stores/jobs";
 import { backendServer } from "./support/backendServer";
 import { openDemoBook } from "./support/demoBook";
 import { epubFile, story } from "./support/epub";
-import { testPinia, type TestPinia } from "./support/pinia";
+import { flush, testPinia, type TestPinia } from "./support/pinia";
+import type { TestApi } from "./support/server";
 
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let scriptingStore: ReturnType<typeof useScriptingStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
 let pinia: TestPinia;
+let api: TestApi;
 /** the book the estimates are worked out over: three chapters, the first longer than one chunk */
 let book: string;
 
@@ -42,7 +49,7 @@ function useTestProfile() {
 }
 beforeAll(async () => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  const api = backendServer();
+  api = backendServer();
   const { body } = await api.import<{ book: Book }>(
     await epubFile({
       chapters: ["One", "Two", "Three"].map((title) => ({ title, paragraphs: story(4) })),
@@ -87,9 +94,17 @@ test("a concurrency may be any positive whole number, however large, and the URL
   ).toContain("Use the base URL without /chat/completions.");
 });
 
+/** Read the book's spending as the app shell does, so a budget has something to be checked against. */
+async function readSpend() {
+  const jobsStore = useJobsStore();
+  pinia.run(() => useBookSpend(book));
+  while (!jobsStore.spendOf(book)) await flush();
+}
+
 describe("the estimate", () => {
   beforeEach(async () => {
     await openDemoBook(pinia, book);
+    await readSpend();
     useTestProfile();
   });
 
@@ -128,6 +143,207 @@ describe("the estimate", () => {
     endpointsStore.profiles[0].outPrice = 0;
     libraryStore.bookById(book)!.scriptBudget = 0;
     expect(scriptingStore.scriptEstimate(book, [1]).blockers).toEqual([]);
+  });
+});
+
+// ---------- which endpoint a run goes to ----------
+
+describe("the profile a run goes to", () => {
+  const profile = (id: string, over: Parameters<typeof newProfile>[0] = {}) =>
+    newProfile({ id, name: id, model: "m", needsKey: false, ...over });
+
+  test("is the one picked while it exists, else the first that can run, else none", () => {
+    expect(scriptingStore.runProfile).toBeUndefined();
+    expect(scriptingStore.runBlockers).toEqual(["Add a scripting endpoint to run scripting."]);
+
+    endpointsStore.profiles = [
+      profile("paused", { enabled: false }),
+      profile("broken", { model: "" }),
+      profile("usable"),
+    ];
+    // nothing picked, or a pick that names nothing: the first profile that can take a run
+    expect(scriptingStore.runProfile?.id).toBe("usable");
+    scriptingStore.scriptSettings.profile = "gone";
+    expect(scriptingStore.runProfile?.id).toBe("usable");
+    // a pick that exists holds even while paused, and the blockers say why it cannot run
+    scriptingStore.scriptSettings.profile = "paused";
+    expect(scriptingStore.runProfile?.id).toBe("paused");
+    expect(scriptingStore.runBlockers).toContain(
+      "This endpoint is paused. Enable it or select another.",
+    );
+
+    endpointsStore.profiles = [profile("paused", { enabled: false })];
+    scriptingStore.scriptSettings.profile = null;
+    expect(scriptingStore.runProfile).toBeUndefined();
+    expect(scriptingStore.runBlockers[0]).toContain("Every scripting endpoint is paused");
+  });
+
+  test("removing the picked profile leaves none picked, and Undo picks it again", () => {
+    let undo: (() => void) | undefined;
+    useUiStore().toast = (_msg: string, opts?: { undo?: () => void }) => {
+      undo = opts?.undo;
+      return "test";
+    };
+    endpointsStore.profiles = [profile("a"), profile("b")];
+    scriptingStore.scriptSettings.profile = "b";
+    endpointsStore.removeScriptProfile("b");
+    expect(scriptingStore.scriptSettings.profile).toBeNull();
+    expect(scriptingStore.runProfile?.id).toBe("a");
+    undo!();
+    expect(scriptingStore.scriptSettings.profile).toBe("b");
+  });
+
+  test("the pick is saved with the endpoints and read back, as a reload would", async () => {
+    await endpointsStore.load(true);
+    endpointsStore.profiles.push(profile("saved"));
+    scriptingStore.scriptSettings.profile = "saved";
+    await nextTick();
+    await endpointsStore.flushWrites();
+    endpointsStore._detach();
+
+    // a new tab: the stores start from nothing and read the server
+    pinia = testPinia();
+    const reloaded = useScriptingStore();
+    expect(reloaded.scriptSettings.profile).toBeNull();
+    await useEndpointsStore().load(true);
+    expect(reloaded.scriptSettings).toEqual({ profile: "saved" });
+    useEndpointsStore()._detach();
+    // leave the server as the other tests found it
+    await api.request("/api/endpoints", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        endpoints: [],
+        profiles: [],
+        credentials: [],
+        script: { profile: null },
+      }),
+    });
+  });
+});
+
+// ---------- what the Scripting page shows before everything is read ----------
+
+describe("a selection not read yet", () => {
+  beforeEach(async () => {
+    await openDemoBook(pinia, book);
+    await readSpend();
+    useTestProfile();
+  });
+
+  test("is not priced as free: the estimate says it is reading, blocks the run, and prices it once read", async () => {
+    const cache = pinia.run(() => useQueryCache());
+    const text = cache.getQueryData(keys.chapterText(book, 1, "plain"));
+    cache.remove(cache.getEntries({ key: keys.chapterText(book, 1, "plain"), exact: true })[0]);
+    // what the page renders from: it must follow the text in when it lands
+    const shown = computed(() => scriptingStore.scriptEstimate(book, [1]));
+    expect(shown.value.reading).toBe(1);
+    expect(shown.value.blockers).toContain("Reading the text of 1 chapter…");
+    expect(scriptingStore.scriptPlan(book, [1]).requests).toBe(0);
+
+    cache.setQueryData(keys.chapterText(book, 1, "plain"), text);
+    expect(shown.value.reading).toBe(0);
+    expect(shown.value.chunks).toBeGreaterThan(1);
+    expect(shown.value.cost).toBeGreaterThan(0);
+    expect(shown.value.blockers).toEqual([]);
+  });
+
+  test("a book with a cap whose spending is not read yet has an unknown amount left, not all of it", () => {
+    const cache = pinia.run(() => useQueryCache());
+    cache.remove(cache.getEntries({ key: keys.spend(book), exact: true })[0]);
+    libraryStore.bookById(book)!.scriptBudget = 5;
+    const estimate = scriptingStore.scriptEstimate(book, [1]);
+    expect(Number.isNaN(estimate.remaining)).toBe(true);
+    expect(estimate.blockers).toContain("Reading what this book has spent…");
+    libraryStore.bookById(book)!.scriptBudget = null;
+  });
+
+  test("the budget left is the lower of the scripting budget and the book's overall cap", () => {
+    const b = libraryStore.bookById(book)!;
+    b.scriptBudget = 5;
+    b.budget = { cap: 2, paused: false };
+    expect(scriptingStore.scriptEstimate(book, [1]).remaining).toBe(2);
+    b.budget = { cap: null, paused: false };
+    expect(scriptingStore.scriptEstimate(book, [1]).remaining).toBe(5);
+    b.scriptBudget = null;
+    expect(scriptingStore.scriptEstimate(book, [1]).remaining).toBe(Infinity);
+  });
+
+  test("a chapter is a replacement by its own status, whether or not its script has been read", () => {
+    const ch = libraryStore.chapter(book, 2)!;
+    ch.scripting = "done";
+    // nothing on this page has read chapter 2's script
+    scriptsStore.segments = {};
+    const plan = scriptingStore.scriptPlan(book, [1, 2]);
+    expect([plan.fresh, plan.replace]).toEqual([1, 1]);
+    ch.scripting = "none";
+  });
+});
+
+// ---------- starting a run ----------
+
+describe("a run started from a button", () => {
+  beforeEach(async () => {
+    await openDemoBook(pinia, book);
+    await readSpend();
+  });
+
+  test("is refused, and says why, while the estimate has a blocker", async () => {
+    const toasts: string[] = [];
+    useUiStore().toast = (msg: string, opts?: { description?: string }) => {
+      toasts.push(`${msg}: ${opts?.description ?? ""}`);
+      return "test";
+    };
+    useTestProfile().enabled = false;
+    const queued = async () =>
+      (await api.request<{ jobs: unknown[] }>(`/api/jobs?bookId=${book}`)).body.jobs.length;
+    const before = await queued();
+    expect(await scriptingStore.startRun(book, [1])).toBe(false);
+    expect(toasts.join("\n")).toContain("This endpoint is paused");
+    expect(await queued()).toBe(before);
+  });
+
+  test("reads the chapters' text first, so a selection the page had not read yet can start", async () => {
+    await endpointsStore.load(true);
+    const p = newProfile({ id: "run", name: "Run", model: "m", needsKey: false, maxChars: 0 });
+    endpointsStore.profiles.push(p);
+    scriptingStore.scriptSettings.profile = p.id;
+    const cache = pinia.run(() => useQueryCache());
+    for (const e of cache.getEntries({ key: ["books", book, "text"] })) cache.remove(e);
+    expect(await scriptingStore.startRun(book, [3], { quiet: true })).toBe(true);
+    await api.runner.idle();
+    endpointsStore._detach();
+  });
+
+  test("smaller chunks reach the server before the run that needs them, and the toast says every book is affected", async () => {
+    const toasts: { msg: string; description?: string }[] = [];
+    useUiStore().toast = (msg: string, opts?: { description?: string }) => {
+      toasts.push({ msg, description: opts?.description });
+      return "test";
+    };
+    await endpointsStore.load(true);
+    const p = newProfile({ id: "chunks", name: "Chunky", model: "m", needsKey: false });
+    endpointsStore.profiles.push(p);
+    scriptingStore.scriptSettings.profile = p.id;
+    await nextTick();
+    await endpointsStore.flushWrites();
+    const saved = () =>
+      api.request<{ profiles: { id: string; maxChars: number }[] }>("/api/endpoints");
+    expect((await saved()).body.profiles.find((x) => x.id === p.id)!.maxChars).toBe(6000);
+
+    await scriptingStore.smallerChunks(book, 2);
+    // the job was queued with the profile as the server held it at that moment
+    const { jobs } = (
+      await api.request<{
+        jobs: { chapterId: number; scriptRun?: { profile: { maxChars: number } } }[];
+      }>(`/api/jobs?bookId=${book}`)
+    ).body;
+    const run = jobs.filter((j) => j.chapterId === 2).at(-1)!;
+    expect(run.scriptRun!.profile.maxChars).toBe(4000);
+    expect((await saved()).body.profiles.find((x) => x.id === p.id)!.maxChars).toBe(4000);
+    expect(toasts.at(-1)!.description).toContain("for every book it scripts");
+    await api.runner.idle();
+    endpointsStore._detach();
   });
 });
 

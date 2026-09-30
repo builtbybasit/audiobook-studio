@@ -95,6 +95,23 @@ describe("what a narration run spends", () => {
     );
   });
 
+  test("a cancelled run ends holding nothing, with the lines it never sent still unpaid", async () => {
+    const gate = gatedSpeechProvider();
+    const api = testApi({ speech: gate.provider });
+    const id = await voiced(api);
+    const { body } = await narrate(api, id);
+    const [queued] = (body as Queued).jobs;
+    expect(queued.narrationRun?.reserved).toBeGreaterThan(0);
+    await gate.started;
+    await api.request(`/api/jobs/${queued.id}/cancel`, { method: "POST" });
+    await api.runner.idle();
+
+    const job = await jobById(api, queued.id);
+    expect(job.status).toBe("cancelled");
+    expect(job.narrationRun?.reserved).toBe(0);
+    expect(bookSpend(api.db, id).reserved).toBe(0);
+  });
+
   test("a part that fails leaves the parts before it charged", async () => {
     const endpoint = speech({ maxChars: 60 });
     let second = "";
@@ -166,6 +183,8 @@ describe("the budget", () => {
     const job = await jobById(api, (body as Queued).jobs[0].id);
     expect(job.status).toBe("failed");
     expect(job.activity?.at(-1)?.detail?.error).toMatch(/^Over the book's .* for the next line/);
+    // the lines it never sent are not held once it has stopped
+    expect(job.narrationRun?.reserved).toBe(0);
     const [first, ...rest] = await linesOf(api, id);
     expect(first.audio.status).toBe("done");
     // the rest were never sent, so they are neither rendered nor failed

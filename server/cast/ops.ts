@@ -6,38 +6,26 @@
 // rename, a merge, a removal — moves lines in every chapter of the book, and does so in the same
 // transaction as the cast row. Each says which lines it moved, so an Undo can put exactly those
 // back through `attribute` rather than guessing at an inverse.
-import { and, asc, eq } from "drizzle-orm";
-
-import type { Character, LexEntry, SegmentAudio } from "@/types";
+import type {
+  Cast,
+  ChapterLines,
+  Character,
+  LexEntry,
+  LexiconSaved,
+  MovedLines,
+  RevisedLines,
+  SegmentAudio,
+} from "@/types";
 import { NARRATOR } from "@/lib/cast";
 import { speak } from "@/lib/speech";
 import type { Db, Tx } from "~/db/client";
 import * as cast from "~/db/cast";
-import { chapters } from "~/db/schema";
-import { discardSpeakerSamples, moveSpeakerSamples } from "~/speakerSamples/store";
-import {
-  attributeLines,
-  bumpRevision,
-  readScript,
-  reattribute,
-  writeClip,
-  type ChapterLines,
-  type MovedLines,
-} from "~/db/script";
-import { settleChapter } from "~/jobs/narration";
+import * as library from "~/db/library";
+import { discardSpeakerSamples, moveSpeakerSamples } from "~/db/speakerSamples";
+import { attributeLines, bumpRevision, readScript, reattribute, writeClip } from "~/db/script";
 import { badRequest, conflict, notFound } from "~/lib/errors";
 import { requireBook } from "~/library/ops";
-
-export interface Cast {
-  characters: Character[];
-  lexicon: LexEntry[];
-}
-
-/** Lines that changed hands, by chapter with the chapter's revision now, and the cast as it stands. */
-export interface Moved {
-  characters: Character[];
-  moved: MovedLines[];
-}
+import { settleChapter } from "~/narration/chapter";
 
 export function bookCast(db: Db, bookId: string): Cast {
   requireBook(db, bookId);
@@ -66,7 +54,7 @@ export function putCharacter(db: Db, bookId: string, name: string, c: Character)
  * Change a speaker's name, and re-attribute every line that names them. Not the Narrator's: the
  * Narrator is the speaker every book has and every removal hands lines to, by that name.
  */
-export function renameCharacter(db: Db, bookId: string, from: string, to: string): Moved {
+export function renameCharacter(db: Db, bookId: string, from: string, to: string): MovedLines {
   requireBook(db, bookId);
   to = to.trim();
   if (!to) throw badRequest("A speaker needs a name");
@@ -87,7 +75,7 @@ export function renameCharacter(db: Db, bookId: string, from: string, to: string
  * speaker that stays, and the speaker that went comes off the cast. Anyone can be folded into the
  * Narrator; the Narrator is folded into no one, for the reason they cannot be removed.
  */
-export function mergeCharacter(db: Db, bookId: string, from: string, into: string): Moved {
+export function mergeCharacter(db: Db, bookId: string, from: string, into: string): MovedLines {
   requireBook(db, bookId);
   if (from === NARRATOR)
     throw conflict(
@@ -110,7 +98,7 @@ export function mergeCharacter(db: Db, bookId: string, from: string, into: strin
 }
 
 /** Take a speaker off the cast; the lines they read go to the Narrator. */
-export function deleteCharacter(db: Db, bookId: string, name: string): Moved {
+export function deleteCharacter(db: Db, bookId: string, name: string): MovedLines {
   requireBook(db, bookId);
   if (name === NARRATOR) throw conflict("The Narrator cannot be removed");
   requireCharacter(db, bookId, name);
@@ -134,20 +122,13 @@ export function attribute(
   bookId: string,
   character: Character,
   lines: readonly ChapterLines[],
-): Moved {
+): MovedLines {
   requireBook(db, bookId);
   return db.transaction((tx) => {
     cast.upsertCharacter(tx, bookId, character);
     const moved = attributeLines(tx, bookId, lines, character.name);
     return { characters: cast.readCast(tx, bookId), moved };
   });
-}
-
-/** The dictionary as it now stands, and the clips it moved, by chapter with the revision now. */
-export interface LexiconSaved {
-  entries: LexEntry[];
-  stale: MovedLines[];
-  restored: MovedLines[];
 }
 
 /**
@@ -179,9 +160,9 @@ export function putLexicon(
     cast.replaceLexicon(tx, bookId, entries);
     const lexicon = cast.readLexicon(tx, bookId);
     const named = new Map(restore.map((r) => [r.chapterId, new Set(r.ids)]));
-    const stale: MovedLines[] = [];
-    const restored: MovedLines[] = [];
-    for (const chapterId of chapterIds(tx, bookId)) {
+    const stale: RevisedLines[] = [];
+    const restored: RevisedLines[] = [];
+    for (const chapterId of library.chapterNumbers(tx, bookId)) {
       const staled: number[] = [];
       const back: number[] = [];
       const undo = named.get(chapterId);
@@ -209,21 +190,7 @@ export function putLexicon(
   });
 }
 
-function chapterIds(tx: Tx, bookId: string): number[] {
-  return tx
-    .select({ id: chapters.id })
-    .from(chapters)
-    .where(eq(chapters.bookId, bookId))
-    .orderBy(asc(chapters.id))
-    .all()
-    .map((c) => c.id);
-}
-
 function inProgress(tx: Tx, bookId: string, chapterId: number): boolean {
-  const row = tx
-    .select({ narration: chapters.narration })
-    .from(chapters)
-    .where(and(eq(chapters.bookId, bookId), eq(chapters.id, chapterId)))
-    .get();
-  return row?.narration === "queued" || row?.narration === "running";
+  const narration = library.getChapter(tx, bookId, chapterId)?.narration;
+  return narration === "queued" || narration === "running";
 }

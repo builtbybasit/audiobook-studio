@@ -10,6 +10,7 @@
 // expected to use, with the prompt this endpoint sends and, for a model that reasons, the thinking
 // its recent requests at this level were seen to spend.
 import { computed, ref, watch } from "vue";
+import { plural } from "@/lib/contents";
 import { UiNumber, UiSelect } from "@/ui";
 import NumberSlider from "@/components/NumberSlider.vue";
 import { ChevronLeft as PrevIcon, ChevronRight as NextIcon, Check as OkIcon } from "@lucide/vue";
@@ -524,7 +525,7 @@ const limitNote = computed(() => {
           <h3 class="label">Split preview</h3>
           <span class="text-[11px] text-zinc-500"
             >{{ dirty ? "your text" : sampleLabel }} · {{ text.length.toLocaleString() }} chars →
-            {{ parts.length }} request{{ parts.length === 1 ? "" : "s" }}</span
+            {{ plural(parts.length, "request") }}</span
           >
         </div>
         <textarea

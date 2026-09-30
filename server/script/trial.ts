@@ -12,8 +12,6 @@
 // The request is real, though, and so is its bill. It is held to the book's budget at its worst
 // case before it goes, like a run's first request, and what it used is priced into the book's
 // ledger against the chapter, where it counts toward spend like any other.
-import { and, eq } from "drizzle-orm";
-
 import type {
   BookPrompt,
   ProfilePrompt,
@@ -29,19 +27,19 @@ import {
   type PromptVars,
 } from "@/lib/prompt";
 import { tokenEstimate } from "@/lib/scripting";
+import { readSpeakers } from "~/db/cast";
 import type { Db } from "~/db/client";
 import { readProfiles } from "~/db/endpoints";
 import * as library from "~/db/library";
-import { chapters } from "~/db/schema";
 import { readLibraryPrompt } from "~/db/settings";
 import { plainText } from "~/epub/markdown";
 import { badRequest, conflict, notFound } from "~/lib/errors";
-import { chunksOf, readSpeakers } from "~/jobs/scripting";
 import { fidelity } from "~/providers/chatScripting";
 import { ProviderError } from "~/providers/http";
 import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
+import { chunksOf } from "~/script/chunks";
 import { assertWithinBudget } from "~/usage/budget";
 import { settleScript } from "~/usage/ledger";
 
@@ -69,13 +67,11 @@ export async function tryPrompt(
   if (book.importing) throw conflict("Finish the contents review before scripting this book");
   const profile = readProfiles(db).find((p) => p.id === request.profile);
   if (!profile) throw notFound(`There is no scripting endpoint “${request.profile}”`);
-  const chapter = db
-    .select({ uid: chapters.uid, title: chapters.title })
-    .from(chapters)
-    .where(and(eq(chapters.bookId, bookId), eq(chapters.id, request.chapterId)))
-    .get();
+  const chapter = library.getChapter(db, bookId, request.chapterId);
+  const uid = library.chapterUid(db, bookId, request.chapterId);
   const body = chapter && library.getChapterBody(db, bookId, request.chapterId);
-  if (!chapter || body == null) throw notFound(`${book.title} has no chapter ${request.chapterId}`);
+  if (!chapter || uid == null || body == null)
+    throw notFound(`${book.title} has no chapter ${request.chapterId}`);
 
   // Cut as the endpoint cuts it, so part 3 here is part 3 of a run.
   const chunks = chunksOf(plainText(body), profile);
@@ -129,7 +125,7 @@ export async function tryPrompt(
         profile,
         {
           bookId,
-          chapterUid: chapter.uid,
+          chapterUid: uid,
           label: `Prompt trial · ch ${request.chapterId} · part ${part}/${chunks.length}`,
         },
         report,

@@ -12,7 +12,6 @@
 // the store's side of the seam, and the route has its own tests in `tests/server/`.
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 
-import { credentials } from "@/lib/credentials";
 import { ApiError } from "@/services/http";
 import {
   HttpEndpointSettingsService,
@@ -121,9 +120,10 @@ class FakeService implements EndpointSettingsService {
   sampleAnswer: VoiceSample | ApiError = {
     blob: new Blob([new Uint8Array([82, 73, 70, 70])], { type: "audio/wav" }),
     duration: 3.5,
+    source: "rendered",
   };
   /** what each clone was asked, with how many writes had gone out by then */
-  cloned: { id: string; title: string; clips: number; consent: boolean; puts: number }[] = [];
+  cloned: { id: string; title: string; samples: number; consent: boolean; puts: number }[] = [];
   cloneAnswer: ClonedVoice | ApiError = {
     id: "cloned-1",
     label: "Mara",
@@ -134,7 +134,7 @@ class FakeService implements EndpointSettingsService {
     this.cloned.push({
       id,
       title: request.title,
-      clips: request.clips.length,
+      samples: request.samples.length,
       consent: request.consent,
       puts: this.puts.length,
     });
@@ -245,10 +245,14 @@ describe("the endpoints store with a server answering", () => {
     expect(endpointsStore.endpoints.map((e) => e.id)).toEqual(["srv-tts"]);
     expect(endpointsStore.endpoints[0].sampleRate).toBe(24000);
     expect(endpointsStore.profiles).toEqual([]);
-    // the registry is refilled in place: the Connection tab holds this very array
-    expect(credentials.map((c) => c.id)).toEqual(["srv-cred"]);
+    expect(endpointsStore.credentials.map((c) => c.id)).toEqual(["srv-cred"]);
     // telemetry is the browser's, and a new endpoint starts with none
     expect(endpointsStore.endpoints[0].history).toEqual([]);
+    // saved before its operational settings and its pricing existed: the defaults are filled in
+    // as it comes in, and filling them in is not an edit to send back
+    expect(endpointsStore.endpoints[0].timeoutSec).toBeNumber();
+    expect(endpointsStore.endpoints[0].pricing?.windows).toEqual([]);
+    await settle();
     expect(svc.puts).toEqual([]);
     // a second load is a no-op; `force` reads again
     await endpointsStore.load();
@@ -272,15 +276,17 @@ describe("the endpoints store with a server answering", () => {
   });
 
   test("a server nobody has configured is given nothing, and the page shows none", async () => {
-    // the store never starts on the seeded configuration, so there is nothing to hand over
+    // the store never starts on the seeded configuration, so there is nothing to hand over — not
+    // even the demo's credential registry
     expect(endpointsStore.endpoints).toEqual([]);
     expect(endpointsStore.profiles).toEqual([]);
+    expect(endpointsStore.credentials).toEqual([]);
     await endpointsStore.load();
     expect(svc.puts).toHaveLength(0);
     expect(endpointsStore.loaded).toBe(true);
     expect(endpointsStore.endpoints).toEqual([]);
     expect(endpointsStore.profiles).toEqual([]);
-    expect(credentials).toEqual([]);
+    expect(endpointsStore.credentials).toEqual([]);
     await settle();
     expect(svc.puts).toHaveLength(0);
   });
@@ -343,7 +349,7 @@ describe("the endpoints store with a server answering", () => {
   test("a credential or a profile changing is sent too", async () => {
     svc.held = server();
     await endpointsStore.load();
-    credentials[0].note = "the team account";
+    endpointsStore.credentials[0].note = "the team account";
     endpointsStore.addScriptProfile();
     await settle();
     expect(svc.puts).toHaveLength(1);
@@ -411,6 +417,47 @@ describe("the endpoints store with a server answering", () => {
     await settle();
     expect(svc.puts.map((b) => b.endpoints[0].concurrency)).toEqual([5, 9]);
     expect(ep.concurrency).toBe(9);
+  });
+
+  // what a run waits on before the server reads the profile it names
+  test("a flush waits for the write already out, and for what was typed while it was out", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const put = svc.putSettings.bind(svc);
+    svc.putSettings = async (body) => {
+      await gate;
+      return put(body);
+    };
+    const ep = endpointsStore.endpoints[0];
+    ep.concurrency = 5;
+    await settle(); // the write for 5 is out, and nothing is waiting behind it
+    let flushed = false;
+    const flushing = endpointsStore.flushWrites().then(() => (flushed = true));
+    await drain();
+    expect(flushed).toBe(false);
+    ep.concurrency = 9;
+    await drain();
+    release();
+    await flushing;
+    expect(svc.puts.map((b) => b.endpoints[0].concurrency)).toEqual([5, 9]);
+    expect(svc.held!.endpoints[0].concurrency).toBe(9);
+  });
+
+  test("a store loaded after another's takes the write-behind over, as a new tab would", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const first = endpointsStore;
+    pinia = testPinia();
+    endpointsStore = useEndpointsStore();
+    await endpointsStore.load();
+    endpointsStore.endpoints[0].concurrency = 7;
+    await settle();
+    // the first store is not watched any more: what it holds goes nowhere
+    first.endpoints[0].concurrency = 2;
+    await settle();
+    expect(svc.puts.map((b) => b.endpoints[0].concurrency)).toEqual([7]);
   });
 });
 
@@ -694,7 +741,7 @@ describe("voice samples with a server answering", () => {
     svc.sampleAnswer = new ApiError("Speech server needs an API key", 400);
     expect(await endpointsStore.sampleVoice(ep, "ash")).toBeNull();
     expect(toasts).toEqual([{ msg: "Speech server needs an API key", kind: "error" }]);
-    svc.sampleAnswer = { blob: new Blob([]), duration: 1 };
+    svc.sampleAnswer = { blob: new Blob([]), duration: 1, source: "rendered" };
     expect(await endpointsStore.sampleVoice(ep, "ash")).not.toBeNull();
     expect(svc.sampled).toHaveLength(2);
   });
@@ -711,12 +758,12 @@ describe("cloning a voice with a server answering", () => {
     await drain();
     const voice = await endpointsStore.cloneVoice(ep, {
       title: "Mara",
-      clips: [recording(), recording()],
+      samples: [recording(), recording()],
       consent: true,
     });
     expect(voice).toEqual({ id: "cloned-1", label: "Mara", gender: "?" });
     expect(svc.cloned).toEqual([
-      { id: "srv-tts", title: "Mara", clips: 2, consent: true, puts: 1 },
+      { id: "srv-tts", title: "Mara", samples: 2, consent: true, puts: 1 },
     ]);
     expect(ep.voices.at(-1)).toEqual({ id: "cloned-1", label: "Mara", gender: "?" });
     expect(toasts.at(-1)).toMatchObject({ kind: "success" });
@@ -726,7 +773,7 @@ describe("cloning a voice with a server answering", () => {
 
     // a voice made whose recordings the server could not keep is still made, and the page says so
     svc.cloneAnswer = { id: "cloned-2", label: "Kael", gender: "?", samplesKept: false };
-    await endpointsStore.cloneVoice(ep, { title: "Kael", clips: [recording()], consent: true });
+    await endpointsStore.cloneVoice(ep, { title: "Kael", samples: [recording()], consent: true });
     expect(ep.voices.at(-1)).toEqual({ id: "cloned-2", label: "Kael", gender: "?" });
     expect(toasts.at(-1)).toMatchObject({ kind: "warn" });
   });
@@ -738,7 +785,11 @@ describe("cloning a voice with a server answering", () => {
     const before = ep.voices.length;
     svc.cloneAnswer = new ApiError("Confirm you have the right to clone this voice", 400);
     expect(
-      await endpointsStore.cloneVoice(ep, { title: "Mara", clips: [recording()], consent: false }),
+      await endpointsStore.cloneVoice(ep, {
+        title: "Mara",
+        samples: [recording()],
+        consent: false,
+      }),
     ).toBeNull();
     expect(toasts).toEqual([
       { msg: "Confirm you have the right to clone this voice", kind: "error" },

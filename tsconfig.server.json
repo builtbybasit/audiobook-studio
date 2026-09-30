@@ -13,7 +13,6 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "composite": true,
     "paths": {
       "@/*": ["./src/*"],
       "~/*": ["./server/*"]
@@ -24,22 +23,7 @@
     "drizzle.config.ts",
     "tests/server/**/*.ts",
     "tests/live/**/*.ts",
-    "tests/support/epub.ts",
-    "tests/support/server.ts",
-    "tests/support/persist.ts",
-    "tests/support/images.ts",
-    "tests/support/encoded.ts",
-    "tests/support/cloning.ts",
-    "tests/support/batchServer.ts",
-    "tests/support/tempRoot.ts",
-    "tests/support/credentialRegistry.ts",
-    "tests/support/zip.ts",
     "src/types/**/*.ts",
-    "src/lib/**/*.ts",
-    "src/ui/types.ts",
-    "src/mock/**/*.ts",
-    "src/services/http.ts",
-    "src/services/library.ts",
-    "src/services/mode.ts"
+    "src/lib/**/*.ts"
   ]
 }

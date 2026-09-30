@@ -10,6 +10,7 @@ import * as v from "valibot";
 import type {
   BookPrompt,
   Character,
+  Credential,
   ExportSettings,
   LexEntry,
   Profile,
@@ -19,13 +20,13 @@ import type {
   ScriptFileSpeaker,
   ScriptFileTerm,
   ScriptManifest,
+  ScriptSettings,
   Segment,
   VersionOrigin,
 } from "@/types";
-import type { Credential } from "@/lib/credentials";
 import { REASONING_EFFORTS } from "@/lib/prompt";
 import { SAMPLE_RATES } from "@/lib/speech";
-import type { EndpointSettings } from "~/db/rows";
+import type { StoredEndpoint } from "@/lib/endpointTelemetry";
 import { badRequest } from "~/lib/errors";
 
 const Gender = v.picklist(["m", "f", "n", "?"]);
@@ -390,7 +391,7 @@ export const EndpointSchema = v.object({
       }),
     ),
   ),
-}) satisfies v.GenericSchema<unknown, EndpointSettings>;
+}) satisfies v.GenericSchema<unknown, StoredEndpoint>;
 
 // ---- the scripting prompt ----
 //
@@ -416,6 +417,14 @@ export const BookPromptSchema = v.object({
   replace: v.boolean(),
   ...PromptTemplateSchema.entries,
 }) satisfies v.GenericSchema<unknown, BookPrompt>;
+
+/**
+ * Which profile scripting runs go to; see `~/db/settings`. Anything else a page from before sends
+ * beside it is dropped rather than refused.
+ */
+export const ScriptSettingsSchema = v.object({
+  profile: v.nullable(v.pipe(v.string(), v.nonEmpty())),
+}) satisfies v.GenericSchema<unknown, ScriptSettings>;
 
 /** Refuse a prompt that has problems, naming whose it is: “OpenAI”'s prompt: … */
 export function refusePrompt(whose: string, problems: readonly string[]): void {

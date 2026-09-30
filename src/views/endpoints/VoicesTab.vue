@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { sizeLabel } from "@/lib/audioFormat";
 import { useCastStore } from "@/stores/cast";
-import { useEndpointsStore, type HeardSample } from "@/stores/endpoints";
-import { SAMPLE_TITLE } from "@/composables/useVoiceSample";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { SAMPLE_TITLE, sampleId, useVoiceSample } from "@/composables/useVoiceSample";
 import { useLibraryStore } from "@/stores/library";
-import { useUiStore } from "@/stores/ui";
-import { useSpeakerSamplesStore, type CloneFromSamples } from "@/stores/speakerSamples";
 
 // The voice catalogue of one speech endpoint — the only place voices are added, edited or removed.
 //
@@ -17,36 +15,26 @@ import { useSpeakerSamplesStore, type CloneFromSamples } from "@/stores/speakerS
 // Two ways in, because providers differ: fetch the server's list where there is one (Fish Audio's
 // catalogue is per account and needs the key first), or type an id by hand for a server that has no
 // list endpoint at all. A Fish endpoint has a third: search Fish's public catalogue and add a voice
-// from the results.
+// from the results (`FishVoiceSearch`). Where the provider clones, a fourth makes one from samples
+// (`CloneVoicePanel`).
 import { computed, reactive, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
-import { keyInPlace, type VoiceListPage } from "@/services/endpointSettings";
-import { ApiError } from "@/services/http";
-import { usePlayer } from "@/composables/usePlayer";
-import type { Component } from "vue";
+import { keyInPlace } from "@/services/endpointSettings";
 import {
-  Check as AddedIcon,
-  ChevronLeft as PrevIcon,
-  ChevronRight as NextIcon,
-  Dot as NeutralIcon,
   Archive as KeptIcon,
-  Globe as PublicIcon,
-  Mic as CloneIcon,
   LoaderCircle as BusyIcon,
   Pause as PauseIcon,
-  Mars as MaleIcon,
   Play as PlayIcon,
   Plus as AddIcon,
   RefreshCw as FetchIcon,
-  Search as SearchIcon,
   TriangleAlert as WarnIcon,
-  Venus as FemaleIcon,
   X as RemoveIcon,
+  Search as SearchIcon,
 } from "@lucide/vue";
 import { UiCheckbox, UiSelect, UiTooltip } from "@/ui";
+import { plural } from "@/lib/contents";
 import { isFishAudio } from "@/lib/endpoints";
 import { CLONE_CONSENT } from "@/lib/endpointShapes";
-import { cloneModelsFor, cloningOf, speechProviderOf } from "@/lib/providers";
+import { cloningOf, speechProviderOf } from "@/lib/providers";
 import {
   acceptOf,
   leftOutSaid,
@@ -54,37 +42,16 @@ import {
   pickOf,
   pickProblem,
 } from "@/views/endpoints/cloneForm";
+import CloneVoicePanel from "@/views/endpoints/CloneVoicePanel.vue";
+import FishVoiceSearch from "@/views/endpoints/FishVoiceSearch.vue";
+import { GENDER_ICON, GENDERS } from "@/views/endpoints/genders";
 import { maxSamplesOf } from "@/lib/voiceSamples";
-import type {
-  Endpoint,
-  FoundVoice,
-  Gender,
-  KeptVoiceSamples,
-  SpeakerSamples,
-  Voice,
-} from "@/types";
+import type { Endpoint, Gender, KeptVoiceSamples, Voice } from "@/types";
 
 const props = defineProps<{ endpoint: Endpoint }>();
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
-const uiStore = useUiStore();
-const samplesStore = useSpeakerSamplesStore();
-const route = useRoute();
-const router = useRouter();
-
-const GENDERS: { value: Gender; label: string }[] = [
-  { value: "f", label: "female" },
-  { value: "m", label: "male" },
-  { value: "n", label: "neutral" },
-  { value: "?", label: "unknown" },
-];
-const GENDER_ICON: Record<Gender, Component> = {
-  m: MaleIcon,
-  f: FemaleIcon,
-  n: NeutralIcon,
-  "?": NeutralIcon,
-};
 
 /** Who is using each voice, across every book — `voice id → book title → speaker names`. */
 const usage = computed(() => {
@@ -134,193 +101,9 @@ const fish = computed(() => isFishAudio(props.endpoint));
 const needsKeyFirst = computed(() => props.endpoint.needsKey && !keyInPlace(props.endpoint));
 const fetchBlocked = computed(() => fish.value && needsKeyFirst.value);
 
-// ---------- searching the public catalogue ----------
-// Fish Audio's public voices, a page at a time, through the server — which asks with the saved key.
-// A result is only a result until "Add" puts it on this endpoint, and the write-behind saves it like
-// any other voice. Only a Fish endpoint has one.
-const LANGUAGES = [
-  { value: "", label: "Any language" },
-  { value: "en", label: "English" },
-  { value: "zh", label: "Chinese" },
-  { value: "ja", label: "Japanese" },
-  { value: "ko", label: "Korean" },
-  { value: "fr", label: "French" },
-  { value: "de", label: "German" },
-  { value: "es", label: "Spanish" },
-  { value: "pt", label: "Portuguese" },
-  { value: "it", label: "Italian" },
-  { value: "ru", label: "Russian" },
-  { value: "ar", label: "Arabic" },
-];
-const search = reactive({
-  query: "",
-  language: "en",
-  busy: false,
-  error: "",
-  result: null as VoiceListPage | null,
-});
-/** Only the latest search's answer is shown; an earlier one arriving late is dropped. */
-let searches = 0;
-async function runSearch(page = 1) {
-  const n = ++searches;
-  search.busy = true;
-  search.error = "";
-  try {
-    const result = await endpointsStore.searchVoices(props.endpoint, {
-      query: search.query.trim() || undefined,
-      language: search.language || undefined,
-      page,
-    });
-    if (n === searches) search.result = result;
-  } catch (e) {
-    if (n !== searches) return;
-    search.result = null;
-    search.error =
-      e instanceof ApiError && e.status === 404
-        ? "This endpoint is not saved on the server yet."
-        : e instanceof Error
-          ? e.message
-          : String(e);
-  } finally {
-    if (n === searches) search.busy = false;
-  }
-}
-const has = (v: Voice) => props.endpoint.voices.some((x) => x.id === v.id);
-
-// ---------- cloning ----------
-// A voice made from samples of someone speaking — recorded, or downloaded — kept by the provider as
-// a private voice on the account and added to this endpoint like any other: the provider makes it
-// once, and it is spoken by its id from then on. Only where the provider keeps one (its `cloning`):
-// the samples go to the provider through the server, with the saved key, and the server keeps them beside the voice with the consent they were given under — so the voice can
-// travel with a book's script to someone who has to make it again.
-//
-// What a pick may be is the provider's (`cloneForm.ts`): the picker offers its formats, a pick is
-// cut to the most it takes, and a file too large for it blocks the button with its name. The
-// server still decides by each file's first bytes, so a renamed file is refused there with its name.
+// what the provider takes as a voice's samples, which keeping them is held to as cloning is
 const cloning = computed(() => cloningOf(props.endpoint));
-const provider = computed(() => speechProviderOf(props.endpoint).label);
 const clonable = computed(() => !!cloning.value);
-// a provider that clones only for some of its models (Qwen) says which, where this one does not
-const cloneModels = computed(() => cloneModelsFor(props.endpoint));
-const clone = reactive({
-  title: "",
-  samples: [] as File[],
-  /** how many picked samples were left out, past the most one voice is made from */
-  leftOut: 0,
-  consent: false,
-  busy: false,
-});
-const samplesInput = ref<HTMLInputElement | null>(null);
-const samplesSize = computed(() => clone.samples.reduce((n, f) => n + f.size, 0));
-/** Why the picked samples cannot be sent, naming the file; null when nothing stops them. */
-const problemOf = (samples: File[]) =>
-  cloning.value ? pickProblem(samples, cloning.value, provider.value) : null;
-const cloneProblem = computed(() => problemOf(clone.samples));
-const cloneBlocked = computed(
-  () =>
-    !clone.title.trim() ||
-    !clone.samples.length ||
-    !!cloneProblem.value ||
-    !clone.consent ||
-    clone.busy ||
-    needsKeyFirst.value,
-);
-/** The samples a file input holds, up to the most one voice is made from, and how many were not. */
-function picked(e: Event): { samples: File[]; leftOut: number } {
-  const all = [...((e.target as HTMLInputElement).files ?? [])];
-  return cloning.value ? pickOf(all, cloning.value) : { samples: [], leftOut: all.length };
-}
-function pickSamples(e: Event) {
-  Object.assign(clone, picked(e));
-  // samples picked by hand are not the ones the link brought, so the voice is not theirs to assign
-  from.value = null;
-}
-
-// ---------- cloning from samples a script file brought ----------
-// The Cast page and the import report link here with `?book=…&samples=…&speaker=…&was=…` when a
-// script file carried the samples of a private voice. The form is filled with them and nothing
-// more: the file's consent record is shown as what someone else agreed to, the box stays unticked
-// for this person's own, and the button is theirs to press. A voice made from them goes to the
-// speaker only if the speaker's voice is still `was` — see `afterClone`.
-const from = ref<(CloneFromSamples & { sample: SpeakerSamples }) | null>(null);
-const query = (k: string): string => {
-  const v = route.query[k];
-  return typeof v === "string" ? v : "";
-};
-async function prefill() {
-  const bookId = query("book");
-  const sampleId = Number(query("samples"));
-  if (query("endpoint") !== `tts:${props.endpoint.id}` || !bookId || !sampleId || !clonable.value)
-    return;
-  if (from.value?.bookId === bookId && from.value.sampleId === sampleId) return;
-  const sample = (await samplesStore.load(bookId)).find((x) => x.id === sampleId);
-  if (!sample) {
-    uiStore.toast("Those voice samples are no longer waiting", {
-      kind: "info",
-      description: "They were cloned or discarded after the link was made.",
-    });
-    return;
-  }
-  const samples = await samplesStore.files(bookId, sample);
-  if (!samples) return;
-  from.value = {
-    bookId,
-    sampleId,
-    // the server's row, never the address: a rename since the link was made moves the row with it
-    speaker: sample.speaker,
-    was: query("was") || null,
-    sample,
-  };
-  // held to this provider like a pick by hand: a script file may carry more samples than it takes
-  Object.assign(clone, {
-    title: sample.title,
-    ...(cloning.value ? pickOf(samples, cloning.value) : { samples: [], leftOut: samples.length }),
-    consent: false,
-  });
-  if (samplesInput.value) samplesInput.value.value = "";
-}
-watch(
-  () => [route.query.book, route.query.samples, props.endpoint.id, clonable.value],
-  () => void prefill(),
-  { immediate: true },
-);
-/** Leave the link behind: the form empties, and the address stops asking for it again. */
-function forgetLink() {
-  const { book: _b, samples: _s, speaker: _p, was: _w, ...rest } = route.query;
-  void router.replace({ query: rest });
-}
-function putAside() {
-  from.value = null;
-  Object.assign(clone, { title: "", samples: [], leftOut: 0, consent: false });
-  forgetLink();
-}
-async function makeVoice() {
-  if (cloneBlocked.value) return;
-  clone.busy = true;
-  try {
-    const voice = await endpointsStore.cloneVoice(props.endpoint, {
-      title: clone.title,
-      samples: clone.samples,
-      consent: clone.consent,
-    });
-    if (voice) {
-      if (from.value) {
-        const made = from.value;
-        from.value = null;
-        forgetLink();
-        void samplesStore.afterClone(made, `${props.endpoint.id}/${voice.id}`);
-      }
-      clone.title = "";
-      clone.samples = [];
-      clone.leftOut = 0;
-      clone.consent = false;
-      if (samplesInput.value) samplesInput.value.value = "";
-      void loadKept();
-    }
-  } finally {
-    clone.busy = false;
-  }
-}
 
 // ---------- kept samples ----------
 // Which voices here have the samples they were made from kept on the server. A voice cloned before
@@ -340,7 +123,7 @@ watch(
   { immediate: true },
 );
 const keptTitle = (k: KeptVoiceSamples) =>
-  `${k.samples.length} sample${k.samples.length === 1 ? "" : "s"} kept on this server, ${sizeLabel(
+  `${plural(k.samples.length, "sample")} kept on this server, ${sizeLabel(
     k.samples.reduce((n, x) => n + x.bytes, 0),
   )}. Consent given ${new Date(k.consentAt).toLocaleDateString()}: “${k.consentText}”`;
 
@@ -352,7 +135,12 @@ const keep = reactive({
   busy: false,
 });
 const keepVoice = computed(() => props.endpoint.voices.find((v) => v.id === keep.voiceId));
-const keepProblem = computed(() => problemOf(keep.samples));
+/** Why the picked samples cannot be kept, naming the file; null when nothing stops them. */
+const keepProblem = computed(() =>
+  cloning.value
+    ? pickProblem(keep.samples, cloning.value, speechProviderOf(props.endpoint).label)
+    : null,
+);
 const keepBlocked = computed(
   () => !keep.samples.length || !!keepProblem.value || !keep.consent || keep.busy,
 );
@@ -360,8 +148,13 @@ function openKeep(v: Voice) {
   Object.assign(keep, { voiceId: keep.voiceId === v.id ? null : v.id, samples: [], leftOut: 0 });
   keep.consent = false;
 }
+/** The samples picked, up to the most one voice is made from, and how many were not. */
 function pickKept(e: Event) {
-  Object.assign(keep, picked(e));
+  const all = [...((e.target as HTMLInputElement).files ?? [])];
+  Object.assign(
+    keep,
+    cloning.value ? pickOf(all, cloning.value) : { samples: [], leftOut: all.length },
+  );
 }
 async function keepSamples() {
   if (keepBlocked.value || !keep.voiceId) return;
@@ -392,59 +185,14 @@ async function forgetKept(v: Voice) {
 // Play is the provider's own recording of the voice where it keeps one, or else the saved endpoint
 // saying a sentence in it: a real, priced request, made once and kept by the server from then on
 // (`endpointsStore.sampleVoice`).
-const player = usePlayer();
-const sampling = ref<string | null>(null);
-const sampleId = (v: Voice) => `sample:${props.endpoint.id}/${v.id}`;
-const playingSample = (v: Voice) => player.p.id === sampleId(v) && player.p.playing;
+/** the sample being fetched, if any — one at a time */
+const { loading: sampling, play: playSample, playingId } = useVoiceSample();
+const idOf = (v: Voice) => sampleId(props.endpoint.id, v.id);
 const sampleTitle = computed(() =>
   needsKeyFirst.value
     ? "Save a key for this endpoint first: a sample is a real request"
     : SAMPLE_TITLE,
 );
-/** A sample the server timed plays at once; one only its file can time is read for it first. */
-const hear = (id: string, sample: HeardSample, title: string): Promise<void> | void =>
-  sample.duration
-    ? player.play(id, sample.duration, sample.url)
-    : player.playFile(id, sample.url, title);
-async function playSample(v: Voice) {
-  if (sampling.value) return;
-  sampling.value = v.id;
-  try {
-    const sample = await endpointsStore.sampleVoice(props.endpoint, v.id);
-    if (sample) await hear(sampleId(v), sample, v.label);
-  } finally {
-    sampling.value = null;
-  }
-}
-
-// A public Fish voice found by the search plays Fish's own recording of it: a file on Fish's CDN,
-// free, nothing rendered. One that has none is rendered by this endpoint like a listed voice.
-const foundId = (v: FoundVoice) => `found:${props.endpoint.id}/${v.id}`;
-const playingFound = (v: FoundVoice) => player.p.id === foundId(v) && player.p.playing;
-const foundTitle = (v: FoundVoice) => {
-  if (!v.sample)
-    return "Fish has no sample of this voice — hear it from this endpoint: a real request, billed once and replayed after";
-  const said = v.sample.text.length > 120 ? `${v.sample.text.slice(0, 119)}…` : v.sample.text;
-  return `Fish's own sample${said ? `: “${said}”` : ""} — free, nothing is rendered`;
-};
-async function playFound(v: FoundVoice) {
-  if (sampling.value) return;
-  sampling.value = foundId(v);
-  try {
-    if (v.sample) await player.playFile(foundId(v), v.sample.url, v.label);
-    else {
-      const sample = await endpointsStore.sampleVoice(props.endpoint, v.id);
-      if (sample) await hear(foundId(v), sample, v.label);
-    }
-  } catch (e) {
-    uiStore.toast(`Could not play the sample of ${v.label}`, {
-      kind: "error",
-      description: e instanceof Error ? e.message : undefined,
-    });
-  } finally {
-    sampling.value = null;
-  }
-}
 </script>
 
 <template>
@@ -454,8 +202,7 @@ async function playFound(v: FoundVoice) {
         <div class="min-w-0">
           <h3 class="label mb-1">Voice catalogue</h3>
           <p class="text-[11px] leading-relaxed text-zinc-500">
-            {{ endpoint.voices.length }} voice{{ endpoint.voices.length === 1 ? "" : "s" }} on
-            <b>{{ endpoint.name }}</b
+            {{ plural(endpoint.voices.length, "voice") }} on <b>{{ endpoint.name }}</b
             ><span v-if="routed">, {{ routed }} of them assigned to a speaker somewhere</span>. A
             character can only be given a voice that exists here, and every book draws on this one
             list.
@@ -533,212 +280,8 @@ async function playFound(v: FoundVoice) {
       </p>
     </section>
 
-    <section v-if="fish" class="card p-3">
-      <h3 class="label mb-1"><PublicIcon class="icon-sm" /> Public voices</h3>
-      <p class="mb-2 text-[11px] leading-relaxed text-zinc-500">
-        Search Fish Audio’s public catalogue by title, or paste a voice’s id to find that one. Best
-        rated first. Adding one puts it in this endpoint’s list; it is spoken with like your own.
-      </p>
-      <form class="flex flex-wrap items-center gap-2" @submit.prevent="runSearch(1)">
-        <div class="relative min-w-48 flex-1">
-          <SearchIcon
-            class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 icon"
-          />
-          <input
-            v-model="search.query"
-            class="input w-full pl-7!"
-            placeholder="narrator, calm, old man… or a voice id"
-            aria-label="Search Fish Audio's public voices"
-            spellcheck="false"
-          />
-        </div>
-        <UiSelect
-          v-model="search.language"
-          :options="LANGUAGES"
-          size="xs"
-          class="w-36"
-          aria-label="Language the voices speak"
-        />
-        <button
-          class="btn-primary btn-xs"
-          type="submit"
-          :disabled="search.busy || needsKeyFirst"
-          :title="needsKeyFirst ? 'Set the API key on the Connection tab first' : undefined"
-        >
-          <SearchIcon class="icon-sm" /> {{ search.busy ? "Searching…" : "Search" }}
-        </button>
-      </form>
-
-      <p
-        v-if="search.error"
-        class="mt-2 rounded bg-red-500/10 px-2 py-1 text-[11px] text-red-700 dark:text-red-300"
-        role="alert"
-      >
-        {{ search.error }}
-      </p>
-      <template v-else-if="search.result">
-        <p
-          v-if="!search.result.voices.length"
-          class="mt-2 rounded-lg border border-dashed border-zinc-300 px-3 py-4 text-center text-xs text-zinc-500 dark:border-zinc-700"
-        >
-          No public voice matches that{{ search.language ? " in that language" : "" }}.
-        </p>
-        <ul v-else class="mt-2 divide-y divide-zinc-100 dark:divide-zinc-800">
-          <li
-            v-for="v in search.result.voices"
-            :key="v.id"
-            class="flex flex-wrap items-center gap-2 py-1.5 text-sm"
-          >
-            <component :is="GENDER_ICON[v.gender]" class="icon-sm shrink-0 text-zinc-400" />
-            <span class="min-w-0 flex-1 truncate" :title="v.label">{{ v.label }}</span>
-            <span
-              class="hidden w-40 shrink-0 truncate font-mono text-[11px] text-zinc-500 sm:inline"
-              :title="v.id"
-              >{{ v.id }}</span
-            >
-            <button
-              class="btn-ghost btn-xs shrink-0"
-              :aria-label="`${playingFound(v) ? 'Pause' : 'Preview'} ${v.label}`"
-              :title="foundTitle(v)"
-              :disabled="!!sampling && sampling !== foundId(v)"
-              :aria-busy="sampling === foundId(v)"
-              @click="playFound(v)"
-            >
-              <BusyIcon v-if="sampling === foundId(v)" class="icon-sm animate-spin" />
-              <PauseIcon v-else-if="playingFound(v)" class="icon-sm icon-fill" />
-              <PlayIcon v-else class="icon-sm icon-fill" />
-            </button>
-            <button
-              class="btn-ghost btn-xs shrink-0"
-              :disabled="has(v)"
-              :aria-label="has(v) ? `${v.label} is on this endpoint` : `Add ${v.label}`"
-              @click="endpointsStore.addVoice(endpoint, v)"
-            >
-              <component :is="has(v) ? AddedIcon : AddIcon" class="icon-sm" />
-              {{ has(v) ? "Added" : "Add" }}
-            </button>
-          </li>
-        </ul>
-        <div
-          v-if="search.result.page > 1 || search.result.hasMore"
-          class="mt-2 flex items-center justify-between gap-2 text-[11px] text-zinc-500"
-        >
-          <button
-            class="btn-ghost btn-xs"
-            :disabled="search.busy || search.result.page <= 1"
-            @click="runSearch(search.result.page - 1)"
-          >
-            <PrevIcon class="icon-sm" /> Previous
-          </button>
-          <span
-            >Page {{ search.result.page }} · {{ search.result.total.toLocaleString() }} match{{
-              search.result.total === 1 ? "" : "es"
-            }}</span
-          >
-          <button
-            class="btn-ghost btn-xs"
-            :disabled="search.busy || !search.result.hasMore"
-            @click="runSearch(search.result.page + 1)"
-          >
-            Next <NextIcon class="icon-sm" />
-          </button>
-        </div>
-      </template>
-    </section>
-
-    <section v-if="clonable && cloning" class="card p-3">
-      <h3 class="label mb-1"><CloneIcon class="icon-sm" /> Clone a voice</h3>
-      <p class="text-[11px] leading-relaxed text-zinc-500">
-        Make a voice from samples of one person speaking — audio you recorded or downloaded, any
-        clip of that one voice you have the right to use. {{ endpoint.name }} makes the voice once
-        and keeps it as a private voice on your account; it is added to this list, and spoken by its
-        id from then on. The samples are kept on this server with the voice and your consent, so the
-        voice can go with a book's script.
-      </p>
-      <p class="mt-1 text-[11px] leading-relaxed text-zinc-500">
-        {{ cloning.advice }} {{ limitsSaid(cloning) }}
-      </p>
-      <p
-        v-if="cloning.cost"
-        class="mt-1 rounded bg-amber-400/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
-      >
-        {{ cloning.cost }}
-      </p>
-      <div
-        v-if="from"
-        class="mt-2 rounded border border-violet-200 bg-violet-50 px-2.5 py-2 text-[11px] leading-relaxed dark:border-violet-500/30 dark:bg-violet-500/10"
-      >
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <span class="font-medium"
-            >Samples for {{ from.speaker }}, from {{ from.sample.source }}</span
-          >
-          <button type="button" class="btn-ghost btn-xs" @click="putAside">Put them aside</button>
-        </div>
-        <p class="text-zinc-600 dark:text-zinc-400">
-          Consent recorded {{ new Date(from.sample.consentAt).toLocaleDateString() }}: “{{
-            from.sample.consentText
-          }}” That is someone else's record, not yours — tick the box below only if it holds for you
-          too. A voice made here goes to {{ from.speaker }} if their voice has not changed since the
-          link was opened.
-        </p>
-      </div>
-      <form class="mt-2 space-y-2" @submit.prevent="makeVoice">
-        <div class="flex flex-wrap items-end gap-2">
-          <label class="space-y-1 text-xs font-medium"
-            ><span>Name</span
-            ><input
-              v-model="clone.title"
-              class="input w-56"
-              maxlength="100"
-              placeholder="Narrator — Mara"
-          /></label>
-          <label class="space-y-1 text-xs font-medium"
-            ><span>{{ maxSamplesOf(cloning) === 1 ? "Sample" : "Samples" }}</span
-            ><input
-              ref="samplesInput"
-              type="file"
-              :accept="acceptOf(cloning)"
-              :multiple="maxSamplesOf(cloning) > 1"
-              class="block text-xs"
-              @change="pickSamples"
-          /></label>
-          <span v-if="clone.samples.length" class="text-[11px] text-zinc-500">
-            {{ clone.samples.length }} sample{{ clone.samples.length === 1 ? "" : "s" }},
-            {{ sizeLabel(samplesSize) }}
-          </span>
-          <span v-if="clone.leftOut" class="text-[11px] text-amber-600 dark:text-amber-400">
-            {{ leftOutSaid(clone.leftOut, cloning) }}
-          </span>
-        </div>
-        <p
-          v-if="cloneProblem"
-          class="rounded bg-amber-400/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
-          role="alert"
-        >
-          <WarnIcon class="icon-sm" /> {{ cloneProblem }}
-        </p>
-        <label class="flex items-start gap-2 text-xs">
-          <UiCheckbox v-model="clone.consent" />
-          <span>{{ CLONE_CONSENT }}</span>
-        </label>
-        <div class="flex items-center gap-2">
-          <button class="btn-primary btn-xs" type="submit" :disabled="cloneBlocked">
-            <CloneIcon class="icon-sm" /> {{ clone.busy ? "Making the voice…" : "Make voice" }}
-          </button>
-          <span v-if="needsKeyFirst" class="text-[11px] text-amber-600 dark:text-amber-400"
-            >Save a key for this endpoint first.</span
-          >
-        </div>
-      </form>
-    </section>
-    <section v-else-if="cloneModels.length" class="card p-3">
-      <h3 class="label mb-1"><CloneIcon class="icon-sm" /> Clone a voice</h3>
-      <p class="text-[11px] leading-relaxed text-zinc-500">
-        {{ provider }} makes a voice from a sample only for <code>{{ cloneModels.join(", ") }}</code
-        >, and the voice then speaks only with that model. Change this endpoint's model on the
-        Connection tab to clone one here.
-      </p>
-    </section>
+    <FishVoiceSearch v-if="fish" :endpoint="endpoint" />
+    <CloneVoicePanel :endpoint="endpoint" @cloned="loadKept" />
 
     <section class="card p-3">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -804,17 +347,15 @@ async function playFound(v: FoundVoice) {
             <span
               class="w-24 shrink-0 cursor-help text-right text-[11px]"
               :class="countOf(v) ? 'text-violet-600 dark:text-violet-300' : 'text-zinc-400'"
-              >{{
-                countOf(v) ? `${countOf(v)} speaker${countOf(v) === 1 ? "" : "s"}` : "unused"
-              }}</span
+              >{{ countOf(v) ? plural(countOf(v), "speaker") : "unused" }}</span
             >
           </UiTooltip>
           <template v-if="clonable">
             <UiTooltip v-if="kept[v.id]" :text="keptTitle(kept[v.id])">
               <span
                 class="flex shrink-0 cursor-help items-center gap-1 text-[11px] text-emerald-700 dark:text-emerald-400"
-                ><KeptIcon class="icon-sm" />{{ kept[v.id].samples.length }} sample{{
-                  kept[v.id].samples.length === 1 ? "" : "s"
+                ><KeptIcon class="icon-sm" />{{
+                  plural(kept[v.id].samples.length, "sample")
                 }}
                 kept</span
               >
@@ -840,14 +381,14 @@ async function playFound(v: FoundVoice) {
           </template>
           <button
             class="btn-ghost btn-xs shrink-0"
-            :aria-label="`${playingSample(v) ? 'Pause' : 'Preview'} ${v.label}`"
+            :aria-label="`${playingId(idOf(v)) ? 'Pause' : 'Preview'} ${v.label}`"
             :title="sampleTitle"
-            :disabled="needsKeyFirst || (!!sampling && sampling !== v.id)"
-            :aria-busy="sampling === v.id"
-            @click="playSample(v)"
+            :disabled="needsKeyFirst || (!!sampling && sampling !== idOf(v))"
+            :aria-busy="sampling === idOf(v)"
+            @click="playSample(endpoint, v.id, v.label)"
           >
-            <BusyIcon v-if="sampling === v.id" class="icon-sm animate-spin" />
-            <PauseIcon v-else-if="playingSample(v)" class="icon-sm icon-fill" />
+            <BusyIcon v-if="sampling === idOf(v)" class="icon-sm animate-spin" />
+            <PauseIcon v-else-if="playingId(idOf(v))" class="icon-sm icon-fill" />
             <PlayIcon v-else class="icon-sm icon-fill" />
           </button>
           <button
@@ -886,7 +427,7 @@ async function playFound(v: FoundVoice) {
               @change="pickKept"
           /></label>
           <span v-if="keep.samples.length" class="text-[11px] text-zinc-500">
-            {{ keep.samples.length }} sample{{ keep.samples.length === 1 ? "" : "s" }},
+            {{ plural(keep.samples.length, "sample") }},
             {{ sizeLabel(keep.samples.reduce((n, f) => n + f.size, 0)) }}
           </span>
           <span v-if="keep.leftOut" class="text-[11px] text-amber-600 dark:text-amber-400">

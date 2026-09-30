@@ -2,9 +2,10 @@
 // One row of the shelf table.
 import { computed } from "vue";
 import type { Book } from "@/types";
+import { plural } from "@/lib/contents";
 import type { PickedFile } from "@/components/addEpub";
 import { useBookFacts } from "@/views/library/bookFacts";
-import { hours, plural, TONE } from "@/views/library/shared";
+import { hours, TONE } from "@/views/library/shared";
 import BookMenu from "@/views/library/BookMenu.vue";
 import BookCover from "@/components/BookCover.vue";
 import { ArrowRight as GoIcon } from "@lucide/vue";

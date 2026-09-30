@@ -8,6 +8,7 @@
 // Success is also two numbers — right first time, and right in the end — because an endpoint that
 // only ever succeeds on its third attempt is not the same as a healthy one.
 import { computed } from "vue";
+import { plural } from "@/lib/contents";
 import { UiToggleGroup, UiTooltip } from "@/ui";
 import MetricChart from "@/views/endpoints/MetricChart.vue";
 import { RANGES } from "@/services/endpoints";
@@ -151,8 +152,7 @@ const rangeLabel = computed(() => RANGES.find((r) => r.value === props.range)!.l
           :class="t && t.unknownCost ? 'text-amber-600 dark:text-amber-400' : 'text-zinc-500'"
         >
           <template v-if="t && t.unknownCost"
-            >{{ t.unknownCost }} request{{ t.unknownCost === 1 ? "" : "s" }} not priced — the real
-            total is higher</template
+            >{{ plural(t.unknownCost, "request") }} not priced — the real total is higher</template
           >
           <template v-else-if="t">{{ t.requests }} requests, all priced</template>
           <template v-else>no requests in this range</template>

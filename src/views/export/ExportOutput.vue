@@ -19,8 +19,9 @@ import {
   markerTitle,
   trackNo,
 } from "@/lib/exports";
-import { DEFAULT_PACING, secs as secondsOf } from "@/lib/speech";
-import { hms, plural, secs } from "@/views/export/shared";
+import { DEFAULT_PACING, secs } from "@/lib/speech";
+import { plural } from "@/lib/contents";
+import { hms } from "@/views/export/shared";
 import ExportSection from "@/views/export/ExportSection.vue";
 import BookCover from "@/components/BookCover.vue";
 import { UiNumber, UiSelect, UiSwitch, UiToggleGroup } from "@/ui";
@@ -64,17 +65,12 @@ const overrides = computed(() => {
 });
 const pacingSummary = computed(
   () =>
-    `${secondsOf(pacing.value.line)} / ${secondsOf(pacing.value.turn)} between lines · ${secs(s.chapterGap)} between chapters`,
+    `${secs(pacing.value.line)} / ${secs(pacing.value.turn)} between lines · ${secs(s.chapterGap)} between chapters`,
 );
 
-// ---- loudness. Simulated end to end; every readout here says so.
-const loudness = computed(() => exportsStore.exportLoudnessFor(props.bookId, props.selected, s));
+// ---- loudness. What the build will do; the figures are the build's, measured from the audio.
 const loudnessSummary = computed(() =>
-  s.normalize
-    ? `matched to ${s.loudness} LUFS`
-    : loudness.value.spread >= 2
-      ? `off · voices differ by ${loudness.value.spread} LU`
-      : "off",
+  s.normalize ? `levelled to ${s.loudness} LUFS` : "off · levels left as rendered",
 );
 
 const metaSummary = computed(() =>
@@ -355,7 +351,7 @@ const trackSample = computed(() =>
                 :class="pacing[k] === v && 'chip-on'"
                 @click="castStore.setPacing(bookId, { [k]: v })"
               >
-                {{ secondsOf(v) }}
+                {{ secs(v) }}
               </button>
             </div>
           </div>
@@ -363,7 +359,7 @@ const trackSample = computed(() =>
             <button
               v-if="book.pacing"
               class="btn-ghost btn-xs"
-              :title="`back to ${secondsOf(DEFAULT_PACING.line)} / ${secondsOf(DEFAULT_PACING.turn)}`"
+              :title="`back to ${secs(DEFAULT_PACING.line)} / ${secs(DEFAULT_PACING.turn)}`"
               @click="castStore.resetPacing(bookId)"
             >
               Reset to the default
@@ -413,19 +409,15 @@ const trackSample = computed(() =>
       </div>
     </ExportSection>
 
-    <ExportSection
-      title="Loudness"
-      :summary="loudnessSummary"
-      :icon="LoudnessIcon"
-      :note="!s.normalize && loudness.spread >= 3 ? 'uneven' : ''"
-    >
+    <ExportSection title="Loudness" :summary="loudnessSummary" :icon="LoudnessIcon">
       <p class="mb-3 text-xs leading-relaxed text-zinc-500">
-        A book read by several voices from several providers arrives at several different levels,
-        and a listener reaches for the volume knob long before they notice the bitrate. Matching
-        them applies one gain per clip; no clip is re-rendered and nothing is billed.
+        A book read by several voices from several providers arrives at several levels, and a
+        listener reaches for the volume knob long before they notice the bitrate. Normalising
+        measures each file the build writes and brings it to one integrated loudness (EBU R128, in
+        two passes); no clip is re-rendered and nothing is billed.
       </p>
       <div class="flex flex-wrap items-center gap-3">
-        <UiSwitch v-model="s.normalize" label="match every voice to one level" class="text-sm" />
+        <UiSwitch v-model="s.normalize" label="normalise loudness" class="text-sm" />
         <UiSelect
           :model-value="s.loudness"
           :options="LOUDNESS_TARGETS.map((t) => ({ value: t.value, label: t.label, hint: t.hint }))"
@@ -435,47 +427,12 @@ const trackSample = computed(() =>
           @update:model-value="(v) => (s.loudness = Number(v) as LoudnessTarget)"
         />
       </div>
-
-      <div v-if="!loudness.voices.length" class="mt-3 text-xs text-zinc-500">
-        Select some narrated chapters to see the voices they use.
-      </div>
-      <div v-else class="mt-3">
-        <div class="mb-1.5 flex flex-wrap items-baseline gap-x-3 text-xs">
-          <span class="text-zinc-500"
-            >{{ plural(loudness.voices.length, "voice") }} in this selection</span
-          >
-          <span
-            :class="loudness.spread >= 3 ? 'text-amber-600 dark:text-amber-400' : 'text-zinc-500'"
-            >{{ loudness.spread }} LU between the quietest and the loudest</span
-          >
-        </div>
-        <ul class="space-y-1">
-          <li v-for="v in loudness.voices" :key="v.ref" class="flex items-center gap-2 text-xs">
-            <span class="min-w-0 flex-1 truncate" :title="`${v.label} · ${v.endpoint}`"
-              >{{ v.label }} <span class="text-zinc-400">· {{ v.endpoint }}</span></span
-            >
-            <span class="w-24 shrink-0 text-right font-mono text-zinc-500"
-              >{{ v.lufs.toFixed(1) }} LUFS</span
-            >
-            <span
-              class="w-16 shrink-0 text-right font-mono"
-              :class="
-                !s.normalize
-                  ? 'text-zinc-300 dark:text-zinc-600'
-                  : Math.abs(v.gain) >= 3
-                    ? 'text-amber-600 dark:text-amber-400'
-                    : 'text-emerald-600'
-              "
-              >{{ s.normalize ? `${v.gain > 0 ? "+" : ""}${v.gain.toFixed(1)} dB` : "—" }}</span
-            >
-          </li>
-        </ul>
-        <p class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-          These levels are invented from each voice's identity, not measured: this prototype renders
-          no audio and applies no gain. In a real build they would come from an analysis pass over
-          the rendered clips.
-        </p>
-      </div>
+      <p class="mt-3 text-[11px] leading-relaxed text-zinc-500">
+        A file is levelled as a whole, with one gain: two voices that differ from each other still
+        differ inside it. Only a server started with <code>EXPORT_ENCODER=ffmpeg</code> measures and
+        levels; the default encoder stitches the clips as they are, and the build's log says which
+        happened. What each file measured before levelling is in that log too, on the Queue page.
+      </p>
     </ExportSection>
   </div>
 </template>

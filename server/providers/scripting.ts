@@ -2,16 +2,23 @@
 //
 // A scripting job hands a provider a chapter's prose and gets back lines with speakers. What model,
 // what prompt and what key are the provider's business; what each request used it reports through
-// `sent`, and the job prices that into the ledger (`sent.ts`). A key, when there is one, is read by the provider
-// from the server's own environment and never leaves the process — see `docs/backend.md`.
+// `sent`, and the job prices that into the ledger (`sent.ts`). A key, when there is one, is the
+// profile's own, read from the database at the moment of dispatch (`target.ts`), and never leaves
+// the process.
 //
 // Two implementations: the fake, which reads the prose and never the network, and the one that
 // calls the profile the run was queued with (`chatScripting.ts`). A server runs with both, and
 // sends each run to the one its profile names (`endpointScripting.ts`): a simulated profile to
 // the fake, every other to its model.
-import type { PromptTemplate, ReasoningEffort, RenderedPrompt, SegmentType } from "@/types";
+import type {
+  EndpointProbe,
+  PromptTemplate,
+  ReasoningEffort,
+  RenderedPrompt,
+  SegmentType,
+} from "@/types";
 import type { SentScript } from "~/providers/sent";
-import type { ProbeResult, ProviderTarget } from "~/providers/target";
+import type { ProviderTarget } from "~/providers/target";
 
 /** A profile as a request needs it: the target, and how long an answer may be. */
 export interface ScriptTarget extends ProviderTarget {
@@ -81,5 +88,5 @@ export interface ScriptingProvider {
     target: ScriptTarget,
     signal: AbortSignal,
     prompt?: { template: PromptTemplate; notes: string },
-  ): Promise<ProbeResult>;
+  ): Promise<EndpointProbe>;
 }

@@ -19,9 +19,7 @@ const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 
 const prompt = computed(() => libraryStore.bookById(props.bookId)?.prompt);
-const profile = computed(() =>
-  endpointsStore.profiles.find((p) => p.id === scriptingStore.scriptSettings.profile),
-);
+const profile = computed(() => scriptingStore.runProfile);
 const resolved = computed(() =>
   resolvePrompt({
     library: endpointsStore.prompt,

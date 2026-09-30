@@ -116,10 +116,38 @@ export function pauseAfter(s: Segment, next: Segment | undefined, pacing: Pacing
   return s.pause ?? defaultPause(s, next, pacing);
 }
 
+/** One clip of a chapter's timeline: where it starts and ends, and the silence stitched after it. */
+export interface TimelineClip {
+  s: Segment;
+  start: number;
+  end: number;
+  gap: number;
+}
+
+/**
+ * A chapter as it plays: every line with a clip, in order, placed on one clock with the silence
+ * stitched after each. Unrendered lines take no time at all, and a gap is measured to the next
+ * line that *plays*, not the next line of the script.
+ *
+ * The one layout of a chapter: the player's queue, "play from here", the ledger's scrubber and the
+ * chapter's silence all read it, so a line cannot start at one second on the bar and another in
+ * the player.
+ */
+export function chapterTimeline(segments: Segment[], pacing: Pacing): TimelineClip[] {
+  const heard = segments.filter((s) => s.audio.duration > 0);
+  let t = 0;
+  return heard.map((s, i) => {
+    const start = t;
+    const end = start + s.audio.duration;
+    const gap = pauseAfter(s, heard[i + 1], pacing);
+    t = end + gap;
+    return { s, start, end, gap };
+  });
+}
+
 /** Total silence stitched between the clips of one chapter; unrendered lines take no time at all. */
 export function silenceOf(segments: Segment[], pacing: Pacing): number {
-  const heard = segments.filter((s) => s.audio.duration > 0);
-  return heard.reduce((a, s, i) => a + pauseAfter(s, heard[i + 1], pacing), 0);
+  return chapterTimeline(segments, pacing).reduce((a, x) => a + x.gap, 0);
 }
 
 /** How long a chapter plays: every clip, and the silence stitched between them. */

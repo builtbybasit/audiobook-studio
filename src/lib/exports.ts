@@ -11,7 +11,7 @@
 //    per-line overrides on top of it) — the same numbers the reader, the ledger and the player use.
 //    Export only owns the gap *between* two chapters, because that join does not exist until the
 //    chapters are stitched. `durationOf` is therefore the only place chapter time is added up.
-import { pauseAfter, silenceOf } from "@/lib/speech";
+import { pauseAfter } from "@/lib/speech";
 import type {
   Chapter,
   ChapterReadiness,
@@ -24,11 +24,8 @@ import type {
   ExportReview,
   ExportScope,
   ExportSettings,
-  LoudnessReport,
   Pacing,
   Segment,
-  VoiceLoudness,
-  VoiceRef,
   Volume,
 } from "@/types";
 
@@ -232,10 +229,6 @@ export const sizeOf = (seconds: number, s: ExportSettings): number =>
  */
 export const durationOf = (chapters: Chapter[], chapterGap: number): number =>
   chapters.reduce((a, c) => a + c.duration, 0) + Math.max(0, chapters.length - 1) * chapterGap;
-
-/** The silence the book's pacing puts inside one chapter — quoted so Export can show its share. */
-export const silenceInside = (segments: Segment[], pacing: Pacing): number =>
-  silenceOf(segments, pacing);
 
 // ---------- the plan ----------
 
@@ -441,55 +434,22 @@ export function reviewOf(chapters: Chapter[], settings: ExportSettings): ExportR
 }
 
 // ---------- loudness ----------
-// Simulated. Nothing is measured and nothing is processed: these numbers come from the voice's
-// identity, so the same voice always reads the same and the control can be exercised end to end.
-// Every screen that shows them says so.
+// The page offers a target and a switch; the build is what measures and levels, and only an
+// encoder that can (`EXPORT_ENCODER=ffmpeg`, two-pass EBU R128 over each file's stitched audio).
+// Nothing here guesses at a level before a build has read the audio.
 
-/** FNV-1a. Used for the invented loudness figures and for identifying a preview's timeline. */
+/** FNV-1a. Identifies a preview's timeline, so the player knows when it has changed. */
 export const hash = (s: string): number => {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return h >>> 0;
 };
 
-/** Integrated loudness a voice would measure at, LUFS. Deterministic, invented, never measured. */
-export function measuredLoudness(ref: VoiceRef): number {
-  // endpoints differ systematically (one model simply renders hotter), voices vary inside that
-  const [endpointId] = ref.split("/");
-  const centre = -21 + (hash(endpointId) % 700) / 100; // −21 … −14
-  const spread = ((hash(ref) % 400) - 200) / 100; // ±2 LU
-  return Math.round((centre + spread) * 10) / 10;
-}
-
 export const LOUDNESS_TARGETS = [
   { value: -23, label: "−23 LUFS", hint: "EBU R128 · broadcast" },
   { value: -18, label: "−18 LUFS", hint: "spoken word · what most audiobook stores expect" },
   { value: -16, label: "−16 LUFS", hint: "louder · podcast apps and phone speakers" },
 ] as const;
-
-/** What normalisation would do to each voice in a selection, and how far apart they are now. */
-export function loudnessReport(
-  voices: { ref: VoiceRef; label: string; endpoint: string; segments: number }[],
-  settings: ExportSettings,
-): LoudnessReport {
-  const rows: VoiceLoudness[] = voices
-    .map((v) => {
-      const lufs = measuredLoudness(v.ref);
-      return {
-        ...v,
-        lufs,
-        gain: Math.round((settings.loudness - lufs) * 10) / 10,
-      };
-    })
-    .sort((a, b) => a.lufs - b.lufs);
-  const levels = rows.map((r) => r.lufs);
-  return {
-    voices: rows,
-    spread: rows.length ? Math.round((Math.max(...levels) - Math.min(...levels)) * 10) / 10 : 0,
-    target: settings.loudness,
-    enabled: settings.normalize,
-  };
-}
 
 // ---------- what changed since a build ----------
 

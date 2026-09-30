@@ -7,6 +7,7 @@
 // is the sentence the overview has room for.
 //
 // Pure over the counts, so the card, the overview and the test can agree on the words.
+import { plural } from "@/lib/contents";
 import type { BookProgress, ExportUpdate } from "@/types";
 
 export interface NextStep {
@@ -34,8 +35,6 @@ export interface NextStepContext {
 }
 
 export function nextStepOf(p: BookProgress, extra: NextStepContext): NextStep {
-  const n = (count: number, one: string, many = one + "s") =>
-    `${count} ${count === 1 ? one : many}`;
   // Broken work first, then work that needs a decision, then work that just needs doing. A retry
   // outranks a review on purpose: the shelf's "needs attention" filter keys on the red tone, so
   // a book with a failed chapter has to stay findable even when it also has a speaker to review.
@@ -55,15 +54,15 @@ export function nextStepOf(p: BookProgress, extra: NextStepContext): NextStep {
     };
   if (extra.failedScripting)
     return {
-      label: `Retry ${n(extra.failedScripting, "failed chapter")}`,
-      text: `${n(extra.failedScripting, "chapter")} failed scripting.`,
+      label: `Retry ${plural(extra.failedScripting, "failed chapter")}`,
+      text: `${plural(extra.failedScripting, "chapter")} failed scripting.`,
       to: "scripting",
       tone: "red",
     };
   if (extra.unreviewed)
     return {
       label: "Review cast",
-      text: `${n(extra.unreviewed, "newly detected speaker")} ${
+      text: `${plural(extra.unreviewed, "newly detected speaker")} ${
         extra.unreviewed === 1 ? "needs" : "need"
       } review — probably aliases to merge.`,
       to: "cast",
@@ -72,14 +71,14 @@ export function nextStepOf(p: BookProgress, extra: NextStepContext): NextStep {
   if (p.fallback)
     return {
       label: "Inspect fallbacks",
-      text: `${n(p.fallback, "chapter")} kept a chunk as plain narration because it didn’t verify.`,
+      text: `${plural(p.fallback, "chapter")} kept a chunk as plain narration because it didn’t verify.`,
       to: "scripting",
       tone: "amber",
     };
   if (extra.unvoiced)
     return {
       label: "Assign voices",
-      text: `${n(extra.unvoiced, "main character")} still ${
+      text: `${plural(extra.unvoiced, "main character")} still ${
         extra.unvoiced === 1 ? "uses" : "use"
       } the Narrator’s voice.`,
       to: "narration",
@@ -87,22 +86,22 @@ export function nextStepOf(p: BookProgress, extra: NextStepContext): NextStep {
     };
   if (p.stale)
     return {
-      label: `Re-narrate ${n(p.stale, "stale chapter")}`,
-      text: `${n(p.stale, "chapter")} edited after narration — audio is stale.`,
+      label: `Re-narrate ${plural(p.stale, "stale chapter")}`,
+      text: `${plural(p.stale, "chapter")} edited after narration — audio is stale.`,
       to: "narration",
       tone: "amber",
     };
   if (extra.failedNarration)
     return {
-      label: `Retry ${n(extra.failedNarration, "failed narration")}`,
-      text: `${n(extra.failedNarration, "chapter")} have failed segments.`,
+      label: `Retry ${plural(extra.failedNarration, "failed narration")}`,
+      text: `${plural(extra.failedNarration, "chapter")} have failed segments.`,
       to: "narration",
       tone: "red",
     };
   if (p.narrated < p.scripted)
     return {
-      label: `Narrate ${n(p.scripted - p.narrated, "chapter")}`,
-      text: `${n(p.scripted - p.narrated, "scripted chapter")} ${
+      label: `Narrate ${plural(p.scripted - p.narrated, "chapter")}`,
+      text: `${plural(p.scripted - p.narrated, "scripted chapter")} ${
         p.scripted - p.narrated === 1 ? "is" : "are"
       } not narrated yet.`,
       to: "narration",
@@ -111,7 +110,7 @@ export function nextStepOf(p: BookProgress, extra: NextStepContext): NextStep {
   if (p.scripted < p.total)
     return {
       label: `Script ${p.total - p.scripted} more`,
-      text: `${n(p.total - p.scripted, "chapter")} still to script.`,
+      text: `${plural(p.total - p.scripted, "chapter")} still to script.`,
       to: "scripting",
       tone: "amber",
     };
@@ -179,7 +178,7 @@ export function updateReason(
   u: Pick<ExportUpdate, "added" | "changed" | "stale" | "missing" | "settings">,
 ): string {
   const n = (ids: number[], what: string, one = what) =>
-    `${ids.length} chapter${ids.length === 1 ? "" : "s"} ${ids.length === 1 ? one : what}`;
+    `${plural(ids.length, "chapter")} ${ids.length === 1 ? one : what}`;
   if (u.missing.length) return n(u.missing, "lost their audio", "lost its audio");
   if (u.added.length) return n(u.added, "not in it yet");
   if (u.changed.length) return n(u.changed, "re-narrated since");
@@ -193,6 +192,3 @@ export const hours = (s: number): string =>
   s >= 3600
     ? `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, "0")}m`
     : `${Math.max(1, Math.round(s / 60))} min`;
-
-export const plural = (n: number, one: string, many = one + "s"): string =>
-  `${n} ${n === 1 ? one : many}`;

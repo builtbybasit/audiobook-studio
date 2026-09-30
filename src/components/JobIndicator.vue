@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useJobsStore } from "@/stores/jobs";
+import { hhmm } from "@/lib/format";
 
 // Top-bar glance at the queue; click-through to the Queue page. Sized like the header's other
 // chips (Jump, Demo), not like a button.
@@ -24,10 +25,7 @@ const jobsStore = useJobsStore();
     <span
       v-if="jobsStore.eta"
       class="hidden text-[11px] text-zinc-500 sm:inline"
-      :title="
-        'estimated finish ' +
-        new Date(jobsStore.eta.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      "
+      :title="'estimated finish ' + hhmm(jobsStore.eta.at)"
       >~{{
         jobsStore.eta.seconds < 60 ? "<1m" : Math.round(jobsStore.eta.seconds / 60) + "m"
       }}</span

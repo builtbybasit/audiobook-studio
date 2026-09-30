@@ -6,11 +6,11 @@ import { useScriptsStore } from "@/stores/scripts";
 // novel spans several EPUBs; each volume header can collapse and select/deselect its chapters.
 // Each row has a peek (raw text preview) and can be skipped (excluded from every stage).
 // Keyboard: ↑↓ move, space ticks, ↵ opens, / focuses search.
-import { computed, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { computed, ref } from "vue";
 import { isNarrated } from "@/lib/scriptReview";
 import { chapterState, selectionSummary } from "@/lib/runPlan";
-import { queryIdSet, queryText } from "@/lib/query";
+import { idSetParam, textParam, useQueryParam } from "@/composables/useQueryParam";
+import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
 import { clockDuration } from "@/lib/time";
 import StatusDot from "@/components/StatusDot.vue";
 import { UiCheckbox, UiSelect } from "@/ui";
@@ -56,8 +56,6 @@ const emit = defineEmits<{
 }>();
 const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
-const route = useRoute();
-const router = useRouter();
 const chapters = computed(() => libraryStore.chaptersOf(props.bookId));
 const volumes = computed(() => libraryStore.volumesOf(props.bookId));
 const grouped = computed(() =>
@@ -66,10 +64,9 @@ const grouped = computed(() =>
 /** A volume plus the chapters that belong to it, as rendered by the list. */
 type VolumeRow = Volume & { chapters: Chapter[] };
 const multi = computed(() => volumes.value.length > 1);
-const collapsed = ref(queryIdSet(route.query.closed));
-const q = ref(queryText(route.query.find));
+const collapsed = useQueryParam("closed", idSetParam());
+const q = useQueryParam("find", textParam());
 const search = ref<HTMLInputElement | null>(null);
-const lastClicked = ref<number | null>(null);
 const canPick = (c: Chapter) => props.selectable(c) && !c.excluded;
 const matches = (c: Chapter) =>
   !q.value || c.title.toLowerCase().includes(q.value.toLowerCase()) || String(c.id) === q.value;
@@ -80,30 +77,7 @@ const visible = computed(() =>
 );
 const visiblePickable = computed(() => visible.value.flatMap((v) => v.chapters.filter(canPick)));
 const eligible = computed(() => chapters.value.filter(canPick));
-watch(q, (value) => {
-  if (queryText(route.query.find) === value) return;
-  void router.replace({ query: { ...route.query, find: value || undefined } });
-});
-watch(collapsed, (value) => {
-  const closed = [...value].sort((a, b) => a - b).join(",");
-  if (queryText(route.query.closed) === closed) return;
-  void router.replace({ query: { ...route.query, closed: closed || undefined } });
-});
-watch(
-  () => route.query.find,
-  (value) => {
-    const next = queryText(value);
-    if (q.value !== next) q.value = next;
-  },
-);
-watch(
-  () => route.query.closed,
-  (value) => {
-    const next = queryIdSet(value);
-    const ordered = (ids: Set<number>) => [...ids].sort((a, b) => a - b).join(",");
-    if (ordered(next) !== ordered(collapsed.value)) collapsed.value = next;
-  },
-);
+const range = useRangeSelect(() => visiblePickable.value.map((c) => c.id));
 function jump(id: string | number | null) {
   document
     .getElementById(`vol-${props.bookId}-${id}`)
@@ -123,20 +97,8 @@ function progressOf(c: Chapter) {
   return props.stage === "scripting" ? c.scriptingProgress : c.narrationProgress;
 }
 function toggle(id: number, e?: MouseEvent | KeyboardEvent) {
-  const set = new Set(props.modelValue);
-  if (e?.shiftKey && lastClicked.value != null) {
-    const ids = visiblePickable.value.map((c) => c.id);
-    const a = ids.indexOf(lastClicked.value);
-    const b = ids.indexOf(id);
-    const on = !set.has(id);
-    for (const x of ids.slice(Math.min(a, b), Math.max(a, b) + 1)) {
-      if (on) set.add(x);
-      else set.delete(x);
-    }
-  } else if (set.has(id)) set.delete(id);
-  else set.add(id);
-  lastClicked.value = id;
-  emit("update:modelValue", [...set]);
+  const on = !props.modelValue.includes(id);
+  emit("update:modelValue", [...applySpan(props.modelValue, range.span(id, e), on)]);
 }
 function all() {
   emit(
@@ -519,7 +481,7 @@ const peek = (c: Chapter) => {
               v-else-if="stage === 'scripting' && c.scripting === 'done'"
               class="font-mono text-[11px] text-zinc-400"
               title="segments"
-              >{{ scriptsStore.segmentsOf(bookId, c.id).length }}</span
+              >{{ scriptsStore.lineCountsOf(bookId, c.id)?.total ?? "" }}</span
             >
             <span
               v-else-if="stage !== 'scripting' && c.duration"

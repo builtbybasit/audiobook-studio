@@ -10,9 +10,9 @@
 // more volume of a book.
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
-import { IMPORT_SAMPLES } from "@/mock/fixtures/imports";
-import { importedBook } from "@/mock/world/imports";
-import { chapterParts } from "@/mock/world/text";
+import { IMPORT_SAMPLES } from "~/demo/seed/fixtures/imports";
+import { importedBook } from "~/demo/seed/world/imports";
+import { chapterParts } from "~/demo/seed/world/text";
 import { readinessOf } from "@/lib/exports";
 import {
   excerptOf,

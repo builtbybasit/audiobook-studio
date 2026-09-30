@@ -2,19 +2,20 @@
 //
 // Reading a script, editing it, naming a checkpoint and forgetting a version each turn into one
 // call on `server/script/ops.ts`. The revision rule and the history rule are there; here a stale
-// `ifRevision` is simply the 409 `app.onError` makes of the refusal. A retake of a line and the
-// verdict on it are the two calls on `server/narration/ops.ts`, addressed under the chapter because
-// a retake is something done to one line of its script.
+// `ifRevision` is simply the 409 `app.onError` makes of the refusal. A line's flag is written on its
+// own, naming no revision (`ops.flagLine`). A retake of a line and the verdict on it are the two
+// calls on `server/narration/ops.ts`, addressed under the chapter because a retake is something
+// done to one line of its script.
 import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
+import type { ChapterScript, EditedScript, Flagged, Judged, RetakesQueued } from "@/types";
 import type { Db } from "~/db/client";
 import type { Runner } from "~/jobs/runner";
 import { IdParam } from "~/lib/http";
 import { SegmentSchema, VersionOriginSchema } from "~/lib/schemas";
 import { validate } from "~/lib/validate";
-import { bookWithChapters } from "~/library/ops";
 import * as narration from "~/narration/ops";
 import * as ops from "~/script/ops";
 
@@ -34,6 +35,11 @@ const Retakes = v.object({
   ids: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
 });
 const Verdict = v.object({ verdict: v.picklist(["accept", "reject"]) });
+/** What is wrong with a line's clip, in the listener's words. */
+const Flag = v.object({
+  kind: v.picklist(["pronunciation", "delivery", "pause", "other"]),
+  note: v.optional(v.string(), ""),
+});
 
 export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
@@ -41,7 +47,7 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
   /** A chapter's script as it stands, and the revision a later write has to name. */
   app.get("/:id/chapters/:chapterId/script", validate("param", ChapterParam), (c) => {
     const { id, chapterId } = c.req.valid("param");
-    return c.json(ops.chapterScript(db, id, chapterId));
+    return c.json(ops.chapterScript(db, id, chapterId) satisfies ChapterScript);
   });
 
   /** Replace the script with what a person made of it, naming the revision they read. */
@@ -56,7 +62,7 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
         { chapter: chapterId, lines: result.segments.length, revision: result.revision },
         "script edited",
       );
-      return c.json(result);
+      return c.json(result satisfies EditedScript);
     },
   );
 
@@ -86,6 +92,30 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     },
   );
 
+  // ---------- flags ----------
+  /** Raise or replace one line's flag. Answers with the flag as written and the new revision. */
+  app.put(
+    "/:id/chapters/:chapterId/lines/:segmentId/flag",
+    validate("param", LineParam),
+    validate("json", Flag),
+    (c) => {
+      const { id, chapterId, segmentId } = c.req.valid("param");
+      return c.json(
+        ops.flagLine(db, id, chapterId, segmentId, c.req.valid("json")) satisfies Flagged,
+      );
+    },
+  );
+
+  /** Take one line's flag down. */
+  app.delete(
+    "/:id/chapters/:chapterId/lines/:segmentId/flag",
+    validate("param", LineParam),
+    (c) => {
+      const { id, chapterId, segmentId } = c.req.valid("param");
+      return c.json(ops.flagLine(db, id, chapterId, segmentId, null) satisfies Flagged);
+    },
+  );
+
   // ---------- retakes ----------
   /**
    * Render another take of these lines, as one job. Answers with the job, the lines it queued and
@@ -108,7 +138,7 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
         },
         "retakes queued",
       );
-      return c.json({ ...result, chapters: bookWithChapters(db, id).chapters }, 202);
+      return c.json(result satisfies RetakesQueued, 202);
     },
   );
 
@@ -125,7 +155,7 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
         { chapter: chapterId, line: segmentId, verdict, revision: result.revision },
         "retake judged",
       );
-      return c.json(result);
+      return c.json(result satisfies Judged);
     },
   );
 

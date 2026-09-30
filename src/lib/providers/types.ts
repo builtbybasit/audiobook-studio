@@ -62,8 +62,11 @@ export interface SpeechProviderShape {
   label: string;
   /** whether a base URL is this provider's; the fallback says yes to anything */
   matches(baseUrl: string): boolean;
-  /** the path a line is sent to after the base URL, as the Connection tab shows it */
-  requestPath(model: string): string;
+  /**
+   * The path a line is sent to after the base URL, as the Connection tab shows it. A provider whose
+   * path carries the voice puts `voice` in it, already escaped, and `<voice>` when there is none.
+   */
+  requestPath(model: string, voice?: string): string;
   formats: readonly FormatSupport[];
   /** how `model` takes expression tags, or null when it takes none */
   tags(model: string): TagSyntax | null;
@@ -81,6 +84,19 @@ export interface SpeechProviderShape {
    * A provider with a description here has a `clone` in its wire module, and one without has none.
    */
   cloning: CloneSupport | null;
+}
+
+/**
+ * What a provider is asked for when an endpoint names no rate or bitrate: the defaults its shape
+ * gives `format`, which are what the page shows. The server's wire for the provider reads them
+ * here rather than keeping a copy, so what the page says and what is sent cannot drift apart.
+ */
+export function formatDefaults(
+  shape: Pick<SpeechProviderShape, "formats">,
+  format: AudioFormat,
+): { rate: number | null; bitrate: number | null } {
+  const support = shape.formats.find((f) => f.format === format) ?? shape.formats[0];
+  return { rate: support.defaultRate, bitrate: support.defaultBitrate };
 }
 
 // ---------- voice cloning ----------

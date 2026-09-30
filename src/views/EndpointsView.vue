@@ -11,18 +11,12 @@ import { useUiStore } from "@/stores/ui";
 // script, and speech models that render a line. They used to be configured in two different places,
 // each buried inside a book's stage, which made "what is running, what is broken, what am I
 // spending" unanswerable. This page is the answer: a compact overview, a searchable list of every
-// endpoint, and the selected one's detail behind the tabs the scripting editor already used.
-//
-// Where the numbers come from:
-//   · what is running now  — the queue in the store (`live.ts`)
-//   · everything historical — `useEndpointHistory`: the rows of the server's ledger, each a
-//     request a job really sent (a simulated endpoint's marked simulated)
-//   · a book's spending — the jobs store, which holds the server's figures
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+// endpoint, and the selected one's detail behind the tabs the scripting editor already used. What
+// it shows of them is `useEndpointOverview`'s; what it does when something is pressed is here.
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { keyInPlace } from "@/services/endpointSettings";
-import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
-import { UiToggleGroup, UiTooltip } from "@/ui";
+import { TabsContent, TabsRoot } from "reka-ui";
+import { UiTabs, UiToggleGroup, UiTooltip } from "@/ui";
 import {
   Ban as CancelIcon,
   Pause as PauseIcon,
@@ -45,26 +39,11 @@ import PricingTab from "@/views/endpoints/PricingTab.vue";
 import ActivityTab from "@/views/endpoints/ActivityTab.vue";
 import PromptTab from "@/views/endpoints/PromptTab.vue";
 import LibraryPromptPanel from "@/views/endpoints/LibraryPromptPanel.vue";
-import { useEndpointHistory, useEndpointLive, useLibrarySpend } from "@/queries";
-import { probeCost, seriesFrom, RANGES } from "@/services/endpoints";
-import type { EndpointDescriptor } from "@/services/endpoints";
-import {
-  DOT,
-  KIND_LABEL,
-  TEXT,
-  billingOf,
-  endpointErrors,
-  ensureOps,
-  healthOf,
-  speechPricing,
-  unifyEndpoint,
-  unifyProfile,
-} from "@/lib/endpoints";
-import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
-import { ensurePricing, money, pricingOf } from "@/lib/pricing";
-import { scriptTelemetry } from "@/lib/scriptActivity";
-import { useEndpointActivity } from "@/views/endpoints/live";
-const { jobsUsing, liveActivity, liveRequests } = useEndpointActivity();
+import { useEndpointOverview } from "@/views/endpoints/overview";
+import { DOT, KIND_LABEL, TEXT } from "@/lib/endpoints";
+import type { UnifiedEndpoint } from "@/lib/endpoints";
+import { plural } from "@/lib/contents";
+import { money } from "@/lib/pricing";
 import {
   TABS,
   draftDirty,
@@ -76,117 +55,43 @@ import {
   ui,
 } from "@/views/endpoints/state";
 import type { TabId } from "@/views/endpoints/state";
-import type { MetricBucket, RequestRecord, SettingsFile } from "@/types";
+import type { MetricBucket, SettingsFile } from "@/types";
 
 const endpointsStore = useEndpointsStore();
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
-const now = ref(Date.now());
-let clock: ReturnType<typeof setInterval>;
-onMounted(() => {
-  clock = setInterval(() => (now.value = Date.now()), 1000);
-});
-onUnmounted(() => clearInterval(clock));
-// the busy slots, waiting lines and cooldowns are the server's gate's, read while narration runs
-useEndpointLive();
-
-// ---------- the unified list ----------
-const all = computed<UnifiedEndpoint[]>(() => [
-  ...endpointsStore.profiles.map(unifyProfile),
-  ...endpointsStore.endpoints.map(unifyEndpoint),
-]);
-// fill operational defaults in whenever the lists change
-watch(
-  () => [endpointsStore.profiles.length, endpointsStore.endpoints.length] as const,
-  () => {
-    for (const p of endpointsStore.profiles) {
-      ensureOps(p, "scripting");
-      // an endpoint saved before advanced pricing existed gets an empty schedule and no promotions,
-      // which is exactly "ordinary pricing" — nothing on screen changes for it
-      ensurePricing(p);
-    }
-    for (const e of endpointsStore.endpoints) {
-      ensureOps(e, "tts");
-      ensurePricing(e);
-    }
-  },
-  { immediate: true },
-);
+const {
+  all,
+  list,
+  loading,
+  rangeLabel,
+  settledFor,
+  liveFor,
+  reasoningFor,
+  healthFor,
+  probeCostOf,
+  jobsUsing,
+  selected,
+  series,
+  live,
+  health,
+  busyJobs,
+  activityRows,
+  spendToday,
+  spendTodayFor,
+  totals,
+  attention,
+} = useEndpointOverview();
 
 const KIND_FILTERS = [
   { value: "all", label: "All" },
   { value: "scripting", label: "Scripting" },
   { value: "tts", label: "TTS" },
 ];
-const list = computed(() => {
-  const q = ui.search.trim().toLowerCase();
-  return all.value.filter((u) => {
-    if (ui.kind !== "all" && u.kind !== ui.kind) return false;
-    if (!q) return true;
-    return `${u.name} ${u.model} ${u.baseUrl}`.toLowerCase().includes(q);
-  });
-});
-
-// ---------- history ----------
-// One pull of the widest range per endpoint; every shorter range is bucketed from it locally.
-
-const describe = (u: UnifiedEndpoint): EndpointDescriptor => ({
-  key: u.key,
-  id: u.id,
-  kind: u.kind,
-  pricing: u.profile ? pricingOf(u.profile) : u.endpoint ? speechPricing(u.endpoint) : undefined,
-  billing: u.endpoint ? billingOf(u.endpoint) : undefined,
-});
-
-const history = useEndpointHistory(() => all.value.map(describe));
-const histories = history.histories;
-const loading = computed(() => history.status.value === "pending");
-// the budget table and the wait reasons set each book's spending against its cap
-useLibrarySpend();
-
-const rangeLabel = computed(() => RANGES.find((r) => r.value === ui.range)!.label);
-
-/**
- * Every settled request against this endpoint: the rows of the server's append-only ledger, which
- * keeps a request once it has settled whatever later happens to what it produced.
- */
-const settledFor = (u: UnifiedEndpoint): RequestRecord[] => histories.value[u.key] ?? [];
-
-/** Buckets for one endpoint over one range, folded from its records. */
-const seriesFor = (u: UnifiedEndpoint, range = ui.range) =>
-  seriesFrom(settledFor(u), u.kind, range, now.value);
-
-const liveFor = (u: UnifiedEndpoint) => liveActivity(u);
-
-/** What a scripting endpoint's recent requests at its reasoning level spent thinking, once one said. */
-const reasoningFor = (u: UnifiedEndpoint) =>
-  u.profile ? scriptTelemetry(settledFor(u), u.profile).reasoning : undefined;
-
-function healthFor(u: UnifiedEndpoint): Health {
-  const rows = histories.value[u.key] ?? [];
-  return healthOf(u, {
-    hasKey: keyInPlace(u.profile ?? u.endpoint),
-    errors: endpointErrors(u),
-    now: now.value,
-    totals: loading.value ? null : seriesFor(u).totals,
-    lastSeen: rows.length ? (rows[0].finishedAt ?? rows[0].queuedAt) : null,
-    tested: !!ui.tests[u.key]?.ok,
-  });
-}
 
 // ---------- selection ----------
-const selected = computed<UnifiedEndpoint | null>(
-  () => all.value.find((u) => u.key === ui.selected) ?? list.value[0] ?? all.value[0] ?? null,
-);
-watch(
-  selected,
-  (u) => {
-    if (u && ui.selected !== u.key) ui.selected = u.key;
-  },
-  { immediate: true },
-);
 const detail = ref<HTMLElement | null>(null);
 async function reveal() {
   if (window.matchMedia("(max-width: 1023px)").matches) {
@@ -216,75 +121,12 @@ const tab = computed<TabId>({
     if (selected.value) ui.tab[selected.value.key] = v;
   },
 });
-const tabs = computed(() => tabsFor(selected.value?.kind ?? "tts"));
+const tabs = computed(() =>
+  tabsFor(selected.value?.kind ?? "tts").map((t) => ({ value: t.id, label: t.label })),
+);
 /** A speech endpoint with no voices can't render anything, so the tab that fixes it says so. */
 const noVoices = computed(
   () => !!selected.value?.endpoint && !selected.value.endpoint.voices.length,
-);
-
-const series = computed(() => (selected.value ? seriesFor(selected.value) : null));
-const live = computed(() =>
-  selected.value
-    ? liveFor(selected.value)
-    : { active: 0, queued: 0, waiting: null, effectiveLimit: 0 },
-);
-const health = computed(() =>
-  selected.value
-    ? healthFor(selected.value)
-    : ({ state: "idle", label: "", tone: "muted", detail: "" } as Health),
-);
-const busyJobs = computed(() => (selected.value ? jobsUsing(selected.value) : []));
-
-/** In flight now, then what has settled — newest first. */
-const activityRows = computed(() => {
-  const u = selected.value;
-  if (!u) return [];
-  const from = now.value - RANGES.find((r) => r.value === ui.range)!.ms;
-  const settled = settledFor(u).filter((r) => (r.finishedAt ?? r.queuedAt) >= from);
-  return [...liveRequests(u, now.value), ...settled];
-});
-
-// ---------- the strip ----------
-const startOfToday = computed(() => {
-  const d = new Date(now.value);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-});
-/** What one endpoint has been charged since midnight. */
-const spendSince = (rows: RequestRecord[]) => {
-  let cost = 0;
-  let unknown = 0;
-  for (const r of rows) {
-    if ((r.finishedAt ?? r.queuedAt) < startOfToday.value) continue;
-    if (r.cost == null) unknown++;
-    else cost += r.cost;
-  }
-  return { cost, unknown };
-};
-const spendToday = computed(() =>
-  all.value.reduce(
-    (acc, u) => {
-      const one = spendSince(settledFor(u));
-      return { cost: acc.cost + one.cost, unknown: acc.unknown + one.unknown };
-    },
-    { cost: 0, unknown: 0 },
-  ),
-);
-const spendTodayFor = (u: UnifiedEndpoint) => spendSince(settledFor(u));
-const totals = computed(() => {
-  let active = 0;
-  let queued = 0;
-  for (const u of all.value) {
-    const l = liveFor(u);
-    active += l.active;
-    queued += l.queued;
-  }
-  return { active, queued };
-});
-const attention = computed(() =>
-  all.value
-    .map((u) => ({ u, h: healthFor(u) }))
-    .filter((x) => ["failing", "misconfigured", "nokey"].includes(x.h.state)),
 );
 
 // ---------- actions ----------
@@ -308,7 +150,7 @@ function cancelWork(u: UnifiedEndpoint) {
   if (!jobs.length) return;
   for (const j of jobs) jobsStore.cancelJob(j.id);
   confirmCancel.value = false;
-  uiStore.toast(`Cancelled ${jobs.length} job${jobs.length === 1 ? "" : "s"} on ${u.name}`, {
+  uiStore.toast(`Cancelled ${plural(jobs.length, "job")} on ${u.name}`, {
     kind: "warn",
     description:
       "Requests already in flight finish and stay recorded. Nothing rendered was deleted.",
@@ -331,15 +173,6 @@ async function runTest(u: UnifiedEndpoint) {
   } finally {
     testing.value = false;
   }
-}
-
-/**
- * What pressing Test would cost, priced the same way the test itself prices it: through the shared
- * engine, at the rates in force now. Working it out from the base rates here and from the engine
- * there would disagree with itself the moment an off-peak window opened or a promotion started.
- */
-function probeCostOf(u: UnifiedEndpoint): number | null {
-  return probeCost(describe(u), now.value);
 }
 
 function remove(u: UnifiedEndpoint) {
@@ -486,9 +319,7 @@ function pickBucket(b: MetricBucket | null) {
           {{ totals.active }}
         </dd>
         <dd class="text-[11px] text-zinc-500">
-          across {{ all.filter((u) => u.enabled).length }} enabled endpoint{{
-            all.filter((u) => u.enabled).length === 1 ? "" : "s"
-          }}
+          across {{ plural(all.filter((u) => u.enabled).length, "enabled endpoint") }}
         </dd>
       </div>
       <div class="card p-3">
@@ -504,8 +335,8 @@ function pickBucket(b: MetricBucket | null) {
           :class="spendToday.unknown ? 'text-amber-600 dark:text-amber-400' : 'text-zinc-500'"
         >
           <template v-if="spendToday.unknown"
-            >{{ spendToday.unknown }} request{{ spendToday.unknown === 1 ? "" : "s" }} with an
-            unknown rate — the real figure is higher</template
+            >{{ plural(spendToday.unknown, "request") }} with an unknown rate — the real figure is
+            higher</template
           >
           <template v-else>recorded from usage, all endpoints</template>
         </dd>
@@ -676,8 +507,7 @@ function pickBucket(b: MetricBucket | null) {
           >
             <p>
               <WarnIcon class="icon-sm text-red-500" />
-              Cancel {{ busyJobs.length }} unfinished job{{ busyJobs.length === 1 ? "" : "s" }} on
-              {{ selected.name }}:
+              Cancel {{ plural(busyJobs.length, "unfinished job") }} on {{ selected.name }}:
               {{
                 busyJobs
                   .map((j) => j.label)
@@ -697,7 +527,7 @@ function pickBucket(b: MetricBucket | null) {
                 class="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-2 py-0.5 text-xs font-medium text-white transition-colors hover:bg-red-500"
                 @click="cancelWork(selected)"
               >
-                Cancel {{ busyJobs.length }} job{{ busyJobs.length === 1 ? "" : "s" }}
+                Cancel {{ plural(busyJobs.length, "job") }}
               </button>
             </div>
           </div>
@@ -707,7 +537,7 @@ function pickBucket(b: MetricBucket | null) {
             class="mt-2 rounded-md bg-amber-400/10 px-3 py-1.5 text-[11px] text-amber-700 dark:text-amber-300"
             role="status"
           >
-            {{ live.queued }} request{{ live.queued === 1 ? "" : "s" }} waiting —
+            {{ plural(live.queued, "request") }} waiting —
             {{
               live.waiting === "paused"
                 ? "this endpoint is paused"
@@ -725,44 +555,34 @@ function pickBucket(b: MetricBucket | null) {
         </div>
 
         <TabsRoot v-model="tab" class="mt-3">
-          <TabsList
-            class="mb-3 flex gap-1 overflow-x-auto border-b border-zinc-200 dark:border-zinc-800"
+          <UiTabs
+            :tabs="tabs"
+            class="mb-3 overflow-x-auto border-b border-zinc-200 dark:border-zinc-800"
             aria-label="Endpoint detail"
           >
-            <TabsTrigger
-              v-for="t in tabs"
-              :key="t.id"
-              :value="t.id"
-              class="whitespace-nowrap border-b-2 px-2 pb-2 text-xs sm:px-3 sm:text-sm"
-              :class="
-                tab === t.id
-                  ? 'border-violet-500 font-medium text-violet-600 dark:text-violet-400'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
-              "
-            >
-              {{ t.label }}
+            <template #tab="{ tab: t }">
               <span
-                v-if="t.id === 'connection' && draftDirty(selected)"
-                class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle"
+                v-if="t.value === 'connection' && draftDirty(selected)"
+                class="h-1.5 w-1.5 rounded-full bg-violet-500"
                 aria-label="unsaved changes"
               ></span>
               <span
-                v-else-if="t.id === 'prompt' && profilePromptDirty(selected)"
-                class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle"
+                v-else-if="t.value === 'prompt' && profilePromptDirty(selected)"
+                class="h-1.5 w-1.5 rounded-full bg-violet-500"
                 aria-label="unsaved changes"
               ></span>
               <span
-                v-else-if="t.id === 'voices' && noVoices"
-                class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-500 align-middle"
+                v-else-if="t.value === 'voices' && noVoices"
+                class="h-1.5 w-1.5 rounded-full bg-amber-500"
                 aria-label="no voices yet"
               ></span>
               <span
-                v-else-if="t.id === 'voices' && selected.endpoint"
-                class="ml-1 text-[11px] text-zinc-400"
+                v-else-if="t.value === 'voices' && selected.endpoint"
+                class="text-[11px] text-zinc-400"
                 >{{ selected.endpoint.voices.length }}</span
               >
-            </TabsTrigger>
-          </TabsList>
+            </template>
+          </UiTabs>
 
           <TabsContent value="overview">
             <OverviewTab

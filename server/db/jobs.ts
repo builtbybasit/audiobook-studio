@@ -274,18 +274,20 @@ export function setScriptRun(db: Db | Tx, id: number, run: NonNullable<Job["scri
 export function setReserved(db: Db | Tx, id: number, reserved: number): void {
   const row = db.select({ run: jobs.run }).from(jobs).where(eq(jobs.id, id)).get();
   if (!row) return;
-  const run = row.run ?? {};
-  db.update(jobs)
-    .set({
-      reserved,
-      run: run.scriptRun
-        ? { scriptRun: { ...run.scriptRun, reserved } }
-        : run.narrationRun
-          ? { narrationRun: { ...run.narrationRun, reserved } }
-          : run,
-    })
-    .where(eq(jobs.id, id))
-    .run();
+  db.update(jobs).set(holding(row.run, reserved)).where(eq(jobs.id, id)).run();
+}
+
+/** The columns that say a job holds `reserved`: the one the budget sums, and the run detail's. */
+function holding(run: (typeof jobs.$inferSelect)["run"], reserved: number) {
+  const r = run ?? {};
+  return {
+    reserved,
+    run: r.scriptRun
+      ? { scriptRun: { ...r.scriptRun, reserved } }
+      : r.narrationRun
+        ? { narrationRun: { ...r.narrationRun, reserved } }
+        : r,
+  };
 }
 
 /**
@@ -328,7 +330,11 @@ export function appendEvent(
       .run();
 }
 
-/** Settle a job. Its key is released, so the same work can be asked for again. */
+/**
+ * Settle a job. Its key is released, so the same work can be asked for again, and it holds nothing
+ * against its book however it ended: the budget already leaves a finished job out, and the Queue's
+ * detail would otherwise show a hold a cancelled or failed run no longer has.
+ */
 export function finishJob(
   db: Db | Tx,
   id: number,
@@ -344,6 +350,7 @@ export function finishJob(
       finishedAt: at,
       activeKey: null,
       waitingReason: null,
+      ...holding(row.run, 0),
       ...(status === "done" ? { progress: 100 } : {}),
     })
     .where(eq(jobs.id, id))

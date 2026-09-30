@@ -5,6 +5,7 @@ import LatencySparkline from "@/components/LatencySparkline.vue";
 
 import { computed } from "vue";
 
+import { money } from "@/lib/pricing";
 import { isSimulated } from "@/lib/providers";
 import { scriptTelemetry, scriptUsageTotals } from "@/lib/scriptActivity";
 import type { Profile, RequestRecord } from "@/types";
@@ -12,6 +13,8 @@ const props = defineProps<{
   profile: Profile;
   /** the profile's settled requests in the server's ledger, newest first */
   rows: RequestRecord[];
+  /** whether the ledger has been read: until then the figures from it are not zero, just unknown */
+  loaded: boolean;
   now: number;
 }>();
 const jobsStore = useJobsStore();
@@ -45,14 +48,8 @@ const success = computed(() =>
     : "—",
 );
 const number = (n: number) => n.toLocaleString();
-const cost = computed(
-  () =>
-    "$" +
-    usage.value.cost.toLocaleString("en-US", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 5,
-    }),
-);
+/** a figure read off the ledger, or an ellipsis while it is still being read */
+const fromLedger = (text: string) => (props.loaded ? text : "…");
 async function copyError() {
   if (!error.value) return;
   try {
@@ -87,26 +84,28 @@ async function copyError() {
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Avg. latency</dt>
         <dd class="mt-0.5 flex items-center gap-1 font-mono">
-          {{ latency === null ? "—" : (latency / 1000).toFixed(1) + "s" }}
+          {{ fromLedger(latency === null ? "—" : (latency / 1000).toFixed(1) + "s") }}
           <LatencySparkline :points="history" />
         </dd>
       </div>
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Success / 429s</dt>
-        <dd class="mt-0.5 font-mono">{{ success }} / {{ stats.rateLimits }}</dd>
-        <dd class="text-[10px] text-zinc-500">{{ number(stats.completed) }} completed</dd>
+        <dd class="mt-0.5 font-mono">{{ fromLedger(`${success} / ${stats.rateLimits}`) }}</dd>
+        <dd v-if="loaded" class="text-[10px] text-zinc-500">
+          {{ number(stats.completed) }} completed
+        </dd>
       </div>
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Input tokens</dt>
-        <dd class="mt-0.5 font-mono">{{ number(usage.input) }}</dd>
+        <dd class="mt-0.5 font-mono">{{ fromLedger(number(usage.input)) }}</dd>
       </div>
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Output tokens</dt>
-        <dd class="mt-0.5 font-mono">{{ number(usage.output) }}</dd>
+        <dd class="mt-0.5 font-mono">{{ fromLedger(number(usage.output)) }}</dd>
       </div>
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Spend</dt>
-        <dd class="mt-0.5 font-mono">{{ cost }}</dd>
+        <dd class="mt-0.5 font-mono">{{ fromLedger(money(usage.cost)) }}</dd>
         <dd class="text-[10px] text-zinc-500">all books · 7 days</dd>
       </div>
     </dl>

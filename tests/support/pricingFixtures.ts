@@ -7,6 +7,8 @@ export const card = (over: Partial<RateSet> = {}): RateSet => ({
   cachedInput: null,
   cacheWrite: null,
   speech: null,
+  textTokens: null,
+  audioTokens: null,
   ...over,
 });
 

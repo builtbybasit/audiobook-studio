@@ -1,5 +1,5 @@
-// Domain model for the prototype, split by feature. The mock world in `src/mock` builds these
-// shapes and the store mutates them in place; nothing here is persisted or fetched.
+// The domain model, split by feature, shared by the server and the page: the server stores and
+// answers in these shapes, and the page's stores hold them. `api.ts` has the answers that wrap them.
 //
 // This barrel is the only import path the app uses — `@/types` — so a type can move between the
 // files below without touching a single consumer.
@@ -21,3 +21,4 @@ export type * from "@/types/scriptFile";
 export type * from "@/types/ui";
 export type * from "@/types/demo";
 export type * from "@/types/world";
+export type * from "@/types/api";

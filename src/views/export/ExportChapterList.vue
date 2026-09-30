@@ -9,11 +9,11 @@ import { useLibraryStore } from "@/stores/library";
 //
 // It also has to stay usable at 214 chapters: search, a status filter that doubles as navigation,
 // per-volume select and collapse, a jump box, and range selection with shift.
-import { computed, nextTick, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { computed, nextTick, ref } from "vue";
 
 import { readinessOf, READINESS } from "@/lib/exports";
-import { queryIdSet, queryText } from "@/lib/query";
+import { enumParam, idSetParam, textParam, useQueryParam } from "@/composables/useQueryParam";
+import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
 import { clock } from "@/views/export/shared";
 import StatusDot from "@/components/StatusDot.vue";
 import { UiCheckbox, UiSelect } from "@/ui";
@@ -30,8 +30,6 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ "update:modelValue": [number[]]; "clear-focus": [] }>();
 const libraryStore = useLibraryStore();
-const route = useRoute();
-const router = useRouter();
 
 const chapters = computed(() => libraryStore.chaptersOf(props.bookId));
 const volumes = computed(() => libraryStore.volumesOf(props.bookId));
@@ -45,15 +43,13 @@ const readiness = computed(() => {
 /** A chapter that is skipped is out of every stage; it cannot be put in a file either. */
 const canPick = (c: Chapter) => !c.excluded;
 
-const q = ref(queryText(route.query.find));
+const q = useQueryParam("find", textParam());
 const search = ref<HTMLInputElement | null>(null);
-const collapsed = ref(queryIdSet(route.query.closed));
-const lastClicked = ref<number | null>(null);
+const collapsed = useQueryParam("closed", idSetParam());
 
 type FilterKey = "all" | "selected" | "ready" | "attention" | "other";
 const filterKeys: FilterKey[] = ["all", "selected", "ready", "attention", "other"];
-const routeFilter = queryText(route.query.filter) as FilterKey;
-const filter = ref<FilterKey>(filterKeys.includes(routeFilter) ? routeFilter : "all");
+const filter = useQueryParam("filter", enumParam(filterKeys, "all"));
 const counts = computed(() => {
   const out = { total: 0, ready: 0, stale: 0, missing: 0, failed: 0, running: 0, skipped: 0 };
   for (const c of chapters.value) {
@@ -113,26 +109,10 @@ type VolumeRow = Volume & { chapters: Chapter[] };
 const set = (ids: number[]) => emit("update:modelValue", ids);
 const pickable = (list: Chapter[]) => list.filter(canPick).map((c) => c.id);
 
+// a range over what is on screen, not over the whole book — the list you can see is the list
+const range = useRangeSelect(() => visible.value.flatMap((v) => pickable(v.chapters)));
 function toggle(id: number, e?: MouseEvent | KeyboardEvent) {
-  const next = new Set(props.modelValue);
-  if (e?.shiftKey && lastClicked.value != null) {
-    // a range over what is on screen, not over the whole book — the list you can see is the list
-    const ids = visible.value.flatMap((v) => pickable(v.chapters));
-    const a = ids.indexOf(lastClicked.value);
-    const b = ids.indexOf(id);
-    if (a >= 0 && b >= 0) {
-      const on = !next.has(id);
-      for (const x of ids.slice(Math.min(a, b), Math.max(a, b) + 1))
-        if (on) next.add(x);
-        else next.delete(x);
-      lastClicked.value = id;
-      return set([...next]);
-    }
-  }
-  if (next.has(id)) next.delete(id);
-  else next.add(id);
-  lastClicked.value = id;
-  set([...next]);
+  set([...applySpan(props.modelValue, range.span(id, e), !selected.value.has(id))]);
 }
 /** Both things hide a ticked chapter, so both have to go — the promise is "show everything". */
 function showEverything() {
@@ -181,29 +161,6 @@ async function jump(id: string | number | null) {
     .getElementById(`xvol-${props.bookId}-${id}`)
     ?.scrollIntoView({ block: "start", behavior: "smooth" });
 }
-watch(q, (value) => {
-  if (queryText(route.query.find) === value) return;
-  void router.replace({ query: { ...route.query, find: value || undefined } });
-});
-watch(filter, (value) => {
-  if (queryText(route.query.filter) === (value === "all" ? "" : value)) return;
-  void router.replace({ query: { ...route.query, filter: value === "all" ? undefined : value } });
-});
-watch(collapsed, (value) => {
-  const closed = [...value].sort((a, b) => a - b).join(",");
-  if (queryText(route.query.closed) === closed) return;
-  void router.replace({ query: { ...route.query, closed: closed || undefined } });
-});
-watch(
-  () => [route.query.find, route.query.filter, route.query.closed],
-  () => {
-    q.value = queryText(route.query.find);
-    const nextFilter = queryText(route.query.filter) as FilterKey;
-    filter.value = filterKeys.includes(nextFilter) ? nextFilter : "all";
-    collapsed.value = queryIdSet(route.query.closed);
-  },
-);
-
 function onRowKey(e: KeyboardEvent, c: Chapter) {
   const el = e.currentTarget as HTMLElement;
   const rows = [...(el.closest("[data-list]")?.querySelectorAll<HTMLElement>("[data-row]") ?? [])];

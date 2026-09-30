@@ -7,5 +7,39 @@
   "rules": {},
   "env": {
     "builtin": true
-  }
+  },
+  "overrides": [
+    {
+      "files": ["server/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "drizzle-orm",
+                "message": "Queries live in server/db/*.ts (docs/backend.md, \"The shape of it\"): add a function there and call it."
+              },
+              {
+                "name": "~/db/schema",
+                "message": "Queries live in server/db/*.ts (docs/backend.md, \"The shape of it\"): add a function there and call it."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["drizzle-orm/*", "~/db/schema/*"],
+                "message": "Queries live in server/db/*.ts (docs/backend.md, \"The shape of it\"): add a function there and call it."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["server/db/**/*.ts", "server/demo/**/*.ts", "server/usage/ledger.ts"],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    }
+  ]
 }

@@ -22,7 +22,7 @@ import {
   utf8Bytes,
 } from "@/lib/pricing";
 import { TTS_PRESETS, billingOf, endpointErrors, unifyEndpoint } from "@/lib/endpoints";
-import { makeEndpoints } from "@/mock/fixtures/endpoints";
+import { makeEndpoints } from "~/demo/seed/fixtures/endpoints";
 import type { Endpoint, TtsBilling } from "@/types";
 import { THU, card, config, promo, u, utc } from "./support/pricingFixtures";
 
@@ -177,7 +177,7 @@ describe("speech endpoints", () => {
     const e = estimateSpeech(
       speechCard(),
       cfg,
-      { chars: 1_000_000, audioSeconds: 600, requests: 4 },
+      u({ chars: 1_000_000, audioSeconds: 600, requests: 4 }),
       utc(THU, "12:00"),
     );
     expect(e.cost).toBeCloseTo(3, 12);
@@ -193,7 +193,7 @@ describe("speech endpoints", () => {
     const e = estimateSpeech(
       speechCard(),
       cfg,
-      { chars: 1_000_000, audioSeconds: 600, requests: 4 },
+      u({ chars: 1_000_000, audioSeconds: 600, requests: 4 }),
       utc(THU, "12:00"),
     );
     expect(e.cost).toBeCloseTo(12, 12);
@@ -221,10 +221,7 @@ describe("speech endpoints", () => {
       priceSpeechRequest(
         speechCard({ unit: "minute", rate: 0.3 }),
         config(),
-        {
-          chars: 1240,
-          audioSeconds: 90,
-        },
+        u({ chars: 1240, audioSeconds: 90 }),
         { at: utc(THU, "12:00") },
       ),
     );

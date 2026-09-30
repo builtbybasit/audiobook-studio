@@ -6,10 +6,15 @@ import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 
 import { computed } from "vue";
+import { money } from "@/lib/pricing";
+import { plural } from "@/lib/contents";
+import { useChapterScripts } from "@/queries";
 import { useScriptActivity } from "@/queries/scriptActivity";
 import BookPromptSummary from "@/views/scripting/BookPromptSummary.vue";
+import CorrectionsNote from "@/views/scripting/CorrectionsNote.vue";
+import ScriptProfileSelect from "@/views/scripting/ScriptProfileSelect.vue";
 
-import { UiNumber, UiSelect, UiSwitch, UiTooltip } from "@/ui";
+import { UiNumber, UiTooltip } from "@/ui";
 import {
   ArrowRight as NextIcon,
   CircleHelp as HintIcon,
@@ -27,26 +32,30 @@ const scriptsStore = useScriptsStore();
 useScriptActivity();
 const est = computed(() => scriptingStore.scriptEstimate(props.bookId, props.selected));
 const plan = computed(() => scriptingStore.scriptPlan(props.bookId, props.selected));
-const edits = computed(() =>
-  plan.value.chapters.reduce(
-    (n, row) =>
-      n + scriptsStore.segmentsOf(props.bookId, row.id).filter((seg) => seg.edited).length,
-    0,
-  ),
+// The corrections a re-script would replace are on the scripts it replaces, which are read here:
+// a script nobody has opened is not one without corrections.
+const replaced = computed(() =>
+  plan.value.chapters.filter((row) => row.contribution === "replace").map((row) => row.id),
 );
-const book = computed(() => libraryStore.bookById(props.bookId)!);
+const { failed: unread, retry: readAgain } = useChapterScripts(() => props.bookId, replaced);
+const edits = computed(() =>
+  replaced.value.every((id) => scriptsStore.held(props.bookId, id))
+    ? replaced.value.reduce(
+        (n, id) => n + scriptsStore.segmentsOf(props.bookId, id).filter((seg) => seg.edited).length,
+        0,
+      )
+    : null,
+);
+const book = computed(() => libraryStore.bookById(props.bookId));
 const spent = computed(() => jobsStore.scriptSpent(props.bookId));
 const reserved = computed(() => jobsStore.scriptReserved(props.bookId));
+/** what the estimate checks against: the scripting budget and the book's overall cap, whichever is lower */
 const remaining = computed(() =>
-  book.value.scriptBudget == null
-    ? null
-    : Math.max(0, book.value.scriptBudget - spent.value - reserved.value),
+  Number.isFinite(est.value.remaining) ? Math.max(0, est.value.remaining) : null,
 );
 const runs = computed(() =>
   jobsStore.jobs.filter((j) => j.bookId === props.bookId && !j.finishedAt && j.scriptRun),
 );
-const money = (n: number) =>
-  "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
 </script>
 <template>
   <div class="space-y-3 text-xs">
@@ -59,19 +68,7 @@ const money = (n: number) =>
         Manage endpoints <ExternalIcon class="icon-sm" />
       </button>
     </div>
-    <UiSelect
-      v-model="scriptingStore.scriptSettings.profile"
-      :options="
-        endpointsStore.profiles.map((p) => ({
-          value: p.id,
-          label: p.name,
-          hint: p.enabled ? p.model : 'Paused',
-        }))
-      "
-      size="xs"
-      block
-      aria-label="Scripting endpoint"
-    />
+    <ScriptProfileSelect />
     <p v-if="est.profile" class="text-[11px] text-zinc-500">
       {{
         est.profile.maxChars
@@ -80,38 +77,21 @@ const money = (n: number) =>
       }}
       · {{ est.profile.concurrency.toLocaleString() }} concurrent
     </p>
-    <UiSwitch
-      v-model="scriptingStore.scriptSettings.stripWatermarks"
-      label="Strip site boilerplate"
+    <CorrectionsNote
+      :edits="edits"
+      :unread="unread.length"
+      scope="this selection"
+      @retry="readAgain"
     />
-    <!-- what a replacement keeps. Off is a deliberate choice, and it says what it costs. -->
-    <div class="rounded-lg bg-zinc-50 p-2.5 dark:bg-zinc-800/60">
-      <UiSwitch
-        v-model="scriptingStore.scriptSettings.keepEdits"
-        label="Preserve manual corrections"
-      />
-      <p class="mt-1 text-[11px] leading-snug text-zinc-500">
-        <template v-if="scriptingStore.scriptSettings.keepEdits"
-          >Speaker, type, direction and expression annotations you set by hand are re-applied to the
-          new script wherever it wrote the same line. A correction whose line the new run rewrote,
-          split or dropped cannot be carried across — the reader lists those afterwards rather than
-          claiming they survived.</template
-        >
-        <template v-else
-          >Every manual correction in the chapters below is discarded; the new run wins
-          outright.</template
-        >
-        <span v-if="edits" class="text-zinc-400">
-          {{ edits }} corrected line{{ edits === 1 ? "" : "s" }} in this selection.</span
-        >
-      </p>
-    </div>
     <p v-if="plan.replace" class="text-[11px] leading-snug text-amber-700 dark:text-amber-400">
       {{ plan.replace }} of these chapters already {{ plan.replace === 1 ? "has" : "have" }} a
       finished script. Each one is kept in its chapter's history before it is replaced, and stays
       the chapter's script if the new attempt fails or is cancelled.
     </p>
-    <dl class="grid grid-cols-2 gap-y-1.5">
+    <p v-if="est.reading" class="text-[11px] text-zinc-500" role="status">
+      Reading the text of {{ plural(est.reading, "chapter") }} to price the run…
+    </p>
+    <dl v-else class="grid grid-cols-2 gap-y-1.5">
       <dt class="text-zinc-500">Chapters / requests</dt>
       <dd class="text-right font-mono">{{ est.chapters }} / {{ est.chunks }}</dd>
       <dt v-if="plan.fresh || plan.replace" class="text-zinc-500">New / replacing</dt>
@@ -192,12 +172,20 @@ const money = (n: number) =>
               >
                 <HintIcon class="icon" /></button></UiTooltip
           ></span>
-          <p class="text-[11px] leading-snug text-zinc-500">
+          <p v-if="spent === undefined" class="text-[11px] leading-snug text-zinc-500">
+            Reading what this book has spent…
+          </p>
+          <p v-else class="text-[11px] leading-snug text-zinc-500">
             {{ money(spent) }} spent<span v-if="reserved"> · {{ money(reserved) }} reserved</span
-            ><span v-if="remaining !== null"> · {{ money(remaining) }} available</span>
+            ><span
+              v-if="remaining !== null"
+              title="The lower of this budget and the book's overall cap, less what is spent and held"
+            >
+              · {{ money(remaining) }} available</span
+            >
           </p>
           <p
-            v-if="remaining !== null && est.cost"
+            v-if="remaining !== null && est.cost && !est.reading"
             class="text-[11px] leading-snug"
             :class="est.cost > remaining ? 'text-amber-700 dark:text-amber-400' : 'text-zinc-500'"
           >
@@ -208,7 +196,7 @@ const money = (n: number) =>
         <UiNumber
           class="w-28 shrink-0"
           prefix="$"
-          :model-value="book.scriptBudget ?? null"
+          :model-value="book?.scriptBudget ?? null"
           :min="0"
           :step="1"
           :empty="null"
@@ -222,8 +210,9 @@ const money = (n: number) =>
     <div class="border-t border-zinc-200 pt-3 dark:border-zinc-800">
       <BookPromptSummary :book-id="bookId" />
     </div>
+    <!-- while the text is read every figure waits for it, and so do the reasons it cannot run -->
     <div
-      v-if="est.blockers.length"
+      v-if="est.blockers.length && !est.reading"
       class="space-y-1 rounded-lg bg-amber-50 p-2.5 text-[11px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
       role="status"
     >

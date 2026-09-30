@@ -132,18 +132,10 @@ function load(): Promise<TurndownService> {
     // Not `<figure>`: publishers put epigraphs, poems and letters in one as often as pictures, and
     // removing the element removed the verse with it. Only the caption of a picture goes — see
     // `pictureCaption` below.
-    service.remove([
-      "head",
-      "title",
-      "meta",
-      "link",
-      "script",
-      "style",
-      "nav",
-      "aside",
-      "svg",
-      "img",
-    ]);
+    service.remove(["head", "title", "meta", "link", "script", "style", "nav", "aside", "img"]);
+    // An inline drawing, which has no words to read. Matched by name: `<svg>` is not an HTML tag,
+    // so Turndown's types do not take it in the list above, where the DOM's are in scope.
+    service.remove((node) => node.nodeName.toLowerCase() === "svg");
     // `remove` above does not reach `<img>`: Turndown's own image rule is asked first, and wrote
     // `![](a.png)` into the stored text — a link into an archive that is not kept. Taken out here.
     service.addRule("picture", { filter: ["img"], replacement: () => "" });

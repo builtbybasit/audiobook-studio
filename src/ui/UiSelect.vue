@@ -16,6 +16,7 @@ import {
   SelectViewport,
 } from "reka-ui";
 import { Check as CheckIcon, ChevronDown as ChevronDownIcon } from "@lucide/vue";
+import { optionKey as key, selectLabel } from "@/ui/select";
 import type { UiOption } from "@/ui/types";
 
 const props = withDefaults(
@@ -39,8 +40,6 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ "update:modelValue": [string | number | null] }>();
 const NULL = "__null__";
-const EMPTY = "__empty__"; // reka forbids '' as an item value; map it
-const key = (v: string | number | null): string => (v === "" ? EMPTY : String(v));
 const inner = computed({
   get: () =>
     props.modelValue == null
@@ -63,13 +62,8 @@ const groups = computed(() => {
   }
   return [...map.entries()];
 });
-const currentLabel = computed(() =>
-  props.modelValue == null
-    ? props.nullValue !== undefined
-      ? String(props.nullValue)
-      : ""
-    : (props.options.find((o) => o.value === props.modelValue)?.label ?? String(props.modelValue)),
-);
+// a value no option has shows the placeholder, marked, never the value itself
+const current = computed(() => selectLabel(props.modelValue, props.options, props.nullValue));
 </script>
 
 <template>
@@ -80,10 +74,14 @@ const currentLabel = computed(() =>
         size === 'xs' ? 'py-0.5 text-xs' : 'py-1 text-sm',
         block && 'w-full',
         modelValue == null && nullValue !== undefined && 'italic text-zinc-400',
+        current.missing && 'italic text-amber-600',
       ]"
+      :title="current.missing ? 'The saved choice is not one of these options any more' : undefined"
     >
       <SelectValue :placeholder="placeholder" class="min-w-0 flex-1 truncate text-left">
-        <slot name="value" :label="currentLabel">{{ currentLabel || placeholder }}</slot>
+        <slot name="value" :label="current.label" :missing="current.missing">{{
+          current.label || placeholder
+        }}</slot>
       </SelectValue>
       <ChevronDownIcon class="ml-1 icon-sm text-zinc-400" aria-hidden />
     </SelectTrigger>

@@ -11,13 +11,13 @@
 // chance is injectable, so a test says which. It takes one line at a time and has nothing to clone
 // or search; its voices are the few it names.
 import { SIMULATED_VOICES } from "@/lib/providers";
+import type { EndpointProbe, VoiceListPage } from "@/types";
 import { sleep } from "~/providers/fake";
 import { speakTone } from "~/providers/fakeSpeech";
 import { ProviderError } from "~/providers/http";
 import type { RenderedClip, SpeechInput } from "~/providers/speech";
 import { onePage } from "~/providers/speech/wire";
-import type { ProbeResult, ProviderTarget } from "~/providers/target";
-import type { VoicePage } from "~/providers/voices";
+import type { ProviderTarget } from "~/providers/target";
 
 /**
  * `voice` said by a simulated endpoint: after its latency, which a cancel cuts short, and failed
@@ -47,11 +47,11 @@ export async function speakSimulated(
 }
 
 /** The Test button: there is nothing to reach, so nothing is asked. */
-export const probeSimulated = (): ProbeResult => ({
+export const probeSimulated = (): EndpointProbe => ({
   ok: true,
   message: "Simulated: answered here, without a request",
   ms: 0,
 });
 
 /** "Fetch from server": the voices every simulated endpoint has. */
-export const simulatedVoices = (): VoicePage => onePage([...SIMULATED_VOICES]);
+export const simulatedVoices = (): VoiceListPage => onePage([...SIMULATED_VOICES]);

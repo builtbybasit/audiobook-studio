@@ -10,7 +10,7 @@
 // (`demoStore.test.ts`).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
-import { DEMO_GROUPS, demoScenarios } from "@/mock/scenarios/catalogue";
+import { DEMO_GROUPS, demoScenarios } from "~/demo/seed/scenarios/catalogue";
 import type { AppliedSituation, Book, DemoSituations } from "@/types";
 import { createApp } from "~/app";
 import { openDb, type Db } from "~/db/client";

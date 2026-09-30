@@ -163,20 +163,6 @@ export function expressionParts(plan: ExpressionPlan, ep: Pick<Endpoint, "maxCha
   return splitText(plan.text, ep.maxChars, ep.splitAt, true, plan.ranges);
 }
 
-/** Positions the user can choose without typing offsets or splitting a word. */
-export function expressionPositions(text: string) {
-  return [
-    { value: "0", label: "Before the line" },
-    ...[...text.matchAll(/\S+/g)]
-      .filter((m) => m.index > 0)
-      .map((m) => ({
-        value: String(m.index),
-        label: `Before “${text.slice(m.index, m.index + 32).trim()}${text.length - m.index > 32 ? "…" : ""}”`,
-      })),
-    { value: String(text.length), label: "After the line" },
-  ];
-}
-
 /** Keep unaffected anchors; edited ranges require the user's position choice before rendering. */
 export function remapExpressions(
   list: ExpressionAnnotation[],

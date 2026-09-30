@@ -3,7 +3,11 @@
 // The error shape and the helpers that raise one live in `errors.ts`, so a domain operation can
 // refuse something without knowing it is being served over HTTP. This file keeps what is only ever
 // about a URL or a request.
+import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
+
+import { uploadBodyBytes } from "~/env";
+import { fail } from "~/lib/errors";
 
 export { fail, type ApiError } from "~/lib/errors";
 
@@ -69,3 +73,34 @@ export const IntParam = v.pipe(
 
 /** A chapter number or a volume id in a path: whole and positive. */
 export const IdParam = v.pipe(IntParam, v.minValue(1, "must be positive"));
+
+/** A route under `/api/books/:id`: the book's id, which the operation looks up and refuses. */
+export const BookParam = v.object({ id: v.string() });
+
+/**
+ * A route's limit on a file upload of up to `mb` megabytes, in two halves with one refusal (a 413
+ * that names `setting` as the way to raise it).
+ *
+ * `body` refuses the request as it arrives — from its `content-length` when it says, and by
+ * counting when it does not — rather than after the whole of it has been buffered to be looked at.
+ * It has to allow a megabyte more than the file, for the multipart envelope (`uploadBodyBytes`),
+ * so it is not the limit itself: `file` is, asked of the file once the form is read, so a file a
+ * few bytes over is refused and not let through by the envelope's allowance. The server's own
+ * ceiling (`maxRequestBodySize`) sits just above every such limit, as a backstop that answers in
+ * Bun's words; these are what answer in the API's.
+ */
+export function uploadLimit(mb: number, setting: string, what: "file" | "script" = "file") {
+  const refuse = (detail = ""): never =>
+    fail(
+      413,
+      `That file is larger than the ${mb} MB limit`,
+      `${detail}Raise ${setting} if this is a ${what} you expect to import.`,
+    );
+  return {
+    body: bodyLimit({ maxSize: uploadBodyBytes(mb), onError: () => refuse() }),
+    file(file: File): void {
+      if (file.size > mb * 1024 * 1024)
+        refuse(`${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. `);
+    },
+  };
+}

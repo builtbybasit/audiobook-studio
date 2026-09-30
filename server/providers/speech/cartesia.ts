@@ -22,6 +22,8 @@
 // so it cannot drift. The answer is the new voice, whose `id` is what a line is spoken with; it
 // says nothing of gender.
 import type { Voice } from "@/types";
+import { cartesia } from "@/lib/providers/cartesia";
+import { formatDefaults } from "@/lib/providers/types";
 import { authHeaders, call, jsonHeaders, ProviderError } from "~/providers/http";
 import type { SpeechCallOptions } from "~/providers/send";
 import type { SpeechInput } from "~/providers/speech";
@@ -30,10 +32,6 @@ import type { SpeechWire } from "~/providers/speech/wire";
 
 /** The API version every request is written against, the one Cartesia's reference names. */
 export const CARTESIA_VERSION = "2026-08-14";
-
-/** What this app asks for when the endpoint names no rate: the rate Cartesia's example uses. */
-const DEFAULT_RATE = 44100;
-const DEFAULT_MP3_KBPS = 128;
 
 /** A voice list is read a hundred a page, up to this many pages. */
 const VOICE_PAGE = 100;
@@ -53,14 +51,16 @@ export function cartesiaBody(
   voice: string,
 ): Record<string, unknown> {
   const { format, bitrate } = input.encoding;
-  const sample_rate = input.sampleRate ?? DEFAULT_RATE;
+  // what the endpoint names none of is the shape's: 44.1 kHz, the rate Cartesia's example uses
+  const defaults = formatDefaults(cartesia, format);
+  const sample_rate = input.sampleRate ?? defaults.rate;
   return {
     model_id: model,
     transcript: input.text,
     voice: { id: voice },
     output_format:
       format === "mp3"
-        ? { container: "mp3", sample_rate, bit_rate: (bitrate ?? DEFAULT_MP3_KBPS) * 1000 }
+        ? { container: "mp3", sample_rate, bit_rate: (bitrate ?? defaults.bitrate!) * 1000 }
         : { container: "wav", encoding: "pcm_s16le", sample_rate },
   };
 }
@@ -162,7 +162,7 @@ export const cartesiaWire: SpeechWire = {
 
   request(input, target, voice) {
     return {
-      url: `${cartesiaRoot(target.baseUrl)}/tts/bytes`,
+      url: `${cartesiaRoot(target.baseUrl)}${cartesia.requestPath(target.model)}`,
       init: {
         method: "POST",
         headers: cartesiaHeaders(target),

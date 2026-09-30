@@ -14,6 +14,7 @@ import { useUiStore } from "@/stores/ui";
 //  · buttons are real buttons with focus rings; Escape inside a toast dismisses it
 import { computed } from "vue";
 import { ToastContainer } from "vue-toastflow";
+import { modKey } from "@/lib/format";
 import type { Component } from "vue";
 import {
   Check as CheckIcon,
@@ -25,7 +26,6 @@ import {
 } from "@lucide/vue";
 
 const uiStore = useUiStore();
-const isMac = /Mac|iPhone/.test(navigator.platform);
 const newestUndoId = computed(() => uiStore._undo.at(-1)?.toastId);
 
 const ACCENT = {
@@ -155,7 +155,7 @@ const btnCls = (b: { id?: string }) =>
                   v-if="b.id === 'undo' && newestUndoId === toast.id"
                   class="rounded border border-zinc-200 px-1 font-mono text-[10px] text-zinc-400 dark:border-zinc-700"
                   title="undo from anywhere"
-                  >{{ isMac ? "⌘" : "Ctrl" }} Z</kbd
+                  >{{ modKey }} Z</kbd
                 >
               </template>
             </div>

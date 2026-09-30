@@ -207,10 +207,10 @@ const skip = (c: Chapter, reason: RunSkipReason): RunSkip => ({
  * What re-scripting this selection would do. A chapter that already has a script is a replacement,
  * one that failed without leaving one is a retry, and one that has never been scripted is new work.
  *
- * Whether there is a script to replace is asked of the script (`hasScript`), not of the chapter's
- * label, for the reason the store guide gives: a re-script that failed puts the chapter's status
- * back and leaves the old script exactly where it was, so the label cannot say what is there. The
- * run reads the same answer off this plan, which is what keeps the button's wording, the queue row's
+ * Whether there is a script to replace is asked of the chapter's status (`hasScript`, which the
+ * store answers with `isScripted`), not of the lines the browser happens to hold: a chapter no page
+ * has read is not one without a script. The status can be trusted for it because a re-script that
+ * fails puts it back, leaving the old script exactly where it was. The run reads the same answer off this plan, which is what keeps the button's wording, the queue row's
  * wording and the decision to snapshot `_previous` from being three separate readings.
  */
 export function scriptingPlan(

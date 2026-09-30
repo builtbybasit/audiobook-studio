@@ -12,7 +12,7 @@ import { upsertCharacter } from "~/db/cast";
 import { speakerSamples } from "~/db/schema";
 import { GRACE_MS } from "~/db/voiceSamples";
 import { speakerSampleFiles } from "~/speakerSamples/files";
-import { readScriptFile, SNIFF_BYTES } from "~/script/importPlan";
+import { readScriptFile, SNIFF_BYTES } from "~/script/scriptFile";
 import { listSamples, readSpeakerSamplesForExport } from "~/speakerSamples/store";
 import { epubFile } from "../support/epub";
 import { testApi, type TestApi } from "../support/server";

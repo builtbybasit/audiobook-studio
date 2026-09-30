@@ -53,6 +53,25 @@ export function readKept(
   return { ...keptOf(voice), samples: samplesOf(db, endpointId, voiceId) };
 }
 
+/**
+ * The recordings a script export can carry for a voice: kept, not forgotten, and the voice still in
+ * the saved configuration (`missing_since` unset), since a voice that is gone is not one a book
+ * speaks with. Undefined otherwise.
+ */
+export function readCarried(
+  db: Db | Tx,
+  endpointId: string,
+  voiceId: string,
+): KeptVoiceSamples | undefined {
+  const voice = db
+    .select()
+    .from(clonedVoices)
+    .where(and(whereShown(endpointId, voiceId), isNull(clonedVoices.missingSince)))
+    .get();
+  if (!voice) return undefined;
+  return { ...keptOf(voice), samples: samplesOf(db, endpointId, voiceId) };
+}
+
 /** Every voice of one endpoint that has recordings kept. */
 export function readKeptFor(db: Db | Tx, endpointId: string): KeptVoiceSamples[] {
   return db

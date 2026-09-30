@@ -30,6 +30,8 @@
 // nothing, and the next attempt's random `voice_id` cannot collide with it.
 import type { SpeechUsage, Voice } from "@/types";
 import { normalizeSpeechUsage } from "@/lib/pricing";
+import { minimax } from "@/lib/providers/minimax";
+import { formatDefaults } from "@/lib/providers/types";
 import { audioAnswer, jsonAnswer } from "~/providers/answer";
 import type { CloneRequest } from "~/providers/clone";
 import { authHeaders, call, jsonHeaders, ProviderError } from "~/providers/http";
@@ -37,10 +39,6 @@ import type { SpeechCallOptions } from "~/providers/send";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 import { onePage, type SpeechWire } from "~/providers/speech/wire";
-
-/** What this app asks for when the endpoint names no rate: the rate MiniMax's own example uses. */
-const DEFAULT_RATE = 32000;
-const DEFAULT_MP3_KBPS = 128;
 
 /**
  * `base_resp` codes whose answer on https://platform.minimax.io/docs/api-reference/errorcode is to
@@ -84,6 +82,9 @@ export function miniMaxBody(
   voice: string,
 ): Record<string, unknown> {
   const { format, bitrate } = input.encoding;
+  // what the endpoint names no rate or bitrate for is what the shape says: 32 kHz, the rate
+  // MiniMax's own example uses, and 128 kbps
+  const defaults = formatDefaults(minimax, format);
   return {
     model,
     text: input.text,
@@ -91,11 +92,11 @@ export function miniMaxBody(
     output_format: "hex",
     voice_setting: { voice_id: voice },
     audio_setting: {
-      sample_rate: input.sampleRate ?? DEFAULT_RATE,
+      sample_rate: input.sampleRate ?? defaults.rate,
       format,
       channel: 1,
       // MiniMax spells an MP3's bitrate in bits a second
-      ...(format === "mp3" ? { bitrate: (bitrate ?? DEFAULT_MP3_KBPS) * 1000 } : {}),
+      ...(format === "mp3" ? { bitrate: (bitrate ?? defaults.bitrate!) * 1000 } : {}),
     },
   };
 }
@@ -257,7 +258,7 @@ export const miniMaxWire: SpeechWire = {
   request(input, target, voice) {
     const { format } = input.encoding;
     return {
-      url: `${miniMaxRoot(target.baseUrl)}/t2a_v2`,
+      url: `${miniMaxRoot(target.baseUrl)}${minimax.requestPath(target.model)}`,
       init: {
         method: "POST",
         headers: jsonHeaders(target),

@@ -35,6 +35,8 @@ The scripts are defined in [package.json](../package.json):
 
 Run one test file with Bun directly, for example `bun test tests/history.test.ts`. `pnpm test` uses Bun's `--parallel`, which runs each file in a worker of its own. The seeded demo takes about half a second to open, and a test that opens it can pass 5 s when every core is busy, so the script allows each test 20 s. Tests make their temporary folders under one root per file, removed when the file is done ([tests/support/tempRoot.ts](../tests/support/tempRoot.ts)); make yours with `mkdtemp(tmpdir())` so they land there.
 
+`pnpm typecheck` checks the tests as well as the code they test. The page's tests, in `tests/` and `tests/support/`, are checked with the DOM beside Bun ([tsconfig.tests.json](../tsconfig.tests.json)); the server's, in `tests/server/` and `tests/live/`, are checked with the server, without the DOM ([tsconfig.server.json](../tsconfig.server.json)). A helper either kind imports is checked with it, so a new one needs no entry in either.
+
 `pnpm test:live` runs [tests/live/](../tests/live/) against real APIs with the keys in `.env` (the commented `SCRIPTING_PROVIDER_*` and `FISHAUDIO_*` lines in `.env.example`). It is the only code that reads them; the running server takes its providers from the Endpoints page.
 
 ## Code map
@@ -49,8 +51,8 @@ Run one test file with Bun directly, for example `bun test tests/history.test.ts
 | [src/composables](../src/composables)                             | Shared view logic: the player, the shell's facts about a book, voice samples, the preset picker                 |
 | [src/lib](../src/lib)                                             | Pure rules shared by the page and the server: run plans, pricing, script history, export planning, providers    |
 | [src/types](../src/types)                                         | Domain types, imported through `@/types` on both sides                                                          |
-| [src/mock](../src/mock)                                           | The world, fixtures and situations the server seeds the demo with; no store imports it                          |
 | [server](../server)                                               | The API, the job queue, EPUB import, providers and files. Its own guide is [backend](backend.md)                |
+| [server/demo/seed](../server/demo/seed)                           | The world, fixtures and situations the demo is seeded with; no store imports it                                 |
 | [drizzle](../drizzle)                                             | Generated SQL migrations                                                                                        |
 | [tests](../tests)                                                 | Store and rule tests; [tests/server](../tests/server) for the server, [tests/support](../tests/support) helpers |
 
@@ -131,7 +133,7 @@ and so does the `⁄` caret marking a cut point inside a line in split mode.
 ## UI primitives
 
 Form controls are built on [reka-ui](https://reka-ui.com) (headless, accessible) with thin styled wrappers in [src/ui/](../src/ui/):
-`UiSelect` (grouped items, colour dots, hints, a `null-value` option), `UiCombobox` (searchable, grouped, `action` mode for "merge into…"), `UiSlider`, `UiNumber`, `UiCheckbox` (tri-state), `UiSwitch`, `UiToggleGroup`, `UiTooltip`. Tabs, Popover, Dialog, Collapsible and TooltipProvider are used directly from reka-ui. Reka forbids `''` as a Select item value — the wrapper maps it to a sentinel.
+`UiSelect` (grouped items, colour dots, hints, a `null-value` option), `UiCombobox` (searchable, grouped, `action` mode for "merge into…"), `UiSlider`, `UiNumber`, `UiCheckbox` (tri-state), `UiSwitch`, `UiToggleGroup`, `UiTooltip`, and the shells around a page's own content: `UiDialog` (centred, near the top, or filling the screen) and `UiSheet` (from the right or the bottom) share one overlay, so every modal dims the page alike and stacks at one height, and `UiTabs` is the tab row with the underline, inside the page's `TabsRoot`. Popover, Collapsible and TooltipProvider are used directly from reka-ui. Reka forbids `''` as a Select item value — the wrapper maps it to a sentinel.
 
 `UiNumber` is every numeric field in the app (price, cap, gap, limit, year). It drops the native
 spinner — at this size the arrows eat a third of the box and fire on a stray scroll — and keeps the

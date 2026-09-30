@@ -27,6 +27,7 @@
 // compatible server's capabilities too and says when it takes batches; a server that cannot say
 // has still passed the test, which was about the address and the key.
 import type { Gender, Voice } from "@/types";
+import { compatible, openai } from "@/lib/providers/openai";
 import { call, jsonHeaders, ProviderError } from "~/providers/http";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
@@ -115,6 +116,7 @@ function voicesFromList(body: unknown): Voice[] | null {
 
 /** The shape both share; `hosted` is OpenAI's own API, and differs where OpenAI documents more. */
 function openaiShaped(hosted: boolean): SpeechWire {
+  const shape = hosted ? openai : compatible;
   return {
     request(input, target, voice) {
       // what is actually sent beside the words, and so what the ledger counts: nothing for a model
@@ -123,7 +125,7 @@ function openaiShaped(hosted: boolean): SpeechWire {
         ? ""
         : input.instructions.trim();
       return {
-        url: `${target.baseUrl}/audio/speech`,
+        url: `${target.baseUrl}${shape.requestPath(target.model)}`,
         init: {
           method: "POST",
           headers: jsonHeaders(target),

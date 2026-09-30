@@ -22,114 +22,49 @@
 // the book's layers are resolved then (`resolvePrompt`) and kept on the run with the book's notes,
 // so an edit made while it waits reaches the next run and not this one. Its tags are filled in per
 // request, from the book, the chapter, its cast as it stands and the request's place in the chapter.
-import { and, count, eq } from "drizzle-orm";
-
-import type { Job, Profile, PromptTemplate, Segment } from "@/types";
-import {
-  BUILT_IN_PROMPT,
-  renderPrompt,
-  resolvePrompt,
-  type PromptCastMember,
-  type PromptVars,
-} from "@/lib/prompt";
-import { scriptParts, tokenEstimate } from "@/lib/scripting";
-import { ensureSpeakers } from "~/db/cast";
+import type { Job, Profile, PromptTemplate, ScriptingQueued, Segment } from "@/types";
+import { BUILT_IN_PROMPT, renderPrompt, resolvePrompt, type PromptVars } from "@/lib/prompt";
+import { tokenEstimate } from "@/lib/scripting";
+import { ensureSpeakers, readSpeakers } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { capture } from "~/db/history";
 import { readProfiles } from "~/db/endpoints";
-import { activeJob, appendEvent, getJob, nextRunId, setReserved, setScriptRun } from "~/db/jobs";
+import { activeJob, getJob, nextRunId, setScriptRun } from "~/db/jobs";
 import * as library from "~/db/library";
-import { books, chapters, characters, segments } from "~/db/schema";
 import { readLibraryPrompt } from "~/db/settings";
-import { ScriptConflict, readScript, replaceScript } from "~/db/script";
+import { ScriptConflict, lineCount, readScript, replaceScript, scriptRevision } from "~/db/script";
 import { plainText } from "~/epub/markdown";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
 import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
+import { chunksOf } from "~/script/chunks";
 import { assertWithinBudget, budgetProblem } from "~/usage/budget";
 import { scriptReasoning, settleScript } from "~/usage/ledger";
 
 /** The status a chapter reads as when no job is running on it: asked of its script, not remembered. */
-export function settledScriptingStatus(
+function settledScriptingStatus(
   db: Db | Tx,
   bookId: string,
   chapterId: number,
   outcome: "done" | "failed" | "cancelled",
 ): "none" | "done" | "failed" {
-  const lines =
-    db
-      .select({ n: count() })
-      .from(segments)
-      .where(and(eq(segments.bookId, bookId), eq(segments.chapterId, chapterId)))
-      .get()?.n ?? 0;
   // a re-script that failed leaves the old script intact, and a chapter with a usable script must
   // not read as failed — that is what would stop it being narrated or exported
-  if (lines) return "done";
+  if (lineCount(db, bookId, chapterId)) return "done";
   return outcome === "failed" ? "failed" : "none";
-}
-
-function setChapterScripting(
-  db: Db | Tx,
-  bookId: string,
-  chapterId: number,
-  scripting: "none" | "queued" | "running" | "done" | "failed",
-  progress: number,
-): void {
-  db.update(chapters)
-    .set({ scripting, scriptingProgress: progress })
-    .where(and(eq(chapters.bookId, bookId), eq(chapters.id, chapterId)))
-    .run();
 }
 
 /** The chapter as the job needs it: where it is, what it says, and which script it is replacing. */
 function readChapter(db: Db, bookId: string, chapterId: number) {
-  const row = db
-    .select({ uid: chapters.uid, title: chapters.title, revision: chapters.scriptRevision })
-    .from(chapters)
-    .where(and(eq(chapters.bookId, bookId), eq(chapters.id, chapterId)))
-    .get();
-  if (!row) throw notFound("The chapter no longer exists");
+  const chapter = library.getChapter(db, bookId, chapterId);
+  const uid = library.chapterUid(db, bookId, chapterId);
+  const revision = scriptRevision(db, bookId, chapterId);
+  if (!chapter || uid == null || revision == null) throw notFound("The chapter no longer exists");
   const body = library.getChapterBody(db, bookId, chapterId);
   if (body == null) throw notFound("The chapter has no text");
-  return { ...row, text: plainText(body) };
-}
-
-/** Where a chapter is now, by the identity that does not move. The narration job asks this too. */
-export function locate(db: Db | Tx, uid: string): { bookId: string; id: number } | undefined {
-  return db
-    .select({ bookId: chapters.bookId, id: chapters.id })
-    .from(chapters)
-    .where(eq(chapters.uid, uid))
-    .get();
-}
-
-/**
- * The chapter cut into the requests its profile allows, exactly as the Endpoints page previews
- * them: `scriptParts` is the demo's own call, with the source's whitespace kept so the pieces
- * rejoin to the chapter. No profile, or a limit of 0, is the chapter whole.
- */
-export function chunksOf(text: string, profile: Profile | undefined): string[] {
-  const parts = profile ? scriptParts(text, profile) : [];
-  return parts.length ? parts : [text];
-}
-
-/**
- * The speakers the book already has, as the prompt's cast tags read them, so a chunk read on its
- * own still calls Mara "Mara".
- */
-export function readSpeakers(db: Db, bookId: string): PromptCastMember[] {
-  return db
-    .select({
-      name: characters.name,
-      aliases: characters.aliases,
-      gender: characters.gender,
-      description: characters.description,
-    })
-    .from(characters)
-    .where(eq(characters.bookId, bookId))
-    .all();
+  return { uid, title: chapter.title, revision, text: plainText(body) };
 }
 
 /**
@@ -168,11 +103,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       // The prompt the run was queued with; a run queued before prompts could be edited is sent
       // the built-in one, which is what it would have been sent then.
       const template = queued?.prompt ?? BUILT_IN_PROMPT;
-      const book = db
-        .select({ title: books.title, author: books.author })
-        .from(books)
-        .where(eq(books.id, job.bookId))
-        .get();
+      const book = library.getBook(db, job.bookId);
       const varsFor = (i: number): PromptVars => ({
         book: {
           title: book?.title ?? "",
@@ -190,7 +121,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           notes: queued?.profile.prompt?.notes ?? "",
         },
       });
-      setChapterScripting(db, job.bookId, job.chapterId, "running", 0);
+      library.setChapterScripting(db, job.bookId, job.chapterId, "running", 0);
       ctx.note("Scripting started", "info", {
         provider: provider.name,
         characters: chapter.text.length,
@@ -211,8 +142,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         if (pct === lastPct) return;
         lastPct = pct;
         ctx.progress(pct);
-        const at = locate(db, chapter.uid);
-        if (at) setChapterScripting(db, at.bookId, at.id, "running", pct);
+        const at = library.locateChapter(db, chapter.uid);
+        if (at) library.setChapterScripting(db, at.bookId, at.id, "running", pct);
       };
       // The run's live detail, one object that every write goes through, so a request settling
       // from inside the provider and the worker counting it can never write over each other. It
@@ -248,7 +179,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       const settle = (i: number, sent: SentScript): void => {
         if (!run) return;
         const profile = readProfiles(db).find((p) => p.id === run.profile.id) ?? run.profile;
-        const at = locate(db, chapter.uid);
+        const at = library.locateChapter(db, chapter.uid);
         try {
           const record = settleScript(
             db,
@@ -370,7 +301,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       // good script is never pushed into the history by an attempt that produced nothing.
       try {
         db.transaction((tx) => {
-          const at = locate(tx, chapter.uid);
+          const at = library.locateChapter(tx, chapter.uid);
           if (!at) throw notFound("The chapter was removed while it was being scripted");
           const previous = readScript(tx, at.bookId, at.id);
           const { revision } = replaceScript(tx, at.bookId, at.id, segs, {
@@ -397,7 +328,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             at.bookId,
             segs.map((s) => s.speaker),
           );
-          setChapterScripting(tx, at.bookId, at.id, "done", 100);
+          library.setChapterScripting(tx, at.bookId, at.id, "done", 100);
           ctx.note("Script written", "info", {
             lines: segs.length,
             speakers: new Set(segs.map((s) => s.speaker)).size,
@@ -414,22 +345,14 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
     },
 
     onSettled(ctx, status) {
-      // A finished job holds nothing, however it ended. The budget already leaves finished jobs
-      // out; this is for the Queue's detail, which would otherwise show a hold that is not there.
-      const fresh = getJob(ctx.db, ctx.job.id);
-      if (fresh?.scriptRun?.reserved) setReserved(ctx.db, fresh.id, 0);
       // `done` wrote the chapter's status inside its own transaction. Anything else puts the
       // chapter back to what its script says it is — read off the job's row, whose chapter number
       // has followed any renumbering by cascade, rather than the number the job started with.
       if (status === "done") return;
+      const fresh = getJob(ctx.db, ctx.job.id);
       if (!fresh || fresh.chapterId == null) return;
-      const exists = ctx.db
-        .select({ id: chapters.id })
-        .from(chapters)
-        .where(and(eq(chapters.bookId, fresh.bookId), eq(chapters.id, fresh.chapterId)))
-        .get();
-      if (!exists) return;
-      setChapterScripting(
+      if (!library.chapterExists(ctx.db, fresh.bookId, fresh.chapterId)) return;
+      library.setChapterScripting(
         ctx.db,
         fresh.bookId,
         fresh.chapterId,
@@ -440,19 +363,13 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
   };
 }
 
-export interface ScriptingQueued {
-  jobs: Job[];
-  /** chapters left out of this run, and why */
-  skipped: { id: number; why: "excluded" | "busy" | "missing" }[];
-  runId: number;
-}
-
 /**
  * Queue a scripting job for each chapter, as one run.
  *
  * Chapters skipped for the audiobook and chapters already being scripted are left out and said so,
  * rather than refused: a bulk press over a selection that includes one is a person's intent for
- * the rest. A book still in its contents review has nothing to script yet, and that is refused.
+ * the rest. A book still in its contents review has nothing to script yet, and that is refused, as
+ * is a profile this server does not have (404).
  *
  * So is a run the book cannot afford, whole: its worst case is checked against the budget before
  * any chapter is queued, and a run that does not fit queues nothing (409). A paused book refuses
@@ -468,6 +385,17 @@ export function enqueueScripting(
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
   if (book.importing) throw conflict("Finish the contents review before scripting this book");
+  // The profile is read once, here, and kept on every job of the run. The endpoints live on this
+  // server, so one the request names that it does not have is a mistake to say now, not a run of
+  // jobs that each fail for want of it. A request that names none is queued: what it is sent to
+  // decides — the server's own provider refuses it, saying to choose one, and a test's fake
+  // scripts it.
+  const chosen = profile ? readProfiles(db).find((p) => p.id === profile) : undefined;
+  if (profile && !chosen)
+    throw notFound(
+      `No such scripting endpoint “${profile}”`,
+      "Save it on the Endpoints page, or choose another.",
+    );
   const known = new Map(library.listChapters(db, bookId).map((c) => [c.id, c]));
 
   const targets: number[] = [];
@@ -480,10 +408,6 @@ export function enqueueScripting(
     else targets.push(id);
   }
 
-  // The profile is read once, here, and kept on every job of the run. One the browser names but
-  // this server was never sent is not a refusal — a fresh server has no endpoints until the page
-  // saves them — so its chapters go whole, and each job says why.
-  const chosen = profile ? readProfiles(db).find((p) => p.id === profile) : undefined;
   // a run is named by the profile it goes to
   const via = chosen?.name ?? "no profile";
   // The prompt is resolved once too, and kept with the notes it will fill in — the template the
@@ -553,16 +477,10 @@ export function enqueueScripting(
       },
       // in the same transaction as the row, so it cannot land after the worker has moved on
       ...(held ? { run: { scriptRun: held } } : {}),
-      onCreated: (tx) => setChapterScripting(tx, bookId, id, "queued", 0),
+      onCreated: (tx) => library.setChapterScripting(tx, bookId, id, "queued", 0),
     });
-    if (profile && !chosen)
-      appendEvent(
-        db,
-        job.id,
-        `The scripting profile “${profile}” is not saved on this server; the chapter goes whole`,
-        "warning",
-      );
     jobs.push(job);
   });
-  return { jobs, skipped, runId };
+  // the chapters as they now stand, with the queued ones marked
+  return { jobs, skipped, runId, chapters: library.listChapters(db, bookId) };
 }

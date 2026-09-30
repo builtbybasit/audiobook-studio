@@ -60,7 +60,7 @@ describe("the preset picker", () => {
     const { options } = picker("tts");
     expect(options.value[0]).toMatchObject({ value: "", label: "Start from a preset…" });
     expect(options.value.slice(1).map((o) => o.value)).toEqual(TTS_PRESETS.map((p) => p.id));
-    expect(options.value.slice(1).every((o) => o.group)).toBe(true);
+    expect(options.value.slice(1).every((o) => "group" in o && o.group)).toBe(true);
   });
 
   test("hands over a copy of the preset's fields, shows its note, and says what to do next", () => {

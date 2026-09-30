@@ -7,7 +7,8 @@ import { useUiStore } from "@/stores/ui";
 
 // Queue: every job across every book. Running now (with live detail), the pending queue (cancellable),
 // endpoint utilisation, and history with retry. A clock tick keeps elapsed times moving.
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, ref } from "vue";
+import { useNow } from "@vueuse/core";
 
 import StatusDot from "@/components/StatusDot.vue";
 import JobDetails from "@/views/queue/JobDetails.vue";
@@ -23,7 +24,8 @@ import {
 // the pricing line reads the endpoint's billing model rather than the legacy per-1M-characters
 // number, which says nothing useful about a byte-billed or token-billed endpoint
 import { pricingLabel, unifyEndpoint } from "@/lib/endpoints";
-import { useEndpointLive } from "@/queries";
+import { useBooks, useEndpointLive } from "@/queries";
+import { hhmm } from "@/lib/format";
 
 const endpointsStore = useEndpointsStore();
 const jobsStore = useJobsStore();
@@ -36,14 +38,13 @@ function openRow(event: MouseEvent, job: Job) {
   if ((event.target as HTMLElement).closest("button, a, input")) return;
   selectedId.value = job.id;
 }
-const now = ref(Date.now());
-let t: ReturnType<typeof setInterval>;
-onMounted(() => {
-  t = setInterval(() => (now.value = Date.now()), 500);
-});
-onUnmounted(() => clearInterval(t));
+const clock = useNow({ interval: 500 });
+const now = computed(() => clock.value.getTime());
 // the endpoint pool's busy slots and back-off, as the server's gate holds them when one answers
 useEndpointLive();
+// the chapters of every book the queue names, which the rows, their line counts and "Retry failed"
+// read: the Queue can be the first page opened, before any of those books has been
+useBooks(() => jobsStore.jobs.map((j) => j.bookId));
 
 const icon: Record<JobKind, Component> = {
   scripting: ScriptingIcon,
@@ -79,19 +80,19 @@ const elapsed = (j: Job) =>
   fmtDur(((j.finishedAt ?? now.value) - (j.startedAt ?? now.value)) / 1000);
 const fmtDur = (s: number) =>
   s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
-const clock = (ts: number) =>
-  new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+// A running chapter's lines as the server counts them, or as its script counts them when a page
+// has it open: the Queue can be the first page opened, and a chapter no page read is not 0 of 0.
 function segStats(j: Job) {
-  const segs = j.chapterId == null ? [] : scriptsStore.segmentsOf(j.bookId, j.chapterId);
+  const lines = j.chapterId == null ? undefined : scriptsStore.lineCountsOf(j.bookId, j.chapterId);
   return {
-    total: segs.length,
-    done: segs.filter((s) => s.audio.status === "done").length,
-    gen: segs.filter((s) => s.audio.status === "generating").length,
-    failed: segs.filter((s) => s.audio.status === "failed").length,
+    total: lines?.total ?? 0,
+    done: lines?.done ?? 0,
+    gen: lines?.generating ?? 0,
+    failed: lines?.failed ?? 0,
   };
 }
-// One scan per running row, not one per number on it: the four figures below a narration row are
-// the same scan, and the row re-renders twice a second while the clock ticks.
+// One count per running row, not one per number on it: the four figures below a narration row are
+// the same count, and the row re-renders twice a second while the clock ticks.
 const segStatsOf = computed(() => {
   const by: Record<number, ReturnType<typeof segStats>> = {};
   for (const j of running.value) by[j.id] = segStats(j);
@@ -114,11 +115,7 @@ const eta = computed(() => {
   const e = jobsStore.eta;
   return e && { ...e, at: now.value + e.seconds * 1000 };
 });
-const finishAt = computed(() =>
-  eta.value
-    ? new Date(eta.value.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : null,
-);
+const finishAt = computed(() => (eta.value ? hhmm(eta.value.at) : null));
 const canNotify = "Notification" in window;
 async function toggleNotify() {
   if (uiStore.notify) {
@@ -423,7 +420,7 @@ async function toggleNotify() {
                   </td>
                   <td class="w-20 text-right font-mono text-xs text-zinc-500">{{ elapsed(j) }}</td>
                   <td class="w-24 text-right font-mono text-xs text-zinc-400">
-                    {{ clock(j.finishedAt!) }}
+                    {{ hhmm(j.finishedAt!) }}
                   </td>
                   <td class="w-28 pr-4 text-right">
                     <button

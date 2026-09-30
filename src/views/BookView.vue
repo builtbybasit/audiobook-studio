@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
-import { useEndpointsStore } from "@/stores/endpoints";
+import { plural } from "@/lib/contents";
+import { money } from "@/lib/pricing";
 import { useExportsStore } from "@/stores/exports";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
@@ -33,15 +34,12 @@ import { nextStepOf } from "@/views/library/shared";
 import { countOf, useReviewInbox } from "@/views/review/inbox";
 
 const castStore = useCastStore();
-const endpointsStore = useEndpointsStore();
 const exportsStore = useExportsStore();
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 /** The endpoint scripting runs are sent to, which the book's prompt is previewed and tried with. */
-const runProfile = computed(() =>
-  endpointsStore.profiles.find((x) => x.id === scriptingStore.scriptSettings.profile),
-);
+const runProfile = computed(() => scriptingStore.runProfile);
 const bookId = useBookId();
 const router = useRouter();
 const route = useRoute();
@@ -123,9 +121,15 @@ function removeWarning(v: Volume): string {
     : `Removes ${v.name} (${v.file}) and its ${n} chapters${work ? ` (${work})` : ""}, and renumbers the rest. This cannot be undone.`;
 }
 const budget = computed(() => book.value.budget ?? { cap: null, paused: false });
+// undefined until the book's spending has been read, which the panel says rather than showing $0
 const spent = computed(() => jobsStore.spent(bookId));
 const scriptSpent = computed(() => jobsStore.scriptSpent(bookId));
-const narrationSpent = computed(() => Math.max(0, spent.value - scriptSpent.value));
+const narrationSpent = computed(() =>
+  spent.value == null || scriptSpent.value == null
+    ? undefined
+    : Math.max(0, spent.value - scriptSpent.value),
+);
+const dollars = (n: number | undefined) => (n == null ? "—" : money(n));
 const capInput = computed({
   get: () => book.value.budget?.cap ?? null,
   set: (v) => void libraryStore.setBudgetCap(bookId, v || null),
@@ -243,9 +247,9 @@ const next = computed(() =>
       <RouterLink :to="`/book/${bookId}/export`" class="card p-4 hover:border-violet-400">
         <div class="flex items-baseline justify-between">
           <span class="label">3 · Export</span
-          ><span class="font-mono text-xs text-zinc-500"
-            >{{ exportsHere.length }} audiobook{{ exportsHere.length === 1 ? "" : "s" }}</span
-          >
+          ><span class="font-mono text-xs text-zinc-500">{{
+            plural(exportsHere.length, "audiobook")
+          }}</span>
         </div>
         <div v-if="exportsHere.length" class="mt-2 truncate font-mono text-xs">
           {{ exportsHere[0].filename }}
@@ -417,10 +421,7 @@ const next = computed(() =>
           </div>
           <div class="mt-1 text-xs text-zinc-500">
             <span v-if="contents.suggested" class="text-amber-600 dark:text-amber-400"
-              >{{ contents.suggested }} suggested skip{{
-                contents.suggested === 1 ? "" : "s"
-              }}
-              undecided · </span
+              >{{ plural(contents.suggested, "suggested skip") }} undecided · </span
             ><span v-if="contents.review" class="text-violet-600 dark:text-violet-400"
               >{{ contents.review }} need{{ contents.review === 1 ? "s" : "" }} review · </span
             ><template v-if="contents.skipped"
@@ -462,13 +463,13 @@ const next = computed(() =>
             }}</span>
           </div>
           <div class="mt-2 flex items-baseline gap-2 text-sm">
-            <b class="text-lg">${{ spent.toFixed(2) }}</b
+            <b class="text-lg">{{ dollars(spent) }}</b
             ><span class="text-zinc-500">spent on this book</span>
           </div>
           <div class="mt-0.5 text-[11px] text-zinc-500">
-            Scripting ${{ scriptSpent.toFixed(2) }} · Narration ${{ narrationSpent.toFixed(2) }}
+            Scripting {{ dollars(scriptSpent) }} · Narration {{ dollars(narrationSpent) }}
           </div>
-          <div v-if="budget.cap" class="mt-1">
+          <div v-if="budget.cap && spent != null" class="mt-1">
             <div class="h-1.5 rounded bg-zinc-200 dark:bg-zinc-800">
               <div
                 class="h-1.5 rounded"
@@ -510,15 +511,25 @@ const next = computed(() =>
         </div>
         <div class="card p-4 text-xs text-zinc-500">
           <div class="label mb-1">Scripting profile</div>
-          <div class="text-sm text-zinc-900 dark:text-zinc-100">
-            {{ runProfile?.name }}
-            ·
-            <span class="font-mono">{{ runProfile?.model }}</span>
-          </div>
-          <div class="mt-1">
-            {{ (runProfile?.maxChars ?? 0).toLocaleString() }}
-            chars/chunk · watermarks
-            {{ scriptingStore.scriptSettings.stripWatermarks ? "stripped" : "kept" }}
+          <template v-if="runProfile">
+            <div class="text-sm text-zinc-900 dark:text-zinc-100">
+              {{ runProfile.name }}
+              ·
+              <span class="font-mono">{{ runProfile.model }}</span>
+            </div>
+            <div class="mt-1">
+              {{
+                runProfile.maxChars
+                  ? `${runProfile.maxChars.toLocaleString()} chars/chunk`
+                  : "whole chapters"
+              }}
+            </div>
+          </template>
+          <div v-else class="text-sm">
+            None can run.
+            <RouterLink to="/endpoints" class="text-violet-600 hover:underline dark:text-violet-400"
+              >Add one on the Endpoints page</RouterLink
+            >
           </div>
         </div>
       </div>

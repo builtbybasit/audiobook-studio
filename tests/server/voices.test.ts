@@ -5,7 +5,8 @@
 // voices that can narrate, labelled to pick from, and a refusal said in words.
 import { describe, expect, test } from "bun:test";
 
-import { endpointVoiceLister, OPENAI_VOICES, type VoicePage } from "~/providers/voices";
+import type { VoiceListPage } from "@/types";
+import { endpointVoiceLister, OPENAI_VOICES } from "~/providers/voices";
 import { saved, cloneEndpoint } from "../support/cloning";
 import { jsonBody, testApi, type TestApi } from "../support/server";
 
@@ -42,7 +43,7 @@ async function api(
 }
 
 const list = (t: TestApi, body: Record<string, unknown>) =>
-  t.request<VoicePage & { error?: { code: string; message: string } }>(
+  t.request<VoiceListPage & { error?: { code: string; message: string } }>(
     "/api/endpoints/voices",
     jsonBody({ id: "fish", ...body }),
   );

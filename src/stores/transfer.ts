@@ -14,7 +14,8 @@ import { planRestore, type RestoreOptions } from "@/lib/scriptHistory";
 import { chapterNarration } from "@/lib/runPlan";
 import { newSpeaker } from "@/lib/cast";
 import { clone } from "@/lib/utils";
-import { ApiError, libraryService, type ChapterLines } from "@/services/library";
+import { fetchScript } from "@/queries/chapterScript";
+import { libraryService, type ChapterLines } from "@/services/library";
 import type {
   Character,
   ImportChapter,
@@ -35,6 +36,7 @@ import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
+import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 
 /** A voice the person chose for a speaker: one this install has, or a public one to add first. */
@@ -148,16 +150,6 @@ export const useTransferStore = defineStore("transfer", {
     },
   },
   actions: {
-    /** Say a request failed, and change nothing. */
-    _failed(what: string, cause: unknown): void {
-      const uiStore = useUiStore();
-      const api = cause instanceof ApiError ? cause : null;
-      uiStore.toast(api ? api.message : `Could not ${what}`, {
-        kind: "error",
-        description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
-        timeout: 8000,
-      });
-    },
     /**
      * Send the file to the server and keep the plan it answers with. The chapters it matched have
      * their current scripts read in, since what applying one does is measured against them.
@@ -167,7 +159,7 @@ export const useTransferStore = defineStore("transfer", {
       try {
         plan = await libraryService().planScriptImport(bookId, file);
       } catch (cause) {
-        this._failed("read this script file", cause);
+        toastFailure("read this script file", cause);
         return null;
       }
       this.plans[bookId] = plan;
@@ -192,14 +184,13 @@ export const useTransferStore = defineStore("transfer", {
     /** Read the scripts of these chapters that are not here yet, a few at a time. */
     async _loadScripts(bookId: string, ids: number[]): Promise<void> {
       const scriptsStore = useScriptsStore();
-      const svc = libraryService();
-      const todo = ids.filter((id) => scriptsStore._revision[key(bookId, id)] == null);
+      const todo = ids.filter((id) => !scriptsStore.held(bookId, id));
       for (const id of todo) this.loading[key(bookId, id)] = true;
       const next = async (): Promise<void> => {
         const id = todo.shift();
         if (id == null) return;
         try {
-          scriptsStore._install(bookId, id, await svc.chapterScript(bookId, id));
+          await fetchScript(bookId, id);
         } catch {
           // the preview says it could not read the chapter; applying it would be refused anyway
         } finally {
@@ -262,18 +253,20 @@ export const useTransferStore = defineStore("transfer", {
       const origin: VersionOrigin = { kind: "imported", file: plan.name, chapters: writes.length };
 
       // ---- the cast: the file's speakers the applied lines use, with the file's details
-      const cast = (castStore.characters[bookId] ??= []);
-      const castBefore = clone(cast);
+      // read afresh where it is used: a book whose cast was never read gets its list as the
+      // first speaker is added
+      const cast = () => castStore.charactersOf(bookId);
+      const castBefore = clone(cast());
       const used = new Set(writes.flatMap((w) => w.restore.segments.map((s) => s.speaker)));
       const added: string[] = [];
       for (const speaker of plan.cast.add) {
-        if (cast.some((c) => c.name === speaker.name)) continue;
+        if (cast().some((c) => c.name === speaker.name)) continue;
         if (!used.has(speaker.name)) {
           report.unused.push(speaker.name);
           continue;
         }
         const c: Character = {
-          ...newSpeaker(speaker.name, cast.length),
+          ...newSpeaker(speaker.name, cast().length),
           aliases: [...speaker.aliases],
           gender: speaker.gender,
           description: speaker.description,
@@ -281,18 +274,18 @@ export const useTransferStore = defineStore("transfer", {
           ...(speaker.color ? { color: speaker.color } : {}),
           ...(speaker.major != null ? { major: speaker.major } : {}),
         };
-        cast.push(c);
+        castStore._addSpeaker(bookId, c);
         added.push(c.name);
       }
       // aliases are only more ways to recognise someone, so a union loses nothing
       const aliased: string[] = [];
       for (const { name, add } of plan.cast.aliases) {
-        const c = cast.find((x) => x.name === name);
+        const c = cast().find((x) => x.name === name);
         const fresh = add.filter(
-          (a) => a !== name && !c?.aliases.includes(a) && !cast.some((x) => x.name === a),
+          (a) => a !== name && !c?.aliases.includes(a) && !cast().some((x) => x.name === a),
         );
         if (!c || !fresh.length) continue;
-        c.aliases = [...c.aliases, ...fresh];
+        castStore._patchSpeaker(bookId, name, { aliases: [...c.aliases, ...fresh] });
         aliased.push(name);
       }
 
@@ -304,7 +297,6 @@ export const useTransferStore = defineStore("transfer", {
       const absorbed: string[] = [];
       for (const { chapter, restore } of writes) {
         const chId = chapter.chapterId;
-        const k = key(bookId, chId);
         const c = libraryStore.chapter(bookId, chId)!;
         const was = {
           narration: c.narration,
@@ -312,11 +304,13 @@ export const useTransferStore = defineStore("transfer", {
           duration: c.duration,
           scripting: c.scripting,
         };
-        const beforeScript = clone(scriptsStore.segments[k] ?? []);
-        scriptsStore.segments[k] = restore.segments;
-        if (restore.scripting) c.scripting = restore.scripting;
-        c.narration = restore.narration;
-        if (restore.narration === "none") c.narrationProgress = 0;
+        const beforeScript = clone(scriptsStore.segmentsOf(bookId, chId));
+        scriptsStore._replace(bookId, chId, restore.segments);
+        libraryStore._patchChapter(bookId, chId, {
+          ...(restore.scripting ? { scripting: restore.scripting } : {}),
+          narration: restore.narration,
+          ...(restore.narration === "none" ? { narrationProgress: 0 } : {}),
+        });
         // a speaker a line names that neither the book nor the file's cast has — a lone chapter
         // file carries no cast — comes in unreviewed, where the Cast page can merge it
         absorbed.push(...castStore._absorbCast(bookId, chId));
@@ -324,8 +318,8 @@ export const useTransferStore = defineStore("transfer", {
         scriptsStore._commit(bookId, chId, origin);
         report.applied.push({ chapterId: chId, title: chapter.title });
         undoChapters.push(() => {
-          scriptsStore.segments[k] = beforeScript;
-          Object.assign(c, was);
+          scriptsStore._replace(bookId, chId, beforeScript);
+          libraryStore._patchChapter(bookId, chId, was);
           castStore._retime(bookId, chId);
           scriptsStore._commit(bookId, chId);
         });
@@ -336,12 +330,9 @@ export const useTransferStore = defineStore("transfer", {
       );
 
       // ---- the dictionary: terms the book lacks
-      const lexicon = (castStore.lexicon[bookId] ??= []);
       for (const t of plan.lexicon.add) {
-        if (lexicon.some((e) => e.term === t.term)) continue;
-        const id = Math.max(0, ...lexicon.map((e) => e.id)) + 1;
-        lexicon.push({
-          id,
+        if (castStore.lexiconOf(bookId).some((e) => e.term === t.term)) continue;
+        castStore._addTerm(bookId, {
           term: t.term,
           say: t.say,
           enabled: t.enabled,
@@ -361,7 +352,7 @@ export const useTransferStore = defineStore("transfer", {
       const addedVoices: { endpointId: string; voiceId: string }[] = [];
       const voicesBefore: { name: string; voice: VoiceRef | null }[] = [];
       for (const pick of voices) {
-        const c = cast.find((x) => x.name === pick.speaker);
+        const c = cast().find((x) => x.name === pick.speaker);
         if (!c) continue;
         if (pick.add) {
           const ep = endpointsStore.endpoints.find((e) => e.id === pick.add!.endpointId);
@@ -371,7 +362,7 @@ export const useTransferStore = defineStore("transfer", {
         }
         if (c.voice === pick.ref) continue;
         voicesBefore.push({ name: c.name, voice: c.voice });
-        c.voice = pick.ref;
+        castStore._patchSpeaker(bookId, c.name, { voice: pick.ref });
         report.voices++;
         void castStore._push(bookId, c.name);
       }
@@ -385,7 +376,7 @@ export const useTransferStore = defineStore("transfer", {
               (row) =>
                 row.samples?.kind === "ok" &&
                 (row.match.kind === "private" || row.match.kind === "unchecked") &&
-                cast.some((c) => c.name === row.speaker),
+                cast().some((c) => c.name === row.speaker),
             )
             .map((row) => row.speaker)
         : [];
@@ -426,18 +417,13 @@ export const useTransferStore = defineStore("transfer", {
         undo: () => {
           for (const undo of undoChapters) undo();
           // the voices and the aliases go back as they were; so do the endpoints' voice lists
-          for (const { name, voice } of voicesBefore) {
-            const c = castStore.characters[bookId]?.find((x) => x.name === name);
-            if (c) c.voice = voice;
-          }
-          for (const { endpointId, voiceId } of addedVoices) {
-            const ep = endpointsStore.endpoints.find((e) => e.id === endpointId);
-            if (ep) ep.voices = ep.voices.filter((v) => v.id !== voiceId);
-          }
+          for (const { name, voice } of voicesBefore)
+            castStore._patchSpeaker(bookId, name, { voice });
+          for (const { endpointId, voiceId } of addedVoices)
+            endpointsStore._dropVoice(endpointId, voiceId);
           for (const name of aliased) {
-            const c = castStore.characters[bookId]?.find((x) => x.name === name);
             const b = castBefore.find((x) => x.name === name);
-            if (c && b) c.aliases = [...b.aliases];
+            if (b) castStore._patchSpeaker(bookId, name, { aliases: [...b.aliases] });
           }
           const pushBack = () => {
             for (const { name } of voicesBefore) void castStore._push(bookId, name);
@@ -475,7 +461,7 @@ export const useTransferStore = defineStore("transfer", {
 
       const changed: { name: string; was: SpeakerDiff["book"] }[] = [];
       for (const d of diffs) {
-        const c = castStore.characters[bookId]?.find((x) => x.name === d.name);
+        const c = castStore.charactersOf(bookId).find((x) => x.name === d.name);
         if (!c) continue;
         const was = { gender: c.gender, description: c.description, style: c.style };
         if (
@@ -484,7 +470,7 @@ export const useTransferStore = defineStore("transfer", {
           was.style === d.file.style
         )
           continue;
-        Object.assign(c, d.file);
+        castStore._patchSpeaker(bookId, c.name, d.file);
         changed.push({ name: c.name, was });
         void castStore._push(bookId, c.name);
       }
@@ -496,12 +482,8 @@ export const useTransferStore = defineStore("transfer", {
         {
           description: "Gender, description and style. Voices and aliases are unchanged.",
           undo: () => {
-            for (const { name, was } of changed) {
-              const c = castStore.characters[bookId]?.find((x) => x.name === name);
-              if (!c) continue;
-              Object.assign(c, was);
-              void castStore._push(bookId, name);
-            }
+            for (const { name, was } of changed)
+              if (castStore._patchSpeaker(bookId, name, was)) void castStore._push(bookId, name);
           },
         },
       );
@@ -515,19 +497,19 @@ export const useTransferStore = defineStore("transfer", {
       let changed = 0;
       let last = "";
       for (const d of diffs) {
-        const e = castStore.lexicon[bookId]?.find((x) => x.term === d.term);
+        const e = castStore.lexiconOf(bookId).find((x) => x.term === d.term);
         if (!e) continue;
         const { ipa, note, matchCase, ...rest } = d.file;
-        const next = { ...e, ...rest, ipa, note, matchCase };
-        if (JSON.stringify(next) === JSON.stringify(e)) continue;
-        Object.assign(e, rest);
+        if (JSON.stringify({ ...e, ...rest, ipa, note, matchCase }) === JSON.stringify(e)) continue;
         // absent on the file's side is absent here, not left as the book had it
-        if (ipa) e.ipa = ipa;
-        else delete e.ipa;
-        if (note) e.note = note;
-        else delete e.note;
-        if (matchCase) e.matchCase = true;
-        else delete e.matchCase;
+        const { ipa: _ipa, note: _note, matchCase: _matchCase, ...kept } = e;
+        castStore._replaceTerm(bookId, {
+          ...kept,
+          ...rest,
+          ...(ipa ? { ipa } : {}),
+          ...(note ? { note } : {}),
+          ...(matchCase ? { matchCase: true } : {}),
+        });
         changed++;
         last = e.term;
       }

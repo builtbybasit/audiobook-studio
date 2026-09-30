@@ -3,42 +3,17 @@
 // The same arrangement as `@/services/library`: one HTTP implementation, asking the library this
 // tab is on (`API_BASE`) — yours, or the demo's — unless a test set another. The jobs store asks
 // `jobsService()`; no view knows which answered.
-import type { Chapter, ExportItem, ExportSettings, Job, NarrationScope } from "@/types";
+import type {
+  BuildQueued,
+  ExportSettings,
+  Job,
+  NarrationQueued,
+  NarrationScope,
+  RetakesQueued,
+  ScriptingQueued,
+} from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { API_BASE } from "@/services/mode";
-
-/** What queueing a scripting run came to: the jobs, and the chapters it left out and why. */
-export interface ScriptingQueued {
-  jobs: Job[];
-  skipped: { id: number; why: "excluded" | "busy" | "missing" }[];
-  runId: number;
-  /** the book's chapters as they now stand, with the queued ones marked */
-  chapters: Chapter[];
-}
-
-/** What queueing a narration run came to: the same shape, with the reasons narration adds. */
-export interface NarrationQueued {
-  jobs: Job[];
-  skipped: { id: number; why: "excluded" | "busy" | "missing" | "unscripted" | "nothing" }[];
-  runId: number;
-  chapters: Chapter[];
-}
-
-/** What asking for retakes came to: the one job, the lines in it, and the lines left out and why. */
-export interface RetakesQueued {
-  /** null when nothing was queued */
-  job: Job | null;
-  queued: number[];
-  skipped: { id: number; why: "missing" | "pending" }[];
-  chapters: Chapter[];
-}
-
-/** What starting a build came to: the job that will run it, and the audiobook it is writing. */
-export interface BuildQueued {
-  job: Job;
-  /** the entry as the server created it — building, with its files, version and what it replaces */
-  export: ExportItem;
-}
 
 export interface JobsService {
   /** Every job the server holds, oldest first. */

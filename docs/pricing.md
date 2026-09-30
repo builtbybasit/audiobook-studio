@@ -2,7 +2,7 @@
 
 [Back to README](../README.md) · [Endpoint UI](endpoints.md) · [Ownership and invariants](../src/stores/README.md#pricing-and-usage-invariants)
 
-These are the rules every request is priced by. One engine, [src/lib/pricing.ts](../src/lib/pricing.ts),
+These are the rules every request is priced by. One engine, [src/lib/pricing/](../src/lib/pricing/),
 serves both sides: the server prices each request into the usage ledger with it, and the page
 prices its estimates with it. A provider preset carries that provider's published card on the date
 its note gives; the rates on an endpoint are whatever you saved, and a budget is held to them, so
@@ -110,7 +110,7 @@ never additions. A response reporting 10,000 input tokens of which 8,000 were ca
 charge lines always add back up to what the provider reported.
 
 Providers disagree about this, so nothing reads a payload directly. `normalizeUsage` in
-[src/lib/pricing.ts](../src/lib/pricing.ts) is the one way in and knows three shapes: OpenAI's `prompt_tokens` **includes**
+[src/lib/pricing/usage.ts](../src/lib/pricing/usage.ts) is the one way in and knows three shapes: OpenAI's `prompt_tokens` **includes**
 `prompt_tokens_details.cached_tokens`, Anthropic's `input_tokens` **excludes**
 `cache_read_input_tokens` and `cache_creation_input_tokens`, and a plain provider reports totals and
 nothing else. The server reads every answer through it, and
@@ -239,15 +239,16 @@ speech rates on discount, and **every billing model in one chapter** — five sp
 models at once, so a single run produces character-billed, byte-billed, token-billed, free and
 unpriced requests and the estimate has to add all of them into one figure.
 
-The demo's endpoints cover the configuration cases between them (`src/mock/fixtures/profiles.ts`
-and `endpoints.ts`): OpenAI with cached input, a midnight-crossing off-peak window, a peak surcharge
-and three promotions; DeepSeek with cache-write pricing and a nightly discount; Anthropic with
-cache-write pricing and a promotion on both cache lines; a local chat model with no advanced pricing
-at all; the OpenAI speech endpoint with a nightly off-peak window and a promotion on top; a local
-Kokoro at **zero**, which is "free" and not "unknown"; Fish Audio billing UTF-8 bytes with a
-promotion scoped to the speech rate; Gemini billing input text and output audio tokens with a
-promotion on the **audio half only**; and the Azure proxy with a window over a rate nobody knows.
-Every one is simulated, so its requests are priced at these cards and nothing is billed.
+The demo's endpoints cover the configuration cases between them
+(`server/demo/seed/fixtures/profiles.ts` and `endpoints.ts`): OpenAI with cached input, a
+midnight-crossing off-peak window, a peak surcharge and three promotions; DeepSeek with cache-write
+pricing and a nightly discount; Anthropic with cache-write pricing and a promotion on both cache
+lines; a local chat model with no advanced pricing at all; the OpenAI speech endpoint with a nightly
+off-peak window and a promotion on top; a local Kokoro at **zero**, which is "free" and not
+"unknown"; Fish Audio billing UTF-8 bytes with a promotion scoped to the speech rate; Gemini billing
+input text and output audio tokens with a promotion on the **audio half only**; and the Azure proxy
+with a window over a rate nobody knows. Every one is simulated, so its requests are priced at these
+cards and nothing is billed.
 
 ### Limitations
 

@@ -1,77 +1,67 @@
 <script setup lang="ts">
+// The Scripting page's endpoint panel: which endpoint runs go to, how it is doing, and how it would
+// cut the chapter you are about to run. Its connection, limits and pricing are edited on the
+// Endpoints page, with a draft and Save — the link goes straight to its Connection tab — and so is
+// the settings file, which that page exports and imports for the whole library.
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
-import { useScriptsStore } from "@/stores/scripts";
-import { useUiStore } from "@/stores/ui";
 
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
+import { useNow } from "@vueuse/core";
 import { keyInPlace } from "@/services/endpointSettings";
-import ServerKeyField from "@/views/endpoints/ServerKeyField.vue";
-import { UiNumber, UiSelect, UiSwitch } from "@/ui";
-import NumberSlider from "@/components/NumberSlider.vue";
 import {
-  Check as CheckIcon,
   ChevronLeft as ChevronLeftIcon,
   ChevronRight as ChevronRightIcon,
-  Download as ExportIcon,
-  Pause as PauseIcon,
-  Play as PlayIcon,
-  Plus as AddIcon,
-  Upload as ImportIcon,
   ArrowUpRight as ArrowIcon,
 } from "@lucide/vue";
 import {
-  REASONING_LEVELS,
   profileErrors,
   reasoningEstimateNote,
   scriptParts,
   tokenEstimate,
   scriptingHealth,
 } from "@/lib/scripting";
-import { reasoningRequest } from "@/lib/reasoning";
+import { money } from "@/lib/pricing";
+import { plural } from "@/lib/contents";
 import { resolvePrompt } from "@/lib/prompt";
 import { scriptTelemetry } from "@/lib/scriptActivity";
-import { useScriptActivity } from "@/queries/scriptActivity";
 import { isSimulated } from "@/lib/providers";
-import { usePresetPicker } from "@/composables/usePresetPicker";
-import { TabsRoot, TabsList, TabsTrigger, TabsContent } from "reka-ui";
+import { useChapterText } from "@/queries";
+import { useScriptActivity } from "@/queries/scriptActivity";
 import EndpointActivity from "@/views/scripting/EndpointActivity.vue";
-import type { Profile, ReasoningEffort, SettingsFile } from "@/types";
-import { SPLIT_MODES } from "@/lib/split";
+import ScriptProfileSelect from "@/views/scripting/ScriptProfileSelect.vue";
+
 const props = defineProps<{ bookId: string; selected: number[] }>();
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
-const scriptsStore = useScriptsStore();
-const uiStore = useUiStore();
-const selectedId = ref(scriptingStore.scriptSettings.profile);
-const now = ref(Date.now());
-let clock: ReturnType<typeof setInterval>;
-onMounted(() => {
-  clock = setInterval(() => (now.value = Date.now()), 500);
-});
-onUnmounted(() => clearInterval(clock));
-const endpointList = ref<HTMLElement | null>(null);
-// what each profile has been through is its rows in the server's ledger, read once for the list
+const clock = useNow({ interval: 500 });
+const now = computed(() => clock.value.getTime());
+// what each profile has been through is its rows in the server's ledger, read once for the panel
 const activity = useScriptActivity();
-const health = (ep: Profile) =>
-  scriptingHealth(ep, scriptTelemetry(activity.rowsOf(ep.id), ep), keyInPlace(ep), now.value);
-const tone = (ep: Profile) =>
-  ({ good: "bg-emerald-500", warn: "bg-amber-500", muted: "bg-zinc-400" })[health(ep).tone];
-watch(selectedId, async () => {
-  previewPart.value = 0;
-  await nextTick();
-  const list = endpointList.value;
-  const selected = list?.querySelector<HTMLElement>('[data-selected="true"]');
-  if (list && selected) {
-    list.scrollTop = selected.offsetTop - list.offsetTop;
-    list.scrollLeft = selected.offsetLeft - list.offsetLeft;
-  }
-});
-const p = computed(() => endpointsStore.profiles.find((p) => p.id === selectedId.value));
-const section = ref("connection");
+const p = computed(() => scriptingStore.runProfile);
+const health = computed(() =>
+  p.value && activity.data.value === undefined
+    ? { label: "Reading its requests…", tone: "muted" }
+    : p.value
+      ? scriptingHealth(
+          p.value,
+          scriptTelemetry(activity.rowsOf(p.value.id), p.value),
+          keyInPlace(p.value),
+          now.value,
+        )
+      : null,
+);
+const tone = computed(
+  () =>
+    ({ good: "bg-emerald-500", warn: "bg-amber-500", muted: "bg-zinc-400" })[
+      health.value?.tone ?? "muted"
+    ],
+);
 const errors = computed(() => (p.value ? profileErrors(p.value) : []));
+
+// ---------- the chunk preview: the chapter a run would start on, cut the way the endpoint cuts it
 const sampleChapter = computed(
   () =>
     libraryStore
@@ -79,16 +69,20 @@ const sampleChapter = computed(
       .find((c) => props.selected.includes(c.id) && !c.excluded) ??
     libraryStore.chaptersOf(props.bookId).find((c) => !c.excluded),
 );
-const parts = computed(() =>
-  p.value && sampleChapter.value
-    ? scriptParts(scriptsStore.rawText(props.bookId, sampleChapter.value.id), p.value)
-    : [],
+const sample = useChapterText(
+  () => props.bookId,
+  () => sampleChapter.value?.id,
+  "plain",
 );
+/** the sample's text is in: until then there is nothing to cut, which is not the same as no chunks */
+const sampleRead = computed(() => sample.data.value !== undefined);
+const parts = computed(() => (p.value ? scriptParts(sample.text.value, p.value) : []));
 const previewPart = ref(0);
+watch([p, sampleChapter], () => (previewPart.value = 0));
 const preview = computed(
   () => parts.value[Math.min(previewPart.value, parts.value.length - 1)] ?? "",
 );
-/** What the selected endpoint's recent requests at its reasoning level spent thinking, if any said. */
+/** What the endpoint's recent requests at its reasoning level spent thinking, if any said. */
 const reasoningSeen = computed(() =>
   p.value && !isSimulated(p.value.baseUrl)
     ? scriptTelemetry(activity.rowsOf(p.value.id), p.value).reasoning
@@ -96,7 +90,7 @@ const reasoningSeen = computed(() =>
 );
 const tokens = computed(() =>
   p.value && preview.value
-    ? tokenEstimate(preview.value, p.value, Date.now(), {
+    ? tokenEstimate(preview.value, p.value, now.value, {
         // with the prompt this book's run would send, as the run's estimate is
         prompt: resolvePrompt({
           library: endpointsStore.prompt,
@@ -112,441 +106,115 @@ const thinkingNote = computed(() =>
     ? reasoningEstimateNote(p.value.reasoning, reasoningSeen.value, tokens.value.reasoningTokens)
     : null,
 );
-const money = (n: number) => "$" + n.toLocaleString("en-US", { maximumFractionDigits: 6 });
-function exportSettings() {
-  const url = URL.createObjectURL(
-    new Blob([JSON.stringify(endpointsStore.exportSettings(), null, 2)], {
-      type: "application/json",
-    }),
-  );
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "audiobook-settings.json";
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-async function importSettings(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) return;
-  try {
-    endpointsStore.importSettings(JSON.parse(await file.text()) as SettingsFile);
-  } catch (error) {
-    uiStore.toast("Could not import settings", {
-      kind: "error",
-      description: error instanceof Error ? error.message : "Invalid settings file",
-    });
-  }
-  input.value = "";
-}
-// ---------- presets ----------
-// The provider presets the Endpoints page offers. Every field here binds straight onto the profile,
-// so a preset is written onto it the same way — a copy, so no two profiles share a rate card.
-const {
-  options: presetOptions,
-  presetId,
-  note: presetNote,
-  choose: choosePreset,
-} = usePresetPicker({
-  kind: "scripting",
-  endpoint: selectedId,
-  fill: (fields) => (p.value ? void Object.assign(p.value, fields) : false),
-  next: "Check the model and prices, and add the key if it needs one.",
-});
-
-/** What the host makes of the reasoning level, when it can't do exactly that. */
-const reasoningNote = computed(() =>
-  p.value ? reasoningRequest(p.value.baseUrl, p.value.reasoning).note : null,
-);
-
-/** A `simulated:` profile is answered by the server itself, so it has no request line and no key. */
-const simulated = computed(() => !!p.value && isSimulated(p.value.baseUrl));
-// Typing a simulated base URL over a hosted one turns the key off with it, since the key switch is
-// hidden for it. Selecting another profile changes nothing.
-watch([selectedId, simulated], ([id, now], [was]) => {
-  if (id === was && now && p.value) p.value.needsKey = false;
-});
-
-function add() {
-  selectedId.value = endpointsStore.addScriptProfile();
-  section.value = "connection";
-}
-function remove() {
-  if (p.value) endpointsStore.removeScriptProfile(p.value.id);
-  if (!p.value) selectedId.value = endpointsStore.profiles[0]?.id ?? "";
-}
 </script>
 <template>
-  <div class="grid grid-cols-1 min-w-0 md:grid-cols-[260px_minmax(0,1fr)]">
-    <div
-      class="min-w-0 border-b border-zinc-200 p-3 md:sticky md:top-0 md:self-start md:border-b-0 md:border-r dark:border-zinc-800"
-    >
-      <div class="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
-        <!-- the section heading is itself the way out to the full endpoint page: "all endpoints"
-             spelled out alongside export/import cost more width than this column has. -->
-        <RouterLink
-          to="/endpoints"
-          class="label inline-flex items-center gap-1 whitespace-nowrap hover:text-violet-500!"
-          title="health, spend and request history for every endpoint"
-          aria-label="All endpoints — health, spend and request history"
-          >Endpoints <ArrowIcon class="icon-sm"
-        /></RouterLink>
-        <span class="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
-          <button
-            class="inline-flex items-center gap-1 whitespace-nowrap text-zinc-400 hover:text-violet-500"
-            title="download endpoints + profiles as JSON (no keys)"
-            @click="exportSettings"
-          >
-            <ExportIcon class="icon-sm" /> export
-          </button>
-          <label
-            class="cursor-pointer inline-flex items-center gap-1 whitespace-nowrap text-zinc-400 hover:text-violet-500"
-            title="import a settings JSON"
-            ><ImportIcon class="icon-sm" /> import<input
-              type="file"
-              accept="application/json"
-              class="hidden"
-              aria-label="Import settings"
-              @change="importSettings"
-          /></label>
-        </span>
-      </div>
-      <div
-        ref="endpointList"
-        class="relative flex gap-1 overflow-x-auto md:max-h-[320px] md:flex-col md:overflow-y-auto"
+  <div class="min-w-0 space-y-3 p-3 sm:p-4">
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <span class="label">Runs go to</span>
+      <ScriptProfileSelect class="w-72 max-w-full" :block="false" size="sm" />
+      <span
+        v-if="health"
+        class="flex items-center gap-1.5 text-[11px]"
+        :class="
+          health.tone === 'good'
+            ? 'text-emerald-600 dark:text-emerald-400'
+            : health.tone === 'warn'
+              ? 'text-amber-700 dark:text-amber-400'
+              : 'text-zinc-500'
+        "
+        ><span class="h-1.5 w-1.5 rounded-full" :class="tone"></span>{{ health.label }}</span
       >
-        <div
-          v-for="ep in endpointsStore.profiles"
-          :key="ep.id"
-          :data-selected="selectedId === ep.id"
-          class="relative min-w-56 shrink-0 rounded-lg border transition-colors md:min-w-0"
-          :class="
-            selectedId === ep.id
-              ? 'border-violet-400 bg-violet-50 dark:border-violet-500 dark:bg-violet-500/10'
-              : 'border-zinc-200 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800/60'
-          "
-        >
-          <button
-            class="block w-full px-2.5 py-2 text-left"
-            :aria-pressed="selectedId === ep.id"
-            @click="selectedId = ep.id"
-          >
-            <span class="flex items-center gap-1.5 pr-9"
-              ><span
-                class="h-2 w-2 shrink-0 rounded-full"
-                :class="tone(ep)"
-                :title="health(ep).label"
-              ></span
-              ><span class="truncate text-sm font-medium" :class="!ep.enabled && 'text-zinc-400'">{{
-                ep.name || "Untitled endpoint"
-              }}</span
-              ><span
-                v-if="scriptingStore.scriptSettings.profile === ep.id"
-                class="shrink-0 text-[10px] font-medium text-violet-600 dark:text-violet-400"
-                title="runs use this endpoint"
-                ><CheckIcon class="icon-sm" /> runs</span
-              ></span
-            >
-            <span class="block truncate font-mono text-[11px] text-zinc-500 dark:text-zinc-400">{{
-              ep.model || "Model required"
-            }}</span>
-            <span class="block truncate text-[11px] text-zinc-500 dark:text-zinc-400"
-              >{{ money(ep.inPrice) }} in / {{ money(ep.outPrice) }} out · per 1M tokens</span
-            >
-          </button>
-          <div class="absolute right-2 top-2">
-            <UiSwitch v-model="ep.enabled"
-              ><span class="sr-only">Enable {{ ep.name }}</span></UiSwitch
-            >
-          </div>
-        </div>
-        <button
-          class="min-w-56 shrink-0 rounded-lg border border-dashed border-zinc-300 py-2 text-xs text-zinc-500 hover:border-violet-400 hover:text-violet-500 md:min-w-0 dark:border-zinc-700"
-          @click="add"
-        >
-          <AddIcon class="icon-sm" /> Add endpoint
-        </button>
-      </div>
-      <p class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-        Choose an endpoint for each run. Jobs keep their model and pricing when you switch.
-      </p>
+      <RouterLink
+        :to="
+          p
+            ? { path: '/endpoints', query: { endpoint: `scripting:${p.id}`, tab: 'connection' } }
+            : '/endpoints'
+        "
+        class="ml-auto inline-flex items-center gap-1 whitespace-nowrap text-xs text-violet-600 hover:underline dark:text-violet-400"
+        :title="
+          p
+            ? `${p.name}'s connection, limits and pricing, with its request history`
+            : 'Add a scripting endpoint'
+        "
+        >{{ p ? "Edit on the Endpoints page" : "Add one on the Endpoints page" }}
+        <ArrowIcon class="icon-sm"
+      /></RouterLink>
     </div>
-    <div v-if="p" class="min-w-0 p-3 sm:p-4">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 class="text-base font-semibold">{{ p.name || "New endpoint" }}</h2>
-          <p class="mt-0.5 text-[11px] text-zinc-500">OpenAI-compatible · session activity</p>
-        </div>
-        <div class="flex items-center gap-2">
-          <span
-            class="flex items-center gap-1.5 text-[11px]"
-            :class="
-              health(p).tone === 'good'
-                ? 'text-emerald-600 dark:text-emerald-400'
-                : health(p).tone === 'warn'
-                  ? 'text-amber-700 dark:text-amber-400'
-                  : 'text-zinc-500'
-            "
-            ><span class="h-1.5 w-1.5 rounded-full" :class="tone(p)"></span
-            >{{ health(p).label }}</span
-          >
-          <button class="btn-ghost btn-xs" @click="p.enabled = !p.enabled">
-            <component :is="p.enabled ? PauseIcon : PlayIcon" class="icon-sm icon-fill" />
-            {{ p.enabled ? "Pause" : "Enable" }}</button
-          ><button
-            v-if="scriptingStore.scriptSettings.profile !== p.id"
-            class="btn-primary btn-xs"
-            :disabled="!!errors.length || !p.enabled"
-            @click="scriptingStore.scriptSettings.profile = p.id"
-          >
-            Use for runs</button
-          ><span v-else class="text-xs font-medium text-violet-600 dark:text-violet-400"
-            ><CheckIcon class="icon-sm" /> Selected for runs</span
-          >
-        </div>
-      </div>
-      <EndpointActivity :profile="p" :rows="activity.rowsOf(p.id)" :now="now" />
-      <TabsRoot v-model="section"
-        ><TabsList
-          class="sticky top-0 z-10 mb-3 mt-3 flex gap-1 border-b bg-white pt-1 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800"
-          aria-label="Endpoint settings"
-        >
-          <TabsTrigger
-            v-for="tab in [
-              { id: 'connection', label: 'Connection' },
-              { id: 'limits', label: 'Requests & chunking' },
-              { id: 'pricing', label: 'Token pricing' },
-            ]"
-            :key="tab.id"
-            :value="tab.id"
-            class="border-b-2 px-2 pb-2 text-xs sm:px-3 sm:text-sm"
-            :class="
-              section === tab.id
-                ? 'border-violet-500 font-medium text-violet-600 dark:text-violet-400'
-                : 'border-transparent text-zinc-500'
-            "
-          >
-            {{ tab.label }}</TabsTrigger
-          >
-        </TabsList>
-        <TabsContent value="connection" class="space-y-3">
-          <div>
-            <div class="flex flex-wrap items-center gap-2">
-              <UiSelect
-                :model-value="presetId"
-                :options="presetOptions"
-                class="w-72"
-                aria-label="Start from a provider preset"
-                @update:model-value="choosePreset"
-              />
-              <span class="text-[11px] text-zinc-500">
-                Fills in the base URL, model and token prices. Every field stays editable.
-              </span>
-            </div>
-            <p v-if="presetNote" class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-              {{ presetNote }}
-            </p>
-          </div>
-          <div class="grid gap-4 sm:grid-cols-2">
-            <label class="space-y-1 text-xs font-medium"
-              ><span>Endpoint name</span
-              ><input v-model="p.name" class="input w-full" placeholder="My DeepSeek" /></label
-            ><label class="space-y-1 text-xs font-medium"
-              ><span>Model ID</span
-              ><input
-                v-model="p.model"
-                class="input w-full font-mono"
-                placeholder="deepseek-chat"
-                spellcheck="false"
-            /></label>
-          </div>
-          <label class="block space-y-1 text-xs font-medium"
-            ><span>Base URL</span
-            ><input
-              v-model.trim="p.baseUrl"
-              type="url"
-              class="input w-full font-mono"
-              placeholder="https://your-provider.com/v1"
-              spellcheck="false"
-            /><span v-if="simulated" class="block text-[11px] font-normal text-zinc-500"
-              >Simulated: this server answers it and nothing is sent anywhere, so it needs no key
-              and costs nothing.</span
-            ><span v-else class="block text-[11px] font-normal text-zinc-500"
-              >Requests append /chat/completions. Include /v1 only if your provider requires
-              it.</span
-            ></label
-          >
-          <div v-if="!simulated" class="space-y-2">
-            <UiSwitch v-model="p.needsKey" label="Requires an API key" />
-            <!-- the key is the server's: see ServerKeyField -->
-            <ServerKeyField
-              v-if="p.needsKey"
-              kind="scripting"
-              :id="p.id"
-              :name="p.name"
-              :has-key="!!p.hasKey"
-              :needs-key="p.needsKey"
-            />
-          </div>
-        </TabsContent>
-        <TabsContent value="limits" class="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <div class="space-y-3">
-            <div>
-              <NumberSlider
-                v-model="p.concurrency"
-                label="Concurrency"
-                :min="1"
-                :initial-max="32"
-                unit="requests"
-              />
-              <p class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-                Shared across books. Chunks run in parallel; chapters stay ordered.
-              </p>
-            </div>
-            <div>
-              <NumberSlider
-                v-model="p.maxChars"
-                label="Max characters"
-                :initial-max="12000"
-                unit="/ chunk"
-              />
-              <p class="mt-2 text-[11px] text-zinc-500">
-                0 sends the whole chapter. Prompt and context are additional input tokens.
-              </p>
-            </div>
-            <label class="flex items-center justify-between gap-3 text-sm"
-              ><span>Cut at</span><UiSelect v-model="p.splitAt" :options="SPLIT_MODES" class="w-44"
-            /></label>
-            <p class="text-[11px] text-zinc-500">
-              Falls back to finer boundaries when needed. Original text and whitespace are
-              preserved.
-            </p>
-            <NumberSlider
-              v-model="p.maxOutputTokens"
-              label="Max output tokens"
-              :min="1"
-              :initial-max="16384"
-              unit="/ request"
-            />
-            <template v-if="!simulated">
-              <label class="flex items-center justify-between gap-3 text-sm"
-                ><span>Reasoning</span
-                ><UiSelect
-                  :model-value="p.reasoning ?? null"
-                  :options="REASONING_LEVELS"
-                  null-value="Model default"
-                  class="w-44"
-                  aria-label="Reasoning"
-                  @update:model-value="
-                    (v) => p && (p.reasoning = v == null ? null : (v as ReasoningEffort))
-                  "
-              /></label>
-              <p class="text-[11px] text-zinc-500">
-                How long a model that reasons thinks before it answers. Most hosts bill the thinking
-                as output tokens.
-                <span v-if="reasoningNote" class="text-amber-700 dark:text-amber-300">{{
-                  reasoningNote
-                }}</span>
-              </p>
-            </template>
-          </div>
-          <div
-            class="min-w-0 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-950/50"
-          >
-            <div class="label">Chunk preview</div>
-            <p class="my-2 text-xs text-zinc-500">
-              Chapter {{ sampleChapter?.index ?? "—" }} · {{ parts.length }} requests
-            </p>
-            <div v-if="parts.length" class="mb-3 flex items-center justify-between gap-2">
-              <button
-                class="btn-ghost btn-xs"
-                :disabled="previewPart <= 0"
-                aria-label="Previous chunk"
-                @click="previewPart = Math.max(0, previewPart - 1)"
-              >
-                <ChevronLeftIcon class="icon-sm" /></button
-              ><span class="text-xs"
-                >Chunk {{ Math.min(previewPart + 1, parts.length) }} of {{ parts.length }} ·
-                {{ preview.length.toLocaleString() }} chars</span
-              ><button
-                class="btn-ghost btn-xs"
-                :disabled="previewPart >= parts.length - 1"
-                aria-label="Next chunk"
-                @click="previewPart++"
-              >
-                <ChevronRightIcon class="icon-sm" />
-              </button>
-            </div>
-            <pre
-              class="max-h-48 overflow-auto whitespace-pre-wrap break-words font-serif text-sm leading-relaxed"
-              >{{ preview || "Add valid settings to preview the first available chapter." }}</pre>
-            <p
-              v-if="tokens"
-              class="mt-3 border-t border-zinc-200 pt-3 text-[11px] text-zinc-500 dark:border-zinc-700"
-            >
-              ~{{ tokens.inputTokens.toLocaleString() }} input + ~{{
-                tokens.outputTokens.toLocaleString()
-              }}
-              output tokens · {{ money(tokens.cost) }}
-              <span v-if="thinkingNote" class="block text-zinc-400">{{ thinkingNote }}</span>
-            </p>
-          </div>
-        </TabsContent>
-        <TabsContent value="pricing" class="space-y-3">
-          <p class="text-sm text-zinc-500">
-            Enter your provider’s rates in USD per 1 million tokens.
-          </p>
-          <div class="grid gap-4 sm:grid-cols-2">
-            <label class="space-y-2 text-sm font-medium"
-              ><span>Input token price</span>
-              <UiNumber
-                v-model="p.inPrice"
-                class="w-full"
-                prefix="$"
-                :min="0"
-                :step="0.05"
-                label="Input token price"
-              />
-              <span class="block text-xs font-normal text-zinc-500"
-                >Source text, prompt, and carried context.</span
-              ></label
-            ><label class="space-y-2 text-sm font-medium"
-              ><span>Output token price</span>
-              <UiNumber
-                v-model="p.outPrice"
-                class="w-full"
-                prefix="$"
-                :min="0"
-                :step="0.05"
-                label="Output token price"
-              />
-              <span class="block text-xs font-normal text-zinc-500"
-                >Generated script, speaker labels, and directions.</span
-              ></label
-            >
-          </div>
-        </TabsContent></TabsRoot
-      >
+    <p v-if="!p" class="text-sm text-zinc-500">
+      {{ scriptingStore.runBlockers[0] }}
+    </p>
+    <template v-else>
+      <p class="font-mono text-[11px] text-zinc-500">
+        {{ p.model || "Model required" }} · {{ money(p.inPrice) }} in / {{ money(p.outPrice) }} out
+        per 1M tokens ·
+        {{ p.maxChars ? `${p.maxChars.toLocaleString("en")} chars / chunk` : "whole chapters" }}
+      </p>
+      <EndpointActivity
+        :profile="p"
+        :rows="activity.rowsOf(p.id)"
+        :loaded="activity.data.value !== undefined"
+        :now="now"
+      />
       <div
         v-if="errors.length"
-        class="mt-4 rounded-lg bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
+        class="rounded-lg bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
         role="status"
       >
         <p v-for="error in errors" :key="error">{{ error }}</p>
       </div>
       <div
-        class="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 pt-3 dark:border-zinc-800"
+        class="min-w-0 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-950/50"
       >
-        <span class="text-[11px] text-zinc-500"
-          >Changes apply to new runs; a paused endpoint can’t start one.</span
-        ><button class="text-xs text-red-600 hover:underline dark:text-red-400" @click="remove">
-          Remove endpoint
-        </button>
+        <div class="label">Chunk preview</div>
+        <p class="my-2 text-xs text-zinc-500">
+          <template v-if="!sampleChapter">No chapter to preview.</template>
+          <template v-else-if="!sampleRead"
+            >Reading chapter {{ sampleChapter.index }}’s text…</template
+          >
+          <template v-else-if="errors.length"
+            >Chapter {{ sampleChapter.index }} · fix the settings above to see how it is
+            cut</template
+          >
+          <template v-else
+            >Chapter {{ sampleChapter.index }} · {{ plural(parts.length, "request") }}</template
+          >
+        </p>
+        <template v-if="parts.length">
+          <div class="mb-3 flex items-center justify-between gap-2">
+            <button
+              class="btn-ghost btn-xs"
+              :disabled="previewPart <= 0"
+              aria-label="Previous chunk"
+              @click="previewPart = Math.max(0, previewPart - 1)"
+            >
+              <ChevronLeftIcon class="icon-sm" /></button
+            ><span class="text-xs"
+              >Chunk {{ Math.min(previewPart + 1, parts.length) }} of {{ parts.length }} ·
+              {{ preview.length.toLocaleString() }} chars</span
+            ><button
+              class="btn-ghost btn-xs"
+              :disabled="previewPart >= parts.length - 1"
+              aria-label="Next chunk"
+              @click="previewPart++"
+            >
+              <ChevronRightIcon class="icon-sm" />
+            </button>
+          </div>
+          <pre
+            class="max-h-48 overflow-auto whitespace-pre-wrap break-words font-serif text-sm leading-relaxed"
+            >{{ preview }}</pre>
+          <p
+            v-if="tokens"
+            class="mt-3 border-t border-zinc-200 pt-3 text-[11px] text-zinc-500 dark:border-zinc-700"
+          >
+            ~{{ tokens.inputTokens.toLocaleString() }} input + ~{{
+              tokens.outputTokens.toLocaleString()
+            }}
+            output tokens · {{ money(tokens.cost) }}
+            <span v-if="thinkingNote" class="block text-zinc-400">{{ thinkingNote }}</span>
+          </p>
+        </template>
       </div>
-    </div>
-    <div v-else class="grid place-content-center gap-3 p-8 text-center">
-      <p class="text-sm text-zinc-500">Add a scripting endpoint to get started.</p>
-      <button class="btn-primary" @click="add"><AddIcon class="icon" /> Add endpoint</button>
-    </div>
+    </template>
   </div>
 </template>

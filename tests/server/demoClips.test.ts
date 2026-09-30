@@ -16,7 +16,7 @@ import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { demoClips } from "~/audio/demoClips";
 import { audioFiles, type MakeClip } from "~/audio/files";
 import { writeScript } from "~/db/script";
-import { settleChapter } from "~/jobs/narration";
+import { settleChapter } from "~/narration/chapter";
 import { DEMO_BASE, openLibrary, REAL_BASE, type Library } from "~/libraries";
 import { SAMPLE_RATE, toneOf, toneWav } from "~/providers/fakeSpeech";
 import { byteRate, readWavHeader, wavEncoders } from "~/providers/wavEncoder";

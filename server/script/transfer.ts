@@ -1,6 +1,5 @@
 // A book's script written out as a file to keep, send, edit or carry to a newer EPUB of the same
 // book. See docs/script-transfer.md#the-file-and-the-export; reading one back is `importPlan.ts`.
-import { and, eq, isNull } from "drizzle-orm";
 import JSZip from "jszip";
 
 import type {
@@ -26,8 +25,7 @@ import {
 import { readCast, readLexicon } from "~/db/cast";
 import type { Db } from "~/db/client";
 import { readEndpoints } from "~/db/endpoints";
-import { clonedVoices } from "~/db/schema";
-import { samplesOf } from "~/db/voiceSamples";
+import { readCarried } from "~/db/voiceSamples";
 import { getBook, getChapterBody, listChapters } from "~/db/library";
 import { readScript } from "~/db/script";
 import { plainText } from "~/epub/markdown";
@@ -120,27 +118,14 @@ function keptCloneOf(
   const slash = c.voice.indexOf("/");
   const endpointId = c.voice.slice(0, slash);
   const voiceId = c.voice.slice(slash + 1);
-  const clone = db
-    .select()
-    .from(clonedVoices)
-    .where(
-      and(
-        eq(clonedVoices.endpointId, endpointId),
-        eq(clonedVoices.voiceId, voiceId),
-        isNull(clonedVoices.forgottenAt),
-        isNull(clonedVoices.missingSince),
-      ),
-    )
-    .get();
-  if (!clone) return undefined;
-  const samples = samplesOf(db, endpointId, voiceId);
-  if (!samples.length) return undefined;
+  const clone = readCarried(db, endpointId, voiceId);
+  if (!clone?.samples.length) return undefined;
   return {
     speaker: c.name,
     title: clone.title,
     consentAt: clone.consentAt,
     consentText: clone.consentText,
-    samples: samples.map((s) => ({
+    samples: clone.samples.map((s) => ({
       name: s.name,
       format: s.format,
       bytes: s.bytes,

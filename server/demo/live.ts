@@ -23,14 +23,15 @@ import type {
   ReqError,
   ScriptEndpointTelemetry,
 } from "@/types";
+import type { EndpointTelemetry } from "@/lib/endpointTelemetry";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
-import { makeScriptSettings } from "@/mock/fixtures/profiles";
 import type { AudioFiles } from "~/audio/files";
 import { coverFiles } from "~/covers/files";
 import type { Db, Tx } from "~/db/client";
 import * as exports from "~/db/exports";
 import * as queue from "~/db/jobs";
 import * as library from "~/db/library";
+import { readScriptSettings } from "~/db/settings";
 import { enqueueBuild } from "~/jobs/export";
 import { enqueueNarration } from "~/jobs/narration";
 import type { Runner } from "~/jobs/runner";
@@ -40,10 +41,7 @@ import type { SpeechGate } from "~/providers/gate";
 import { append, chapterUidOf } from "~/usage/ledger";
 
 /** What an endpoint in the world has been through, as the browser's demo keeps it on the endpoint. */
-export type SpeechTelemetry = Pick<
-  Endpoint,
-  "history" | "failures" | "rateLimits" | "backoffUntil" | "lastError"
->;
+export type SpeechTelemetry = Pick<Endpoint, EndpointTelemetry>;
 
 /** A run to have in flight: on the situation's book, unless it names another. */
 export type LiveRun = NonNullable<DemoScenario["runs"]>[number] & { bookId?: string };
@@ -273,10 +271,10 @@ function failedBuild(
 
 /**
  * The runs the situation wants in flight, queued as the page's buttons queue them: scripting to the
- * profile the browser's Script button starts out on, narration of every line.
+ * profile the seed chose for runs, narration of every line.
  */
 function startRuns({ db, runner }: LiveParts, live: DemoLive): void {
-  const { profile } = makeScriptSettings();
+  const profile = readScriptSettings(db).profile ?? undefined;
   for (const run of live.runs) {
     const bookId = run.bookId ?? live.bookId;
     if (run.kind === "scripting") enqueueScripting(db, runner, bookId, run.chapterIds, profile);

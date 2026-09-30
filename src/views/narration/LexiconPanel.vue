@@ -9,8 +9,9 @@ import { useNarrationStore } from "@/stores/narration";
 // Click a term for its preview against a real line, plus match-case and a note.
 import { computed, nextTick, ref } from "vue";
 
-import { UiNumber, UiSwitch } from "@/ui";
+import { UiCheckbox, UiNumber, UiSwitch } from "@/ui";
 import { hitsIn, marks, speak, DEFAULT_PACING, secs } from "@/lib/speech";
+import { plural } from "@/lib/contents";
 import {
   Plus as AddIcon,
   RotateCcw as RetryIcon,
@@ -82,7 +83,7 @@ const staleLines = computed(() =>
 // One run over every stale chapter at the "missing & changed" scope, which is what
 // `renarrateStale` asks of one chapter: the server works out the lines from the clips it holds.
 function renarrate() {
-  void narrationStore.runNarration(
+  void narrationStore.startRun(
     props.bookId,
     staleChapters.value.map((c) => c.id),
     { scope: "fill" },
@@ -99,7 +100,7 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
       <div class="mb-2 flex flex-wrap items-baseline gap-x-2">
         <span class="label">Dictionary</span>
         <span class="text-[11px] text-zinc-500"
-          >{{ list.length }} term{{ list.length === 1 ? "" : "s"
+          >{{ plural(list.length, "term")
           }}<span v-if="unused" :title="`not found in the scripted chapters`">
             · {{ unused }} unused</span
           >
@@ -211,13 +212,11 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
             </p>
             <div class="mt-2 flex flex-wrap items-center gap-3">
               <label class="flex items-center gap-1.5 text-zinc-500"
-                ><input
-                  type="checkbox"
-                  :checked="!!e.matchCase"
-                  @change="
-                    castStore.updateTerm(bookId, e.id, {
-                      matchCase: ($event.target as HTMLInputElement).checked,
-                    })
+                ><UiCheckbox
+                  size="xs"
+                  :model-value="!!e.matchCase"
+                  @update:model-value="
+                    (v) => castStore.updateTerm(bookId, e.id, { matchCase: v === true })
                   "
                 />match capitals exactly</label
               >
@@ -248,10 +247,9 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
       >
         <WarnIcon class="icon shrink-0" />
         <span class="min-w-0 flex-1"
-          >{{ staleLines }} line{{ staleLines === 1 ? "" : "s" }} across
-          {{ staleChapters.length }} chapter{{ staleChapters.length === 1 ? "" : "s" }} need
-          narrating again: their audio reads an older script or spelling, or was never
-          rendered.</span
+          >{{ plural(staleLines, "line") }} across
+          {{ plural(staleChapters.length, "chapter") }} need narrating again: their audio reads an
+          older script or spelling, or was never rendered.</span
         >
         <button class="btn-ghost btn-xs shrink-0 border-amber-400" @click="renarrate">
           <RetryIcon class="icon-sm" /> Re-narrate them

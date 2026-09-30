@@ -139,6 +139,30 @@ describe("narrating through an endpoint that takes batches", () => {
     expect(batches[1].slice(0, 2)).toEqual(batches[0].slice(0, 2));
   });
 
+  test("a batch refused whole is retried as one request and no more, and its lines fail with the status", async () => {
+    const server = batchServer({
+      batch: { max_items: 4, max_input_chars: null },
+      voices: ["mara"],
+      refuse: { status: 503, times: Infinity },
+    });
+    const api = testApi({
+      speech: endpointSpeechProvider({ fetch: server.fetch, backoffMs: () => 0 }),
+    });
+    const id = await book(api, speech());
+    const [queued] = await narrateChapters(api, id, [1]);
+
+    const job = (await api.request<{ job: Job }>(`/api/jobs/${queued.id}`)).body.job;
+    expect(job.status).toBe("failed");
+    const lines = (await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`))
+      .body.segments;
+    expect(lines.map((s) => [s.audio.status, s.audio.error?.code])).toEqual(
+      lines.map(() => ["failed", 503]),
+    );
+    // each batch is the first attempt and the endpoint's two retries, and its lines are not sent
+    // again in another batch on top of them
+    expect(server.batches()).toHaveLength(Math.ceil(lines.length / 4) * 3);
+  });
+
   test("prices every item as its own request, filed under its line", async () => {
     const { api, lines } = await run({});
     const rows = endpointRequests(api.db, "tts", "local", 0);

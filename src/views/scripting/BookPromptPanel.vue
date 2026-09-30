@@ -104,9 +104,7 @@ const replace = computed({
 
 // ---- what a run of the chosen endpoint would send, for this book ----
 
-const profile = computed(() =>
-  endpointsStore.profiles.find((p) => p.id === scriptingStore.scriptSettings.profile),
-);
+const profile = computed(() => scriptingStore.runProfile);
 const resolved = computed(() =>
   resolvePrompt({
     library: endpointsStore.prompt,
@@ -261,7 +259,7 @@ const previewOf = computed(
       <PromptTrial
         :book-id="bookId"
         :chapter-id="null"
-        :profile-id="scriptingStore.scriptSettings.profile"
+        :profile-id="profile?.id ?? ''"
         :drafts="{ book: draft }"
         :disabled="problems.length > 0"
         disabled-reason="Fix the problems above to try this prompt."

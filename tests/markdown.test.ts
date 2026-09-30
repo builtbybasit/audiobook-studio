@@ -5,11 +5,13 @@
 // and that a run of stress arrives as something the template can draw without unpicking it.
 import { describe, expect, test } from "bun:test";
 
-import { blocksOf, inlineOf, piecesOf, rowsOf, safeHref } from "@/lib/markdown";
+import { blocksOf, inlineOf, piecesOf, rowsOf, safeHref, type Piece } from "@/lib/markdown";
 import type { Tokens } from "marked";
 
+/** The words a piece shows: its own text, or a link's. */
+const words = (p: Piece): string => (p.kind === "link" ? p.pieces.map(words).join("") : p.text);
 const inline = (markdown: string) => inlineOf(blocksOf(markdown)[0]);
-const said = (markdown: string) => inline(markdown).map((p) => `${p.kind}:${p.text}`);
+const said = (markdown: string) => inline(markdown).map((p) => `${p.kind}:${words(p)}`);
 
 describe("what a link may point at", () => {
   test("the schemes a book has business linking to are kept", () => {
@@ -104,7 +106,7 @@ describe("blocks the review has to draw", () => {
     expect(block.type).toBe("table");
     const rows = rowsOf(block as Tokens.Table);
     expect(rows.map((r) => r.head)).toEqual([true, false]);
-    expect(rows.map((r) => r.cells.map((c) => piecesOf(c.tokens, c.text)[0]?.text))).toEqual([
+    expect(rows.map((r) => r.cells.map((c) => piecesOf(c.tokens, c.text).map(words)[0]))).toEqual([
       ["Day", "Chapter"],
       ["Monday", "Ch 1"],
     ]);
@@ -123,7 +125,7 @@ describe("blocks the review has to draw", () => {
     const [block] = blocksOf("## Chapter Twelve");
     expect(block.type).toBe("heading");
     expect((block as Tokens.Heading).depth).toBe(2);
-    expect(inlineOf(block).map((p) => p.text)).toEqual(["Chapter Twelve"]);
+    expect(inlineOf(block).map(words)).toEqual(["Chapter Twelve"]);
   });
 
   test("plain prose parses to itself, so the review draws one way and not two", () => {
@@ -149,9 +151,9 @@ describe("blocks the review has to draw", () => {
     const [list] = blocksOf("- Parent\n  - Child");
     const [item] = (list as Tokens.List).items;
     expect(item.tokens.map((t) => t.type)).toEqual(["text", "list"]);
-    expect(inlineOf(item.tokens[0]).map((p) => p.text)).toEqual(["Parent"]);
+    expect(inlineOf(item.tokens[0]).map(words)).toEqual(["Parent"]);
     const child = item.tokens[1] as Tokens.List;
-    expect(inlineOf(child.items[0].tokens[0]).map((p) => p.text)).toEqual(["Child"]);
+    expect(inlineOf(child.items[0].tokens[0]).map(words)).toEqual(["Child"]);
   });
 
   test("a scene break is a break, not three stars to read out", () => {

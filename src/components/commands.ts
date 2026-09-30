@@ -11,6 +11,7 @@
 // the queue says it would actually re-run — because a palette with its own copy of either offers a
 // count the button then does not honour.
 import { useCastStore } from "@/stores/cast";
+import { plural } from "@/lib/contents";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
@@ -90,7 +91,7 @@ export function paletteCommands(router: Router, mod: string): Command[] {
       label: "Review",
       hint: (() => {
         const n = reviewCount(b);
-        return n ? `${n} decision${n === 1 ? "" : "s"} waiting` : "nothing waiting";
+        return n ? `${plural(n, "decision")} waiting` : "nothing waiting";
       })(),
       keywords: "inbox decisions retakes flagged unreviewed pending waiting",
       run: go(`/book/${b}/review`),
@@ -155,7 +156,8 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         hint: `${pending.length} ch`,
         keywords: "extract run",
         run: () => {
-          scriptingStore.runScripting(b, pending);
+          // held to the Run button's blockers, which it says in a toast when one stands in the way
+          void scriptingStore.startRun(b, pending);
           router.push(`/book/${b}/scripting`);
         },
       });
@@ -167,7 +169,7 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         hint: `${scripted.length} ch`,
         keywords: "tts render run",
         run: () => {
-          narrationStore.runNarration(b, scripted);
+          narrationStore.startRun(b, scripted);
           router.push(`/book/${b}/narration`);
         },
       });
@@ -182,7 +184,7 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         // guard holds one pending review at a time, so chapter 2 overwrote chapter 1's and only the
         // last blocked chapter ever got a dialog — the rest returned having queued nothing.
         run: () => {
-          narrationStore.runNarration(
+          narrationStore.startRun(
             b,
             stale.map((c) => c.id),
             { scope: "fill" },
@@ -198,7 +200,7 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         hint: `${failedN.length} ch`,
         // one run, one expression review — see "Re-narrate changed segments" above
         run: () => {
-          narrationStore.runNarration(
+          narrationStore.startRun(
             b,
             failedN.map((c) => c.id),
             { scope: "failed" },

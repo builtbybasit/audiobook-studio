@@ -11,10 +11,9 @@ import * as v from "valibot";
 import type { Db } from "~/db/client";
 import { getBook } from "~/db/library";
 import { notFound } from "~/lib/errors";
+import { BookParam } from "~/lib/http";
 import { validate } from "~/lib/validate";
 import { bookSpend, endpointRequests } from "~/usage/ledger";
-
-const BookParam = v.object({ id: v.string() });
 
 /** How far back the Activity list and the charts read, as the page's range picker names it. */
 const RANGE_MS = { "1h": 3_600_000, "6h": 21_600_000, "24h": 86_400_000, "7d": 604_800_000 };

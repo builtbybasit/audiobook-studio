@@ -11,16 +11,17 @@ import { useScriptsStore } from "@/stores/scripts";
 // is how a book quietly ends up pointed at a different provider than the one you were looking at.
 // What is left is the half that is genuinely per book: which endpoint each speaker resolves to,
 // and which of them can't currently render.
-import { computed, onMounted, onUnmounted, ref } from "vue";
-import { keyInPlace } from "@/services/endpointSettings";
+import { computed } from "vue";
+import { useNow } from "@vueuse/core";
 import { useEndpointLive } from "@/queries";
 import {
   ArrowUpRight as ArrowIcon,
   Server as EndpointIcon,
   TriangleAlert as WarnIcon,
 } from "@lucide/vue";
-import { DOT, TEXT } from "@/lib/endpoints";
+import { DOT, TEXT, speechReadiness } from "@/lib/endpoints";
 import type { HealthTone } from "@/lib/endpoints";
+import { plural } from "@/lib/contents";
 import type { Endpoint } from "@/types";
 
 const props = defineProps<{ bookId: string }>();
@@ -30,12 +31,8 @@ const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const scriptsStore = useScriptsStore();
 
-const now = ref(Date.now());
-let clock: ReturnType<typeof setInterval>;
-onMounted(() => {
-  clock = setInterval(() => (now.value = Date.now()), 1000);
-});
-onUnmounted(() => clearInterval(clock));
+// a cooldown counts down in seconds
+const now = useNow({ interval: 1000 });
 // a cooldown on the server is the gate's, read while narration runs
 useEndpointLive();
 
@@ -51,39 +48,43 @@ interface Status {
   tab: string;
 }
 
-/** Only the states that decide whether this book's lines can render. Observed health — latency,
- *  error rates, spend — is the app-wide page's job, and is a click away. */
+/** Only the states that decide whether this book's lines can render — `speechReadiness`, the one
+ *  answer the blockers and the Endpoints page read too. Observed health — latency, error rates,
+ *  spend — is the app-wide page's job, and is a click away. */
 function statusOf(e: Endpoint): Status {
-  const cooling = Math.ceil((e.backoffUntil - now.value) / 1000);
-  if (!e.enabled)
-    return {
-      label: "Paused",
-      tone: "muted",
-      fix: "Lines routed here wait instead of going out. Resume it to narrate them.",
-      tab: "overview",
-    };
-  if (e.needsKey && !keyInPlace(e))
-    return {
-      label: "No API key",
-      tone: "warn",
-      fix: "This endpoint needs a key. Lines routed here fail until one is set.",
-      tab: "connection",
-    };
-  if (!e.voices.length)
-    return {
-      label: "No voices",
-      tone: "warn",
-      fix: "Nothing can be routed here until it has at least one voice.",
-      tab: "voices",
-    };
-  if (cooling > 0)
-    return {
-      label: `Cooling down ${cooling}s`,
-      tone: "warn",
-      fix: "The provider rate limited us. Dispatch resumes on its own.",
-      tab: "overview",
-    };
-  return { label: "Ready", tone: "good", fix: "", tab: "overview" };
+  const r = speechReadiness(e, now.value.getTime());
+  switch (r.state) {
+    case "paused":
+      return {
+        label: "Paused",
+        tone: "muted",
+        fix: "Lines routed here wait instead of going out. Resume it to narrate them.",
+        tab: "overview",
+      };
+    case "nokey":
+      return {
+        label: "No API key",
+        tone: "warn",
+        fix: "This endpoint needs a key. Lines routed here fail until one is set.",
+        tab: "connection",
+      };
+    case "novoices":
+      return {
+        label: "No voices",
+        tone: "warn",
+        fix: "Nothing can be routed here until it has at least one voice.",
+        tab: "voices",
+      };
+    case "cooldown":
+      return {
+        label: `Cooling down ${r.seconds}s`,
+        tone: "warn",
+        fix: "The provider rate limited us. Dispatch resumes on its own.",
+        tab: "overview",
+      };
+    case "ready":
+      return { label: "Ready", tone: "good", fix: "", tab: "overview" };
+  }
 }
 
 interface Route {
@@ -130,7 +131,12 @@ const unused = computed(() =>
     (e) => !resolved.value.routes.some((r) => r.endpoint.id === e.id),
   ),
 );
-const blocked = computed(() => resolved.value.routes.filter((r) => statusOf(r.endpoint).fix));
+/** Each route's status, worked out once a tick rather than once per place its row shows it. */
+const statuses = computed(
+  () => new Map(resolved.value.routes.map((r) => [r.endpoint.id, statusOf(r.endpoint)])),
+);
+const status = (e: Endpoint): Status => statuses.value.get(e.id) ?? statusOf(e);
+const blocked = computed(() => resolved.value.routes.filter((r) => status(r.endpoint).fix));
 </script>
 
 <template>
@@ -177,7 +183,7 @@ const blocked = computed(() => resolved.value.routes.filter((r) => statusOf(r.en
         this book uses can’t render right now —
         {{
           blocked
-            .map((r) => `${r.endpoint.name} (${statusOf(r.endpoint).label.toLowerCase()})`)
+            .map((r) => `${r.endpoint.name} (${status(r.endpoint).label.toLowerCase()})`)
             .join(", ")
         }}.
       </p>
@@ -188,37 +194,35 @@ const blocked = computed(() => resolved.value.routes.filter((r) => statusOf(r.en
         :key="r.endpoint.id"
         class="rounded-lg border p-3"
         :class="
-          statusOf(r.endpoint).fix
+          status(r.endpoint).fix
             ? 'border-amber-300 dark:border-amber-500/40'
             : 'border-zinc-200 dark:border-zinc-800'
         "
       >
         <div class="flex flex-wrap items-center gap-2">
-          <span
-            class="h-2 w-2 shrink-0 rounded-full"
-            :class="DOT[statusOf(r.endpoint).tone]"
-          ></span>
+          <span class="h-2 w-2 shrink-0 rounded-full" :class="DOT[status(r.endpoint).tone]"></span>
           <b class="min-w-0 truncate">{{ r.endpoint.name }}</b>
-          <span class="text-[11px]" :class="TEXT[statusOf(r.endpoint).tone]">{{
-            statusOf(r.endpoint).label
+          <span class="text-[11px]" :class="TEXT[status(r.endpoint).tone]">{{
+            status(r.endpoint).label
           }}</span>
           <span class="text-[11px] text-zinc-500"
-            >· {{ r.speakers.length }} speaker{{ r.speakers.length === 1 ? "" : "s" }} ·
-            {{ r.lines.toLocaleString() }} line{{ r.lines === 1 ? "" : "s" }}</span
+            >· {{ plural(r.speakers.length, "speaker") }} · {{ r.lines.toLocaleString() }} line{{
+              r.lines === 1 ? "" : "s"
+            }}</span
           >
           <RouterLink
-            :to="settingsLink(r.endpoint, statusOf(r.endpoint).tab)"
+            :to="settingsLink(r.endpoint, status(r.endpoint).tab)"
             class="ml-auto shrink-0 text-[11px] text-violet-600 hover:underline dark:text-violet-400"
-            >{{ statusOf(r.endpoint).fix ? "Fix on Endpoints" : "Settings" }}
+            >{{ status(r.endpoint).fix ? "Fix on Endpoints" : "Settings" }}
             <ArrowIcon class="icon-sm"
           /></RouterLink>
         </div>
 
         <p
-          v-if="statusOf(r.endpoint).fix"
+          v-if="status(r.endpoint).fix"
           class="mt-1 text-[11px] text-amber-700 dark:text-amber-400"
         >
-          {{ statusOf(r.endpoint).fix }}
+          {{ status(r.endpoint).fix }}
         </p>
 
         <p class="mt-1 font-mono text-[11px] text-zinc-500">

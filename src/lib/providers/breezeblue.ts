@@ -9,7 +9,7 @@ export const breezeblue: SpeechProviderShape = {
   id: "breezeblue",
   label: "BreezeBlue",
   matches: (baseUrl) => /(^|\/\/)([a-z0-9-]+\.)*breeze\.blue(\/|:|$)/i.test(baseUrl),
-  requestPath: () => "/text-to-speech/<voice>",
+  requestPath: (_model, voice = "<voice>") => `/text-to-speech/${voice}`,
   /**
    * `output_format`: the same `<format>_<rate>[_<kbps>]` as ElevenLabs, WAV as 16-bit mono at any
    * of its rates, 24 kHz being the model's own. Its MP3 is offered at 44.1 kHz and 128 kbps, the

@@ -6,3 +6,6 @@ export { default as UiCheckbox } from "@/ui/UiCheckbox.vue";
 export { default as UiSwitch } from "@/ui/UiSwitch.vue";
 export { default as UiToggleGroup } from "@/ui/UiToggleGroup.vue";
 export { default as UiTooltip } from "@/ui/UiTooltip.vue";
+export { default as UiDialog } from "@/ui/UiDialog.vue";
+export { default as UiSheet } from "@/ui/UiSheet.vue";
+export { default as UiTabs } from "@/ui/UiTabs.vue";

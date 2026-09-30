@@ -12,7 +12,7 @@
 //
 // Listing spends nothing and changes nothing, which is why the route always calls the real lister:
 // only a test hands over one that answers from memory.
-import type { FoundVoice } from "@/types";
+import type { VoiceListPage } from "@/types";
 import { isSimulated } from "@/lib/providers";
 import { sniffSample, type SampleFormat } from "~/providers/clone";
 import { ProviderError, requireKey, type CallOptions } from "~/providers/http";
@@ -35,16 +35,6 @@ export interface VoiceQuery {
   page?: number;
 }
 
-/** One answer: the voices, and where they sit in the whole list. */
-export interface VoicePage {
-  /** a public Fish voice carries Fish's own recording of it, when it has one */
-  voices: FoundVoice[];
-  /** how many the provider says match, which may count some that are not voices */
-  total: number;
-  page: number;
-  hasMore: boolean;
-}
-
 /** A provider's own recording of a voice, fetched: the file as it was served, and what it says. */
 export interface VoiceRecording {
   bytes: Uint8Array;
@@ -59,7 +49,7 @@ const RECORDING_MS = 30_000;
 
 /** The port the route lists through; a test hands over one that answers from memory. */
 export interface VoiceLister {
-  list(target: ProviderTarget, query: VoiceQuery, signal: AbortSignal): Promise<VoicePage>;
+  list(target: ProviderTarget, query: VoiceQuery, signal: AbortSignal): Promise<VoiceListPage>;
   /**
    * The provider's own recording of one voice, fetched, when it keeps one (`SpeechWire.recording`)
    * — null otherwise, and for a simulated endpoint. Nothing here is billed.

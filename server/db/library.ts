@@ -6,7 +6,16 @@
 // behind for the review to choke on.
 import { and, asc, count, eq, inArray, max, sql } from "drizzle-orm";
 
-import type { Book, BookPrompt, Chapter, ChapterCounts, Volume } from "@/types";
+import type {
+  Book,
+  BookPrompt,
+  Chapter,
+  ChapterCounts,
+  LineCounts,
+  NarrationStatus,
+  ScriptingStatus,
+  Volume,
+} from "@/types";
 import type { Db, Tx } from "~/db/client";
 import type { ChapterBody } from "~/import/assemble";
 import { rekeyActive } from "~/db/jobs";
@@ -19,6 +28,7 @@ import {
   exportChapters,
   exportFiles,
   exportItems,
+  segments,
   volumes,
 } from "~/db/schema";
 import {
@@ -99,22 +109,145 @@ export function getBook(db: Db | Tx, id: string): Book | undefined {
 }
 
 export function listChapters(db: Db | Tx, bookId: string): Chapter[] {
+  const lines = lineCounts(db, bookId);
   return db
     .select()
     .from(chapters)
     .where(eq(chapters.bookId, bookId))
     .orderBy(asc(chapters.id))
     .all()
-    .map(toChapter);
+    .map((row) => ({ ...toChapter(row), lines: lines.get(row.id) ?? NO_LINES }));
 }
 
+const NO_LINES: LineCounts = { total: 0, done: 0, generating: 0, failed: 0 };
+
+/**
+ * Each chapter's lines counted by the clip each one plays, in one pass over the book.
+ *
+ * A page that shows a chapter's figures — its line count in the picker, a running job's progress on
+ * the Queue — reads these rather than the chapter's script, which it may never have opened.
+ */
+function lineCounts(db: Db | Tx, bookId: string): Map<number, LineCounts> {
+  const rows = db
+    .select({
+      chapterId: segments.chapterId,
+      total: count(),
+      done: sql<number>`sum(case when ${clips.status} = 'done' then 1 else 0 end)`,
+      generating: sql<number>`sum(case when ${clips.status} = 'generating' then 1 else 0 end)`,
+      failed: sql<number>`sum(case when ${clips.status} = 'failed' then 1 else 0 end)`,
+    })
+    .from(segments)
+    .leftJoin(
+      clips,
+      and(
+        eq(clips.bookId, segments.bookId),
+        eq(clips.chapterId, segments.chapterId),
+        eq(clips.segmentId, segments.id),
+        eq(clips.role, "current"),
+      ),
+    )
+    .where(eq(segments.bookId, bookId))
+    .groupBy(segments.chapterId)
+    .all();
+  return new Map(
+    rows.map((r) => [
+      r.chapterId,
+      {
+        total: r.total,
+        done: Number(r.done),
+        generating: Number(r.generating),
+        failed: Number(r.failed),
+      },
+    ]),
+  );
+}
+
+/** One chapter of one book, by the number it goes by now: every read and write of one says this. */
+export const chapterAt = (bookId: string, id: number) =>
+  and(eq(chapters.bookId, bookId), eq(chapters.id, id));
+
 export function getChapter(db: Db | Tx, bookId: string, id: number): Chapter | undefined {
-  const row = db
-    .select()
-    .from(chapters)
-    .where(and(eq(chapters.bookId, bookId), eq(chapters.id, id)))
-    .get();
+  const row = db.select().from(chapters).where(chapterAt(bookId, id)).get();
   return row ? toChapter(row) : undefined;
+}
+
+export function chapterExists(db: Db | Tx, bookId: string, id: number): boolean {
+  return !!db.select({ id: chapters.id }).from(chapters).where(chapterAt(bookId, id)).get();
+}
+
+/** A book's chapter numbers in reading order, without the rest of each row. */
+export function chapterNumbers(db: Db | Tx, bookId: string): number[] {
+  return db
+    .select({ id: chapters.id })
+    .from(chapters)
+    .where(eq(chapters.bookId, bookId))
+    .orderBy(asc(chapters.id))
+    .all()
+    .map((c) => c.id);
+}
+
+/**
+ * The identity a chapter keeps whatever number it goes by. A job reads it when it starts and finds
+ * the chapter by it at every write (`locateChapter`), because removing an earlier volume
+ * renumbers the book under a running job.
+ */
+export function chapterUid(db: Db | Tx, bookId: string, id: number): string | undefined {
+  return db.select({ uid: chapters.uid }).from(chapters).where(chapterAt(bookId, id)).get()?.uid;
+}
+
+/** Where a chapter is now, by the identity that does not move; undefined once it has gone. */
+export function locateChapter(
+  db: Db | Tx,
+  uid: string,
+): { bookId: string; id: number } | undefined {
+  return db
+    .select({ bookId: chapters.bookId, id: chapters.id })
+    .from(chapters)
+    .where(eq(chapters.uid, uid))
+    .get();
+}
+
+/** A chapter's scripting status and how far along it is; the job keeps it, and a person's edit. */
+export function setChapterScripting(
+  db: Db | Tx,
+  bookId: string,
+  chapterId: number,
+  scripting: ScriptingStatus,
+  progress: number,
+): void {
+  db.update(chapters)
+    .set({ scripting, scriptingProgress: progress })
+    .where(chapterAt(bookId, chapterId))
+    .run();
+}
+
+/** A chapter's narration status, and — when given — how far along it is and how long it plays. */
+export function setChapterNarration(
+  db: Db | Tx,
+  bookId: string,
+  chapterId: number,
+  narration: NarrationStatus,
+  progress?: number,
+  duration?: number,
+): void {
+  db.update(chapters)
+    .set({
+      narration,
+      ...(progress != null ? { narrationProgress: progress } : {}),
+      ...(duration != null ? { duration } : {}),
+    })
+    .where(chapterAt(bookId, chapterId))
+    .run();
+}
+
+/** How long a chapter plays, in seconds, leaving its status alone: a pacing change re-times it. */
+export function setChapterDuration(
+  db: Db | Tx,
+  bookId: string,
+  chapterId: number,
+  duration: number,
+): void {
+  db.update(chapters).set({ duration }).where(chapterAt(bookId, chapterId)).run();
 }
 
 export function getChapterBody(db: Db, bookId: string, chapterId: number): string | undefined {
@@ -240,7 +373,7 @@ export function setSkipped(db: Db, bookId: string, ids: readonly number[], skip:
         if (!!row.excluded === skip) continue;
         tx.update(chapters)
           .set(skip ? { excluded: true } : { excluded: null, ...(row.note ? { kept: true } : {}) })
-          .where(and(eq(chapters.bookId, bookId), eq(chapters.id, row.id)))
+          .where(chapterAt(bookId, row.id))
           .run();
         changed++;
       }
@@ -264,7 +397,7 @@ export function setKept(db: Db, bookId: string, ids: readonly number[]): number 
         if (!row.note || (row.kept && !row.excluded)) continue;
         tx.update(chapters)
           .set({ excluded: null, kept: true })
-          .where(and(eq(chapters.bookId, bookId), eq(chapters.id, row.id)))
+          .where(chapterAt(bookId, row.id))
           .run();
         changed++;
       }
@@ -314,10 +447,7 @@ export function setDecisions(db: Db, bookId: string, decisions: readonly ReviewD
         // `kept` means nothing on a chapter with no note, and is never written to one
         const kept = d.kept && row.note ? true : null;
         if (!!row.excluded === !!excluded && !!row.kept === !!kept) continue;
-        tx.update(chapters)
-          .set({ excluded, kept })
-          .where(and(eq(chapters.bookId, bookId), eq(chapters.id, d.id)))
-          .run();
+        tx.update(chapters).set({ excluded, kept }).where(chapterAt(bookId, d.id)).run();
         changed++;
       }
     }
@@ -373,7 +503,7 @@ function renumber(tx: Tx, bookId: string): void {
     perVolume.set(c.volumeId, volumeIndex);
     tx.update(chapters)
       .set({ id, volumeIndex })
-      .where(and(eq(chapters.bookId, bookId), eq(chapters.id, c.id + OFFSET)))
+      .where(chapterAt(bookId, c.id + OFFSET))
       .run();
   });
 

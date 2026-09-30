@@ -20,8 +20,8 @@ import { useScriptsStore } from "@/stores/scripts";
 import { computed, type ComputedRef, type MaybeRefOrGetter, toValue } from "vue";
 import type { RouteLocationRaw } from "vue-router";
 import { flagText } from "@/lib/scriptReview";
-import { plural } from "@/views/library/shared";
 import type { Job } from "@/types";
+import { plural } from "@/lib/contents";
 
 /** The stage a decision belongs to, which is also the page it is settled on. */
 export type DecisionKind =

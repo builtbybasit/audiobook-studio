@@ -27,8 +27,15 @@ const hash = (data: Uint8Array | string): string =>
 /** The directory name one voice's recordings are kept under. */
 const keyOf = (endpointId: string, voiceId: string): string => hash(`${endpointId}\0${voiceId}`);
 
-/** Whether `file` is a name a recording could have been kept under. */
+/**
+ * Whether `file` is a name a recording could have been kept under. A speaker's waiting recordings
+ * are named the same way (`~/speakerSamples/files`).
+ */
 export const isSampleFile = (file: string): boolean => FILE.test(file);
+
+/** The name a recording is kept under: a hash of its bytes, and its format. */
+export const sampleFileName = (bytes: Uint8Array, format: SampleFormat): string =>
+  `${hash(bytes)}.${format}`;
 
 /** A sample kept under `heard/`, and which of the names it was asked for by it was kept under. */
 export interface HeardSample {
@@ -76,14 +83,14 @@ export interface VoiceFiles {
 export function voiceFiles(dir: string): VoiceFiles {
   return {
     async write(endpointId, voiceId, bytes, format) {
-      const file = `${hash(bytes)}.${format}`;
+      const file = sampleFileName(bytes, format);
       const at = join(dir, keyOf(endpointId, voiceId));
       await mkdir(at, { recursive: true });
       await writeFile(join(at, file), bytes);
       return file;
     },
     path(endpointId, voiceId, file) {
-      if (!FILE.test(file)) return null;
+      if (!isSampleFile(file)) return null;
       return join(dir, keyOf(endpointId, voiceId), file);
     },
     async remove(endpointId, voiceId, files) {

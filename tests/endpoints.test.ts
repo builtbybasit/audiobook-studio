@@ -7,6 +7,7 @@ import {
   isFishAudio,
   pricingLabel,
   sanitize,
+  speechReadiness,
   ttsRequestPath,
   unifyEndpoint,
   unifyProfile,
@@ -64,6 +65,11 @@ const totals = (over: Partial<MetricTotals> = {}): MetricTotals => ({
   unknownCost: 0,
   inputTokens: 0,
   outputTokens: 0,
+  cachedInputTokens: 0,
+  cacheReportedInputTokens: 0,
+  cacheReported: 0,
+  providerReported: 0,
+  estimatedCost: 0,
   chars: 0,
   audioSeconds: 0,
   ...over,
@@ -138,6 +144,27 @@ test("paused, misconfigured and key-less states win over observed traffic", () =
   expect(h.label).toContain("9s");
 });
 
+test.each([
+  ["paused, whatever else is wrong", { enabled: false, needsKey: true, voices: [] }, "paused"],
+  ["a key it needs and has not got", { needsKey: true }, "nokey"],
+  ["a key it needs and has", { needsKey: true, hasKey: true }, "ready"],
+  ["cooling down after a 429", { backoffUntil: NOW + 4500 }, "cooldown"],
+  ["a cooldown that has ended", { backoffUntil: NOW - 1 }, "ready"],
+  ["no voice to render in", { voices: [] }, "novoices"],
+] as const)("an endpoint %s reads as %s", (_, over, state) => {
+  expect(speechReadiness(ttsEndpoint(over as Partial<Endpoint>), NOW).state).toBe(state);
+});
+
+test("a cooldown says how long it has left, and a scripting profile has none of its own", () => {
+  expect(speechReadiness(ttsEndpoint({ backoffUntil: NOW + 4500 }), NOW)).toEqual({
+    state: "cooldown",
+    seconds: 5,
+  });
+  const profile = newProfile({ id: "p", name: "P", model: "m", needsKey: true });
+  expect(speechReadiness(profile, NOW).state).toBe("nokey");
+  expect(speechReadiness({ ...profile, hasKey: true }, NOW).state).toBe("ready");
+});
+
 test("first-attempt and eventual success are judged separately", () => {
   const u = unifyProfile(newProfile({ id: "p", name: "P", model: "m" }));
   // everything lands, but only after retries
@@ -177,7 +204,7 @@ function record(over: Partial<RequestRecord> = {}): RequestRecord {
     responseMs: 5000,
     usage: { inputTokens: 1000, outputTokens: 500 },
     cost: 0.001,
-    costBasis: "recorded",
+    costBasis: "calculated",
     simulated: true,
     ...over,
   };
@@ -338,7 +365,15 @@ test("a probe is priced through the same engine the rest of the page uses", () =
 });
 
 test("a scripting probe follows the schedule too", () => {
-  const base: RateSet = { input: 2, output: 8, cachedInput: null, cacheWrite: null, speech: null };
+  const base: RateSet = {
+    input: 2,
+    output: 8,
+    cachedInput: null,
+    cacheWrite: null,
+    speech: null,
+    textTokens: null,
+    audioTokens: null,
+  };
   const config: PricingConfig = {
     cachedInput: null,
     cacheWrite: null,

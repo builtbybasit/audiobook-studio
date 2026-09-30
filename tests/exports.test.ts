@@ -6,10 +6,11 @@
 // instead. The build itself is the server's (`tests/server/exports.test.ts`); the store tests here
 // build on a seeded demo library and read back what it made, the way the Audiobooks tab does.
 import { test, expect, beforeAll, beforeEach, describe } from "bun:test";
+import { useQueryCache } from "@pinia/colada";
+import { keys } from "@/queries/keys";
 
 import { useCastStore } from "@/stores/cast";
 import { useExportsStore } from "@/stores/exports";
-import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
@@ -18,8 +19,6 @@ import {
   DEFAULT_EXPORT_SETTINGS,
   durationOf,
   exportKey,
-  loudnessReport,
-  measuredLoudness,
   planOf,
   readinessOf,
   reviewOf,
@@ -37,7 +36,6 @@ import { testPinia } from "./support/pinia";
 
 let castStore: ReturnType<typeof useCastStore>;
 let exportsStore: ReturnType<typeof useExportsStore>;
-let jobsStore: ReturnType<typeof useJobsStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
 
@@ -168,36 +166,6 @@ describe("what stands in the way", () => {
   });
 });
 
-describe("loudness", () => {
-  test("a voice always measures the same, and the gain closes the gap to the target", () => {
-    const ref = "openai/nova";
-    expect(measuredLoudness(ref)).toBe(measuredLoudness(ref));
-    const report = loudnessReport(
-      [{ ref, label: "Nova", endpoint: "OpenAI", segments: 10 }],
-      settings({ loudness: -18 }),
-    );
-    const row = report.voices[0];
-    expect(Math.round((row.lufs + row.gain) * 10) / 10).toBe(-18);
-  });
-
-  test("the spread is what different providers cost you, and is 0 for a single voice", () => {
-    const one = loudnessReport(
-      [{ ref: "openai/nova", label: "Nova", endpoint: "OpenAI", segments: 1 }],
-      settings(),
-    );
-    expect(one.spread).toBe(0);
-    const many = loudnessReport(
-      [
-        { ref: "openai/nova", label: "Nova", endpoint: "OpenAI", segments: 1 },
-        { ref: "local/af_heart", label: "Heart", endpoint: "Kokoro", segments: 1 },
-      ],
-      settings(),
-    );
-    expect(many.spread).toBeGreaterThan(0);
-    expect(many.voices[0].lufs).toBeLessThanOrEqual(many.voices[1].lufs); // quietest first
-  });
-});
-
 // ---------- against the demo library ----------
 //
 // One demo library for the rest of the file, with the runs it starts with cancelled so that a
@@ -224,12 +192,11 @@ async function open(bookId = "starforge") {
   const pinia = testPinia();
   castStore = useCastStore();
   exportsStore = useExportsStore();
-  jobsStore = useJobsStore();
   libraryStore = useLibraryStore();
   scriptsStore = useScriptsStore();
   useUiStore().toast = () => "test";
   await openDemoBook(pinia, bookId);
-  exportsStore._install(bookId, await libraryService().exports(bookId));
+  useQueryCache().setQueryData(keys.exports(bookId), await libraryService().exports(bookId));
 }
 
 /**
@@ -239,7 +206,10 @@ async function open(bookId = "starforge") {
 async function settled(entry: ExportItem | null): Promise<ExportItem> {
   expect(entry).not.toBeNull();
   await demo.idle();
-  exportsStore._install(entry!.bookId, await libraryService().exports(entry!.bookId));
+  useQueryCache().setQueryData(
+    keys.exports(entry!.bookId),
+    await libraryService().exports(entry!.bookId),
+  );
   return exportsStore.exports.find((e) => e.id === entry!.id)!;
 }
 const build = async (
@@ -450,8 +420,11 @@ describe("update and retry ask before they decide", () => {
         done: 0,
       },
     };
-    exportsStore.exports.push(failed);
-    jobsStore._install([job]);
+    useQueryCache().setQueryData(keys.exports(failed.bookId), (l: ExportItem[] = []) => [
+      ...l,
+      failed,
+    ]);
+    useQueryCache().setQueryData(keys.jobs, [job]);
     return exportsStore.exports.find((e) => e.id === failed.id)!;
   }
 

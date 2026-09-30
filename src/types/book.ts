@@ -103,12 +103,25 @@ export interface Chapter {
   /** the user reviewed the note and chose to keep the chapter */
   kept?: boolean;
   /**
-   * Set while a re-script is queued. `keepEdits` says whether the run re-applies manual
-   * corrections; `was` is the status to go back to if the attempt produces nothing, so a failed or
+   * The chapter's lines as the server last counted them, so a page can show how far a chapter
+   * has got without reading its script. On every chapter the server lists; absent on one the
+   * browser or an import built before it was stored.
+   */
+  lines?: LineCounts;
+  /**
+   * Set while a re-script is queued. `was` is the status to go back to if the attempt produces nothing, so a failed or
    * cancelled replacement leaves a chapter that still has a usable script saying so; `token` is the
    * job allowed to write the result, so a late callback cannot overwrite a newer run or a restore.
    */
-  rescript?: { keepEdits: boolean; was?: ScriptingStatus; token?: number };
+  rescript?: { was?: ScriptingStatus; token?: number };
+}
+
+/** A chapter's lines, and how many of them have a clip done, being rendered, or failed. */
+export interface LineCounts {
+  total: number;
+  done: number;
+  generating: number;
+  failed: number;
 }
 
 export interface Volume {

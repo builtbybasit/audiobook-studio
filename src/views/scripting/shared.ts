@@ -24,8 +24,3 @@ export function useScript(props: ChapterProps) {
   return { segments, cast, counts, inChapter, colorOf };
 }
 export const TYPES: SegmentType[] = ["dialogue", "narration", "thought"];
-export const TYPE_GLYPH: Record<SegmentType, string> = {
-  dialogue: "“ ”",
-  narration: "¶",
-  thought: "…",
-};

@@ -19,8 +19,8 @@ Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } }
 import { sql } from "drizzle-orm";
 
 import type { Job, RequestRecord, World } from "@/types";
-import { credentials } from "@/lib/credentials";
-import { makeWorld } from "@/mock/world";
+import { makeCredentials } from "~/demo/seed/fixtures/credentials";
+import { makeWorld } from "~/demo/seed/world";
 import { openDb, type Db } from "~/db/client";
 import { deleteVolume } from "~/db/library";
 import { migrate } from "~/db/migrate";
@@ -235,7 +235,7 @@ describe("script history", () => {
 
 describe("endpoints and their rate cards", () => {
   // Endpoints point at named credentials, so the registry has to exist before any of them do.
-  beforeEach(() => writeCredentials(db, credentials));
+  beforeEach(() => writeCredentials(db, makeCredentials()));
 
   test("every seeded speech endpoint round-trips, schedule and promotions included", () => {
     world.endpoints.forEach((e, i) => writeEndpoint(db, e, i));

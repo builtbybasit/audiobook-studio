@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useJobsStore } from "@/stores/jobs";
+import { plural } from "@/lib/contents";
 import { useLibraryStore } from "@/stores/library";
 
 // Money, and the four different things people mean by "cost":
@@ -14,7 +15,8 @@ import { useLibraryStore } from "@/stores/library";
 //
 // Ordinary pricing is the top card and nothing else. The schedule and the promotions are behind
 // disclosures that stay shut on an endpoint that has neither, which is most of them.
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed } from "vue";
+import { useNow } from "@vueuse/core";
 
 import { UiNumber, UiSwitch } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
@@ -56,12 +58,8 @@ const billing = computed(() => (props.u.endpoint ? billingOf(props.u.endpoint) :
 
 // The effective rates move on their own — an off-peak window opens, a promotion expires — so this
 // panel keeps its own clock rather than reading a stale snapshot until somebody clicks something.
-const now = ref(Date.now());
-let clock: ReturnType<typeof setInterval>;
-onMounted(() => {
-  clock = setInterval(() => (now.value = Date.now()), 1000);
-});
-onUnmounted(() => clearInterval(clock));
+const clock = useNow({ interval: 1000 });
+const now = computed(() => clock.value.getTime());
 
 // ---------- the rate card, whichever kind this endpoint is ----------
 // Both kinds go through the same schedule and the same promotions; what differs is which rates they
@@ -138,8 +136,20 @@ const books = computed(() =>
       reserved: jobsStore.scriptReserved(b.id),
       paused: !!b.budget?.paused,
     }))
-    .filter((r) => r.cap != null || r.scriptCap != null || r.reserved > 0),
+    .filter((r) => r.cap != null || r.scriptCap != null || (r.reserved ?? 0) > 0),
 );
+// a book's spending not read yet is said as unknown, never as nothing spent
+const moneyOrUnknown = (n: number | undefined) => (n == null ? "—" : money(n));
+// the reservations across the library, or unknown while any book's is still unread
+const reservedAll = computed(() => {
+  let n = 0;
+  for (const b of libraryStore.books) {
+    const r = jobsStore.scriptReserved(b.id);
+    if (r == null) return undefined;
+    n += r;
+  }
+  return n;
+});
 const anyBudget = computed(() => books.value.length > 0);
 
 const limit = computed(() => ops.value.spendLimit);
@@ -305,7 +315,7 @@ const limitUsed = computed(() =>
         <span class="ml-1 font-normal normal-case text-zinc-400">
           {{
             config.windows.length
-              ? `${config.windows.length} window${config.windows.length === 1 ? "" : "s"} · ${config.timezone}`
+              ? `${plural(config.windows.length, "window")} · ${config.timezone}`
               : "none — the rates above apply at every hour"
           }}
         </span>
@@ -365,11 +375,7 @@ const limitUsed = computed(() =>
                honest per-endpoint figure to show here. The number says what it is instead of
                implying it belongs to the endpoint whose tab it is on. -->
           <dd class="mt-1 font-mono text-sm">
-            {{
-              u.kind === "scripting"
-                ? money(libraryStore.books.reduce((n, b) => n + jobsStore.scriptReserved(b.id), 0))
-                : "—"
-            }}
+            {{ u.kind === "scripting" ? moneyOrUnknown(reservedAll) : "—" }}
             <span v-if="u.kind === 'scripting'" class="font-sans text-[11px] text-zinc-500"
               >· every book, every scripting endpoint</span
             >
@@ -540,10 +546,10 @@ const limitUsed = computed(() =>
                   >
                   <span v-if="r.scriptCap != null" class="block text-zinc-500"
                     >scripting sub-cap {{ money(r.scriptCap) }} ·
-                    {{ money(r.scriptSpent) }} used</span
+                    {{ moneyOrUnknown(r.scriptSpent) }} used</span
                   >
                 </td>
-                <td class="py-1 text-right font-mono">{{ money(r.spent) }}</td>
+                <td class="py-1 text-right font-mono">{{ moneyOrUnknown(r.spent) }}</td>
                 <td class="py-1 text-right font-mono">
                   {{ r.cap == null ? "none" : money(r.cap) }}
                 </td>

@@ -6,29 +6,25 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Book, BookSpend, Endpoint, Profile, RequestRecord } from "@/types";
-import { makeEndpoints } from "@/mock/fixtures/endpoints";
-import { makeProfiles } from "@/mock/fixtures/profiles";
 import * as queue from "~/db/jobs";
 import type { SentScript, SentSpeech } from "~/providers/sent";
 import { budgetProblem } from "~/usage/budget";
 import { bookSpend, chapterUidOf, NOT_BILLED, settleScript, settleSpeech } from "~/usage/ledger";
 import { epubFile, story } from "../support/epub";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import { jsonBody, speechEndpoint, testApi, type TestApi } from "../support/server";
+import { openaiProfile } from "../support/profiles";
 
 /** A profile at $2 in / $8 out per million tokens, with no schedule or promotion to move it. */
 const profile: Profile = {
-  ...makeProfiles().find((p) => p.id === "openai")!,
+  ...openaiProfile(),
   inPrice: 2,
   outPrice: 8,
   pricing: undefined,
 };
 
 /** A speech endpoint billed per character at $15 per million, or per minute at $0.30. */
-const speech = (unit: "chars" | "minute" = "chars"): Endpoint => ({
-  ...makeEndpoints()[0]!,
-  billing: { unit, rate: unit === "chars" ? 15 : 0.3 },
-  pricing: undefined,
-});
+const speech = (unit: "chars" | "minute" = "chars"): Endpoint =>
+  speechEndpoint({ billing: { unit, rate: unit === "chars" ? 15 : 0.3 }, pricing: undefined });
 
 const at = Date.UTC(2026, 8, 23, 12);
 

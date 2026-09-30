@@ -9,7 +9,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 
 import type { Book, Chapter, ExportItem, ExportSettings, Job } from "@/types";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
-import { makeWorld } from "@/mock/world";
+import { makeWorld } from "~/demo/seed/world";
 import { chapterSpans, exportFileToken } from "~/db/exports";
 import { fakeSpeechProvider, SAMPLE_RATE, toneOf, toneWav } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";
@@ -732,8 +732,12 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
     // nothing said the format was not the one asked for, because this time it was
     const job = await jobById(api, done.jobId!);
     expect(job.activity?.some((e) => e.message.includes("rather than"))).toBe(false);
-    // and the loudness the panel offered was measured rather than waved away
+    // and the loudness the panel offered was measured rather than waved away, with the figure the
+    // file measured before it was levelled
     expect(job.activity?.some((e) => e.detail?.measured != null)).toBe(true);
+    expect(job.activity?.find((e) => e.message.endsWith("is written"))?.detail?.loudness).toMatch(
+      /^-?\d+\.\d LUFS in, levelled to -\d+$/,
+    );
   }, 30_000);
 
   test("an update re-encodes the whole audiobook, and says why", async () => {

@@ -10,38 +10,27 @@
 // objects it edits, so there is no single action to hang a narrower request on — and the server
 // has to check the three lists against each other anyway (a credential an endpoint names must be
 // in the same body), which a partial write could not let it do.
-import type { Credential } from "@/lib/credentials";
 import { CLONE_CONSENT } from "@/lib/endpointShapes";
 import type {
   ClonedVoice,
+  Credential,
   Endpoint,
   EndpointKind,
   EndpointLive,
-  FoundVoice,
+  EndpointProbe,
   KeptVoiceSamples,
   Profile,
   PromptTemplate,
+  ScriptSettings,
+  VoiceListPage,
 } from "@/types";
+import type { StoredEndpoint } from "@/lib/endpointTelemetry";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { API_BASE } from "@/services/mode";
 
-/**
- * The parts of an endpoint that are a record of its requests rather than its configuration. The
- * server stores none of them: it answers with them empty and ignores them in a write. The rate
- * limits and the cooldown are filled in from what its process has seen (`live`) instead.
- */
-export const ENDPOINT_TELEMETRY = [
-  "history",
-  "failures",
-  "rateLimits",
-  "backoffUntil",
-  "lastError",
-  "fetching",
-] as const;
-export type EndpointTelemetry = (typeof ENDPOINT_TELEMETRY)[number];
-
-/** An endpoint as it is stored: its configuration, without the telemetry. */
-export type StoredEndpoint = Omit<Endpoint, EndpointTelemetry>;
+// declared in `@/types` with the server that answers them; named here too for the page that reads
+// them beside the service
+export type { EndpointProbe, VoiceListPage } from "@/types";
 
 /** What is sent: the whole configuration, replacing what the server holds. */
 export interface EndpointConfig {
@@ -53,6 +42,11 @@ export interface EndpointConfig {
    * leaving it out keeps what the server holds; always present in a read.
    */
   prompt?: PromptTemplate | null;
+  /**
+   * The scripting settings — the profile runs go to, and the switches beside it. Optional in a
+   * write, where leaving them out keeps what the server holds; always present in a read.
+   */
+  script?: ScriptSettings;
 }
 
 /**
@@ -62,16 +56,6 @@ export interface EndpointConfig {
  */
 export interface EndpointSettings extends EndpointConfig {
   endpoints: Endpoint[];
-}
-
-/** What the server found when it sent one small real request to a saved endpoint. `ok: false` is
- *  an answer — a refused key, a wrong model — not a failed request. */
-export interface EndpointProbe {
-  ok: boolean;
-  /** one sentence to show as it is */
-  message: string;
-  /** how long the request took; 0 when none was made */
-  ms: number;
 }
 
 /** Which of a speech endpoint's catalogues to read. Only Fish Audio has a public one. */
@@ -84,16 +68,6 @@ export interface VoiceListQuery {
   language?: string;
   /** 1-based */
   page?: number;
-}
-
-/** A page of voices the server found. Nothing is added to the endpoint until the page adds it. */
-export interface VoiceListPage {
-  /** a public Fish voice carries Fish's own recording of it, when it has one */
-  voices: FoundVoice[];
-  /** how many the provider says match */
-  total: number;
-  page: number;
-  hasMore: boolean;
 }
 
 /** One voice saying the server's sample sentence: the audio as the endpoint answered, and its length. */

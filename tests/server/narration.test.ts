@@ -11,12 +11,22 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import type { Book, Chapter, Job, Segment } from "@/types";
+import type {
+  ChapterScript,
+  ImportedBook,
+  Job,
+  Judged,
+  LexiconSaved,
+  NarrationQueued,
+  RetakesQueued,
+} from "@/types";
 import * as queue from "~/db/jobs";
 import { readScript } from "~/db/script";
-import { enqueueNarration } from "~/jobs/narration";
-import { retakeLines, type Judged, type RetakesQueued } from "~/narration/ops";
+import { SCOPE_LABEL } from "@/lib/runPlan";
+import { enqueueNarration, scopeOf } from "~/jobs/narration";
+import { retakeLines } from "~/narration/ops";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
+import { ProviderError } from "~/providers/http";
 import type { SpeechProvider } from "~/providers/speech";
 import { epubFile, story } from "../support/epub";
 import {
@@ -28,20 +38,6 @@ import {
   type TestApi,
 } from "../support/server";
 
-interface ImportResult {
-  book: Book;
-  chapters: Chapter[];
-}
-interface Queued {
-  jobs: Job[];
-  skipped: { id: number; why: string }[];
-  runId: number;
-  chapters: Chapter[];
-}
-interface ScriptResult {
-  segments: Segment[];
-  revision: number;
-}
 interface Failure {
   error: { code: string; message: string; detail?: string };
 }
@@ -56,7 +52,7 @@ const dialogue = () => [
 
 /** A two-speaker book on the shelf, chapters 1 and 2 scripted, the runner idle. */
 async function scripted(api = testApi()) {
-  const { body } = await api.import<ImportResult>(
+  const { body } = await api.import<ImportedBook>(
     await epubFile({
       title: "Moonlight Ledger",
       chapters: ["One", "Two", "Three"].map((title) => ({ title, paragraphs: dialogue() })),
@@ -70,24 +66,27 @@ async function scripted(api = testApi()) {
 }
 
 const narrate = (api: TestApi, id: string, ids: number[], scope?: string) =>
-  api.request<Queued>(`/api/books/${id}/chapters/narrate`, jsonBody({ ids, scope }));
+  api.request<NarrationQueued>(`/api/books/${id}/chapters/narrate`, jsonBody({ ids, scope }));
 
 const scriptOf = async (api: TestApi, id: string, ch = 1) =>
-  (await api.request<ScriptResult>(`/api/books/${id}/chapters/${ch}/script`)).body;
+  (await api.request<ChapterScript>(`/api/books/${id}/chapters/${ch}/script`)).body;
 
 const chaptersOf = async (api: TestApi, id: string) =>
-  (await api.request<ImportResult>(`/api/books/${id}`)).body.chapters;
+  (await api.request<ImportedBook>(`/api/books/${id}`)).body.chapters;
 
 const jobById = async (api: TestApi, id: number) =>
   (await api.request<{ job: Job }>(`/api/jobs/${id}`)).body.job;
 
 const edit = (api: TestApi, id: string, body: unknown, ch = 1) =>
-  api.request<ScriptResult>(`/api/books/${id}/chapters/${ch}/script`, {
+  api.request<ChapterScript>(`/api/books/${id}/chapters/${ch}/script`, {
     ...jsonBody(body),
     method: "PUT",
   });
 
-/** A provider that fails the lines `match` picks out, once each, and renders everything else. */
+/**
+ * A provider that fails the lines `match` picks out, once each, as a 503 its retries did not get
+ * past, and renders everything else.
+ */
 function failingOnce(match: (text: string) => boolean): SpeechProvider {
   const inner = fakeSpeechProvider();
   const failed = new Set<string>();
@@ -96,7 +95,9 @@ function failingOnce(match: (text: string) => boolean): SpeechProvider {
     speak(input) {
       if (match(input.text) && !failed.has(input.text)) {
         failed.add(input.text);
-        return Promise.reject(new Error("The voice service dropped the connection"));
+        return Promise.reject(
+          new ProviderError("The voice service dropped the connection", 503, true),
+        );
       }
       return inner.speak(input);
     },
@@ -127,10 +128,7 @@ function retaking({ failing }: { failing?: (text: string) => boolean } = {}): Sp
 }
 
 const retake = (api: TestApi, id: string, ids: number[], ch = 1) =>
-  api.request<RetakesQueued & { chapters: Chapter[] }>(
-    `/api/books/${id}/chapters/${ch}/retakes`,
-    jsonBody({ ids }),
-  );
+  api.request<RetakesQueued>(`/api/books/${id}/chapters/${ch}/retakes`, jsonBody({ ids }));
 
 const judge = (api: TestApi, id: string, segId: number, verdict: string, ch = 1) =>
   api.request<Judged>(
@@ -291,6 +289,18 @@ describe("what a scope renders", () => {
   });
 });
 
+test("a job runs at the scope it kept, and one queued before scopes were kept at its label's", () => {
+  const job = (run: Partial<NonNullable<Job["narrationRun"]>>, label: string) =>
+    ({
+      narrationRun: run,
+      bulk: { id: 1, op: "Narrate", index: 1, total: 1, scope: label },
+    }) as Job;
+  // the label is display text; a reworded one does not change what the job renders
+  expect(scopeOf(job({ scope: "failed" }, "Everything, reworded"))).toBe("failed");
+  expect(scopeOf(job({}, SCOPE_LABEL.fill))).toBe("fill");
+  expect(scopeOf(job({}, "Retake"))).toBe("pending");
+});
+
 describe("a line that cannot be rendered", () => {
   test("fails the job and the chapter, leaves the other lines done, and `failed` re-renders only it", async () => {
     const { api, id } = await scripted(
@@ -305,6 +315,8 @@ describe("a line that cannot be rendered", () => {
     const broken = before.segments.find((s) => s.text.includes("count it twice"))!;
     expect(broken.audio.status).toBe("failed");
     expect(broken.audio.error?.message).toBe("The voice service dropped the connection");
+    // the status it was refused with, not the 0 that reads as "not sent"
+    expect(broken.audio.error?.code).toBe(503);
     expect(broken.audio.url).toBeUndefined();
     expect(before.segments.filter((s) => s.audio.status === "done")).toHaveLength(
       before.segments.length - 1,
@@ -315,6 +327,7 @@ describe("a line that cannot be rendered", () => {
 
     const retry = await narrate(api, id, [1], "failed");
     expect(retry.body.jobs[0].bulk?.scope).toBe("Failed only");
+    expect(retry.body.jobs[0].narrationRun?.scope).toBe("failed");
     expect(retry.body.jobs[0].narrationRun?.clips).toBe(1);
     await api.runner.idle();
     const { segments } = await scriptOf(api, id);
@@ -533,7 +546,7 @@ describe("what is left out of a run", () => {
 
   test("a book still in its contents review, a book that is not there and a misspelled scope are refused", async () => {
     const api = testApi();
-    const { body } = await api.import<ImportResult>(
+    const { body } = await api.import<ImportedBook>(
       await epubFile({ chapters: [{ title: "One", paragraphs: story(3) }] }),
     );
     const refused = await api.request<Failure>(
@@ -814,12 +827,6 @@ describe("the verdict on a retake", () => {
     expect((await judge(api, id, line.id, "accept")).status).toBe(200);
   });
 });
-
-interface LexiconSaved {
-  entries: { id: number; term: string; say: string; enabled: boolean }[];
-  stale: { chapterId: number; ids: number[]; revision: number }[];
-  restored: { chapterId: number; ids: number[]; revision: number }[];
-}
 
 const lexicon = (
   api: TestApi,

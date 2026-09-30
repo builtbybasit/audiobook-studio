@@ -2,8 +2,8 @@
 //
 // One query for every job, shared by whoever asks (`defineQuery`): the shell's indicator, the
 // Queue page and a book's overview all read the same poll rather than three. It polls while a job
-// is queued or running and goes quiet when the queue does; each read is installed into the jobs
-// store, which every page reads.
+// is queued or running and goes quiet when the queue does. Nothing edits the queue in the browser,
+// so the read is not copied anywhere: the jobs store's `jobs` is this query's data.
 //
 // A job that moved is a chapter that moved. The server does not push events, so the poll is where
 // a change is noticed: a job whose status or progress changed has its book read again, a
@@ -20,11 +20,13 @@ import { defineQuery, useQuery } from "@pinia/colada";
 import type { Job } from "@/types";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
+import { fetchBook } from "@/queries/library";
 import { spendMoved } from "@/queries/spend";
 import { jobsService } from "@/services/jobs";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
+import { toastFailure } from "@/stores/toastFailure";
 
 /** How often the server is asked again while something is queued or running. */
 export const POLL_MS = 1500;
@@ -33,18 +35,11 @@ const live = (j: Job): boolean => j.status === "queued" || j.status === "running
 const narrating = (jobs: readonly Job[]): boolean =>
   jobs.some((j) => j.kind === "narration" && live(j));
 
-async function readJobs(): Promise<Job[]> {
-  const jobs = await jobsService().list();
-  useJobsStore()._install(jobs);
-  return jobs;
-}
-
 const useJobsQuery = defineQuery(() => {
-  const jobsStore = useJobsStore();
   const libraryStore = useLibraryStore();
   const query = useQuery({
     key: keys.jobs,
-    query: readJobs,
+    query: () => jobsService().list(),
     staleTime: POLL_MS,
     // the auto-refetch plugin reads this: poll while anything is live, and not otherwise
     autoRefetch: (state) => (state.data?.some(live) ? POLL_MS : false),
@@ -54,7 +49,7 @@ const useJobsQuery = defineQuery(() => {
   watch(
     () => !!query.error.value,
     (failing) => {
-      if (failing) jobsStore._failed("read the queue", query.error.value);
+      if (failing) toastFailure("read the queue", query.error.value);
     },
   );
 
@@ -92,7 +87,8 @@ const useJobsQuery = defineQuery(() => {
     // a job that moved sent a request, finished or let go of what it held: the book's spending is
     // read again, the way its chapters are
     for (const id of books) {
-      void libraryStore.loadBook(id);
+      // through the book's query, so a slow read overtaken by the next tick's installs nothing
+      void fetchBook(id).catch(() => {});
       void spendMoved(id);
     }
     // and each request it sent is a row on the Endpoints page
@@ -108,7 +104,7 @@ const useJobsQuery = defineQuery(() => {
 /**
  * The jobs of one book, or every job when no book is named.
  *
- * `jobs` reads the store, so it is the list the poll installs.
+ * `jobs` reads the store, whose `jobs` is the poll's own data.
  */
 export function useBookJobs(bookId?: MaybeRefOrGetter<string | null | undefined>) {
   const jobsStore = useJobsStore();

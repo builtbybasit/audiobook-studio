@@ -5,10 +5,11 @@
 // it. That revision is what lets a job that started against one script refuse to overwrite the
 // next: it captures the number when it reads the chapter, and the write here only goes through when
 // the number has not moved. See `writeScript`.
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 
-import type { Segment, SegmentAudio, Take } from "@/types";
+import type { ChapterLines, RevisedLines, Segment, SegmentAudio, SegmentFlag, Take } from "@/types";
 import { snapshotTake } from "@/lib/takes";
+import { chapterAt } from "~/db/library";
 import { insertRows, prepared } from "~/db/prepared";
 import type { Db, Tx } from "~/db/client";
 import { chapters, clips, segments } from "~/db/schema";
@@ -22,6 +23,17 @@ const chunked = <T>(xs: readonly T[]): T[][] => {
   for (let i = 0; i < xs.length; i += CHUNK) out.push(xs.slice(i, i + CHUNK));
   return out;
 };
+
+/** How many lines a chapter's script has; 0 for one never scripted. */
+export function lineCount(db: Db | Tx, bookId: string, chapterId: number): number {
+  return (
+    db
+      .select({ n: count() })
+      .from(segments)
+      .where(and(eq(segments.bookId, bookId), eq(segments.chapterId, chapterId)))
+      .get()?.n ?? 0
+  );
+}
 
 export function readScript(db: Db | Tx, bookId: string, chapterId: number): Segment[] {
   const where = (t: typeof segments | typeof clips) =>
@@ -40,6 +52,31 @@ export function readScript(db: Db | Tx, bookId: string, chapterId: number): Segm
     bySegment.set(c.segmentId, list);
   }
   return segRows.map((s) => toSegment(s, bySegment.get(s.id) ?? []));
+}
+
+/**
+ * The clip a book's row names by this address — whoever's line it is, how long the row says it
+ * plays and at what rate — or undefined when no clip row holds it. The demo makes a clip's file
+ * from this the first time it is read (`~/audio/demoClips`).
+ */
+export function clipByUrl(
+  db: Db | Tx,
+  bookId: string,
+  url: string,
+): { speaker: string; duration: number; rate: number | null } | undefined {
+  return db
+    .select({ speaker: segments.speaker, duration: clips.duration, rate: clips.sampleRate })
+    .from(clips)
+    .innerJoin(
+      segments,
+      and(
+        eq(segments.bookId, clips.bookId),
+        eq(segments.chapterId, clips.chapterId),
+        eq(segments.id, clips.segmentId),
+      ),
+    )
+    .where(and(eq(clips.bookId, bookId), eq(clips.url, url)))
+    .get();
 }
 
 /** One chapter, named by placeholders, for the statements a script write repeats per chapter. */
@@ -302,8 +339,20 @@ export function acceptCandidate(
  * chosen over the one that was flagged is no longer a line with a problem.
  */
 export function clearFlag(tx: Tx, bookId: string, chapterId: number, segmentId: number): void {
-  tx.update(segments)
-    .set({ flag: null })
+  setFlag(tx, bookId, chapterId, segmentId, null);
+}
+
+/** Write one line's flag, or take it down with `null`; false when the line is not in the script. */
+export function setFlag(
+  tx: Db | Tx,
+  bookId: string,
+  chapterId: number,
+  segmentId: number,
+  flag: SegmentFlag | null,
+): boolean {
+  return !!tx
+    .update(segments)
+    .set({ flag })
     .where(
       and(
         eq(segments.bookId, bookId),
@@ -311,7 +360,8 @@ export function clearFlag(tx: Tx, bookId: string, chapterId: number, segmentId: 
         eq(segments.id, segmentId),
       ),
     )
-    .run();
+    .returning({ id: segments.id })
+    .get();
 }
 
 /**
@@ -328,7 +378,7 @@ export function bumpRevision(tx: Tx, bookId: string, chapterId: number): number 
   const revision = tx
     .update(chapters)
     .set({ scriptRevision: sql`${chapters.scriptRevision} + 1` })
-    .where(and(eq(chapters.bookId, bookId), eq(chapters.id, chapterId)))
+    .where(chapterAt(bookId, chapterId))
     .returning({ revision: chapters.scriptRevision })
     .get()?.revision;
   if (revision == null) throw new ScriptConflict(0, null);
@@ -336,17 +386,6 @@ export function bumpRevision(tx: Tx, bookId: string, chapterId: number): number 
 }
 
 // ---------- lines by speaker ----------
-
-/** Lines of one chapter, named by number. */
-export interface ChapterLines {
-  chapterId: number;
-  ids: number[];
-}
-
-/** Lines that changed hands, and the revision their chapter is at now that they have. */
-export interface MovedLines extends ChapterLines {
-  revision: number;
-}
 
 /**
  * Give every line of the book that `from` reads to `to`, and say which lines moved.
@@ -357,7 +396,7 @@ export interface MovedLines extends ChapterLines {
  * on top of the change — and a clip rendered for a line that now names a different speaker no
  * longer matches its line, so it is marked stale, as the cast store does.
  */
-export function reattribute(tx: Tx, bookId: string, from: string, to: string): MovedLines[] {
+export function reattribute(tx: Tx, bookId: string, from: string, to: string): RevisedLines[] {
   const rows = tx
     .select({ chapterId: segments.chapterId, id: segments.id })
     .from(segments)
@@ -380,8 +419,8 @@ export function attributeLines(
   bookId: string,
   lines: readonly ChapterLines[],
   speaker: string,
-): MovedLines[] {
-  const moved: MovedLines[] = [];
+): RevisedLines[] {
+  const moved: RevisedLines[] = [];
   for (const { chapterId, ids } of lines) {
     let changed = 0;
     for (const part of chunked(ids)) {
@@ -415,10 +454,32 @@ export function attributeLines(
     const revision = tx
       .update(chapters)
       .set({ scriptRevision: sql`${chapters.scriptRevision} + 1` })
-      .where(and(eq(chapters.bookId, bookId), eq(chapters.id, chapterId)))
+      .where(chapterAt(bookId, chapterId))
       .returning({ revision: chapters.scriptRevision })
       .get()?.revision;
     if (revision != null) moved.push({ chapterId, ids, revision });
   }
   return moved;
+}
+
+/**
+ * The clips each speech endpoint has rendered that the library plays, done and failed, by
+ * endpoint id: what the Queue's endpoint pool counts, across every book rather than the chapters a
+ * page happens to have read. A retake waiting for its verdict and a superseded take are not the
+ * book's clips, so only the current one of each line counts.
+ */
+export function clipsByEndpoint(db: Db | Tx): Map<string, { done: number; failed: number }> {
+  const rows = db
+    .select({
+      endpoint: clips.endpoint,
+      done: sql<number>`sum(case when ${clips.status} = 'done' then 1 else 0 end)`,
+      failed: sql<number>`sum(case when ${clips.status} = 'failed' then 1 else 0 end)`,
+    })
+    .from(clips)
+    .where(and(eq(clips.role, "current"), sql`${clips.endpoint} is not null`))
+    .groupBy(clips.endpoint)
+    .all();
+  return new Map(
+    rows.map((r) => [r.endpoint!, { done: Number(r.done), failed: Number(r.failed) }]),
+  );
 }

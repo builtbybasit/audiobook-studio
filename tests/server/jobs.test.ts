@@ -9,9 +9,8 @@ import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
 import type { Book, Chapter, Job, Profile, Segment } from "@/types";
-import { credentials } from "@/lib/credentials";
+import { makeCredentials } from "~/demo/seed/fixtures/credentials";
 import { scriptParts } from "@/lib/scripting";
-import { makeProfiles } from "@/mock/fixtures/profiles";
 import * as queue from "~/db/jobs";
 import { readScript, writeScript } from "~/db/script";
 import { jobs } from "~/db/schema";
@@ -27,6 +26,7 @@ import {
   testDb,
   testRunner,
 } from "../support/server";
+import { openaiProfile } from "../support/profiles";
 
 interface ImportResult {
   book: Book;
@@ -651,9 +651,9 @@ describe("the queue over HTTP", () => {
 
 // ---- a chapter cut into the requests its profile allows ----
 
-/** The seeded OpenAI profile, cut small enough that a chapter takes several requests. */
+/** An OpenAI profile, cut small enough that a chapter takes several requests. */
 const small = (over: Partial<Profile> = {}): Profile => ({
-  ...makeProfiles().find((p) => p.id === "openai")!,
+  ...openaiProfile(),
   maxChars: 700,
   splitAt: "sentence",
   concurrency: 2,
@@ -666,7 +666,7 @@ async function saveProfile(api: ReturnType<typeof testApi>, profile: Profile) {
     ...jsonBody({
       endpoints: [],
       profiles: [profile],
-      credentials: credentials.map((c) => ({ ...c })),
+      credentials: makeCredentials(),
     }),
     method: "PUT",
   });
@@ -778,19 +778,19 @@ describe("a chapter longer than its scripting profile takes", () => {
     expect((await chaptersOf(api, id))[0].scripting).not.toBe("done");
   });
 
-  test("a profile this server was never sent is not refused: the chapter goes whole, and the job says why", async () => {
+  test("a profile this server does not have is refused, and nothing is queued", async () => {
     const whole = recording();
     const { api, id } = await shelved(testApi({ scripting: whole.provider }), ["One"]);
-    const { status, body } = await script(api, id, [1], "openai");
-    expect(status).toBe(202);
-    await api.runner.idle();
-    expect(whole.sent.length).toBe(1);
-    const job = await jobById(api, body.jobs[0].id);
-    expect(job.status).toBe("done");
-    expect(job.scriptRun).toBeUndefined();
-    expect(job.activity?.map((e) => e.message)).toContain(
-      "The scripting profile “openai” is not saved on this server; the chapter goes whole",
+    const { status, body } = await api.request<Failure>(
+      `/api/books/${id}/chapters/script`,
+      jsonBody({ ids: [1], profile: "openai" }),
     );
+    expect(status).toBe(404);
+    expect(body.error.message).toBe("No such scripting endpoint “openai”");
+    await api.runner.idle();
+    expect(whole.sent).toEqual([]);
+    expect(queue.listJobs(api.db)).toEqual([]);
+    expect((await chaptersOf(api, id))[0].scripting).toBe("none");
   });
 });
 
@@ -804,7 +804,7 @@ const budget = (api: ReturnType<typeof testApi>, id: string, settings: Record<st
     body: JSON.stringify(settings),
   });
 
-/** Every scripting request the ledger holds for the seeded OpenAI profile. */
+/** Every scripting request the ledger holds for the OpenAI profile. */
 const ledger = (api: ReturnType<typeof testApi>) =>
   endpointRequests(api.db, "scripting", "openai", 0);
 

@@ -8,14 +8,31 @@ import { computed, toValue, type MaybeRefOrGetter } from "vue";
 import { useQuery } from "@pinia/colada";
 
 import type { ChapterHistory } from "@/types";
+import { fetchQuery } from "@/queries/fetch";
 import { keys } from "@/queries/keys";
 import { libraryService } from "@/services/library";
 import { useHistoryStore } from "@/stores/history";
 
-async function readHistory(bookId: string, chapterId: number): Promise<ChapterHistory> {
+async function readHistory(
+  bookId: string,
+  chapterId: number,
+  signal: AbortSignal,
+): Promise<ChapterHistory> {
   const history = await libraryService().chapterHistory(bookId, chapterId);
-  useHistoryStore()._install(bookId, chapterId, history);
+  // a read overtaken by a later one leaves the store to the later one
+  if (!signal.aborted) useHistoryStore()._install(bookId, chapterId, history);
   return history;
+}
+
+const historyQuery = (bookId: string, chapterId: number) => ({
+  key: keys.chapterHistory(bookId, chapterId),
+  staleTime: Infinity,
+  query: ({ signal }: { signal: AbortSignal }) => readHistory(bookId, chapterId, signal),
+});
+
+/** A chapter's history read from the server now and installed, whether or not a page shows it. */
+export function fetchHistory(bookId: string, chapterId: number): Promise<ChapterHistory> {
+  return fetchQuery(historyQuery(bookId, chapterId));
 }
 
 export function useChapterHistory(
@@ -24,10 +41,8 @@ export function useChapterHistory(
 ) {
   const historyStore = useHistoryStore();
   const query = useQuery(() => ({
-    key: keys.chapterHistory(toValue(bookId), toValue(chapterId) ?? 0),
+    ...historyQuery(toValue(bookId), toValue(chapterId) ?? 0),
     enabled: toValue(chapterId) != null,
-    staleTime: Infinity,
-    query: () => readHistory(toValue(bookId), toValue(chapterId)!),
   }));
   const history = computed(() => {
     const ch = toValue(chapterId);

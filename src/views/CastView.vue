@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
+import { plural } from "@/lib/contents";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { sizeLabel } from "@/lib/audioFormat";
@@ -18,8 +19,10 @@ import { useRoute } from "vue-router";
 
 import { useBookId } from "@/composables/useBookId";
 import { useBookScripts, useCast } from "@/queries";
+import { GENDER } from "@/lib/scriptReview";
 import { UiSelect, UiCombobox, UiCheckbox, UiSwitch, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
+import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
 import {
   ChevronDown as OpenIcon,
   ChevronRight as ClosedIcon,
@@ -44,8 +47,10 @@ const voiceOpts = computed(() => endpointsStore.voiceOptions);
 const bookId = useBookId();
 // the cast: read from the server when the page opens, or the seeded world's
 const { characters: cast } = useCast(bookId);
-// every speaker's line count, and the chapters they appear in, are read across the whole book
-useBookScripts(bookId);
+// every speaker's line count, and the chapters they appear in, are read across the whole book —
+// and are not counts at all until every scripted chapter is in
+const { failed: unread, loading: reading, retry: readAgain } = useBookScripts(bookId);
+const counted = computed(() => !reading.value && !unread.value.length);
 const stats = computed(() => castStore.castStats(bookId));
 const suggestions = computed(() => castStore.mergeSuggestions(bookId));
 const q = ref("");
@@ -127,13 +132,10 @@ function commit() {
   if (editing.value) castStore.renameCharacter(bookId, editing.value, draft.value);
   editing.value = null;
 }
-const genderLabel = { m: "male", f: "female", n: "neutral", "?": "unknown" };
-const GENDERS: { value: Gender; label: string }[] = [
-  { value: "f", label: "female" },
-  { value: "m", label: "male" },
-  { value: "n", label: "neutral" },
-  { value: "?", label: "unknown" },
-];
+const GENDERS = (["f", "m", "n", "?"] as Gender[]).map((value) => ({
+  value,
+  label: GENDER[value] ?? "unknown",
+}));
 
 // ---------- the full record ----------
 // One row at a time: the detail is wide, and two open at once is a diff nobody asked for.
@@ -329,10 +331,10 @@ const duplicate = computed(
           >{{ s.into }}</span
         >
         <span class="min-w-0 flex-1 truncate text-xs text-zinc-500"
-          >{{ s.reason }} · {{ stats[s.from]?.lines ?? 0 }} line{{
-            (stats[s.from]?.lines ?? 0) === 1 ? "" : "s"
-          }}
-          would move</span
+          >{{ s.reason
+          }}<template v-if="counted">
+            · {{ plural(stats[s.from]?.lines ?? 0, "line") }} would move</template
+          ></span
         >
         <button
           class="btn-primary btn-xs"
@@ -359,6 +361,12 @@ const duplicate = computed(
       />
       <button class="ml-auto text-xs text-zinc-500" @click="sel = new Set()">clear</button>
     </div>
+
+    <ReadFailure
+      v-if="unread.length"
+      :message="`${scriptsUnread(unread.length)}, so the speakers’ line counts are not shown.`"
+      @retry="readAgain"
+    />
 
     <div class="card overflow-x-auto">
       <table class="w-full min-w-[760px] text-sm">
@@ -448,10 +456,10 @@ const duplicate = computed(
                   :title="`Set ${c.name}’s gender`"
                   @click="toggleOpen(c.name)"
                 >
-                  {{ genderLabel[c.gender] ?? "unknown" }}
+                  {{ GENDER[c.gender] ?? "unknown" }}
                 </button>
               </td>
-              <td class="pr-4 text-right font-mono text-xs">{{ st.lines }}</td>
+              <td class="pr-4 text-right font-mono text-xs">{{ counted ? st.lines : "…" }}</td>
               <td class="pl-2">
                 <div
                   class="flex h-3 gap-px"
@@ -464,7 +472,7 @@ const duplicate = computed(
                     :class="st.chapters.has(i) ? 'bg-violet-500' : 'bg-zinc-200 dark:bg-zinc-800'"
                   ></span>
                 </div>
-                <div class="text-[10px] text-zinc-400">
+                <div v-if="counted" class="text-[10px] text-zinc-400">
                   {{ st.chapters.size }} ch · first ch {{ st.first ?? "—" }}
                 </div>
               </td>
@@ -566,8 +574,7 @@ const duplicate = computed(
                     >
                       <div class="font-medium">Samples waiting</div>
                       <div class="text-zinc-500">
-                        {{ w.samples.length }} recording{{ w.samples.length === 1 ? "" : "s" }} of
-                        “{{ w.title }}”,
+                        {{ plural(w.samples.length, "recording") }} of “{{ w.title }}”,
                         {{ sizeLabel(w.samples.reduce((n, x) => n + x.bytes, 0)) }} · from
                         {{ w.source }}
                       </div>

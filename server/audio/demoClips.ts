@@ -11,30 +11,16 @@
 //
 // Only a url a clip row holds is made, and only as a WAV, the one format the tone is written in: a
 // name no clip holds stays the 404 it is in the real library.
-import { and, eq } from "drizzle-orm";
-
 import { formatOfFile, type MakeClip } from "~/audio/files";
 import type { Db } from "~/db/client";
-import { clips, segments } from "~/db/schema";
+import { clipByUrl } from "~/db/script";
 import { SAMPLE_RATE, toneOf, toneWav } from "~/providers/fakeSpeech";
 
 /** What makes a clip's file from its row in this database; the demo library's files are given it. */
 export function demoClips(db: Db): MakeClip {
   return (bookId, url) => {
     if (formatOfFile(url) !== "wav") return null;
-    const clip = db
-      .select({ speaker: segments.speaker, duration: clips.duration, rate: clips.sampleRate })
-      .from(clips)
-      .innerJoin(
-        segments,
-        and(
-          eq(segments.bookId, clips.bookId),
-          eq(segments.chapterId, clips.chapterId),
-          eq(segments.id, clips.segmentId),
-        ),
-      )
-      .where(and(eq(clips.bookId, bookId), eq(clips.url, url)))
-      .get();
+    const clip = clipByUrl(db, bookId, url);
     return clip ? toneWav(toneOf(clip.speaker), clip.duration, clip.rate ?? SAMPLE_RATE) : null;
   };
 }

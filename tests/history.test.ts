@@ -8,6 +8,8 @@
 // chapter of The Cliché Cultivation World is scripted and narrated; a comparison needs no library,
 // and a test that puts the demo into a situation is handed it rebuilt, so only the rest reset it.
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { useQueryCache } from "@pinia/colada";
+import { keys } from "@/queries/keys";
 
 import { readinessOf } from "@/lib/exports";
 import {
@@ -21,7 +23,6 @@ import { ApiError, libraryService, type LibraryService } from "@/services/librar
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useHistoryStore } from "@/stores/history";
-import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
@@ -43,7 +44,6 @@ let pinia: TestPinia;
 let castStore: ReturnType<typeof useCastStore>;
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
 let historyStore: ReturnType<typeof useHistoryStore>;
-let jobsStore: ReturnType<typeof useJobsStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;
 let scriptsStore: ReturnType<typeof useScriptsStore>;
 let transferStore: ReturnType<typeof useTransferStore>;
@@ -91,7 +91,6 @@ beforeEach(() => {
   castStore = useCastStore();
   endpointsStore = useEndpointsStore();
   historyStore = useHistoryStore();
-  jobsStore = useJobsStore();
   libraryStore = useLibraryStore();
   scriptsStore = useScriptsStore();
   transferStore = useTransferStore();
@@ -348,12 +347,12 @@ describe("restoring", () => {
 
   test("a run in flight is not raced: the restore waits for it", async () => {
     const checkpoint = await withHistory();
-    jobsStore.jobs = [inFlight(1)];
+    useQueryCache().setQueryData(keys.jobs, [inFlight(1)]);
     expect(historyStore.busyJobs("cliche", 1)).toHaveLength(1);
     expect(historyStore.restore("cliche", 1, checkpoint.id)).toBe(false);
     expect(head().origin.kind).not.toBe("restored");
 
-    jobsStore.jobs = [];
+    useQueryCache().setQueryData(keys.jobs, []);
     expect(historyStore.restore("cliche", 1, checkpoint.id)).toBe(true);
   });
 });
@@ -426,7 +425,7 @@ describe("importing a script file", () => {
   test("a chapter with a run in flight is left alone", async () => {
     await open(1);
     readIn([fileChapter(1, (lines) => (dialogue(lines)[0].speaker = "Elder Mo"))]);
-    jobsStore.jobs = [inFlight(1)];
+    useQueryCache().setQueryData(keys.jobs, [inFlight(1)]);
     const before = JSON.stringify(segments());
     const report = transferStore.apply("cliche", [1])!;
     expect(report.skipped).toMatchObject([{ chapterId: 1, why: "busy" }]);

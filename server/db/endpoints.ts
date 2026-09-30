@@ -7,14 +7,20 @@
 // `<endpointId>/<voiceId>` as text, and the requests ledger keeps the id it was made under — so
 // replacing the rows moves nothing and orphans nothing. What an endpoint owns (voices, the rate
 // schedule, promotions, expression tags) cascades with it. The library's default scripting prompt
-// is edited on the same page and saved in the same write, though it lives in `settings`.
+// is edited on the same page and saved in the same write, though it lives in `settings`, and so are
+// the scripting settings (`script`: which profile runs go to), which the Scripting page picks.
 import { asc, eq, sql } from "drizzle-orm";
 
-import type { Endpoint, Profile, PromptTemplate } from "@/types";
-import type { Credential } from "@/lib/credentials";
+import type { Credential, Endpoint, Profile, PromptTemplate, ScriptSettings } from "@/types";
+import type { StoredEndpoint } from "@/lib/endpointTelemetry";
 import type { Db, Tx } from "~/db/client";
 import * as rows from "~/db/rows";
-import { readLibraryPrompt, writeLibraryPrompt } from "~/db/settings";
+import {
+  readLibraryPrompt,
+  readScriptSettings,
+  writeLibraryPrompt,
+  writeScriptSettings,
+} from "~/db/settings";
 import {
   credentials,
   endpoints,
@@ -26,7 +32,7 @@ import {
 
 /** The whole configuration the Endpoints page edits. */
 export interface EndpointConfig {
-  endpoints: rows.EndpointSettings[];
+  endpoints: StoredEndpoint[];
   profiles: Profile[];
   credentials: Credential[];
   /**
@@ -34,6 +40,11 @@ export interface EndpointConfig {
    * write, left out keeps the one stored, so a save that never showed it cannot reset it.
    */
   prompt?: PromptTemplate | null;
+  /**
+   * The scripting settings: the profile runs go to, and the switches beside it. Always there in a
+   * read, naming only a profile that is saved; in a write, left out keeps the ones stored.
+   */
+  script?: ScriptSettings;
 }
 
 /**
@@ -50,7 +61,7 @@ export function writeCredentials(db: Db | Tx, registry: readonly Credential[]): 
 /** An endpoint and everything hanging off it: voices, the schedule, promotions, expression tags. */
 export function writeEndpoint(
   db: Db | Tx,
-  e: rows.EndpointSettings,
+  e: StoredEndpoint,
   position: number,
   apiKey: string | null = null,
 ): void {
@@ -151,11 +162,17 @@ export function readCredentials(db: Db | Tx): Credential[] {
 }
 
 export function readEndpointConfig(db: Db | Tx): EndpointConfig {
+  const profiles = readProfiles(db);
+  const script = readScriptSettings(db);
+  // a save that left the settings out may have removed the profile they chose
+  if (script.profile != null && !profiles.some((p) => p.id === script.profile))
+    script.profile = null;
   return {
     endpoints: readEndpoints(db),
-    profiles: readProfiles(db),
+    profiles,
     credentials: readCredentials(db),
     prompt: readLibraryPrompt(db),
+    script,
   };
 }
 
@@ -203,4 +220,5 @@ export function replaceEndpoints(tx: Tx, config: EndpointConfig): void {
     writeProfile(tx, p, i, keyAfterSave(p.apiKey, kept.get(rows.profileKey(p.id)))),
   );
   if (config.prompt !== undefined) writeLibraryPrompt(tx, config.prompt);
+  if (config.script !== undefined) writeScriptSettings(tx, config.script);
 }

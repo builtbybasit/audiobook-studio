@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
+import { plural } from "@/lib/contents";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
@@ -14,11 +15,11 @@ import { useUiStore } from "@/stores/ui";
 // the selection away rather than carry hidden lines into a correction.
 import { computed, nextTick, ref, watch } from "vue";
 import type { Component } from "vue";
-import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
 import { UiCheckbox, UiSelect, UiToggleGroup } from "@/ui";
 import { useFilter } from "reka-ui";
 import { useBookId } from "@/composables/useBookId";
+import { enumParam, textParam, useQueryParam } from "@/composables/useQueryParam";
 import { useBookScripts, useCast } from "@/queries";
 import {
   Flag as FlagIcon,
@@ -29,6 +30,7 @@ import {
   X as ClearIcon,
 } from "@lucide/vue";
 import StatusDot from "@/components/StatusDot.vue";
+import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
 import BulkPanel from "@/views/search/BulkPanel.vue";
 import PronunciationDialog from "@/views/search/PronunciationDialog.vue";
 import type { BulkResult, BulkTarget, Segment, UndoEntry } from "@/types";
@@ -37,39 +39,14 @@ const castStore = useCastStore();
 const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
-const route = useRoute();
-const router = useRouter();
 const bookId = useBookId();
 useCast(bookId);
-useBookScripts(bookId);
-const q = ref(String(route.query.q ?? ""));
-const speaker = ref(String(route.query.speaker ?? ""));
+// a chapter whose script is not in yet has no lines to match, which is not the same as none
+const { failed: unread, loading: reading, retry: readAgain } = useBookScripts(bookId);
+const q = useQueryParam("q", textParam());
+const speaker = useQueryParam("speaker", textParam());
 const TYPES = ["all", "dialogue", "narration", "thought"];
-const asType = (v: unknown): string => (TYPES.includes(String(v)) ? String(v) : "all");
-const type = ref(asType(route.query.type));
-watch(
-  () => route.query.q,
-  (v) => {
-    if (v != null) q.value = String(v);
-  },
-);
-watch(q, (v) => router.replace({ query: { ...route.query, q: v || undefined } }));
-watch(
-  () => route.query.speaker,
-  (v) => {
-    speaker.value = String(v ?? "");
-  },
-);
-watch(speaker, (v) => router.replace({ query: { ...route.query, speaker: v || undefined } }));
-watch(
-  () => route.query.type,
-  (v) => {
-    type.value = asType(v);
-  },
-);
-watch(type, (v) =>
-  router.replace({ query: { ...route.query, type: v === "all" ? undefined : v } }),
-);
+const type = useQueryParam("type", enumParam(TYPES, "all"));
 const { contains } = useFilter({ sensitivity: "base" });
 const cast = computed(() => castStore.charactersOf(bookId));
 const speakerOpts = computed(() => [
@@ -168,7 +145,7 @@ function clearSelection() {
   const n = selected.value.size;
   selected.value = new Set();
   panel.value = null; // a panel with nothing selected has nothing to say
-  announcement.value = n ? `Selection cleared — ${n} line${n === 1 ? "" : "s"}.` : "";
+  announcement.value = n ? `Selection cleared — ${plural(n, "line")}.` : "";
 }
 
 // a different query or filter means a different match set: the old selection is dropped rather than
@@ -180,8 +157,8 @@ watch(criteria, () => {
   if (!selected.value.size) return;
   const n = selected.value.size;
   selected.value = new Set();
-  announcement.value = `Selection cleared: the search changed, so the ${n} selected line${n === 1 ? "" : "s"} no longer apply.`;
-  uiStore.toast(`Selection cleared — ${n} line${n === 1 ? "" : "s"}`, {
+  announcement.value = `Selection cleared: the search changed, so the ${plural(n, "selected line")} no longer apply.`;
+  uiStore.toast(`Selection cleared — ${plural(n, "line")}`, {
     kind: "info",
     description: "The search changed, so nothing stays selected out of sight.",
     timeout: 4000,
@@ -216,7 +193,7 @@ function applied(result: BulkResult) {
   last.value = { result, entry: result.entry };
   panel.value = null;
   clearSelection();
-  announcement.value = `${result.label}: ${result.changed} line${result.changed === 1 ? "" : "s"} changed.`;
+  announcement.value = `${result.label}: ${plural(result.changed, "line")} changed.`;
 }
 function undo() {
   if (!last.value?.entry) return;
@@ -289,10 +266,8 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
       <span>
         <b v-if="selected.size" class="text-zinc-900 dark:text-zinc-100"
           >{{ selected.size }} selected</b
-        ><span v-if="selected.size"> · </span>{{ total }} matching line{{
-          total === 1 ? "" : "s"
-        }}
-        in {{ results.length }} chapter{{ results.length === 1 ? "" : "s" }}
+        ><span v-if="selected.size"> · </span>{{ plural(total, "matching line") }} in
+        {{ plural(results.length, "chapter") }}
       </span>
       <button v-if="selected.size" class="chip" @click="clearSelection">
         <ClearIcon class="icon-sm" /> Clear selection
@@ -309,19 +284,14 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
       class="card flex flex-wrap items-center gap-x-3 gap-y-1 border-violet-300 p-3 text-sm dark:border-violet-500/40"
     >
       <span
-        ><b>{{ last.result.label }}</b> — {{ last.result.changed }} line{{
-          last.result.changed === 1 ? "" : "s"
-        }}
-        in {{ last.result.chapters }} chapter{{
-          last.result.chapters === 1 ? "" : "s"
-        }}
-        changed<template v-if="last.result.skipped"
+        ><b>{{ last.result.label }}</b> — {{ plural(last.result.changed, "line") }} in
+        {{ plural(last.result.chapters, "chapter") }} changed<template v-if="last.result.skipped"
           >, {{ last.result.skipped }} left as they were</template
         >.</span
       >
       <span v-if="last.result.stale" class="text-xs text-amber-600"
-        >{{ last.result.stale }} clip{{ last.result.stale === 1 ? "" : "s" }} need re-narration —
-        the audio is kept until you run it.</span
+        >{{ plural(last.result.stale, "clip") }} need re-narration — the audio is kept until you run
+        it.</span
       >
       <button v-if="undoable" class="btn-ghost btn-xs ml-auto" @click="undo">
         <UndoIcon class="icon-sm" /> Undo this batch
@@ -341,9 +311,9 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
     >
       <div class="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
         <span class="font-medium"
-          >{{ selected.size }} line{{ selected.size === 1 ? "" : "s" }}
+          >{{ plural(selected.size, "line") }}
           <span class="font-normal text-zinc-500"
-            >in {{ selectedChapters }} chapter{{ selectedChapters === 1 ? "" : "s" }}</span
+            >in {{ plural(selectedChapters, "chapter") }}</span
           ></span
         >
         <div class="flex flex-wrap items-center gap-1.5">
@@ -455,8 +425,13 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
       </button>
     </div>
 
+    <ReadFailure
+      v-if="unread.length"
+      :message="`${scriptsUnread(unread.length)}, so ${unread.length === 1 ? 'its' : 'their'} lines are not searched.`"
+      @retry="readAgain"
+    />
     <div v-if="!results.length" class="card p-8 text-center text-sm text-zinc-500">
-      {{ q ? `Nothing matches “${q}”.` : "Type to search." }}
+      {{ reading ? "Reading the script…" : q ? `Nothing matches “${q}”.` : "Type to search." }}
     </div>
 
     <PronunciationDialog :book-id="bookId" :open="pronounce" :term="q" @close="pronounce = false" />

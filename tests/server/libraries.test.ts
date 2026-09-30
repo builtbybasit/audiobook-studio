@@ -17,7 +17,7 @@ import { join } from "node:path";
 import type { Book, Character, Endpoint, ExportSettings, Job, Profile, Segment } from "@/types";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { isSimulated, SIMULATED_BASE_URL } from "@/lib/providers";
-import { makeWorld } from "@/mock/world";
+import { makeWorld } from "~/demo/seed/world";
 import type { Db } from "~/db/client";
 import { SIMULATED_ID } from "~/demo/seed";
 import { DEMO_BASE, openLibrary, REAL_BASE, serveLibraries, type Library } from "~/libraries";

@@ -138,9 +138,28 @@ export interface EndpointLive {
   rateLimits: number;
   /** when the cooldown after its last rate limit ends, epoch ms; in the past when there is none */
   backoffUntil: number;
+  /**
+   * The clips it rendered that the library plays, done and failed, across every book — counted
+   * from what is stored, so unlike the rest these survive a restart. Absent for an endpoint with
+   * none.
+   */
+  done?: number;
+  failed?: number;
 }
 
 export type EndpointKind = "scripting" | "tts";
+
+/**
+ * A named credential: which provider account an endpoint uses, so several endpoints can say they
+ * share one. Only a name — the server keeps one key per endpoint and never sends it back, so no
+ * key is ever here. The registry travels with the endpoint configuration.
+ */
+export interface Credential {
+  id: string;
+  label: string;
+  /** free-text reminder of which account this is — never the key itself */
+  note: string;
+}
 
 /** Operational settings shared by both kinds. Optional on the endpoint types so anything saved
  *  before they existed still loads; `ensureOps` fills the defaults in on first use. */

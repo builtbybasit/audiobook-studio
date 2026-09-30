@@ -1,39 +1,40 @@
 <script setup lang="ts">
-import { useCastStore } from "@/stores/cast";
-import { useEndpointsStore } from "@/stores/endpoints";
-import { useHistoryStore } from "@/stores/history";
-import { useChapterHistory } from "@/queries";
+import { useBookScripts, useChapterHistory } from "@/queries";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 
 // Script reader: narration flows as prose; dialogue and thought are lifted into cards with a
-// speaker pill and the voice direction. Right rail (toggleable) = the cast *in this chapter* with
-// aliases, spoiler-hidden descriptions and inline rename/merge; the rest of the cast is collapsed.
-// Any segment can be clicked to edit speaker / type / direction in place. Typography via the Aa menu.
+// speaker pill and the voice direction. Right rail (toggleable, `ChapterCastRail`) = the cast *in
+// this chapter* with aliases, spoiler-hidden descriptions and inline rename; the rest of the cast is
+// collapsed. Any segment can be clicked to edit speaker / type / direction in place
+// (`SegmentEditor`). Typography via the Aa menu.
 // The model's segment boundaries are not always right — two speakers in one segment, or a sentence cut
 // in half — so the editor can split a segment at any word gap (click the gap; sentence ends are marked)
 // and join it with its neighbour. Both invalidate the audio they touch and both are undoable.
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { useScript, TYPES } from "@/views/scripting/shared";
-import { directionOptions } from "@/lib/bulk";
+import { useScript } from "@/views/scripting/shared";
+import { preview, provideSegmentEditing } from "@/views/scripting/segmentEditing";
+import { useBurstToast } from "@/views/scripting/useBurstToast";
+import { useReaderKeys } from "@/views/scripting/useReaderKeys";
 import { useReader } from "@/stores/reader";
 import ReaderSettings from "@/components/ReaderSettings.vue";
 import ScriptHistory from "@/views/scripting/ScriptHistory.vue";
-import VoicePicker from "@/components/VoicePicker.vue";
+import ScriptProfileSelect from "@/views/scripting/ScriptProfileSelect.vue";
+import CorrectionsNote from "@/views/scripting/CorrectionsNote.vue";
+import SegmentEditor from "@/views/scripting/SegmentEditor.vue";
+import ChapterCastRail from "@/views/scripting/ChapterCastRail.vue";
 import ExpressionText from "@/components/ExpressionText.vue";
-import ExpressionEditor from "@/components/ExpressionEditor.vue";
-import WordStrip from "@/components/WordStrip.vue";
-import { PAUSE_STEPS, defaultPause, pauseAfter, secs } from "@/lib/speech";
+import { secs } from "@/lib/speech";
 import { usePlayer } from "@/composables/usePlayer";
+import { idParam, useQueryParam } from "@/composables/useQueryParam";
 import { chapterQueue, chapterQueueId, clipOf, segmentStart } from "@/composables/useChapterQueue";
 import {
   AudioLines as NarrationIcon,
   ChevronUp as ChevronUpIcon,
   ChevronDown as ChevronDownIcon,
-  PanelRightClose as HideCastIcon,
   Maximize2 as FocusIcon,
   Minimize2 as ExitFocusIcon,
   Flag as FlagIcon,
@@ -42,32 +43,19 @@ import {
   Play as PlayIcon,
   RotateCcw as RetryIcon,
   Scissors as SplitIcon,
-  Trash2 as TrashIcon,
-  Type as TextIcon,
   TriangleAlert as WarnIcon,
   Users as CastIcon,
 } from "@lucide/vue";
-import { UiSelect, UiCombobox, UiToggleGroup, UiTooltip, UiSwitch } from "@/ui";
+import { UiSelect, UiToggleGroup } from "@/ui";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
-import type { Character, Gender, Segment, SegmentType } from "@/types";
-const typeOpts = TYPES.map((t) => ({ value: t, label: t }));
-const speakerOpts = computed(() => [
-  ...inChapter.value.map((c) => ({
-    value: c.name,
-    label: c.name,
-    color: c.color,
-    group: "In this chapter",
-    hint: `${counts.value[c.name]} line${counts.value[c.name] === 1 ? "" : "s"}`,
-    keywords: c.aliases.join(" "),
-  })),
-  ...rest.value.map((c) => ({
-    value: c.name,
-    label: c.name,
-    color: c.color,
-    group: "Rest of cast",
-    keywords: c.aliases.join(" "),
-  })),
-]);
+import type { Segment } from "@/types";
+
+const props = withDefaults(
+  defineProps<{ bookId: string; chapterId: number; focusMode?: boolean }>(),
+  { focusMode: false },
+);
+const emit = defineEmits<{ "toggle-focus": [] }>();
+const { segments, cast, counts, inChapter, colorOf } = useScript(props);
 const filterOpts = computed(() => [
   { value: "", label: "All speakers" },
   ...inChapter.value.map((c) => ({
@@ -77,16 +65,6 @@ const filterOpts = computed(() => [
     hint: counts.value[c.name] + "",
   })),
 ]);
-
-const props = withDefaults(
-  defineProps<{ bookId: string; chapterId: number; focusMode?: boolean }>(),
-  { focusMode: false },
-);
-const emit = defineEmits<{ "toggle-focus": [] }>();
-const { segments, cast, counts, inChapter, colorOf } = useScript(props);
-const castStore = useCastStore();
-const endpointsStore = useEndpointsStore();
-const historyStore = useHistoryStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 const scriptsStore = useScriptsStore();
@@ -94,17 +72,24 @@ const uiStore = useUiStore();
 const reader = useReader();
 const route = useRoute();
 const router = useRouter();
+// Every scripted chapter's script, for what is counted across the book: the rest of the cast's
+// lines, the directions already in use, and the chapter the player moves on to.
+const bookScripts = useBookScripts(() => props.bookId);
 const volume = computed(() => libraryStore.volumeOf(props.bookId, props.chapterId));
 const multiVolume = computed(() => libraryStore.volumesOf(props.bookId).length > 1);
 
 const mode = ref("all"); // all | dialogue
 const warnOpen = ref(false); // the unverified-chunk banner reads as one line until asked
 const speaker = ref(""); // '' = everyone
+/** the line whose editor is open */
 const open = ref<number | null>(null);
-const showRest = ref(false);
-const revealed = ref(new Set<string>());
-const editingName = ref<string | null>(null);
-const draft = ref("");
+/** the line the keys act on */
+const focus = ref<number | null>(null);
+// …and in the URL as `?seg=`, so a link to a line — from Search, the review inbox or the ledger's
+// edit key — lands on it, and a reload keeps your place
+const linked = useQueryParam("seg", idParam());
+const editing = provideSegmentEditing(props, { open, focus });
+const { splitting, editingText, nextOf, gapOf, bookGap, setPause } = editing;
 
 const rows = computed(() =>
   segments.value.filter(
@@ -113,21 +98,9 @@ const rows = computed(() =>
       (!speaker.value || s.speaker === speaker.value),
   ),
 );
-const rest = computed(() => cast.value.filter((c) => !counts.value[c.name]));
 const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterId)!);
 const chars = computed(() => segments.value.reduce((a, s) => a + s.text.length, 0));
 
-function jumpToSpeaker(name: string) {
-  speaker.value = speaker.value === name ? "" : name;
-}
-function startRename(c: Character) {
-  editingName.value = c.name;
-  draft.value = c.name;
-}
-function commitRename() {
-  if (editingName.value) castStore.renameCharacter(props.bookId, editingName.value, draft.value);
-  editingName.value = null;
-}
 function nextNew() {
   const s = segments.value.find((s) => cast.value.find((c) => c.name === s.speaker)?.isNew);
   if (s) {
@@ -137,112 +110,8 @@ function nextNew() {
 }
 const unresolved = computed(() => inChapter.value.filter((c) => c.isNew).length);
 const fallbacks = computed(() => segments.value.filter((s) => s.fallback));
-// directions: presets + everything already used in this book, free text allowed
-const dirOpts = computed(() => directionOptions(scriptsStore.segments, props.bookId));
-// ---- segment boundaries: split at a word gap, join with a neighbour. Both live in the editor
-// under the line: the split turns the line into a strip of words with its gaps showing (the same
-// strip expressions are placed on), and hovering a gap shows both halves as they would come out;
-// hovering a join shows the merged line and who would read it.
-const splitting = ref<number | null>(null);
-/** the gap under the pointer while splitting, for the two-halves preview */
-const cutAt = ref<number | null>(null);
-const joinPreview = ref<"prev" | "next" | null>(null);
-const at = (id: number) => segments.value.findIndex((x) => x.id === id);
-const nextOf = (s: Segment): Segment | undefined => segments.value[at(s.id) + 1];
-const prevOf = (s: Segment): Segment | undefined => segments.value[at(s.id) - 1];
-const preview = (t: string, n = 42) => (t.length > n ? t.slice(0, n) + "…" : t);
-/** The line a join would produce: the earlier segment's text, the separator a split kept, the later one's. */
-function mergedText(s: Segment, dir: "next" | "prev"): string {
-  const first = dir === "next" ? s : prevOf(s);
-  const second = first && nextOf(first);
-  if (!first || !second) return "";
-  const text = `${first.text.trimEnd()}${first.sep ?? " "}${second.text.trimStart()}`;
-  return text.length > 180
-    ? `${text.slice(0, 100).trimEnd()} … ${text.slice(-70).trimStart()}`
-    : text;
-}
-function doSplit(s: Segment, offset: number) {
-  const id = scriptsStore.splitSegment(props.bookId, props.chapterId, s.id, offset);
-  splitting.value = null;
-  cutAt.value = null;
-  if (id == null) return;
-  // the second half is the one that usually needs a different speaker — open it
-  open.value = id;
-  focus.value = id;
-  nextTick(() =>
-    document.getElementById("seg-" + id)?.scrollIntoView({ block: "center", behavior: "smooth" }),
-  );
-}
-// ---- the words themselves. The model mis-hears a word, doubles a line, or carries an author's
-// note into the story — Contents keeps such a chapter whole and says the note can be trimmed here,
-// so the editor has to be able to say what the line is, and to drop it.
-const modKey = /Mac|iPhone/.test(navigator.platform) ? "⌘" : "Ctrl";
-const editingText = ref<number | null>(null);
-const textDraft = ref("");
-function startTextEdit(s: Segment) {
-  open.value = s.id;
-  focus.value = s.id;
-  editingText.value = s.id;
-  textDraft.value = s.text;
-  void nextTick(() => document.getElementById(`seg-text-${s.id}`)?.focus());
-}
-/** Save the rewritten line. Expressions move with the words they sit on (the store remaps them),
- *  and the clip no longer matches the words, so it goes stale — worth an undo. */
-function commitText(s: Segment) {
-  const text = textDraft.value.trim();
-  editingText.value = null;
-  if (!text || text === s.text) return;
-  const before = preview(s.text, 60);
-  const revert = scriptsStore._editSnapshot(props.bookId, props.chapterId);
-  scriptsStore.updateSegment(props.bookId, props.chapterId, s.id, { text });
-  uiStore.toast(`#${s.id} rewritten`, { description: `Was “${before}”`, undo: revert });
-}
-function dropSegment(s: Segment) {
-  if (scriptsStore.deleteSegment(props.bookId, props.chapterId, s.id)) {
-    if (open.value === s.id) open.value = null;
-    if (focus.value === s.id) focus.value = null;
-    editingText.value = null;
-  }
-}
 
-function doJoin(s: Segment, dir: "next" | "prev") {
-  const first = dir === "next" ? s : prevOf(s);
-  if (!first || !nextOf(first)) return;
-  if (scriptsStore.joinSegments(props.bookId, props.chapterId, first.id)) {
-    open.value = first.id;
-    focus.value = first.id;
-  }
-}
-
-// ---- pacing: how long the book holds after this line. Silence is stitched, not rendered, so a
-// pause changes the chapter's length without invalidating a single clip.
-const pacing = computed(() => castStore.pacingOf(props.bookId));
-const gapOf = (s: Segment) => pauseAfter(s, nextOf(s), pacing.value);
-const bookGap = (s: Segment) => defaultPause(s, nextOf(s), pacing.value);
-const setPause = (s: Segment, v: number | null) =>
-  castStore.setPause(props.bookId, props.chapterId, s.id, v);
-
-// ---- one message per burst of keypresses ----
-// The keys that repeat — [ ] on the pause, 1–9 on the speaker — change a line you may not be
-// looking at, so they have to say what they did. One toast per press would bury the page under
-// near-identical messages, so a run of presses on the same line is announced once it settles, and
-// its undo steps back to where the run began rather than one press into it.
-const BURST_MS = 700;
-let burst: { key: string; timer: ReturnType<typeof setTimeout>; send: () => void } | null = null;
-/** Still mid-run on this key — the caller keeps the value the run started from. */
-const continuing = (key: string) => burst?.key === key;
-function announce(key: string, send: () => void) {
-  if (burst) {
-    clearTimeout(burst.timer);
-    if (burst.key !== key) burst.send(); // a different line: let its message out before this one
-  }
-  burst = { key, send, timer: setTimeout(flushBurst, BURST_MS) };
-}
-function flushBurst() {
-  const pending = burst;
-  burst = null;
-  pending?.send();
-}
+const { continuing, announce } = useBurstToast();
 
 /** Lengthen or shorten the silence after a line from the keyboard. The chips in the editor show
  *  what they did; a keystroke can land on a line that has scrolled away, so this one says the new
@@ -299,10 +168,6 @@ watch(
   },
 );
 
-const GENDER_LABEL: Partial<Record<Gender, string>> = { m: "male", f: "female", n: "neutral" };
-const sameSpeakerCount = (s: Segment) =>
-  segments.value.filter((x) => x.speaker === s.speaker && x.id !== s.id).length;
-
 // stale nudge: lines whose audio is out of date — edited after narration, or a half of a split that
 // has never been rendered at all (only counts once the chapter has audio)
 const stale = computed(
@@ -315,18 +180,17 @@ const stale = computed(
 );
 const edits = computed(() => segments.value.filter((s) => s.edited).length);
 
-// re-script: run the LLM again on this chapter, optionally re-applying manual edits; then show the diff
+// re-script: run the LLM again on this chapter, optionally re-applying manual edits; then show the
+// diff. The button is held to the same blockers as the page's Run, and says them.
 const rescriptOpen = ref(false);
-// the same preference the Scripting page's run settings hold, so the two never disagree
-const keepEdits = computed({
-  get: () => scriptingStore.scriptSettings.keepEdits,
-  set: (v: boolean) => (scriptingStore.scriptSettings.keepEdits = v),
-});
+const rescriptBlockers = computed(
+  () => scriptingStore.scriptEstimate(props.bookId, [props.chapterId]).blockers,
+);
 const diff = computed(() => scriptsStore.scriptDiff(props.bookId, props.chapterId));
 const showDiff = ref(true);
 function rescript() {
   rescriptOpen.value = false;
-  void scriptingStore.runScripting(props.bookId, [props.chapterId], { quiet: true });
+  void scriptingStore.startRun(props.bookId, [props.chapterId], { quiet: true });
 }
 function jumpTo(id: number) {
   focus.value = id;
@@ -339,7 +203,11 @@ function jumpTo(id: number) {
 // ---- history: the versions this chapter's script has been through. It takes over the reader's
 // body rather than opening beside it, so there is never a question of which script is on screen —
 // and `?history=1` opens it, which is how the seeded scenario lands on it.
-const history = ref(route.query.history === "1");
+const history = useQueryParam<boolean>("history", {
+  parse: (text) => text === "1",
+  serialize: (on) => (on ? "1" : undefined),
+  default: false,
+});
 const historyPanel = ref<{ back: () => boolean } | null>(null);
 // read through the query so the count is right before the panel has been opened
 const { versions: knownVersions } = useChapterHistory(
@@ -347,121 +215,30 @@ const { versions: knownVersions } = useChapterHistory(
   () => props.chapterId,
 );
 const versionCount = computed(() => knownVersions.value.length);
-watch(history, (on) => {
-  if (!!route.query.history === on) return;
-  void router.replace({ query: { ...route.query, history: on ? "1" : undefined } });
-});
-watch(
-  () => route.query.history,
-  (v) => (history.value = v === "1"),
-);
 /** Follow a change in the comparison back to the line it belongs to, in the script itself. */
 function jumpFromHistory(id: number) {
   history.value = false;
   jumpTo(id);
 }
 
-// keyboard: j/k or ↑/↓ move, Enter edit, Esc close, 1–9 assign speaker (in-chapter order), c toggles cast
-//
-// These are single letters with no modifier, and they used to be listened for on `window`: the
-// reader kept the keyboard wherever you had wandered to, so clicking a line here and then working
-// in the chapter list meant pressing 3 over there silently reassigned a speaker in here. They now
-// belong to this pane, and the one that changes something you may not be looking at says so.
+const toggleFocus = () => emit("toggle-focus");
 const root = ref<HTMLElement | null>(null);
-/** Where the last press landed. Prose and most rows are not focusable, so a click usually leaves
- *  `document.activeElement` on `<body>` and only the pointer says which pane you are working in.
- *  Starts inside, so a chapter you have just opened answers j/k without a click first. */
-let pointerInside = true;
-const onPointerDown = (e: PointerEvent) => {
-  pointerInside = !!root.value?.contains(e.target as Node);
-};
-/** Whether the reader owns the keyboard: something in it has focus, or nothing anywhere does and
- *  this is where you last clicked. */
-function owns(): boolean {
-  const el = root.value;
-  if (!el) return false;
-  const active = document.activeElement;
-  if (active && active !== document.body) return el.contains(active);
-  return pointerInside;
-}
-const focus = ref<number | null>(null);
-watch(focus, (value) => {
-  const current = Number(route.query.seg) || null;
-  if (current === value) return;
-  void router.replace({ query: { ...route.query, seg: value ? String(value) : undefined } });
+watch(focus, (value) => (linked.value = value));
+useReaderKeys({
+  root,
+  rows,
+  segments,
+  inChapter,
+  editing,
+  history,
+  historyBack: () => !!historyPanel.value?.back(),
+  focusMode: () => props.focusMode,
+  toggleFocus,
+  reader,
+  nudgePause,
+  playLine,
+  assignSpeaker,
 });
-function moveFocus(d: number) {
-  const ids = rows.value.map((r) => r.id);
-  const i = focus.value == null ? -1 : ids.indexOf(focus.value);
-  focus.value = ids[Math.max(0, Math.min(ids.length - 1, i < 0 ? 0 : i + d))] ?? null;
-  document
-    .getElementById("seg-" + focus.value)
-    ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-}
-function onKey(e: KeyboardEvent) {
-  if (!owns()) return;
-  const t = e.target as HTMLElement;
-  if (t.closest('[data-expression-editor], [role="dialog"]')) return;
-  // the history panel is over the script: the reader's single-key edits would land on lines nobody
-  // is looking at, so it keeps only the way out
-  if (history.value) {
-    if (e.key !== "Escape" || ["INPUT", "TEXTAREA"].includes(t.tagName)) return;
-    if (!historyPanel.value?.back()) history.value = false;
-    return;
-  }
-  // inside a field: let the widget (combobox/select) handle Escape itself; a second Escape closes the editor
-  if (
-    ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) ||
-    t.isContentEditable ||
-    t.closest?.("[role=listbox],[role=option]")
-  ) {
-    if (e.key === "Escape" && t.getAttribute("role") !== "combobox") t.blur();
-    return;
-  }
-  if (e.key === "ArrowDown" || e.key === "j") {
-    e.preventDefault();
-    moveFocus(1);
-  } else if (e.key === "ArrowUp" || e.key === "k") {
-    e.preventDefault();
-    moveFocus(-1);
-  } else if (e.key === "Enter" && focus.value) {
-    open.value = open.value === focus.value ? null : focus.value;
-  } else if (e.key === "Escape") {
-    if (open.value || splitting.value) {
-      open.value = null;
-      splitting.value = null;
-      cutAt.value = null;
-    } else if (props.focusMode) emit("toggle-focus");
-  } else if (e.key === "s" && focus.value) {
-    // the split lives in the editor, so the editor opens with it
-    open.value = focus.value;
-    splitting.value = splitting.value === focus.value ? null : focus.value;
-    cutAt.value = null;
-  } else if (e.key === "m" && focus.value) {
-    const s = segments.value.find((x) => x.id === focus.value);
-    if (s) doJoin(s, "next");
-  } else if ((e.key === "[" || e.key === "]") && focus.value) {
-    const s = segments.value.find((x) => x.id === focus.value);
-    if (s && nextOf(s)) nudgePause(s, e.key === "]" ? 0.25 : -0.25);
-  } else if (e.key === "e" && focus.value) {
-    e.preventDefault(); // the field opens focused, and would otherwise be handed this very "e"
-    const s = segments.value.find((x) => x.id === focus.value);
-    if (s) startTextEdit(s);
-  } else if (e.key === "p" && focus.value) {
-    const s = segments.value.find((x) => x.id === focus.value);
-    if (s) playLine(s);
-  } else if (e.key === "c") {
-    reader.showCast = !reader.showCast;
-  } else if (e.key === "f") {
-    emit("toggle-focus");
-  } else if (e.key === "/" && !e.shiftKey) {
-    e.preventDefault();
-    document.querySelector<HTMLInputElement>('input[placeholder^="Find chapter"]')?.focus();
-  } else if (/^[1-9]$/.test(e.key) && focus.value) {
-    const c = inChapter.value[Number(e.key) - 1];
-    if (c) assignSpeaker(focus.value, c.name);
-  }
-}
 /** Reassign the focused line by number key. The picker in the editor needs no toast — you are
  *  looking at what you changed — but a keystroke can land on a line that has scrolled away, and a
  *  speaker swapped in silence is only found later, in the audio. So this one names both speakers,
@@ -489,22 +266,13 @@ function assignSpeaker(id: number, name: string) {
   );
 }
 
+// a line the address names that is not the one in hand came from a link: go to it
 onMounted(() => {
-  window.addEventListener("keydown", onKey);
-  window.addEventListener("pointerdown", onPointerDown, true);
-  if (route.query.seg) jumpTo(Number(route.query.seg));
+  if (linked.value) jumpTo(linked.value);
 });
-onUnmounted(() => {
-  window.removeEventListener("keydown", onKey);
-  window.removeEventListener("pointerdown", onPointerDown, true);
-  flushBurst(); // leaving the chapter mid-run still owes you the message
+watch(linked, (id) => {
+  if (id && id !== focus.value) jumpTo(id);
 });
-watch(
-  () => route.query.seg,
-  (v) => {
-    if (v) jumpTo(Number(v));
-  },
-);
 watch(open, (v) => {
   if (v) focus.value = v;
   if (v !== editingText.value) editingText.value = null;
@@ -556,40 +324,11 @@ watch(open, (v) => {
               <PopoverContent :side-offset="6" align="end" class="ui-popup w-80 p-3 text-xs">
                 <div class="label mb-2">Re-script chapter {{ chapter.id }}</div>
                 <div class="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1.5">
-                  <span class="text-zinc-500">Profile</span
-                  ><UiSelect
-                    v-model="scriptingStore.scriptSettings.profile"
-                    :options="
-                      endpointsStore.profiles.map((p) => ({
-                        value: p.id,
-                        label: p.name,
-                        hint: p.model,
-                      }))
-                    "
-                    size="xs"
-                    block
-                  />
+                  <span class="text-zinc-500">Endpoint</span><ScriptProfileSelect />
                   <span class="text-zinc-500">Chunking</span>
                   <span class="text-zinc-400">Uses this endpoint’s request settings.</span>
                 </div>
-                <div class="mt-2 rounded-md bg-zinc-50 p-2 dark:bg-zinc-800/60">
-                  <template v-if="edits"
-                    ><UiSwitch
-                      v-model="keepEdits"
-                      :label="`keep my ${edits} manual edit${edits === 1 ? '' : 's'}`"
-                    />
-                    <div class="mt-1 text-[11px] text-zinc-500">
-                      {{
-                        keepEdits
-                          ? "Speaker, type, direction and expression annotations are re-applied where the text still matches."
-                          : "Your edits are discarded — the new run wins."
-                      }}
-                    </div></template
-                  >
-                  <div v-else class="text-[11px] text-zinc-500">
-                    No manual edits in this chapter.
-                  </div>
-                </div>
+                <CorrectionsNote class="mt-2" :edits="edits" scope="this chapter" />
                 <div class="mt-1 text-[11px] text-zinc-500">
                   <template v-if="segments.some((s) => s.audio.duration)"
                     >Narrated audio is kept; lines whose speaker or direction change become
@@ -597,9 +336,22 @@ watch(open, (v) => {
                   >
                   A “what changed” panel appears when it finishes.
                 </div>
+                <div
+                  v-if="rescriptBlockers.length"
+                  class="mt-2 space-y-1 rounded-md bg-amber-50 p-2 text-[11px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
+                  role="status"
+                >
+                  <p v-for="reason in rescriptBlockers" :key="reason">{{ reason }}</p>
+                </div>
                 <div class="mt-3 flex justify-end gap-2">
                   <button class="btn-ghost btn-xs" @click="rescriptOpen = false">Cancel</button
-                  ><button class="btn-primary btn-xs" @click="rescript">Re-script now</button>
+                  ><button
+                    class="btn-primary btn-xs"
+                    :disabled="!!rescriptBlockers.length"
+                    @click="rescript"
+                  >
+                    Re-script now
+                  </button>
                 </div>
               </PopoverContent>
             </PopoverPortal>
@@ -917,295 +669,12 @@ watch(open, (v) => {
               </p>
             </div>
             <!-- inline editor -->
-            <div
+            <SegmentEditor
               v-if="open === s.id"
-              class="-mt-1 mb-4 grid grid-cols-2 items-end gap-2 rounded-md border border-violet-300 bg-white p-2 font-sans text-xs leading-normal 2xl:grid-cols-[1fr_1fr_2fr] dark:border-violet-500/40 dark:bg-zinc-900"
-              @click.stop
-            >
-              <!-- the editor's own header: which line this is, and the one way out -->
-              <div
-                class="col-span-2 -mt-0.5 flex items-center gap-2 border-b border-zinc-100 pb-1.5 2xl:col-span-3 dark:border-zinc-800"
-              >
-                <span class="font-mono text-[10px] text-zinc-400">#{{ s.id }}</span>
-                <span class="font-medium" :style="{ color: colorOf(s.speaker) }">{{
-                  s.speaker
-                }}</span>
-                <span class="text-zinc-400">· {{ s.type }}</span>
-                <span
-                  v-if="s.edited"
-                  class="rounded bg-zinc-100 px-1 text-[10px] text-zinc-500 dark:bg-zinc-800"
-                  >edited</span
-                >
-                <button
-                  class="btn-ghost btn-xs ml-auto"
-                  :class="
-                    editingText === s.id && 'border-violet-400 text-violet-700 dark:text-violet-300'
-                  "
-                  :aria-pressed="editingText === s.id"
-                  title="Correct the words of this line — a mis-heard name, a doubled sentence, a note that isn’t story"
-                  @click="editingText === s.id ? (editingText = null) : startTextEdit(s)"
-                >
-                  <TextIcon class="icon-sm" /> Edit text
-                  <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">e</kbd>
-                </button>
-                <button
-                  class="btn-ghost btn-xs"
-                  title="Close the editor (Esc)"
-                  @click="((open = null), (splitting = null))"
-                >
-                  Done
-                  <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">esc</kbd>
-                </button>
-              </div>
-              <div
-                v-if="editingText === s.id"
-                class="col-span-2 space-y-1.5 border-b border-zinc-100 pb-2 2xl:col-span-3 dark:border-zinc-800"
-              >
-                <span class="text-zinc-400">Line text</span>
-                <textarea
-                  :id="`seg-text-${s.id}`"
-                  v-model="textDraft"
-                  class="input min-h-24 w-full resize-y font-serif text-sm leading-relaxed"
-                  :class="s.type === 'thought' && 'italic'"
-                  spellcheck="true"
-                  @keydown.esc.stop="editingText = null"
-                  @keydown.enter.meta.prevent="commitText(s)"
-                  @keydown.enter.ctrl.prevent="commitText(s)"
-                ></textarea>
-                <div class="flex flex-wrap items-center gap-2">
-                  <button
-                    class="btn-primary btn-xs"
-                    :disabled="!textDraft.trim() || textDraft.trim() === s.text"
-                    @click="commitText(s)"
-                  >
-                    Save text
-                    <kbd class="rounded bg-white/20 px-1 text-[10px]">{{ modKey }}↵</kbd>
-                  </button>
-                  <button class="btn-ghost btn-xs" @click="editingText = null">Cancel</button>
-                  <span class="text-[10px] text-zinc-400">
-                    {{ textDraft.trim().length }} chars ·
-                    <template v-if="!textDraft.trim()"
-                      >a line can’t be empty — use Delete line instead</template
-                    ><template v-else
-                      >expressions follow the words they sit on<template v-if="s.audio.duration"
-                        >, and this line’s audio goes stale</template
-                      ></template
-                    >
-                  </span>
-                </div>
-              </div>
-              <label
-                >Speaker<UiCombobox
-                  :model-value="s.speaker"
-                  :options="speakerOpts"
-                  size="xs"
-                  class="mt-1"
-                  block
-                  @update:model-value="
-                    (v) => scriptsStore.setSpeaker(bookId, chapterId, s.id, String(v))
-                  "
-              /></label>
-              <label
-                >Type<UiSelect
-                  :model-value="s.type"
-                  :options="typeOpts"
-                  size="xs"
-                  class="mt-1"
-                  block
-                  @update:model-value="
-                    (v) =>
-                      scriptsStore.updateSegment(bookId, chapterId, s.id, {
-                        type: v as SegmentType,
-                      })
-                  "
-              /></label>
-              <label class="col-span-2 2xl:col-span-1"
-                >Direction <span class="text-zinc-400">— pick or type your own</span>
-                <div class="mt-1 flex items-center gap-1">
-                  <UiCombobox
-                    :model-value="s.direction"
-                    :options="dirOpts"
-                    custom
-                    placeholder="e.g. whispered, hesitant"
-                    size="xs"
-                    class="min-w-0 flex-1"
-                    block
-                    @update:model-value="
-                      (v) =>
-                        scriptsStore.updateSegment(bookId, chapterId, s.id, {
-                          direction: String(v),
-                        })
-                    "
-                  />
-                  <UiTooltip
-                    :text="`Set “${s.direction || '—'}” on every ${s.speaker} line in this chapter (${sameSpeakerCount(s)} more)`"
-                    ><button
-                      class="btn-ghost btn-xs whitespace-nowrap"
-                      :disabled="!s.direction || !sameSpeakerCount(s)"
-                      @click="
-                        scriptsStore.applyDirection(bookId, chapterId, s.speaker, s.direction)
-                      "
-                    >
-                      → all {{ s.speaker.split(" ")[0] }}
-                    </button></UiTooltip
-                  >
-                </div>
-              </label>
-              <ExpressionEditor
-                :book-id="bookId"
-                :chapter-id="chapterId"
-                :segment="s"
-                class="col-span-2 border-t border-zinc-200 pt-2 2xl:col-span-3 dark:border-zinc-800"
-              />
-              <!-- boundaries: the model grouped two speakers together, or cut a sentence in half -->
-              <div
-                class="col-span-2 space-y-2 border-t border-zinc-200 pt-2 2xl:col-span-3 dark:border-zinc-800"
-                @mouseleave="joinPreview = null"
-              >
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class="text-zinc-400">Boundaries</span>
-                  <button
-                    class="btn-ghost btn-xs"
-                    :class="
-                      splitting === s.id && 'border-violet-400 text-violet-700 dark:text-violet-300'
-                    "
-                    :aria-pressed="splitting === s.id"
-                    @click="((splitting = splitting === s.id ? null : s.id), (cutAt = null))"
-                  >
-                    <SplitIcon class="icon-sm" />
-                    {{ splitting === s.id ? "Cancel split" : "Split…" }}
-                    <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">s</kbd>
-                  </button>
-                  <button
-                    v-if="prevOf(s)"
-                    class="btn-ghost btn-xs"
-                    @mouseenter="joinPreview = 'prev'"
-                    @focus="joinPreview = 'prev'"
-                    @blur="joinPreview = null"
-                    @click="doJoin(s, 'prev')"
-                  >
-                    <ChevronUpIcon class="icon-sm" /> Join up
-                  </button>
-                  <button
-                    v-if="nextOf(s)"
-                    class="btn-ghost btn-xs"
-                    @mouseenter="joinPreview = 'next'"
-                    @focus="joinPreview = 'next'"
-                    @blur="joinPreview = null"
-                    @click="doJoin(s, 'next')"
-                  >
-                    <ChevronDownIcon class="icon-sm" /> Join next
-                    <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">m</kbd>
-                  </button>
-                  <div class="ml-auto flex items-center gap-2">
-                    <button
-                      v-if="segments.length > 1"
-                      class="btn-ghost btn-xs hover:border-red-300 hover:text-red-600 dark:hover:text-red-400"
-                      :title="`Drop #${s.id} from the chapter — the prose closes over it. Undoable from the toast.`"
-                      @click="dropSegment(s)"
-                    >
-                      <TrashIcon class="icon-sm" /> Delete line
-                    </button>
-                  </div>
-                </div>
-
-                <!-- split: the line as a strip of words, and both halves as they would come out -->
-                <template v-if="splitting === s.id">
-                  <div
-                    class="rounded-md bg-zinc-50 p-3 leading-loose ring-1 ring-violet-300 dark:bg-zinc-800/50 dark:ring-violet-500/40"
-                    :class="s.type === 'thought' && 'italic'"
-                  >
-                    <WordStrip
-                      :text="s.text"
-                      mode="split"
-                      :expressions="s.expressions"
-                      :quote="s.type === 'dialogue' ? 'dialogue' : ''"
-                      verb="cut"
-                      @pick="(at) => doSplit(s, at)"
-                      @hover="(at) => (cutAt = at)"
-                      @cancel="((splitting = null), (cutAt = null))"
-                    />
-                  </div>
-                  <div v-if="cutAt != null" class="grid gap-1 sm:grid-cols-2">
-                    <div
-                      class="min-w-0 rounded border border-zinc-200 px-2 py-1 dark:border-zinc-700"
-                    >
-                      <span class="font-mono text-[10px] text-zinc-400">#{{ s.id }}</span>
-                      <span class="font-medium" :style="{ color: colorOf(s.speaker) }">{{
-                        s.speaker
-                      }}</span>
-                      <div class="truncate">{{ s.text.slice(0, cutAt).trimEnd() }}</div>
-                    </div>
-                    <div
-                      class="min-w-0 rounded border border-dashed border-violet-300 px-2 py-1 dark:border-violet-500/40"
-                    >
-                      <span class="font-mono text-[10px] text-zinc-400">new</span>
-                      <span class="font-medium" :style="{ color: colorOf(s.speaker) }">{{
-                        s.speaker
-                      }}</span>
-                      <span class="text-[10px] text-zinc-400">· opens for a new speaker</span>
-                      <div class="truncate">{{ s.text.slice(cutAt).trimStart() }}</div>
-                    </div>
-                  </div>
-                  <p v-else class="text-violet-600 dark:text-violet-300">
-                    Click the gap where this line should be cut — the darker ticks end a sentence.
-                    <span class="text-violet-500/70"
-                      >← → walk the gaps, Enter cuts, Esc cancels.</span
-                    >
-                  </p>
-                </template>
-
-                <!-- join: the merged line, and who would read it -->
-                <div
-                  v-else-if="joinPreview && (joinPreview === 'prev' ? prevOf(s) : nextOf(s))"
-                  class="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-700"
-                >
-                  <span class="font-mono text-[10px] text-zinc-400"
-                    >#{{ (joinPreview === "prev" ? prevOf(s)! : s).id }}</span
-                  >
-                  <span
-                    class="font-medium"
-                    :style="{ color: colorOf((joinPreview === 'prev' ? prevOf(s)! : s).speaker) }"
-                    >{{ (joinPreview === "prev" ? prevOf(s)! : s).speaker }}</span
-                  >
-                  <span class="text-zinc-400">
-                    reads both ·
-                    {{
-                      joinPreview === "prev"
-                        ? `#${prevOf(s)!.id} + #${s.id}`
-                        : `#${s.id} + #${nextOf(s)!.id}`
-                    }}</span
-                  >
-                  <div class="line-clamp-2">{{ mergedText(s, joinPreview) }}</div>
-                  <div
-                    v-if="
-                      (joinPreview === 'prev' ? prevOf(s)!.speaker : nextOf(s)!.speaker) !==
-                      s.speaker
-                    "
-                    class="text-amber-600 dark:text-amber-400"
-                  >
-                    {{ joinPreview === "prev" ? s.speaker : nextOf(s)!.speaker }}’s words would be
-                    read by {{ (joinPreview === "prev" ? prevOf(s)! : s).speaker }}.
-                  </div>
-                </div>
-              </div>
-              <!-- pacing: silence after this line. Stitched at build time, so no clip is invalidated. -->
-              <div
-                v-if="nextOf(s)"
-                class="col-span-2 flex flex-wrap items-center gap-1.5 border-t border-zinc-200 pt-2 2xl:col-span-3 dark:border-zinc-800"
-              >
-                <span class="text-zinc-400">Pause after</span>
-                <button
-                  v-for="v in PAUSE_STEPS"
-                  :key="String(v)"
-                  class="chip"
-                  :class="(s.pause ?? null) === v && 'chip-on'"
-                  @click="setPause(s, v)"
-                >
-                  {{ v === null ? `book · ${secs(bookGap(s))}` : v === 0 ? "run on" : secs(v) }}
-                </button>
-              </div>
-            </div>
+              :book-id="bookId"
+              :chapter-id="chapterId"
+              :segment="s"
+            />
             <!-- a line that holds, or runs straight on, shown where the gap actually falls -->
             <div
               v-if="s.pause != null && nextOf(s)"
@@ -1224,7 +693,11 @@ watch(open, (v) => {
             </div>
           </template>
           <div v-if="!rows.length" class="py-10 text-center text-sm text-zinc-500">
-            Nothing matches this filter.
+            {{
+              segments.length
+                ? "Nothing matches this filter."
+                : "This chapter's script has no lines."
+            }}
           </div>
         </div>
       </div>
@@ -1260,129 +733,14 @@ watch(open, (v) => {
     </div>
 
     <!-- cast rail -->
-    <div
+    <ChapterCastRail
       v-if="reader.showCast"
-      class="card max-h-[50vh] min-h-0 overflow-y-auto overflow-x-hidden p-3 lg:max-h-none"
-    >
-      <div class="mb-2 flex items-center gap-2">
-        <span class="label">In this chapter · {{ inChapter.length }} speakers</span>
-        <button
-          class="icon-btn ml-auto"
-          title="hide the cast (c)"
-          aria-label="Hide the cast"
-          @click="reader.showCast = false"
-        >
-          <HideCastIcon class="icon-sm" />
-        </button>
-      </div>
-      <div
-        v-for="c in inChapter"
-        :key="c.name"
-        class="mb-2 rounded-lg border p-3 text-sm transition-colors"
-        :class="[
-          speaker === c.name
-            ? 'border-violet-400 bg-violet-50 dark:bg-violet-500/10'
-            : 'border-zinc-200 dark:border-zinc-800',
-          c.isNew && 'border-dashed border-amber-400',
-        ]"
-      >
-        <div class="flex items-center gap-2">
-          <span class="h-2.5 w-2.5 shrink-0 rounded-full" :style="{ background: c.color }"></span>
-          <input
-            v-if="editingName === c.name"
-            v-model="draft"
-            class="input min-w-0 flex-1 py-0"
-            autofocus
-            @keydown.enter="commitRename"
-            @keydown.esc="editingName = null"
-            @blur="commitRename"
-          />
-          <button
-            v-else
-            class="min-w-0 flex-1 truncate text-left font-semibold"
-            @click="jumpToSpeaker(c.name)"
-            @dblclick="startRename(c)"
-          >
-            {{ c.name }}
-          </button>
-          <span class="text-[11px] text-zinc-400">{{ GENDER_LABEL[c.gender] ?? "unknown" }}</span>
-        </div>
-        <div class="mt-1 flex flex-wrap items-center gap-1 pl-4 text-[11px] text-zinc-500">
-          <span>{{ counts[c.name] }} line{{ counts[c.name] === 1 ? "" : "s" }}</span>
-          <template v-if="c.aliases.length"
-            ><span>· a.k.a.</span
-            ><span
-              v-for="a in c.aliases"
-              :key="a"
-              class="rounded bg-zinc-100 px-1 dark:bg-zinc-800"
-              >{{ a }}</span
-            ></template
-          >
-          <RouterLink
-            v-if="c.isNew"
-            :to="`/book/${bookId}/cast`"
-            class="rounded bg-amber-400/20 px-1 font-semibold text-amber-600 hover:underline"
-            title="review this name on the Cast page — rename it, or merge it into the speaker it belongs to"
-            >new · alias?</RouterLink
-          >
-        </div>
-        <div class="mt-2 pl-4 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-          <template v-if="!c.description"
-            ><span class="italic text-zinc-400">No description yet.</span></template
-          >
-          <template v-else-if="revealed.has(c.name) || c.name === 'Narrator'">{{
-            c.description
-          }}</template>
-          <button
-            v-else
-            class="rounded border border-dashed border-zinc-300 px-2 py-1 italic text-zinc-400 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
-            @click="revealed = new Set([...revealed, c.name])"
-          >
-            description hidden — spoilers · show
-          </button>
-        </div>
-        <div class="mt-2 flex items-center gap-1 pl-4 text-[11px]">
-          <VoicePicker
-            :model-value="c.voice"
-            @update:model-value="(v) => castStore.setVoice(bookId, c.name, v)"
-            :book-id="bookId"
-            :speaker="c.name"
-            size="xs"
-            class="min-w-0 flex-1"
-            block
-          />
-          <button
-            class="shrink-0 rounded px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-            @click="startRename(c)"
-          >
-            rename
-          </button>
-        </div>
-      </div>
-
-      <button
-        class="mt-1 w-full rounded-lg border border-dashed border-zinc-300 py-2 text-xs text-zinc-500 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
-        @click="showRest = !showRest"
-      >
-        {{ showRest ? "Hide" : "Show" }} the rest of the cast ({{ rest.length }})
-      </button>
-      <div v-if="showRest" class="mt-2 space-y-0.5">
-        <div
-          v-for="c in rest"
-          :key="c.name"
-          class="flex items-center gap-2 rounded px-2 py-1 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          <span class="h-2 w-2 rounded-full" :style="{ background: c.color }"></span>
-          <span class="min-w-0 flex-1 truncate">{{ c.name }}</span>
-          <span class="font-mono text-zinc-400">{{
-            scriptsStore.lineCounts(bookId)[c.name] ?? 0
-          }}</span>
-        </div>
-      </div>
-      <p class="mt-3 text-[11px] leading-relaxed text-zinc-400">
-        Click a name to filter the reader to their lines, double-click to rename, and set the voice
-        it is read in right here. A speaker with no voice of their own borrows the Narrator’s.
-      </p>
-    </div>
+      v-model:speaker="speaker"
+      :book-id="bookId"
+      :chapter-id="chapterId"
+      :book-counted="!bookScripts.loading.value && !bookScripts.failed.value.length"
+      :book-unread="bookScripts.failed.value.length"
+      @retry="bookScripts.retry()"
+    />
   </div>
 </template>

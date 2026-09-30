@@ -5,9 +5,9 @@ import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 
 import { computed } from "vue";
-import { plural } from "@/views/library/shared";
 import type { Book } from "@/types";
 import { ArrowRight as ResumeIcon } from "@lucide/vue";
+import { plural } from "@/lib/contents";
 
 const props = defineProps<{ book: Book }>();
 const libraryStore = useLibraryStore();

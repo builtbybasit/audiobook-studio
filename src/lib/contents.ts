@@ -108,5 +108,6 @@ export function importLabel(kind: "book" | "volume", included: number): string {
   return kind === "book" ? `Add to library · ${n}` : `Add volume · ${n}`;
 }
 
+/** “1 chapter”, “1,204 chapters” — grouped, so a long web novel's count still reads at a glance. */
 export const plural = (n: number, one: string, many = one + "s"): string =>
-  `${n} ${n === 1 ? one : many}`;
+  `${n.toLocaleString()} ${n === 1 ? one : many}`;

@@ -232,8 +232,8 @@ An unused endpoint is never called "Healthy": it reads **Not tested** until some
 
 ### In the demo
 
-The demo's endpoints are the fixtures in `src/mock/fixtures/`, made simulated by the demo's seed
-(`server/demo/`), plus the two Simulated presets. Their history is ordinary ledger rows: what a
+The demo's endpoints are the fixtures in `server/demo/seed/fixtures/`, made simulated by the demo's
+seed (`server/demo/`), plus the two Simulated presets. Their history is ordinary ledger rows: what a
 situation says an endpoint has been through — recent requests, failures, a 429 and its cooldown —
 is written as simulated rows costing nothing, and everything run in the demo is appended like any
 other request. A reset or a Demo tools situation seeds the endpoints again.

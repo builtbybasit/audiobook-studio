@@ -6,6 +6,8 @@
 // kept in the database. The `.env` variables the live tests read are theirs alone.
 import * as v from "valibot";
 
+import { MAX_SAMPLES_BYTES } from "@/lib/voiceSamples";
+
 const Env = v.object({
   /** where the server listens; the Vite dev server proxies /api and /demo/api here */
   PORT: v.pipe(
@@ -141,10 +143,21 @@ export function readEnv(source: Record<string, string | undefined> = Bun.env): E
 export const env: Env = readEnv();
 
 /**
- * The most an import's request body may be: the file at its limit, and the multipart envelope
- * around it — the boundaries, the field names, a title — which a megabyte covers many times over.
+ * The most a request body carrying a file of up to `mb` megabytes may be: the file at its limit, and
+ * the multipart envelope around it — the boundaries, the field names, a title — which a megabyte
+ * covers many times over.
  */
-export const importBodyBytes = (e: Env = env): number => (e.MAX_UPLOAD_MB + 1) * 1024 * 1024;
+export const uploadBodyBytes = (mb: number): number => (mb + 1) * 1024 * 1024;
+
+/** The most an import's request body may be; see `uploadBodyBytes`. */
+export const importBodyBytes = (e: Env = env): number => uploadBodyBytes(e.MAX_UPLOAD_MB);
 
 /** The same for a script file, which may carry voice samples: see `MAX_SCRIPT_UPLOAD_MB`. */
-export const scriptBodyBytes = (e: Env = env): number => (e.MAX_SCRIPT_UPLOAD_MB + 1) * 1024 * 1024;
+export const scriptBodyBytes = (e: Env = env): number => uploadBodyBytes(e.MAX_SCRIPT_UPLOAD_MB);
+
+/**
+ * The largest body the clone and keep routes read: the samples, and a little over for the multipart
+ * envelope around them. The server's own ceiling (`maxRequestBodySize`) is set above it, so these
+ * routes are the ones that answer.
+ */
+export const CLONE_BODY_BYTES = MAX_SAMPLES_BYTES + 256 * 1024;

@@ -8,9 +8,45 @@
 // `range-parser`, the one Express's `send` uses; the slicing is Bun's own, which reads only the
 // bytes the slice covers.
 import type { BunFile } from "bun";
+import type { Context } from "hono";
 import parseRange from "range-parser";
 
-import type { ApiError } from "~/lib/errors";
+import { notFound, type ApiError } from "~/lib/errors";
+
+export interface ServeOptions {
+  /** what the 404 says when there is no such file, and its detail */
+  missing: string;
+  detail?: string;
+  /**
+   * Whether the name is the bytes' hash, so what it serves can never change and may be kept for
+   * good — true unless said otherwise. A file that can change under its name is revalidated.
+   */
+  immutable?: boolean;
+  /** anything else the file's answer carries, such as the name a download is saved under */
+  headers?: Record<string, string>;
+}
+
+/**
+ * The file at `path` as `type`, a part at a time when asked (`fileResponse`), or a 404 saying
+ * `missing` when there is no path or nothing is there. Every route that hands out a file on disk
+ * answers through this, so each says the same thing about caching and about a file that is gone.
+ */
+export async function serveFile(
+  c: Context,
+  path: string | null | undefined,
+  type: string,
+  { missing, detail, immutable = true, headers }: ServeOptions,
+): Promise<Response> {
+  const found = path ? Bun.file(path) : null;
+  if (!found || !(await found.exists())) throw notFound(missing, detail);
+  return fileResponse(c.req.raw, found, {
+    "content-type": type,
+    "cache-control": immutable
+      ? "private, max-age=31536000, immutable"
+      : "private, max-age=0, must-revalidate",
+    ...headers,
+  });
+}
 
 /**
  * The file, or the part of it the request's `Range` names.

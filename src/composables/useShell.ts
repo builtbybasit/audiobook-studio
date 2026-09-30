@@ -8,8 +8,7 @@ import { useLibraryStore } from "@/stores/library";
 
 import { computed } from "vue";
 import { useRoute } from "vue-router";
-import { keyInPlace } from "@/services/endpointSettings";
-import { endpointErrors, unifyEndpoint, unifyProfile } from "@/lib/endpoints";
+import { endpointErrors, speechReadiness, unifyEndpoint, unifyProfile } from "@/lib/endpoints";
 import { bookFacts } from "@/views/library/bookFacts";
 import { reviewCount } from "@/views/review/inbox";
 
@@ -49,17 +48,17 @@ export function useShell() {
   const etaMinutes = computed(() =>
     jobsStore.eta ? Math.max(1, Math.round(jobsStore.eta.seconds / 60)) : 0,
   );
-  /** enabled endpoints that can't currently run: no key, or settings that don't validate */
+  /** enabled endpoints that can't currently run: no key, or settings that don't validate. Paused
+   *  is a choice and a cooldown passes on its own, so neither needs attention. */
   const endpointsNeedingAttention = computed(
     () =>
       [
         ...endpointsStore.profiles.map(unifyProfile),
         ...endpointsStore.endpoints.map(unifyEndpoint),
-      ].filter(
-        (u) =>
-          u.enabled &&
-          ((u.needsKey && !keyInPlace(u.profile ?? u.endpoint)) || endpointErrors(u).length > 0),
-      ).length,
+      ].filter((u) => {
+        const { state } = speechReadiness(u.profile ?? u.endpoint!, Date.now());
+        return state !== "paused" && (state === "nokey" || endpointErrors(u).length > 0);
+      }).length,
   );
   /** A link to another book that lands on the page you are already on, so switching keeps your place. */
   const switchTo = (id: string): string =>

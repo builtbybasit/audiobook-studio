@@ -50,7 +50,7 @@ import {
   voicesFromFishModels,
   type FishModel,
 } from "@/lib/endpointShapes";
-import { FISH_MODELS } from "@/lib/providers/fish";
+import { fish, FISH_MODELS } from "@/lib/providers/fish";
 import { authHeaders, call, jsonHeaders, ProviderError } from "~/providers/http";
 import type { ProviderTarget } from "~/providers/target";
 import { getJson, type SpeechWire } from "~/providers/speech/wire";
@@ -72,8 +72,8 @@ export const PUBLIC_PAGE = 30;
 const FISH_ID = /^[0-9a-f]{32}$/i;
 
 /** Fish serves TTS at `/v1/tts` on the API's host, whatever path the base URL was saved with. */
-export function fishTtsUrl(baseUrl: string): string {
-  return `${new URL(baseUrl).origin}/v1/tts`;
+export function fishTtsUrl(target: ProviderTarget): string {
+  return `${new URL(target.baseUrl).origin}/v1${fish.requestPath(target.model)}`;
 }
 
 /** Why the endpoint's model would not be the one Fish speaks with; empty when it would be. */
@@ -130,7 +130,7 @@ export const fishWire: SpeechWire = {
     const { sampleRate } = input;
     const { format, bitrate } = input.encoding;
     return {
-      url: fishTtsUrl(target.baseUrl),
+      url: fishTtsUrl(target),
       init: {
         method: "POST",
         headers: { ...jsonHeaders(target), model: target.model },

@@ -16,6 +16,8 @@
 //
 // The book is the demo's `cliche`, read from a seeded demo library the way its pages read it.
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { useQueryCache } from "@pinia/colada";
+import { keys } from "@/queries/keys";
 
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
@@ -32,7 +34,7 @@ import { jobsService, setJobsService, type JobsService } from "@/services/jobs";
 import type { Job, NarrationScope, PricingConfig } from "@/types";
 import { demoServer } from "./support/demoServer";
 import { openDemoBook } from "./support/demoBook";
-import { testPinia } from "./support/pinia";
+import { flush, testPinia } from "./support/pinia";
 
 let real: JobsService;
 let castStore: ReturnType<typeof useCastStore>;
@@ -257,6 +259,13 @@ describe("a run can be stopped and picked up again", () => {
     };
   }
   const bulk = (id: number, index: number, total: number) => ({ id, op: "Narrate", index, total });
+  /**
+   * Let a retry read what its blockers are worked out from, and then ask or refuse: a refusal is
+   * a toast even for a quiet run.
+   */
+  const retried = async () => {
+    for (let i = 0; i < 100 && !asked.length && !toasts.length; i++) await flush();
+  };
 
   test("cancelling a run asks for what has not finished, and only that", () => {
     const run = [
@@ -264,7 +273,7 @@ describe("a run can be stopped and picked up again", () => {
       job({ kind: "narration", chapterId: 2, status: "running", bulk: bulk(7, 2, 3) }),
       job({ kind: "narration", chapterId: 3, status: "queued", bulk: bulk(7, 3, 3) }),
     ];
-    jobsStore._install(run);
+    useQueryCache().setQueryData(keys.jobs, run);
     expect(jobsStore.cancelRun(7)).toBe(2);
     expect(asked).toEqual([
       { kind: "cancel", id: run[1].id },
@@ -272,67 +281,98 @@ describe("a run can be stopped and picked up again", () => {
     ]);
   });
 
-  test("a run whose replacements failed is retried at the failed scope, which the chapter's status cannot ask for", () => {
+  test("a run whose replacements failed is retried at the failed scope, which the chapter's status cannot ask for", async () => {
     const ch = narratedChapter();
     const line = segments(ch.id).find((s) => s.audio.duration > 0)!;
     // the replacement failed beside a clip that is still fine, so the chapter still reads as
     // narrated and the failure is only on the clips
     line.candidate = { ...line.audio, status: "failed", duration: 0, n: 2 };
     const failed = job({ kind: "narration", chapterId: ch.id, status: "failed" });
-    jobsStore._install([failed]);
+    useQueryCache().setQueryData(keys.jobs, [failed]);
     expect(ch.narration).toBe("done");
 
     jobsStore.retryJob(failed.id);
+    await retried();
     expect(asked).toEqual([{ kind: "narrate", ids: [ch.id], scope: "failed" }]);
   });
 
-  test("a narration job with nothing failed left is retried as missing & changed", () => {
+  test("a narration job with nothing failed left is retried as missing & changed", async () => {
     const ch = narratedChapter();
     const cancelled = job({ kind: "narration", chapterId: ch.id, status: "cancelled" });
-    jobsStore._install([cancelled]);
+    useQueryCache().setQueryData(keys.jobs, [cancelled]);
     jobsStore.retryJob(cancelled.id);
+    await retried();
     expect(asked).toEqual([{ kind: "narrate", ids: [ch.id], scope: "fill" }]);
   });
 
-  test("a re-script that failed is picked up by Retry all failed, and not again once a later run made it good", () => {
+  test("a re-script that failed is picked up by Retry all failed, and not again once a later run made it good", async () => {
     const ch = chapters().find((c) => c.scripting === "done")!;
     const failed = job({ kind: "scripting", chapterId: ch.id, status: "failed" });
-    jobsStore._install([failed]);
+    useQueryCache().setQueryData(keys.jobs, [failed]);
     // the script it was replacing is still the chapter's, so the chapter still reads as scripted
     expect(jobsStore.retryableFailures().map((j) => j.id)).toEqual([failed.id]);
     jobsStore.retryAllFailed();
+    // a run first reads what its blockers need and sends any endpoint edit still waiting, then asks
+    await retried();
     expect(asked).toEqual([{ kind: "script", ids: [ch.id] }]);
 
     asked = [];
-    jobsStore._install([failed, job({ kind: "scripting", chapterId: ch.id, status: "done" })]);
+    useQueryCache().setQueryData(keys.jobs, [
+      failed,
+      job({ kind: "scripting", chapterId: ch.id, status: "done" }),
+    ]);
     expect(jobsStore._supersededBy(failed)).toBe(true);
     jobsStore.retryAllFailed();
+    await retried();
     expect(asked).toEqual([]);
   });
 
-  test("a chapter's newest failure is the one Retry all failed picks, not the one a later run fixed", () => {
+  test.each(["scripting", "narration"] as const)(
+    "a %s retry is held to the run button's blockers, and says why",
+    async (kind) => {
+      const ch =
+        kind === "scripting" ? chapters().find((c) => c.scripting === "done")! : narratedChapter();
+      if (kind === "narration")
+        segments(ch.id)[0].candidate = { ...segments(ch.id)[0].audio, status: "failed", n: 2 };
+      const failed = job({ kind, chapterId: ch.id, status: "failed" });
+      useQueryCache().setQueryData(keys.jobs, [failed]);
+      // what the run button would refuse on: a paused endpoint, a paused book
+      if (kind === "scripting") profile().enabled = false;
+      else libraryStore.bookById(BOOK)!.budget = { cap: null, paused: true };
+      jobsStore.retryJob(failed.id);
+      await retried();
+      expect(asked).toEqual([]);
+      expect(toasts).toEqual([
+        kind === "scripting" ? "Scripting can’t start yet" : "Narration can’t start yet",
+      ]);
+    },
+  );
+
+  test("a chapter's newest failure is the one Retry all failed picks, not the one a later run fixed", async () => {
     const ch = narratedChapter();
     segments(ch.id)[0].candidate = { ...segments(ch.id)[0].audio, status: "failed", n: 2 };
     const old = job({ kind: "narration", chapterId: ch.id, status: "failed" });
     const fixed = job({ kind: "narration", chapterId: ch.id, status: "done" });
     const current = job({ kind: "narration", chapterId: ch.id, status: "failed" });
-    jobsStore._install([old, fixed, current]);
+    useQueryCache().setQueryData(keys.jobs, [old, fixed, current]);
 
     expect(jobsStore._supersededBy(old)).toBe(true);
     const retryable = jobsStore.retryableFailures().map((j) => j.id);
     expect(retryable).toEqual([current.id]);
     jobsStore.retryAllFailed();
+    await retried();
     expect(asked).toEqual([{ kind: "narrate", ids: [ch.id], scope: "failed" }]);
   });
 
-  test("retrying a run's failures is one run again, not one run per chapter", () => {
+  test("retrying a run's failures is one run again, not one run per chapter", async () => {
     const run = [
       job({ kind: "narration", chapterId: 1, status: "failed", bulk: bulk(9, 1, 3) }),
       job({ kind: "narration", chapterId: 2, status: "done", bulk: bulk(9, 2, 3) }),
       job({ kind: "narration", chapterId: 3, status: "failed", bulk: bulk(9, 3, 3) }),
     ];
-    jobsStore._install(run);
+    useQueryCache().setQueryData(keys.jobs, run);
     expect(jobsStore.retryRunFailures(9)).toBe(2);
+    await retried();
     expect(asked).toEqual([{ kind: "narrate", ids: [1, 3], scope: "failed" }]);
   });
 });

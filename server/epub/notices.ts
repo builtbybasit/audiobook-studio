@@ -5,7 +5,7 @@
 // concerned, and narrating them produces an audiobook that stops mid-arc to ask the listener to
 // vote on a website.
 //
-// The prototype never did this. `src/mock/fixtures/notices.ts` supplies the words for a note whose
+// The prototype never did this. `server/demo/seed/fixtures/notices.ts` supplies the words for a note whose
 // kind the sample already declared; this file is the part that was missing — reading a chapter and
 // deciding. It never removes anything: it attaches a `ChapterNote`, and the contents review is
 // where the person decides. That division is the whole safety argument for guessing at all, so a

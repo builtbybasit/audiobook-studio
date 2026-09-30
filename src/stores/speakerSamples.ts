@@ -10,6 +10,7 @@
 import { defineStore } from "pinia";
 import type { RouteLocationRaw } from "vue-router";
 import { cloningOf, type CloneSupport } from "@/lib/providers";
+import { fetchCast } from "@/queries/cast";
 import {
   ApiError,
   type LibraryService,
@@ -19,6 +20,7 @@ import {
 import type { Endpoint, KeptSample, SpeakerSamples, VoiceRef } from "@/types";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
+import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 
 interface SpeakerSamplesState {
@@ -102,15 +104,6 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
     _service(): LibraryService {
       return libraryService();
     },
-    _failed(what: string, cause: unknown): void {
-      const uiStore = useUiStore();
-      const api = cause instanceof ApiError ? cause : null;
-      uiStore.toast(api ? api.message : `Could not ${what}`, {
-        kind: "error",
-        description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
-        timeout: 8000,
-      });
-    },
     _put(bookId: string, sample: SpeakerSamples): void {
       const list = (this.waiting[bookId] ?? []).filter((x) => x.id !== sample.id);
       this.waiting[bookId] = [...list, sample];
@@ -139,7 +132,7 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
         for (const s of done.stored) this._put(bookId, s);
         return done;
       } catch (cause) {
-        this._failed("keep the file's voice samples", cause);
+        toastFailure("keep the file's voice samples", cause);
         return { stored: [], replaced: [] };
       }
     },
@@ -154,7 +147,7 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
         ids.map((id) =>
           svc.discardSpeakerSamples(bookId, id).catch((cause) => {
             if (cause instanceof ApiError && cause.status === 404) return;
-            this._failed("put the voice samples aside", cause);
+            toastFailure("put the voice samples aside", cause);
           }),
         ),
       );
@@ -166,7 +159,7 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
         ids.map((id) =>
           svc.restoreSpeakerSamples(bookId, id).then(
             (back) => this._put(bookId, back),
-            (cause) => this._failed("bring the voice samples back", cause),
+            (cause) => toastFailure("bring the voice samples back", cause),
           ),
         ),
       );
@@ -189,7 +182,7 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
       try {
         await svc.discardSpeakerSamples(bookId, sample.id);
       } catch (cause) {
-        this._failed("discard the voice samples", cause);
+        toastFailure("discard the voice samples", cause);
         return false;
       }
       this._take(bookId, [sample.id]);
@@ -198,7 +191,7 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
         undo: () =>
           void svc.restoreSpeakerSamples(bookId, sample.id).then(
             (back) => this._put(bookId, back),
-            (cause) => this._failed("bring the voice samples back", cause),
+            (cause) => toastFailure("bring the voice samples back", cause),
           ),
       });
       return true;
@@ -211,7 +204,7 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
           sample.samples.map((k) => svc.speakerSampleFile(bookId, sample.id, k)),
         );
       } catch (cause) {
-        this._failed("read the voice samples", cause);
+        toastFailure("read the voice samples", cause);
         return null;
       }
     },
@@ -224,9 +217,9 @@ export const useSpeakerSamplesStore = defineStore("speakerSamples", {
       const castStore = useCastStore();
       const uiStore = useUiStore();
       // the Voices tab has no book open, so the cast may not have been read yet
-      if (!castStore.characters[from.bookId]) {
+      if (!castStore.held(from.bookId)) {
         try {
-          castStore._install(from.bookId, await this._service().cast(from.bookId));
+          await fetchCast(from.bookId);
         } catch {
           // judged as not found below
         }

@@ -13,13 +13,14 @@
 // An undo of a skip or a keep, by contrast, is exact: the store records what the chapters were and
 // puts that back through `setDecisions`, rather than running the inverse rule and letting an undone
 // skip come back as "looked at".
+import { useQueryCache } from "@pinia/colada";
 import { noticeGroups, plural, summarize } from "@/lib/contents";
 import { bookPromptProblems } from "@/lib/prompt";
-import { isNarrated, isScripted, key } from "@/lib/scriptReview";
+import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { invalidate } from "@/queries/invalidate";
+import { fetchBook, fetchShelf } from "@/queries/library";
 import { keys } from "@/queries/keys";
 import {
-  ApiError,
   type BookSettings,
   type ImportedBook,
   type LibraryService,
@@ -33,9 +34,9 @@ import type {
   Chapter,
   ContentsSummary,
   NoticeGroup,
+  Pacing,
   PromptTrialRequest,
   PromptTrialResult,
-  SegmentMap,
   Volume,
 } from "@/types";
 import { defineStore } from "pinia";
@@ -44,6 +45,7 @@ import { useExportsStore } from "@/stores/exports";
 import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
 import { useScriptsStore } from "@/stores/scripts";
+import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 
 /** An EPUB arriving at `importBook`, and the title to give the book in place of its own. */
@@ -208,21 +210,6 @@ export const useLibraryStore = defineStore("library", {
     _service(): LibraryService {
       return libraryService();
     },
-    /**
-     * Say a request failed, and change nothing.
-     *
-     * The alternative — applying the change locally anyway — is the silent fallback the mode rule
-     * forbids twice over: the screen would show a library the server does not have.
-     */
-    _failed(what: string, cause: unknown): void {
-      const uiStore = useUiStore();
-      const api = cause instanceof ApiError ? cause : null;
-      uiStore.toast(api ? api.message : `Could not ${what}`, {
-        kind: "error",
-        description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
-        timeout: 8000,
-      });
-    },
     /** A book and its chapters as the server just described them, in place of what was here. */
     _put(book: Book, chapters: Chapter[]): void {
       const i = this.books.findIndex((b) => b.id === book.id);
@@ -230,32 +217,39 @@ export const useLibraryStore = defineStore("library", {
       else this.books[i] = book;
       this.chapters[book.id] = chapters;
     },
-    /** Read the shelf from the server. Called once when the app starts; `force` re-reads it. */
+    /** The shelf as the server lists it, in place of what was here. What `useShelf` installs. */
+    _shelve(books: Book[]): void {
+      this.books = books;
+      this.loaded = true;
+      this.unreachable = false;
+    },
+    /**
+     * Read the shelf from the server (`fetchShelf`). Called once when the app starts; `force`
+     * re-reads it.
+     */
     async load(force = false): Promise<void> {
       if (this.loaded && !force) return;
       try {
-        this.books = await this._service().books();
-        this.loaded = true;
-        this.unreachable = false;
+        await fetchShelf();
       } catch (cause) {
         // the page says this one where the books would be; a toast on top would say it twice
         this.unreachable = unreachable(cause);
-        if (!this.unreachable) this._failed("read the library", cause);
+        if (!this.unreachable) toastFailure("read the library", cause);
       }
     },
     /**
-     * Read one book and its chapters. The shelf lists books; only this brings the chapters.
+     * Read one book and its chapters (`fetchBook`). The shelf lists books; only this brings the
+     * chapters.
      *
      * Returns whether the book is now here, so a page opened on a link can send the person back to
      * the library rather than render an empty review.
      */
     async loadBook(bookId: string): Promise<boolean> {
       try {
-        const { book, chapters } = await this._service().book(bookId);
-        this._put(book, chapters);
+        await fetchBook(bookId);
         return true;
       } catch (cause) {
-        this._failed("read this book", cause);
+        toastFailure("read this book", cause);
         return false;
       }
     },
@@ -300,7 +294,7 @@ export const useLibraryStore = defineStore("library", {
       try {
         this.chapters[bookId] = await this._service().skipChapters(bookId, pending, skip);
       } catch (cause) {
-        this._failed(skip ? "skip those chapters" : "include those chapters", cause);
+        toastFailure(skip ? "skip those chapters" : "include those chapters", cause);
         return 0;
       }
       const revert = () => this._restoreDecisions(bookId, before);
@@ -334,7 +328,7 @@ export const useLibraryStore = defineStore("library", {
       try {
         this.chapters[bookId] = await this._service().keepChapters(bookId, pending);
       } catch (cause) {
-        this._failed("keep those chapters", cause);
+        toastFailure("keep those chapters", cause);
         return 0;
       }
       const revert = () => this._restoreDecisions(bookId, before);
@@ -369,7 +363,7 @@ export const useLibraryStore = defineStore("library", {
       try {
         this.chapters[bookId] = await this._service().setDecisions(bookId, decisions);
       } catch (cause) {
-        this._failed("put those chapters back", cause);
+        toastFailure("put those chapters back", cause);
       }
     },
     // ---------- budget, pause & settings ----------
@@ -399,10 +393,35 @@ export const useLibraryStore = defineStore("library", {
         return answer;
       } catch (cause) {
         if (settingsWrites.get(bookId) !== n) return null;
-        this._failed(what, cause);
+        toastFailure(what, cause);
         await this.loadBook(bookId);
         return null;
       }
+    },
+    /**
+     * What this side holds of a chapter's progress, moved ahead of the server's answer: an edit
+     * that staled a clip, a restore or an import that replaced the script, a pacing that re-timed
+     * the clips here. The server's next read of the book is what the chapter then says.
+     */
+    _patchChapter(
+      bookId: string,
+      chId: number,
+      patch: Partial<Pick<Chapter, "scripting" | "narration" | "narrationProgress" | "duration">>,
+    ): void {
+      const c = this.chapter(bookId, chId);
+      if (c) Object.assign(c, patch);
+    },
+    /** A narrated chapter one of whose clips no longer matches its script now reads as stale. */
+    _staleChapter(bookId: string, chId: number): void {
+      const c = this.chapter(bookId, chId);
+      if (c?.narration === "done") c.narration = "stale";
+    },
+    /** The book's pacing as it now stands here, ahead of the write that sends it; null is the default. */
+    _setPacing(bookId: string, pacing: Pacing | null): void {
+      const b = this.bookById(bookId);
+      if (!b) return;
+      if (pacing) b.pacing = pacing;
+      else delete b.pacing;
     },
     /** The book as the server just described it, leaving its chapters as they are here. */
     _putBook(book: Book): void {
@@ -536,7 +555,7 @@ export const useLibraryStore = defineStore("library", {
         this._put(book, chapters);
         return book.id;
       } catch (cause) {
-        this._failed("read that file", cause);
+        toastFailure("read that file", cause);
         return null;
       }
     },
@@ -555,7 +574,7 @@ export const useLibraryStore = defineStore("library", {
         this._put(book, chapters);
         return book.volumes.find((v) => v.importing)?.id ?? null;
       } catch (cause) {
-        this._failed("read that file", cause);
+        toastFailure("read that file", cause);
         return null;
       }
     },
@@ -572,7 +591,7 @@ export const useLibraryStore = defineStore("library", {
         const shelved = await this._service().confirmImport(bookId);
         this._put(shelved, this.chapters[bookId] ?? []);
       } catch (cause) {
-        this._failed(wasBook ? "add this book" : "add this volume", cause);
+        toastFailure(wasBook ? "add this book" : "add this volume", cause);
         return false;
       }
       const s = this.contentsOf(bookId);
@@ -602,7 +621,7 @@ export const useLibraryStore = defineStore("library", {
       try {
         discarded = await this._service().discardImport(bookId);
       } catch (cause) {
-        this._failed("cancel this import", cause);
+        toastFailure("cancel this import", cause);
         return null;
       }
       if (discarded === "book") this._dropBook(bookId);
@@ -624,7 +643,7 @@ export const useLibraryStore = defineStore("library", {
       try {
         this._putBook(await this._service().renameVolume(bookId, volId, name));
       } catch (cause) {
-        this._failed("rename this volume", cause);
+        toastFailure("rename this volume", cause);
         await this.loadBook(bookId);
       }
     },
@@ -654,7 +673,7 @@ export const useLibraryStore = defineStore("library", {
           return "book";
         }
       } catch (cause) {
-        this._failed("remove this volume", cause);
+        toastFailure("remove this volume", cause);
         return null;
       }
       const gone = this._dropVolume(bookId, volId);
@@ -664,26 +683,14 @@ export const useLibraryStore = defineStore("library", {
       });
       return "volume";
     },
-    /** Take a volume off its book without a word: its chapters, jobs and export entries go, the
-     *  rest renumber. Returns how many chapters went. */
+    /** Take a volume off its book without a word: its chapters go and the rest renumber. The
+     *  server cancelled its jobs and dropped its export entries; the reads of both follow from
+     *  `_renumber`. Returns how many chapters went. */
     _dropVolume(bookId: string, volId: number): number {
-      const jobsStore = useJobsStore();
-
       const book = this.bookById(bookId);
       if (!book) return 0;
       const gone = new Set(
         this.chapters[bookId].filter((c) => c.volumeId === volId).map((c) => c.id),
-      );
-      for (const j of jobsStore.jobs)
-        if (
-          j.bookId === bookId &&
-          j.chapterId != null &&
-          gone.has(j.chapterId) &&
-          (j.status === "running" || j.status === "queued")
-        )
-          jobsStore.cancelJob(j.id);
-      jobsStore.jobs = jobsStore.jobs.filter(
-        (j) => !(j.bookId === bookId && j.chapterId != null && gone.has(j.chapterId)),
       );
       book.volumes = book.volumes.filter((v) => v.id !== volId);
       this._renumber(
@@ -717,7 +724,7 @@ export const useLibraryStore = defineStore("library", {
           vols.map((v) => v.id),
         );
       } catch (cause) {
-        this._failed("move this volume", cause);
+        toastFailure("move this volume", cause);
         return false;
       }
       // the book may have been re-read while the request was out; renumber what is here now
@@ -735,9 +742,9 @@ export const useLibraryStore = defineStore("library", {
       this._put(answer.book, answer.chapters);
       return true;
     },
-    // give `ordered` chapters ids 1..n in that order; re-key segments, remap jobs/exports, fix volume ranges
+    // give `ordered` chapters ids 1..n in that order; re-key what each store holds by chapter
+    // number, fix volume ranges, and read again everything read from the server by those numbers
     _renumber(bookId: string, ordered: Chapter[]): void {
-      const exportsStore = useExportsStore();
       const historyStore = useHistoryStore();
       const jobsStore = useJobsStore();
       const scriptsStore = useScriptsStore();
@@ -748,22 +755,14 @@ export const useLibraryStore = defineStore("library", {
       ordered.forEach((c, i) => {
         map[c.id] = i + 1;
       });
-      const segs: SegmentMap = {};
-      for (const [k, v] of Object.entries(scriptsStore.segments)) {
-        if (!k.startsWith(bookId + ":")) {
-          segs[k] = v;
-          continue;
-        }
-        const old = Number(k.split(":")[1]);
-        if (map[old]) segs[key(bookId, map[old])] = v;
-      }
-      scriptsStore.segments = segs;
       scriptsStore._remapBook(bookId, map);
       // a chapter's script history is keyed by its number too, so it moves with the script
       historyStore.remapBook(bookId, map);
       // everything read from the server about this book was keyed by numbers that have moved: it
-      // is a cache of the server's answers, so the cheap correct thing is to ask again
+      // is a cache of the server's answers, so the cheap correct thing is to ask again — the
+      // queue included, whose jobs name their chapters by number
       this._forgetBook(bookId);
+      void jobsStore._changed();
       ordered.forEach((c) => {
         c.id = map[c.id];
         c.index = c.id;
@@ -777,28 +776,6 @@ export const useLibraryStore = defineStore("library", {
         from += mine.length;
         mine.forEach((c, i) => (c.volumeIndex = i + 1));
       }
-      for (const j of jobsStore.jobs)
-        if (j.bookId === bookId && j.chapterId != null && map[j.chapterId])
-          j.chapterId = map[j.chapterId];
-      const remap = (ids: number[]) => ids.filter((id) => map[id]).map((id) => map[id]);
-      exportsStore.exports = exportsStore.exports
-        .map((e) =>
-          e.bookId !== bookId
-            ? e
-            : {
-                ...e,
-                chapterIds: remap(e.chapterIds),
-                files: e.files.map((f) => ({ ...f, chapterIds: remap(f.chapterIds) })),
-                state: Object.fromEntries(
-                  Object.entries(e.state ?? {})
-                    .filter(([id]) => map[Number(id)])
-                    .map(([id, sig]) => [map[Number(id)], sig]),
-                ),
-              },
-        )
-        .filter((e) => e.bookId !== bookId || e.chapterIds.length);
-      for (const e of exportsStore.exports)
-        if (e.bookId === bookId) e.chapters = e.chapterIds.length;
     },
     async removeBook(bookId: string): Promise<void> {
       const uiStore = useUiStore();
@@ -810,7 +787,7 @@ export const useLibraryStore = defineStore("library", {
       try {
         await this._service().removeBook(bookId);
       } catch (cause) {
-        this._failed("remove this book", cause);
+        toastFailure("remove this book", cause);
         return;
       }
       this._dropBook(bookId);
@@ -818,33 +795,30 @@ export const useLibraryStore = defineStore("library", {
         description: `Its ${chapters} chapter${chapters === 1 ? "" : "s"}, script, cast and audiobooks went with it. This cannot be undone.`,
       });
     },
-    /** Everything a book owns, gone without a word. */
+    /**
+     * Everything a book owns, gone without a word. The server cancelled its jobs and took its
+     * audiobooks and its spending with it; each store that held some of the book lets it go, and
+     * the queue and the library's spending are read again.
+     */
     _dropBook(bookId: string): void {
       const castStore = useCastStore();
-      const exportsStore = useExportsStore();
       const historyStore = useHistoryStore();
       const jobsStore = useJobsStore();
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
-      for (const j of jobsStore.jobs)
-        if (j.bookId === bookId && (j.status === "running" || j.status === "queued"))
-          jobsStore.cancelJob(j.id);
-      jobsStore.jobs = jobsStore.jobs.filter((j) => j.bookId !== bookId);
       this.books = this.books.filter((b) => b.id !== bookId);
       delete this.chapters[bookId];
-      delete castStore.characters[bookId];
-      delete castStore.lexicon[bookId];
-      scriptsStore._previous = Object.fromEntries(
-        Object.entries(scriptsStore._previous).filter(([k]) => !k.startsWith(bookId + ":")),
-      );
-      scriptsStore.segments = Object.fromEntries(
-        Object.entries(scriptsStore.segments).filter(([k]) => !k.startsWith(bookId + ":")),
-      );
-      scriptsStore._remapBook(bookId, {});
-      exportsStore.exports = exportsStore.exports.filter((e) => e.bookId !== bookId);
+      castStore._dropBook(bookId);
+      scriptsStore._dropBook(bookId);
       historyStore.clearBook(bookId);
-      this._forgetBook(bookId);
+      // nothing filed under the book is there to read again, so its reads are let go rather than
+      // invalidated: a read of a book the server no longer has would only fail
+      const queryCache = useQueryCache();
+      for (const entry of queryCache.getEntries({ key: keys.book(bookId) }))
+        queryCache.remove(entry);
+      void jobsStore._changed();
+      void invalidate({ key: keys.librarySpend });
       if (uiStore.currentBookId === bookId) uiStore.currentBookId = null;
     },
   },

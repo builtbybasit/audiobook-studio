@@ -9,6 +9,9 @@ import type { TextFormat } from "@/services/library";
 
 export const keys = {
   jobs: ["jobs"] as const,
+  /** every book the library lists, without their chapters */
+  shelf: ["shelf"] as const,
+  /** a book and its chapters — and, as a prefix, everything filed under the book */
   book: (bookId: string) => ["books", bookId] as const,
   chapterText: (bookId: string, chapterId: number, format: TextFormat) =>
     ["books", bookId, "text", chapterId, format] as const,

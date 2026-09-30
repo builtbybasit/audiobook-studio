@@ -15,12 +15,7 @@ import type {
   Gender,
   Voice,
 } from "@/types";
-import {
-  cloningOf,
-  speechProviderOf,
-  type FormatSupport,
-  type SpeechProviderId,
-} from "@/lib/providers";
+import { speechProviderOf, type FormatSupport, type SpeechProviderId } from "@/lib/providers";
 
 export type { FormatSupport } from "@/lib/providers";
 
@@ -241,13 +236,6 @@ export const fishApiRoot = (baseUrl: string): string =>
     .replace(/\/v\d+$/, "");
 
 // ---------- voice cloning ----------
-
-/**
- * Whether this endpoint's provider can make a voice from someone's samples and keep it as one more
- * voice on the account — whether its description has `cloning`. The Voices tab offers cloning only
- * where it does.
- */
-export const canCloneVoices = (e: Pick<Endpoint, "baseUrl" | "model">): boolean => !!cloningOf(e);
 
 /**
  * What a person agrees to by ticking the box before a voice is made, or before its recordings are

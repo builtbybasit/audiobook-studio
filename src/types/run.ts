@@ -5,7 +5,6 @@
 // selection is work that does not exist yet, how much of it replaces work that is finished, and
 // what is not in the run at all and why. `lib/runPlan.ts` works the answers out; the store queues
 // exactly what the plan counted, and the panels render exactly what the plan counted.
-import type { NarrationStatus, ScriptingStatus } from "@/types/book";
 
 /** What a narration run is asked to do with the clips in the chapters it was given. */
 export type NarrationScope =
@@ -85,10 +84,4 @@ export interface SelectionSummary {
   counts: Record<ChapterState, number>;
   /** the sentence the picker prints, e.g. "8 chapters selected: 3 new, 5 already scripted" */
   text: string;
-}
-
-/** The status a chapter goes back to when a replacement run leaves it as it found it. */
-export interface PreservedStatus {
-  scripting?: ScriptingStatus;
-  narration?: NarrationStatus;
 }

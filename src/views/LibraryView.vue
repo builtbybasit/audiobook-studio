@@ -19,7 +19,7 @@ import { useUiStore } from "@/stores/ui";
 // is no way round it.
 import { useStorage } from "@vueuse/core";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRouter } from "vue-router";
 
 import type { Book } from "@/types";
 import EmptyState from "@/components/EmptyState.vue";
@@ -30,17 +30,16 @@ import ShelfGrid from "@/views/library/ShelfGrid.vue";
 import ShelfTable from "@/views/library/ShelfTable.vue";
 import { bookFacts } from "@/views/library/bookFacts";
 import {
-  asShelfFilter,
-  asShelfSort,
   filterCounts,
   SHELF_FILTERS,
   SHELF_SORTS,
   shelfView,
   type ShelfEntry,
-  type ShelfFilter,
   type ShelfSort,
 } from "@/views/library/shelf";
-import { plural } from "@/views/library/shared";
+import { plural } from "@/lib/contents";
+import { enumParam, textParam, useQueryParam } from "@/composables/useQueryParam";
+import { UiSelect } from "@/ui";
 import {
   LayoutGrid as GridIcon,
   Library as LibraryIcon,
@@ -56,7 +55,6 @@ import {
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const uiStore = useUiStore();
-const route = useRoute();
 const router = useRouter();
 const pending = ref<PendingAdd | null>(null);
 
@@ -85,48 +83,38 @@ const VIEWS: { key: View; label: string; icon: typeof GridIcon }[] = [
 ];
 // the last choice, remembered per browser; the URL carries it too, for a link and a private window
 const remembered = useStorage<View>(VIEW_KEY, "grid");
-const view = computed<View>(() => {
-  const v = route.query.view;
-  if (v === "list" || v === "grid") return v;
-  return remembered.value === "list" ? "list" : "grid";
-});
+const inUrl = useQueryParam("view", enumParam<View, null>(["grid", "list"], null));
+const view = computed<View>(() => inUrl.value ?? (remembered.value === "list" ? "list" : "grid"));
 function setView(v: View) {
   remembered.value = v;
-  void router.replace({ query: { ...route.query, view: v } });
+  inUrl.value = v;
 }
 // a remembered choice shows in the URL too, so the link a person copies says what they saw
 watch(
-  () => route.query.view,
+  inUrl,
   (v) => {
-    if (v !== "list" && v !== "grid" && route.path === "/library" && remembered.value === "list")
-      void router.replace({ query: { ...route.query, view: "list" } });
+    if (v == null && remembered.value === "list") inUrl.value = "list";
   },
   { immediate: true },
 );
 
 // ---- search, filter, order — in the URL, read back when the URL changes
-const text = (v: unknown): string => (typeof v === "string" ? v : "");
-const q = ref(text(route.query.q));
-const filter = ref<ShelfFilter>(asShelfFilter(route.query.filter));
-const sort = ref<ShelfSort>(asShelfSort(route.query.sort));
-watch([q, filter, sort], () => {
-  const next = {
-    ...route.query,
-    q: q.value.trim() || undefined,
-    filter: filter.value === "all" ? undefined : filter.value,
-    sort: sort.value === "added" ? undefined : sort.value,
-  };
-  if (JSON.stringify(next) !== JSON.stringify(route.query)) void router.replace({ query: next });
-});
-watch(
-  () => route.query,
-  (query) => {
-    if (route.path !== "/library") return;
-    if (text(query.q) !== q.value.trim()) q.value = text(query.q);
-    filter.value = asShelfFilter(query.filter);
-    sort.value = asShelfSort(query.sort);
-  },
+const q = useQueryParam("q", textParam({ trim: true }));
+const filter = useQueryParam(
+  "filter",
+  enumParam(
+    SHELF_FILTERS.map((f) => f.key),
+    "all",
+  ),
 );
+const sort = useQueryParam(
+  "sort",
+  enumParam(
+    SHELF_SORTS.map((s) => s.key),
+    "added",
+  ),
+);
+const SORT_OPTIONS = SHELF_SORTS.map((s) => ({ value: s.key, label: s.label }));
 
 const entries = computed<ShelfEntry[]>(() =>
   shelved.value.map((book) => ({ book, facts: bookFacts(book.id) })),
@@ -348,9 +336,14 @@ onUnmounted(() => {
         </div>
         <label class="ml-auto flex items-center gap-1.5 text-zinc-500">
           Order
-          <select v-model="sort" class="input py-0.5 text-xs" aria-label="Order the shelf by">
-            <option v-for="s in SHELF_SORTS" :key="s.key" :value="s.key">{{ s.label }}</option>
-          </select>
+          <UiSelect
+            :model-value="sort"
+            :options="SORT_OPTIONS"
+            size="xs"
+            class="w-40"
+            aria-label="Order the shelf by"
+            @update:model-value="(v) => (sort = v as ShelfSort)"
+          />
         </label>
       </div>
 

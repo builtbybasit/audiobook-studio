@@ -42,7 +42,6 @@ export function readMode(): AppMode {
 
 export const mode: AppMode = readMode();
 export const isDemo = mode === "demo";
-export const isBackend = mode === "backend";
 
 /**
  * Where this tab's API answers: your library at `/api`, the demo library at `/demo/api`. Both are

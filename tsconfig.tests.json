@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "types": ["bun", "vite/client", "@pinia/colada-plugin-auto-refetch"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "~/*": ["./server/*"]
+    }
+  },
+  // The tests the page's code runs in: stores, queries and rules, with the DOM beside Bun. The
+  // server's own tests are `tsconfig.server.json`'s, without the DOM, and so is the fake batch
+  // server they share, which answers with Bun's `Response` rather than the browser's.
+  "include": ["tests/*.ts", "tests/support/*.ts", "src/env.d.ts", "server/types/*.d.ts"],
+  "exclude": ["tests/support/batchServer.ts"]
+}

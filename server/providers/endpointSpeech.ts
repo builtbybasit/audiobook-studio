@@ -23,6 +23,7 @@
 // server once. Each item of a batch is held to the same refusals a line is, and one that fails
 // them is answered with the reason and never sent; the rest go in one request.
 import { isSimulated } from "@/lib/providers";
+import type { EndpointProbe } from "@/types";
 import { refuseEncoding } from "~/providers/answer";
 import { ProviderError, requireKey } from "~/providers/http";
 import { sendSpeech, type SpeechCallOptions } from "~/providers/send";
@@ -35,7 +36,7 @@ import type {
   SpeechInput,
   SpeechProvider,
 } from "~/providers/speech";
-import type { ProbeResult, ProviderTarget } from "~/providers/target";
+import type { ProviderTarget } from "~/providers/target";
 
 /** How long what an endpoint said about batches is believed before it is asked again. */
 const LIMITS_KEPT_MS = 5 * 60_000;
@@ -150,7 +151,7 @@ export function endpointSpeechProvider(options: EndpointSpeechOptions = {}): Spe
       );
     },
 
-    async probe(target: ProviderTarget, signal: AbortSignal): Promise<ProbeResult> {
+    async probe(target: ProviderTarget, signal: AbortSignal): Promise<EndpointProbe> {
       if (isSimulated(target.baseUrl)) return probeSimulated();
       // A test is a question, not a job: one attempt, so a dead endpoint says so at once.
       const once = { ...target, maxRetries: 0 };

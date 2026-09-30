@@ -12,7 +12,7 @@ export const elevenlabs: SpeechProviderShape = {
   id: "elevenlabs",
   label: "ElevenLabs",
   matches: (baseUrl) => /(^|\/\/)([a-z0-9-]+\.)*elevenlabs\.io(\/|:|$)/i.test(baseUrl),
-  requestPath: () => "/text-to-speech/<voice>",
+  requestPath: (_model, voice = "<voice>") => `/text-to-speech/${voice}`,
   /**
    * `output_format`, which names the rate and, for MP3, the bitrate. Its WAV at 44.1 kHz needs a
    * Pro plan and its 192 kbps MP3 a Creator plan; a plan without them is refused by ElevenLabs,

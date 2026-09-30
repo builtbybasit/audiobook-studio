@@ -8,13 +8,13 @@ import type { Spoken } from "@/lib/speech";
 // removal records the lines that moved and puts exactly those back (`attribute`), rather than
 // restoring a snapshot the server never saw. The dictionary works the same way: a change reports
 // the clips it staled, and its Undo names exactly those, for the server to put back to done.
-import { keyInPlace } from "@/services/endpointSettings";
-import { key, norm } from "@/lib/scriptReview";
+import { fetchCast } from "@/queries/cast";
+import { speechReadiness } from "@/lib/endpoints";
+import { norm } from "@/lib/scriptReview";
 import { chapterSeconds, hitsIn, pacingOrDefault, speak } from "@/lib/speech";
 import { newSpeaker, voiceRef } from "@/lib/cast";
 import { clone } from "@/lib/utils";
 import {
-  ApiError,
   type Cast,
   type ChapterLines,
   type LibraryService,
@@ -37,6 +37,7 @@ import { defineStore } from "pinia";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
+import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 interface CastState {
   characters: Record<string, Character[]>;
@@ -61,6 +62,10 @@ export const useCastStore = defineStore("cast", {
     },
     lexiconOf(s): (bookId: string) => LexEntry[] {
       return (bookId: string): LexEntry[] => s.lexicon[bookId] ?? [];
+    },
+    /** Whether this book's cast has been read: `charactersOf` is empty before it and for none. */
+    held(s): (bookId: string) => boolean {
+      return (bookId: string): boolean => bookId in s.characters;
     },
     pacingOf(): (bookId: string) => Pacing {
       const libraryStore = useLibraryStore();
@@ -115,6 +120,11 @@ export const useCastStore = defineStore("cast", {
         };
       };
     },
+    /**
+     * Speakers whose own voice cannot be rendered: the voice is gone, or its endpoint is paused or
+     * has no key (`speechReadiness`). A cooldown passes on its own and is not an issue; a speaker
+     * with no voice of their own borrows the Narrator's, and is covered by the Narrator's row.
+     */
     routingIssues(): (bookId: string) => RoutingIssue[] {
       const endpointsStore = useEndpointsStore();
 
@@ -123,27 +133,22 @@ export const useCastStore = defineStore("cast", {
         for (const c of this.characters[bookId] ?? []) {
           if (!c.voice) continue;
           const r = endpointsStore.resolveVoice(c.voice);
-          if (!r)
+          if (!r) {
             out.push({
               name: c.name,
               ref: c.voice,
               reason: "voice no longer exists",
-              kind: "missing" as const,
+              kind: "missing",
             });
-          else if (!r.endpoint.enabled)
+            continue;
+          }
+          const { state } = speechReadiness(r.endpoint, Date.now());
+          if (state === "paused" || state === "nokey")
             out.push({
               name: c.name,
               ref: c.voice,
-              reason: `${r.endpoint.name} is paused`,
-              kind: "paused" as const,
-              endpoint: r.endpoint,
-            });
-          else if (r.endpoint.needsKey && !keyInPlace(r.endpoint))
-            out.push({
-              name: c.name,
-              ref: c.voice,
-              reason: `${r.endpoint.name} has no API key`,
-              kind: "nokey" as const,
+              reason: `${r.endpoint.name} ${state === "paused" ? "is paused" : "has no API key"}`,
+              kind: state,
               endpoint: r.endpoint,
             });
         }
@@ -216,20 +221,41 @@ export const useCastStore = defineStore("cast", {
     _service(): LibraryService {
       return libraryService();
     },
-    /** Say a request failed, and change nothing. */
-    _failed(what: string, cause: unknown): void {
-      const uiStore = useUiStore();
-      const api = cause instanceof ApiError ? cause : null;
-      uiStore.toast(api ? api.message : `Could not ${what}`, {
-        kind: "error",
-        description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
-        timeout: 8000,
-      });
-    },
     /** The cast as the server holds it, in place of what was here. What `useCast` installs. */
     _install(bookId: string, { characters, lexicon }: Cast): void {
       this.characters[bookId] = characters;
       this.lexicon[bookId] = lexicon;
+    },
+    /** A speaker this book's cast does not have yet, added here; the caller writes them (`_push`). */
+    _addSpeaker(bookId: string, c: Character): void {
+      (this.characters[bookId] ??= []).push(c);
+    },
+    /** Some of one speaker's fields, changed here; the caller writes them (`_push`). */
+    _patchSpeaker(bookId: string, name: string, patch: Partial<Omit<Character, "name">>): boolean {
+      const c = this.characters[bookId]?.find((x) => x.name === name);
+      if (c) Object.assign(c, patch);
+      return !!c;
+    },
+    /**
+     * A term this book's dictionary does not have yet, added here under the next id; the caller
+     * writes the dictionary. Returns its id.
+     */
+    _addTerm(bookId: string, entry: Omit<LexEntry, "id">): number {
+      const list = (this.lexicon[bookId] ??= []);
+      const id = Math.max(0, ...list.map((e) => e.id)) + 1;
+      list.push({ id, ...entry });
+      return id;
+    },
+    /** One term, as `next` has it, in place of the entry of the same term; the caller writes it. */
+    _replaceTerm(bookId: string, next: LexEntry): void {
+      const list = this.lexicon[bookId] ?? [];
+      const i = list.findIndex((e) => e.term === next.term);
+      if (i >= 0) list[i] = next;
+    },
+    /** A book that is gone takes its cast and its dictionary with it. */
+    _dropBook(bookId: string): void {
+      delete this.characters[bookId];
+      delete this.lexicon[bookId];
     },
     /**
      * Write one speaker to the server as they now stand here.
@@ -243,14 +269,14 @@ export const useCastStore = defineStore("cast", {
       try {
         this.characters[bookId] = await this._service().putCharacter(bookId, clone(c));
       } catch (cause) {
-        this._failed("save this speaker", cause);
+        toastFailure("save this speaker", cause);
         await this._reread(bookId);
       }
     },
     /** The server's cast over whatever was here, after a request it refused. */
     async _reread(bookId: string): Promise<void> {
       try {
-        this._install(bookId, await this._service().cast(bookId));
+        await fetchCast(bookId);
       } catch {
         // the failure has been said once already
       }
@@ -263,20 +289,10 @@ export const useCastStore = defineStore("cast", {
       const scriptsStore = useScriptsStore();
 
       this.characters[bookId] = characters;
-      for (const { chapterId, ids, revision } of moved) {
-        const segs = scriptsStore.segments[key(bookId, chapterId)];
-        if (segs) {
-          const set = new Set(ids);
-          for (const s of segs)
-            if (set.has(s.id)) {
-              s.speaker = speaker;
-              scriptsStore._markStale(bookId, chapterId, s);
-            }
-        }
-        // never backwards: an edit's answer for this chapter may have landed in between
-        const k = key(bookId, chapterId);
-        scriptsStore._revision[k] = Math.max(scriptsStore._revision[k] ?? 0, revision);
-      }
+      // a chapter whose script has not been read has nothing to move, and reads its revision
+      // with its script
+      for (const { chapterId, ids, revision } of moved)
+        scriptsStore._applyLines(bookId, chapterId, ids, { speaker }, revision);
     },
     /** Add any speaker this chapter uses that the cast does not have yet. Returns their names, so
      *  an undo of whatever brought them in can take exactly those back off again. */
@@ -310,17 +326,18 @@ export const useCastStore = defineStore("cast", {
         void this._service()
           .deleteCharacter(bookId, c.name)
           .then((r) => this._moved(bookId, r, "Narrator"))
-          .catch((cause: unknown) => this._failed("remove this speaker", cause));
+          .catch((cause: unknown) => toastFailure("remove this speaker", cause));
     },
     /** Chapter length is the sum of what is actually rendered, plus the silence stitched between. */
     _retime(bookId: string, chId: number): void {
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
 
-      const c = libraryStore.chapter(bookId, chId);
-      if (!c) return;
+      if (!libraryStore.chapter(bookId, chId)) return;
       const segs = scriptsStore.segmentsOf(bookId, chId);
-      c.duration = chapterSeconds(segs, this.pacingOf(bookId));
+      libraryStore._patchChapter(bookId, chId, {
+        duration: chapterSeconds(segs, this.pacingOf(bookId)),
+      });
     },
     // ---------- pronunciation & pacing ----------
     // Two ways to change how a book sounds without editing a word of it. The dictionary rewrites a
@@ -328,48 +345,23 @@ export const useCastStore = defineStore("cast", {
     // longer match and are marked stale. A pause is stitched between clips instead of rendered, so
     // changing one re-times the chapter and invalidates nothing.
     _lexSnapshot(bookId: string): () => void {
-      const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
 
       const before = clone(this.lexicon[bookId] ?? []);
-      const prefix = bookId + ":";
-      const keys = Object.keys(scriptsStore.segments).filter((k) => k.startsWith(prefix));
-      const audio = keys.flatMap((k) =>
-        scriptsStore.segments[k].map((s) => [k, s.id, s.audio.status] as const),
-      );
-      const narration = libraryStore.chaptersOf(bookId).map((c) => [c.id, c.narration] as const);
+      const audio = scriptsStore._audioSnapshot(bookId);
       return () => {
         this.lexicon[bookId] = before;
-        for (const [k, id, status] of audio) {
-          const s = scriptsStore.segments[k]?.find((x) => x.id === id);
-          if (s) s.audio.status = status;
-        }
-        for (const [id, was] of narration) {
-          const c = libraryStore.chapter(bookId, id);
-          if (c) c.narration = was;
-        }
+        audio();
       };
     },
     /** Clips that would now be sent different words read the old pronunciation — mark them stale. */
     _lexRestale(bookId: string): number {
-      const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
 
-      let n = 0;
-      const prefix = bookId + ":";
-      for (const k of Object.keys(scriptsStore.segments)) {
-        if (!k.startsWith(prefix)) continue;
-        for (const s of scriptsStore.segments[k]) {
-          const sent = s.audio.pronounced ?? s.audio.said ?? s.audio.text;
-          if (s.audio.status !== "done" || sent == null) continue;
-          if (this.spoken(bookId, s.text).text === sent) continue;
-          s.audio.status = "stale";
-          n++;
-          const c = libraryStore.chapter(bookId, Number(k.slice(prefix.length)));
-          if (c?.narration === "done") c.narration = "stale";
-        }
-      }
-      return n;
+      return scriptsStore._restale(bookId, (s) => {
+        const sent = s.audio.pronounced ?? s.audio.said ?? s.audio.text;
+        return sent != null && this.spoken(bookId, s.text).text !== sent;
+      });
     },
     _lexChanged(bookId: string, revert: () => void, label: string): void {
       const uiStore = useUiStore();
@@ -411,20 +403,14 @@ export const useCastStore = defineStore("cast", {
           restore,
         );
         this.lexicon[bookId] = entries;
-        for (const { chapterId, ids } of stale) {
-          // usually already stale here by the same rule; this catches a clip only the server had
-          const set = new Set(ids);
-          for (const s of scriptsStore.segments[key(bookId, chapterId)] ?? [])
-            if (set.has(s.id)) scriptsStore._markStale(bookId, chapterId, s);
-        }
-        for (const { chapterId, revision } of [...stale, ...restored]) {
-          // never backwards: an edit's answer for this chapter may have landed in between
-          const k = key(bookId, chapterId);
-          scriptsStore._revision[k] = Math.max(scriptsStore._revision[k] ?? 0, revision);
-        }
+        // usually already stale here by the same rule; this catches a clip only the server had
+        for (const { chapterId, ids, revision } of stale)
+          scriptsStore._applyLines(bookId, chapterId, ids, {}, revision);
+        for (const { chapterId, revision } of restored)
+          scriptsStore._adoptRevision(bookId, chapterId, revision);
         return stale.map(({ chapterId, ids }) => ({ chapterId, ids }));
       } catch (cause) {
-        this._failed("save the dictionary", cause);
+        toastFailure("save the dictionary", cause);
         await this._reread(bookId);
         return null;
       }
@@ -469,28 +455,24 @@ export const useCastStore = defineStore("cast", {
     setPause(bookId: string, chId: number, segId: number, pause: number | null): void {
       const scriptsStore = useScriptsStore();
 
-      const s = scriptsStore.segmentsOf(bookId, chId).find((x) => x.id === segId);
       // the pacing of a line is part of the script, so a nudge is written as an edit of it
-      if (!s || (s.pause ?? null) === pause) return;
-      if (pause == null) delete s.pause;
-      else s.pause = pause;
+      if (!scriptsStore._setPause(bookId, chId, segId, pause)) return;
       this._retime(bookId, chId);
       scriptsStore._commit(bookId, chId);
     },
     setPacing(bookId: string, patch: Partial<Pacing>): Promise<void> {
       const libraryStore = useLibraryStore();
 
-      const b = libraryStore.bookById(bookId);
-      if (!b) return Promise.resolve();
-      b.pacing = { ...this.pacingOf(bookId), ...patch };
-      return this._pacingChanged(bookId, b.pacing);
+      if (!libraryStore.bookById(bookId)) return Promise.resolve();
+      const pacing = { ...this.pacingOf(bookId), ...patch };
+      libraryStore._setPacing(bookId, pacing);
+      return this._pacingChanged(bookId, pacing);
     },
     resetPacing(bookId: string): Promise<void> {
       const libraryStore = useLibraryStore();
 
-      const b = libraryStore.bookById(bookId);
-      if (!b?.pacing) return Promise.resolve();
-      delete b.pacing;
+      if (!libraryStore.bookById(bookId)?.pacing) return Promise.resolve();
+      libraryStore._setPacing(bookId, null);
       return this._pacingChanged(bookId, null);
     },
     /**
@@ -507,20 +489,15 @@ export const useCastStore = defineStore("cast", {
       const scriptsStore = useScriptsStore();
 
       for (const c of libraryStore.chaptersOf(bookId))
-        if (key(bookId, c.id) in scriptsStore.segments) this._retime(bookId, c.id);
+        if (scriptsStore.held(bookId, c.id)) this._retime(bookId, c.id);
       const answer = await libraryStore._writeSettings(
         bookId,
         { pacing },
         pacing ? "save the pacing" : "reset the pacing",
       );
       if (!answer) return;
-      const held = libraryStore.chapters[bookId];
-      if (!held) return;
-      const timed = new Map(answer.chapters.map((c) => [c.id, c.duration]));
-      for (const c of held) {
-        const d = timed.get(c.id);
-        if (d !== undefined) c.duration = d;
-      }
+      for (const { id, duration } of answer.chapters)
+        libraryStore._patchChapter(bookId, id, { duration });
     },
     /** Lines in this book that carry a pause of their own. */
     pauseOverrides(bookId: string): {
@@ -559,7 +536,7 @@ export const useCastStore = defineStore("cast", {
       try {
         this._moved(bookId, await this._service().renameCharacter(bookId, from, to), to);
       } catch (cause) {
-        this._failed("rename this speaker", cause);
+        toastFailure("rename this speaker", cause);
         return null;
       }
       return async () => {
@@ -596,7 +573,7 @@ export const useCastStore = defineStore("cast", {
       try {
         result = await svc.mergeCharacter(bookId, from, into);
       } catch (cause) {
-        this._failed("merge these speakers", cause);
+        toastFailure("merge these speakers", cause);
         return null;
       }
       this._moved(bookId, result, into);
@@ -612,7 +589,7 @@ export const useCastStore = defineStore("cast", {
               await this._push(bookId, into);
             }
           } catch (cause) {
-            this._failed("undo the merge", cause);
+            toastFailure("undo the merge", cause);
           }
         },
       };
@@ -657,7 +634,7 @@ export const useCastStore = defineStore("cast", {
           void this._service()
             .deleteCharacter(bookId, name)
             .then((r) => this._moved(bookId, r, "Narrator"))
-            .catch((cause: unknown) => this._failed("remove this speaker", cause));
+            .catch((cause: unknown) => toastFailure("remove this speaker", cause));
         },
       });
       return true;
@@ -726,7 +703,7 @@ export const useCastStore = defineStore("cast", {
       try {
         result = await svc.deleteCharacter(bookId, name);
       } catch (cause) {
-        this._failed("remove this speaker", cause);
+        toastFailure("remove this speaker", cause);
         return;
       }
       this._moved(bookId, result, "Narrator");
@@ -736,7 +713,7 @@ export const useCastStore = defineStore("cast", {
           try {
             this._moved(bookId, await svc.attribute(bookId, was, result.moved), name);
           } catch (cause) {
-            this._failed("put this speaker back", cause);
+            toastFailure("put this speaker back", cause);
           }
         },
       });

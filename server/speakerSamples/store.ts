@@ -10,18 +10,26 @@
 // The removal happens on the next read of the book's samples after the grace period.
 import { existsSync } from "node:fs";
 
-import { and, asc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
-
-import type { KeptSample, ScriptFileVoice, SpeakerSamples } from "@/types";
+import type { KeptSample, ScriptFileVoice, SpeakerSamples, StoredSamples } from "@/types";
 import { readCast } from "~/db/cast";
-import type { Db, Tx } from "~/db/client";
+import type { Db } from "~/db/client";
 import { getBook } from "~/db/library";
-import { speakerSampleFiles as filesTable, speakerSamples } from "~/db/schema";
+import {
+  filesOf,
+  keepSpeakerSamples,
+  namedFiles,
+  purgeDiscardedRows,
+  sampleRow,
+  setDiscarded,
+  toSpeakerSamples,
+  waitingSamples,
+  type KeepSpeakerSamples,
+} from "~/db/speakerSamples";
 import { GRACE_MS } from "~/db/voiceSamples";
 import { inBackground } from "~/lib/background";
 import { fail, notFound } from "~/lib/errors";
 import type { SampleFormat } from "~/providers/clone";
-import { readScriptFile, type ReadFile, type ScriptUpload } from "~/script/importPlan";
+import { readScriptFile, type ReadFile, type ScriptUpload } from "~/script/scriptFile";
 import { speakerSampleFiles, type SpeakerSampleFiles } from "~/speakerSamples/files";
 import {
   folderOf,
@@ -39,65 +47,6 @@ export interface SampleOptions {
 }
 
 // ---------- reading ----------
-
-type Row = typeof speakerSamples.$inferSelect;
-
-function filesOf(db: Db | Tx, id: number): KeptSample[] {
-  return db
-    .select({
-      file: filesTable.file,
-      name: filesTable.name,
-      format: filesTable.format,
-      bytes: filesTable.bytes,
-    })
-    .from(filesTable)
-    .where(eq(filesTable.sampleId, id))
-    .orderBy(asc(filesTable.position))
-    .all();
-}
-
-const shapeOf = (db: Db | Tx, r: Row): SpeakerSamples => ({
-  id: r.id,
-  speaker: r.speaker,
-  title: r.title,
-  consentAt: r.consentAt,
-  consentText: r.consentText,
-  source: r.source,
-  samples: filesOf(db, r.id),
-});
-
-/** One row of this book's, discarded or not; undefined when there is none. */
-function rowOf(db: Db | Tx, bookId: string, id: number): Row | undefined {
-  return db
-    .select()
-    .from(speakerSamples)
-    .where(and(eq(speakerSamples.bookId, bookId), eq(speakerSamples.id, id)))
-    .get();
-}
-
-/** Every file a row of this book still names — which a removal must leave on disk. */
-function namedFiles(db: Db | Tx, bookId: string): Set<string> {
-  return new Set(
-    db
-      .select({ file: filesTable.file })
-      .from(filesTable)
-      .innerJoin(speakerSamples, eq(speakerSamples.id, filesTable.sampleId))
-      .where(eq(speakerSamples.bookId, bookId))
-      .all()
-      .map((r) => r.file),
-  );
-}
-
-/** The samples waiting in this book, oldest first; a discarded row is not among them. */
-export function waitingSamples(db: Db | Tx, bookId: string): SpeakerSamples[] {
-  return db
-    .select()
-    .from(speakerSamples)
-    .where(and(eq(speakerSamples.bookId, bookId), isNull(speakerSamples.discardedAt)))
-    .orderBy(asc(speakerSamples.id))
-    .all()
-    .map((r) => shapeOf(db, r));
-}
 
 /** A voice an export carries again: the speaker, the consent, and how to read each recording. */
 export interface WaitingVoice {
@@ -171,25 +120,7 @@ export function purgeDiscarded(
   bookId: string,
   now: number,
 ): void {
-  const gone = db.transaction((tx) => {
-    const expired = tx
-      .select({ id: speakerSamples.id })
-      .from(speakerSamples)
-      .where(
-        and(
-          eq(speakerSamples.bookId, bookId),
-          isNotNull(speakerSamples.discardedAt),
-          lt(speakerSamples.discardedAt, now - GRACE_MS),
-        ),
-      )
-      .all()
-      .map((r) => r.id);
-    if (!expired.length) return [];
-    const named = expired.flatMap((id) => filesOf(tx, id).map((f) => f.file));
-    tx.delete(speakerSamples).where(inArray(speakerSamples.id, expired)).run();
-    const still = namedFiles(tx, bookId);
-    return named.filter((f) => !still.has(f));
-  });
+  const gone = purgeDiscardedRows(db, bookId, now - GRACE_MS);
   if (gone.length)
     inBackground(files.remove(bookId, gone), "could not remove discarded voice samples", {
       book: bookId,
@@ -216,7 +147,7 @@ export async function storeSamples(
   upload: ScriptUpload,
   speakers: readonly string[],
   { now = Date.now, limits = SAMPLE_LIMITS }: SampleOptions = {},
-): Promise<{ stored: SpeakerSamples[]; replaced: number[] }> {
+): Promise<StoredSamples> {
   requireBook(db, bookId);
   const names = [...new Set(speakers)];
   if (!names.length) fail(400, "Name at least one speaker whose recordings to keep");
@@ -252,7 +183,7 @@ export async function storeSamples(
   const before = namedFiles(db, bookId);
   const written: string[] = [];
   try {
-    const kept: { speaker: string; voice: ScriptFileVoice; clips: KeptSample[] }[] = [];
+    const kept: KeepSpeakerSamples[] = [];
     for (const j of judged) {
       const clips: KeptSample[] = [];
       for (const clip of j.clips) {
@@ -262,55 +193,7 @@ export async function storeSamples(
       }
       kept.push({ ...j, clips });
     }
-    return db.transaction((tx) => {
-      const replaced: number[] = [];
-      const stored: SpeakerSamples[] = [];
-      const at = now();
-      for (const k of kept) {
-        const old = tx
-          .select({ id: speakerSamples.id })
-          .from(speakerSamples)
-          .where(
-            and(
-              eq(speakerSamples.bookId, bookId),
-              eq(speakerSamples.speaker, k.speaker),
-              isNull(speakerSamples.discardedAt),
-            ),
-          )
-          .all()
-          .map((o) => o.id);
-        replaced.push(...old);
-        if (old.length)
-          tx.update(speakerSamples)
-            .set({ discardedAt: at })
-            .where(inArray(speakerSamples.id, old))
-            .run();
-        const row = tx
-          .insert(speakerSamples)
-          .values({
-            bookId,
-            speaker: k.speaker,
-            title: k.voice.title,
-            consentAt: Date.parse(k.voice.consentAt),
-            consentText: k.voice.consentText,
-            source: upload.name,
-            storedAt: at,
-          })
-          .returning()
-          .get();
-        // the same recording carried twice in one voice is one file, kept once
-        const seen = new Set<string>();
-        k.clips.forEach((c, position) => {
-          if (seen.has(c.file)) return;
-          seen.add(c.file);
-          tx.insert(filesTable)
-            .values({ sampleId: row.id, ...c, position })
-            .run();
-        });
-        stored.push(shapeOf(tx, row));
-      }
-      return { stored, replaced };
-    });
+    return keepSpeakerSamples(db, bookId, kept, upload.name, now());
   } catch (e) {
     const orphans = [...new Set(written)].filter((f) => !before.has(f));
     const still = namedFiles(db, bookId);
@@ -330,61 +213,19 @@ export function discardSamples(
   { now = Date.now }: SampleOptions = {},
 ): { id: number } {
   requireBook(db, bookId);
-  const row = rowOf(db, bookId, id);
+  const row = sampleRow(db, bookId, id);
   if (!row || row.discardedAt != null) throw notFound("There are no recordings waiting by that id");
-  db.update(speakerSamples).set({ discardedAt: now() }).where(eq(speakerSamples.id, id)).run();
+  setDiscarded(db, id, now());
   return { id };
-}
-
-/**
- * A merge folds one speaker into another: the lines go to them, and so do the recordings waiting
- * for either — it is one person, cloned or not, and a cascade from the removed row would drop the
- * rows and leave their files on disk with nothing naming them.
- */
-export function moveSpeakerSamples(tx: Db | Tx, bookId: string, from: string, into: string): void {
-  tx.update(speakerSamples)
-    .set({ speaker: into })
-    .where(and(eq(speakerSamples.bookId, bookId), eq(speakerSamples.speaker, from)))
-    .run();
-}
-
-/**
- * Taking a speaker off the cast leaves their recordings nobody to wait for. They are discarded the
- * soft way — held by the Narrator's row only so the foreign key has somewhere to point, hidden at
- * once, and purged with their files a day later — rather than cascaded away with their files left
- * behind.
- */
-export function discardSpeakerSamples(
-  tx: Db | Tx,
-  bookId: string,
-  name: string,
-  holder: string,
-  { now = Date.now }: SampleOptions = {},
-): void {
-  const at = now();
-  tx.update(speakerSamples)
-    .set({ speaker: holder, discardedAt: at })
-    .where(
-      and(
-        eq(speakerSamples.bookId, bookId),
-        eq(speakerSamples.speaker, name),
-        isNull(speakerSamples.discardedAt),
-      ),
-    )
-    .run();
-  tx.update(speakerSamples)
-    .set({ speaker: holder })
-    .where(and(eq(speakerSamples.bookId, bookId), eq(speakerSamples.speaker, name)))
-    .run();
 }
 
 /** Take back a discard; a row already removed by the purge is gone for good. */
 export function restoreSamples(db: Db, bookId: string, id: number): SpeakerSamples {
   requireBook(db, bookId);
-  const row = rowOf(db, bookId, id);
+  const row = sampleRow(db, bookId, id);
   if (!row) throw notFound("Those recordings are gone", "They were discarded more than a day ago.");
-  db.update(speakerSamples).set({ discardedAt: null }).where(eq(speakerSamples.id, id)).run();
-  return shapeOf(db, { ...row, discardedAt: null });
+  setDiscarded(db, id, null);
+  return toSpeakerSamples(db, { ...row, discardedAt: null });
 }
 
 /** Where one waiting recording is on disk, and what it is; 404 for anything else. */
@@ -395,7 +236,7 @@ export function sampleFile(
   id: number,
   file: string,
 ): { path: string; format: SampleFormat } {
-  const row = rowOf(db, bookId, id);
+  const row = sampleRow(db, bookId, id);
   const kept = row && row.discardedAt == null ? filesOf(db, id).find((f) => f.file === file) : null;
   const path = kept ? files.path(bookId, file) : null;
   if (!kept || !path) throw notFound("There is no recording by that name");

@@ -68,15 +68,6 @@ export interface Simulation {
   failRate: number;
 }
 
-/** What a connection test found. `ok: false` is an answer, not an error: the route reports it. */
-export interface ProbeResult {
-  ok: boolean;
-  /** one sentence a person reads, e.g. "Answered in 840 ms with 2 lines" or "401: key refused" */
-  message: string;
-  /** how long the request took, in milliseconds; 0 when none was made */
-  ms: number;
-}
-
 /** A speech endpoint as a request needs it, its key read now and its unset ops defaulted. */
 export function speechTarget(db: Db | Tx, e: Endpoint): ProviderTarget {
   return targetOf(e, "tts", readEndpointKey(db, "tts", e.id));

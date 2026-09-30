@@ -3,6 +3,7 @@ import { useCastStore } from "@/stores/cast";
 import { useExportsStore } from "@/stores/exports";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
+import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
 import { useUiStore } from "@/stores/ui";
 
 // What pressing Build would produce, and what stands in the way. The plan is read off one structure
@@ -15,10 +16,12 @@ import { useUiStore } from "@/stores/ui";
 import { computed, ref, watch } from "vue";
 
 import { usePlayer } from "@/composables/usePlayer";
-import { pauseAfter } from "@/lib/speech";
+import { pauseAfter, secs } from "@/lib/speech";
 import { exportKey, formatOf, hash } from "@/lib/exports";
-import { hms, mb, plural, secs } from "@/views/export/shared";
+import { plural } from "@/lib/contents";
+import { hms, mb } from "@/views/export/shared";
 import ExportFiles from "@/views/export/ExportFiles.vue";
+import { UiCheckbox } from "@/ui";
 import {
   Download as BuildIcon,
   FileAudio as FileIcon,
@@ -29,9 +32,18 @@ import {
 import type { ExportSettings } from "@/types";
 import type { Queue } from "@/composables/usePlayer";
 
-const props = defineProps<{ bookId: string; settings: ExportSettings; selected: number[] }>();
+const props = defineProps<{
+  bookId: string;
+  settings: ExportSettings;
+  selected: number[];
+  /** scripts of selected chapters not read in yet: until they are, "nothing flagged" is not known */
+  reading: boolean;
+  /** selected chapters whose script could not be read */
+  unread: number[];
+}>();
 const emit = defineEmits<{
   build: [];
+  "read-again": [];
   narrate: [number[]];
   drop: [number[]];
   "use-stale": [];
@@ -51,6 +63,10 @@ const review = computed(() =>
   exportsStore.exportReviewFor(props.bookId, props.selected, props.settings),
 );
 const blocked = computed(() => review.value.blockers.length > 0);
+// The flagged lines, the retakes waiting for a verdict and the review below are read from the
+// chapters' lines. A chapter whose lines are not here reads as one with nothing flagged, so the
+// build waits for them rather than passing a review nobody could have seen.
+const unchecked = computed(() => props.reading || props.unread.length > 0);
 /** The image the build embeds, if any: the one chosen, else the EPUB's own, else none at all. */
 const coverNote = computed(() =>
   props.settings.cover
@@ -187,6 +203,8 @@ function listen(ids: number[], title: string) {
 const buildLabel = computed(() => {
   if (running.value) return `Building v${running.value.version}…`;
   if (!props.selected.length) return "Nothing selected";
+  if (props.unread.length) return "Read the chapters’ scripts first";
+  if (props.reading) return "Reading the chapters’ scripts…";
   if (blocked.value) {
     const n = review.value.blockers.length;
     return `Resolve ${n === 1 ? "the problem" : `${n} problems`} above first`;
@@ -292,13 +310,22 @@ const ACTION_LABEL: Record<string, string> = {
           {{ plan.markers ? plural(plan.markers, "chapter mark") : "no chapter marks" }} ·
           {{ coverNote }} ·
           {{
-            settings.normalize ? `matched to ${settings.loudness} LUFS` : "levels left as rendered"
+            settings.normalize
+              ? `levelled to ${settings.loudness} LUFS`
+              : "levels left as rendered"
           }}<template v-if="plan.gaps > 0">
             · {{ hms(plan.gaps) }} of it is the {{ secs(settings.chapterGap) }} between
             chapters</template
           >
         </p>
       </template>
+    </div>
+
+    <div v-if="unread.length" class="border-b border-zinc-200 p-4 dark:border-zinc-800">
+      <ReadFailure
+        :message="`${scriptsUnread(unread.length)}, so its flagged lines and retakes cannot be checked.`"
+        @retry="emit('read-again')"
+      />
     </div>
 
     <!-- problems, as things to do -->
@@ -401,7 +428,7 @@ const ACTION_LABEL: Record<string, string> = {
               </RouterLink>
             </div>
             <label class="mt-3 flex items-start gap-2 text-xs">
-              <input v-model="acceptUnreviewed" type="checkbox" class="mt-0.5 accent-violet-600" />
+              <UiCheckbox v-model="acceptUnreviewed" class="mt-0.5" />
               <span>Build with these unresolved review items. The current clips will be used.</span>
             </label>
           </div>
@@ -445,7 +472,11 @@ const ACTION_LABEL: Record<string, string> = {
       <button
         class="btn-primary w-full justify-center"
         :disabled="
-          blocked || !selected.length || !!running || (!!audioReview.total && !acceptUnreviewed)
+          blocked ||
+          unchecked ||
+          !selected.length ||
+          !!running ||
+          (!!audioReview.total && !acceptUnreviewed)
         "
         @click="emit('build')"
       >

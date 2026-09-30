@@ -9,7 +9,7 @@ import { useCastStore } from "@/stores/cast";
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useJob, fmt } from "@/views/narration/shared";
-import { pauseAfter, secs } from "@/lib/speech";
+import { chapterTimeline, secs } from "@/lib/speech";
 import { usePlayer, type Queue } from "@/composables/usePlayer";
 import { chapterQueue, chapterQueueId } from "@/composables/useChapterQueue";
 import {
@@ -28,19 +28,9 @@ const router = useRouter();
 const { chapter, segments, colorOf } = useJob(props);
 const { p, playQueue, cue, seekTo, skip, next, prev, cycleRate } = usePlayer();
 const pacing = computed(() => castStore.pacingOf(props.bookId));
-// the stitched chapter is the clips *and* the silence between them, so the scrubber shows both
-const timeline = computed(() => {
-  const heard = segments.value.filter((s) => s.audio.duration > 0);
-  let t = 0;
-  return heard.map((s, i) => {
-    const start = t;
-    t += s.audio.duration;
-    const end = t;
-    const gap = pauseAfter(s, heard[i + 1], pacing.value);
-    t += gap;
-    return { s, start, end, gap };
-  });
-});
+// the stitched chapter is the clips *and* the silence between them, so the scrubber shows both —
+// laid out by the same `chapterTimeline` the player's queue is built from
+const timeline = computed(() => chapterTimeline(segments.value, pacing.value));
 // The length of the bar below, summed from the very clips it draws rather than read off
 // `chapter.duration`. The two are the same arithmetic (`cast._retime` is Σdurations + `silenceOf`)
 // and agree whenever nothing is in flight — but a clip being rendered again drops out of `timeline`
@@ -121,7 +111,7 @@ defineExpose({ playChapter });
               total ? "Stitched chapter · click the bar to scrub" : "No audio yet"
             }}</span>
             <span v-if="total && !p.live" class="ml-1 text-[10px] text-amber-600"
-              >timed, not heard — no rendered files in the prototype</span
+              >timed, not heard — these clips have no files</span
             ></span
           >
           <span class="flex items-center gap-2">

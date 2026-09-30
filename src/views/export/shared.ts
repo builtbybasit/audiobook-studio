@@ -15,12 +15,6 @@ export const clock = clockDuration;
 export const mb = (n: number): string =>
   n >= 1024 ? `${(n / 1024).toFixed(n >= 10240 ? 0 : 1)} GB` : `${Math.round(n)} MB`;
 
-export const plural = (n: number, one: string, many = one + "s"): string =>
-  `${n.toLocaleString()} ${n === 1 ? one : many}`;
-
-/** Seconds, exact but never noisy — the same rule the pacing controls use. */
-export const secs = (n: number): string => `${Number(n.toFixed(2))}s`;
-
 /** Where a finished export would sit on disk. Invented path; nothing is written. */
 export const diskPath = (series: string, filename: string): string =>
   `~/Audiobooks/${(series || "Audiobooks").replace(/[/:]/g, "-")}/${filename}`;

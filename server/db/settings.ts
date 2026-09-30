@@ -5,7 +5,8 @@
 // setting being absent, never as an object the app cannot use.
 import { eq } from "drizzle-orm";
 
-import type { PromptTemplate } from "@/types";
+import type { PromptTemplate, ScriptSettings } from "@/types";
+import { makeScriptSettings } from "@/lib/scripting";
 import type { Db, Tx } from "~/db/client";
 import { settings } from "~/db/schema";
 
@@ -26,6 +27,30 @@ export function writeLibraryPrompt(db: Db | Tx, prompt: PromptTemplate | null): 
   const value = { system: prompt.system, user: prompt.user };
   db.insert(settings)
     .values({ key: "prompt", value })
+    .onConflictDoUpdate({ target: settings.key, set: { value } })
+    .run();
+}
+
+/**
+ * How the library's scripting runs are set up: the profile a run goes to. A row that is missing or
+ * not of that shape reads as the defaults, with no profile; a row saved when the settings still
+ * carried the "strip boilerplate" and "keep my edits" switches reads as its profile alone, since
+ * nothing ever acted on them.
+ */
+export function readScriptSettings(db: Db | Tx): ScriptSettings {
+  const value = db.select().from(settings).where(eq(settings.key, "script")).get()?.value;
+  const out = makeScriptSettings();
+  if (typeof value !== "object" || value === null) return out;
+  const { profile } = value as Record<string, unknown>;
+  if (typeof profile === "string" && profile) out.profile = profile;
+  return out;
+}
+
+/** Keep these as the library's scripting settings. */
+export function writeScriptSettings(db: Db | Tx, script: ScriptSettings): void {
+  const value = { profile: script.profile };
+  db.insert(settings)
+    .values({ key: "script", value })
     .onConflictDoUpdate({ target: settings.key, set: { value } })
     .run();
 }

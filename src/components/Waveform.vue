@@ -8,18 +8,13 @@
 // exactly one playback engine (`usePlayer`), so the element stays out of wavesurfer's hands and the
 // playhead is pushed in from outside with `setTime`. `getDuration()` falls back to the decoded peaks,
 // so that works with no media attached at all.
-//
-// With a `url` wavesurfer decodes the real file. Without one — the prototype has no files — it draws
-// the invented shape from `peaks`, and the caller says so on screen.
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import WaveSurfer from "wavesurfer.js";
 
 const props = withDefaults(
   defineProps<{
-    /** the real file, when a backend has rendered one */
-    url?: string;
-    /** pre-computed samples, used when there is no file */
-    peaks?: number[];
+    /** the clip's file, which wavesurfer decodes */
+    url: string;
     duration: number;
     /** 0…1 of this clip; the playhead the app's player is driving */
     progress?: number;
@@ -56,7 +51,7 @@ function build() {
     barRadius: 2,
     normalize: true,
     duration: props.duration,
-    ...(props.url ? { url: props.url } : { peaks: [props.peaks ?? []] }),
+    url: props.url,
   });
   ready = false;
   ws.on("ready", () => {
@@ -75,7 +70,7 @@ onBeforeUnmount(() => {
   ws = null;
 });
 // a different clip is a different waveform; colours and the playhead are not
-watch(() => [props.url, props.peaks, props.duration], build);
+watch(() => [props.url, props.duration], build);
 watch(
   () => [props.wave, props.played],
   () => ws?.setOptions({ waveColor: props.wave, progressColor: props.played }),

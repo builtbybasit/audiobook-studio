@@ -9,8 +9,7 @@
 // none of them `auto`: a retake that lands waits, where a bulk replacement takes over. The verdict
 // is the other half. Both end by settling the chapter the way a run does, because a kept take is a
 // clip that plays and a chapter's length is asked of the clips that play.
-import type { Chapter, Job, Segment } from "@/types";
-import { nextTakeNumber, requeue } from "@/lib/takes";
+import type { Judged, RetakesQueued, Segment } from "@/types";
 import type { Db } from "~/db/client";
 import { activeJob, nextRunId } from "~/db/jobs";
 import * as library from "~/db/library";
@@ -22,33 +21,18 @@ import {
   rejectCandidate,
   writeClip,
 } from "~/db/script";
-import {
-  inFlight,
-  narrationRunOf,
-  RETAKE_LABEL,
-  setChapterNarration,
-  settleChapter,
-} from "~/jobs/narration";
 import type { Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
 import { requireBook } from "~/library/ops";
+import {
+  inFlight,
+  narrationRunOf,
+  queuedSlot,
+  RETAKE_LABEL,
+  settleChapter,
+} from "~/narration/chapter";
 import { narrationCost } from "~/narration/cost";
 import { assertWithinBudget } from "~/usage/budget";
-
-export interface RetakesQueued {
-  /** the job, or null when nothing was queued */
-  job: Job | null;
-  queued: number[];
-  skipped: { id: number; why: "missing" | "pending" }[];
-}
-
-export interface Judged {
-  /** the line as it now stands */
-  segment: Segment;
-  revision: number;
-  /** the chapter as it now stands: status and duration follow the clip that plays */
-  chapter: Chapter;
-}
 
 export type Verdict = "accept" | "reject";
 
@@ -97,7 +81,8 @@ export function retakeLines(
     else if (s.candidate || inFlight(s.audio.status)) skipped.push({ id, why: "pending" });
     else queued.push(s);
   }
-  if (!queued.length) return { job: null, queued: [], skipped };
+  if (!queued.length)
+    return { job: null, queued: [], skipped, chapters: library.listChapters(db, bookId) };
   // held to the book's budget as a bulk run is, before anything is written
   const cost = narrationCost(db, bookId, queued);
   assertWithinBudget(db, bookId, { kind: "narration", cost: cost.reserved, what: "this retake" });
@@ -108,29 +93,28 @@ export function retakeLines(
     chapterId,
     label: `${RETAKE_LABEL} · ch ${chapterId}`,
     bulk: { id: nextRunId(db), op: RETAKE_LABEL, index: 1, total: 1, scope: RETAKE_LABEL },
-    run: { narrationRun: narrationRunOf(cost, queued.length) },
+    run: { narrationRun: narrationRunOf(cost, queued.length, "pending") },
     // in the same transaction as the row, so the lines hold their slots before the run can start
     // and the chapter cannot read as queued after the worker has moved on
     onCreated: (tx) => {
       for (const s of queued) {
-        if (s.audio.duration > 0)
-          writeClip(tx, bookId, chapterId, s.id, "candidate", {
-            status: "queued",
-            endpoint: null,
-            ms: 0,
-            duration: 0,
-            n: nextTakeNumber(s.audio),
-          });
-        else writeClip(tx, bookId, chapterId, s.id, "current", requeue(s.audio));
+        const { slot, queued: clip } = queuedSlot(s.audio, { auto: false });
+        writeClip(tx, bookId, chapterId, s.id, slot, clip);
       }
-      setChapterNarration(tx, bookId, chapterId, "queued", 0);
+      library.setChapterNarration(tx, bookId, chapterId, "queued", 0);
       bumpRevision(tx, bookId, chapterId);
     },
   });
   // the check above and the enqueue are not one transaction; a run that slipped in between is the
   // job handed back, and it was not this request's, so the lines were not queued
   if (!created) throw beingNarrated(chapterId, "ask for the retake");
-  return { job, queued: queued.map((s) => s.id), skipped };
+  // the chapters as they now stand, since the one retaken reads as queued from here on
+  return {
+    job,
+    queued: queued.map((s) => s.id),
+    skipped,
+    chapters: library.listChapters(db, bookId),
+  };
 }
 
 /**

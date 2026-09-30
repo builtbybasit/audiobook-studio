@@ -11,8 +11,6 @@ export const SHELF_FILTERS: { key: ShelfFilter; label: string }[] = [
   { key: "behind", label: "Behind" },
   { key: "done", label: "Up to date" },
 ];
-export const asShelfFilter = (v: unknown): ShelfFilter =>
-  SHELF_FILTERS.some((f) => f.key === v) ? (v as ShelfFilter) : "all";
 
 /** Each key has the one direction that is useful: newest first, A to Z, most to do first. */
 export type ShelfSort = "added" | "title" | "author" | "todo" | "scripted" | "narrated";
@@ -24,8 +22,6 @@ export const SHELF_SORTS: { key: ShelfSort; label: string }[] = [
   { key: "scripted", label: "Least scripted" },
   { key: "narrated", label: "Least narrated" },
 ];
-export const asShelfSort = (v: unknown): ShelfSort =>
-  SHELF_SORTS.some((s) => s.key === v) ? (v as ShelfSort) : "added";
 
 export interface ShelfEntry {
   book: Book;

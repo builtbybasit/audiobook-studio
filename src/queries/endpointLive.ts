@@ -2,9 +2,9 @@
 //
 // Narration goes out through one gate per process that holds each endpoint to its concurrency, its
 // pause and the cooldown after a rate limit, and `GET /api/endpoints/live` says what it holds:
-// lines out, lines waiting, rate limits met and when the cooldown ends. Each read is installed into
-// the endpoints store, which puts the cooldown and the rate limits on the endpoints and keeps the
-// counts beside them, where the Endpoints and Queue pages read them.
+// lines out, lines waiting, rate limits met and when the cooldown ends. Each read puts the cooldown
+// and the rate limits on the endpoints in the endpoints store (`_installLive`); the counts stay
+// here, where the store's `live` reads them for the Endpoints and Queue pages.
 //
 // The query does not poll on its own. The queue's poll (`@/queries/jobs`) is already running while
 // anything is live, and it invalidates this one on every read that finds narration queued or
@@ -27,7 +27,7 @@ async function readLive(): Promise<Record<string, EndpointLive>> {
 }
 
 /**
- * The server's live telemetry for every speech endpoint, read into the endpoints store. A failed
+ * The server's live telemetry for every speech endpoint. A failed
  * read is not said: the queue's poll against the same server says so already, and the page keeps
  * the last counts it had until the next read.
  */

@@ -22,7 +22,7 @@
 // `temperature` is left out where that host refuses or ignores it beside a reasoning level.
 import * as v from "valibot";
 
-import type { RenderedPrompt, SegmentType, TokenUsage } from "@/types";
+import type { EndpointProbe, RenderedPrompt, SegmentType, TokenUsage } from "@/types";
 import { BUILT_IN_PROMPT, renderPrompt, sampleVars } from "@/lib/prompt";
 import { NARRATOR } from "@/lib/cast";
 import { normalizeUsage } from "@/lib/pricing";
@@ -43,7 +43,6 @@ import type {
   ScriptingProvider,
 } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
-import type { ProbeResult } from "~/providers/target";
 
 export interface ChatScriptingOptions {
   /** injected by tests; the real one otherwise */
@@ -56,11 +55,7 @@ export interface ChatScriptingOptions {
  * The built-in prompt for one request, for a caller that rendered none: the chapter's title, the
  * cast and the text, with nothing known of the book.
  */
-export function builtInPrompt(
-  title: string,
-  cast: readonly string[],
-  text: string,
-): RenderedPrompt {
+function builtInPrompt(title: string, cast: readonly string[], text: string): RenderedPrompt {
   return renderPrompt(BUILT_IN_PROMPT, {
     book: { title: "", author: "", notes: "" },
     chapter: { title, number: 1 },
@@ -196,7 +191,7 @@ const Reasoned = v.looseObject({
 });
 
 /** The reasoning tokens a completion says it spent; null when it said nothing readable. */
-export function reasoningTokensOf(body: unknown): number | null {
+function reasoningTokensOf(body: unknown): number | null {
   const read = v.safeParse(Reasoned, body);
   return read.success ? read.output.usage.completion_tokens_details.reasoning_tokens : null;
 }
@@ -215,7 +210,7 @@ function typeOf(said: string, speaker: string): SegmentType {
 const WRAPPING_QUOTES = /^["“”]+|["“”]+$/gu;
 
 /** A fenced or chatty answer's JSON object: the span from its first `{` to its last `}`. */
-export function jsonIn(content: string): unknown {
+function jsonIn(content: string): unknown {
   const unfenced = content.replace(/```(?:json)?/gi, "");
   const from = unfenced.indexOf("{");
   const to = unfenced.lastIndexOf("}");
@@ -427,7 +422,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
       progress?.(1, 1);
       return lines;
     },
-    async probe(target, signal, given): Promise<ProbeResult> {
+    async probe(target, signal, given): Promise<EndpointProbe> {
       const started = performance.now();
       const ms = (): number => Math.round(performance.now() - started);
       try {

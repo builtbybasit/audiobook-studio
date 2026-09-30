@@ -14,8 +14,8 @@ import { useLibraryStore } from "@/stores/library";
 
 import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { plural } from "@/views/library/shared";
 import type { Book } from "@/types";
+import { plural } from "@/lib/contents";
 import { pickedFrom, type PickedFile } from "@/components/addEpub";
 import { libraryService, scriptExportUrl } from "@/services/library";
 import { sizeLabel } from "@/lib/audioFormat";

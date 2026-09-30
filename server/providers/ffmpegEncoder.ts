@@ -411,6 +411,7 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
         const input = ["-f", "concat", "-safe", "0", "-i", listPath];
 
         let filter: string[] = [];
+        let measuredLufs: number | undefined;
         if (options.loudness != null) {
           // Pass one measures; nothing is written, so the output goes nowhere.
           const stats = measured(
@@ -430,6 +431,7 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
           // Silence measures as -inf, which the second pass refuses outright ("Result too large");
           // there is nothing in it to level, so it is written as it is.
           const silent = stats != null && !Number.isFinite(Number(stats.input_i));
+          if (stats && !silent) measuredLufs = Number(stats.input_i);
           filter = silent
             ? []
             : [
@@ -493,7 +495,7 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
         await run(bin, args, signal);
 
         for (const [i, span] of spans.entries()) onChapter?.(span, i);
-        return { bytes: Bun.file(out).size, seconds, chapters: spans };
+        return { bytes: Bun.file(out).size, seconds, chapters: spans, measuredLufs };
       } finally {
         await rm(work, { recursive: true, force: true });
       }

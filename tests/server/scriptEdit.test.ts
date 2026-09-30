@@ -3,7 +3,14 @@
 // per bulk correction, one per restore, and none for a session that came back to where it began.
 import { describe, expect, test } from "bun:test";
 
-import type { Book, Chapter, ChapterHistory, ScriptVersion, Segment } from "@/types";
+import type {
+  ChapterHistory,
+  ChapterScript,
+  EditedScript,
+  ImportedBook,
+  ScriptVersion,
+  Segment,
+} from "@/types";
 import { SESSION_IDLE_MS } from "@/lib/scriptHistory";
 import { readHistory } from "~/db/history";
 import { getJob } from "~/db/jobs";
@@ -18,17 +25,6 @@ import {
   type TestApi,
 } from "../support/server";
 
-interface ImportResult {
-  book: Book;
-  chapters: Chapter[];
-}
-interface ScriptResult {
-  segments: Segment[];
-  revision: number;
-}
-interface Edited extends ScriptResult {
-  history: ChapterHistory;
-}
 interface Failure {
   error: { code: string; message: string; detail?: string };
 }
@@ -41,7 +37,7 @@ const dialogue = () => [
 const FAKE = fakeScriptingProvider().name;
 
 async function scripted(api = testApi()) {
-  const { body } = await api.import<ImportResult>(
+  const { body } = await api.import<ImportedBook>(
     await epubFile({
       chapters: ["One", "Two"].map((title) => ({ title, paragraphs: dialogue() })),
     }),
@@ -50,12 +46,12 @@ async function scripted(api = testApi()) {
   await api.request(`/api/books/${id}/confirm`, { method: "POST" });
   await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1] }));
   await api.runner.idle();
-  const script = (await api.request<ScriptResult>(`/api/books/${id}/chapters/1/script`)).body;
+  const script = (await api.request<ChapterScript>(`/api/books/${id}/chapters/1/script`)).body;
   return { api, id, ...script };
 }
 
 const edit = (api: TestApi, id: string, body: unknown, ch = 1) =>
-  api.request<Edited>(`/api/books/${id}/chapters/${ch}/script`, {
+  api.request<EditedScript>(`/api/books/${id}/chapters/${ch}/script`, {
     ...jsonBody(body),
     method: "PUT",
   });
@@ -80,7 +76,8 @@ describe("editing a script", () => {
     expect(body.history.head.origin).toEqual({ kind: "edited", edits: 1 });
     expect(body.history.head.open).toBe(true);
     expect(
-      (await api.request<ScriptResult>(`/api/books/${id}/chapters/1/script`)).body.segments[0].text,
+      (await api.request<ChapterScript>(`/api/books/${id}/chapters/1/script`)).body.segments[0]
+        .text,
     ).toBe("Edited by hand.");
   });
 
@@ -94,7 +91,7 @@ describe("editing a script", () => {
     });
     expect(status).toBe(409);
     expect(body).toMatchObject({ error: { code: "conflict" } });
-    const kept = (await api.request<ScriptResult>(`/api/books/${id}/chapters/1/script`)).body;
+    const kept = (await api.request<ChapterScript>(`/api/books/${id}/chapters/1/script`)).body;
     expect(kept.segments[0].text).toBe("First.");
     expect(kept.revision).toBe(revision + 1);
     // and the refused edit left no trace in the history either
@@ -113,10 +110,47 @@ describe("editing a script", () => {
     const { api, id, segments } = await scripted();
     const { body } = await edit(api, id, { segments, ifRevision: 0 }, 2);
     expect(body.revision).toBe(1);
-    const chapters = (await api.request<ImportResult>(`/api/books/${id}`)).body.chapters;
+    const chapters = (await api.request<ImportedBook>(`/api/books/${id}`)).body.chapters;
     expect(chapters[1].scripting).toBe("done");
     // nothing was there to preserve, so the history holds no version yet
     expect(body.history.versions).toEqual([]);
+  });
+});
+
+describe("a line's flag", () => {
+  const flag = (api: TestApi, id: string, line: number, body: unknown | null) =>
+    api.request<{ flag: Segment["flag"] | null; revision: number }>(
+      `/api/books/${id}/chapters/1/lines/${line}/flag`,
+      body ? { ...jsonBody(body), method: "PUT" } : { method: "DELETE" },
+    );
+
+  test("is written to its line alone whatever the revision has moved to, and moves it on", async () => {
+    const { api, id, segments, revision } = await scripted();
+    const before = await historyOf(api, id);
+    // the script moves on after it was read — as it does with every clip a run lands
+    const moved = await edit(api, id, { segments, ifRevision: revision });
+    const raised = await flag(api, id, segments[1].id, { kind: "pause", note: " too long " });
+    expect(raised.status).toBe(200);
+    expect(raised.body.flag).toMatchObject({ kind: "pause", note: "too long" });
+    expect(raised.body.revision).toBe(moved.body.revision + 1);
+    const now = (await api.request<ChapterScript>(`/api/books/${id}/chapters/1/script`)).body;
+    expect(now.segments[1].flag).toMatchObject({ kind: "pause", note: "too long" });
+    expect(now.segments.map((s) => s.text)).toEqual(segments.map((s) => s.text));
+    // a copy read before the flag is refused rather than written back over it
+    expect((await edit(api, id, { segments, ifRevision: moved.body.revision })).status).toBe(409);
+    // a flag is not a version of the script
+    expect(await historyOf(api, id)).toEqual(before);
+
+    const cleared = await flag(api, id, segments[1].id, null);
+    expect(cleared.body).toEqual({ flag: null, revision: raised.body.revision + 1 });
+    const after = (await api.request<ChapterScript>(`/api/books/${id}/chapters/1/script`)).body;
+    expect(after.segments[1].flag).toBeUndefined();
+  });
+
+  test("on a line the script does not have is not found, and an unknown kind is a bad request", async () => {
+    const { api, id, segments } = await scripted();
+    expect((await flag(api, id, 9999, { kind: "pause", note: "" })).status).toBe(404);
+    expect((await flag(api, id, segments[0].id, { kind: "loud", note: "" })).status).toBe(400);
   });
 });
 
@@ -282,7 +316,7 @@ describe("the history an edit writes", () => {
     });
     expect(saved.body.history.head.origin).toEqual(saved.body.version.origin);
     expect(
-      (await api.request<ScriptResult>(`/api/books/${id}/chapters/1/script`)).body.revision,
+      (await api.request<ChapterScript>(`/api/books/${id}/chapters/1/script`)).body.revision,
     ).toBe(revision);
 
     const dropped = await api.request<{ history: ChapterHistory }>(
@@ -410,7 +444,7 @@ describe("the history a scripting job writes", () => {
   test("a chapter's history goes with its volume, and follows a renumbering", async () => {
     const { api, id, segments, revision } = await scripted();
     await edit(api, id, { segments: rewrite(segments, "Kept."), ifRevision: revision });
-    await api.import<ImportResult>(
+    await api.import<ImportedBook>(
       await epubFile({ chapters: [{ title: "Three", paragraphs: dialogue() }] }),
       { bookId: id },
     );

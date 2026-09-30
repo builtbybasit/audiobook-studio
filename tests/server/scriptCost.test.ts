@@ -7,12 +7,12 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Book, Profile } from "@/types";
-import { makeProfiles } from "@/mock/fixtures/profiles";
 import { chatScriptingProvider } from "~/providers/chatScripting";
 import type { SentScript } from "~/providers/sent";
 import { chapterUidOf, settleScript } from "~/usage/ledger";
 import { epubFile, story } from "../support/epub";
 import { testApi } from "../support/server";
+import { openaiProfile } from "../support/profiles";
 
 const TEXT = "The door opened. “Come in,” said Mara softly.";
 const LINES = [
@@ -23,7 +23,7 @@ const LINES = [
 
 /** A profile at $2 in / $8 out per million tokens, with no schedule or promotion to move it. */
 const profile: Profile = {
-  ...makeProfiles().find((p) => p.id === "openai")!,
+  ...openaiProfile(),
   inPrice: 2,
   outPrice: 8,
   pricing: undefined,

@@ -20,7 +20,7 @@
 // another language is refused at the save with BreezeBlue's own words. A name is held to its 80
 // characters before anything is sent, since BreezeBlue rejects a longer one — after the upload.
 import type { Voice } from "@/types";
-import { BREEZE_INSTRUCTION_CHARS } from "@/lib/providers/breezeblue";
+import { BREEZE_INSTRUCTION_CHARS, breezeblue } from "@/lib/providers/breezeblue";
 import { call, ProviderError } from "~/providers/http";
 import {
   verifyFirst,
@@ -124,7 +124,7 @@ export const breezeBlueWire: SpeechWire = {
         0,
         false,
       );
-    return elevenLabsRequest(input, target, voice, instructions);
+    return elevenLabsRequest(breezeblue, input, target, voice, instructions);
   },
   probe: modelsProbe,
 

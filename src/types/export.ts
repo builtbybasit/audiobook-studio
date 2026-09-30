@@ -1,7 +1,5 @@
 // Export: what a build would produce, what it did produce, and why a finished one no longer matches
 // the book. A build makes one *export*, which is one or more files; grouping decides how many.
-import type { VoiceRef } from "@/types/common";
-
 export type ExportStatus = "building" | "done" | "failed" | "cancelled" | "replaced";
 
 /** The container the audiobook is written in. */
@@ -132,26 +130,6 @@ export interface ExportReview {
   blockers: ExportBlocker[];
   /** stale chapters the user has explicitly accepted */
   usingStale: number;
-}
-
-/** One voice in the selection and what normalisation would do to it. Simulated, never measured. */
-export interface VoiceLoudness {
-  ref: VoiceRef;
-  label: string;
-  endpoint: string;
-  segments: number;
-  /** integrated loudness, LUFS */
-  lufs: number;
-  /** dB that normalisation would apply */
-  gain: number;
-}
-
-export interface LoudnessReport {
-  voices: VoiceLoudness[];
-  /** LU between the quietest and the loudest voice */
-  spread: number;
-  target: number;
-  enabled: boolean;
 }
 
 export interface ExportItem {

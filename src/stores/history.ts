@@ -17,7 +17,7 @@
 import { key } from "@/lib/scriptReview";
 import { compareScripts, originLabel, planRestore, restoreConsequences } from "@/lib/scriptHistory";
 import { clone } from "@/lib/utils";
-import { ApiError, libraryService } from "@/services/library";
+import { libraryService } from "@/services/library";
 import type {
   ChapterHistory,
   HistoryHead,
@@ -33,6 +33,7 @@ import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
+import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 
 const emptyHead = (): HistoryHead => ({ at: 0, origin: { kind: "scripted" } });
@@ -106,16 +107,6 @@ export const useHistoryStore = defineStore("history", {
     _install(bookId: string, chId: number, history: ChapterHistory): void {
       this.chapters[key(bookId, chId)] = history;
     },
-    /** Say a request failed, and change nothing. */
-    _failed(what: string, cause: unknown): void {
-      const uiStore = useUiStore();
-      const api = cause instanceof ApiError ? cause : null;
-      uiStore.toast(api ? api.message : `Could not ${what}`, {
-        kind: "error",
-        description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
-        timeout: 8000,
-      });
-    },
     // ---------- checkpoints ----------
     /**
      * Name the script as it stands and keep a copy of it. Nothing about the working script changes:
@@ -139,7 +130,7 @@ export const useHistoryStore = defineStore("history", {
         version = saved.version;
         this._install(bookId, chId, saved.history);
       } catch (cause) {
-        this._failed("save this checkpoint", cause);
+        toastFailure("save this checkpoint", cause);
         return null;
       }
       uiStore.toast(`Checkpoint saved: “${title}”`, {
@@ -149,7 +140,7 @@ export const useHistoryStore = defineStore("history", {
           try {
             this._install(bookId, chId, await svc.dropVersion(bookId, chId, version.id));
           } catch (cause) {
-            this._failed("forget this checkpoint", cause);
+            toastFailure("forget this checkpoint", cause);
           }
         },
       });
@@ -191,7 +182,6 @@ export const useHistoryStore = defineStore("history", {
         });
         return false;
       }
-      const k = key(bookId, chId);
       const chapter = libraryStore.chapter(bookId, chId);
       const was = chapter
         ? {
@@ -204,15 +194,17 @@ export const useHistoryStore = defineStore("history", {
       // Undo puts back exactly what the restore changed and nothing else: this chapter's script,
       // the chapter's own status, and any speaker the restore had to add to the cast. Work done elsewhere in the book while the toast was up is not a restore's to
       // take back.
-      const beforeScript = clone(scriptsStore.segments[k] ?? []);
+      const beforeScript = clone(scriptsStore.segmentsOf(bookId, chId));
       const origin: VersionOrigin = { kind: "restored", from: version.id, fromAt: version.at };
-      scriptsStore.segments[k] = plan.segments;
-      if (chapter) {
-        if (chapter.scripting === "done" || chapter.scripting === "fallback")
-          chapter.scripting = plan.scripting ?? chapter.scripting;
-        chapter.narration = plan.narration;
-        if (plan.narration === "none") chapter.narrationProgress = 0;
-      }
+      scriptsStore._replace(bookId, chId, plan.segments);
+      if (was)
+        libraryStore._patchChapter(bookId, chId, {
+          ...((was.scripting === "done" || was.scripting === "fallback") && plan.scripting
+            ? { scripting: plan.scripting }
+            : {}),
+          narration: plan.narration,
+          ...(plan.narration === "none" ? { narrationProgress: 0 } : {}),
+        });
       // a speaker the book's cast lost comes back unreviewed, where the Cast page can merge it
       const absorbed = castStore._absorbCast(bookId, chId);
       for (const name of absorbed) void castStore._push(bookId, name);
@@ -224,8 +216,8 @@ export const useHistoryStore = defineStore("history", {
         description: `${originLabel(version.origin)} · ${facts.join(" · ")}. Everything after it is still in the history.`,
         timeout: 12000,
         undo: () => {
-          scriptsStore.segments[k] = beforeScript;
-          if (chapter && was) Object.assign(chapter, was);
+          scriptsStore._replace(bookId, chId, beforeScript);
+          if (was) libraryStore._patchChapter(bookId, chId, was);
           castStore._retime(bookId, chId);
           // Only the speakers this restore added, and only while nothing else has started using
           // them. The two writes must not race: a speaker removed while the server's script still

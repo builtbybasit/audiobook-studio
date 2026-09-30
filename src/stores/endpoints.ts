@@ -10,31 +10,33 @@
 // credential registry), and a short while after it last changed sends the whole of it. What the
 // server answers is what the store then holds.
 //
-// The library's default scripting prompt travels in the same document (`prompt`, null for the
-// built-in one), but it is not bound onto anything: the page stages an edit to it and saves it on
-// purpose (`setLibraryPrompt`), as it does an endpoint's own prompt (`setProfilePrompt`), since a
-// prompt half-typed is one the server would refuse and every run would read.
+// The scripting settings travel in it too (`script`, the scripting store's `scriptSettings`), and
+// are written behind like the rest. The library's default scripting prompt travels in the same
+// document (`prompt`, null for the built-in one), but it is not bound onto anything: the page
+// stages an edit to it and saves it on purpose (`setLibraryPrompt`), as it does an endpoint's own
+// prompt (`setProfilePrompt`), since a prompt half-typed is one the server would refuse and every
+// run would read.
 //
 // The request history, failure counts and back-off on each endpoint are not configuration. The
 // server never stores them, and neither sending nor installing a configuration touches them. The
 // rate limits and the cooldown are the server's gate's (`_installLive`), read while narration is
 // running, and the lines each endpoint has out and held sit beside the endpoints in `live` rather
 // than on them. They are left out of what the write-behind watches, so a poll never sends a save.
-import { watch } from "vue";
-import { credentials } from "@/lib/credentials";
-import { isFishAudio, presetById, voiceRef } from "@/lib/endpoints";
+import { nextTick, watch } from "vue";
+import { useQueryCache } from "@pinia/colada";
+import { ensureOps, isFishAudio, presetById, voiceRef } from "@/lib/endpoints";
+import { ensurePricing } from "@/lib/pricing";
 import { configErrors, expressionId } from "@/lib/expressions";
 import { newProfile, profileErrors } from "@/lib/scripting";
 import { BUILT_IN_PROMPT, profilePromptProblems, promptProblems } from "@/lib/prompt";
 import { GENDER } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
+import { ENDPOINT_TELEMETRY, type StoredEndpoint } from "@/lib/endpointTelemetry";
 import {
   endpointSettingsService,
-  ENDPOINT_TELEMETRY,
   type EndpointConfig,
   type EndpointSettings,
   type EndpointSettingsService,
-  type StoredEndpoint,
   type VoiceCloneRequest,
   type VoiceListPage,
   type VoiceListQuery,
@@ -45,6 +47,7 @@ import { keys } from "@/queries/keys";
 import { encodingOf } from "@/lib/endpointShapes";
 import type {
   ConnectionTest,
+  Credential,
   Endpoint,
   EndpointKind,
   EndpointLive,
@@ -54,6 +57,7 @@ import type {
   ProfilePrompt,
   PromptTemplate,
   ResolvedVoice,
+  ScriptSettings,
   SettingsFile,
   Voice,
   VoiceOption,
@@ -65,23 +69,23 @@ import { useJobsStore } from "@/stores/jobs";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
+import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 interface EndpointsState {
   endpoints: Endpoint[];
   profiles: Profile[];
   /** The library's default scripting prompt, as saved; null is the built-in one. */
   prompt: PromptTemplate | null;
+  /** The named credentials the endpoints and profiles say they use; names only, never a key. */
+  credentials: Credential[];
   /** Whether the configuration has been read from the server yet. */
   loaded: boolean;
-  /**
-   * What the server's process last said of each speech endpoint it has sent to, by id
-   * (`GET /api/endpoints/live`). Empty until narration first runs.
-   */
-  live: Record<string, EndpointLive>;
 }
 
 /** An endpoint the server has sent nothing to: nothing out, nothing held. */
 const IDLE: EndpointLive = { active: 0, waiting: 0, rateLimits: 0, backoffUntil: 0 };
+/** No endpoint's telemetry, before the first read. */
+const NONE: Record<string, EndpointLive> = {};
 
 /** How long the configuration has to sit still before it is sent. A number box sends nothing
  *  per keystroke; a pause sends the value typed. */
@@ -103,6 +107,8 @@ function configOf(
   endpoints: Endpoint[],
   profiles: Profile[],
   prompt: PromptTemplate | null,
+  credentials: Credential[],
+  script: ScriptSettings,
 ): EndpointConfig {
   return {
     endpoints: endpoints.map(storedOf),
@@ -112,7 +118,25 @@ function configOf(
     credentials: credentials.map((c) => ({ ...c })),
     // always sent, so what the server holds is what the page shows
     prompt,
+    // the choice of profile only ever names one saved with it, which the server insists on
+    script: {
+      ...script,
+      profile: profiles.some((p) => p.id === script.profile) ? script.profile : null,
+    },
   };
+}
+
+/**
+ * An endpoint or profile with its operational settings and its pricing block filled in, for one
+ * saved before either existed. Every one the store takes on comes through here — read from the
+ * server, added, or imported from a file — so the pages that edit them never find a field missing.
+ * Filling in the defaults is idempotent and changes nothing a request would do differently: an
+ * empty schedule and no promotions is exactly ordinary pricing.
+ */
+function filled<T extends Endpoint | Profile>(ep: T, kind: EndpointKind): T {
+  ensureOps(ep, kind);
+  ensurePricing(ep);
+  return ep;
 }
 
 /** A template as it is kept: null when it is the built-in prompt, word for word. */
@@ -162,6 +186,21 @@ let inFlight = 0;
 let held = "";
 let timer: ReturnType<typeof setTimeout> | null = null;
 let stopWatch: (() => void) | null = null;
+/**
+ * The store the watch is on, held weakly: a page has one, and a second Pinia's (a test's next tab)
+ * takes it over.
+ */
+let watching: WeakRef<object> | null = null;
+/** Writes sent and not yet answered, for `flushWrites` to wait on. */
+const writing = new Set<Promise<unknown>>();
+
+/** Count `write` among those out until it settles, however it settles. */
+function tracked<T>(write: Promise<T>): Promise<T> {
+  writing.add(write);
+  const done = () => void writing.delete(write);
+  write.then(done, done);
+  return write;
+}
 
 /** A voice heard, as an object url; `duration` is null when only the file knows it. */
 export interface HeardSample {
@@ -191,17 +230,24 @@ export const useEndpointsStore = defineStore("endpoints", {
     endpoints: [],
     profiles: [],
     prompt: null,
+    credentials: [],
     loaded: false,
-    live: {},
   }),
   getters: {
+    /**
+     * What the server's process last said of each speech endpoint it has sent to, by id
+     * (`GET /api/endpoints/live`, read by `useEndpointLive`). Empty until narration first runs.
+     */
+    live(): Record<string, EndpointLive> {
+      return useQueryCache().getQueryData<Record<string, EndpointLive>>(keys.endpointLive) ?? NONE;
+    },
     /**
      * Lines out at a speech endpoint and lines held for it, across every job, as the server counts
      * them. The clips the browser has loaded are only those of the chapters it has opened; the gate
      * counts every job's lines.
      */
-    serverLoad(s): (id: string) => EndpointLive {
-      return (id) => s.live[id] ?? IDLE;
+    serverLoad(): (id: string) => EndpointLive {
+      return (id) => this.live[id] ?? IDLE;
     },
     enabledEndpoints(s): Endpoint[] {
       return s.endpoints.filter((e) => e.enabled);
@@ -242,52 +288,48 @@ export const useEndpointsStore = defineStore("endpoints", {
     _service(): EndpointSettingsService {
       return endpointSettingsService();
     },
-    /** Say a request failed. The caller decides what to read again. */
-    _failed(what: string, cause: unknown): void {
-      const uiStore = useUiStore();
-      const api = cause instanceof ApiError ? cause : null;
-      uiStore.toast(api ? api.message : `Could not ${what}`, {
-        kind: "error",
-        description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
-        timeout: 8000,
-      });
-    },
     _config(): EndpointConfig {
-      return configOf(this.endpoints, this.profiles, this.prompt);
+      return configOf(
+        this.endpoints,
+        this.profiles,
+        this.prompt,
+        this.credentials,
+        useScriptingStore().scriptSettings,
+      );
     },
     /**
      * Hold the configuration the server answered with, in place of this one.
      *
      * An endpoint that survives keeps its object and its telemetry; a new one starts with none.
-     * The credential registry is a module-level list the Connection tab reads directly, so it is
-     * refilled in place rather than replaced.
      */
     _install(answer: EndpointSettings): void {
       const endpoints = new Map(this.endpoints.map((e) => [e.id, e]));
       this.endpoints = answer.endpoints.map((e) => {
         const cur = endpoints.get(e.id);
-        return cur
-          ? adopt(cur, e)
-          : { ...e, history: [], failures: 0, rateLimits: 0, backoffUntil: 0 };
+        return filled(
+          cur ? adopt(cur, e) : { ...e, history: [], failures: 0, rateLimits: 0, backoffUntil: 0 },
+          "tts",
+        );
       });
       const profiles = new Map(this.profiles.map((p) => [p.id, p]));
       this.profiles = answer.profiles.map((p) => {
         const cur = profiles.get(p.id);
-        return cur ? adopt(cur, p) : p;
+        return filled(cur ? adopt(cur, p) : p, "scripting");
       });
-      credentials.splice(0, credentials.length, ...answer.credentials);
+      this.credentials = answer.credentials;
       this.prompt = answer.prompt ?? null;
+      if (answer.script) useScriptingStore().scriptSettings = { ...answer.script };
       // What the watch will see next is the answer, and the answer is not a change to send.
       held = JSON.stringify(this._config());
     },
     /**
-     * Hold what the server's process last said of its speech endpoints, and put each one's rate
-     * limits and cooldown on the endpoint, where the wait reasons and the effective limit read
-     * them. An endpoint the answer leaves out has had nothing sent to it, so it is not cooling
-     * down. Both fields are telemetry, which the write-behind never sees, so this sends nothing.
+     * Put what the server's process last said of each speech endpoint's rate limits and cooldown on
+     * the endpoint, where the wait reasons and the effective limit read them. An endpoint the answer
+     * leaves out has had nothing sent to it, so it is not cooling down. Both fields are telemetry,
+     * which the write-behind never sees, so this sends nothing. The counts themselves stay in the
+     * query cache, where `live` reads them.
      */
     _installLive(live: Record<string, EndpointLive>): void {
-      this.live = live;
       for (const ep of this.endpoints) {
         const seen = live[ep.id] ?? IDLE;
         ep.rateLimits = seen.rateLimits;
@@ -309,16 +351,24 @@ export const useEndpointsStore = defineStore("endpoints", {
         // Something was typed while the read was out: that is newer than what it read, and its
         // own write is already on its way.
         if (this.loaded && edits !== before) return;
+        // watched first: taking the watch over from another store starts its bookkeeping afresh,
+        // and what is installed next is what the server holds
+        this._writeBehind();
         this._install(answer);
         this.loaded = true;
-        this._writeBehind();
       } catch (cause) {
-        this._failed("read the endpoints", cause);
+        toastFailure("read the endpoints", cause);
       }
     },
-    /** Start watching the configuration for changes to send. Once per store. */
+    /**
+     * Start watching the configuration for changes to send. Once per store: the bookkeeping is
+     * module state, so a store that is not the one being watched — another Pinia's — lets the
+     * other's watch and bookkeeping go first, or it would keep sending that store's configuration.
+     */
     _writeBehind(): void {
-      if (stopWatch) return;
+      if (watching?.deref() === this) return;
+      this._detach();
+      watching = new WeakRef(this);
       stopWatch = watch(
         () => JSON.stringify(this._config()),
         (now) => {
@@ -328,15 +378,17 @@ export const useEndpointsStore = defineStore("endpoints", {
           // so this has to be said too.
           if (now === held && !inFlight) return cancelTimer();
           cancelTimer();
-          timer = setTimeout(() => void this.flushWrites(), WRITE_DELAY_MS);
+          timer = setTimeout(() => void this._send(), WRITE_DELAY_MS);
         },
       );
     },
-    /** Stop the write-behind and forget its bookkeeping, and the samples heard. For tests, between
-     *  one store and the next. */
+    /** Stop the write-behind and forget its bookkeeping, and the samples heard: before another
+     *  store takes the watch over, and in a test between one store and the next. */
     _detach(): void {
       stopWatch?.();
       stopWatch = null;
+      watching = null;
+      writing.clear();
       cancelTimer();
       edits = 0;
       inFlight = 0;
@@ -345,15 +397,31 @@ export const useEndpointsStore = defineStore("endpoints", {
       samples.clear();
     },
     /**
-     * Send the configuration now rather than when the timer would have. Resolves when the answer
-     * is in; a no-op when nothing is waiting to go.
+     * Send what is waiting now rather than when the timer would have, and resolve once everything
+     * edited so far is on the server: a write already out is waited for, and so is the one sent
+     * for what was typed while it was out. A no-op when nothing is waiting or out.
+     *
+     * A change made while a write was out sets the timer again, so this goes round until nothing
+     * is waiting and nothing is out.
+     */
+    async flushWrites(): Promise<void> {
+      for (;;) {
+        // the watch sees an edit only before the next render, so a caller that has just edited
+        // needs nothing of its own
+        await nextTick();
+        if (timer) await this._send();
+        else if (writing.size) await Promise.allSettled(writing);
+        else return;
+      }
+    },
+    /**
+     * Send the configuration as it stands, taking it off the timer.
      *
      * Only the answer to the latest change is installed: an earlier write answering after the
      * person has typed past it would put back what they typed over. A refused write is said, and
      * the server's configuration is read back so the page shows what is actually in force.
      */
-    async flushWrites(): Promise<void> {
-      if (!timer) return;
+    async _send(): Promise<void> {
       cancelTimer();
       const n = edits;
       const body = this._config();
@@ -363,11 +431,11 @@ export const useEndpointsStore = defineStore("endpoints", {
       inFlight++;
       let answer: EndpointSettings;
       try {
-        answer = await this._service().putSettings(body);
+        answer = await tracked(this._service().putSettings(body));
       } catch (cause) {
         inFlight--;
         if (edits !== n) return;
-        this._failed("save the endpoints", cause);
+        toastFailure("save the endpoints", cause);
         await this.load(true);
         return;
       }
@@ -380,6 +448,7 @@ export const useEndpointsStore = defineStore("endpoints", {
         profiles: answer.profiles,
         credentials: answer.credentials,
         prompt: answer.prompt ?? null,
+        script: answer.script,
       };
       if (JSON.stringify(same) === sent) held = sent;
       else this._install(answer);
@@ -404,10 +473,10 @@ export const useEndpointsStore = defineStore("endpoints", {
       inFlight++;
       let answer: EndpointSettings;
       try {
-        answer = await this._service().putSettings(body);
+        answer = await tracked(this._service().putSettings(body));
       } catch (cause) {
         inFlight--;
-        this._failed(apiKey ? "save the key" : "remove the key", cause);
+        toastFailure(apiKey ? "save the key" : "remove the key", cause);
         if (edits === n) await this.load(true);
         return false;
       }
@@ -578,30 +647,42 @@ export const useEndpointsStore = defineStore("endpoints", {
           backoffUntil: 0,
           ...portable(e),
         } as Endpoint;
-        if (cur) Object.assign(cur, fresh);
-        else this.endpoints.push(fresh);
+        if (cur) filled(Object.assign(cur, fresh), "tts");
+        else this.endpoints.push(filled(fresh, "tts"));
         n++;
       }
       for (const p of profiles) {
         const cur = this.profiles.find((x) => x.id === p.id);
-        if (cur) Object.assign(cur, p);
-        else this.profiles.push(p);
+        if (cur) filled(Object.assign(cur, p), "scripting");
+        else this.profiles.push(filled(p, "scripting"));
       }
       if (obj.prompt !== undefined) this.prompt = keptPrompt(obj.prompt);
-      if (obj.scriptSettings) Object.assign(scriptingStore.scriptSettings, obj.scriptSettings);
+      if (obj.scriptSettings) {
+        const { profile } = obj.scriptSettings;
+        // a file's choice of profile holds only if that profile is here now
+        if (this.profiles.some((p) => p.id === profile))
+          scriptingStore.scriptSettings.profile = profile;
+      }
       uiStore.toast(`Imported ${n} narration and ${profiles.length} scripting endpoints`, {
         kind: "success",
         description: "API keys are never in the file — add them again on each endpoint.",
         timeout: 7000,
       });
     },
+    /** A new named credential for the Connection tab to pick. Returns its id. */
+    addCredential(label: string): string {
+      const id = "cred-" + Math.random().toString(36).slice(2, 8);
+      this.credentials.push({ id, label: label.trim() || "New credential", note: "" });
+      return id;
+    },
     addScriptProfile(): string {
-      const p = newProfile();
+      const p = filled(newProfile(), "scripting");
       this.profiles.push(p);
       return p.id;
     },
     removeScriptProfile(id: string): void {
       const jobsStore = useJobsStore();
+      const scriptingStore = useScriptingStore();
       const uiStore = useUiStore();
 
       if (jobsStore.jobs.some((j) => !j.finishedAt && j.scriptRun?.profile.id === id)) {
@@ -611,7 +692,15 @@ export const useEndpointsStore = defineStore("endpoints", {
       const i = this.profiles.findIndex((p) => p.id === id);
       if (i < 0) return;
       const [p] = this.profiles.splice(i, 1);
-      uiStore.toast(`Removed ${p.name}`, { undo: () => this.profiles.splice(i, 0, p) });
+      // runs no longer go to it: the first profile that can take one does, until another is picked
+      const chosen = scriptingStore.scriptSettings.profile === id;
+      if (chosen) scriptingStore.scriptSettings.profile = null;
+      uiStore.toast(`Removed ${p.name}`, {
+        undo: () => {
+          this.profiles.splice(i, 0, p);
+          if (chosen) scriptingStore.scriptSettings.profile = id;
+        },
+      });
     },
     // ---------- endpoints & their voices ----------
     /** `presetId` fills in what a provider pins down (base URL, model, billing, limits); every
@@ -639,7 +728,9 @@ export const useEndpointsStore = defineStore("endpoints", {
       };
       const preset = presetId ? presetById(presetId) : undefined;
       // a copy, so the preset's billing never becomes an object two endpoints share
-      this.endpoints.push(Object.assign(base, preset ? clone(preset.apply) : undefined));
+      this.endpoints.push(
+        filled(Object.assign(base, preset ? clone(preset.apply) : undefined), "tts"),
+      );
       return this.endpoints[this.endpoints.length - 1];
     },
     removeEndpoint(id: string): void {
@@ -659,6 +750,11 @@ export const useEndpointsStore = defineStore("endpoints", {
       if (!id || ep.voices.some((v) => v.id === id)) return false;
       ep.voices.push({ id, label: (label ?? "").trim() || id, gender: gender ?? "n" });
       return true;
+    },
+    /** Take a voice off an endpoint without a word, as an undo of adding it does. */
+    _dropVoice(endpointId: string, voiceId: string): void {
+      const ep = this.endpoints.find((e) => e.id === endpointId);
+      if (ep) ep.voices = ep.voices.filter((v) => v.id !== voiceId);
     },
     removeVoice(ep: Endpoint, id: string): void {
       const uiStore = useUiStore();
@@ -738,7 +834,7 @@ export const useEndpointsStore = defineStore("endpoints", {
         samples.set(key, sample);
         return sample;
       } catch (cause) {
-        this._failed("play the sample", cause);
+        toastFailure("play the sample", cause);
         return null;
       } finally {
         // answered or not, a request may have reached the provider, and it is a row on this page
@@ -768,7 +864,7 @@ export const useEndpointsStore = defineStore("endpoints", {
         });
         return voice;
       } catch (cause) {
-        this._failed("make the voice", cause);
+        toastFailure("make the voice", cause);
         return null;
       }
     },
@@ -806,7 +902,7 @@ export const useEndpointsStore = defineStore("endpoints", {
         );
         return kept;
       } catch (cause) {
-        this._failed("keep the samples", cause);
+        toastFailure("keep the samples", cause);
         return null;
       }
     },
@@ -825,7 +921,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       try {
         await svc.forgetSamples(ep.id, kept.voiceId);
       } catch (cause) {
-        this._failed("forget the samples", cause);
+        toastFailure("forget the samples", cause);
         return false;
       }
       uiStore.toast(`Forgot the samples of ${kept.title}`, {
@@ -833,7 +929,7 @@ export const useEndpointsStore = defineStore("endpoints", {
         undo: () =>
           void svc
             .restoreSamples(ep.id, kept.voiceId)
-            .then(restored, (cause) => this._failed("bring the samples back", cause)),
+            .then(restored, (cause) => toastFailure("bring the samples back", cause)),
       });
       return true;
     },

@@ -8,8 +8,9 @@ import { useScriptsStore } from "@/stores/scripts";
 import { computed, ref } from "vue";
 
 import { SAMPLE_TITLE, useVoiceSample } from "@/composables/useVoiceSample";
-import { UiSelect, UiCheckbox, UiTooltip } from "@/ui";
+import { UiCheckbox, UiDialog, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
+import SpoilerText from "@/components/SpoilerText.vue";
 import {
   ChevronDown as ChevronDownIcon,
   ChevronRight as ChevronRightIcon,
@@ -21,14 +22,9 @@ import {
   UserPen as EditCastIcon,
 } from "@lucide/vue";
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "reka-ui";
-import {
-  DialogContent,
-  DialogDescription,
-  DialogOverlay,
-  DialogPortal,
-  DialogRoot,
-  DialogTitle,
-} from "reka-ui";
+import { DialogDescription, DialogTitle } from "reka-ui";
+import { GENDER } from "@/lib/scriptReview";
+import { plural } from "@/lib/contents";
 import type { Character, Gender } from "@/types";
 
 const props = defineProps<{ bookId: string }>();
@@ -44,7 +40,6 @@ const issueOf = (c: Character) =>
 const q = ref("");
 const unassignedOnly = ref(false);
 const showMinor = ref(false);
-const revealed = ref(new Set<string>());
 const assignOpen = ref(false);
 
 const all = computed(() => castStore.charactersOf(props.bookId));
@@ -63,12 +58,7 @@ const minor = computed(() =>
 );
 const narrator = computed(() => all.value.find((c) => c.name === "Narrator"));
 const assignmentPlan = computed(() => castStore.autoAssignPlan(props.bookId));
-const genderLabel: Record<Gender, string> = {
-  m: "male",
-  f: "female",
-  n: "neutral",
-  "?": "unknown",
-};
+const genderLabel = (g: Gender): string => GENDER[g] ?? "unknown";
 /** The Cast page holds the whole record; this opens it on one speaker rather than at the top of a
  *  list you then have to find them in. */
 const editLink = (c: Character) => ({
@@ -141,7 +131,7 @@ function applyAssignments() {
             title="Auto-assign pools voices by gender and skips a speaker without one"
             >unknown gender</span
           >
-          <span v-else class="text-[11px] text-zinc-400">{{ genderLabel[c.gender] }}</span>
+          <span v-else class="text-[11px] text-zinc-400">{{ genderLabel(c.gender) }}</span>
           <RouterLink
             :to="editLink(c)"
             class="icon-btn"
@@ -158,19 +148,11 @@ function applyAssignments() {
           >
         </div>
         <div class="mt-2 min-h-8 text-xs leading-snug text-zinc-600 dark:text-zinc-400">
-          <template v-if="!c.description"
-            ><span class="italic text-zinc-400">No description.</span></template
-          >
-          <template v-else-if="revealed.has(c.name) || c.name === 'Narrator'">{{
-            c.description
-          }}</template>
-          <button
-            v-else
-            class="rounded border border-dashed border-zinc-300 px-2 py-0.5 italic text-zinc-400 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
-            @click="revealed = new Set([...revealed, c.name])"
-          >
-            description hidden — spoilers · show
-          </button>
+          <SpoilerText
+            :text="c.description"
+            :hidden="c.name !== 'Narrator'"
+            empty="No description."
+          />
         </div>
         <div class="mt-2 flex items-center gap-1.5">
           <VoicePicker
@@ -256,7 +238,7 @@ function applyAssignments() {
                 title="Auto-assign pools voices by gender and skips a speaker without one"
                 >unknown</span
               >
-              <span v-else class="text-zinc-500">{{ genderLabel[c.gender] }}</span>
+              <span v-else class="text-zinc-500">{{ genderLabel(c.gender) }}</span>
             </td>
             <td class="w-16 font-mono text-xs text-zinc-400">{{ counts[c.name] ?? 0 }} seg</td>
             <td class="w-56 py-1">
@@ -285,57 +267,46 @@ function applyAssignments() {
       </CollapsibleContent>
     </CollapsibleRoot>
 
-    <DialogRoot v-model:open="assignOpen">
-      <DialogPortal>
-        <DialogOverlay class="fixed inset-0 z-40 bg-black/40" />
-        <DialogContent
-          class="card fixed left-1/2 top-1/2 z-50 flex max-h-[min(36rem,90vh)] w-[min(34rem,92vw)] -translate-x-1/2 -translate-y-1/2 flex-col p-5 text-sm shadow-2xl focus:outline-none"
+    <UiDialog
+      v-model:open="assignOpen"
+      class="card flex max-h-[min(36rem,90vh)] w-[min(34rem,92vw)] flex-col p-5 text-sm"
+    >
+      <DialogTitle class="text-base font-semibold">
+        Assign {{ plural(assignmentPlan.length, "unvoiced speaker") }}?
+      </DialogTitle>
+      <DialogDescription class="mt-1 text-xs leading-relaxed text-zinc-500">
+        Enabled endpoints supply the voices. Gender-matched voices are rotated across the cast;
+        unknown or unmatched speakers use the available pool. Existing assignments and the Narrator
+        stay unchanged.
+      </DialogDescription>
+      <div class="mt-3 min-h-0 flex-1 overflow-auto rounded-md border dark:border-zinc-800">
+        <div
+          v-for="row in assignmentPlan"
+          :key="row.name"
+          class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b px-3 py-2 last:border-0 dark:border-zinc-800"
         >
-          <DialogTitle class="text-base font-semibold">
-            Assign {{ assignmentPlan.length }} unvoiced speaker{{
-              assignmentPlan.length === 1 ? "" : "s"
-            }}?
-          </DialogTitle>
-          <DialogDescription class="mt-1 text-xs leading-relaxed text-zinc-500">
-            Enabled endpoints supply the voices. Gender-matched voices are rotated across the cast;
-            unknown or unmatched speakers use the available pool. Existing assignments and the
-            Narrator stay unchanged.
-          </DialogDescription>
-          <div class="mt-3 min-h-0 flex-1 overflow-auto rounded-md border dark:border-zinc-800">
-            <div
-              v-for="row in assignmentPlan"
-              :key="row.name"
-              class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b px-3 py-2 last:border-0 dark:border-zinc-800"
-            >
-              <div class="min-w-0">
-                <div class="truncate font-medium">{{ row.name }}</div>
-                <div class="text-[10px] text-zinc-400">
-                  {{ genderLabel[row.gender]
-                  }}{{ row.matchedGender ? " match" : " · fallback pool" }}
-                </div>
-              </div>
-              <NextIcon class="icon-sm text-zinc-400" />
-              <div class="min-w-0 text-right">
-                <div class="truncate">{{ row.voiceLabel }}</div>
-                <div class="truncate text-[10px] text-zinc-400">{{ row.endpoint }}</div>
-              </div>
+          <div class="min-w-0">
+            <div class="truncate font-medium">{{ row.name }}</div>
+            <div class="text-[10px] text-zinc-400">
+              {{ genderLabel(row.gender) }}{{ row.matchedGender ? " match" : " · fallback pool" }}
             </div>
           </div>
-          <div class="mt-4 flex justify-end gap-2">
-            <button class="btn-ghost" @click="assignOpen = false">Cancel</button>
-            <button
-              class="btn-primary"
-              :disabled="!assignmentPlan.length"
-              @click="applyAssignments"
-            >
-              Assign {{ assignmentPlan.length }} speaker{{ assignmentPlan.length === 1 ? "" : "s" }}
-            </button>
+          <NextIcon class="icon-sm text-zinc-400" />
+          <div class="min-w-0 text-right">
+            <div class="truncate">{{ row.voiceLabel }}</div>
+            <div class="truncate text-[10px] text-zinc-400">{{ row.endpoint }}</div>
           </div>
-          <p class="mt-2 text-right text-[11px] text-zinc-400">
-            You can undo the whole assignment from the toast or with ⌘Z.
-          </p>
-        </DialogContent>
-      </DialogPortal>
-    </DialogRoot>
+        </div>
+      </div>
+      <div class="mt-4 flex justify-end gap-2">
+        <button class="btn-ghost" @click="assignOpen = false">Cancel</button>
+        <button class="btn-primary" :disabled="!assignmentPlan.length" @click="applyAssignments">
+          Assign {{ plural(assignmentPlan.length, "speaker") }}
+        </button>
+      </div>
+      <p class="mt-2 text-right text-[11px] text-zinc-400">
+        You can undo the whole assignment from the toast or with ⌘Z.
+      </p>
+    </UiDialog>
   </div>
 </template>

@@ -13,6 +13,7 @@
 // their magnitude and empty buckets easy to compare. Latency is a trend: one line shows the total
 // wait a user experienced, while the readout retains the queue/provider split needed to diagnose it.
 import { computed, ref } from "vue";
+import { plural } from "@/lib/contents";
 import { CurveType } from "@unovis/ts";
 import {
   VisAxis,
@@ -334,7 +335,7 @@ const tooltip = computed(() =>
     >
       <template v-if="shown">
         <b class="text-zinc-700 dark:text-zinc-200">{{ stamp(shown.from) }}</b> ·
-        {{ shown.requests }} request{{ shown.requests === 1 ? "" : "s" }}
+        {{ plural(shown.requests, "request") }}
         <template v-if="metric === 'latency'">
           · total {{ format(shown.latencyMs) }} · provider {{ format(shown.responseMs) }} · queue
           {{ format(shown.queueMs) }}

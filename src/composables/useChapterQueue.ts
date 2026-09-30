@@ -9,7 +9,7 @@ import { useCastStore } from "@/stores/cast";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 
-import { pauseAfter } from "@/lib/speech";
+import { chapterTimeline } from "@/lib/speech";
 import type { Queue } from "@/composables/usePlayer";
 
 /** The player is app-wide, so a queue has to name this exact chapter: pressing play on ch 7 while
@@ -35,18 +35,20 @@ export function chapterQueue(
   const libraryStore = useLibraryStore();
   const scriptsStore = useScriptsStore();
 
-  const heard = scriptsStore.segmentsOf(bookId, chId).filter((s) => s.audio.duration > 0);
-  if (!heard.length) return null;
-  const pace = castStore.pacingOf(bookId);
+  const timeline = chapterTimeline(
+    scriptsStore.segmentsOf(bookId, chId),
+    castStore.pacingOf(bookId),
+  );
+  if (!timeline.length) return null;
   return {
     id: chapterQueueId(bookId, chId),
     title: libraryStore.chapter(bookId, chId)?.title ?? "",
     subtitle: libraryStore.bookById(bookId)?.title ?? "",
     href: opts.href?.(chId),
-    clips: heard.map((s, i) => ({
+    clips: timeline.map(({ s, gap }) => ({
       id: clipOf(s.id),
       duration: s.audio.duration,
-      gap: pauseAfter(s, heard[i + 1], pace),
+      gap,
       url: s.audio.url,
       label: s.text,
       speaker: s.speaker,
@@ -71,12 +73,9 @@ export function segmentStart(bookId: string, chId: number, segId: number): numbe
   const castStore = useCastStore();
   const scriptsStore = useScriptsStore();
 
-  const heard = scriptsStore.segmentsOf(bookId, chId).filter((s) => s.audio.duration > 0);
-  const pace = castStore.pacingOf(bookId);
-  let t = 0;
-  for (const [i, s] of heard.entries()) {
-    if (s.id === segId) return t;
-    t += s.audio.duration + pauseAfter(s, heard[i + 1], pace);
-  }
-  return null;
+  return (
+    chapterTimeline(scriptsStore.segmentsOf(bookId, chId), castStore.pacingOf(bookId)).find(
+      (x) => x.s.id === segId,
+    )?.start ?? null
+  );
 }

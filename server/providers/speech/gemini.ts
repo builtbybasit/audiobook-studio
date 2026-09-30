@@ -37,7 +37,7 @@ import { onePage, type SpeechWire } from "~/providers/speech/wire";
 const LEGACY_RATE = 24000;
 
 /** The headers every Gemini request carries: its key goes in its own header, not `authorization`. */
-export function geminiHeaders(target: ProviderTarget): Record<string, string> {
+function geminiHeaders(target: ProviderTarget): Record<string, string> {
   return {
     "content-type": "application/json",
     ...(target.apiKey ? { "x-goog-api-key": target.apiKey } : {}),
@@ -48,7 +48,7 @@ const modelUrl = (target: ProviderTarget): string =>
   `${target.baseUrl}/models/${encodeURIComponent(geminiModelId(target.model))}`;
 
 /** The request body for one line. Exported for the tests, which check it against the docs. */
-export function geminiSpeechBody(
+function geminiSpeechBody(
   input: Pick<SpeechInput, "text" | "sampleRate">,
   model: string,
   voice: string,

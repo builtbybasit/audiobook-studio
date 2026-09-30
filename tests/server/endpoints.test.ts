@@ -14,23 +14,26 @@ import type {
   Book,
   Chapter,
   Character,
+  Credential,
   Endpoint,
   EndpointLive,
   ExportItem,
   ExpressionAnnotation,
   Profile,
+  ScriptSettings,
   Segment,
 } from "@/types";
-import { credentials as registry, type Credential } from "@/lib/credentials";
+import { makeCredentials } from "~/demo/seed/fixtures/credentials";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { expressionParts, expressionPlan } from "@/lib/expressions";
-import { makeEndpoints } from "@/mock/fixtures/endpoints";
-import { makeProfiles } from "@/mock/fixtures/profiles";
+import { makeEndpoints } from "~/demo/seed/fixtures/endpoints";
+import { makeProfiles } from "~/demo/seed/fixtures/profiles";
 import { readEndpoint } from "~/db/endpoints";
 import { fakeSpeechProvider, SAMPLE_RATE } from "~/providers/fakeSpeech";
 import type { SpeechInput, SpeechProvider } from "~/providers/speech";
 import { readWavHeader } from "~/providers/wavEncoder";
 import { epubFile, story } from "../support/epub";
+import { openaiProfile } from "../support/profiles";
 import { jsonBody, testApi, type TestApi } from "../support/server";
 
 interface Settings {
@@ -38,6 +41,7 @@ interface Settings {
   profiles: Profile[];
   credentials: Credential[];
   prompt: { system: string; user: string } | null;
+  script: ScriptSettings;
 }
 interface Failure {
   error: { code: string; message: string; detail?: string };
@@ -84,9 +88,12 @@ const laughing = (over: Partial<Endpoint> = {}): Endpoint =>
 
 const read = async (api: TestApi) => (await api.request<Settings>("/api/endpoints")).body;
 
+/** What a server nobody has picked scripting settings on reads them as. */
+const NO_SCRIPT: ScriptSettings = { profile: null };
+
 const save = <T = Settings>(
   api: TestApi,
-  config: { endpoints: unknown[]; profiles?: unknown[]; credentials?: unknown[] },
+  config: { endpoints: unknown[]; profiles?: unknown[]; credentials?: unknown[]; script?: unknown },
 ) =>
   api.request<T>("/api/endpoints", {
     ...jsonBody({ profiles: [], credentials: [], ...config }),
@@ -100,6 +107,7 @@ describe("the endpoints' configuration", () => {
       profiles: [],
       credentials: [],
       prompt: null,
+      script: NO_SCRIPT,
     });
   });
 
@@ -108,7 +116,7 @@ describe("the endpoints' configuration", () => {
     const endpoints = makeEndpoints();
     const profiles = makeProfiles();
     // the seeded endpoints point at the seeded registry, which is saved with them
-    const credentials = registry.map((c) => ({ ...c }));
+    const credentials = makeCredentials();
     const { status, body } = await save(api, { endpoints, profiles, credentials });
     expect(status).toBe(200);
     expect(await read(api)).toEqual(body);
@@ -141,12 +149,19 @@ describe("the endpoints' configuration", () => {
 
     await save(api, { endpoints: [] });
     back = await read(api);
-    expect(back).toEqual({ endpoints: [], profiles: [], credentials: [], prompt: null });
+    expect(back).toEqual({
+      endpoints: [],
+      profiles: [],
+      credentials: [],
+      prompt: null,
+      script: NO_SCRIPT,
+    });
   });
 
   test("a speech endpoint's sample rate is kept, and a scripting profile has none", async () => {
     const api = testApi();
-    const [profile] = makeProfiles().filter((p) => p.credentialId == null);
+    // no credential, so the save needs no registry beside it
+    const profile = openaiProfile({ credentialId: null });
     const { body } = await save(api, {
       endpoints: [speech({ sampleRate: 24000 }), speech({ id: "native", name: "Native" })],
       profiles: [{ ...profile, sampleRate: 48000 }],
@@ -204,6 +219,65 @@ describe("the endpoints' configuration", () => {
       expect(body.error.message).toBe(message);
     }
     expect(await read(api)).toEqual(before);
+  });
+});
+
+// ---- which profile scripting runs go to ----
+
+describe("the scripting settings", () => {
+  const [profile] = makeProfiles().filter((p) => p.credentialId == null);
+
+  test("are saved with the profiles and read back after a reload, as the Scripting page picks them", async () => {
+    const api = testApi();
+    const script = { profile: profile.id };
+    const { status, body } = await save(api, { endpoints: [], profiles: [profile], script });
+    expect(status).toBe(200);
+    expect(body.script).toEqual(script);
+    expect((await read(api)).script).toEqual(script);
+    // a save that leaves them out keeps them
+    await save(api, { endpoints: [], profiles: [profile] });
+    expect((await read(api)).script).toEqual(script);
+  });
+
+  test("a profile that is not saved with them is refused, and nothing is written", async () => {
+    const api = testApi();
+    const { status, body } = await save<Failure>(api, {
+      endpoints: [],
+      profiles: [profile],
+      script: { ...NO_SCRIPT, profile: "nobody" },
+    });
+    expect(status).toBe(400);
+    expect(body.error.message).toBe(
+      "The scripting settings choose a profile that is not in the list",
+    );
+    expect(await read(api)).toMatchObject({ profiles: [], script: NO_SCRIPT });
+  });
+
+  test("a chosen profile removed by a save that left them out reads as none chosen", async () => {
+    const api = testApi();
+    await save(api, {
+      endpoints: [],
+      profiles: [profile],
+      script: { ...NO_SCRIPT, profile: profile.id },
+    });
+    await save(api, { endpoints: [], profiles: [] });
+    expect((await read(api)).script).toEqual(NO_SCRIPT);
+  });
+
+  test("a malformed choice is refused", async () => {
+    const api = testApi();
+    for (const script of [{ profile: "" }, { profile: {} }, { profile: 3 }]) {
+      const { status } = await save<Failure>(api, { endpoints: [], script });
+      expect(status).toBe(400);
+    }
+  });
+
+  test("a choice saved beside the old switches keeps its profile and drops them", async () => {
+    const api = testApi();
+    const script = { profile: profile.id, stripWatermarks: false, keepEdits: false };
+    const { status } = await save(api, { endpoints: [], profiles: [profile], script });
+    expect(status).toBe(200);
+    expect((await read(api)).script).toEqual({ profile: profile.id });
   });
 });
 

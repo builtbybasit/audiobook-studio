@@ -22,7 +22,8 @@ export class ProviderError extends Error {
     readonly status: number,
     /**
      * Whether another attempt could go differently: a rate limit, a server fault, a timeout. `call`
-     * retries on it; the routes answer a 502 rather than a 400 for it; the job does not read it.
+     * retries on it; the routes answer a 502 rather than a 400 for it; and the narration job sends a
+     * line again in a later batch when the server answered its item as failed with it set.
      */
     readonly retryable: boolean,
     /** a refusal inside a 200 that says it is a rate limit, as a 429 would */
@@ -43,7 +44,7 @@ const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 const BODY_CHARS = 300;
 
 /** How long a `Retry-After` asks for, in ms: seconds or an HTTP date; undefined if neither. */
-export function retryAfterMs(header: string | null, now = Date.now()): number | undefined {
+function retryAfterMs(header: string | null, now = Date.now()): number | undefined {
   if (!header) return undefined;
   const seconds = Number(header);
   if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);

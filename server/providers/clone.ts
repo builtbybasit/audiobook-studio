@@ -107,7 +107,7 @@ export function sniffSample(b: Uint8Array): SampleFormat | null {
  * for the transcription, and since there is no second attempt, one that gives up too early is a
  * failure the person has to start again by hand.
  */
-export const CLONE_TIMEOUT_SEC = 600;
+const CLONE_TIMEOUT_SEC = 600;
 
 export interface VoiceClonerOptions extends Omit<CallOptions, "signal"> {
   /** the attempt's wall clock, in seconds; `CLONE_TIMEOUT_SEC` unless a test makes it short */

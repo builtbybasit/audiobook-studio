@@ -4,12 +4,13 @@ import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
+import type { Cast, LexiconSaved, MovedLines } from "@/types";
 import type { Db } from "~/db/client";
 import * as ops from "~/cast/ops";
+import { BookParam } from "~/lib/http";
 import { CharacterSchema, ChapterLinesSchema, LexEntrySchema } from "~/lib/schemas";
 import { validate } from "~/lib/validate";
 
-const BookParam = v.object({ id: v.string() });
 const NameParam = v.object({ id: v.string(), name: v.pipe(v.string(), v.nonEmpty()) });
 const Rename = v.object({ to: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")) });
 const Merge = v.object({ into: v.pipe(v.string(), v.nonEmpty("must name a speaker")) });
@@ -24,7 +25,7 @@ export function castRoutes(db: Db): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
   app.get("/:id/cast", validate("param", BookParam), (c) =>
-    c.json(ops.bookCast(db, c.req.valid("param").id)),
+    c.json(ops.bookCast(db, c.req.valid("param").id) satisfies Cast),
   );
 
   /** One speaker, written as stated: new or replaced. */
@@ -46,7 +47,7 @@ export function castRoutes(db: Db): Hono<PinoEnv> {
       const { id, name } = c.req.valid("param");
       const result = ops.renameCharacter(db, id, name, c.req.valid("json").to);
       c.var.logger.info({ from: name, chapters: result.moved.length }, "speaker renamed");
-      return c.json(result);
+      return c.json(result satisfies MovedLines);
     },
   );
 
@@ -58,14 +59,14 @@ export function castRoutes(db: Db): Hono<PinoEnv> {
       const { id, name } = c.req.valid("param");
       const result = ops.mergeCharacter(db, id, name, c.req.valid("json").into);
       c.var.logger.info({ from: name, chapters: result.moved.length }, "speaker merged");
-      return c.json(result);
+      return c.json(result satisfies MovedLines);
     },
   );
 
   /** Take a speaker off the cast; their lines go to the Narrator. */
   app.delete("/:id/characters/:name", validate("param", NameParam), (c) => {
     const { id, name } = c.req.valid("param");
-    return c.json(ops.deleteCharacter(db, id, name));
+    return c.json(ops.deleteCharacter(db, id, name) satisfies MovedLines);
   });
 
   /** Put a speaker back on exactly these lines: what an Undo of a merge or a removal sends. */
@@ -75,13 +76,17 @@ export function castRoutes(db: Db): Hono<PinoEnv> {
     validate("json", Attribute),
     (c) => {
       const { character, lines } = c.req.valid("json");
-      return c.json(ops.attribute(db, c.req.valid("param").id, character, lines));
+      return c.json(
+        ops.attribute(db, c.req.valid("param").id, character, lines) satisfies MovedLines,
+      );
     },
   );
 
   app.put("/:id/lexicon", validate("param", BookParam), validate("json", Lexicon), (c) => {
     const { entries, restore } = c.req.valid("json");
-    return c.json(ops.putLexicon(db, c.req.valid("param").id, entries, restore));
+    return c.json(
+      ops.putLexicon(db, c.req.valid("param").id, entries, restore) satisfies LexiconSaved,
+    );
   });
 
   return app;

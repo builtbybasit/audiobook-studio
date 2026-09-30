@@ -4,7 +4,7 @@
 // and notices, a cast and a dictionary each, six thousand script lines with rendered clips and
 // frozen receipts, finished and failed exports, endpoints with off-peak schedules and running
 // promotions. The demo library holds the same world, so the server's demo shows what the
-// browser's does; this is the one place the server reaches into `src/mock` to get it, and only the
+// browser's does; this is the one place the server reaches into `demo/seed/` to get it, and only the
 // demo's seed calls it.
 //
 // What the world leaves out, a library needs, and it is filled in here:
@@ -17,8 +17,8 @@
 //   - where each endpoint sends its work, which in the world is a real provider's host and here is
 //     `simulated://` in front of the same host and path, so nothing in the demo reaches the
 //     network, and nothing it does is billed, whatever the endpoint is called.
-import { chapterParts, partsText } from "@/mock/world/text";
-import { credentials } from "@/lib/credentials";
+import { chapterParts, partsText } from "~/demo/seed/world/text";
+import { makeCredentials } from "~/demo/seed/fixtures/credentials";
 import type {
   Book,
   Chapter,
@@ -267,5 +267,5 @@ const simulatedProfile = (p: Profile): Profile => ({
 export const worldEndpoints = (world: World): EndpointConfig => ({
   endpoints: world.endpoints.map(simulatedEndpoint),
   profiles: world.profiles.map(simulatedProfile),
-  credentials: credentials.map(({ id, label, note }) => ({ id, label, note })),
+  credentials: makeCredentials(),
 });

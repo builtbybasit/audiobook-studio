@@ -11,15 +11,7 @@ import { useCastStore } from "@/stores/cast";
 import { useNarrationStore } from "@/stores/narration";
 
 import { computed, nextTick, ref, watch } from "vue";
-import {
-  DialogRoot,
-  DialogPortal,
-  DialogOverlay,
-  DialogContent,
-  DialogTitle,
-  DialogDescription,
-  DialogClose,
-} from "reka-ui";
+import { DialogClose, DialogDescription, DialogTitle } from "reka-ui";
 import {
   Plus as AddIcon,
   X as CloseIcon,
@@ -28,7 +20,7 @@ import {
   ChevronDown as ExpandIcon,
   MoveHorizontal as MoveIcon,
 } from "@lucide/vue";
-import { UiCombobox } from "@/ui";
+import { UiCombobox, UiDialog } from "@/ui";
 
 import { expressionSupport } from "@/lib/expressions";
 import { gapLabel } from "@/lib/gaps";
@@ -368,25 +360,20 @@ const tokenOf = (a: ExpressionAnnotation) =>
       </template>
     </div>
 
-    <DialogRoot v-model:open="settings"
-      ><DialogPortal
-        ><DialogOverlay class="fixed inset-0 z-50 bg-black/40" /><DialogContent
-          class="fixed left-1/2 top-1/2 z-50 max-h-[90dvh] w-[min(680px,96vw)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl bg-white p-4 shadow-2xl focus:outline-none dark:bg-zinc-950"
-          data-expression-editor
-          ><div class="mb-2 flex items-center gap-2">
-            <DialogTitle class="font-semibold">Expressions for {{ endpoint?.model }}</DialogTitle
-            ><DialogClose class="btn-ghost btn-xs ml-auto" aria-label="Close model expressions"
-              ><CloseIcon class="icon"
-            /></DialogClose>
-          </div>
-          <DialogDescription class="mb-3 text-xs text-zinc-500"
-            >Tags are configured once per model — {{ endpoint?.name }} · {{ endpoint?.model }} — and
-            every line read by it can then use them. Nothing here changes the
-            book.</DialogDescription
-          ><ExpressionsTab
-            v-if="endpoint"
-            :key="endpoint.id"
-            :endpoint="endpoint" /></DialogContent></DialogPortal
-    ></DialogRoot>
+    <UiDialog
+      v-model:open="settings"
+      class="max-h-[90dvh] w-[min(680px,96vw)] overflow-y-auto rounded-xl bg-white p-4 dark:bg-zinc-950"
+      data-expression-editor
+      ><div class="mb-2 flex items-center gap-2">
+        <DialogTitle class="font-semibold">Expressions for {{ endpoint?.model }}</DialogTitle
+        ><DialogClose class="btn-ghost btn-xs ml-auto" aria-label="Close model expressions"
+          ><CloseIcon class="icon"
+        /></DialogClose>
+      </div>
+      <DialogDescription class="mb-3 text-xs text-zinc-500"
+        >Tags are configured once per model — {{ endpoint?.name }} · {{ endpoint?.model }} — and
+        every line read by it can then use them. Nothing here changes the book.</DialogDescription
+      ><ExpressionsTab v-if="endpoint" :key="endpoint.id" :endpoint="endpoint"
+    /></UiDialog>
   </section>
 </template>

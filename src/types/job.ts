@@ -1,6 +1,7 @@
 // The queue. One job per chapter of work, whatever kind it is; `scriptRun` and `exportRun` carry
 // the live detail the Queue page opens up, and everything a retry needs to run it again.
 import type { ExportSettings } from "@/types/export";
+import type { NarrationScope } from "@/types/run";
 import type { Profile, ResolvedPrompt } from "@/types/scripting";
 
 export type JobKind = "scripting" | "narration" | "export";
@@ -82,6 +83,11 @@ export interface Job {
     reserved: number;
     /** clips this job put in the queue, for the reconciliation the queue shows afterwards */
     clips: number;
+    /**
+     * What the run renders: a scope, or `pending` — only the clips already in flight, as a retake's
+     * job is. Absent on a job queued before it was kept, whose `bulk.scope` label says instead.
+     */
+    scope?: NarrationScope | "pending";
     /** what this chapter was estimated at when it was dispatched, at the rates in force then */
     estimated?: number;
     /**

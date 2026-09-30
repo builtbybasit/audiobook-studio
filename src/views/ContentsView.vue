@@ -13,23 +13,30 @@ import { useChapterText } from "@/queries";
 // leaves every stage and the audiobook; the suggestions the import attached are a reason beside a
 // title until the person acts on them. What the button says it adds is what goes in.
 import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRouter } from "vue-router";
 import { useMediaQuery } from "@vueuse/core";
 import { importLabel, isUndecided, plural } from "@/lib/contents";
 import { useBookId } from "@/composables/useBookId";
+import {
+  enumParam,
+  idParam,
+  idSetParam,
+  textParam,
+  useQueryParam,
+} from "@/composables/useQueryParam";
+import { useRangeSelect } from "@/composables/useRangeSelect";
 import ContentsList, { type VolumeRow } from "@/views/contents/ContentsList.vue";
 import ContentsPreview from "@/views/contents/ContentsPreview.vue";
 import ContentsSuggestions from "@/views/contents/ContentsSuggestions.vue";
 import { FILTER_KEYS, FILTER_LABEL, passes, type ContentsFilter } from "@/views/contents/shared";
-import { UiSelect } from "@/ui";
-import { DialogContent, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from "reka-ui";
+import { UiSelect, UiSheet } from "@/ui";
+import { DialogTitle } from "reka-ui";
 import { BookOpen as ReadIcon, Search as SearchIcon, X as ClearIcon } from "@lucide/vue";
 import type { Chapter, NoticeGroup, NoticeKind } from "@/types";
 
 const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
-const route = useRoute();
 const router = useRouter();
 const bookId = useBookId();
 
@@ -46,29 +53,27 @@ const importing = computed<"book" | "volume" | null>(() =>
 const newVolume = computed(() => libraryStore.importingVolume(bookId));
 
 // ---- page state, kept in the URL so leaving and coming back finds the same view
-const queryText = (value: unknown) =>
-  Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
-const queryIds = (value: unknown) =>
-  new Set(queryText(value).split(",").map(Number).filter(Number.isFinite));
-const asFilter = (v: unknown): ContentsFilter =>
-  FILTER_KEYS.includes(queryText(v) as ContentsFilter) ? (queryText(v) as ContentsFilter) : "all";
-
-const q = ref(queryText(route.query.find));
-const filter = ref<ContentsFilter>(asFilter(route.query.filter));
-const kind = ref<NoticeKind | null>((queryText(route.query.kind) as NoticeKind) || null);
-const collapsed = ref<Set<number>>(
-  route.query.closed != null
-    ? queryIds(route.query.closed)
-    : // a new volume of a shelved book: the volumes already reviewed start folded away
+const q = useQueryParam("find", textParam());
+const filter = useQueryParam("filter", enumParam(FILTER_KEYS, "all"));
+const kind = useQueryParam<NoticeKind | null>("kind", {
+  parse: (text) => (text as NoticeKind) || null,
+  serialize: (value) => value ?? undefined,
+  default: null,
+});
+const collapsed = useQueryParam(
+  "closed",
+  // a new volume of a shelved book: the volumes already reviewed start folded away
+  idSetParam(
+    () =>
       new Set(newVolume.value ? volumes.value.filter((v) => !v.importing).map((v) => v.id) : []),
+  ),
 );
 const wide = useMediaQuery("(min-width: 1024px)");
-const opened = ref<number | null>(Number(route.query.ch) || null);
+const opened = useQueryParam("ch", idParam());
 // on a phone the groups would push the list off the screen, so they start folded there
 const suggestionsOpen = ref(wide.value);
 const search = ref<HTMLInputElement | null>(null);
 const list = ref<InstanceType<typeof ContentsList> | null>(null);
-const lastClicked = ref<number | null>(null);
 const cancelling = ref(false);
 
 // the first thing worth reading is the first chapter still to decide — on a clean book, nothing
@@ -91,18 +96,6 @@ watch(
   },
   { immediate: true },
 );
-
-watch([q, filter, kind, collapsed, opened], () => {
-  const next = {
-    ...route.query,
-    find: q.value || undefined,
-    filter: filter.value === "all" ? undefined : filter.value,
-    kind: kind.value ?? undefined,
-    closed: collapsed.value.size ? [...collapsed.value].sort((a, b) => a - b).join(",") : undefined,
-    ch: opened.value ?? undefined,
-  };
-  if (JSON.stringify(next) !== JSON.stringify(route.query)) void router.replace({ query: next });
-});
 
 // ---- the list
 const rows = computed<VolumeRow[]>(() =>
@@ -143,25 +136,19 @@ const undecidedAfter = computed(
 
 // ---- decisions. Every one goes through the store's two actions, so the row, the preview, the
 // strip and the volume header leave a chapter in exactly the same state.
+// a run over what is on screen, not over the whole book — the list you can see is the list
+const range = useRangeSelect(() => visible.value.map((x) => x.id));
 function toggle(c: Chapter, e?: MouseEvent | KeyboardEvent) {
-  const skip = !c.excluded;
-  if (e?.shiftKey && lastClicked.value != null) {
-    // a run over what is on screen, not over the whole book — the list you can see is the list
-    const ids = visible.value.map((x) => x.id);
-    const a = ids.indexOf(lastClicked.value);
-    const b = ids.indexOf(c.id);
-    if (a >= 0 && b >= 0) {
-      const run = ids.slice(Math.min(a, b), Math.max(a, b) + 1);
-      libraryStore.skipChapters(bookId, run, skip, {
-        quiet: run.length === 1,
-        scope: `chapters ${Math.min(...run)}–${Math.max(...run)}`,
-      });
-      lastClicked.value = c.id;
-      return;
-    }
-  }
-  libraryStore.skipChapters(bookId, [c.id], skip, { quiet: true });
-  lastClicked.value = c.id;
+  const run = range.span(c.id, e);
+  // one row is its own undo; a run toasts, with Undo, naming the chapters it covered
+  libraryStore.skipChapters(
+    bookId,
+    run,
+    !c.excluded,
+    run.length === 1
+      ? { quiet: true }
+      : { scope: `chapters ${Math.min(...run)}–${Math.max(...run)}` },
+  );
 }
 function toggleVolume(v: VolumeRow) {
   const on = v.all.filter((c) => !c.excluded).length;
@@ -540,34 +527,33 @@ async function discard() {
     </div>
 
     <!-- narrow screens: the chapter opens as a sheet over the list -->
-    <DialogRoot v-if="!wide" :open="!!openedChapter" @update:open="(v) => !v && closeSheet()">
-      <DialogPortal>
-        <DialogOverlay class="fixed inset-0 z-40 bg-black/40" />
-        <DialogContent
-          class="fixed inset-x-0 bottom-0 z-50 flex h-[88dvh] flex-col rounded-t-2xl bg-white shadow-2xl focus:outline-none dark:bg-zinc-900"
-          :aria-describedby="undefined"
-        >
-          <DialogTitle class="sr-only">{{ openedChapter?.title }}</DialogTitle>
-          <ContentsPreview
-            v-if="openedChapter"
-            :key="openedChapter.id"
-            :chapter="openedChapter"
-            :volume="libraryStore.volumeOf(bookId, openedChapter.id)"
-            :multi="multi"
-            :total="summary.total"
-            :parts="openedParts"
-            :undecided-left="undecidedAfter"
-            sheet
-            @skip="libraryStore.skipChapters(bookId, [openedChapter.id], true, { quiet: true })"
-            @include="libraryStore.skipChapters(bookId, [openedChapter.id], false, { quiet: true })"
-            @keep="libraryStore.keepChapters(bookId, [openedChapter.id], { quiet: true })"
-            @prev="step(-1)"
-            @next="step(1)"
-            @next-undecided="nextUndecided"
-            @close="closeSheet"
-          />
-        </DialogContent>
-      </DialogPortal>
-    </DialogRoot>
+    <UiSheet
+      v-if="!wide"
+      side="bottom"
+      :open="!!openedChapter"
+      class="h-[88dvh]"
+      :aria-describedby="undefined"
+      @update:open="(v) => !v && closeSheet()"
+    >
+      <DialogTitle class="sr-only">{{ openedChapter?.title }}</DialogTitle>
+      <ContentsPreview
+        v-if="openedChapter"
+        :key="openedChapter.id"
+        :chapter="openedChapter"
+        :volume="libraryStore.volumeOf(bookId, openedChapter.id)"
+        :multi="multi"
+        :total="summary.total"
+        :parts="openedParts"
+        :undecided-left="undecidedAfter"
+        sheet
+        @skip="libraryStore.skipChapters(bookId, [openedChapter.id], true, { quiet: true })"
+        @include="libraryStore.skipChapters(bookId, [openedChapter.id], false, { quiet: true })"
+        @keep="libraryStore.keepChapters(bookId, [openedChapter.id], { quiet: true })"
+        @prev="step(-1)"
+        @next="step(1)"
+        @next-undecided="nextUndecided"
+        @close="closeSheet"
+      />
+    </UiSheet>
   </div>
 </template>

@@ -31,7 +31,13 @@ import type { AnsweredAudio } from "~/providers/answer";
 import { sleep } from "~/providers/fake";
 import type { SentSpeech } from "~/providers/sent";
 import { ProviderError } from "~/providers/http";
-import type { BatchLimits, RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
+import {
+  BatchCut,
+  type BatchLimits,
+  type RenderedClip,
+  type SpeechInput,
+  type SpeechProvider,
+} from "~/providers/speech";
 
 export interface FakeSpeechOptions {
   /** a pause per line, so a test can cancel a run that is genuinely in flight */
@@ -186,7 +192,7 @@ export function fakeSpeechProvider(options: FakeSpeechOptions = {}): SpeechProvi
         if (signal.aborted) throw signal.reason;
         if (options.dropAfter != null && !dropped && told === options.dropAfter) {
           dropped = true;
-          throw new ProviderError("The fake dropped the connection part-way", 0, true);
+          throw new BatchCut("The fake dropped the connection part-way");
         }
         const item = items[i];
         told++;

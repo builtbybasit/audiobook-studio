@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useUiStore } from "@/stores/ui";
+import { plural } from "@/lib/contents";
 
 // Three things get confused with each other and are kept apart here:
 //
@@ -32,7 +33,7 @@ import { maybeMoney } from "@/lib/pricing";
 import { isSimulated } from "@/lib/providers";
 import { encodingSummary } from "@/lib/audioFormat";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
-import { addCredential, credentials } from "@/lib/credentials";
+import { useEndpointsStore } from "@/stores/endpoints";
 import {
   PROVIDER_FIELDS,
   applyDraft,
@@ -69,9 +70,10 @@ const now = Date.now();
  * The server keeps one key per endpoint and nothing per named credential, so the key field is
  * always this endpoint's own and goes to the server; a credential only names the account.
  */
+const endpointsStore = useEndpointsStore();
 const CRED_OPTIONS = computed(() => [
   { value: "__own__", label: "This endpoint’s own key", hint: "kept on the server" },
-  ...credentials.map((c) => ({ value: c.id, label: c.label, hint: "" })),
+  ...endpointsStore.credentials.map((c) => ({ value: c.id, label: c.label, hint: "" })),
 ]);
 
 const credential = computed({
@@ -170,7 +172,7 @@ const changeList = computed(() =>
 );
 
 function newCredential() {
-  const id = addCredential(draft.value.name || "New credential");
+  const id = endpointsStore.addCredential(draft.value.name || "New credential");
   draft.value.credentialId = id;
 }
 </script>
@@ -200,7 +202,7 @@ function newCredential() {
         class="mt-2 rounded bg-white/70 p-2 leading-relaxed text-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-300"
       >
         <WarnIcon class="icon-sm text-amber-500" />
-        {{ busy }} job{{ busy === 1 ? "" : "s" }} on this endpoint {{ busy === 1 ? "is" : "are" }}
+        {{ plural(busy, "job") }} on this endpoint {{ busy === 1 ? "is" : "are" }}
         unfinished. They keep the base URL, model and credential they were queued with — this change
         only applies to jobs started after you save. Nothing is re-sent, and nothing already
         recorded is re-priced.
@@ -453,8 +455,8 @@ function newCredential() {
       <UiTooltip text="Removal is undoable from the toast that appears." side="top">
         <p class="text-[11px] leading-relaxed text-zinc-500">
           <template v-if="busy"
-            >{{ busy }} unfinished job{{ busy === 1 ? "" : "s" }} would have to be cancelled first —
-            cancel them from the header, then remove.</template
+            >{{ plural(busy, "unfinished job") }} would have to be cancelled first — cancel them
+            from the header, then remove.</template
           >
           <template v-else-if="u.kind === 'tts'"
             >Speakers whose voice lives here lose their routing and show as unrouted until they are

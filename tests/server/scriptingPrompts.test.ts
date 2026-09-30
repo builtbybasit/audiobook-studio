@@ -19,7 +19,6 @@ import type {
 } from "@/types";
 import { BUILT_IN_PROMPT, OUTPUT_FORMAT } from "@/lib/prompt";
 import { scriptTelemetry } from "@/lib/scriptActivity";
-import { makeProfiles } from "@/mock/fixtures/profiles";
 import { characters, endpoints, requests } from "~/db/schema";
 import { profileKey } from "~/db/rows/endpoints";
 import { fakeScriptingProvider } from "~/providers/fake";
@@ -27,6 +26,7 @@ import type { ScriptInput, ScriptingProvider } from "~/providers/scripting";
 import { append, scriptReasoning } from "~/usage/ledger";
 import { epubFile, story } from "../support/epub";
 import { jsonBody, testApi, type TestApi } from "../support/server";
+import { openaiProfile } from "../support/profiles";
 
 interface Settings {
   profiles: Profile[];
@@ -41,14 +41,8 @@ const LIBRARY = {
   user: "{{chapter.title}}\n{{excerpt}}",
 };
 
-/** The seeded OpenAI profile, with whatever this test gives it. */
-const openai = (over: Partial<Profile> = {}): Profile => ({
-  ...makeProfiles().find((p) => p.id === "openai")!,
-  ...over,
-});
-
 /**
- * The one credential the seeded OpenAI profile names. Spelled out rather than read from the page's
+ * The one credential the OpenAI profile names. Spelled out rather than read from the page's
  * registry, which a store test earlier in the same process may have refilled from a server of its own.
  */
 const CREDENTIALS = [{ id: "openai-personal", label: "OpenAI · personal", note: "" }];
@@ -139,8 +133,8 @@ describe("an endpoint's reasoning and prompt", () => {
     };
     const { status } = await put(api, {
       profiles: [
-        openai({ reasoning: "high", prompt }),
-        { ...openai({ id: "bare", name: "Bare" }), reasoning: undefined, prompt: undefined },
+        openaiProfile({ reasoning: "high", prompt }),
+        { ...openaiProfile({ id: "bare", name: "Bare" }), reasoning: undefined, prompt: undefined },
       ],
     });
     expect(status).toBe(200);
@@ -169,7 +163,7 @@ describe("an endpoint's reasoning and prompt", () => {
     },
   ])("refuses $why, saying what to change", async ({ prompt, said }) => {
     const { status, body } = await put<Failure>(testApi(), {
-      profiles: [openai({ prompt } as Partial<Profile>)],
+      profiles: [openaiProfile({ prompt } as Partial<Profile>)],
     });
     expect(status).toBe(400);
     expect(body.error.message).toBe(said);
@@ -177,12 +171,12 @@ describe("an endpoint's reasoning and prompt", () => {
 
   test("a default endpoint's kept texts are not held to the rules of a prompt", async () => {
     const prompt = { mode: "default" as const, system: "{{nonsense}}", user: "", notes: "" };
-    expect((await put(testApi(), { profiles: [openai({ prompt })] })).status).toBe(200);
+    expect((await put(testApi(), { profiles: [openaiProfile({ prompt })] })).status).toBe(200);
   });
 
   test("one kept in Append's place reads as default, what it appended now its notes", async () => {
     const api = testApi();
-    await put(api, { profiles: [openai()] });
+    await put(api, { profiles: [openaiProfile()] });
     api.db
       .update(endpoints)
       .set({
@@ -216,7 +210,7 @@ describe("the library's prompt", () => {
   test("with a tag that is not one is refused, and nothing of the save is kept", async () => {
     const api = testApi();
     const { status, body } = await put<Failure>(api, {
-      profiles: [openai()],
+      profiles: [openaiProfile()],
       prompt: { system: "{{book.genre}}", user: "{{excerpt}}" },
     });
     expect(status).toBe(400);
@@ -292,7 +286,12 @@ describe("a run's prompt", () => {
         color: "#c33",
       })
       .run();
-    const profile = openai({ maxChars: 700, splitAt: "sentence", concurrency: 1, prompt: NOTES });
+    const profile = openaiProfile({
+      maxChars: 700,
+      splitAt: "sentence",
+      concurrency: 1,
+      prompt: NOTES,
+    });
     await put(api, { profiles: [profile], prompt: LIBRARY });
     await patchBook(api, id, {
       ...BOOK,
@@ -330,7 +329,7 @@ describe("a run's prompt", () => {
     const rec = recording();
     const api = testApi({ scripting: rec.provider });
     const id = await shelved(api);
-    await put(api, { profiles: [openai({ maxChars: 0, prompt: NOTES })] });
+    await put(api, { profiles: [openaiProfile({ maxChars: 0, prompt: NOTES })] });
     await patchBook(api, id, BOOK);
     await api.request(
       `/api/books/${id}/chapters/script`,
@@ -345,7 +344,7 @@ describe("a run's prompt", () => {
     const rec = recording(true);
     const api = testApi({ scripting: rec.provider });
     const id = await shelved(api, ["One", "Two"]);
-    await put(api, { profiles: [openai({ maxChars: 0 })], prompt: LIBRARY });
+    await put(api, { profiles: [openaiProfile({ maxChars: 0 })], prompt: LIBRARY });
     await patchBook(api, id, { notes: "First notes.", replace: false, system: "", user: "" });
     await api.request(
       `/api/books/${id}/chapters/script`,
@@ -354,7 +353,7 @@ describe("a run's prompt", () => {
 
     await rec.first;
     await patchBook(api, id, { notes: "Later notes.", replace: false, system: "", user: "" });
-    await put(api, { profiles: [openai({ maxChars: 0 })], prompt: null });
+    await put(api, { profiles: [openaiProfile({ maxChars: 0 })], prompt: null });
     rec.release();
     await api.runner.idle();
 
@@ -382,8 +381,8 @@ describe("the connection test", () => {
     const replaced = { system: "Mine. {{endpoint.notes}}", user: "{{excerpt}}" };
     await put(api, {
       profiles: [
-        openai({ id: "kept", prompt: { mode: "default", ...replaced, notes: "Short." } }),
-        openai({ id: "own", prompt: { mode: "replace", ...replaced, notes: "Short." } }),
+        openaiProfile({ id: "kept", prompt: { mode: "default", ...replaced, notes: "Short." } }),
+        openaiProfile({ id: "own", prompt: { mode: "replace", ...replaced, notes: "Short." } }),
       ],
       prompt: LIBRARY,
     });
@@ -403,7 +402,7 @@ describe("what a reasoning model spent thinking", () => {
     const rec = recording(false, 120);
     const api = testApi({ scripting: rec.provider });
     const id = await shelved(api);
-    await put(api, { profiles: [openai({ maxChars: 0, reasoning: "high" })] });
+    await put(api, { profiles: [openaiProfile({ maxChars: 0, reasoning: "high" })] });
     await api.request(
       `/api/books/${id}/chapters/script`,
       jsonBody({ ids: [1], profile: "openai" }),
@@ -418,7 +417,7 @@ describe("what a reasoning model spent thinking", () => {
     const rec = recording(false, 0);
     const api = testApi({ scripting: rec.provider });
     const id = await shelved(api);
-    await put(api, { profiles: [openai({ maxChars: 0, reasoning: "high" })] });
+    await put(api, { profiles: [openaiProfile({ maxChars: 0, reasoning: "high" })] });
     const estimate = async () => {
       const { body } = await api.request<{ jobs: Job[] }>(
         `/api/books/${id}/chapters/script`,
@@ -437,7 +436,7 @@ describe("what a reasoning model spent thinking", () => {
 
   test("is read, per input token, only off answered requests at the endpoint's level now", async () => {
     const api = testApi();
-    await put(api, { profiles: [openai()] });
+    await put(api, { profiles: [openaiProfile()] });
     const now = Date.now();
     const row = (
       at: number,
@@ -491,6 +490,8 @@ describe("what a reasoning model spent thinking", () => {
     const { body } = await api.request<{ requests: RequestRecord[] }>(
       "/api/endpoints/requests?kind=scripting&id=openai",
     );
-    expect(scriptTelemetry(body.requests, openai({ reasoning: "high" })).reasoning).toEqual(high);
+    expect(scriptTelemetry(body.requests, openaiProfile({ reasoning: "high" })).reasoning).toEqual(
+      high,
+    );
   });
 });

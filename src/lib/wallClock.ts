@@ -21,7 +21,7 @@ export const localTimezone = (): string => {
   }
 };
 
-export const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+export const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export const DAY_LABEL = [
   "Sunday",
@@ -32,7 +32,6 @@ export const DAY_LABEL = [
   "Friday",
   "Saturday",
 ];
-export const DAY_SHORT = DAYS;
 
 const KNOWN = new Map<string, boolean>();
 

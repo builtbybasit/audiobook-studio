@@ -10,24 +10,31 @@
 //   * **History is written in the transaction that writes the script.** The working script is
 //     preserved before the new one replaces it, labelled by what produced it, so a version and the
 //     script it preceded cannot disagree about which came first.
-import type { ChapterHistory, ScriptVersion, Segment, VersionOrigin } from "@/types";
+import type {
+  ChapterHistory,
+  ChapterScript,
+  EditedScript,
+  FlagKind,
+  Flagged,
+  ScriptVersion,
+  Segment,
+  SegmentFlag,
+  VersionOrigin,
+} from "@/types";
 import { scriptSignature } from "@/lib/scriptHistory";
-import { and, eq } from "drizzle-orm";
 
 import type { Db } from "~/db/client";
 import * as history from "~/db/history";
-import { chapters } from "~/db/schema";
-import { ScriptConflict, readScript, replaceScript, scriptRevision } from "~/db/script";
+import * as library from "~/db/library";
+import {
+  ScriptConflict,
+  bumpRevision,
+  readScript,
+  replaceScript,
+  scriptRevision,
+  setFlag,
+} from "~/db/script";
 import { badRequest, conflict, notFound } from "~/lib/errors";
-
-export interface ChapterScript {
-  segments: Segment[];
-  revision: number;
-}
-
-export interface Edited extends ChapterScript {
-  history: ChapterHistory;
-}
 
 function requireRevision(db: Db, bookId: string, chapterId: number): number {
   const revision = scriptRevision(db, bookId, chapterId);
@@ -68,7 +75,12 @@ export interface EditInput {
  * `scriptSignature` is what a version is, and a script with the same signature is the same script,
  * so there is no edit to count and no session to open.
  */
-export function editScript(db: Db, bookId: string, chapterId: number, input: EditInput): Edited {
+export function editScript(
+  db: Db,
+  bookId: string,
+  chapterId: number,
+  input: EditInput,
+): EditedScript {
   requireRevision(db, bookId, chapterId);
   if (!input.segments.length) throw badRequest("A script needs at least one line");
   const ids = new Set<number>();
@@ -89,16 +101,9 @@ export function editScript(db: Db, bookId: string, chapterId: number, input: Edi
       const { revision } = replaceScript(tx, bookId, chapterId, input.segments, {
         ifRevision: input.ifRevision,
       });
-      const status = tx
-        .select({ scripting: chapters.scripting })
-        .from(chapters)
-        .where(and(eq(chapters.bookId, bookId), eq(chapters.id, chapterId)))
-        .get()?.scripting;
+      const status = library.getChapter(tx, bookId, chapterId)?.scripting;
       if (status !== "done" && status !== "fallback")
-        tx.update(chapters)
-          .set({ scripting: "done", scriptingProgress: 100 })
-          .where(and(eq(chapters.bookId, bookId), eq(chapters.id, chapterId)))
-          .run();
+        library.setChapterScripting(tx, bookId, chapterId, "done", 100);
       return {
         segments: readScript(tx, bookId, chapterId),
         revision,
@@ -113,6 +118,34 @@ export function editScript(db: Db, bookId: string, chapterId: number, input: Edi
       );
     throw e;
   }
+}
+
+/**
+ * Raise, replace or take down one line's flag, and write nothing else.
+ *
+ * A flag changes nothing a version keeps and nothing a run renders, so unlike an edit it names no
+ * revision: a run landing clips in this chapter moves the revision on with every clip, and a flag
+ * raised while it did was refused as an edit of a script that had moved. The revision still moves
+ * on, as it does for every write of the script's rows, so a copy read before the flag is refused
+ * rather than written back over it. The history is left alone, as `editScript` leaves it for a
+ * write that changes no signature.
+ */
+export function flagLine(
+  db: Db,
+  bookId: string,
+  chapterId: number,
+  segmentId: number,
+  flag: { kind: FlagKind; note: string } | null,
+): Flagged {
+  requireRevision(db, bookId, chapterId);
+  const written: SegmentFlag | null = flag
+    ? { kind: flag.kind, note: flag.note.trim(), at: Date.now() }
+    : null;
+  return db.transaction((tx) => {
+    if (!setFlag(tx, bookId, chapterId, segmentId, written))
+      throw notFound(`Line ${segmentId} is not in this chapter's script`);
+    return { flag: written, revision: bumpRevision(tx, bookId, chapterId) };
+  });
 }
 
 /** Name the script as it stands and keep a copy. The script itself is untouched. */

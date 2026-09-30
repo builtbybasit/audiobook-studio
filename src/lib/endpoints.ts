@@ -34,19 +34,10 @@ import {
 
 export {
   KIND_PATH,
-  OPS_DEFAULTS,
   fishModelsUrl,
-  isBreezeBlue,
-  isCartesia,
-  isElevenLabs,
-  isElevenLabsShaped,
   isFishAudio,
-  isGemini,
-  isMiniMax,
-  isQwen,
   ttsRequestPath,
   voicesFromFishModels,
-  type FishModel,
 } from "@/lib/endpointShapes";
 
 /** Fill in operational defaults in place. Idempotent — only absent fields are written. */
@@ -128,13 +119,12 @@ export {
   presetById,
   presetsOf,
   scriptingPresetById,
-  type Preset,
   type ScriptingPreset,
   type TtsPreset,
 } from "@/lib/presets";
 
 // ---------- billing ----------
-// The units, the conversion and the arithmetic live in `lib/pricing.ts`, beside the schedules and
+// The units, the conversion and the arithmetic live in `lib/pricing/`, beside the schedules and
 // promotions that move a speech rate too. Import them from there; this file adapts an `Endpoint`
 // onto them and does no pricing arithmetic of its own.
 
@@ -162,6 +152,35 @@ export function pricingLabel(u: UnifiedEndpoint, now: number = Date.now()): stri
  *  only one of its two rates filled in, which prices nothing rather than half of each request. */
 export const unpriced = (u: UnifiedEndpoint): boolean =>
   u.endpoint ? !speechRateKnown(billingOf(u.endpoint)) : false;
+
+// ---------- readiness ----------
+
+/**
+ * Whether an endpoint can send a request right now, and if not, the first thing in the way — as
+ * the configuration says, before anything has been sent. Paused holds the work, a missing key
+ * fails it, a speech endpoint with no voices has nothing to render in, and a cooldown is the
+ * gate holding off after a 429 until `backoffUntil`, which passes on its own.
+ *
+ * One definition for every place that asks "can this render": the Narration page's routing and
+ * blockers, the cast's routing issues, the Endpoints page's wait reasons and the shell's count of
+ * endpoints needing attention. A scripting profile is asked the same questions; it has no voices,
+ * and no cooldown of its own.
+ */
+export type Readiness =
+  | { state: "ready" }
+  | { state: "paused" }
+  | { state: "nokey" }
+  | { state: "novoices" }
+  | { state: "cooldown"; seconds: number };
+
+export function speechReadiness(e: Endpoint | Profile, now: number): Readiness {
+  if (!e.enabled) return { state: "paused" };
+  if (e.needsKey && !e.hasKey) return { state: "nokey" };
+  const seconds = "backoffUntil" in e ? Math.ceil((e.backoffUntil - now) / 1000) : 0;
+  if (seconds > 0) return { state: "cooldown", seconds };
+  if ("voices" in e && !e.voices.length) return { state: "novoices" };
+  return { state: "ready" };
+}
 
 // ---------- health ----------
 

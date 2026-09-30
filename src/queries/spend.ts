@@ -1,10 +1,10 @@
-// What a book has spent and what its unfinished work holds, read into the jobs store.
+// What a book has spent and what its unfinished work holds.
 //
 // Spending is the server's: every request a job sends is priced and appended to its ledger, and
-// every run it queued holds a reservation there. Each read is installed into the jobs store
-// (`_installSpend`), whose `spent` / `reserved` / `scriptSpent` / `scriptReserved` then answer with
-// it — so the book's budget panel, the Endpoints page's budget table, the wait reasons and the run
-// estimates all read the one figure.
+// every run it queued holds a reservation there. Nothing edits it in the browser, so the reads stay
+// in the query cache, and the jobs store's `spent` / `reserved` / `scriptSpent` / `scriptReserved`
+// answer from them (`spendOf`) — so the book's budget panel, the Endpoints page's budget table, the
+// wait reasons and the run estimates all read the one figure.
 //
 // Spending moves when a job does, so the queue's poll invalidates a book's spend on every move of
 // one of its jobs (`spendMoved`), the same way it reads a chapter's script again as clips land; a
@@ -15,33 +15,42 @@ import { computed, toValue, type MaybeRefOrGetter } from "vue";
 import { useQuery } from "@pinia/colada";
 
 import type { BookSpend } from "@/types";
+import { fetchQuery } from "@/queries/fetch";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { usageService } from "@/services/usage";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 
-async function readSpend(bookId: string): Promise<BookSpend> {
-  const spend = await usageService().bookSpend(bookId);
-  useJobsStore()._installSpend(bookId, spend);
-  return spend;
+const readSpend = (bookId: string): Promise<BookSpend> => usageService().bookSpend(bookId);
+
+const spendQuery = (bookId: string) => ({
+  key: keys.spend(bookId),
+  staleTime: Infinity,
+  query: () => readSpend(bookId),
+});
+
+/**
+ * A book's spending read now, whether or not a page shows it — for a run started from a page that
+ * has another book open, whose budget still has to be checked against what it has spent.
+ */
+export function fetchSpend(bookId: string): Promise<BookSpend> {
+  return fetchQuery(spendQuery(bookId));
 }
 
-/** One book's spending, kept in the jobs store while a page shows it. */
+/** One book's spending, read while a page shows it. */
 export function useBookSpend(bookId: MaybeRefOrGetter<string | null | undefined>) {
   const jobsStore = useJobsStore();
   const query = useQuery(() => ({
-    key: keys.spend(toValue(bookId) ?? ""),
+    ...spendQuery(toValue(bookId) ?? ""),
     enabled: !!toValue(bookId),
-    staleTime: Infinity,
-    query: () => readSpend(toValue(bookId)!),
   }));
   return {
     ...query,
     /** the server's figures; null until the first read lands */
     spend: computed(() => {
       const id = toValue(bookId);
-      return id ? (jobsStore.spend[id] ?? null) : null;
+      return id ? (jobsStore.spendOf(id) ?? null) : null;
     }),
   };
 }

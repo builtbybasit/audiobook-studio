@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useLibraryStore } from "@/stores/library";
+import { plural } from "@/lib/contents";
 
 // The book's review inbox: every decision waiting on a person, wherever it lives, with the link
 // that lands on it. The counts on the stage pages are unchanged — this is the one place that can
@@ -12,6 +13,7 @@ import { relative } from "@/lib/endpoints";
 import { bookFacts } from "@/views/library/bookFacts";
 import { useReviewInbox, type DecisionKind, type DecisionTone } from "@/views/review/inbox";
 import EmptyState from "@/components/EmptyState.vue";
+import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
 import { useBookId } from "@/composables/useBookId";
 import { useBookScripts, useCast } from "@/queries";
 import {
@@ -31,7 +33,9 @@ import type { Component } from "vue";
 const libraryStore = useLibraryStore();
 const bookId = useBookId();
 useCast(bookId);
-useBookScripts(bookId);
+// retakes, flags and unverified chunks are on the lines: until every scripted chapter's are in,
+// "nothing waiting" is not an answer
+const { failed: unread, loading: reading, retry: readAgain } = useBookScripts(bookId);
 // the router only reaches this view with a real book id
 const book = computed(() => libraryStore.bookById(bookId)!);
 const groups = useReviewInbox(bookId);
@@ -91,11 +95,14 @@ const now = Date.now();
       <h1 class="text-2xl font-semibold">Review</h1>
       <p class="mt-1 text-sm text-zinc-500">
         <template v-if="total"
-          >{{ total }} decision{{ total === 1 ? "" : "s" }} waiting on you across
+          >{{ plural(total, "decision") }} waiting on you across
           <b class="font-medium text-zinc-700 dark:text-zinc-200">{{ book.title }}</b
           >. Every row opens where it is settled — nothing here is decided for you.</template
         >
-        <template v-else>Everything this book was waiting on has been decided.</template>
+        <template v-else-if="reading">Reading the book’s scripts…</template>
+        <template v-else-if="!unread.length"
+          >Everything this book was waiting on has been decided.</template
+        >
       </p>
     </div>
 
@@ -115,7 +122,13 @@ const now = Date.now();
       </button>
     </div>
 
-    <div v-if="!total">
+    <ReadFailure
+      v-if="unread.length"
+      :message="`${scriptsUnread(unread.length)}, so what waits in ${unread.length === 1 ? 'it' : 'them'} is not listed.`"
+      @retry="readAgain"
+    />
+
+    <div v-if="!total && !reading && !unread.length">
       <EmptyState
         :icon="DoneIcon"
         title="Nothing waiting"

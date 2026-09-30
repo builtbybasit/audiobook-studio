@@ -2,12 +2,9 @@
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
-import { useScriptsStore } from "@/stores/scripts";
-import { useUiStore } from "@/stores/ui";
 
 // Scripting stage: chapter picker + run settings on the left, script reader on the right.
-import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { computed, nextTick, ref } from "vue";
 import { isScripted } from "@/lib/scriptReview";
 import { runActionLabel, runSummary, skipSummary } from "@/lib/runPlan";
 import ChapterPicker from "@/components/ChapterPicker.vue";
@@ -17,77 +14,58 @@ import ScriptReader from "@/views/scripting/ScriptReader.vue";
 import ScriptSettings from "@/views/scripting/ScriptSettings.vue";
 import ScriptEndpoints from "@/views/scripting/ScriptEndpoints.vue";
 import { useBookId } from "@/composables/useBookId";
-import { useCast, useChapterScript } from "@/queries";
+import { useOpenedChapter } from "@/composables/useOpenedChapter";
+import { plural } from "@/lib/contents";
+import { useCast, useChapterScript, useChapterTexts } from "@/queries";
 import { scriptExportUrl } from "@/services/library";
 
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
-const scriptsStore = useScriptsStore();
-const uiStore = useUiStore();
-const route = useRoute();
-const router = useRouter();
 const bookId = useBookId();
 useCast(bookId);
 const selected = ref<number[]>([]);
 const showEndpoints = ref(false);
 const focusReader = ref(false);
 const endpointPanel = ref<HTMLElement | null>(null);
-const currentEndpoint = computed(() =>
-  endpointsStore.profiles.find((p) => p.id === scriptingStore.scriptSettings.profile),
-);
 async function configure() {
   showEndpoints.value = true;
   await nextTick();
   endpointPanel.value?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
-function smallerChunks() {
-  if (currentEndpoint.value)
-    currentEndpoint.value.maxChars = Math.max(100, (currentEndpoint.value.maxChars || 6000) - 2000);
-  void scriptingStore.runScripting(bookId, [opened.value]);
-}
-const opened = ref(
-  Number(route.query.ch) ||
-    uiStore.chapterIn(bookId, libraryStore.chaptersOf(bookId)) ||
-    (libraryStore.chaptersOf(bookId).find((c) => c.scripting === "fallback")?.id ??
-      libraryStore.chaptersOf(bookId).find(isScripted)?.id ??
-      1),
+const { opened, open: openChapter } = useOpenedChapter(
+  bookId,
+  (chapters) =>
+    chapters.find((c) => c.scripting === "fallback")?.id ?? chapters.find(isScripted)?.id,
 );
-watch(
-  () => route.query.ch,
-  (ch) => {
-    if (ch) opened.value = Number(ch);
-  },
-); // ?ch= from the command palette
-function openChapter(id: number) {
-  opened.value = id;
-}
-// The chapter follows you between stages: whichever way it changed here — the picker, ?ch=, the
-// palette, or the book's own memory — record it and keep the URL saying which one you are on.
-function remember(id: number) {
-  uiStore.openChapter(bookId, id);
-  if (Number(route.query.ch) !== id)
-    void router.replace({ query: { ...route.query, ch: String(id), seg: undefined } });
-}
-watch(opened, remember);
-onMounted(() => remember(opened.value));
 // The opened chapter's script, read when the chapter is opened and again when the queue says a
 // run landed on it. The reader itself reads the scripts store, which is where the read lands.
-useChapterScript(bookId, opened);
+const { loaded, status: scriptStatus, refetch: readScript } = useChapterScript(bookId, opened);
+// The plain text of every chapter a run here could start on — the ticked ones and the one open —
+// which the plan cuts into requests and the estimate prices. Until it is read the estimate says
+// so and no run starts.
+const { unread } = useChapterTexts(
+  bookId,
+  () => [...new Set([...selected.value, opened.value])],
+  "plain",
+);
 // One plan behind the button's label, the line under it and the work the run queues.
 const plan = computed(() => scriptingStore.scriptPlan(bookId, selected.value));
+const estimate = computed(() => scriptingStore.scriptEstimate(bookId, selected.value));
 const runNote = computed(() => {
   if (!plan.value.chapters.length) return "";
-  const keep = scriptingStore.scriptSettings.keepEdits;
+  // the request count comes last, and is not a count until every chapter's text is in
+  const summary = runSummary(plan.value);
+  if (estimate.value.reading) summary.splice(-1, 1, "counting requests…");
   return (
-    runSummary(plan.value).join(" · ") +
-    (plan.value.replace
-      ? ` · each replaced script is kept in its chapter's history${keep ? ", manual corrections re-applied where the line still matches" : ""}`
-      : "")
+    summary.join(" · ") +
+    (plan.value.replace ? " · each replaced script is kept in its chapter's history" : "")
   );
 });
 const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
 const hasScript = computed(() => chapter.value && isScripted(chapter.value));
+/** the chapters' scripts and texts still on their way, which the reader and the buttons wait for */
+const waiting = computed(() => (hasScript.value && !loaded.value) || unread.value > 0);
 const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));
 function scriptFirst() {
   const ids = libraryStore
@@ -96,7 +74,7 @@ function scriptFirst() {
     .slice(0, 3)
     .map((c) => c.id);
   selected.value = ids;
-  void scriptingStore.runScripting(bookId, ids);
+  void scriptingStore.startRun(bookId, ids);
 }
 </script>
 
@@ -112,8 +90,8 @@ function scriptFirst() {
         <span
           ><span class="text-sm font-semibold">Scripting endpoints</span
           ><span class="ml-3 text-xs text-zinc-500"
-            >{{ endpointsStore.profiles.length }} saved ·
-            {{ currentEndpoint?.name ?? "Choose an endpoint" }}</span
+            >{{ plural(endpointsStore.profiles.length, "endpoint") }} ·
+            {{ scriptingStore.runProfile?.name ?? "none can run" }}</span
           ></span
         >
         <span class="text-xs text-violet-600 dark:text-violet-400">{{
@@ -143,10 +121,10 @@ function scriptFirst() {
             :run-count="plan.chapters.length"
             :run-note="runNote"
             :run-skipped="skipSummary(plan)"
-            :run-disabled="!!scriptingStore.scriptEstimate(bookId, selected).blockers.length"
+            :run-disabled="!!estimate.blockers.length"
             :selectable="(c) => !['running', 'queued'].includes(c.scripting)"
             @open="openChapter"
-            @run="(ids) => scriptingStore.runScripting(bookId, ids)"
+            @run="(ids) => scriptingStore.startRun(bookId, ids)"
           />
         </div>
         <div class="card shrink-0 p-3">
@@ -172,8 +150,24 @@ function scriptFirst() {
         class="min-h-0 min-w-0 lg:sticky lg:top-4"
         :class="focusReader ? 'h-[calc(100dvh-88px)]' : 'lg:h-[calc(100vh-140px)]'"
       >
+        <div
+          v-if="hasScript && !loaded"
+          class="card grid h-full place-content-center p-8 text-sm text-zinc-500"
+          role="status"
+        >
+          <template v-if="scriptStatus === 'error'"
+            >Chapter {{ opened }}’s script could not be read.
+            <button
+              class="mt-2 text-violet-600 hover:underline dark:text-violet-400"
+              @click="readScript()"
+            >
+              Try again
+            </button></template
+          >
+          <template v-else>Reading chapter {{ opened }}’s script…</template>
+        </div>
         <ScriptReader
-          v-if="hasScript"
+          v-else-if="hasScript"
           :book-id="bookId"
           :chapter-id="opened"
           :focus-mode="focusReader"
@@ -209,10 +203,25 @@ function scriptFirst() {
           :title="chapter.title"
           body="Scripting failed: after retries the model's output still didn't reconstruct the chapter text, so nothing was kept. This usually means a chunk boundary split a quote or the chapter has unusual formatting. Try a smaller chunk size, then re-run."
         >
-          <button class="btn-primary" @click="scriptingStore.runScripting(bookId, [opened])">
+          <button
+            class="btn-primary"
+            :disabled="waiting"
+            @click="scriptingStore.startRun(bookId, [opened])"
+          >
             Re-run this chapter
           </button>
-          <button class="btn-ghost" @click="smallerChunks">Smaller chunks + re-run</button>
+          <button
+            class="btn-ghost"
+            :disabled="waiting || !scriptingStore.runProfile"
+            :title="
+              scriptingStore.runProfile
+                ? `Cuts ${scriptingStore.runProfile.name}'s chunks by 2,000 characters — for every book it scripts`
+                : 'No scripting endpoint can run'
+            "
+            @click="scriptingStore.smallerChunks(bookId, opened)"
+          >
+            Smaller chunks + re-run
+          </button>
         </EmptyState>
         <EmptyState
           v-else
@@ -220,7 +229,11 @@ function scriptFirst() {
           :title="chapter?.title"
           body="Not scripted yet. Tick it on the left and run scripting, or script just this one."
         >
-          <button class="btn-primary" @click="scriptingStore.runScripting(bookId, [opened])">
+          <button
+            class="btn-primary"
+            :disabled="waiting"
+            @click="scriptingStore.startRun(bookId, [opened])"
+          >
             Script this chapter
           </button>
         </EmptyState>

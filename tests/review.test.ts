@@ -12,6 +12,8 @@
 // each still reads it into a page of its own, and one that writes to the demo says so, so the next
 // test is handed the situation afresh.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { useQueryCache } from "@pinia/colada";
+import { keys } from "@/queries/keys";
 
 import { jobsService } from "@/services/jobs";
 import { libraryService } from "@/services/library";
@@ -66,8 +68,8 @@ async function situated(id: string, bookId: string): Promise<void> {
   const svc = libraryService();
   await libraryStore.loadBook(bookId);
   castStore._install(bookId, await svc.cast(bookId));
-  exportsStore._install(bookId, await svc.exports(bookId));
-  jobsStore._install(await jobsService().list());
+  useQueryCache().setQueryData(keys.exports(bookId), await svc.exports(bookId));
+  useQueryCache().setQueryData(keys.jobs, await jobsService().list());
   for (const c of libraryStore.chaptersOf(bookId))
     if (c.scripting !== "none")
       scriptsStore._install(bookId, c.id, await svc.chapterScript(bookId, c.id));
@@ -128,9 +130,9 @@ describe("a book with clips to listen to again", () => {
     const flag = group("starforge", "flagged")!.items[0];
     const [, fCh, fSeg] = flag.id.split(":").map(Number);
     const flagsBefore = group("starforge", "flagged")!.items.length;
-    narrationStore.clearFlag("starforge", fCh, fSeg);
+    const cleared = narrationStore.clearFlag("starforge", fCh, fSeg);
     expect(group("starforge", "flagged")?.items.length ?? 0).toBe(flagsBefore - 1);
-    await scriptsStore._settled("starforge", fCh);
+    await cleared;
   });
 });
 

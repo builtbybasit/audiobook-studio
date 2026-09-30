@@ -23,19 +23,43 @@ export function useVoiceSample() {
   /** the sample being fetched, if any; one at a time */
   const loading = ref<string | null>(null);
 
-  async function play(ep: Endpoint, voiceId: string, title = voiceId): Promise<void> {
-    const id = sampleId(ep.id, voiceId);
+  /** One fetch at a time, known by the player id it will play under. */
+  async function oneAtATime(id: string, work: () => Promise<void>): Promise<void> {
     if (loading.value) return;
     loading.value = id;
     try {
-      const sample = await endpointsStore.sampleVoice(ep, voiceId);
-      if (!sample) return;
-      if (sample.duration) player.play(id, sample.duration, sample.url);
-      else await player.playFile(id, sample.url, title);
+      await work();
     } finally {
       loading.value = null;
     }
   }
+
+  /**
+   * A voice's sample, played under `id` — the voice's own sample id unless the caller keeps a
+   * separate one (the Voices tab's public search does, for a voice that is not on the list yet).
+   * A sample the server timed plays at once; one only its file can time is read for it first.
+   */
+  function play(
+    ep: Endpoint,
+    voiceId: string,
+    title = voiceId,
+    id = sampleId(ep.id, voiceId),
+  ): Promise<void> {
+    return oneAtATime(id, async () => {
+      const sample = await endpointsStore.sampleVoice(ep, voiceId);
+      if (!sample) return;
+      if (sample.duration) player.play(id, sample.duration, sample.url);
+      else await player.playFile(id, sample.url, title);
+    });
+  }
+
+  /** A recording the provider serves itself, such as Fish's own sample of a public voice. */
+  function playUrl(id: string, url: string, title: string): Promise<void> {
+    return oneAtATime(id, () => player.playFile(id, url, title));
+  }
+
+  /** Whether the player is playing what it was given under `id`. */
+  const playingId = (id: string): boolean => player.p.id === id && player.p.playing;
 
   /** The voice a reference names; nothing when it names none this library has. */
   function playRef(ref: VoiceRef | null | undefined): Promise<void> {
@@ -45,12 +69,12 @@ export function useVoiceSample() {
 
   const playing = (ref: VoiceRef | null | undefined): boolean => {
     const r = endpointsStore.resolveVoice(ref);
-    return !!r && player.p.id === sampleId(r.endpoint.id, r.voice.id) && player.p.playing;
+    return !!r && playingId(sampleId(r.endpoint.id, r.voice.id));
   };
   const fetching = (ref: VoiceRef | null | undefined): boolean => {
     const r = endpointsStore.resolveVoice(ref);
     return !!r && loading.value === sampleId(r.endpoint.id, r.voice.id);
   };
 
-  return { play, playRef, playing, fetching, loading };
+  return { play, playUrl, playRef, playing, playingId, fetching, loading };
 }

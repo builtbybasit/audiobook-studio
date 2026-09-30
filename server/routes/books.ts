@@ -9,17 +9,23 @@ import { bodyLimit } from "hono/body-limit";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
-import type { PromptTrialRequest } from "@/types";
+import type {
+  ImportedBook,
+  NarrationQueued,
+  PromptTrialRequest,
+  PromptTrialResult,
+  ScriptingQueued,
+} from "@/types";
 import type { AudioFiles } from "~/audio/files";
 import { coverFiles, MAX_COVER_BYTES } from "~/covers/files";
 import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
-import { env, importBodyBytes } from "~/env";
+import { env } from "~/env";
 import { enqueueNarration } from "~/jobs/narration";
 import type { Runner } from "~/jobs/runner";
 import { enqueueScripting } from "~/jobs/scripting";
-import { fail, notFound } from "~/lib/errors";
-import { IdParam } from "~/lib/http";
+import { fail } from "~/lib/errors";
+import { BookParam, IdParam, uploadLimit } from "~/lib/http";
 import { bookPromptProblems } from "@/lib/prompt";
 import {
   BookPromptSchema,
@@ -27,10 +33,9 @@ import {
   PromptTemplateSchema,
   refusePrompt,
 } from "~/lib/schemas";
-import { fileResponse } from "~/lib/serve";
+import { serveFile } from "~/lib/serve";
 import { validate } from "~/lib/validate";
 import * as ops from "~/library/ops";
-import { endpointScriptingProvider } from "~/providers/endpointScripting";
 import type { ScriptingProvider } from "~/providers/scripting";
 import { tryPrompt } from "~/script/trial";
 
@@ -102,7 +107,6 @@ const PromptTrial = v.object({
   book: v.optional(v.nullable(BookPromptSchema)),
 }) satisfies v.GenericSchema<unknown, PromptTrialRequest>;
 
-const BookParam = v.object({ id: v.string() });
 const ChapterParam = v.object({ id: v.string(), chapterId: IdParam });
 const VolumeParam = v.object({ id: v.string(), volumeId: IdParam });
 
@@ -135,10 +139,10 @@ const CoverParam = v.object({ id: v.string(), file: v.string() });
 export function bookRoutes(
   db: Db,
   runner: Runner,
-  files?: AudioFiles,
-  built?: AudiobookFiles,
-  /** what a prompt trial is sent to; the endpoints' own, as a running server has it, by default */
-  scripting: ScriptingProvider = endpointScriptingProvider(),
+  files: AudioFiles | undefined,
+  built: AudiobookFiles | undefined,
+  /** what a prompt trial is sent to: the app's own, so a test's stands in for the network */
+  scripting: ScriptingProvider,
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
   // A book's covers are kept beside its clips, so they go when its directory does.
@@ -148,7 +152,7 @@ export function bookRoutes(
   app.get("/", (c) => c.json({ books: ops.listBooks(db) }));
 
   app.get("/:id", validate("param", BookParam), (c) =>
-    c.json(ops.bookWithChapters(db, c.req.valid("param").id)),
+    c.json(ops.bookWithChapters(db, c.req.valid("param").id) satisfies ImportedBook),
   );
 
   app.get(
@@ -165,47 +169,24 @@ export function bookRoutes(
   );
 
   // ---------- importing ----------
-  app.post(
-    "/import",
-    // Refused as the body arrives — from its `content-length` when it says, and by counting when
-    // it does not — rather than after the whole of it has been buffered to be looked at. The
-    // server's own ceiling (`maxRequestBodySize`) sits just above this, as a backstop that answers
-    // in Bun's words; this is the one that answers in the API's.
-    bodyLimit({
-      maxSize: importBodyBytes(),
-      onError: () =>
-        fail(
-          413,
-          `That file is larger than the ${env.MAX_UPLOAD_MB} MB limit`,
-          "Raise MAX_UPLOAD_MB if this is a file you expect to import.",
-        ),
-    }),
-    validate("form", ImportForm),
-    async (c) => {
-      const { file, title, bookId, name } = c.req.valid("form");
+  const importLimit = uploadLimit(env.MAX_UPLOAD_MB, "MAX_UPLOAD_MB");
+  app.post("/import", importLimit.body, validate("form", ImportForm), async (c) => {
+    const { file, title, bookId, name } = c.req.valid("form");
+    importLimit.file(file);
+    if (!file.size) fail(400, "That file is empty");
 
-      const limit = env.MAX_UPLOAD_MB * 1024 * 1024;
-      if (file.size > limit)
-        fail(
-          413,
-          `That file is larger than the ${env.MAX_UPLOAD_MB} MB limit`,
-          `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. Raise MAX_UPLOAD_MB if this is a file you expect to import.`,
-        );
-      if (!file.size) fail(400, "That file is empty");
+    // `assign` puts these on the request's own line too, so the one-line summary of the request
+    // and anything written during it agree about which file they are talking about.
+    const log = c.var.logger;
+    log.assign({ name: "import", file: file.name, bytes: file.size });
 
-      // `assign` puts these on the request's own line too, so the one-line summary of the request
-      // and anything written during it agree about which file they are talking about.
-      const log = c.var.logger;
-      log.assign({ name: "import", file: file.name, bytes: file.size });
-
-      const result = await ops.importEpub(
-        db,
-        { bytes: await file.arrayBuffer(), fileName: file.name, title, bookId, name, covers },
-        log,
-      );
-      return c.json(result, 201);
-    },
-  );
+    const result = await ops.importEpub(
+      db,
+      { bytes: await file.arrayBuffer(), fileName: file.name, title, bookId, name, covers },
+      log,
+    );
+    return c.json(result satisfies ImportedBook, 201);
+  });
 
   // ---------- covers ----------
   if (covers) {
@@ -226,15 +207,16 @@ export function bookRoutes(
     );
 
     /** A cover's bytes. Named by their hash, so what a url serves never changes. */
-    app.get("/:id/covers/:file", validate("param", CoverParam), async (c) => {
+    app.get("/:id/covers/:file", validate("param", CoverParam), (c) => {
       const { id, file } = c.req.valid("param");
-      const path = covers.path(id, file);
-      const found = path ? Bun.file(path) : null;
-      if (!found || !(await found.exists())) throw notFound("No such cover");
-      return fileResponse(c.req.raw, found, {
-        "content-type": file.endsWith(".png") ? "image/png" : "image/jpeg",
-        "cache-control": "private, max-age=31536000, immutable",
-      });
+      return serveFile(
+        c,
+        covers.path(id, file),
+        file.endsWith(".png") ? "image/png" : "image/jpeg",
+        {
+          missing: "No such cover",
+        },
+      );
     });
   }
 
@@ -253,12 +235,18 @@ export function bookRoutes(
   app.patch("/:id", validate("param", BookParam), validate("json", Settings), (c) => {
     const settings = c.req.valid("json");
     if (settings.prompt) refusePrompt("The book's prompt", bookPromptProblems(settings.prompt));
-    return c.json(ops.updateBook(db, c.req.valid("param").id, settings));
+    return c.json(ops.updateBook(db, c.req.valid("param").id, settings) satisfies ImportedBook);
   });
 
   /** Read the volumes in this order; the chapters are numbered to follow it. */
   app.put("/:id/volumes/order", validate("param", BookParam), validate("json", VolumeOrder), (c) =>
-    c.json(ops.reorderVolumes(db, c.req.valid("param").id, c.req.valid("json").order)),
+    c.json(
+      ops.reorderVolumes(
+        db,
+        c.req.valid("param").id,
+        c.req.valid("json").order,
+      ) satisfies ImportedBook,
+    ),
   );
 
   app.patch(
@@ -307,10 +295,7 @@ export function bookRoutes(
         { run: result.runId, jobs: result.jobs.length, skipped: result.skipped.length },
         "scripting queued",
       );
-      return c.json(
-        { ...result, chapters: ops.bookWithChapters(db, c.req.valid("param").id).chapters },
-        202,
-      );
+      return c.json(result satisfies ScriptingQueued, 202);
     },
   );
 
@@ -341,7 +326,7 @@ export function bookRoutes(
         },
         "prompt tried",
       );
-      return c.json(result);
+      return c.json(result satisfies PromptTrialResult);
     },
   );
 
@@ -362,10 +347,7 @@ export function bookRoutes(
         { run: result.runId, scope, jobs: result.jobs.length, skipped: result.skipped.length },
         "narration queued",
       );
-      return c.json(
-        { ...result, chapters: ops.bookWithChapters(db, c.req.valid("param").id).chapters },
-        202,
-      );
+      return c.json(result satisfies NarrationQueued, 202);
     },
   );
 

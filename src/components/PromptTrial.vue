@@ -34,6 +34,7 @@ import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { UiSelect } from "@/ui";
+import { money } from "@/lib/pricing";
 import type { PromptTrialResult } from "@/types";
 
 const props = withDefaults(
@@ -254,8 +255,6 @@ onBeforeUnmount(cancel);
 
 // ---- showing it ----
 
-const money = (n: number) =>
-  "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
 const n = (v: number) => v.toLocaleString("en");
 
 const fidelity = computed(() =>

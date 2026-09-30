@@ -9,11 +9,7 @@ import { join } from "node:path";
 
 import { BOOK_ID } from "~/lib/http";
 import type { SampleFormat } from "~/providers/clone";
-
-const FILE = /^[a-f0-9]{32}\.(wav|mp3|m4a|opus|flac)$/;
-
-const hash = (data: Uint8Array): string =>
-  new Bun.CryptoHasher("sha256").update(data).digest("hex").slice(0, 32);
+import { isSampleFile, sampleFileName } from "~/voices/files";
 
 export interface SpeakerSampleFiles {
   /** Keep one recording already sniffed as `format`, and say the name it is kept under. */
@@ -32,21 +28,19 @@ export function speakerSampleFiles(audioDir: string): SpeakerSampleFiles {
     async write(bookId, bytes, format) {
       const at = dirOf(bookId);
       if (!at) throw new Error(`not a book id: ${bookId}`);
-      const file = `${hash(bytes)}.${format}`;
+      const file = sampleFileName(bytes, format);
       await mkdir(at, { recursive: true });
       await writeFile(join(at, file), bytes);
       return file;
     },
     path(bookId, file) {
       const at = dirOf(bookId);
-      return at && FILE.test(file) ? join(at, file) : null;
+      return at && isSampleFile(file) ? join(at, file) : null;
     },
     async remove(bookId, files) {
       const at = dirOf(bookId);
       if (!at) return;
-      await Promise.all(
-        files.filter((f) => FILE.test(f)).map((f) => rm(join(at, f), { force: true })),
-      );
+      await Promise.all(files.filter(isSampleFile).map((f) => rm(join(at, f), { force: true })));
       // refused while anything is still in it, which is the point
       await rmdir(at).catch(() => {});
     },

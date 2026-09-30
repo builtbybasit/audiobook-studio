@@ -9,13 +9,9 @@ import { sqliteTable, text } from "drizzle-orm/sqlite-core";
  * Known keys.
  *
  *   script   `ScriptSettings` — the chosen profile, watermark stripping, keep-my-edits
- *   export     the export form's defaults, so a new build starts where the last one left off
  *   prompt   `PromptTemplate` — the library's default scripting prompt; absent = the built-in one
- *
- * An older database may also hold an `endpoints` row, the mark a first save of the endpoints once
- * left; nothing reads it.
  */
-export type SettingKey = "script" | "export" | "prompt";
+export type SettingKey = "script" | "prompt";
 
 export const settings = sqliteTable("settings", {
   key: text("key").$type<SettingKey>().primaryKey(),

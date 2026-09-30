@@ -17,10 +17,11 @@
 import * as v from "valibot";
 
 import { presetById, scriptingPresetById, type Preset } from "@/lib/presets";
-import { newProfile } from "@/lib/scripting";
+import { makeScriptSettings, newProfile } from "@/lib/scripting";
 import type { DemoResult, DemoScenario } from "@/types";
 import type { Db } from "~/db/client";
 import { books, endpoints } from "~/db/schema";
+import { writeScriptSettings } from "~/db/settings";
 import type { DemoLive } from "~/demo/live";
 import { situate } from "~/demo/situations";
 import { writeWorld, worldEndpoints } from "~/demo/world";
@@ -98,6 +99,8 @@ export function seedDemo(
 
   db.transaction((tx) => {
     saveEndpoints(tx, config, voiceFiles);
+    // runs go to the world's own first profile, as they would once somebody had picked it
+    writeScriptSettings(tx, { ...makeScriptSettings(), profile: config.profiles[0].id });
     writeWorld(tx, demo, { base, now });
   });
 

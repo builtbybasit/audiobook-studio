@@ -6,7 +6,8 @@ import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 
 import { computed, type ComputedRef, type MaybeRefOrGetter, toValue } from "vue";
-import { nextStepOf, plural, updateReason, type NextStep } from "@/views/library/shared";
+import { plural } from "@/lib/contents";
+import { nextStepOf, updateReason, type NextStep } from "@/views/library/shared";
 import type { BookProgress, ContentsSummary, ExportItem } from "@/types";
 
 export interface BookFacts {

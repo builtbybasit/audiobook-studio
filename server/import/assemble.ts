@@ -1,6 +1,6 @@
 // A parsed EPUB becomes a book (or one more volume of one).
 //
-// This mirrors `src/mock/world/imports.ts` deliberately: the same numbering rules, the same
+// This mirrors `server/demo/seed/world/imports.ts` deliberately: the same numbering rules, the same
 // `importing` marks, the same "nothing is skipped here" stance. The review the person then works
 // through does not know or care which of the two produced what it is showing, and that is the
 // point — the demo and the backend put the same shapes on screen.

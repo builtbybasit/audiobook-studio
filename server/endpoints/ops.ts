@@ -7,9 +7,9 @@
 // endpoint and a scripting profile may share one — the seeded world's `openai` is both), two
 // voices or tags under one id on one endpoint, and an endpoint pointing at a credential that is
 // not in the registry being saved with it. The scripting prompts saved with them — the library's
-// default, and each profile's say over it — are held to the rules the editor shows (`@/lib/prompt`).
-import type { Endpoint } from "@/types";
-import type { Credential } from "@/lib/credentials";
+// default, and each profile's say over it — are held to the rules the editor shows (`@/lib/prompt`),
+// and the scripting settings may only choose a profile saved with them.
+import type { Credential, Endpoint, EndpointProbe, VoiceListPage } from "@/types";
 import { profilePromptProblems, promptProblems, resolvePrompt } from "@/lib/prompt";
 import { isSimulated } from "@/lib/providers";
 import { encodingOf, VOICE_SAMPLE } from "@/lib/endpointShapes";
@@ -29,8 +29,8 @@ import { refusePrompt } from "~/lib/schemas";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { ProviderError } from "~/providers/http";
 import { SAMPLE_MIME, type SampleFormat } from "~/providers/clone";
-import { scriptTarget, speechTarget, type ProbeResult, type Providers } from "~/providers/target";
-import { endpointVoiceLister, type VoicePage, type VoiceQuery } from "~/providers/voices";
+import { scriptTarget, speechTarget, type Providers } from "~/providers/target";
+import { endpointVoiceLister, type VoiceQuery } from "~/providers/voices";
 import { settleSpeech } from "~/usage/ledger";
 import type { VoiceFiles } from "~/voices/files";
 import { removeDropped } from "~/voices/ops";
@@ -94,6 +94,13 @@ function check(config: EndpointConfig): void {
     if (p.prompt) refusePrompt(`“${p.name || p.id}”'s prompt`, profilePromptProblems(p.prompt));
   }
   if (config.prompt) refusePrompt("The library's prompt", promptProblems(config.prompt));
+  // the profile runs go to is one of the profiles saved with it, or none
+  const chosen = config.script?.profile;
+  if (chosen != null && !config.profiles.some((p) => p.id === chosen))
+    throw badRequest(
+      "The scripting settings choose a profile that is not in the list",
+      `profile: ${chosen}`,
+    );
 }
 
 /**
@@ -138,7 +145,7 @@ export async function testEndpoint(
   kind: "tts" | "scripting",
   id: string,
   signal: AbortSignal,
-): Promise<ProbeResult> {
+): Promise<EndpointProbe> {
   if (kind === "tts") {
     const ep = readEndpoint(db, id);
     if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
@@ -161,7 +168,7 @@ export async function testEndpoint(
   });
 }
 
-const untestable = (name: string): ProbeResult => ({
+const untestable = (name: string): EndpointProbe => ({
   ok: false,
   message: `${name} has no connection test`,
   ms: 0,
@@ -202,7 +209,7 @@ export async function listVoices(
   id: string,
   query: VoiceQuery,
   signal: AbortSignal,
-): Promise<VoicePage> {
+): Promise<VoiceListPage> {
   const ep = readEndpoint(db, id);
   if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
   const lister = providers.voices ?? endpointVoiceLister();

@@ -12,7 +12,7 @@ import * as v from "valibot";
 import { AUDIO_MIME } from "@/lib/endpointShapes";
 import { formatOfFile, type AudioFiles } from "~/audio/files";
 import { notFound } from "~/lib/errors";
-import { fileResponse } from "~/lib/serve";
+import { serveFile } from "~/lib/serve";
 import { validate } from "~/lib/validate";
 
 const FileParam = v.object({ bookId: v.string(), file: v.string() });
@@ -23,14 +23,11 @@ export function audioRoutes(files: AudioFiles): Hono<PinoEnv> {
   app.get("/:bookId/:file", validate("param", FileParam), async (c) => {
     const { bookId, file } = c.req.valid("param");
     const format = formatOfFile(file);
-    // `ready`, not `path`: a demo clip nobody has played yet is made now, before it is looked for
-    const path = format ? await files.ready(bookId, file) : null;
-    const found = path ? Bun.file(path) : null;
-    if (!found || !format || !(await found.exists())) throw notFound("No such audio file");
+    if (!format) throw notFound("No such audio file");
+    // `ready`, not `path`: a demo clip nobody has played yet is made now, before it is looked for.
     // A part at a time when the player asks for one, which is how it seeks; see `fileResponse`.
-    return fileResponse(c.req.raw, found, {
-      "content-type": AUDIO_MIME[format],
-      "cache-control": "private, max-age=31536000, immutable",
+    return serveFile(c, await files.ready(bookId, file), AUDIO_MIME[format], {
+      missing: "No such audio file",
     });
   });
 

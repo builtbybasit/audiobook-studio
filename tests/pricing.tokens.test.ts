@@ -14,13 +14,13 @@ import {
   usageTrustworthy,
 } from "@/lib/pricing";
 import { scriptingPresetById } from "@/lib/endpoints";
-import { makeProfiles } from "@/mock/fixtures/profiles";
+import { makeProfiles } from "~/demo/seed/fixtures/profiles";
 import { newProfile, tokenEstimate } from "@/lib/scripting";
 import { clone } from "@/lib/utils";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
-import { useChapterText } from "@/queries";
+import { useBookSpend, useChapterText } from "@/queries";
 import { demoServer } from "./support/demoServer";
 import { flush, testPinia } from "./support/pinia";
 import { FRI, THU, card, config, promo, utc } from "./support/pricingFixtures";
@@ -389,9 +389,11 @@ describe("reservations and budgets", () => {
       .chaptersOf(book.id)
       .slice(0, 2)
       .map((c) => c.id);
-    // the estimate counts the prose the page has read, so read it
+    // the estimate counts the prose the page has read, and checks the budget against the spending
+    // the app shell has read, so read both
     const texts = pinia.run(() => ids.map((id) => useChapterText(book.id, id, "plain")));
-    while (texts.some((t) => !t.text.value)) await flush();
+    const spend = pinia.run(() => useBookSpend(book.id));
+    while (texts.some((t) => !t.text.value) || !spend.spend.value) await flush();
 
     const bare = scripting.scriptEstimate(book.id, ids);
     expect(bare.rates).not.toBeNull();

@@ -18,7 +18,8 @@ import { computed, ref } from "vue";
 import { usePlayer } from "@/composables/usePlayer";
 import { formatOf } from "@/lib/exports";
 import { exportFileUrl } from "@/services/jobs";
-import { diskPath, hms, mb, plural } from "@/views/export/shared";
+import { plural } from "@/lib/contents";
+import { diskPath, hms, mb } from "@/views/export/shared";
 import {
   ChevronDown as ChevronDownIcon,
   ChevronRight as ChevronRightIcon,

@@ -1,10 +1,12 @@
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { computed } from "vue";
 
-import type { AudioStatus } from "@/types";
+import { usePlayer } from "@/composables/usePlayer";
+import type { AudioStatus, ReqError, Segment, SegmentAudio } from "@/types";
 
 export const STATUS_BG: Record<AudioStatus, string> = {
   none: "bg-zinc-300 dark:bg-zinc-700",
@@ -17,20 +19,38 @@ export const STATUS_BG: Record<AudioStatus, string> = {
 export const fmt = (s: number): string =>
   `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
+/** the player's name for the retake waiting beside the clip in the book — `2` plays it */
+export const candId = (s: Segment): string => `cand${s.id}`;
+
+/** the clip under the playhead is this one — true whether it is playing alone or inside the chapter */
+export const onClip = (id: string): boolean => {
+  const { p } = usePlayer();
+  return p.clipId === id && p.playing;
+};
+
+/**
+ * What a failed request's status says: the provider's HTTP status when it answered with one. A
+ * failure with none never had an answer — refused before it went out, or no response came back.
+ */
+export const errorStatus = (e: ReqError): string => (e.code ? `HTTP ${e.code}` : "no HTTP status");
+
 export interface ChapterProps {
   bookId: string;
   chapterId: number;
 }
 
-export interface JobStats extends Record<AudioStatus, number> {
-  total: number;
-  duration: number;
-}
+/** The line itself, in the reader — where a wrong speaker, direction or word is fixed before a
+ *  retake would read the same request again. The same deep link Search uses. */
+export const lineLink = (props: ChapterProps, s: Segment) => ({
+  path: `/book/${props.bookId}/scripting`,
+  query: { ch: String(props.chapterId), seg: String(s.id) },
+});
 
 export function useJob(props: ChapterProps) {
   const castStore = useCastStore();
   const endpointsStore = useEndpointsStore();
   const libraryStore = useLibraryStore();
+  const narrationStore = useNarrationStore();
   const scriptsStore = useScriptsStore();
   const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterId));
   const segments = computed(() => scriptsStore.segmentsOf(props.bookId, props.chapterId));
@@ -43,22 +63,8 @@ export function useJob(props: ChapterProps) {
   };
   const epName = (id: string | null): string =>
     endpointsStore.endpoints.find((e) => e.id === id)?.name ?? "—";
-  const stats = computed<JobStats>(() => {
-    const s: JobStats = {
-      none: 0,
-      stale: 0,
-      done: 0,
-      failed: 0,
-      generating: 0,
-      queued: 0,
-      total: segments.value.length,
-      duration: 0,
-    };
-    for (const x of segments.value) {
-      s[x.audio.status] = (s[x.audio.status] ?? 0) + 1;
-      s.duration += x.audio.duration;
-    }
-    return s;
-  });
-  return { chapter, segments, cast, colorOf, voiceOf, epName, stats };
+  /** what differs between the clip and the script now (the reason a row is stale, made explicit) */
+  const drift = (s: Segment, a?: SegmentAudio): string[] =>
+    narrationStore.clipDrift(props.bookId, s, a);
+  return { chapter, segments, cast, colorOf, voiceOf, epName, drift };
 }

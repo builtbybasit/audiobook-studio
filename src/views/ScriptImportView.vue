@@ -17,9 +17,10 @@ import { useLibraryStore } from "@/stores/library";
 import { useTransferStore, type VoicePick } from "@/stores/transfer";
 import { sizeLabel } from "@/lib/audioFormat";
 import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
+import { plural } from "@/lib/contents";
 import VoicePicker from "@/components/VoicePicker.vue";
-import { UiCheckbox } from "@/ui";
-import { plural } from "@/views/library/shared";
+import { useRangeSelect } from "@/composables/useRangeSelect";
+import { UiCheckbox, UiSelect } from "@/ui";
 import { FileUp as FileIcon, X as ClearIcon } from "@lucide/vue";
 import type {
   ImportChapter,
@@ -109,14 +110,13 @@ function setAll(list: ImportChapter[], on: boolean) {
   }
   ticked.value = next;
 }
-const lastClicked = ref<number | null>(null);
+const range = useRangeSelect(() => ordered.value.map((c) => c.chapterId));
 function tick(c: ImportChapter, e: MouseEvent) {
-  const on = !ticked.value.has(c.chapterId);
-  const at = ordered.value.indexOf(c);
-  const from = e.shiftKey && lastClicked.value != null ? lastClicked.value : at;
-  const [lo, hi] = from < at ? [from, at] : [at, from];
-  setAll(ordered.value.slice(lo, hi + 1), on);
-  lastClicked.value = at;
+  const run = new Set(range.span(c.chapterId, e));
+  setAll(
+    ordered.value.filter((x) => run.has(x.chapterId)),
+    !ticked.value.has(c.chapterId),
+  );
 }
 
 /**
@@ -560,15 +560,19 @@ const SKIPPED = {
               <div class="text-zinc-500">{{ voiceLabel(row.current) }}</div>
               <div>
                 <template v-if="row.match.kind === 'here'">
-                  <select
+                  <UiSelect
                     v-if="row.match.options.length > 1"
-                    v-model="choices[row.speaker].ref"
-                    class="input py-0.5 text-xs"
-                  >
-                    <option v-for="o in row.match.options" :key="o.ref" :value="o.ref">
-                      {{ row.hint.voiceLabel }} · {{ o.endpointName }}
-                    </option>
-                  </select>
+                    :model-value="choices[row.speaker].ref"
+                    :options="
+                      row.match.options.map((o) => ({
+                        value: o.ref,
+                        label: `${row.hint.voiceLabel} · ${o.endpointName}`,
+                      }))
+                    "
+                    size="xs"
+                    :aria-label="`Which of the file's voices ${row.speaker} takes`"
+                    @update:model-value="(v) => (choices[row.speaker].ref = v as VoiceRef | null)"
+                  />
                   <span v-else
                     >{{ row.hint.voiceLabel }} · {{ row.match.options[0]?.endpointName }}</span
                   >

@@ -1,14 +1,15 @@
 // Export drafts, results and update decisions.
 //
-// The finished audiobooks are the server's: `useBookExports` in `@/queries` reads a book's in,
-// forgetting one is a request, and building one is a job the server runs — `buildExport` sends the
-// selection and the settings and installs the entry that comes back, rather than encoding anything
-// here.
+// The finished audiobooks are the server's: `useBookExports` in `@/queries` reads a book's in, and
+// `exports` is every such read as the query cache holds it — nothing here edits one. Forgetting
+// one is a request, and building one is a job the server runs — `buildExport` sends the selection
+// and the settings and puts the entry that comes back at the top of the book's list, rather than
+// encoding anything here.
+import { useQueryCache } from "@pinia/colada";
 import {
   chapterStates,
   coverRefusal,
   DEFAULT_EXPORT_SETTINGS,
-  loudnessReport,
   OUTPUT_KEYS,
   planOf,
   reusedChapters,
@@ -25,22 +26,19 @@ import type {
   ExportScope,
   ExportSettings,
   ExportUpdate,
-  LoudnessReport,
-  VoiceRef,
 } from "@/types";
 import { defineStore } from "pinia";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { jobsService } from "@/services/jobs";
-import { libraryService, ApiError } from "@/services/library";
+import { libraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
-import { useEndpointsStore } from "@/stores/endpoints";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
+import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 interface ExportsState {
-  exports: ExportItem[];
   _exportDraft: {
     bookId: string;
     ids: number[];
@@ -49,23 +47,27 @@ interface ExportsState {
     updates: number | null;
   } | null;
 }
+/** Whether a query key is one book's exports: `["books", id, "exports"]`. */
+const isExportsKey = (key: readonly unknown[]): boolean =>
+  key.length === 3 && key[0] === "books" && key[2] === "exports";
+
 export const useExportsStore = defineStore("exports", {
-  // no export is here until it has been read from the server
-  state: (): ExportsState => ({ exports: [], _exportDraft: null }),
+  state: (): ExportsState => ({ _exportDraft: null }),
+  getters: {
+    /** Every book's audiobooks the server has listed so far; a book not read yet has none here. */
+    exports(): ExportItem[] {
+      return useQueryCache()
+        .getEntries({ key: ["books"], predicate: (e) => isExportsKey(e.key) })
+        .flatMap((e) => (e.state.value.data as ExportItem[] | undefined) ?? []);
+    },
+  },
   actions: {
     // ---------- the seam ----------
-    /** A book's exports as the server holds them, in place of what was here for that book. */
-    _install(bookId: string, list: ExportItem[]): void {
-      this.exports = [...this.exports.filter((e) => e.bookId !== bookId), ...list];
-    },
-    _failed(what: string, cause: unknown): void {
-      const uiStore = useUiStore();
-      const api = cause instanceof ApiError ? cause : null;
-      uiStore.toast(api ? api.message : `Could not ${what}`, {
-        kind: "error",
-        description: api?.detail ?? (cause instanceof Error ? cause.message : undefined),
-        timeout: 8000,
-      });
+    /** One book's audiobooks as `change` leaves them, until the server's list is read again. */
+    _edit(bookId: string, change: (list: ExportItem[]) => ExportItem[]): void {
+      useQueryCache().setQueryData<ExportItem[]>(keys.exports(bookId), (list) =>
+        change(list ?? []),
+      );
     },
     // ---------- export ----------
     // A build makes one *export*, which is one or more files: grouping decides how many and nothing
@@ -85,49 +87,6 @@ export const useExportsStore = defineStore("exports", {
 
       const chapters = libraryStore.chaptersOf(bookId).filter((c) => ids.includes(c.id));
       return reviewOf(chapters, settings);
-    },
-    /** The voices heard in a selection, by how much of it they read. */
-    exportVoicesFor(
-      bookId: string,
-      ids: number[],
-    ): {
-      ref: VoiceRef;
-      label: string;
-      endpoint: string;
-      segments: number;
-    }[] {
-      const castStore = useCastStore();
-      const endpointsStore = useEndpointsStore();
-      const scriptsStore = useScriptsStore();
-
-      const by = new Map<
-        VoiceRef,
-        {
-          segments: number;
-        }
-      >();
-      for (const id of ids)
-        for (const s of scriptsStore.segmentsOf(bookId, id)) {
-          if (s.audio.duration <= 0) continue;
-          // what the clip was actually rendered with, falling back to where the line routes now
-          const ref = s.audio.voiceRef ?? castStore.effectiveVoice(bookId, s.speaker).ref;
-          if (!ref) continue;
-          (by.get(ref) ?? (by.set(ref, { segments: 0 }), by.get(ref)!)).segments++;
-        }
-      return [...by.entries()]
-        .map(([ref, v]) => {
-          const r = endpointsStore.resolveVoice(ref);
-          return {
-            ref,
-            label: r ? r.voice.label : `${ref.split("/")[1]} (missing)`,
-            endpoint: r?.endpoint.name ?? ref.split("/")[0],
-            segments: v.segments,
-          };
-        })
-        .sort((a, b) => b.segments - a.segments);
-    },
-    exportLoudnessFor(bookId: string, ids: number[], settings: ExportSettings): LoudnessReport {
-      return loudnessReport(this.exportVoicesFor(bookId, ids), settings);
     },
     /** One fingerprint per chapter, so a later build knows what it can carry over. */
     exportStateFor(bookId: string, ids: number[]): Record<number, string> {
@@ -262,15 +221,15 @@ export const useExportsStore = defineStore("exports", {
           settings,
           opts.updates ?? null,
         );
-        // added rather than installed: the book's other audiobooks are still as last read, and this
+        // added rather than read: the book's other audiobooks are still as last read, and this
         // one belongs at the top
-        this.exports = [entry, ...this.exports.filter((e) => e.id !== entry.id)];
+        this._edit(bookId, (list) => [entry, ...list.filter((e) => e.id !== entry.id)]);
         // the Queue page picks the job up from its own poll, and the audiobooks are read again
         // because the server has just marked the version this build replaces
         await Promise.all([jobsStore._changed(), invalidate({ key: keys.exports(bookId) })]);
         return this.exports.find((e) => e.id === entry.id) ?? entry;
       } catch (cause) {
-        this._failed("build this audiobook", cause);
+        toastFailure("build this audiobook", cause);
         return null;
       }
     },
@@ -296,7 +255,7 @@ export const useExportsStore = defineStore("exports", {
         settings.cover = (await libraryService().uploadCover(bookId, file)).cover;
         return true;
       } catch (cause) {
-        this._failed("upload that cover", cause);
+        toastFailure("upload that cover", cause);
         return false;
       }
     },
@@ -450,10 +409,10 @@ export const useExportsStore = defineStore("exports", {
       try {
         await libraryService().removeExport(e.bookId, e.id);
       } catch (cause) {
-        this._failed("delete this audiobook", cause);
+        toastFailure("delete this audiobook", cause);
         return;
       }
-      this.exports = this.exports.filter((x) => x.id !== id);
+      this._edit(e.bookId, (list) => list.filter((x) => x.id !== id));
       uiStore.toast(`Deleted ${e.filename} v${e.version}`, {
         description: "This cannot be undone.",
       });

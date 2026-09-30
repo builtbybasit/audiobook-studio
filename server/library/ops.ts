@@ -6,9 +6,7 @@
 // another for a new volume — so there is one statement of each, and none of them knows what a
 // status code is. A rule that does not hold is thrown as an `AppError`, which `app.onError` turns
 // into the API's one error shape.
-import { and, eq } from "drizzle-orm";
-
-import type { Book, Chapter } from "@/types";
+import type { Book, Chapter, ImportedBook } from "@/types";
 import { chapterSeconds, pacingOrDefault } from "@/lib/speech";
 import type { AudioFiles } from "~/audio/files";
 import { MAX_COVER_BYTES, sniffCover, type CoverFiles } from "~/covers/files";
@@ -16,7 +14,6 @@ import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
 import * as queue from "~/db/jobs";
 import * as library from "~/db/library";
-import { chapters } from "~/db/schema";
 import { readScript } from "~/db/script";
 import { env } from "~/env";
 import { checkArchive } from "~/epub/archive";
@@ -38,11 +35,6 @@ export interface ImportLog {
   warn(obj: object, msg: string): void;
 }
 
-export interface BookAndChapters {
-  book: Book;
-  chapters: Chapter[];
-}
-
 /** Every book, importing ones included. */
 export const listBooks = (db: Db): Book[] => library.listBooks(db);
 
@@ -53,7 +45,7 @@ export function requireBook(db: Db, bookId: string): Book {
   return book;
 }
 
-export function bookWithChapters(db: Db, bookId: string): BookAndChapters {
+export function bookWithChapters(db: Db, bookId: string): ImportedBook {
   const book = requireBook(db, bookId);
   return { book, chapters: library.listChapters(db, book.id) };
 }
@@ -86,7 +78,7 @@ export interface ImportInput {
   covers?: CoverFiles;
 }
 
-export interface Imported extends BookAndChapters {
+export interface Imported extends ImportedBook {
   /** the volume the file became, when it was added to an existing book */
   volumeId?: number;
   /** what the file turned out to hold */
@@ -422,11 +414,7 @@ export async function removeVolume(
  * the length it has. The budget is stored and not yet enforced here: nothing the fake provider
  * does costs anything to hold against it.
  */
-export function updateBook(
-  db: Db,
-  bookId: string,
-  settings: library.BookSettings,
-): BookAndChapters {
+export function updateBook(db: Db, bookId: string, settings: library.BookSettings): ImportedBook {
   requireBook(db, bookId);
   db.transaction((tx) => {
     library.setBookSettings(tx, bookId, settings);
@@ -435,11 +423,7 @@ export function updateBook(
     for (const ch of library.listChapters(tx, bookId)) {
       if (ch.narration === "none") continue;
       const segs = readScript(tx, bookId, ch.id);
-      const duration = chapterSeconds(segs, pacing);
-      tx.update(chapters)
-        .set({ duration })
-        .where(and(eq(chapters.bookId, bookId), eq(chapters.id, ch.id)))
-        .run();
+      library.setChapterDuration(tx, bookId, ch.id, chapterSeconds(segs, pacing));
     }
   });
   return bookWithChapters(db, bookId);
@@ -462,7 +446,7 @@ export function renameVolume(db: Db, bookId: string, volumeId: number, name: str
  * each chapter landed by number. And refused while a volume is still in review, which is added at
  * the end and has no place in the order until it is.
  */
-export function reorderVolumes(db: Db, bookId: string, order: readonly number[]): BookAndChapters {
+export function reorderVolumes(db: Db, bookId: string, order: readonly number[]): ImportedBook {
   const book = requireBook(db, bookId);
   const ids = book.volumes.map((x) => x.id);
   if (

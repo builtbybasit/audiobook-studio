@@ -8,14 +8,15 @@ export const hasDetails = (s: Segment): boolean => !!(s.audio.at || s.audio.erro
 
 <script setup lang="ts">
 import { useEndpointsStore } from "@/stores/endpoints";
-import { useNarrationStore } from "@/stores/narration";
 import { useUiStore } from "@/stores/ui";
 
 // One clip's audit trail: what it was actually rendered with, what the dictionary sent in its place,
 // why it no longer matches the script, what came back when it failed, every take of the line, and
 // how a line too long for its endpoint was cut up. It is a record of a request, so nothing here is
 // re-derived from what the book holds now — the facts come off the clip itself.
-import { useJob } from "@/views/narration/shared";
+import { errorStatus, lineLink, onClip, useJob } from "@/views/narration/shared";
+import { hhmm } from "@/lib/format";
+import { sanitize } from "@/lib/endpoints";
 import { sampleRateLabel, secs } from "@/lib/speech";
 import { usePlayer } from "@/composables/usePlayer";
 import {
@@ -25,50 +26,72 @@ import {
   Scissors as CutIcon,
   TriangleAlert as WarnIcon,
 } from "@lucide/vue";
-import type { SegmentAudio, Take } from "@/types";
+import type { Take } from "@/types";
 
 const props = defineProps<{ bookId: string; chapterId: number; segment: Segment }>();
 /** the failed or drifted clip should be rendered again — the ledger owns every run entry point */
 defineEmits<{ retry: [] }>();
 const endpointsStore = useEndpointsStore();
-const narrationStore = useNarrationStore();
 const uiStore = useUiStore();
-const { chapter, epName } = useJob(props);
-const { p, play } = usePlayer();
+const { chapter, epName, drift } = useJob(props);
+const { play } = usePlayer();
 const AT = { sentence: "sentence", clause: "clause", word: "word", char: "hard cut" };
-const onClip = (id: string) => p.clipId === id && p.playing;
-const clock = (ts: number) =>
-  new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-// what differs between the clip and the script now (the reason a row is stale, made explicit)
-const drift = (s: Segment, a?: SegmentAudio) => narrationStore.clipDrift(props.bookId, s, a);
-/** The line itself, in the reader — where a wrong speaker, direction or word is fixed before a
- *  retake would read the same request again. The same deep link Search uses. */
-const lineLink = (s: Segment) => ({
-  path: `/book/${props.bookId}/scripting`,
-  query: { ch: String(props.chapterId), seg: String(s.id) },
-});
-function requestOf(s: Segment) {
-  const ep = endpointsStore.endpoints.find((e) => e.id === s.audio.endpoint);
+/**
+ * What the clip recorded about the request that made it, as JSON.
+ *
+ * Only what the server kept on the clip: the request body itself is not recorded, and each provider
+ * shapes its own, so writing one out here would be a request nobody sent. The endpoint's own
+ * requests, with their receipts, are on its Activity tab.
+ */
+function clipRecord(s: Segment) {
+  const a = s.audio;
   return JSON.stringify(
     {
-      POST: (ep?.baseUrl ?? "") + "/audio/speech",
-      headers: { Authorization: "Bearer <key>" },
-      body: {
-        model: s.audio.model,
-        voice: s.audio.voice,
-        input: s.audio.said ?? s.text,
-        instructions: [s.audio.style, s.audio.direction].filter(Boolean).join("; ") || undefined,
-        response_format: "wav",
+      line: s.id,
+      chapter: props.chapterId,
+      speaker: s.speaker,
+      status: a.status,
+      endpoint: { id: a.endpoint, name: epName(a.endpoint) },
+      model: a.model,
+      voice: a.voice,
+      sent: {
+        text: a.pronounced ?? a.said ?? a.text,
+        instructions: a.instructions,
+        expressions: a.expressions,
+        type: a.type,
       },
-      error: s.audio.error,
+      parts: a.parts,
+      cuts: a.cuts,
+      sampleRate: a.sampleRate,
+      rendered: a.at ? new Date(a.at).toISOString() : undefined,
+      tookMs: a.ms || undefined,
+      durationSeconds: a.duration || undefined,
+      charge: a.charge,
+      error: a.error
+        ? {
+            status: a.error.code || null,
+            message: a.error.message,
+            body: a.error.body ? sanitize(a.error.body) : undefined,
+            part: a.error.part,
+            at: a.error.at ? new Date(a.error.at).toISOString() : undefined,
+          }
+        : undefined,
     },
     null,
     2,
   );
 }
-function copyReq(s: Segment) {
-  navigator.clipboard?.writeText(requestOf(s));
-  uiStore.toast("Request copied as JSON", { kind: "success", timeout: 2500 });
+async function copyRecord(s: Segment) {
+  try {
+    await navigator.clipboard.writeText(clipRecord(s));
+    uiStore.toast("Clip record copied as JSON", {
+      kind: "success",
+      description: "What the clip recorded about its request. No API key is included.",
+      timeout: 2500,
+    });
+  } catch {
+    uiStore.toast("Could not copy the clip record", { kind: "error" });
+  }
 }
 /** The audit trail as a strip of labelled facts — what this clip was actually rendered with. The
  *  free-text ones (style, direction) go last and take the rest of the line: they are whole phrases. */
@@ -89,7 +112,7 @@ function facts(s: Segment): Fact[] {
     // rendered before rates were recorded, and then there is nothing true to say
     ...(a.sampleRate ? [{ label: "sample rate", value: sampleRateLabel(a.sampleRate) }] : []),
     { label: "read as", value: a.type ?? s.type },
-    { label: "rendered", value: clock(a.at) },
+    { label: "rendered", value: hhmm(a.at) },
     { label: "took", value: a.ms ? (a.ms / 1000).toFixed(1) + "s" : "—", mono: true },
     ...(a.cost ? [{ label: "cost", value: "$" + a.cost.toFixed(4), mono: true }] : []),
     ...(a.lex ? [{ label: "respelled", value: `${a.lex} word${a.lex === 1 ? "" : "s"}` }] : []),
@@ -118,7 +141,7 @@ function allTakes(s: Segment): (Take & { current?: boolean })[] {
   return list.sort((a, b) => a.n - b.n);
 }
 const takeTitle = (t: Take) =>
-  `${endpointsStore.voiceLabel(t.voiceRef) || t.voice || "—"} · ${t.direction || "no direction"} · ${t.at ? clock(t.at) : ""}`;
+  `${endpointsStore.voiceLabel(t.voiceRef) || t.voice || "—"} · ${t.direction || "no direction"} · ${t.at ? hhmm(t.at) : ""}`;
 const takeId = (s: Segment, n: number) => `take${s.id}-${n}`;
 function playTake(s: Segment, t: Take | undefined) {
   if (t) play(takeId(s, t.n), t.duration, t.url);
@@ -152,7 +175,7 @@ const takePlaying = (s: Segment, t: Take | undefined) => !!t && onClip(takeId(s,
           </div>
           <span class="flex shrink-0 items-center gap-3 text-[11px]">
             <RouterLink
-              :to="lineLink(segment)"
+              :to="lineLink({ bookId, chapterId }, segment)"
               class="text-violet-500 hover:underline"
               title="open this line in the reader"
               @click.stop
@@ -161,10 +184,10 @@ const takePlaying = (s: Segment, t: Take | undefined) => !!t && onClip(takeId(s,
             </RouterLink>
             <button
               class="text-violet-500 hover:underline"
-              title="the exact request body, as JSON"
-              @click.stop="copyReq(segment)"
+              title="what this clip recorded about the request that made it, as JSON — the provider's own requests are on the endpoint's Activity tab"
+              @click.stop="copyRecord(segment)"
             >
-              copy request
+              copy clip record
             </button>
           </span>
         </div>
@@ -206,18 +229,16 @@ const takePlaying = (s: Segment, t: Take | undefined) => !!t && onClip(takeId(s,
           class="mt-2 rounded border border-red-300 bg-red-500/5 px-2 py-1.5 dark:border-red-500/40"
         >
           <div class="flex flex-wrap items-center gap-2">
-            <b class="text-red-600">{{
-              segment.audio.error.code ? "HTTP " + segment.audio.error.code : "not sent"
-            }}</b
+            <b class="text-red-600">{{ errorStatus(segment.audio.error) }}</b
             ><span class="min-w-0 flex-1">{{ segment.audio.error.message }}</span
             ><span v-if="segment.audio.error.at" class="text-zinc-400">{{
-              clock(segment.audio.error.at)
+              hhmm(segment.audio.error.at)
             }}</span>
           </div>
           <pre
             v-if="segment.audio.error.body"
             class="mt-1 max-h-16 overflow-auto whitespace-pre-wrap break-all rounded bg-white p-1.5 font-mono text-[10px] text-zinc-600 dark:bg-zinc-900 dark:text-zinc-400"
-            >{{ segment.audio.error.body }}</pre>
+            >{{ sanitize(segment.audio.error.body) }}</pre>
         </div>
 
         <!-- every take, the one in the book marked -->

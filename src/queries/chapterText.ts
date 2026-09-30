@@ -20,18 +20,23 @@ async function readParts(
   return [{ text: await libraryService().chapterText(bookId, chapterId, format) }];
 }
 
+/** One chapter's prose as a query: what `useChapterText` watches and `useChapterTexts` reads. */
+export const textQuery = (bookId: string, chapterId: number, format: TextFormat) => ({
+  key: keys.chapterText(bookId, chapterId, format),
+  // Prose does not change under the app: once read, a chapter's text is right until the book is
+  // renumbered or removed, and both invalidate everything under the book.
+  staleTime: Infinity,
+  query: () => readParts(bookId, chapterId, format),
+});
+
 export function useChapterText(
   bookId: MaybeRefOrGetter<string>,
   chapterId: MaybeRefOrGetter<number | null | undefined>,
   format: TextFormat = "markdown",
 ) {
   const query = useQuery(() => ({
-    key: keys.chapterText(toValue(bookId), toValue(chapterId) ?? 0, format),
+    ...textQuery(toValue(bookId), toValue(chapterId) ?? 0, format),
     enabled: toValue(chapterId) != null,
-    // Prose does not change under the app: once read, a chapter's text is right until the book is
-    // renumbered or removed, and both invalidate everything under the book.
-    staleTime: Infinity,
-    query: () => readParts(toValue(bookId), toValue(chapterId)!, format),
   }));
   const parts = computed<ContentPart[]>(() => query.data.value ?? []);
   const text = computed(() => partsText(parts.value));

@@ -4,14 +4,14 @@ import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
+import type { BuildQueued } from "@/types";
 import type { CoverFiles } from "~/covers/files";
 import type { Db } from "~/db/client";
 import * as ops from "~/exports/ops";
 import { enqueueBuild } from "~/jobs/export";
 import type { Runner } from "~/jobs/runner";
-import { notFound } from "~/lib/errors";
-import { fileResponse } from "~/lib/serve";
-import { IdParam, IntParam } from "~/lib/http";
+import { serveFile } from "~/lib/serve";
+import { BookParam, IdParam, IntParam } from "~/lib/http";
 import { ExportSettingsSchema } from "~/lib/schemas";
 import { validate } from "~/lib/validate";
 import type { ExportPorts } from "~/providers/encoder";
@@ -29,7 +29,6 @@ const MIME: Record<string, string> = {
   m4a: "audio/mp4",
 };
 
-const BookParam = v.object({ id: v.string() });
 const ExportParam = v.object({ id: v.string(), exportId: IdParam });
 const FileParam = v.object({ id: v.string(), exportId: IdParam, position: IntParam });
 
@@ -75,7 +74,7 @@ export function exportRoutes(
       },
       "build queued",
     );
-    return c.json(result, 202);
+    return c.json(result satisfies BuildQueued, 202);
   });
 
   app.get("/:id/exports/:exportId", validate("param", ExportParam), (c) => {
@@ -93,19 +92,20 @@ export function exportRoutes(
   app.get("/:id/exports/:exportId/files/:position", validate("param", FileParam), async (c) => {
     const { id, exportId, position } = c.req.valid("param");
     const { path, name } = ops.exportFile(db, id, exportId, position, ports.files);
-    const found = Bun.file(path);
-    if (!(await found.exists())) throw notFound("That file is no longer on this server");
     // A part at a time when the player asks for one, which is how it seeks; see `fileResponse`.
-    return fileResponse(c.req.raw, found, {
-      "content-type": MIME[name.split(".").at(-1)!.toLowerCase()] ?? "application/octet-stream",
-      // A set is written to a folder, so a file in one carries the folder in its name; a
-      // download has nowhere to put that and the last part is what it should be called.
-      //
-      // A header is Latin-1, and a title is not: an em dash, a curly apostrophe or a Chinese
-      // title would make `Headers` throw and the download a 500. The name goes in the
-      // `filename*` a browser reads in UTF-8, with an ASCII stand-in for anything older.
-      "content-disposition": disposition(name.split("/").at(-1)!),
-      "cache-control": "private, max-age=0, must-revalidate",
+    const type = MIME[name.split(".").at(-1)!.toLowerCase()] ?? "application/octet-stream";
+    return serveFile(c, path, type, {
+      missing: "That file is no longer on this server",
+      immutable: false,
+      headers: {
+        // A set is written to a folder, so a file in one carries the folder in its name; a
+        // download has nowhere to put that and the last part is what it should be called.
+        //
+        // A header is Latin-1, and a title is not: an em dash, a curly apostrophe or a Chinese
+        // title would make `Headers` throw and the download a 500. The name goes in the
+        // `filename*` a browser reads in UTF-8, with an ASCII stand-in for anything older.
+        "content-disposition": disposition(name.split("/").at(-1)!),
+      },
     });
   });
 

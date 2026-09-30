@@ -87,6 +87,5 @@ export interface NarrationEstimate {
   unrouted: number;
   requests: number;
   split: number;
-  endpoints: number;
   per: EndpointEstimate[];
 }

@@ -2,6 +2,7 @@
 import { useExportsStore } from "@/stores/exports";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
+import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 
 // Export: turn narrated chapters into an audiobook, and keep it up to date afterwards.
@@ -19,38 +20,61 @@ import { useUiStore } from "@/stores/ui";
 // the selection or accept stale clips on your behalf, it stages the build instead: the form and the
 // ticks arrive filled in, and the same review asks the same questions before anything is built.
 import { computed, reactive, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRouter } from "vue-router";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { useBookId } from "@/composables/useBookId";
-import { useBookExports } from "@/queries";
+import { enumParam, useQueryParam } from "@/composables/useQueryParam";
+import { useBookExports, useBookScripts } from "@/queries";
 import { DEFAULT_EXPORT_SETTINGS, usable } from "@/lib/exports";
 import { queryIds } from "@/lib/query";
-import { plural } from "@/views/export/shared";
+import { plural } from "@/lib/contents";
 import EmptyState from "@/components/EmptyState.vue";
 import ExportChapterList from "@/views/export/ExportChapterList.vue";
 import ExportOutput from "@/views/export/ExportOutput.vue";
 import ExportPlan from "@/views/export/ExportPlan.vue";
 import ExportLibrary from "@/views/export/ExportLibrary.vue";
-import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
+import { UiTabs } from "@/ui";
+import { TabsContent, TabsRoot } from "reka-ui";
 import { Download as ExportIcon } from "@lucide/vue";
 import type { ExportSettings } from "@/types";
 
 const exportsStore = useExportsStore();
 const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
+const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
-const route = useRoute();
 const router = useRouter();
 const bookId = useBookId();
 // the router only reaches this view with a real book id
 const book = computed(() => libraryStore.bookById(bookId)!);
-const tab = ref(route.query.tab === "library" ? "library" : "build");
+const TABS = [
+  { value: "build", label: "Build" },
+  { value: "library", label: "Audiobooks" },
+] as const;
+const tab = useQueryParam("tab", enumParam(["build", "library"], "build"));
 // the finished audiobooks, read from the server when the page opens
 useBookExports(bookId);
+// Every scripted chapter's lines: the review's flagged lines, retakes and pause overrides are read
+// from them, and so is what each finished audiobook says has changed since it was built.
+const scripts = useBookScripts(bookId);
 
 const anyNarrated = computed(() => libraryStore.chaptersOf(bookId).some(isNarrated));
 const selected = ref<number[]>([]);
-const issueIds = ref<number[]>(queryIds(route.query.issue));
+/** Selected chapters whose script failed to read, and whether any selected one is still on its way. */
+const unread = computed(() => selected.value.filter((id) => scripts.failed.value.includes(id)));
+const reading = computed(() =>
+  selected.value.some((id) => {
+    const c = libraryStore.chapter(bookId, id);
+    return (
+      !!c && isScripted(c) && !scriptsStore.held(bookId, id) && !scripts.failed.value.includes(id)
+    );
+  }),
+);
+const issueIds = useQueryParam<number[]>("issue", {
+  parse: queryIds,
+  serialize: (ids) => ids.join(",") || undefined,
+  default: () => [],
+});
 const settings = reactive<ExportSettings>({ ...DEFAULT_EXPORT_SETTINGS });
 /** The finished export a staged build would become the next version of. */
 const updates = ref<number | null>(null);
@@ -92,30 +116,9 @@ watch(
   },
   { immediate: true },
 );
-watch(tab, (value) => {
-  if (route.query.tab === (value === "library" ? "library" : undefined)) return;
-  void router.replace({
-    query: { ...route.query, tab: value === "library" ? "library" : undefined },
-  });
-});
-watch(
-  () => route.query.tab,
-  (value) => {
-    tab.value = value === "library" ? "library" : "build";
-  },
-);
-watch(
-  () => route.query.issue,
-  (value) => {
-    issueIds.value = queryIds(value);
-  },
-);
 
 function showIssues(ids: number[]) {
   issueIds.value = [...new Set(ids)];
-  void router.replace({
-    query: { ...route.query, issue: issueIds.value.length ? issueIds.value.join(",") : undefined },
-  });
 }
 function clearIssues() {
   showIssues([]);
@@ -161,7 +164,7 @@ function narrate(ids: number[]) {
   // *label* sent a chapter whose clips are fine but whose retake failed down the "everything" path,
   // re-rendering lines that had already succeeded and displacing good clips; "missing & changed" is
   // what this button is for — the lines with no usable clip and the ones the script has moved past.
-  void narrationStore.runNarration(
+  void narrationStore.startRun(
     bookId,
     scripted.map((c) => c.id),
     { scope: "fill" },
@@ -204,34 +207,28 @@ async function build() {
       <div
         class="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 sm:px-4 dark:border-zinc-800 dark:bg-zinc-900"
       >
-        <TabsList class="flex items-center gap-1" aria-label="Export views">
-          <TabsTrigger
-            value="build"
-            class="border-b-2 border-transparent px-3 py-2.5 text-sm text-zinc-500 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:data-[state=active]:text-zinc-100"
-            >Build</TabsTrigger
-          >
-          <TabsTrigger
-            value="library"
-            class="flex items-center gap-1.5 border-b-2 border-transparent px-3 py-2.5 text-sm text-zinc-500 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:data-[state=active]:text-zinc-100"
-            >Audiobooks
-            <span class="text-zinc-400">{{ exportsHere.length }}</span>
-            <span
-              v-if="building"
-              class="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-500"
-              title="a build is running"
-            ></span>
-            <span
-              v-else-if="failedBuilds"
-              class="h-1.5 w-1.5 rounded-full bg-red-500"
-              :title="`${failedBuilds} failed`"
-            ></span>
-            <span
-              v-else-if="needUpdate"
-              class="h-1.5 w-1.5 rounded-full bg-violet-500"
-              :title="`${needUpdate} need updating`"
-            ></span
-          ></TabsTrigger>
-        </TabsList>
+        <UiTabs :tabs="TABS" aria-label="Export views">
+          <template #tab="{ tab: t }">
+            <template v-if="t.value === 'library'">
+              <span class="text-zinc-400">{{ exportsHere.length }}</span>
+              <span
+                v-if="building"
+                class="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-500"
+                title="a build is running"
+              ></span>
+              <span
+                v-else-if="failedBuilds"
+                class="h-1.5 w-1.5 rounded-full bg-red-500"
+                :title="`${failedBuilds} failed`"
+              ></span>
+              <span
+                v-else-if="needUpdate"
+                class="h-1.5 w-1.5 rounded-full bg-violet-500"
+                :title="`${needUpdate} need updating`"
+              ></span>
+            </template>
+          </template>
+        </UiTabs>
       </div>
 
       <TabsContent value="build" class="min-h-0 flex-1 overflow-auto p-3 focus:outline-none sm:p-4">
@@ -267,6 +264,9 @@ async function build() {
               :book-id="bookId"
               :settings="settings"
               :selected="selected"
+              :reading="reading"
+              :unread="unread"
+              @read-again="scripts.retry"
               @build="build"
               @drop="drop"
               @narrate="narrate"

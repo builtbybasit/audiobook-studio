@@ -2,21 +2,21 @@
 // copy of the same book. See docs/script-transfer.md.
 import { create as disposition } from "content-disposition";
 import { Hono } from "hono";
-import { bodyLimit } from "hono/body-limit";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
+import type { ScriptExportSamples, ScriptImportPlan } from "@/types";
 import type { AudioFiles } from "~/audio/files";
 import type { Db } from "~/db/client";
-import { env, scriptBodyBytes } from "~/env";
+import { env } from "~/env";
 import { fail } from "~/lib/errors";
+import { BookParam, uploadLimit } from "~/lib/http";
 import { validate } from "~/lib/validate";
 import type { Providers } from "~/providers/target";
 import { planScriptImport } from "~/script/importPlan";
 import { buildScriptExport, exportSamples } from "~/script/transfer";
 import type { VoiceFiles } from "~/voices/files";
 
-const BookParam = v.object({ id: v.string() });
 /** `?samples=1` asks for the voice samples too; anything else, or nothing, leaves them out. */
 const ExportQuery = v.object({ samples: v.optional(v.string()) });
 const ImportForm = v.object({ file: v.instance(File) });
@@ -28,10 +28,11 @@ export function transferRoutes(
   voiceFiles?: VoiceFiles,
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
+  const scriptLimit = uploadLimit(env.MAX_SCRIPT_UPLOAD_MB, "MAX_SCRIPT_UPLOAD_MB", "script");
 
   /** Whose voice recordings "Include voice samples" would hand over, and how much, before it is ticked. */
   app.get("/:id/script-export/samples", validate("param", BookParam), (c) =>
-    c.json(exportSamples(db, c.req.valid("param").id, audio.dir)),
+    c.json(exportSamples(db, c.req.valid("param").id, audio.dir) satisfies ScriptExportSamples),
   );
 
   /**
@@ -67,36 +68,23 @@ export function transferRoutes(
    */
   app.post(
     "/:id/script-import",
-    bodyLimit({
-      maxSize: scriptBodyBytes(),
-      onError: () =>
-        fail(
-          413,
-          `That file is larger than the ${env.MAX_SCRIPT_UPLOAD_MB} MB limit`,
-          "Raise MAX_SCRIPT_UPLOAD_MB if this is a script you expect to import.",
-        ),
-    }),
+    scriptLimit.body,
     validate("param", BookParam),
     validate("form", ImportForm),
     async (c) => {
       const { file } = c.req.valid("form");
-      if (file.size > env.MAX_SCRIPT_UPLOAD_MB * 1024 * 1024)
-        fail(
-          413,
-          `That file is larger than the ${env.MAX_SCRIPT_UPLOAD_MB} MB limit`,
-          `${file.name} is ${(file.size / 1024 / 1024).toFixed(1)} MB. Raise MAX_SCRIPT_UPLOAD_MB if this is a script you expect to import.`,
-        );
+      scriptLimit.file(file);
       if (!file.size) fail(400, "That file is empty");
       c.var.logger.assign({ name: "script-import", file: file.name, bytes: file.size });
       const bytes = new Uint8Array(await file.arrayBuffer());
       // The app's own lister, so a test's stands in for the network when a voice is looked up
       return c.json(
-        await planScriptImport(
+        (await planScriptImport(
           db,
           c.req.valid("param").id,
           { name: file.name, bytes },
           { voices: providers.voices, signal: c.req.raw.signal },
-        ),
+        )) satisfies ScriptImportPlan,
       );
     },
   );

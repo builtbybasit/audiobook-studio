@@ -12,29 +12,15 @@ import { useUiStore } from "@/stores/ui";
 // owns the book's review queue and the row keyboard shortcuts, acts on it.
 import { defineAsyncComponent } from "vue";
 import { FLAG_LABEL } from "@/lib/scriptReview";
-import { speechPeaks } from "@/lib/peaks";
 import { sampleRateLabel } from "@/lib/speech";
 import { usePlayer } from "@/composables/usePlayer";
+import { candId, onClip } from "@/views/narration/shared";
+import { hhmm } from "@/lib/format";
 import { Pause as PauseIcon, Play as PlayIcon, Flag as FlagIcon } from "@lucide/vue";
 import type { Segment } from "@/types";
 
 // wavesurfer is only ever needed once a compare panel is open, so it stays out of the entry chunk.
 const Waveform = defineAsyncComponent(() => import("@/components/Waveform.vue"));
-// Memoised on what `speechPeaks` is a pure function of. **Identity** is the point, not the work: the
-// template also reads `clipProgress`, which moves every 100ms while a clip plays, so an unmemoised
-// call handed `Waveform` a fresh array ten times a second — and `Waveform` watches `peaks`, so it
-// destroyed and rebuilt wavesurfer each time and never stayed alive long enough to draw a playhead.
-//
-// `<script setup>` compiles into `setup()`, so this map is per open panel rather than shared. The
-// key carries the duration anyway: segment ids restart in every chapter, so `seg5#1` alone names a
-// different clip per chapter, and the envelope's length comes from the duration.
-const PEAKS = new Map<string, number[]>();
-function peaksOf(seed: string, duration: number): number[] {
-  const key = `${seed}@${duration}`;
-  let peaks = PEAKS.get(key);
-  if (!peaks) PEAKS.set(key, (peaks = speechPeaks(seed, duration)));
-  return peaks;
-}
 
 defineProps<{
   segment: Segment;
@@ -47,12 +33,6 @@ defineEmits<{ decide: [keep: "current" | "new"] }>();
 const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
 const { p, play, seekTo, clipProgress } = usePlayer();
-const clock = (ts: number) =>
-  new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-/** the clip under the playhead is this one — true whether it is playing alone or inside the chapter */
-const onClip = (id: string) => p.clipId === id && p.playing;
-/** the clip the retake is judged against: whatever is in the book right now */
-const candId = (s: Segment) => `cand${s.id}`;
 const candPlaying = (s: Segment) => onClip(candId(s));
 /** What differs between the clip in the book and the retake waiting beside it. */
 function takeDiff(s: Segment): string[] {
@@ -132,12 +112,9 @@ function seekTake(id: string, duration: number, url: string | undefined, frac: n
             <span class="font-mono text-zinc-500">{{ segment.audio.duration.toFixed(1) }}s</span>
           </div>
           <Waveform
-            v-if="segment.audio.duration"
+            v-if="segment.audio.duration && segment.audio.url"
             class="mt-1.5"
             :url="segment.audio.url"
-            :peaks="
-              peaksOf('seg' + segment.id + '#' + (segment.audio.n ?? 1), segment.audio.duration)
-            "
             :duration="segment.audio.duration"
             :progress="clipProgress('seg' + segment.id) ?? 0"
             v-bind="waveColors(false)"
@@ -150,7 +127,7 @@ function seekTake(id: string, duration: number, url: string | undefined, frac: n
             {{ segment.audio.direction || "no direction"
             }}<span v-if="segment.audio.sampleRate">
               · {{ sampleRateLabel(segment.audio.sampleRate) }}</span
-            ><span v-if="segment.audio.at"> · {{ clock(segment.audio.at) }}</span>
+            ><span v-if="segment.audio.at"> · {{ hhmm(segment.audio.at) }}</span>
           </div>
         </div>
         <div
@@ -184,12 +161,9 @@ function seekTake(id: string, duration: number, url: string | undefined, frac: n
             }}</span>
           </div>
           <Waveform
-            v-if="segment.candidate!.duration"
+            v-if="segment.candidate!.duration && segment.candidate!.url"
             class="mt-1.5"
             :url="segment.candidate!.url"
-            :peaks="
-              peaksOf(candId(segment) + '#' + segment.candidate!.n, segment.candidate!.duration)
-            "
             :duration="segment.candidate!.duration"
             :progress="clipProgress(candId(segment)) ?? 0"
             v-bind="waveColors(true)"
@@ -214,21 +188,13 @@ function seekTake(id: string, duration: number, url: string | undefined, frac: n
               · {{ segment.candidate!.direction || "no direction"
               }}<span v-if="segment.candidate!.sampleRate">
                 · {{ sampleRateLabel(segment.candidate!.sampleRate!) }}</span
-              ><span v-if="segment.candidate!.at"> · {{ clock(segment.candidate!.at) }}</span></span
+              ><span v-if="segment.candidate!.at"> · {{ hhmm(segment.candidate!.at) }}</span></span
             >
           </div>
         </div>
       </div>
       <div class="mt-2 flex flex-wrap items-center gap-2">
-        <span class="min-w-0 flex-1 text-zinc-500"
-          >{{ takeDiff(segment).join(" · ")
-          }}<span
-            v-if="!segment.audio.url && !segment.candidate!.url"
-            class="ml-1 text-[10px] text-amber-600"
-            title="the prototype renders no audio, so there is no file to decode — the shape is invented from the clip's identity, not measured"
-            >· waveform illustrative</span
-          ></span
-        >
+        <span class="min-w-0 flex-1 text-zinc-500">{{ takeDiff(segment).join(" · ") }}</span>
         <template v-if="!['queued', 'generating'].includes(segment.candidate!.status)">
           <button
             class="btn-ghost btn-xs"

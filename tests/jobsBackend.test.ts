@@ -12,9 +12,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { BookSpend, Endpoint, RequestRecord, Segment } from "@/types";
-import { credentials } from "@/lib/credentials";
+import { makeCredentials } from "~/demo/seed/fixtures/credentials";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
-import { makeProfiles } from "@/mock/fixtures/profiles";
 import { key } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
 import { silenceOf } from "@/lib/speech";
@@ -27,8 +26,15 @@ import {
   useChapterScript,
   useEndpointHistory,
   useEndpointLive,
+  invalidate,
+  keys,
 } from "@/queries";
 import type { EndpointDescriptor } from "@/services/endpoints";
+import {
+  HttpEndpointSettingsService,
+  setEndpointSettingsService,
+} from "@/services/endpointSettings";
+import { fetchCast } from "@/queries/cast";
 import { HttpJobsService, setJobsService } from "@/services/jobs";
 import { libraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
@@ -40,15 +46,18 @@ import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
+import { useTransferStore } from "@/stores/transfer";
 import { useUiStore } from "@/stores/ui";
-import { readScript, writeScript } from "~/db/script";
+import { readScript, scriptRevision, writeScript } from "~/db/script";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";
 import { pointServicesAt, type ServiceWiring } from "./support/backendServer";
 import { epubFile, story } from "./support/epub";
 import { flush, testPinia, type TestPinia } from "./support/pinia";
+import { openaiProfile } from "./support/profiles";
 import { unifyEndpoint } from "@/lib/endpoints";
 import { useEndpointActivity } from "@/views/endpoints/live";
+import { useNarrationData } from "@/views/narration/useNarrationData";
 import { useScriptActivity } from "@/queries/scriptActivity";
 import { scriptTelemetry, scriptUsageTotals } from "@/lib/scriptActivity";
 import {
@@ -173,6 +182,25 @@ async function narrated() {
   return { ...opened, narrationStore };
 }
 
+/**
+ * Every speaker of the book cast with a voice on `studio`, and the stores reading both — what a
+ * run button asks before it lets a run start (`narration.startRun`).
+ */
+async function voiced(id: string) {
+  await api.request("/api/endpoints", {
+    ...jsonBody({ endpoints: [studio], profiles: [], credentials: [] }),
+    method: "PUT",
+  });
+  for (const c of castStore.charactersOf(id))
+    await api.request(`/api/books/${id}/characters/${encodeURIComponent(c.name)}`, {
+      ...jsonBody({ ...c, voice: "studio/ash" }),
+      method: "PUT",
+    });
+  setEndpointSettingsService(new HttpEndpointSettingsService("/api", api.fetch));
+  await useEndpointsStore().load(true);
+  await fetchCast(id);
+}
+
 /** A chapter 1 another tab wrote underneath this one. */
 const writtenElsewhere = (): Segment[] => [
   {
@@ -184,6 +212,27 @@ const writtenElsewhere = (): Segment[] => [
     audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
   },
 ];
+
+/** A speech endpoint of the server's own, for the tests that need clips to name one. */
+const studio: Endpoint = {
+  id: "studio",
+  name: "Studio speech",
+  baseUrl: "http://localhost:8880/v1",
+  model: "studio-tts",
+  concurrency: 1,
+  enabled: true,
+  latency: 0,
+  failRate: 0,
+  price: 15,
+  needsKey: false,
+  maxChars: 0,
+  splitAt: "sentence",
+  voices: [{ id: "ash", gender: "m", label: "Ash" }],
+  history: [],
+  failures: 0,
+  rateLimits: 0,
+  backoffUntil: 0,
+};
 
 beforeEach(() => wire());
 
@@ -481,21 +530,78 @@ describe("editing a script with a server answering", () => {
     expect(scriptsStore._revision[k]).toBe(4);
   });
 
-  test("a flag is written with its script, and adds nothing to the history", async () => {
+  test("a read that lands while an edit is being saved waits for the save, and loses nothing", async () => {
+    const { id } = await scriptedAndOpen();
+    const [a, b] = scriptsStore.segmentsOf(id, 1);
+    const path = `/api/books/${id}/chapters/1/script`;
+    // the first write's answer is held on its way back
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    hold = (p, init) => (init?.method === "PUT" && p === path ? held : Promise.resolve());
+    scriptsStore.updateSegment(id, 1, a.id, { text: "Saved first." });
+    await flush();
+    // a narration job moved meanwhile, and the poll reads the chapter again: the server does not
+    // have the edit yet, so its script must not replace the one on screen
+    await invalidate({ key: keys.chapterScript(id, 1) }, "all");
+    expect(scriptsStore.segmentsOf(id, 1)[0].text).toBe("Saved first.");
+    // and an edit made now is still the one written after the first lands
+    scriptsStore.updateSegment(id, 1, b.id, { text: "Saved second." });
+    hold = null;
+    asked.length = 0;
+    release();
+    await scriptsStore._settled(id, 1);
+    expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
+    expect(
+      readScript(api.db, id, 1)
+        .map((s) => s.text)
+        .slice(0, 2),
+    ).toEqual(["Saved first.", "Saved second."]);
+    expect(
+      scriptsStore
+        .segmentsOf(id, 1)
+        .map((s) => s.text)
+        .slice(0, 2),
+    ).toEqual(["Saved first.", "Saved second."]);
+    // the read that was put off is made once the writes have landed
+    expect(asked.lastIndexOf(path)).toBeGreaterThan(asked.indexOf(path));
+    expect(scriptsStore._revision[key(id, 1)]).toBe(scriptRevision(api.db, id, 1)!);
+  });
+
+  test("lines a rename moved in a chapter not read yet are read with that chapter", async () => {
+    const id = await shelved();
+    await scriptingStore.runScripting(id, [1, 2], { quiet: true });
+    await api.runner.idle();
+    pinia.run(() => useChapterScript(id, 1));
+    pinia.run(() => useCast(id));
+    await settle();
+    await castStore.renameCharacter(id, "Mara", "Mara Voss");
+    // chapter 2 was never read: the rename's revision is not a script held
+    expect(scriptsStore.held(id, 2)).toBe(false);
+    expect(scriptsStore._revision[key(id, 2)]).toBeUndefined();
+    // so a script file's preview, which reads what is not held, reads it with the new name
+    await useTransferStore()._loadScripts(id, [1, 2]);
+    const speakers = scriptsStore.segmentsOf(id, 2).map((s) => s.speaker);
+    expect(speakers).toContain("Mara Voss");
+    expect(speakers).not.toContain("Mara");
+  });
+
+  test("a flag is written to its line alone, and adds nothing to the history", async () => {
     const { id, history } = await scriptedAndOpen();
     const narrationStore = useNarrationStore();
     const line = scriptsStore.segmentsOf(id, 1)[0];
-    narrationStore.flagSegment(id, 1, line.id, "delivery", "softer");
-    await scriptsStore._settled(id, 1);
+    sent.length = 0;
+    await narrationStore.flagSegment(id, 1, line.id, "delivery", "softer");
     expect(readScript(api.db, id, 1)[0].flag).toMatchObject({ kind: "delivery", note: "softer" });
+    // the line's flag and nothing else: no script went with it, so no revision could refuse it
+    expect(sent.map((r) => r.path)).toEqual([`/api/books/${id}/chapters/1/lines/${line.id}/flag`]);
     expect(scriptsStore._revision[key(id, 1)]).toBe(2);
     expect(history.versions.value).toEqual([]);
     expect(history.head.value.origin.kind).toBe("scripted");
-    narrationStore.clearFlag(id, 1, line.id);
-    await scriptsStore._settled(id, 1);
+    await narrationStore.clearFlag(id, 1, line.id);
     expect(readScript(api.db, id, 1)[0].flag).toBeUndefined();
+    expect(scriptsStore.segmentsOf(id, 1)[0].flag).toBeUndefined();
     expect(history.head.value.origin.kind).toBe("scripted");
-    // a flag batch is a plain write too: it does not name itself as a bulk correction
+    // a flag batch is written the same way, a line at a time, and no script goes with it
     sent.length = 0;
     scriptsStore.applyBulk(id, [{ chId: 1, segId: line.id }], {
       kind: "flag",
@@ -504,10 +610,58 @@ describe("editing a script with a server answering", () => {
       replace: true,
     });
     await scriptsStore._settled(id, 1);
-    const write = sent.find((r) => r.path.endsWith("/chapters/1/script"))!;
-    expect(write.body).not.toHaveProperty("origin");
+    expect(sent.map((r) => r.path)).toEqual([`/api/books/${id}/chapters/1/lines/${line.id}/flag`]);
     expect(readScript(api.db, id, 1)[0].flag).toMatchObject({ kind: "pause" });
     expect(history.head.value.origin.kind).toBe("scripted");
+  });
+
+  test("a flag raised while the server's script moves on — a run landing clips — is kept", async () => {
+    const { id } = await scriptedAndOpen();
+    const narrationStore = useNarrationStore();
+    const line = scriptsStore.segmentsOf(id, 1)[1];
+    const read = scriptsStore._revision[key(id, 1)];
+    // written underneath this tab, the way every clip a run lands moves the revision on
+    writeScript(api.db, id, 1, readScript(api.db, id, 1));
+    await narrationStore.flagSegment(id, 1, line.id, "pause", "too long");
+    expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
+    expect(readScript(api.db, id, 1)[1].flag).toMatchObject({ kind: "pause", note: "too long" });
+    expect(scriptsStore.segmentsOf(id, 1)[1].flag).toMatchObject({ kind: "pause" });
+    // the store does not claim a revision whose other write it has not read
+    expect(scriptsStore._revision[key(id, 1)]).toBe(read);
+    // nor is a flag batch refused: it names no revision either
+    const other = scriptsStore.segmentsOf(id, 1)[2];
+    writeScript(api.db, id, 1, readScript(api.db, id, 1));
+    scriptsStore.applyBulk(id, [{ chId: 1, segId: other.id }], {
+      kind: "flag",
+      flag: "delivery",
+      note: "",
+      replace: true,
+    });
+    await scriptsStore._settled(id, 1);
+    expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
+    expect(readScript(api.db, id, 1)[2].flag).toMatchObject({ kind: "delivery" });
+  });
+
+  test("an edit made while a flag is on its way waits for it, and is not refused for the revision it moved", async () => {
+    const { id } = await scriptedAndOpen();
+    const narrationStore = useNarrationStore();
+    const [a, b] = scriptsStore.segmentsOf(id, 1);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    // the flag is written on the server, and its answer is held on the way back
+    hold = (path) => (path.endsWith("/flag") ? gate : Promise.resolve());
+    const flagged = narrationStore.flagSegment(id, 1, a.id, "delivery", "softer");
+    await settle();
+    scriptsStore.updateSegment(id, 1, b.id, { text: "Edited while the flag was out." });
+    await settle();
+    release();
+    await flagged;
+    await scriptsStore._settled(id, 1);
+    expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
+    const saved = readScript(api.db, id, 1);
+    expect(saved[1].text).toBe("Edited while the flag was out.");
+    expect(saved[0].flag).toMatchObject({ kind: "delivery", note: "softer" });
+    expect(scriptsStore._revision[key(id, 1)]).toBe(scriptRevision(api.db, id, 1)!);
   });
 
   test("an expression moved or removed is written with its script", async () => {
@@ -692,7 +846,7 @@ describe("narration with a server answering", () => {
     await settle();
     expect(toasts.at(-1)?.msg).toBe("Narrate · 1 chapter");
     expect(jobsStore.jobs.map((j) => j.kind)).toContain("narration");
-    expect(["queued", "running"]).toContain(libraryStore.chapter(id, 1)?.narration);
+    expect(libraryStore.chapter(id, 1)?.narration).toBeOneOf(["queued", "running"]);
     await api.runner.idle();
     await poll();
     const segs = scriptsStore.segmentsOf(id, 1);
@@ -700,7 +854,7 @@ describe("narration with a server answering", () => {
     for (const s of segs) {
       expect(s.audio.status).toBe("done");
       expect(s.audio.duration).toBeGreaterThan(0);
-      expect(s.audio.url).toStartWith(`/api/audio/${id}/`);
+      expect(s.audio.url ?? "").toStartWith(`/api/audio/${id}/`);
     }
     expect(libraryStore.chapter(id, 1)?.narration).toBe("done");
     expect(libraryStore.chapter(id, 1)?.duration).toBeGreaterThan(0);
@@ -746,8 +900,50 @@ describe("narration with a server answering", () => {
     expect(libraryStore.chapter(id, 1)?.duration).toBeCloseTo(expected, 6);
   });
 
+  test("a reload counts a chapter's lines and each endpoint's clips without reading a script", async () => {
+    const { id } = await narrated();
+    // the clips as one endpoint of the server's rendered them, the last of them failed
+    const segs = readScript(api.db, id, 1);
+    for (const s of segs) s.audio.endpoint = studio.id;
+    segs.at(-1)!.audio.status = "failed";
+    writeScript(api.db, id, 1, segs);
+    const { status } = await api.request("/api/endpoints", {
+      ...jsonBody({ endpoints: [studio], profiles: [], credentials: [] }),
+      method: "PUT",
+    });
+    expect(status).toBe(200);
+    // a reload that opens the Queue first: the book is listed, no script has been read
+    wireStores({ endpoints: true });
+    await libraryStore.loadBook(id);
+    await useEndpointsStore().load();
+    pinia.run(() => useEndpointLive());
+    await settle();
+    expect(scriptsStore.held(id, 1)).toBe(false);
+    const done = segs.length - 1;
+    expect(scriptsStore.lineCountsOf(id, 1)).toEqual({
+      total: segs.length,
+      done,
+      generating: 0,
+      failed: 1,
+    });
+    expect(scriptsStore.lineCountsOf(id, 2)).toEqual({
+      total: 0,
+      done: 0,
+      generating: 0,
+      failed: 0,
+    });
+    expect(jobsStore.endpointLoad.studio).toMatchObject({ done, failed: 1 });
+    // once the script is here, it is what is counted, and it follows an edit before the server does
+    pinia.run(() => useChapterScript(id, 1));
+    await settle();
+    scriptsStore.deleteSegment(id, 1, segs[0].id);
+    expect(scriptsStore.lineCountsOf(id, 1)?.total).toBe(segs.length - 1);
+    await scriptsStore._settled(id, 1);
+  });
+
   test("re-narrating what changed renders only those lines, and keeps the rest", async () => {
     const { id, narrationStore } = await narrated();
+    await voiced(id);
     const before = scriptsStore.segmentsOf(id, 1).map((s) => s.audio.url);
     const [a] = scriptsStore.segmentsOf(id, 1);
     scriptsStore.updateSegment(id, 1, a.id, { text: "Changed since it was rendered." });
@@ -795,6 +991,7 @@ describe("narration with a server answering", () => {
     );
     expect(libraryStore.chapter(id, 1)?.narration).toBe("failed");
     expect(jobsStore.jobs.find((j) => j.kind === "narration")?.status).toBe("failed");
+    await voiced(id);
     // one line, retried by hand: the server re-renders the chapter's failed lines
     narrationStore.retrySegment(id, 1, broken.id);
     await settle();
@@ -886,6 +1083,58 @@ describe("the dictionary with a server answering", () => {
     const cast = pinia.run(() => useCast(id));
     await settle();
     expect(cast.lexicon.value).toEqual([]);
+  });
+});
+
+describe("the Narration page's reads", () => {
+  test("nothing reads as ready until the cast, the scripts and the endpoints are all in; a failed read says so and retries", async () => {
+    const { id } = await scriptedAndOpen();
+    // a reload: fresh stores, nothing read yet
+    wireStores({ endpoints: true });
+    await useEndpointsStore().load();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    hold = async (path) => {
+      if (path.endsWith("/cast")) await gate;
+    };
+    const data = pinia.run(() => useNarrationData(id, 1));
+    await settle();
+    // the scripts are here and the cast is not: an empty cast is not a cast with no voices
+    expect(scriptsStore.held(id, 1)).toBe(true);
+    expect(data.ready.value).toBe(false);
+    expect(data.error.value).toBeNull();
+    release();
+    await settle();
+    expect(data.ready.value).toBe(true);
+
+    // a cast that could not be read is an error with a retry, never an empty cast
+    wireStores({ endpoints: true });
+    await useEndpointsStore().load();
+    hold = async (path) => {
+      if (path.endsWith("/cast")) throw new Error("offline");
+    };
+    const failed = pinia.run(() => useNarrationData(id, 1));
+    await settle();
+    expect(failed.ready.value).toBe(false);
+    expect(failed.error.value).toBe("The cast could not be read.");
+    hold = null;
+    await failed.retry();
+    await settle();
+    expect(failed.ready.value).toBe(true);
+  });
+
+  test("an endpoint configuration that could not be read is an error, not an empty pool", async () => {
+    const { id } = await scriptedAndOpen();
+    wireStores({ endpoints: true });
+    // what the router's read leaves behind when it failed
+    const data = pinia.run(() => useNarrationData(id, 1));
+    await settle();
+    expect(useEndpointsStore().loaded).toBe(false);
+    expect(data.ready.value).toBe(false);
+    expect(data.error.value).toBe("The endpoint configuration could not be read.");
+    await data.retry();
+    await settle();
+    expect(data.ready.value).toBe(true);
   });
 });
 
@@ -1034,14 +1283,16 @@ describe("the audiobooks with a server answering", () => {
 });
 
 describe("spending with a server answering", () => {
-  /** The seeded OpenAI profile, priced, saved to the server the way the Endpoints page saves it. */
+  /** An OpenAI profile, priced, saved to the server the way the Endpoints page saves it. */
   async function priced(): Promise<void> {
-    const profile = makeProfiles().find((p) => p.id === "openai")!;
+    const profile = openaiProfile();
     const { status } = await api.request("/api/endpoints", {
-      ...jsonBody({ endpoints: [], profiles: [profile], credentials: [...credentials] }),
+      ...jsonBody({ endpoints: [], profiles: [profile], credentials: makeCredentials() }),
       method: "PUT",
     });
     expect(status).toBe(200);
+    // and held by the page, which is where a run's profile is picked from
+    useEndpointsStore().profiles = [profile];
     scriptingStore.scriptSettings.profile = profile.id;
   }
 
@@ -1065,7 +1316,7 @@ describe("spending with a server answering", () => {
     expect(jobsStore.scriptSpent(id)).toBe(spend.scriptSpent);
     expect(jobsStore.reserved(id)).toBe(spend.reserved);
     // and the Scripting page's activity figures for the profile are the same ledger rows
-    useEndpointsStore().profiles = [makeProfiles().find((p) => p.id === "openai")!];
+    useEndpointsStore().profiles = [openaiProfile()];
     const activity = pinia.run(() => useScriptActivity());
     await settle();
     const rows = activity.rowsOf("openai");
@@ -1096,10 +1347,6 @@ describe("spending with a server answering", () => {
       key: "scripting:openai",
       id: "openai",
       kind: "scripting",
-      name: "OpenAI",
-      model: "gpt-4o-mini",
-      baseUrl: "https://api.openai.com/v1",
-      concurrency: 1,
     } satisfies EndpointDescriptor;
     const history = pinia.run(() => useEndpointHistory([ep]));
     await settle();
@@ -1114,25 +1361,6 @@ describe("spending with a server answering", () => {
 });
 
 describe("the speech endpoints' live telemetry with a server answering", () => {
-  const studio: Endpoint = {
-    id: "studio",
-    name: "Studio speech",
-    baseUrl: "http://localhost:8880/v1",
-    model: "studio-tts",
-    concurrency: 1,
-    enabled: true,
-    latency: 0,
-    failRate: 0,
-    price: 15,
-    needsKey: false,
-    maxChars: 0,
-    splitAt: "sentence",
-    voices: [{ id: "ash", gender: "m", label: "Ash" }],
-    history: [],
-    failures: 0,
-    rateLimits: 0,
-    backoffUntil: 0,
-  };
   /**
    * A server holding one speech endpoint whose narration the test holds open, the stores reading
    * the configuration from it, and a page showing the endpoints' live telemetry.

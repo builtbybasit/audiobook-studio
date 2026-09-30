@@ -30,14 +30,12 @@ export const REASONING_LEVELS: { value: ReasoningEffort; label: string; hint: st
   { value: "high", label: "High", hint: "slowest, most output tokens" },
 ];
 
-/** The settings a run starts from, until somebody picks otherwise. */
-export const makeScriptSettings = (): ScriptSettings => ({
-  profile: "openai",
-  stripWatermarks: true,
-  // a re-script over chapters somebody has been correcting by hand keeps that work unless they
-  // deliberately say otherwise
-  keepEdits: true,
-});
+/**
+ * The settings a run starts from, until somebody picks otherwise. No profile is chosen: a run then
+ * goes to the first one that can take it (`scripting.runProfile`), and the server keeps whatever is
+ * picked under the `script` settings key.
+ */
+export const makeScriptSettings = (): ScriptSettings => ({ profile: null });
 
 export function newProfile(p: Partial<Profile> = {}): Profile {
   const profile: Profile = {

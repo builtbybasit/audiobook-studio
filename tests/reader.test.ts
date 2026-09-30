@@ -2,7 +2,7 @@
 // words. And the endpoint whose model reads expressions, so the gesture has something to place.
 import { test, expect, describe } from "bun:test";
 
-import { EXPRESSION_TAGS, makeEndpoints } from "@/mock/fixtures/endpoints";
+import { EXPRESSION_TAGS, makeEndpoints } from "~/demo/seed/fixtures/endpoints";
 import { expressionSupport } from "@/lib/expressions";
 import { gapLabel, gapsOf, tokensOf } from "@/lib/gaps";
 

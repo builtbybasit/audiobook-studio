@@ -2,18 +2,11 @@
 
 [Back to README](../README.md) · [Development](development.md) · [Seeded demo](demo.md)
 
-The server in [server/](../server/) is where the app stops pretending. It reads real EPUB files and
-stores real books. **The first slice is the library: import, the contents review, and removal. The
-second is the queue: scripting a chapter is a job the server runs, and the Queue page shows it. The
-third is what a scripted chapter owns: its script can be edited over HTTP, its history and the
-book's cast are written by the run that made them, and the frontend reads all of it through
-queries. The fourth is narration: rendering a chapter is a job the server runs against the speech
-endpoints its voices belong to, the clips are files the server keeps and serves, the player hears
-them, and a retake is judged and kept or discarded. The fifth is export: building an audiobook is a job too,
-and what it writes is a file on disk that can be downloaded and played.** The endpoints are
-saved on the server too, and narration reads its expression tags, its sample rate and its
-per-request limit from them;
-pricing is still the seeded demo's and is untouched by all of it.
+The server in [server/](../server/) holds the library. It reads EPUB files and stores the books;
+runs the queue that scripts chapters, narrates them and builds audiobooks; keeps the clips and the
+audiobooks as files it serves; and holds the endpoints, their keys and the ledger of what every
+request cost. The page reads and writes all of it over HTTP, and nothing in the browser simulates
+anything.
 
 The server sends work to what the Endpoints page holds, and nothing else: a chapter to the
 scripting profile its run was queued with, a line to the speech endpoint its speaker's voice
@@ -21,38 +14,32 @@ belongs to. No setting switches the whole server onto fakes. A **simulated** end
 of endpoint instead — **Simulated (free)** among the presets of either kind, picked by its base
 URL, `simulated://…` — which the server answers itself, without the network and without charge
 ([the providers](#the-providers-and-where-a-key-lives) says how). A fresh library has no endpoints
-at all, so nothing is sent anywhere until you add one; add a simulated one to try a run without an
-account. There are no credentials in the server's configuration, and no code path from an import
-to a paid request.
+at all, so nothing is sent anywhere until you add one. There are no credentials in the server's
+configuration, and no code path from an import to a paid request.
 
 ## Run it
 
 ```sh
-pnpm dev          # both at once: the API on :8787, the frontend on :5173 proxying /api to it
+pnpm dev          # the API on :8787, and the frontend on :5173 proxying /api and /demo/api to it
 ```
 
-That is `pnpm dev:server` and `pnpm dev:web` (plain Vite) side by side through
-`concurrently`, each line prefixed `api` or `web`; stopping either stops both. Settings and their defaults are in
-[.env.example](../.env.example); every one has a working default, so no `.env` is also fine.
+That is `pnpm dev:server` and `pnpm dev:web` side by side through `concurrently`, each line
+prefixed `api` or `web`; stopping either stops both. Each library's migrations are applied as the
+server opens it, so a checkout that has pulled a schema change needs no separate step. Settings
+and their defaults are in [server/env.ts](../server/env.ts) and [.env.example](../.env.example);
+every one has a working default, so no `.env` is also fine. The other commands are in
+[development](development.md).
 
-| Command            | Purpose                                             |
-| ------------------ | --------------------------------------------------- |
-| `pnpm dev`         | Start the API and the frontend together             |
-| `pnpm dev:server`  | Start the API, applying migrations first            |
-| `pnpm db:generate` | Generate SQL in `drizzle/` after editing the schema |
-| `pnpm db:migrate`  | Apply migrations without starting the server        |
-| `pnpm db:studio`   | Browse the database with Drizzle Studio             |
+## Which library a tab talks to
 
-## Demo or backend, chosen as the page loads
-
-The frontend talks to the server. The header's **Demo** chip opens the seeded demo instead, for
+The page talks to your library at `/api`. The header's **Demo** chip opens the demo instead, for
 that tab only: **Enter demo** sets `audiobook-studio:mode` in `sessionStorage` and reloads, and
-[src/services/mode.ts](../src/services/mode.ts) reads it once as the page loads. **Leave demo**
-clears it and reloads, and nothing done in the demo goes with it; a new tab opens on the library.
-The choice is made at load rather than live because the stores build their state once, from the
-service they find: switching in place would mean tearing down every store and cached query.
+[src/services/mode.ts](../src/services/mode.ts) reads it once as the page loads and points every
+service at `/demo/api`. **Leave demo** clears it and reloads; a new tab opens on your library. The
+choice is made at load rather than live because the stores and the query cache are built once,
+from what the services answer: switching in place would mean tearing all of them down.
 
-**Neither mode ever silently becomes the other.** A backend that is down is an error the person
+**Neither library ever silently becomes the other.** A server that is down is an error the person
 sees — the Library says the server is not running and how to start it — not a quiet slide into
 seeded books that look real, and the HTTP client reports a server it cannot reach as exactly that,
 rather than as an empty library. The rules this keeps are in
@@ -76,87 +63,73 @@ cannot touch your library because nothing in it holds a handle to your database.
 
 Your library is never seeded: a fresh one starts with no books and no endpoints. The demo is
 seeded when its database is fresh (no endpoints and no books) and left as it is otherwise, with the
-world the browser's demo is built on — `makeWorld()` from [src/mock/world/](../src/mock/world/),
-written in one transaction by [server/demo/world.ts](../server/demo/world.ts), the one place the
-server reaches into `src/mock`: four books with their volumes, notices and prose, their casts and
-dictionaries, some six thousand script lines with their clips and receipts, the finished and failed
-exports, each book's spend so far, and the finished job history. Its endpoints and profiles are the
-world's, with each base URL moved to `simulated://` in front of the same host and path (OpenAI's is
+world `makeWorld()` builds from [src/mock/](../src/mock/), written in one transaction by
+[server/demo/world.ts](../server/demo/world.ts) — the one place the server reaches into
+`src/mock`: four books with their volumes, notices and prose, their casts and dictionaries, some
+six thousand script lines with their clips and receipts, finished and failed exports, each book's
+spend so far, and the finished job history. Its endpoints and profiles are the world's, with each
+base URL moved to `simulated://` in front of the same host and path (OpenAI's is
 `simulated://api.openai.com/v1`), so they keep their names, rates and voices and none of them can
-reach the network; the **Simulated (free)** endpoint and profile are there beside them.
-[tests/server/demoWorld.test.ts](../tests/server/demoWorld.test.ts) holds the demo API to
-`makeWorld()`, field by field, and says which fields it leaves out.
+reach the network; the **Simulated (free)** endpoint and profile are there beside them
+([server/demo/seed.ts](../server/demo/seed.ts)). A seeded clip has an address and no file: the demo writes its WAV — the
+simulated tone, as long as the row says and at its rate — the first time the audio route or a
+build reads it ([server/audio/demoClips.ts](../server/audio/demoClips.ts)), rather than six
+thousand at seed time. Your library never makes a file it does not have, so a missing one is a 404
+there.
 
-A seeded clip has an address and no file. The demo writes a clip's WAV — the simulated tone, as long
-as the clip's row says and at its rate — the first time the audio route or a build reads it
-([server/audio/demoClips.ts](../server/audio/demoClips.ts)), rather than six thousand of them at
-seed time; your library never makes a file it does not have, so a missing one is a 404 there. A
-seeded export has no file yet either, so its download is a 404 for now.
+The demo alone has routes under `/demo/api/demo` ([server/routes/demo.ts](../server/routes/demo.ts)):
 
-`POST /demo/api/demo/reset` puts the demo back: it stops the demo's queue (the running job is
-aborted and waited for), deletes every row of every table the schema declares, removes the demo's
-folders, seeds again at the time of the reset and starts the queue. Your library has no such route.
-
-**Situations.** `GET /demo/api/demo/situations` lists the Demo chip's situations and their groups,
-and `POST /demo/api/demo/situations/:id` rebuilds the demo with one applied, the way a reset does,
-and answers with what it did and the page to open. It runs the browser's own situation code
-([src/mock/scenarios/situations.ts](../src/mock/scenarios/situations.ts)) against the world in
-memory — `ScenarioContext` over plain data rather than stores
-([server/demo/situations.ts](../server/demo/situations.ts)) — and writes the result in one
-transaction, at the time of the request, so a ten-second cooldown or a promotion dated from now is
-fresh. The three pricing situations that read the clock's hour use the server's timezone.
+- **`POST …/reset`** stops the demo's queue (the running job is aborted and waited for), deletes
+  every row of every table the schema declares, removes the demo's folders, seeds again at the
+  time of the reset and starts the queue, with a few runs going so it is not empty.
+- **`GET …/situations`** lists the Demo drawer's situations, and **`POST …/situations/:id`**
+  rebuilds the demo with one applied, the way a reset does, answering with what it did and the page
+  to open. It runs [src/mock/scenarios/situations.ts](../src/mock/scenarios/situations.ts) against
+  the world in memory — a `ScenarioContext` over plain data
+  ([server/demo/situations.ts](../server/demo/situations.ts)) — and writes the result in one
+  transaction, at the time of the request, so a ten-second cooldown or a promotion dated from now
+  is fresh. Situations that read the clock's hour use the server's timezone. The server does not
+  remember which situation was applied; the tab keeps its name, note and steps in `sessionStorage`.
+- **`GET`/`PUT …/speed`** (1, 4 or 16) divides every simulated wait in the demo — a line's, a
+  scripting chunk's, a build chapter's ([server/demo/pace.ts](../server/demo/pace.ts)). It is kept
+  in memory, survives a reset, and is 1× again when the server restarts. Your library is never
+  paced.
 
 What a situation describes that is not a row is made real once the queue is running again
-([server/demo/live.ts](../server/demo/live.ts)), after a reset and the first seed as well:
-
-- **What the endpoints have been through** — the browser keeps it as counters and a short history
-  on each endpoint; the server keeps what it keeps for any endpoint. Each point of the history is a
-  settled request in the ledger at its moment and with its latency, the last error goes on the
-  failure it was met on, and each other rate limit is a refused request a minute before it; every
-  one costs nothing and says it was simulated. A speech endpoint still cooling down is held by the
-  speech gate for the rest of its cooldown. A scripting profile has no cooldown on the server — a
-  429 is waited out inside the one request — so its telemetry is ledger rows only.
-- **Work in flight as you arrive** — the runs a situation names are real scripting or narration
-  runs, queued through the same operations as the page's buttons, on the demo's simulated
-  endpoints.
-- **Build history** — a running build is a real one, and the demo's encoder reports its chapters
-  140 ms apart so it is still running when the page opens; a failed one is queued through the real
-  path and settled at once as failed while writing a file, so **Retry** rebuilds it; the finished
-  one is the world's. The server builds one audiobook per book at a time, so a retry while the
-  running build is going is refused.
-
-A book's opening scripting spend, which a situation such as the spent budget declares, is a row in
-the ledger, since that is what a book's scripting budget is held to.
-
-[tests/server/demoSituations.test.ts](../tests/server/demoSituations.test.ts) applies every
-situation through the route and checks what it answers and what it leaves running.
-
-A demo tab is the page talking to `/demo/api` rather than `/api`: the Demo drawer lists the
-situations from `GET …/demo/situations`, applies one or resets through the routes above and loads
-the page onto where it opens, and keeps the applied situation's name, note and steps in the tab's
-`sessionStorage` so they survive that reload — the server does not remember which situation was
-applied. **Speed** is the demo library's own: `GET`/`PUT /demo/api/demo/speed` (1, 4 or 16) divides
-every simulated wait in the demo — a line's, a scripting chunk's, a build chapter's — and never
-touches your library; it is kept in memory, survives a reset, and is 1× again when the server
-restarts. A reset (not a situation) also starts a few runs, so the queue is not empty the first
-time you look.
+([server/demo/live.ts](../server/demo/live.ts)). **What an endpoint has been through** becomes what
+the server keeps for any endpoint: each point of its recent history a settled request in the ledger
+at its moment and latency, each other rate limit a refused request, every one free and marked
+simulated, and a speech endpoint still cooling down held by the gate for the rest of its cooldown.
+**Work in flight** is real scripting or narration runs on the simulated endpoints; a **running
+build** is a real one whose chapters the demo's encoder reports 140 ms apart; a **failed build** is
+queued through the real path and settled at once as failed, so **Retry** rebuilds it. A book's
+**opening scripting spend** is a ledger row, since that is what a script budget is held to.
+[libraries](../tests/server/libraries.test.ts), [demoWorld](../tests/server/demoWorld.test.ts),
+[demoSituations](../tests/server/demoSituations.test.ts) and
+[demoLive](../tests/server/demoLive.test.ts) hold all of this.
 
 ## The schema
 
-The tables cover the whole domain, not just the slice the routes use. They are grouped by the part
-of the app that owns them, mirroring [store ownership](../src/stores/README.md), so "who writes
-this" has the same answer on both sides of the wire.
+The tables are grouped by the part of the app that owns them, mirroring
+[store ownership](../src/stores/README.md), so "who writes this" has the same answer on both sides
+of the wire.
 
 | Area      | Tables                                                                                |
 | --------- | ------------------------------------------------------------------------------------- |
 | Library   | `books`, `volumes`, `chapters`, `chapter_texts`                                       |
-| Cast      | `characters`, `lexicon_entries`                                                       |
+| Cast      | `characters`, `lexicon_entries`, `speaker_samples`, `speaker_sample_files`            |
 | Script    | `segments`, `clips`, `script_versions`, `script_heads`, `previous_scripts`            |
 | Endpoints | `endpoints`, `voices`, `rate_windows`, `promotions`, `expression_tags`, `credentials` |
+| Voices    | `cloned_voices`, `voice_samples`                                                      |
 | Queue     | `jobs`, `job_events`                                                                  |
 | Export    | `exports`, `export_files`, `export_chapters`                                          |
-| Usage     | `requests`, `opening_spend`                                                           |
+| Usage     | `requests`, `opening_spend`, `clone_fees`                                             |
 | App       | `settings`                                                                            |
+
+`opening_spend` is what a book had spent before the ledger began; only the demo's seed writes one,
+so a book imported on the server starts at zero. `settings` holds what belongs to the installation
+rather than to a book, such as the library's default scripting prompt. Chapter text is a table of
+its own because the review lists a few hundred chapters at a time and needs none of their prose.
 
 ### What is a column and what is a document
 
@@ -180,60 +153,55 @@ deleted, because the receipts it priced have to remain explicable.
 
 `SegmentAudio`, the retake waiting for a verdict and every superseded `Take` are the same shape
 wearing three hats, so `clips` holds all three with a `role`. Accepting a retake becomes an update
-to two rows rather than a restructure, and the store's rule that a line may never be left with
-neither its clip nor its retake becomes a constraint the database enforces: a partial unique index
-allows at most one `current` and one `candidate` per line, and leaves `take` unconstrained because
-takes are a list.
+to two rows rather than a restructure, and the rule that a line may never be left with neither its
+clip nor its retake becomes a constraint the database enforces: a partial unique index allows at
+most one `current` and one `candidate` per line, and leaves `take` unconstrained because takes are
+a list.
 
 ### Absent is not null
 
-The domain marks things by leaving them out, and three fields in this schema exist only to record
-that difference — each one found by a round-trip test rather than by reading the types:
+The domain marks things by leaving them out, and three fields exist only to record that
+difference — each found by the round-trip test below rather than by reading the types:
 
 - **`endpoints.timezone` is nullable**, and null means no rate card has ever been configured. An
   endpoint that came back with an empty card instead of no card would skip the defaults the app
   fills in on first use.
 - **`export_chapters.duration` is nullable**, and null means the timeline was never recorded. Zero
-  would be indistinguishable from a chapter of silence, and would hand the player a timeline
-  claiming the audiobook is empty.
+  would be indistinguishable from a chapter of silence.
 - **The operational settings arrive as a block or not at all.** `spend_limit: null` means "no
-  endpoint-level limit" and `credential_id: null` means "this endpoint's own key slot" — those are
-  settings, not absences, so the block's presence is keyed on `timeout_sec` and all six fields come
-  back together.
+  endpoint-level limit" and `credential_id: null` means "no named account" — settings, not
+  absences — so the block's presence is keyed on `timeout_sec` and its fields come back together.
 
 ### Everything a chapter owns follows its number
 
 A chapter is addressed by its **number** within the book, continuous across volumes, and that
-number moves when a volume is removed. Every child of `chapters` — the text, the script, the clips
-through the script, the history, an export's chapter list, a queued job — keys on
-`(book_id, chapter_id)` through a composite foreign key declared `ON UPDATE CASCADE`. Renumbering
-therefore writes `chapters` and nothing else, and the rest follows in the same statement. Moving
-them by hand would be a second definition of the same relationship, and the one that fell behind
-would do so silently.
+number moves when a volume is removed or the volumes are reordered. Every child of `chapters` — the
+text, the script, the clips through the script, the history, an export's chapter list, a queued
+job — keys on `(book_id, chapter_id)` through a composite foreign key declared `ON UPDATE CASCADE`.
+Renumbering therefore writes `chapters` and nothing else, and the rest follows in the same
+statement. Moving them by hand would be a second definition of the same relationship, and the one
+that fell behind would do so silently.
 
-A **job** is in that list because it is live state: it follows the chapter through a renumbering and
-ends with the chapter when the chapter goes. A queued narration of chapter 2 that quietly became
-chapter 1 underneath it is not a display problem, and a job for a chapter that no longer exists is
-one the Queue can neither open nor retry. `jobs.chapter_id` is nullable for a whole-book job such as
-a build, and a foreign key with a null in it is satisfied by definition — which is exactly what that
-needs.
+A **job** is in that list because it is live state: a queued narration of chapter 2 that quietly
+became chapter 1 underneath it is not a display problem, and a job for a chapter that no longer
+exists is one the Queue can neither open nor retry. `jobs.chapter_id` is nullable for a whole-book
+job such as a build, and a foreign key with a null in it is satisfied by definition.
 
 Three things a removal changes do not follow a key, and `deleteVolume` does them in the same
 transaction. A live job's **duplicate key** (`active_key`, `kind:book:chapter`) is a string built
 from the number, so `rekeyActive` writes it again from the number the job now has — parking every
 key on the job's id first, because the index is unique and chapter 10's new key is chapter 7's old
-one. Left alone, a job queued for chapter 7 that became chapter 4 was not seen as a duplicate of a
-request for chapter 4, which was then rendered and paid for twice, while the new chapter 7 read as
-busy. An **audiobook** keeps the chapters it still has, as the demo's does, and one left with none
-goes with its files. And the **clips** the removed chapters rendered are handed back and removed
-from disk after the rows. Before any of it, work queued or running on the chapters that go is
-cancelled through the runner, so a provider stops being paid for them; and a removal is refused
-while an audiobook of the book is being built, because a build reads clips and records where each
-chapter landed by number.
+one. Left alone, a job queued for chapter 7 that became chapter 4 would not be seen as a duplicate
+of a request for chapter 4, which would then be rendered and paid for twice. An **audiobook** keeps
+the chapters it still has, and one left with none goes with its files. The **clips** the removed
+chapters rendered are removed from disk after the rows. Before any of it, work on the chapters that
+go is cancelled through the runner, so a provider stops being paid for them; and a removal is
+refused while an audiobook of the book is being built, because a build reads clips and records
+where each chapter landed by number. Nothing puts a removed book or volume back, so the page asks
+before removing rather than offering Undo.
 
 **A reorder is the same renumbering without the removal.** `PUT /api/books/:id/volumes/order`
-writes each volume's `position` and runs the same `renumber` and `rekeyActive`, so every chapter
-keeps its place within its volume and everything it owns follows its new number. Nothing is
+writes each volume's `position` and runs the same renumbering and `rekeyActive`. Nothing is
 cancelled — a running job finds its chapter by uid at every write — and nothing leaves the disk.
 It is refused mid-build for the removal's reason, and while a volume is still in review, since a
 new volume is added at the end and has no place in an order until it is confirmed.
@@ -242,162 +210,146 @@ new volume is added at the end and has no place in an order until it is confirme
 
 `chapters.uid` is assigned once at import and never rewritten. It exists for the one table that must
 not move: the **usage ledger is append-only**, and a row that said "chapter 2" and now says "chapter
-1" is not a record of the past, it is a quiet edit of one. Storing the number in `requests` would
-leave two ways to be wrong and no way to be right — rewrite it and an append-only record has been
-edited, leave it and the row attributes money to a different chapter.
+1" is not a record of the past, it is a quiet edit of one. So `requests.chapter_uid` references the
+chapter itself, `ON DELETE SET NULL` and never cascade: the chapter is gone, what was spent on it is
+not, and it stays in every total. The number a row displays is looked up when it is read, and
+`label`, frozen when the request settles, still names the work after the chapter has been removed.
 
-So `requests.chapter_uid` references the chapter itself, `ON DELETE SET NULL` and never cascade: the
-chapter is gone, what was spent on it is not, and it stays in every total. The number a row displays
-is looked up when it is read. `label` is frozen when the request settles and is what still names the
-work after the chapter it was for has been removed.
+### Voices are tied by value, not by key
+
+A save of the endpoints replaces every endpoint and voice row, so anything that must outlive a save
+cannot hang off `voices` by a cascading key — it would be emptied on every save. `cloned_voices`,
+`voice_samples` and `clone_fees` name their voice by `(endpoint_id, voice_id)` instead, and the save
+reconciles them in its own transaction
+([cloning a voice](#cloning-a-voice-and-keeping-its-samples)).
 
 ### What is deliberately not stored
 
 - **Endpoint telemetry.** `history`, `failures`, `rateLimits`, `backoffUntil` and `lastError` are
-  what a session has observed, not what anyone configured. Writing a backoff deadline to disk would
+  what a process has observed, not what anyone configured. Writing a backoff deadline to disk would
   let a restart resurrect a cooldown for a rate limit that expired days ago, and the durable record
-  of what an endpoint has done is the `requests` ledger.
-- **Secrets.** `credentials` is a registry of names — which account a key belongs to — and no key
-  is in this schema. Where secrets live is a decision this slice does not make.
-- **Reader and UI preferences.** Typography, the rail, the current book: per-browser, and they stay
-  in `localStorage`.
+  of what an endpoint has done is the `requests` ledger. A save drops them on the way in.
+- **A key in anything readable.** `endpoints.api_key` is the one secret in the schema, write-only
+  over HTTP ([where a key lives](#the-providers-and-where-a-key-lives)). `credentials` is a registry
+  of names — which account an endpoint belongs to — and holds no key.
+- **Reader and UI preferences.** Typography, the rail, the current book: per-browser, in
+  `localStorage`.
 
 ### Does it hold the domain?
 
-[tests/server/schema.test.ts](../tests/server/schema.test.ts) writes the **seeded world** through
-the schema and reads it back, asserting equality. That world is the reference answer because it is
-the data every screen is built against: four books with volumes and import notices, their casts and
-pronunciation dictionaries, six thousand script lines with rendered clips and frozen speech
-receipts, retakes awaiting a verdict, endpoints with off-peak schedules and running promotions, and
-finished, replaced and failed exports.
+[schema.test.ts](../tests/server/schema.test.ts) writes the **seeded world** through the schema and
+reads it back, asserting equality. That world is the reference answer because it is the data every
+screen is built against: books with volumes and import notices, casts and dictionaries, six
+thousand script lines with clips and frozen receipts, retakes awaiting a verdict, endpoints with
+off-peak schedules and running promotions, and finished, replaced and failed exports. It is a
+round-trip assertion rather than a field list on purpose: a mapper that turns an absent `note` into
+a null one, or hands back a take carrying a `status` it never had, fails there rather than in a
+screen six months from now.
 
-It is a round-trip assertion rather than a field list on purpose. A mapper that turns an absent
-`note` into a null one, or hands back a take carrying a `status` it never had, fails there rather
-than in a screen six months from now — which is how all three of the nullable columns above were
-found.
+### Migrations
+
+Changing the schema means regenerating: `pnpm db:generate` after editing anything in
+[server/db/schema/](../server/db/schema/), or the next boot migrates to the old shape and the tests
+fail somewhere that does not name the cause. Migrations are versioned in [drizzle/](../drizzle/)
+and applied in order as each library opens.
+
+**Foreign keys are off while migrations run.** A change drizzle-kit cannot write as `ALTER TABLE` is
+written as a rebuild — new table, copy, `DROP` the old one, rename — and with foreign keys on, that
+`DROP` cascades through every `ON DELETE CASCADE` pointing at the table. The generated SQL does say
+`PRAGMA foreign_keys=OFF`, but drizzle runs the migrations in one transaction, where SQLite ignores
+it. So [migrate.ts](../server/db/migrate.ts) turns them off on the connection before drizzle begins,
+asks `PRAGMA foreign_key_check` afterwards, and refuses to boot on a database a migration left
+with a reference to nothing; [migrate.test.ts](../tests/server/migrate.test.ts) runs such a rebuild
+over an imported book. The connection also waits up to five seconds on a busy database, so
+`pnpm db:migrate` beside a running server waits for a write to finish rather than failing.
 
 ## The shape of it
 
-| Location                                                  | Responsibility                                                                                           |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| [server/index.ts](../server/index.ts)                     | Boot: open both libraries, start their queues, listen                                                    |
-| [server/libraries.ts](../server/libraries.ts)             | One library — database, queue, gate, files, API under its base — and the fetch that picks one by path    |
-| [server/demo/](../server/demo/)                           | The demo library's seed, and the reset that empties it and lays the seed down again                      |
-| [server/app.ts](../server/app.ts)                         | The API as a value, built around a database and a queue so tests can drive it                            |
-| [server/env.ts](../server/env.ts)                         | Configuration, validated once at startup                                                                 |
-| [server/routes/](../server/routes/)                       | HTTP: a request turned into one operation, and its result turned into JSON                               |
-| [server/library/ops.ts](../server/library/ops.ts)         | What the library does: import, review, confirm, discard, remove — the rules                              |
-| [server/cast/ops.ts](../server/cast/ops.ts)               | What a cast does: a speaker written, renamed, merged, removed, and put back                              |
-| [server/script/ops.ts](../server/script/ops.ts)           | What a person does to a script: edit against a revision, checkpoint, forget                              |
-| [server/exports/ops.ts](../server/exports/ops.ts)         | The finished audiobooks: listed, handed over to be downloaded, and forgotten                             |
-| [server/lib/errors.ts](../server/lib/errors.ts)           | What a refusal is before it is a response; `app.onError` makes it one                                    |
-| [server/lib/schemas.ts](../server/lib/schemas.ts)         | The domain shapes as request bodies: a speaker, an entry, a line, an origin                              |
-| [server/db/library.ts](../server/db/library.ts)           | Every read and write the library makes, and the chapter counts a shelf reads                             |
-| [server/db/script.ts](../server/db/script.ts)             | Every read and write a chapter's script makes, the revision that guards it, and the lines a rename moves |
-| [server/db/history.ts](../server/db/history.ts)           | Every read and write a chapter's history makes; the capture rule applied to rows                         |
-| [server/db/cast.ts](../server/db/cast.ts)                 | Every read and write a cast and its dictionary make                                                      |
-| [server/db/exports.ts](../server/db/exports.ts)           | Every read and write the finished audiobooks make                                                        |
-| [server/db/jobs.ts](../server/db/jobs.ts)                 | Every read and write the queue makes                                                                     |
-| [server/db/schema/](../server/db/schema/)                 | The tables, grouped by the part of the app that owns them                                                |
-| [server/db/rows/](../server/db/rows/)                     | The only files that know what the columns are called                                                     |
-| [server/jobs/runner.ts](../server/jobs/runner.ts)         | The worker: claim, run, cancel, recover                                                                  |
-| [server/jobs/scripting.ts](../server/jobs/scripting.ts)   | The scripting job, and queueing one per chapter as a run                                                 |
-| [server/jobs/narration.ts](../server/jobs/narration.ts)   | The narration job: a clip per line, in the slot the store's rule says                                    |
-| [server/jobs/export.ts](../server/jobs/export.ts)         | The build job: the plan laid down as files, and what an update carries over                              |
-| [server/audio/files.ts](../server/audio/files.ts)         | Where a rendered clip lives, and how its url finds it again                                              |
-| [server/exports/files.ts](../server/exports/files.ts)     | Where a built audiobook lives, and how a download finds it again                                         |
-| [server/providers/](../server/providers/)                 | The ports a scripting model, a speech model and an encoder are reached through, and what is behind them  |
-| [server/epub/parse.ts](../server/epub/parse.ts)           | Reading an actual EPUB                                                                                   |
-| [server/epub/text.ts](../server/epub/text.ts)             | One section's markup to the prose a narrator would read                                                  |
-| [server/epub/notices.ts](../server/epub/notices.ts)       | Deciding which chapters are not story                                                                    |
-| [server/import/assemble.ts](../server/import/assemble.ts) | Parsed chapters to a book, numbered and marked `importing`                                               |
+| Location                                                                                      | Responsibility                                                                                        |
+| --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [server/index.ts](../server/index.ts)                                                         | Boot: check the encoder, open both libraries, start their queues, listen                              |
+| [server/libraries.ts](../server/libraries.ts)                                                 | One library — database, queue, gate, files, API under its base — and the fetch that picks one by path |
+| [server/app.ts](../server/app.ts)                                                             | The API as a value, built around a database and a queue so tests can drive it                         |
+| [server/env.ts](../server/env.ts)                                                             | Configuration, validated once at startup                                                              |
+| [server/routes/](../server/routes/)                                                           | HTTP: a request turned into one operation, and its result turned into JSON                            |
+| [server/library/](../server/library/), [cast/](../server/cast/), [script/](../server/script/) | What a person does to a book, a cast and a script: the rules, as operations                           |
+| [server/narration/](../server/narration/)                                                     | A retake and its verdict; what narration will cost before it is sent                                  |
+| [server/exports/](../server/exports/)                                                         | The finished audiobooks: listed, downloaded, forgotten, and where their files live                    |
+| [server/endpoints/ops.ts](../server/endpoints/ops.ts)                                         | The endpoint configuration saved whole; a voice sample; a provider's failure as a refusal             |
+| [server/voices/](../server/voices/), [speakerSamples/](../server/speakerSamples/)             | The recordings a cloned voice was made from, and the ones a script file brought for a speaker         |
+| [server/usage/](../server/usage/)                                                             | The ledger, and a book's budget held against it                                                       |
+| [server/jobs/](../server/jobs/)                                                               | The runner, and the scripting, narration and build jobs with the enqueue half of each                 |
+| [server/providers/](../server/providers/)                                                     | The ports a scripting model, a speech model and an encoder are reached through, and what is behind    |
+| [server/epub/](../server/epub/), [import/](../server/import/)                                 | Reading an EPUB, cutting it into chapters, deciding which are notices, assembling a book              |
+| [server/audio/](../server/audio/), [covers/](../server/covers/)                               | Where a clip or a cover lives, and reading a clip's format and length off its bytes                   |
+| [server/demo/](../server/demo/)                                                               | The demo's seed, situations, pace, reset, and what it leaves running                                  |
+| [server/db/](../server/db/)                                                                   | Reads and writes per area, the client, migrations, statements compiled once                           |
+| [server/db/schema/](../server/db/schema/), [rows/](../server/db/rows/)                        | The tables, and the only files that map columns to domain shapes                                      |
+| [server/lib/](../server/lib/), [log/](../server/log/)                                         | Errors, validation, request schemas, ranged file serving, background work, zips; the logger           |
 
 Three layers, each ignorant of the one above it. A route validates the request, calls one
-operation in `server/*/ops.ts` or the enqueue half of a job in `server/jobs/`, and returns what it got: no route
-builds a query, no route holds a rule. An operation states a rule — a volume goes onto a book with
-nothing waiting in its review, removing the last volume removes the book, a rename moves every
-line that names the speaker — and throws an `AppError` when it does not hold, without knowing what
-a status code is; a job or a test calls the same operation and gets the same refusal.
-`server/db/*.ts` is the only place a query is written. The routes of one book are split by the
-part of the app that owns the table — [books.ts](../server/routes/books.ts),
-[cast.ts](../server/routes/cast.ts), [script.ts](../server/routes/script.ts),
-[exports.ts](../server/routes/exports.ts) — and all mount under `/api/books`.
-Above `rows/` everything works in the shapes [`@/types`](../src/types) defines — the same domain
-model the frontend uses — so the contents review does not know or care whether the demo or the
-server produced what it is showing.
-
-Chapter text is a table of its own. The review lists a few hundred chapters at a time and needs none
-of their prose, so keeping it out of `chapters` means that listing stays a cheap read however long
-the book is.
+operation (`server/*/ops.ts`, or the enqueue half of a job) and returns what it got: no route builds
+a query, no route holds a rule. An operation states a rule — a volume goes onto a book with nothing
+waiting in its review, removing the last volume removes the book, a rename moves every line that
+names the speaker — and throws an `AppError` when it does not hold, without knowing what a status
+code is; a job or a test calls the same operation and gets the same refusal. Queries live in
+`server/db/*.ts`, with a few in the operations and jobs that need them inside a transaction of their
+own. Above `rows/` everything works in the shapes [`@/types`](../src/types) defines — the same
+domain model the frontend uses.
 
 ## Importing an EPUB
 
-Import → review contents → add, the same three steps the demo walks. A book arrives marked
-`importing`: the library does not list it, nothing runs on it, and the review works on it in place —
-the same review the book keeps afterwards. Confirming clears the mark.
-
-**Nothing is skipped by the import itself.** Chapters that do not look like story get a note
-attached; a person decides. That division is the whole safety argument for guessing at all, because
-it makes a wrong guess cost a click instead of a missing chapter.
+Import → review contents → add. A book arrives marked `importing`: the library does not list it,
+nothing runs on it, and the review works on it in place — the same review the book keeps
+afterwards. Confirming clears the mark. **Nothing is skipped by the import itself.** Chapters that
+do not look like story get a note attached; a person decides. That division is the whole safety
+argument for guessing at all, because it makes a wrong guess cost a click instead of a missing
+chapter. Numbering is continuous across a book's volumes, because script keys, job records and
+export entries are all keyed by a chapter number that has to stay unique within the book.
 
 Things the parse is deliberate about:
 
-- **The conversion is Turndown's, not ours.** "Turn arbitrary publisher HTML into readable text" is
-  a long tail — nested lists, `<br>` inside a paragraph, entities, whitespace that matters in one
-  element and not the next — and a converter with eight million weekly downloads has met more of it
-  than this project ever will. [markdown.ts](../server/epub/markdown.ts) configures it;
-  [text.ts](../server/epub/text.ts) keeps only the part no converter can do, which is cutting a file
-  into chapters before anything converts it.
-- **HTML's named entities are made ones XML knows.** A chapter file is XHTML, parsed as XML, and
-  XML knows five names; `&nbsp;`, `&mdash;` and `&hellip;` are the DTD's, which no parser here
-  reads, so they arrived as the text `&nbsp;` for the narrator to spell out. EPUB 2 and Calibre
-  books use them everywhere. Before a section is parsed, [entities.ts](../server/epub/entities.ts)
-  replaces each HTML name with the numeric reference for the same character — what a parser that
-  read the DTD would have made of it — using the `entities` package's table. A name that is not
-  HTML's is left alone.
+- **The conversion is Turndown's, not ours.** Turning arbitrary publisher HTML into readable text
+  is a long tail a widely used converter has met far more of than this project ever will.
+  [markdown.ts](../server/epub/markdown.ts) configures it; [text.ts](../server/epub/text.ts) keeps
+  only what no converter can do, which is cutting a file into chapters before anything converts it.
+- **HTML's named entities are made ones XML knows.** A chapter file is XHTML, parsed as XML, which
+  knows five names; `&nbsp;`, `&mdash;` and `&hellip;` are the DTD's, which no parser here reads, so
+  they would arrive as text for the narrator to spell out. [entities.ts](../server/epub/entities.ts)
+  replaces each HTML name with the numeric reference for the same character before a section is
+  parsed, using the `entities` package's table.
 - **The navigation is waited for.** `open()` resolves as soon as the package document is parsed;
-  the navigation document is a second file still being fetched. Read too early it is simply absent,
-  every chapter quietly falls back to its own heading, and the result usually looks close enough to
-  be believed. It is awaited on its own rather than through `book.ready`, which also covers the
-  cover image and the resource list — a book with no cover has a perfectly good table of contents,
-  and losing it to an unrelated failure would be the same silent fallback by another route.
-- **Navigation links are resolved against the navigation document.** A spine item's `href` is
-  written against the package document and a navigation entry's against the navigation document,
-  which may sit in a directory of its own. `../text/c1.xhtml` and `text/c1.xhtml` are then the same
-  file spelled two ways, and comparing them as written loses every label in the book. Both halves
-  are also **percent-decoded**, a path segment and the fragment each on its own: an href is a URL,
-  so `Chapter%201.xhtml` is `Chapter 1.xhtml`, but the manifest and the navigation are often written
-  by different tools and only one of them remembered. Compared as written, a chapter lost its label
-  and one anchored inside that file ran on into the one before.
+  the navigation document is a second file still being fetched. Read too early it is absent, every
+  chapter quietly falls back to its own heading, and the result usually looks close enough to be
+  believed. It is awaited on its own rather than through `book.ready`, which also covers the cover
+  image — a book with no cover has a perfectly good table of contents.
+- **Navigation links are resolved against the navigation document**, which may sit in a directory
+  of its own, so `../text/c1.xhtml` and `text/c1.xhtml` are the same file. Both halves are also
+  **percent-decoded**, a path segment and the fragment each on its own, because the manifest and the
+  navigation are often written by different tools and only one of them remembered that
+  `Chapter%201.xhtml` is `Chapter 1.xhtml`.
 - **Sections are unloaded as they are read.** A web-novel volume can be a thousand chapters, and
   holding every parsed document at once is how a routine import becomes an out-of-memory crash.
 - **The navigation document, non-linear spine items and links out of the book are not chapters.**
-  A cover plate and a colophon would otherwise arrive in the review as something to decide about.
   A spine item with a scheme (`https:`), a protocol-relative `//host/…`, or a `..` that climbs above
-  the root of the zip names something beside the EPUB rather than in it; it used to arrive as a
-  chapter that "could not be read". A file inside the zip that is merely missing is still one.
-- **Tables are kept, not dropped.** A `<table>` in a novel is as often prose as it is data — a
-  character list, a release timetable, or a paragraph an old conversion laid out in cells — and
-  dropping the element takes everything inside it with it. They are stored as GFM tables and read
-  out a row at a time. `aside` and `nav` are still dropped, because they hold a sidebar the
-  narrator is not reading or are the table of contents itself — judgements about the narration
-  rather than accidents of how the page was built.
-- **A figure is kept; a picture is not.** Publishers set epigraphs, poems and letters in
-  `<figure>` as often as pictures, and removing the element removed the verse. Images are dropped
-  (by a rule: Turndown's own image rule runs before its remove list, and wrote `![](a.png)` into
-  the stored text), and so is the `<figcaption>` of a figure that holds a picture; the caption of
-  one that holds words is usually who wrote them, and is kept.
+  the root of the zip names something beside the EPUB rather than in it. A file inside the zip that
+  is merely missing is still a chapter, and an unreadable one.
+- **Tables are kept, not dropped.** A `<table>` in a novel is as often prose as data — a character
+  list, a release timetable, a paragraph an old conversion laid out in cells. They are stored as GFM
+  tables and read out a row at a time. `aside` and `nav` are dropped: a sidebar the narrator is not
+  reading, or the table of contents itself.
+- **A figure is kept; a picture is not.** Publishers set epigraphs, poems and letters in `<figure>`
+  as often as pictures. Images are dropped by a rule (Turndown's own image rule runs before its
+  remove list, and would write an empty image reference into the stored text), and so is the
+  `<figcaption>` of a figure that holds a picture; the caption of one that holds words is kept.
 - **The cover is kept, as a file.** The package names its cover the EPUB 3 way (the manifest item
-  marked `cover-image`) or the EPUB 2 way (`<meta name="cover">`), and the parser reads those bytes
-  from the archive once the chapters are done. A new book keeps them when they are a JPEG or a PNG
-  of at most 10 MB, sniffed from the bytes rather than taken from the manifest's media type, in
-  `<AUDIO_DIR>/<bookId>/covers/` under a hash of its contents; the book keeps, and answers with as
-  `coverImage`, the address it is served from — as a clip keeps its own, so the address names the
-  library that serves it (a cover kept before migration 0012 was a bare file name, and was
-  rewritten to its `/api` address). Anything else — a GIF, an SVG, a cover the manifest
-  promises and the zip lacks — leaves the book without one, and the log says why. A volume added
-  later does not bring its cover: that is another edition's as often as the same one, and swapping
-  the shelf's picture unasked would be a surprise.
+  marked `cover-image`) or the EPUB 2 way (`<meta name="cover">`). A new book keeps it when it is a
+  JPEG or a PNG of at most 10 MB, sniffed from the bytes rather than taken from the manifest, in
+  `<AUDIO_DIR>/<bookId>/covers/` under a hash of its contents
+  ([server/covers/files.ts](../server/covers/files.ts)); the book's `coverImage` is the address it
+  is served from, under its library's base. Anything else leaves the book without one, and the log
+  says why. A volume added later does not bring its cover: that is another edition's as often as
+  the same one.
 
 ### One file, several chapters
 
@@ -409,97 +361,77 @@ So a section is cut where the navigation says a chapter begins, and **only at th
 that reaches that document**. A serial listing twenty chapters of one file side by side has them all
 at the top level and each is a chapter; a novel listing scenes underneath a chapter has the chapter
 above them, and the scenes are not chapters. Reading the deepest level instead would turn the second
-book into a hundred one-page chapters, and there is no way back from that once the audiobook is
-built.
+book into a hundred one-page chapters. A **container** is not one of those levels: an entry that
+names a whole document and has the navigation pointing at places _inside that same document_
+beneath it — "Volume One", with Chapters One and Two anchored under it — is the heading over those
+chapters, and its children are the boundaries instead.
 
-A **container** is not one of those levels. An entry that names a whole document and has the
-navigation pointing at places _inside that same document_ beneath it — "Volume One", linked to the
-file, with Chapters One and Two anchored under it — is the heading over those chapters rather than
-one of them. Taken as the boundary it is the shallowest entry reaching the file, and both chapters
-import as one. Its own children are the boundaries instead.
+Cases the cutting has to be right about:
 
-Three cases the cutting has to be right about:
-
-- **An anchor named by `name` rather than `id`** — `<a name="ch3" id="calibre_link-7">`, as a
-  converter leaves an older book — is found by either attribute, not by whichever comes first.
+- **An anchor named by `name` rather than `id`** — `<a name="ch3" id="calibre_link-7">` — is found
+  by either attribute.
 - **An anchor the file does not contain** produces no chapter. Its text stays with the chapter
   before it — not lost, which is the safe direction to be wrong in.
-- **Text above the first anchor** that no entry claims is the file's own front matter, a series
-  title above the first chapter. It reads as the opening of the chapter that follows it, rather than
-  becoming a chapter nobody named.
-- **A cut through an inline element** reopens it. A chapter that begins halfway through an `<em>`
-  keeps the emphasis on both halves; the wrapper is closed in the part the cut ends and opened again
-  in the part it starts. A block wrapper is not reopened — splitting a paragraph is meant to end it.
+- **Text above the first anchor** that no entry claims is the file's own front matter, and reads as
+  the opening of the chapter that follows it rather than a chapter nobody named.
+- **A cut through an inline element** reopens it: a chapter that begins halfway through an `<em>`
+  keeps the emphasis on both halves. A block wrapper is not reopened — splitting a paragraph is
+  meant to end it.
 
 ### A chapter the file could not supply
 
 One section that will not render is not a reason to lose the other nine hundred, so it arrives as a
 chapter carrying a note of kind `unreadable`, verdict `review` — **one for each chapter the
-navigation says was in that file**, not one for the file. A damaged file holding three chapters is
-three chapters to answer for, and reporting it as one leaves the other two missing from a review
-that never mentions them. It is the one case where the review
-has to speak up rather than guess: narrating it would produce silence, and skipping it by default
-would quietly drop a chapter nobody has looked at. An empty chapter and a lost one look identical
-once the text is gone, which is why the difference is recorded rather than inferred.
-
-If **every** section fails, the import is refused. The file is an EPUB and its package parsed, so it
-opened — but there is no book in it, and importing one chapter of nothing per file would put an
-empty shelf entry in the library and call it a success.
+navigation says was in that file**, not one for the file, so a damaged file holding three chapters
+is three chapters to answer for. It is the one case where the review has to speak up rather than
+guess: narrating it would produce silence, and skipping it by default would quietly drop a chapter
+nobody has looked at. An empty chapter and a lost one look identical once the text is gone, which is
+why the difference is recorded rather than inferred. If **every** section fails, the import is
+refused: an EPUB with no book in it is not a success.
 
 ### What an upload unzips to
 
 The upload limit is on the zip, and a zip can be a thousand times smaller than what it holds: an
 80 KB file with one 80 MB chapter took a gigabyte and a half and seventeen seconds to import, with
-nothing else served meanwhile. So [archive.ts](../server/epub/archive.ts) reads the archive with
+nothing else served meanwhile. So [archive.ts](../server/epub/archive.ts), through the zip guard in
+[server/lib/zip.ts](../server/lib/zip.ts) that the script import shares, reads the archive with
 yauzl before the EPUB library sees it, and refuses — a 413, `too_large` — one that unzips to more
 than `MAX_UNZIPPED_MB` in all or holds a document (a chapter file, the package, the navigation) over
 `MAX_DOCUMENT_MB`. Pictures are held only to the total: they are carried, not parsed.
 
 **The sizes are trusted because they are checked.** A zip states each entry's size, and it can lie;
-the EPUB library unzips with jszip, which believes it. yauzl fails an entry the moment its data runs
-past what it declared, so every entry is inflated once, into nothing, a chunk at a time — and an
-archive that gets through is exactly as big as it said. One that lied is refused as unreadable.
-Neither refusal is handed to EPUBCheck for a diagnosis, which would unzip the whole thing again.
-An entry that merely will not inflate is let through, to become the unreadable chapter below.
+jszip, which the EPUB library unzips with, believes it. yauzl fails an entry the moment its data
+runs past what it declared, so every entry is inflated once, a chunk at a time, and an archive that
+gets through is exactly as big as it said. One that lied is refused as unreadable. An entry that
+merely will not inflate is let through, to become an unreadable chapter.
 
-Either way the refusal says _why_. The parser can only report what stopped it; EPUBCheck, through
+A refusal says _why_. The parser can only report what stopped it; EPUBCheck, through
 [diagnose.ts](../server/epub/diagnose.ts), reports what is wrong with the file — `RSC-001:
-Referenced resource "c2.xhtml" could not be found (OEBPS/content.opf line 12)` — and that is the
-half somebody holding a broken book can act on. It lands in the `detail` the UI already expands to.
-
-It runs **only on a failure, never as a gate**. Its own measured agreement with the reference
-implementation is 95.9%, and plenty of real books are technically non-conformant and read perfectly
-well — this project's own test fixtures among them, which is how that was settled rather than
-assumed. Refusing a book because a validator disliked its metadata would turn a working import into
-a support question; explaining a failure it already had costs a person nothing. Cost is 3–50ms for a
-small book and about 200ms for a 500KB one, on an error path.
+Referenced resource "c2.xhtml" could not be found (OEBPS/content.opf line 12)` — and that lands in
+the `detail` the UI expands to. It runs **only on a failure, never as a gate**, and never on a size
+refusal, which it would unzip whole again. Plenty of real books are technically non-conformant and
+read perfectly well, this project's test fixtures among them; refusing one because a validator
+disliked its metadata would turn a working import into a support question.
 
 ### The stored form is Markdown
 
-`chapter_texts.body` holds the chapter as Markdown: `# heading`, `*italic*`, `**bold**`,
-`***both***`, `- item`, `[text](href)` and GFM tables. It is kept at all because import is the last
+`chapter_texts.body` holds the chapter as Markdown: headings, `*italic*`, `**bold**`,
+`***both***`, list items, inline links and GFM tables. It is kept at all because import is the last
 moment it exists — the EPUB is not retained, so anything dropped here is gone for good.
 
 Markdown in the string rather than structure beside it, because **the string is going to move**.
 Lines are edited, split and joined all through scripting, and a character range recorded against the
-text points at the wrong words after the first edit — silently, with no way to tell that it has.
-Markup survives anything that moves the string.
-
-Italic and bold stay apart because the file kept them apart. A narrator may well end up treating
-them alike, but that is a decision narration can make later from the distinction, and never one it
-can make back if import threw it away. Stress a publisher wrote as styling rather than as an element
-counts too: `<span style="font-style: italic">` is how a good share of real EPUBs mark a word, and
-Turndown's own rules match only `<em>`, `<i>`, `<strong>` and `<b>`. A span inside the emphasis it
-repeats is not marked twice — `*` inside `*` is `**`, which is the other grade entirely.
-
-A table the file gave no header converts with an empty header row above it. It stays in the stored
-Markdown, where it is the table's shape, and is left out of both readings: neither the preview nor a
-narrator opens the table on a blank row.
+text points at the wrong words after the first edit — silently. Markup survives anything that moves
+the string. Italic and bold stay apart because the file kept them apart: a narrator may end up
+treating them alike, but that is a decision narration can make later from the distinction, and
+never one it can make back. Stress written as styling counts too — `<span style="font-style:
+italic">` is how a good share of real EPUBs mark a word, and Turndown's own rules match only `<em>`,
+`<i>`, `<strong>` and `<b>`. A span inside the emphasis it repeats is not marked twice.
 
 There are two readers, and they want different things. The contents review wants the Markdown, so a
-chapter that was laid out as a timetable is shown as a timetable. A model or a speech provider wants
-it gone: sent the stored form, a model is charged for a link's address and a table's pipes, and a
-speech provider reads them aloud. So the chapter-text route serves both and says which it gave:
+timetable is shown as a timetable. A model or a speech provider wants it gone: sent the stored form,
+a model is charged for a link's address and a table's pipes, and a speech provider reads them
+aloud. So the chapter-text route serves both and says which it gave:
 
 ```
 GET /api/books/:id/chapters/:n/text                 → { text, format: "markdown" }
@@ -511,1352 +443,960 @@ Two functions in [markdown.ts](../server/epub/markdown.ts) do the work, and ever
 uses one of them rather than a regex of its own:
 
 - `plainText(body)` — the prose, with no Markdown in it at all. **Anything that counts, bills or
-  speaks a chapter reads this, never the column.** A provider sent the stored form would narrate a
-  heading's `##`, read a link's address out, and charge by the character for both.
+  speaks a chapter reads this, never the column.** A table becomes `Day, Chapter` a row at a time; a
+  horizontal rule a paragraph break; a header row the file never gave is left out.
 - `parseEmphasis(body)` — the prose and where the stress falls, as `{ at, to, mark }` ranges that
-  may overlap. Right for a renderer or for a provider's emphasis markup, which read a string they
-  are about to use and do not change it. The ranges are offsets into the prose **as returned**: the
-  walk pads the text with the blank line it ends every block on, and tidying that away afterwards
-  moves the ranges with it rather than leaving them pointing a word to the left.
+  may overlap, offsets into the prose **as returned**.
 
-The scripting job reads `plainText` before it sends a chapter to the provider, and nothing in the
-server sends the column anywhere. `?format=plain` is what the frontend's estimate reads for the
-same reason.
-
-Both run a real Markdown parser over the stored text rather than stripping punctuation somebody
-remembered. A table becomes `Day, Chapter` a row at a time; a horizontal rule becomes a paragraph
-break; `\*` comes back the star the book had.
-
-The parser is markdown-it, not the `marked` the frontend draws with. Under Bun, `marked`'s lexer
-slows with the length of the document — 4,000 paragraphs took 30 seconds, where Node takes 15 ms —
-and a single-file novel is one chapter of that, read twice on import and again by every count,
-bill and speak. markdown-it reads 64,000 paragraphs in under 300 ms. The walk over its tokens keeps
-the last two characters beside the prose rather than asking the prose, for the same engine's
-reason: a string built by `+=` is flattened before its end can be read, once per block.
+Both run markdown-it over the stored text rather than stripping punctuation somebody remembered. It
+is not the `marked` the frontend draws with: under Bun, `marked`'s lexer slows with the length of
+the document — 4,000 paragraphs took 30 seconds — and a single-file novel is one chapter of that,
+read on import and again by every count, bill and speak. markdown-it reads 64,000 paragraphs in
+under 300 ms.
 
 ### Turndown chooses its DOM once, and can choose wrong
 
 Worth knowing before touching [markdown.ts](../server/epub/markdown.ts). Turndown decides its HTML
-parser when the module is first evaluated:
-
-```js
-var root = typeof window !== "undefined" ? window : {};
-var HTMLParser = canParseHTMLNatively() ? root.DOMParser : createHTMLParser();
-```
-
-With no `window` it uses the `@mixmark-io/domino` it ships with and is tested against. With a
+parser once, when the module is first evaluated. With no `window` it uses the `@mixmark-io/domino` it ships with and is tested against. With a
 `window` carrying a `DOMParser` it takes that instead — and this project has both halves of the
 trap: the frontend tests install a small `window` stub, and importing `@likecoin/epub-ts/node`
 registers linkedom's `DOMParser`. Bound to linkedom, the table plugin stops matching and a table
-collapses to `DayChapterMondayCh 1`, which is exactly the damage the extractor exists to prevent.
-Silently, and only in some import orders.
-
-So Turndown is loaded through `withoutWindow`, which hides `window` for the one moment that decision
-is made — the same shape as the bracket around `@likecoin/epub-ts`. It is a named, exported function
-rather than inline code because the load is cached and happens once per process: a bracket nobody
-can re-enter is a bracket nobody can test.
-
-Turndown is also given HTML **strings**, never the linkedom nodes the splitter already has. Handing
-it a foreign node skips its parser and loses tables the same way.
-
-Numbering is continuous across a book's volumes rather than restarting, because script keys, job
-records and export entries are all keyed by a chapter number that has to stay unique within the
-book. Removing a volume renumbers what is left, and the chapter text moves with it.
+collapses to `DayChapterMondayCh 1` — silently, and only in some import orders. So Turndown is
+loaded through `withoutWindow`, which hides `window` for the one moment that decision is made; it
+is a named, exported function because the load is cached once per process, and a bracket nobody
+can re-enter is a bracket nobody can test. Turndown is also given HTML **strings**, never the
+linkedom nodes the splitter already has: a foreign node skips its parser and loses tables the same
+way.
 
 ### Which chapters are notices
 
 A web-novel EPUB carries the author's announcements inline with the fiction: hiatus notices, release
-schedules, vote reminders, afterwords. They are chapters as far as the file is concerned, and
-narrating them produces an audiobook that stops mid-arc to ask the listener to vote on a website.
+schedules, vote reminders, afterwords. Narrating them produces an audiobook that stops mid-arc to
+ask the listener to vote on a website. [server/epub/notices.ts](../server/epub/notices.ts) reads
+each chapter and decides. It weighs length, dialogue, links, whether the text addresses the reader,
+and keywords for each kind, and the `evidence` it attaches is what it actually saw. Its word count
+is the one the import puts on the chapter: a count that split on whitespace would read a chapter of
+Chinese prose as a single word, and suggest skipping it.
 
-The prototype never did this part. [src/mock/fixtures/notices.ts](../src/mock/fixtures/notices.ts)
-supplies the words for a note whose kind the sample already declared;
-[server/epub/notices.ts](../server/epub/notices.ts) is the part that reads a chapter and decides. It
-weighs length, dialogue, links, whether the text addresses the reader, and keywords for each kind,
-and the `evidence` it attaches is what it actually saw rather than what the rule is called.
+Three of its verdicts are `review` rather than `skip`, all about not losing a chapter: **a full
+chapter with a note stuck to one end** (the note is marked at `start` or `end` and the chapter stays
+in); **a chapter only titled like a notice** — "Author's Note" over two thousand words of dialogue;
+and **a chapter the file could not supply**, which reaches the reader through the same review so
+there is one place to look before trusting a book's contents. A notice repeated later in the book
+is marked `duplicate` and names the chapter it repeats.
 
-Its word count is the same one the import puts on the chapter. A second count that split on
-whitespace read a chapter of Chinese prose — which has no spaces — as a single word, putting it
-under every short-notice threshold there is with a "skip" suggestion attached.
+### Four things the EPUB library does on import
 
-Three of its verdicts are `review` rather than `skip`, and all three are about not losing a chapter:
+[@likecoin/epub-ts](https://github.com/likecoin/epub.ts) is the parser, through its documented Node
+entry point. Its behaviours worked around in [parse.ts](../server/epub/parse.ts):
 
-- **A full chapter with a note stuck to one end** is story _plus_ an author's note, so the note is
-  marked at `start` or `end` and the chapter stays in.
-- **A chapter only titled like a notice** — "Author's Note" over two thousand words of dialogue — is
-  sent for a look. Skipping that automatically would drop a real chapter, which is the one mistake
-  that must not happen without a person.
-
-- **A chapter the file could not supply** is `unreadable`, described above. Not a notice at all,
-  but it reaches the reader through the same review, and a channel of its own would mean a second
-  place to look before trusting a book's contents.
-
-A notice repeated later in the book is marked `duplicate` and names the chapter it repeats.
+- **The globals.** It takes any `window` at all for a complete browser one
+  (`window.requestAnimationFrame.bind(window)`), so it throws on import where a frontend module has
+  installed a small `window` stub; and importing it installs linkedom's `DOMParser` **and** a global
+  `document`, a server process announcing itself as a browser to anything that branches on
+  `typeof document`. So the library is loaded explicitly rather than by a top-level `import` — both
+  fixes have to bracket the import itself — and both globals are put back the way they were found.
+- **Unhandled rejections.** A file that cannot be unzipped rejects every deferred promise a `Book`
+  holds, and nothing awaits most of them; they are settled with a no-op handler before the open. And
+  `unpack` calls `loadNavigation(…).then(…)` with no catch, so an EPUB declaring a navigation
+  document it does not contain rejects promises nothing outside the library holds, though every
+  chapter is readable. `loadNavigation` is shadowed **on the instance** and settled as "no
+  navigation", the library's own behaviour for a book that declares none.
+- **The console.** It `console.error`s full stacks when it turns every manifest asset into a blob URL
+  (an image the zip lacks) and when the spine's content hooks edit a section's head (a section that
+  has none). Neither is needed — sections are read through `readSection`, and the converter drops
+  the head — so the book is opened with `replacements: "none"` and the content hooks are cleared,
+  which removes the output at its source rather than patching a process-global `console`.
 
 ## Logging
 
-`pino`, through [server/log/](../server/log/). A person at a terminal gets columns; anything else —
-a file, a pipe, a log shipper — gets JSON, decided by whether stdout is a terminal and overridable
-with `LOG_FORMAT`. `LOG_LEVEL` sets how much. Colour follows the usual conventions: `NO_COLOR` off,
-`FORCE_COLOR` on for a CI that renders ANSI without being a terminal.
+`pino`, through [server/log/](../server/log/). A person at a terminal gets columns; anything else
+gets JSON, decided by whether stdout is a terminal and overridable with `LOG_FORMAT`. `LOG_LEVEL`
+sets how much; `NO_COLOR` and `FORCE_COLOR` work as usual. Every line names the library it came
+from.
 
-```
-18:03:27.360  WARN  GET /api/books/nope → 404          reqId=1 responseTime=3
-18:03:27.436  WARN  import · refused the file          file=package.json bytes=1823 reason=… epubcheck=…
-18:03:27.437  WARN  POST /api/books/import → 415       file=package.json reqId=2 responseTime=66
-```
+**The redaction list is why this is a module and not a bare `pino()` call.** The server holds
+provider keys, and a key that reaches a log line is in a file, a scrollback and possibly a log
+shipper. `redact` covers the shapes one actually arrives in — `apiKey`, a key or a token on its own,
+inside an object that was spread into the record, in request headers — so it cannot leak through a
+`log.info({ ...endpoint })` somebody wrote in a hurry.
 
-**The redaction list is why this is a module and not a bare `pino()` call.** The server will hold
-provider credentials, and a key that reaches a log line is in a file, a scrollback and possibly a
-log shipper. `redact` covers the shapes one actually arrives in — on its own, inside an endpoint or
-a credential that was spread into the record, in request headers — so it cannot leak through a
-`log.info({ ...endpoint })` somebody wrote in a hurry. That is a guarantee; "remember not to log the
-endpoint object" is a hope.
-
-Three decisions worth knowing:
-
-- **The formatter is ours** ([pretty.ts](../server/log/pretty.ts)), not `pino-pretty`. The look is
-  the entire point of that file, and formatting our own records for our own terminal is not the kind
-  of long tail a dependency saves you from the way parsing arbitrary HTML is. It also keeps the
-  logger one in-process stream with no worker thread behind it — which is the arrangement that
-  survives `bun build --compile`, where pino's worker transport cannot resolve its target.
+- **The formatter is ours** ([pretty.ts](../server/log/pretty.ts)), not `pino-pretty`: the look is
+  the entire point of that file, and it keeps the logger one in-process stream with no worker
+  thread — which survives `bun build --compile`, where pino's worker transport cannot resolve its
+  target.
 - **A 4xx is a warning, not an error.** `hono-pino` calls anything with an error on the context an
-  `error`, which makes "no such book" and "the database is gone" the same severity. A log where
-  routine answers are red is one nobody can skim for the real thing.
-- **Request headers are not written down.** The default puts every header on every line, which
-  buries the field anybody was reading and drops an `authorization` into the log for the redaction
-  list to have to catch. Method and path, and what came back.
+  `error`, which makes "no such book" and "the database is gone" the same severity.
+- **Request headers are not written down.** Method and path, and what came back; not every header,
+  which buries the field anybody was reading and drops an `authorization` into the log.
 
-A route logs through `c.var.logger`, which already carries the request. `assign` adds context that
-the request's own closing line picks up too, so the summary and anything written during it agree
-about which file they were talking about.
+A route logs through `c.var.logger`, which already carries the request; `assign` adds context the
+request's closing line picks up too. Tests use a collecting logger from
+[tests/support/server.ts](../tests/support/server.ts), so a test can assert on what was written —
+and on what was not, which is how [logging.test.ts](../tests/server/logging.test.ts) checks the
+redaction rule.
 
-Tests use a collecting logger from [tests/support/server.ts](../tests/support/server.ts): lines are
-kept rather than printed, so the suite's output stays readable and a test can assert on what was
-written — and on what was not, which is how the redaction rule is checked.
+## The HTTP API
 
-## Endpoints
+`/api` on the same origin (`/demo/api` in a demo tab), so there is no CORS to configure and no base
+URL to set. Errors all have one shape — `{ error: { code, message, detail? } }` — where `code` is a
+stable name a client can switch on (`not_found`, `conflict`, `bad_request`, `forbidden`,
+`too_large`, `unsupported_media`, `range_not_satisfiable`, `upstream` for a provider this server
+called, `internal`), `message` is meant to be shown as it stands and `detail` is the longer
+explanation a panel can expand to. `ApiErrorCode` in [src/types/common.ts](../src/types/common.ts)
+is the one list, and the server imports it.
 
-`/api` on the same origin, so there is no CORS to configure and no base URL to set. Errors all have
-one shape — `{ error: { code, message, detail? } }` — where `code` is a stable name a client can
-switch on (`not_found`, `conflict`, `bad_request`, `forbidden`, `too_large`, `unsupported_media`,
-`range_not_satisfiable`, `upstream` for a provider this server called, `internal`),
-`message` is meant to be shown as it stands and `detail` is the longer explanation a panel can
-expand to. `ApiErrorCode` in [src/types/common.ts](../src/types/common.ts) is the one list, and
-the server imports it, so the two sides agree by construction rather than by luck.
-
-**All** of them, including the ones the validator raises. `sValidator` answers a bad request with
-its own `{ success, error, data }` unless it is told not to, which is a second error contract nobody
-agreed to: a client reading `error.message` finds nothing in it and can only say "Request failed
-(400)" — a worse message than the server already had, with the part naming the field thrown away.
+**All** errors, including the validator's. `sValidator` answers a bad request with its own
+`{ success, error, data }` unless told not to, which is a second error contract nobody agreed to;
 [validate.ts](../server/lib/validate.ts) is the same middleware with that hole closed, and routes
-use it in place of `sValidator` so the contract cannot be opted out of by forgetting a hook. Path
-parameters go through it too: a chapter number or a job id that is not a whole number is a 400
-naming the parameter, rather than `Number("latest")` looking up nothing and answering 404 for a
-request that was never well formed.
-
-So are Hono's own refusals: a body that is not the JSON it claims is a `bad_request` in that shape,
-not the plain text Hono writes by default.
+use it so the contract cannot be opted out of by forgetting a hook. Path parameters go through it
+too: a chapter number that is not a whole number is a 400 naming the parameter, rather than
+`Number("latest")` looking up nothing and answering 404. A body that is not the JSON it claims is a
+`bad_request` in the same shape, not the plain text Hono writes by default.
 
 **Nobody else gets to ask.** The API has no accounts, and a request that deletes a book deletes a
 book. It listens on loopback (`HOST`, `127.0.0.1` by default), so another machine cannot reach it.
 Another _site_ can still make your browser send it a request — a form post, or a post with no body,
 needs no preflight — so Hono's `csrf` check refuses any such request unless the browser says it came
-from this origin (`Sec-Fetch-Site`, or `Origin` from a browser too old to send that), with a
-`forbidden`. A request with neither header is not from a browser, and is let through: a script on
-this machine forges nothing. `secureHeaders` adds the usual set to every response.
+from this origin (`Sec-Fetch-Site`, or `Origin`), with a `forbidden`. A request with neither header
+is not from a browser, and is let through: a script on this machine forges nothing.
+`secureHeaders` adds the usual set to every response.
 
 **An upload is refused before it is read.** The import route's `bodyLimit` answers a body over
-`MAX_UPLOAD_MB` from its `content-length` — or by counting, when it has none — with the `too_large`
-above. Bun's own ceiling sits a megabyte higher, as a backstop, so it is never the one that answers.
+`MAX_UPLOAD_MB` — from its `content-length`, or by counting — with a `too_large`; a script file has
+`MAX_SCRIPT_UPLOAD_MB`, and a clone's samples their own limit. Bun's own ceiling sits a megabyte
+above the largest of them, so it is never the one that answers.
+[security.test.ts](../tests/server/security.test.ts) holds these refusals.
 
-The client holds up the other end. Not everything that answers `/api` is the API — a proxy, a dev
-server or a gateway in front of it answers with HTML — so [`HttpClient`](../src/services/http.ts)
-does not assume the body parses. Letting `JSON.parse` throw would raise a `SyntaxError` out of a
-method whose whole contract is that it raises `ApiError`, and the page would report a JavaScript
-fault where it should be saying the server is unreachable. The library service and the jobs
-service are both built on it, so that rule is written once.
+The client holds up the other end. Not everything that answers `/api` is the API — a proxy or a dev
+server in front of it answers with HTML — so [`HttpClient`](../src/services/http.ts) does not assume
+the body parses: a `SyntaxError` out of a method whose contract is that it raises `ApiError` would
+report a JavaScript fault where it should say the server is unreachable. Every service in
+[src/services/](../src/services/) is built on it.
 
-| Method   | Path                                             | Does                                                           |
-| -------- | ------------------------------------------------ | -------------------------------------------------------------- |
-| `GET`    | `/api/health`                                    | Is it up                                                       |
-| `GET`    | `/api/books`                                     | Every book, importing ones included, with chapter counts       |
-| `GET`    | `/api/books/:id`                                 | A book and its chapters                                        |
-| `GET`    | `/api/books/:id/chapters/:n/text`                | A chapter's prose                                              |
-| `GET`    | `/api/books/:id/chapters/:n/script`              | A chapter's script, and its revision                           |
-| `PUT`    | `/api/books/:id/chapters/:n/script`              | Replace the script, naming the revision that was read          |
-| `GET`    | `/api/books/:id/chapters/:n/history`             | The chapter's versions and how the script came to be           |
-| `POST`   | `/api/books/:id/chapters/:n/history/checkpoints` | Name the script as it stands and keep a copy (201)             |
-| `DELETE` | `/api/books/:id/chapters/:n/history/versions/:v` | Forget one version; what an Undo of a checkpoint sends         |
-| `GET`    | `/api/books/:id/cast`                            | The cast and the pronunciation dictionary                      |
-| `PUT`    | `/api/books/:id/characters/:name`                | One speaker, written as stated: new or replaced                |
-| `POST`   | `/api/books/:id/characters/:name/rename`         | Rename; every line that names them moves                       |
-| `POST`   | `/api/books/:id/characters/:name/merge`          | Fold one speaker into another                                  |
-| `DELETE` | `/api/books/:id/characters/:name`                | Remove a speaker; their lines go to the Narrator               |
-| `POST`   | `/api/books/:id/characters/attribute`            | Put a speaker back on exactly these lines; an Undo             |
-| `PUT`    | `/api/books/:id/lexicon`                         | The dictionary, replaced whole, and the clips it made stale    |
-| `GET`    | `/api/books/:id/exports`                         | The finished audiobooks                                        |
-| `POST`   | `/api/books/:id/exports`                         | Queue a build; the job and the version it makes (202)          |
-| `GET`    | `/api/books/:id/exports/:e`                      | One of them                                                    |
-| `GET`    | `/api/books/:id/exports/:e/files/:n`             | One of its files, to save                                      |
-| `DELETE` | `/api/books/:id/exports/:e`                      | Forget one, and take its files off the disk                    |
-| `POST`   | `/api/books/import`                              | An uploaded EPUB → a book, or one more volume of one           |
-| `POST`   | `/api/books/:id/covers`                          | A JPEG or PNG for an audiobook's cover → its url               |
-| `GET`    | `/api/books/:id/covers/:file`                    | A cover's bytes                                                |
-| `POST`   | `/api/books/:id/confirm`                         | The review is done; it joins the library                       |
-| `POST`   | `/api/books/:id/discard`                         | Cancel: an unconfirmed book goes, or its new volume            |
-| `POST`   | `/api/books/:id/chapters/skip`                   | Skip chapters for the audiobook                                |
-| `POST`   | `/api/books/:id/chapters/include`                | Put them back                                                  |
-| `POST`   | `/api/books/:id/chapters/keep`                   | Keep a noted chapter and stop the suggestion asking            |
-| `POST`   | `/api/books/:id/chapters/decisions`              | Put decisions back exactly as stated; what an Undo sends       |
-| `POST`   | `/api/books/:id/chapters/script`                 | Queue a scripting job per chapter, as one run (202)            |
-| `POST`   | `/api/books/:id/chapters/narrate`                | Queue a narration job per chapter, at a scope (202)            |
-| `GET`    | `/api/audio/:bookId/:file`                       | A rendered clip's audio                                        |
-| `GET`    | `/api/endpoints`                                 | Speech endpoints, scripting profiles, credentials              |
-| `PUT`    | `/api/endpoints`                                 | The whole configuration, in place of what is stored            |
-| `POST`   | `/api/endpoints/test`                            | One small request to a saved endpoint with its saved key       |
-| `POST`   | `/api/endpoints/voices`                          | A saved endpoint's voices: its library, or a public search     |
-| `POST`   | `/api/endpoints/sample`                          | One saved voice, heard: kept, its own recording, or rendered   |
-| `POST`   | `/api/endpoints/voices/clone`                    | A voice made from samples on the provider (multipart, 201)     |
-| `GET`    | `/api/endpoints/requests`                        | One endpoint's requests, newest first; `?kind&id&range`        |
-| `GET`    | `/api/endpoints/live`                            | Each speech endpoint's lines out and waiting, and its cooldown |
-| `GET`    | `/api/books/:id/spend`                           | What the book has spent, and what its unfinished work holds    |
-| `DELETE` | `/api/books/:id`                                 | Remove a book and everything it owns                           |
-| `DELETE` | `/api/books/:id/volumes/:volumeId`               | Remove a volume; the last one removes the book; 409 mid-build  |
-| `PATCH`  | `/api/books/:id`                                 | The budget, script budget or pacing; chapters are re-timed     |
-| `PATCH`  | `/api/books/:id/volumes/:volumeId`               | Rename a volume                                                |
-| `PUT`    | `/api/books/:id/volumes/order`                   | Read the volumes in this order; chapters renumber to follow    |
-| `GET`    | `/api/jobs`                                      | Every job, oldest first; `?bookId=` narrows it                 |
-| `GET`    | `/api/jobs/:id`                                  | One job, with its activity                                     |
-| `POST`   | `/api/jobs/:id/cancel`                           | Stop it: a queued job never starts, a running one stops        |
-| `DELETE` | `/api/jobs/:id`                                  | Take a finished job out of the history                         |
-| `POST`   | `/api/jobs/clear`                                | Clear the history; live jobs stay                              |
+| Method   | Path                                              | Does                                                            |
+| -------- | ------------------------------------------------- | --------------------------------------------------------------- |
+| `GET`    | `/api/health`                                     | Is it up                                                        |
+| `GET`    | `/api/books`                                      | Every book, importing ones included, with chapter counts        |
+| `POST`   | `/api/books/import`                               | An uploaded EPUB → a book, or one more volume of one            |
+| `GET`    | `/api/books/:id`                                  | A book and its chapters                                         |
+| `PATCH`  | `/api/books/:id`                                  | Budget, script budget, pacing or prompt; chapters are re-timed  |
+| `DELETE` | `/api/books/:id`                                  | Remove a book and everything it owns                            |
+| `POST`   | `/api/books/:id/confirm`                          | The review is done; it joins the library                        |
+| `POST`   | `/api/books/:id/discard`                          | Cancel: an unconfirmed book goes, or its new volume             |
+| `PATCH`  | `/api/books/:id/volumes/:volumeId`                | Rename a volume                                                 |
+| `DELETE` | `/api/books/:id/volumes/:volumeId`                | Remove a volume; the last one removes the book; 409 mid-build   |
+| `PUT`    | `/api/books/:id/volumes/order`                    | Read the volumes in this order; chapters renumber to follow     |
+| `POST`   | `/api/books/:id/covers`                           | A JPEG or PNG for an audiobook's cover → its url                |
+| `GET`    | `/api/books/:id/covers/:file`                     | A cover's bytes                                                 |
+| `GET`    | `/api/books/:id/chapters/:n/text`                 | A chapter's prose, as Markdown or plain                         |
+| `POST`   | `/api/books/:id/chapters/skip`, `include`, `keep` | Skip chapters, put them back, or keep a noted one               |
+| `POST`   | `/api/books/:id/chapters/decisions`               | Put decisions back exactly as stated; what an Undo sends        |
+| `POST`   | `/api/books/:id/chapters/script`                  | Queue a scripting job per chapter, as one run (202)             |
+| `POST`   | `/api/books/:id/script-trial`                     | One chunk sent with a draft prompt; nothing written             |
+| `POST`   | `/api/books/:id/chapters/narrate`                 | Queue a narration job per chapter, at a scope (202)             |
+| `GET`    | `/api/books/:id/chapters/:n/script`               | A chapter's script, and its revision                            |
+| `PUT`    | `/api/books/:id/chapters/:n/script`               | Replace the script, naming the revision that was read           |
+| `GET`    | `/api/books/:id/chapters/:n/history`              | The chapter's versions and how the script came to be            |
+| `POST`   | `/api/books/:id/chapters/:n/history/checkpoints`  | Name the script as it stands and keep a copy (201)              |
+| `DELETE` | `/api/books/:id/chapters/:n/history/versions/:v`  | Forget one version; what an Undo of a checkpoint sends          |
+| `POST`   | `/api/books/:id/chapters/:n/retakes`              | Another take of these lines, as one job (202)                   |
+| `POST`   | `/api/books/:id/chapters/:n/lines/:line/verdict`  | Keep or drop a line's retake                                    |
+| `GET`    | `/api/books/:id/cast`                             | The cast and the pronunciation dictionary                       |
+| `PUT`    | `/api/books/:id/characters/:name`                 | One speaker, written as stated: new or replaced                 |
+| `POST`   | `/api/books/:id/characters/:name/rename`          | Rename; every line that names them moves                        |
+| `POST`   | `/api/books/:id/characters/:name/merge`           | Fold one speaker into another                                   |
+| `DELETE` | `/api/books/:id/characters/:name`                 | Remove a speaker; their lines go to the Narrator                |
+| `POST`   | `/api/books/:id/characters/attribute`             | Put a speaker back on exactly these lines; an Undo              |
+| `PUT`    | `/api/books/:id/lexicon`                          | The dictionary, replaced whole, and the clips it made stale     |
+| `GET`    | `/api/books/:id/script-export`                    | The book's script as a file; `?samples=1` carries voice samples |
+| `GET`    | `/api/books/:id/script-export/samples`            | Whose recordings the export would carry, and how much           |
+| `POST`   | `/api/books/:id/script-import`                    | What importing a script file would do; nothing written          |
+| `GET`    | `/api/books/:id/speaker-samples`                  | Recordings a script file brought, waiting with their speakers   |
+| `POST`   | `/api/books/:id/speaker-samples`                  | Keep them for the speakers named, from the same file            |
+| `GET`    | `/api/books/:id/speaker-samples/:s/files/:file`   | One of them                                                     |
+| `DELETE` | `/api/books/:id/speaker-samples/:s`               | Discard; `POST …/:s/restore` takes it back within a day         |
+| `GET`    | `/api/books/:id/exports`                          | The finished audiobooks                                         |
+| `POST`   | `/api/books/:id/exports`                          | Queue a build; the job and the version it makes (202)           |
+| `GET`    | `/api/books/:id/exports/:e`                       | One of them                                                     |
+| `GET`    | `/api/books/:id/exports/:e/files/:n`              | One of its files, to save                                       |
+| `DELETE` | `/api/books/:id/exports/:e`                       | Forget one, and take its files off the disk                     |
+| `GET`    | `/api/books/:id/spend`                            | What the book has spent, and what its unfinished work holds     |
+| `GET`    | `/api/audio/:bookId/:file`                        | A rendered clip's audio                                         |
+| `GET`    | `/api/endpoints`                                  | Speech endpoints, scripting profiles, credentials, the prompt   |
+| `PUT`    | `/api/endpoints`                                  | The whole configuration, in place of what is stored             |
+| `POST`   | `/api/endpoints/test`                             | One small request to a saved endpoint with its saved key        |
+| `POST`   | `/api/endpoints/voices`                           | A saved endpoint's voices: its library, or a public search      |
+| `POST`   | `/api/endpoints/sample`                           | One saved voice, heard: kept, its own recording, or rendered    |
+| `POST`   | `/api/endpoints/voices/clone`                     | A voice made from samples on the provider (multipart, 201)      |
+| `GET`    | `/api/endpoints/:id/samples`                      | An endpoint's voices with kept samples                          |
+| `GET`    | `/api/endpoints/:id/voices/:voice/samples`        | One voice's kept samples and consent; `…/:file` one sample      |
+| `POST`   | `/api/endpoints/:id/voices/:voice/samples`        | Keep samples for a voice already saved; nothing sent            |
+| `DELETE` | `/api/endpoints/:id/voices/:voice/samples`        | Forget them, keep the voice; `POST …/restore` takes it back     |
+| `GET`    | `/api/endpoints/requests`                         | One endpoint's requests, newest first; `?kind&id&range`         |
+| `GET`    | `/api/endpoints/live`                             | Each speech endpoint's lines out and waiting, and its cooldown  |
+| `GET`    | `/api/jobs`                                       | Every job, oldest first; `?bookId=` narrows it                  |
+| `GET`    | `/api/jobs/:id`                                   | One job, with its activity                                      |
+| `POST`   | `/api/jobs/:id/cancel`                            | Stop it: a queued job never starts, a running one stops         |
+| `DELETE` | `/api/jobs/:id`                                   | Take a finished job out of the history                          |
+| `POST`   | `/api/jobs/clear`                                 | Clear the history; live jobs stay                               |
 
-`POST /api/books/import` is `multipart/form-data`: `file` is the EPUB, `title` optionally overrides
-the one in the file, and `bookId` with `name` adds the file to an existing book as one more volume.
+The demo's own routes are [above](#two-libraries-yours-and-the-demo); the script file, its import
+and the samples it carries are [script export and import](script-transfer.md). A few bodies worth
+knowing:
 
-`POST /api/books/:id/covers` is `multipart/form-data` too, with the image as `file`. It is kept
-beside the book's own cover under a hash of its bytes — the same image twice is one file and one
-url — and answers `201 { cover }`; a file that is not a JPEG or PNG is a 415, over 10 MB a 413. It
-does not change the book's `coverImage`: it is what an export's `settings.cover` names, so one
-build can carry it and the next the EPUB's. A build refuses any other `settings.cover` with a 400 —
-a `data:` URL (what the demo holds, and what a build queued before this slice recorded), another
-book's image, a path that is not a cover — since a picture this server could never find would
-otherwise be a build failing halfway.
-
-`POST /api/books/:id/chapters/script` answers with the jobs it made, the chapters it left out and
-why (`excluded`, `busy`, `missing`), and the book's chapters as they now stand — so the client can
-say "2 already being scripted" instead of waiting for work that is not coming. The body can name
-the scripting `profile` the page has chosen; see [a chapter in chunks](#a-chapter-in-chunks).
-
-`GET /api/books` carries each book's chapter counts (`chapters: { total, included, scripted,
-narrated }`), read in one grouped query rather than one per book. The shelf lists books without
-their chapters — a review's worth of rows per book is not a cheap listing — and the counts are
-what let a card say "12 chapters, 3 scripted" before the book has been opened. The library store
-answers `contentsOf` and `progress` from them until the chapters themselves are here.
+- `POST /api/books/import` is multipart: `file` is the EPUB, `title` optionally overrides the one in
+  the file, and `bookId` with `name` adds the file to an existing book as one more volume.
+- `POST …/covers` is multipart too (`file`), kept beside the book's own cover and answered
+  `201 { cover }`. It does not change the book's `coverImage`: it is what an export's
+  `settings.cover` names, and a build refuses any other `settings.cover` with a 400, since a picture
+  this server could never find would otherwise be a build failing halfway.
+- `POST …/chapters/script` answers with the jobs it made, the chapters it left out and why
+  (`excluded`, `busy`, `missing`), and the book's chapters as they now stand, so the page can say
+  "2 already being scripted". The body can name the scripting `profile` the page has chosen.
+- Skip, include and keep are rules that only run forwards — including a noted chapter records that
+  it was looked at — so an Undo sends what the chapters were to `…/chapters/decisions`, which puts
+  it back as stated, rather than running an inverse rule.
+- `GET /api/books` carries each book's chapter counts (`total`, `included`, `scripted`,
+  `narrated`), read in one grouped query, so a card can say "12 chapters, 3 scripted" without the
+  shelf listing every chapter.
 
 ## A script edited by a person
 
 `PUT /api/books/:id/chapters/:n/script` takes `{ segments, ifRevision, origin? }`. Two rules hold,
-and both are the ones the scripting job already keeps:
+and both are the ones the scripting job keeps:
 
 - **An edit names the revision it read.** `chapters.script_revision` counts every write of a
-  chapter's script, whoever made it. `ifRevision` is the revision the client last saw, and an edit
-  against a script that has moved since — a job landed, another tab wrote, a rename moved lines —
-  is a 409 and writes nothing, exactly as a job result that would land on newer work is refused.
-  The client reads the chapter again and says so; the server's script wins. The rule runs one
-  way: an edit made while a job is still queued is not a conflict for the job, because the job
-  reads the revision when it starts, not when it was queued — the job's script replaces the edit,
-  and the edit is preserved in the history the way any script a run replaces is.
+  chapter's script rows, whoever made it — a job, a person, a rename, a clip landing. An edit whose
+  `ifRevision` is not the current one is a 409 and writes nothing, exactly as a job result that
+  would land on newer work is refused; the page reads the chapter again and says so. The rule runs
+  one way: an edit made while a job is queued is not a conflict for the job, which reads the
+  revision when it starts — its script replaces the edit, and the edit is preserved in the history.
 - **History is written in the transaction that writes the script.** The working script is preserved
   before the new one replaces it, so a version and the script it preceded cannot disagree about
   which came first. `origin` says what produced the script — a bulk correction, a restore — and an
   ordinary edit needs none.
 
-The rule behind every entry is one function, `planCapture` in
-[src/lib/scriptHistory.ts](../src/lib/scriptHistory.ts), shared by the history store and
-[server/db/history.ts](../server/db/history.ts): no entry for an empty script, none for an
-operation that leaves the script exactly as it found it, none for a script that is already the
-newest entry, and an edit opens a session that later edits join. The store closes a session with a
-timer; the server has no timer and asks the clock instead (`sessionOpen`): a session is open while
-its last edit is less than `SESSION_IDLE_MS` old. One rule the server adds: **a session that comes
-back to exactly where it began leaves no entry**. An undo over HTTP is an edit that writes the
-previous script back, and when that makes the script equal to the version the session's first edit
-preserved, the version is dropped again and the head goes back to what that version recorded — the
-list must never claim an edit happened that no longer exists. Only that version is the session's
-to drop, and the head remembers which one it was (`script_heads.session_version`, set when an
-edit's capture adds a version and cleared by anything else): the newest version is not always it,
-because a checkpoint saved after the session opened is newer, and a session that comes back to the
-checkpoint's script leaves the checkpoint where it is.
+The rule behind every entry is `planCapture` in [src/lib/scriptHistory.ts](../src/lib/scriptHistory.ts),
+applied by [server/db/history.ts](../server/db/history.ts): no entry for an empty script, none for
+an operation that leaves the script as it found it, none for a script that is already the newest
+entry, and an edit opens a session that later edits join while its last edit is less than
+`SESSION_IDLE_MS` old. **A session that comes back to exactly where it began leaves no entry**: an
+undo over HTTP is an edit that writes the previous script back, and when that equals the version
+the session's first edit preserved, the version is dropped and the head goes back to what it
+recorded — the list must never claim an edit that no longer exists. The head remembers which
+version is the session's (`script_heads.session_version`), because a checkpoint saved after the
+session opened is newer and must stay. Undoing a bulk correction or a restore is still an edit, so
+it leaves that entry with an edit after it.
 
-A write that changes nothing a version keeps — a line flagged, a clip that finished, anything about
-the audio — is written and moves the revision on, but leaves the history alone. `scriptSignature`
-is what a version is, and a script with the same signature is the same script, so there is no edit
-to count and no session to open or close; the store sends such a write with no origin, even from a
-flag batch.
-
-A chapter that now has a script reads as scripted (`chapters.scripting` is asked of the script),
-and an edit that would leave it with no lines is refused, because a chapter with nothing in it
-cannot be narrated and would have nothing left to undo from. A checkpoint names the script as it
-stands without changing it; forgetting the version the head still names puts the head back to how
-the script came to be before it was named, which is what an Undo of a checkpoint asks for. A
-checkpoint saved over a checkpoint records nothing it was saved over, because the answer is the
-earlier checkpoint itself: forgetting it puts the head back to the newest checkpoint still in the
-list, or to "scripted" when none is left.
+A write that changes nothing a version keeps — a line flagged, a clip that finished — moves the
+revision on but leaves the history alone: `scriptSignature` is what a version is. An edit that would
+leave a chapter with no lines is refused, since it could not be narrated and would have nothing left
+to undo from. A checkpoint names the script as it stands; forgetting the version the head still
+names puts the head back to how the script came to be before it was named, which is what an Undo of
+a checkpoint asks for, or to the newest checkpoint still in the list.
 
 ## The cast
 
 A speaker is keyed by name because the script names speakers by name and nothing else, so anything
-that changes a name moves lines in every chapter of the book — and does so in the same transaction
-as the cast row. A rename, a merge and a removal each answer with the lines that changed hands,
-by chapter, and with each chapter's script revision now that they have (`moved`): the client keeps
-editing without a stale-revision refusal, and an Undo puts back exactly those lines through
-`attribute` rather than guessing at an inverse. A merge folds aliases in and cannot be told apart
-from ones that were already there, which is why the undo is recorded rather than inverted — the
-same reasoning as the review's `decisions` route. A line that changes hands has its rendered clip
-marked stale, as the cast store does. The Narrator cannot be removed, renamed or merged into
-anyone (each a 409), because a removal hands the lines to the Narrator by that name; anyone can be
-merged into the Narrator, and the Cast page offers the Narrator row neither button. The dictionary
-is a short list a person edits one entry at a time, and the order it reads in is part of it, so it
+that changes a name moves lines in every chapter of the book — in the same transaction as the cast
+row. A rename, a merge and a removal each answer with the lines that changed hands, by chapter, and
+each chapter's new script revision (`moved`): the page keeps editing without a stale-revision
+refusal, and an Undo puts back exactly those lines through `attribute` rather than guessing at an
+inverse. A merge folds aliases in and cannot be told apart from ones already there, which is why the
+undo is recorded rather than inverted. A line that changes hands has its clip marked stale. The
+Narrator cannot be removed, renamed or merged into anyone (each a 409), because a removal hands the
+lines to the Narrator by that name. The dictionary is a short list whose order is part of it, so it
 is written whole.
 
-The scripting job absorbs the speakers it turned up into the cast when it writes the script: a
-walk-on arrives unreviewed (`isNew`), so the Cast page can merge it; the Narrator, whom every book
-has, arrives as the main cast. Nothing writes voices, styles or aliases but a person.
+The scripting job adds the speakers it turned up to the cast when it writes the script: a walk-on
+arrives unreviewed (`isNew`), so the Cast page can merge it; the Narrator arrives as the main cast.
+Nothing writes voices, styles or aliases but the page's own requests.
 
 ## The queue
 
-A job is a row in `jobs`, the table laid out to hold the frontend's `Job`, so the Queue page reads a
-server job exactly as it reads a simulated one. What the server adds is discipline the browser
-never needed, and each rule below has a test in
-[tests/server/jobs.test.ts](../tests/server/jobs.test.ts) that drives it through the real routes,
-the real runner and a scripting model that reads the prose and never the network.
+A job is a row in `jobs`, laid out to hold the frontend's `Job`. Each rule below has a test in
+[jobs.test.ts](../tests/server/jobs.test.ts) that drives it through the real routes and runner.
 
 - **The same work is never queued twice, and the database says so.** While a job is queued or
-  running, `jobs.active_key` is `kind:book:chapter`; the moment it finishes the key is cleared. A
-  unique index over that column means a double click, a retried request or two tabs asking for the
-  same chapter get the same job back rather than a second one — whatever order the requests
-  arrive in, because it is the index that refuses, not a check a second request could slip past.
-  SQLite treats NULLs as distinct, so finished jobs never collide. The route says which chapters it
-  left out for being `busy`.
-- **One job at a time.** [runner.ts](../server/jobs/runner.ts) claims the oldest queued job,
-  moving it to `running` in the same transaction that reads it, and runs its handler to the end
-  before claiming the next. The queue's own rule — one book's chapters run sequentially so roster
-  and recap carry forward — is a property of the runner rather than something each handler has to
-  re-derive. An enqueue wakes it; a slow interval is only a safety net.
-- **A cancel is an abort.** A running job has an `AbortController`; cancelling aborts it, the
-  handler's provider sees `signal` and stops, and whatever comes back afterwards is recorded as
-  `cancelled` rather than as a failure. A queued job is finished as cancelled without ever starting.
-  Either way the handler gets the last word (`onSettled`), which is how a chapter marked `queued`
-  goes back to `none` — and the same hook runs when a recovery gives up on a job, so there is no
-  path that settles a row without it.
+  running, `jobs.active_key` is `kind:book:chapter`, cleared the moment it finishes. A unique index
+  over that column means a double click, a retried request or two tabs asking for the same chapter
+  get the same job back — whatever order the requests arrive in, because it is the index that
+  refuses, not a check a second request could slip past. The route says which chapters it left out
+  for being `busy`.
+- **One job at a time.** [runner.ts](../server/jobs/runner.ts) claims the oldest queued job, moving
+  it to `running` in the same transaction that reads it, and runs its handler to the end before
+  claiming the next, so one book's chapters run in order and roster and recap carry forward. An
+  enqueue wakes it; a slow interval is only a safety net.
+- **A cancel is an abort.** A running job's `AbortController` is aborted, the provider sees `signal`
+  and stops, and the job is recorded `cancelled` rather than failed; a queued one is finished as
+  cancelled without starting. Either way the handler gets the last word (`onSettled`) — which is how
+  a chapter marked `queued` goes back to `none` — and the same hook runs when a recovery gives up on
+  a job.
 - **A handler that returned is done.** A handler honours a cancel by throwing, at the last point it
-  can still take its work back — a build checks once more immediately before the transaction that
-  makes the new version current. One that arrives after that point is too late: the job is `done`,
-  whatever the signal says. Calling it cancelled there had an export's `onSettled` delete the
-  version it had just committed and leave the one before it marked `replaced`, so there was no
-  current audiobook at all; and a stop in the same window left the row `running`, for the next
-  start to rebuild over the finished files.
-- **A restart loses no work.** A row still `running` when nothing is running is a job the last
-  process died holding. `start` puts it back in the queue with an event saying so, and it starts
-  again — twice in all, because a job that takes the process down every time must not be allowed
-  to forever; the third time it fails with the reason recorded. `stop` (a `SIGINT` from
-  `pnpm dev:server`) aborts the running job and leaves its row `running` on purpose, so there is one
-  recovery path rather than two — but it gives back the start it interrupted (`handBack`), so
-  `attempts` counts crashes only. A long narration interrupted by any number of clean restarts
-  carries on; one the process dies during twice does not.
-- **A result never lands on newer work.** `chapters.script_revision` counts how many times a
-  chapter's script has been written. The scripting job reads it when it starts and writes only if
-  it has not moved, inside one transaction with the write, so a script edited or replaced while a
-  slow run was working is kept and the job fails saying why. The chapter is also found again by its
-  **uid** at the moment of writing, not by the number the job started with: removing an earlier
-  volume renumbers the book mid-run, and the script still lands on the chapter it was read from.
-  `GET …/script` returns the revision so that a script-editing route, when there is one, can name
-  the version it edited.
+  can still take its work back — a build checks immediately before the transaction that makes the
+  new version current. A cancel after that is too late: calling the job cancelled would have an
+  export's `onSettled` delete the version it had just committed.
+- **A restart loses no work.** A row still `running` at start is a job the last process died
+  holding; it is put back in the queue with an event saying so and starts again — twice in all,
+  because a job that takes the process down every time must not be allowed to forever. `stop` (a
+  `SIGINT`) aborts the running job and leaves its row `running` on purpose, so there is one recovery
+  path, but gives back the start it interrupted (`handBack`), so `attempts` counts crashes only.
+- **A result never lands on newer work.** The scripting job reads `chapters.script_revision` when it
+  starts and writes only if it has not moved, in one transaction with the write, so a script edited
+  while a slow run was working is kept and the job fails saying why. The chapter is found again by
+  its **uid** at the moment of writing, so a book renumbered mid-run still gets the script on the
+  chapter it was read from.
 - **A chapter's status is asked of its script, not remembered.** `queued` when the job is (written
-  in the same transaction as the row, so it cannot land after the worker has moved on), `running`
-  with a percentage while it runs, and afterwards whatever the chapter holds: `done` if it has a
-  script — including after a re-script that failed, because the old script is intact and a
-  chapter with a usable script must not read as failed — `none` if it never had one, and `failed`
-  only when a run that was meant to give it one could not.
-- **The job log is bounded** the same way the frontend's is: the newest thousand events, with
-  `dropped_events` counting what is no longer there.
+  in the same transaction as the row), `running` with a percentage, and afterwards `done` if it has
+  a script — including after a re-script that failed, since the old script is intact — `none` if it
+  never had one, and `failed` only when a run meant to give it one could not.
+- **Retry is a new request** through the same route, planned again against the book as it now
+  stands rather than replayed.
+- **The job log is bounded** to the newest thousand events, with `dropped_events` counting the rest.
 
 ### A chapter in chunks
 
 A chapter longer than its scripting profile's `maxChars` goes to the provider as several requests,
 cut exactly where the Endpoints page's chunk preview cuts it: `scriptParts` in
-[src/lib/scripting.ts](../src/lib/scripting.ts), the demo's own call, at the profile's `splitAt`
-and falling down to a clause, a word, a hard cut, with the source's whitespace kept so the pieces
-rejoin to the chapter. The profile is the one the browser has chosen, named in the request's body
-and read from the endpoints saved to the server when the run is **queued** — copied onto each job
-as `scriptRun.profile`, so an edit to it afterwards does not re-cut a run already waiting. One the
-server was never sent is not a refusal (a fresh server has no endpoints until the page saves them):
-the chapter goes whole, and its job's log says why. No profile named, or a limit of 0, is the
-chapter whole, as before.
+[src/lib/scripting.ts](../src/lib/scripting.ts), at the profile's `splitAt` and falling down to a
+clause, a word, a hard cut, with the source's whitespace kept so the pieces rejoin to the chapter.
+The profile is the one the page names in the request's body, read from the saved endpoints when the
+run is **queued** and copied onto each job as `scriptRun.profile`, so an edit to it afterwards does
+not re-cut a run already waiting. A profile the server does not have leaves the run without one:
+each job's log says so, and the provider refuses a run with no profile, saying to choose one.
 
 Up to the profile's `concurrency` requests are out at once. `scriptRun` counts them — `requests`,
-`completed`, `active` — which is what the Queue's job details and the Scripting page read; the bar
-is the chunks' progress together, so it never runs backwards when the next one starts counting
-from zero. The answers are stitched in the chapter's order, whichever came back first, and the lines
-numbered 1 to n afresh, then written in the one transaction a whole chapter is. A request that
-fails stops the others and fails the chapter — `Request 2 of 5 failed: …` — and nothing is
-written: half a script is not a script. The history entry names the profile and the provider as
-its model. Every request is priced into the ledger and the run is held against the book's budget —
-see [what a request costs](#what-a-request-costs-and-what-a-book-may-spend).
+`completed`, `active` — for the Queue and the Scripting page; the bar is the chunks' progress
+together, so it never runs backwards. The answers are stitched in the chapter's order, whichever
+came back first, numbered afresh and written in one transaction. A request that fails stops the
+others and fails the chapter — `Request 2 of 5 failed: …` — and nothing is written: half a script is
+not a script. Every request is priced into the ledger and held against the book's budget
+([what a request costs](#what-a-request-costs-and-what-a-book-may-spend)). A cut can fall between a
+line and the "said Mara" that names its speaker; the book's cast goes in every request's prompt so a
+chunk read on its own still calls Mara "Mara", and the preview shows where the cuts fall.
 
-A cut can fall inside a quotation or between a line and the "said Mara" that names its speaker —
-the preview shows where — and a simulated profile then reads each side on its own, so a quoted
-line can come back as narration or `Unknown`. That is what the Scripting page's "smaller chunks"
-button and the preview are for; a real provider will want the same care.
-
-### The providers, and where a key lives
+## The providers, and where a key lives
 
 A scripting job hands a [`ScriptingProvider`](../server/providers/scripting.ts) a chapter's prose —
-the `plain` reading, never the stored Markdown — and gets back lines with speakers; a narration job
-hands a [`SpeechProvider`](../server/providers/speech.ts) one line and gets back a WAV. That is the
-whole contract. Which answers is decided per request, by the endpoint's base URL:
+the plain reading, never the stored Markdown — and gets back lines with speakers; a narration job
+hands a [`SpeechProvider`](../server/providers/speech.ts) one line and gets back audio. Which one
+answers is decided per request, by the endpoint's base URL:
 
-- **A simulated endpoint** (`simulated://…`, the **Simulated (free)** preset) never reaches the
-  network. [The scripting fake](../server/providers/fake.ts) makes a paragraph narration and a
-  quoted span dialogue, spoken by whoever the paragraph names beside a speech verb — "…," said
-  Mara — or `Unknown`; [the speech fake](../server/providers/fakeSpeech.ts) renders a quiet tone
-  per speaker, through [simulatedSpeech.ts](../server/providers/simulatedSpeech.ts), which also
-  answers its Test button, its six voices and a sample without a request. A simulated speech
-  endpoint waits its `latency` (milliseconds) before each answer and fails its `failRate` (0–1)
-  share of lines as a server error worth another try, so a run on it moves, and fails, the way a
-  run on a real endpoint can; the Requests tab edits both, and only shows them for a simulated
-  endpoint. It needs no key, and the preset's card is zero.
+- **A simulated endpoint** (`simulated://…`) never reaches the network.
+  [The scripting fake](../server/providers/fake.ts) makes a paragraph narration and a quoted span
+  dialogue, spoken by whoever the paragraph names beside a speech verb — "…," said Mara — or
+  `Unknown`; [the speech fake](../server/providers/fakeSpeech.ts) renders a quiet WAV tone per
+  speaker, long enough to say the line, through [simulatedSpeech.ts](../server/providers/simulatedSpeech.ts),
+  which also answers its Test button, its six voices and a sample. A simulated endpoint waits its
+  `latency` (milliseconds) before each answer and fails its `failRate` (0–1) share as a server error
+  worth another try, so a run on it moves, and fails, the way a real one can; the Requests tab edits
+  both. It needs no key, and the preset's card is zero.
 - **Every other endpoint** is called: a chapter goes to its profile's chat-completions model
-  ([endpointScripting.ts](../server/providers/endpointScripting.ts) chooses), a line to the
-  endpoint its voice names (`<endpointId>/<voiceId>`).
+  ([endpointScripting.ts](../server/providers/endpointScripting.ts)), a line to the endpoint its
+  voice names (`<endpointId>/<voiceId>`).
 
-The tests hand the app the fakes directly, in place of the endpoints' own providers, over an
-in-memory database ([tests/support/server.ts](../tests/support/server.ts)), so no test reaches the
-network whatever it saves. That is the "fake AI provider" the
-[demo requirements](demo.md#future-backend-integration-requirements) ask for.
-
-**Nothing about a provider is in the environment.** Base URL, model, timeout, retries and key are
-the endpoint's, saved with it. The `.env` variables `SCRIPTING_PROVIDER_URL`, `…_MODEL`, `…_TOKEN`,
-`FISHAUDIO_TOKEN` and `FISHAUDIO_VOICE_ID` are read by `pnpm test:live` and nothing else.
+The tests hand the app the fakes directly ([tests/support/server.ts](../tests/support/server.ts)),
+so no test reaches the network whatever it saves. **Nothing about a provider is in the
+environment**: base URL, model, timeout, retries and key are the endpoint's, saved with it. The
+`.env` variables `SCRIPTING_PROVIDER_URL`, `…_MODEL`, `…_TOKEN`, `FISHAUDIO_TOKEN` and
+`FISHAUDIO_VOICE_ID` are read by `pnpm test:live` and nothing else.
 
 **The key is write-only.** It is `endpoints.api_key`, one per endpoint and one per profile (a
 speech endpoint and a profile that share an id keep separate keys). `PUT /api/endpoints` takes an
 `apiKey` beside an endpoint: left out, the stored key is kept — the page never has it to send back,
 so absent has to mean keep — and `""` forgets it. `GET` answers `hasKey: true` and never the key.
 The target a request is sent to ([target.ts](../server/providers/target.ts)) reads the key at the
-moment of dispatch, so it is never copied onto a job — `scriptRun.profile` is the profile as read,
-which carries `hasKey` and not the key — and a key changed on the page is the one the next request
-uses. The logger redacts `apiKey` wherever it sits. Named credentials stay a registry of labels:
-every endpoint has its own key field.
+moment of dispatch, so it is never copied onto a job and a key changed on the page is the one the
+next request uses. Named credentials are labels only: every endpoint has its own key.
 
-**Around every request** [http.ts](../server/providers/http.ts) keeps the endpoint's own
-`timeoutSec` per attempt and `maxRetries` after the first, retries only what another attempt could
-fix (408, 425, 429, 5xx, no answer — not a 409, which is the same conflict the second time), waits
-what a `Retry-After` names or `cooldownSec` after a bare 429, and stops at once on a cancel,
-mid-request or mid-wait. A provider that refuses inside a 200 hands `call` a `check` that reads the
-answer before it is accepted, so such a refusal is retried in the same loop, a rate limit after the
-cooldown. A refusal becomes a sentence naming the endpoint and what it said — `{error:{message}}`,
-`{message}`, or ElevenLabs' `{detail:{message}}` and 422 `{detail:[{msg}]}` — and a body the
-attempt's clock cuts off says it timed out rather than that it was not JSON. An endpoint that
-`needsKey` and has none fails before any request.
+**Around every request** [http.ts](../server/providers/http.ts) keeps the endpoint's `timeoutSec`
+per attempt and `maxRetries` after the first, retries only what another attempt could fix (408, 425,
+429, 500, 502, 503, 504, no answer — not a 409, which is the same conflict the second time), waits
+what a `Retry-After` names or `cooldownSec` after a bare 429, and stops at once on a cancel. A
+provider that refuses inside a 200 hands `call` a `check` that reads the answer first, so such a
+refusal is retried in the same loop. A refusal becomes a sentence naming the endpoint and what it
+said, and a body the attempt's clock cuts off says it timed out. An endpoint that `needsKey` and has
+none fails before any request.
 
-**Scripting** ([chatScripting.ts](../server/providers/chatScripting.ts)) is OpenAI's chat
-completions — OpenAI, a gateway, a local model — at `{baseUrl}/chat/completions`, asking for
-`{"lines":[…]}` with `response_format: json_object`, `max_tokens` only when the profile's
-`maxOutputTokens` is above 0, the profile's reasoning level as its host spells it, and the book's
-cast in the prompt so a chunk read on its own still calls Mara "Mara". A gateway may wrap the JSON in a code fence anyway; the answer is read from the
-first `{` to the last `}`. A **reasoning model counts its thinking against `max_tokens`**: a
-cap of 8000 cut a 200-word excerpt off on the model this was tested with, so give such a profile 0. Before anything is written, the lines are held against the prose (`fidelity`): if more than 2% of
-the words went missing or were invented, the chapter fails saying how many and which — an
-audiobook that silently skips a paragraph is the worst thing this job could do. Word counts, not
-order, so it catches a dropped sentence but not a moved one. A bad answer is not retried by the
-provider, so a failure never spends tokens twice without anyone asking.
+### Scripting requests
 
-**The prompt it sends is not in this file.** It has three layers ([src/lib/prompt.ts](../src/lib/prompt.ts)):
-the library's default, kept in `settings` under `prompt` (no row is the built-in prompt) and saved with
-the Endpoints `PUT` (`prompt` absent keeps it, `null` resets it); each scripting profile's `prompt`
-(its notes for `{{endpoint.notes}}`, and `default` / `replace` with the replacement kept whatever
-the mode) and `reasoning`, in the endpoint
-row's `prompt_*` and `reasoning_effort` columns; and each book's `prompt` (notes, and a whole
-replacement it may switch on), in the book row's `prompt_*` columns, set by `PATCH /api/books/:id`.
-Saves are checked with the same rules the editor shows (`profilePromptProblems`, `bookPromptProblems`)
-and refused with a 400 whose message is the problem — from the save, not the validator, whose refusal
-would reach the page as "the json of this request was not valid". `enqueueScripting` resolves the
-layers once and keeps the template, its origin and the book's notes on `scriptRun.prompt`; the holds
-and the estimate are priced with that template (`tokenEstimate`'s fourth argument), and edits made
-after queueing reach only later runs. At dispatch each request's tags are filled from the book, the
-chapter, the cast as it stands and the request's part, the locked output format is added after the
-system prompt, and the provider sends the two messages it is handed. The scripted history version
-records the prompt's origin and fingerprint; the connection test sends the library prompt with the
-profile's own layer, filled with a made-up book. `POST /api/books/:id/script-trial` ([server/script/trial.ts](../server/script/trial.ts)) sends one
-chunk with draft layers over the saved ones and `lenient` set, so the provider hands back lines that
-fail `fidelity` instead of refusing them; it writes nothing but a ledger row, checks the book's budget
-first, answers a provider refusal as a result with `error` (200), and is cancelled with the request.
-Scripting ledger rows keep `reasoning_tokens` (null = not reported) and `reasoning_effort`, and
-`scriptReasoning` turns an endpoint's latest 20 at its current level into the thinking-per-input-token
-share the estimates add to output. The reasoning level becomes the host's own fields
-in [src/lib/reasoning.ts](../src/lib/reasoning.ts), shared with the page so the note under the select
-is about what is actually sent.
+[chatScripting.ts](../server/providers/chatScripting.ts) speaks OpenAI's chat completions — OpenAI,
+a gateway, a local model — at `{baseUrl}/chat/completions`, asking for `{"lines":[…]}` with
+`response_format: json_object`, `max_tokens` only when the profile's `maxOutputTokens` is above 0,
+and the profile's reasoning level as its host spells it ([src/lib/reasoning.ts](../src/lib/reasoning.ts),
+shared with the page). A gateway may wrap the JSON in a code fence anyway; the answer is read from
+the first `{` to the last `}`. A **reasoning model counts its thinking against `max_tokens`**, so a
+low cap cuts the answer off. Before anything is written, the lines are held against the prose
+(`fidelity`): if more than 2% of the words went missing or were invented, the chapter fails saying
+how many and which — an audiobook that silently skips a paragraph is the worst thing this job could
+do. Word counts, not order, so it catches a dropped sentence but not a moved one. A bad answer is
+not retried, so a failure never spends tokens twice without anyone asking.
 
-**Speech** ([endpointSpeech.ts](../server/providers/endpointSpeech.ts)) finds which provider the
-base URL speaks and hands the line to that provider's wire module. A provider is two files:
+**The prompt** has three layers ([src/lib/prompt.ts](../src/lib/prompt.ts)), described from the
+page's side in [endpoints](endpoints.md): the library's default in `settings` under `prompt` (no row
+is the built-in one), saved with the Endpoints `PUT`; a profile's notes, replacement and reasoning
+level in its row's `prompt_*` and `reasoning_effort` columns; a book's notes and replacement in the
+book row's `prompt_*` columns, set by `PATCH /api/books/:id`. Saves are held to the rules the editor
+shows (`profilePromptProblems`, `bookPromptProblems`) and refused with a 400 naming the problem.
+`enqueueScripting` resolves the layers once and keeps the template on `scriptRun.prompt`, so an edit
+made after queueing reaches only later runs; at dispatch each request's tags are filled in and the
+locked output format is added after the system prompt. The history version records the prompt's
+origin and fingerprint.
 
-- **Its description**, `src/lib/providers/<id>.ts`, shared by the browser and the server and
-  holding nothing that needs either: how its base URL is recognised, the request line the
-  Connection tab shows, the formats it can be asked for (`FormatSupport[]`), how each of its models
-  takes expression tags, whether it bills a request it refused (`billsFailures`), and the models its
-  docs name. [index.ts](../src/lib/providers/index.ts) is the list, read in order;
-  `compatible` — OpenAI's shape, which the local servers copy — says yes to any base URL and is
-  last. The helpers the pages already call (`isFishAudio`, `ttsRequestPath`, `speechFormats`, …) are
-  questions asked of it in [endpointShapes.ts](../src/lib/endpointShapes.ts).
-- **Its wire module**, `server/providers/speech/<id>.ts`: the request a line goes out as (throwing,
-  before anything is sent, for a line it cannot be asked for), how a 2xx that is not the audio
-  itself becomes audio, its Test button, and its voice list. The registry
-  ([registry.ts](../server/providers/speech/registry.ts)) is a `Record` over the description ids, so
-  a provider described and given no wire module does not compile.
+**A prompt trial** is `POST /api/books/:id/script-trial` ([server/script/trial.ts](../server/script/trial.ts)):
+one chunk sent with draft layers over the saved ones and `lenient` set, so lines that fail
+`fidelity` come back rather than being refused. It writes nothing but a ledger row, checks the
+book's budget first, answers a provider refusal as a result with `error` (200), and is cancelled
+with the request. **Thinking is counted**: ledger rows keep `reasoning_tokens` (null = not
+reported) and `reasoning_effort`, and `scriptReasoning` turns an endpoint's latest 20 at its current
+level into the thinking-per-input-token share the estimates add to output.
 
-What is the same for every provider happens once, around the module. Before anything is built, the
-line is held to the provider's formats (`refuseEncoding`). [send.ts](../server/providers/send.ts)
-sends the request through `call`, turns a 2xx into a clip — by the module's `read`, or as a body of
-audio ([answer.ts](../server/providers/answer.ts)) — and reports the request to the ledger with how
-many attempts it took (a further request that is part of it, like Qwen's download, counted with
-it), the usage the answer said it used, and whether it was billed (see
-[what a request costs](#what-a-request-costs-and-what-a-book-may-spend)). A `read` hands over the
-usage it finds (`counted`) before it decodes anything, so an answer that then proves unusable still
-reports what it cost. Adding a provider is its description and a line in the list, its wire module
-and a line in the registry, and its tests; a preset for it is `src/lib/endpoints.ts`'s.
+### Speech requests
 
-The providers, as their docs give them:
+[endpointSpeech.ts](../server/providers/endpointSpeech.ts) finds which provider the base URL speaks
+and hands the line to that provider's wire module. A provider is two files:
 
-- Fish ([speech/fish.ts](../server/providers/speech/fish.ts)): `POST /v1/tts` with the model in a
-  `model` header, the voice as `reference_id`, `format: "wav"` and `normalize`. Its WAV rates here are
-  16, 24, 32 and 44.1 kHz, 44.1 when none is asked for; another rate fails before the request.
-  The model is held to the five Fish documents (`s1`, `s2-pro`, `s2.1-pro`, `s2.1-pro-free`,
-  `drama-3-preview`) before a request and by the Test button, because Fish answers any other with
-  the paid `s2.1-pro`. The line's direction is not written in — the job already placed the
-  endpoint's configured expression tags, and a free-text cue would be words nobody configured.
-- Gemini ([speech/gemini.ts](../server/providers/speech/gemini.ts)): `POST
-{base}/models/{model}:generateContent` with the key in `x-goog-api-key` (a model saved as
-  `models/gemini-…` is sent without the prefix doubled), asking for the AUDIO modality in one
-  voice. A 3.8 model is asked for WAV delivered `INLINE` through `responseFormat` (at the
-  endpoint's rate, 16 or 24 kHz, when it names one), names the voice as `voiceConfig.voice`, and
-  gets the line's instructions as the part's `speechMetadata.style` — 3.8 reads the text word for
-  word, so a direction written into it would be spoken. A legacy preview (3.1 and before) takes
-  none of that: `prebuiltVoiceConfig.voiceName`, no style, and it answers raw 24 kHz PCM, which is
-  put under a WAV header. The answer is JSON, the audio base64 in the first candidate; its
-  `usageMetadata` — text tokens in, audio tokens out, which is what Google bills — is reported to
-  the ledger, so a Gemini line is priced from Google's count rather than estimated. An answer
-  that finished for any reason but `STOP` (`MAX_TOKENS` cuts the line off), or came back at
-  another rate than the one asked for, fails — billed, with Google's count kept. The voice list
-  is the guide's thirty prebuilt voices, answered without a request; the Test button reads
-  `GET /models/{model}`.
-- ElevenLabs ([speech/elevenlabs.ts](../server/providers/speech/elevenlabs.ts)): `POST
-/v1/text-to-speech/{voice_id}` with the key in `xi-api-key`, `{ text, model_id }`, and an
-  `output_format` that names the rate and, for MP3, the bitrate (`wav_24000` when nothing is set,
-  which every plan may ask for; `mp3_44100_128`). No instructions field — `eleven_v3` takes audio
-  tags in the text, from the Expressions tab. The answer is the audio itself; its
-  `character-cost` header — which the request-stitching guide reads, though the reference does not
-  list it for this endpoint — is reported as the characters billed when it holds a whole count
-  above 0, and ignored otherwise. Voices come from `GET /v2/voices` a hundred a page; the Test
-  button reads the bare list `GET /v1/models` answers and says when the configured model is not
-  on it.
-- BreezeBlue ([speech/breezeblue.ts](../server/providers/speech/breezeblue.ts), built from the
-  ElevenLabs pieces): `api.breeze.blue` takes the same path, `xi-api-key`, `output_format` and model
-  list, and also an `instructions` field, which it is sent — the line's style and direction, up to
-  the 1,000 characters its guide allows; a line with more fails before a request. Voices come from
-  `GET /v1/voices`, with gender as a field.
-- MiniMax ([speech/minimax.ts](../server/providers/speech/minimax.ts)): `POST /v1/t2a_v2` with a
-  bearer key, `voice_setting.voice_id` and `audio_setting` (rate up to 44.1 kHz; an MP3's bitrate
-  in bits a second), answered as JSON with the audio in hex, which is checked to be whole hex before
-  it is decoded. A refusal can arrive as a 200 whose `base_resp.status_code` is not 0; its `check`
-  finds it before the answer is accepted, so the codes MiniMax's error page says to retry later
-  (1000, 1001, 1002, 1024, 1033, 1039, 1041, and 2045's rate growth limit) are sent again with the
-  endpoint's retries — the limits among them after its cooldown, marked rate-limited — and any other
-  fails at once. Either way the failure carries MiniMax's code, not the 200. `extra_info.usage_characters`
-  is reported as the characters billed. Voices, and the Test button, are `POST /v1/get_voice`.
-- Cartesia ([speech/cartesia.ts](../server/providers/speech/cartesia.ts)): `POST /tts/bytes` with a
-  bearer key and `Cartesia-Version: 2026-08-14`, `{ model_id, transcript, voice: { id },
-output_format }`, answered with the audio. It reports no usage. Voices are `GET /voices`, paged
-  after the last voice of the page before; the Test button reads one.
-- Qwen-Audio 3.0 ([speech/qwen.ts](../server/providers/speech/qwen.ts)): `POST
-/api/v1/services/audio/tts/SpeechSynthesizer` on `dashscope-intl.aliyuncs.com` or a workspace's
-  own host, `{ model, input: { text, voice, format, sample_rate } }`. The answer is a link to the
-  audio, valid a day, fetched at once without the key (it is signed) as part of the same request,
-  its attempts counted with it; `usage.characters` beside it is reported as the characters billed.
-  No instructions are sent: Alibaba's realtime guide says these models take them through the
-  realtime API, and the HTTP reference documents no field for them. WAV at 24 kHz only, and
-  requests kept to 600 characters, until more is known about these models. The voices are each
-  model's system voices from Alibaba's list, answered without a request.
-- OpenAI-shaped ([speech/openai.ts](../server/providers/speech/openai.ts)): `model`, `input`,
-  `voice`, `response_format: "wav"`, and the line's instructions (the speaker's style and the
-  line's direction, as the clip records them) except on `tts-1` and `tts-1-hd`, however their name
-  is cased. OpenAI's own API is sent a custom voice, `voice_…`, as the `{ "id": … }` its reference
-  asks for. This API cannot be asked for a sample rate, so an endpoint with one set fails its lines
-  before any request rather than rendering at the model's own and reading as drift forever after.
-- **The format is the endpoint's** (`encoding`: WAV by default, or MP3 or Opus with a bitrate),
-  and a clip is kept in the format it came back in — the file's extension is the only record of
-  which. Before any request the line is held against `encodingProblems`, so a rate or bitrate the
-  API does not offer fails there, naming it, rather than being refused or quietly changed by the
-  provider.
+- **Its description**, `src/lib/providers/<id>.ts`, shared by the browser and the server: how its
+  base URL is recognised, the request line the Connection tab shows, the formats it can be asked for
+  (`FormatSupport[]`), how each model takes expression tags, whether it bills a request it refused
+  (`billsFailures`), how it clones (`cloning`), and the models its docs name.
+  [index.ts](../src/lib/providers/index.ts) is the list, read in order; `compatible` — OpenAI's
+  shape, which the local servers copy — says yes to any base URL and is last. The helpers the pages
+  call (`isFishAudio`, `ttsRequestPath`, `speechFormats`, …) are in
+  [endpointShapes.ts](../src/lib/endpointShapes.ts).
+- **Its wire module**, `server/providers/speech/<id>.ts`: the request a line goes out as, how a 2xx
+  that is not the audio itself becomes audio, its Test button, its voice list and its clone. The
+  registry ([registry.ts](../server/providers/speech/registry.ts)) is a `Record` over the
+  description ids, so a provider described and given no wire module does not compile; `simulated`
+  alone has none.
+
+What is the same for every provider happens once, around the module. The line is held to the
+provider's formats before anything is built (`refuseEncoding`); [send.ts](../server/providers/send.ts)
+sends it through `call`, turns a 2xx into a clip ([answer.ts](../server/providers/answer.ts)), and
+reports the request to the ledger with its attempts, the usage the answer said it used — handed
+over before anything is decoded, so an unusable answer still reports what it cost — and whether it
+was billed. A line with nowhere to go — a speaker with no voice, a voice whose endpoint is no longer
+configured, a missing key — fails before any request, with the reason. Adding a provider is its
+description and a line in the list, its wire module and a line in the registry, and its tests; its
+preset goes in [src/lib/presets/speech.ts](../src/lib/presets/speech.ts), with each provider's
+`concurrency` set from its own docs for its entry plan.
+
+Each wire module's header cites the docs it was written from. What is particular to each:
+
+- **Fish** ([fish.ts](../server/providers/speech/fish.ts)): `POST /v1/tts`, the model in a `model`
+  header, the voice as `reference_id`. The model is held to the ones Fish documents (`s1`, `s2-pro`,
+  `s2.1-pro`, `s2.1-pro-free`, `drama-3-preview`), because Fish answers any other with the paid
+  `s2.1-pro`. No free-text direction is written in: the job already placed the configured tags.
+- **Gemini** ([gemini.ts](../server/providers/speech/gemini.ts)): `generateContent` with the AUDIO
+  modality. A 3.8 model is asked for WAV `INLINE`, names the voice as `voiceConfig.voice`, and takes
+  the line's instructions as `speechMetadata.style`, because 3.8 reads the text word for word; a
+  legacy 3.1 preview takes none of that and answers raw 24 kHz PCM, put under a WAV header.
+  `usageMetadata` (text tokens in, audio tokens out) is reported, so a line is priced from Google's
+  count. An answer that did not finish with `STOP`, or came back at another rate, fails — billed.
+- **ElevenLabs** ([elevenlabs.ts](../server/providers/speech/elevenlabs.ts)):
+  `POST /v1/text-to-speech/{voice_id}` with an `output_format` naming the rate and bitrate
+  (`wav_24000` by default, which every plan may ask for). No instructions field; `eleven_v3` takes
+  audio tags in the text. A whole `character-cost` header is reported as the characters billed.
+- **BreezeBlue** ([breezeblue.ts](../server/providers/speech/breezeblue.ts)): ElevenLabs' shape, plus
+  an `instructions` field of up to 1,000 characters; a line with more fails before a request.
+- **MiniMax** ([minimax.ts](../server/providers/speech/minimax.ts)): `POST /v1/t2a_v2`, answered as
+  JSON with the audio in hex. A refusal can arrive as a 200 whose `base_resp.status_code` is not 0;
+  the codes MiniMax says to retry (1000, 1001, 1002, 1024, 1033, 1039, 1041, 2045) are sent again,
+  the rate limits among them after the cooldown, and any other fails at once, carrying MiniMax's
+  code. `extra_info.usage_characters` is reported as billed.
+- **Cartesia** ([cartesia.ts](../server/providers/speech/cartesia.ts)): `POST /tts/bytes` with
+  `Cartesia-Version: 2026-08-14`, answered with the audio. It reports no usage.
+- **Qwen-Audio 3.0** ([qwen.ts](../server/providers/speech/qwen.ts)): Model Studio's
+  `SpeechSynthesizer`, answered with a signed link to the audio that is fetched at once, without the
+  key, as part of the same request. `usage.characters` is reported as billed. No instructions, WAV
+  at 24 kHz only, and requests kept to 600 characters, until more is known about these models.
+- **OpenAI-shaped** ([openai.ts](../server/providers/speech/openai.ts)): `/audio/speech` with the
+  line's instructions except on `tts-1` and `tts-1-hd`; OpenAI's own API is sent a custom voice,
+  `voice_…`, as `{ "id": … }`. It cannot be asked for a sample rate, so an endpoint with one set
+  fails its lines before any request rather than rendering at the model's own and reading as drift
+  forever after.
+
+What every provider's audio goes through:
+
+- **The format is the endpoint's** (`encoding`: WAV by default, or MP3 or Opus with a bitrate), and
+  a clip is kept in the format it came back in — the file's extension is the only record of which.
+  A rate or bitrate the API does not offer fails before any request (`encodingProblems`) rather
+  than being refused or quietly changed by the provider. Changing an endpoint's format stales
+  nothing: it applies to the next line rendered. A simulated endpoint answers WAV only.
 - A WAV answer's streamed header claims sizes that are true of nothing (Fish's reads
-  `data ffffff00`, about 4 GB). [wav.ts](../server/providers/wav.ts) keeps the samples that arrived,
-  in whole frames, under the plain 44-byte header the rest of the server writes. An MP3 or Opus
-  answer is kept byte for byte. [probe.ts](../server/audio/probe.ts) is the one reader of a clip:
-  a WAV by its header, an MP3's length by counting its frames (music-metadata validates it and
-  gives the rate, but estimates the length of an MP3 with no Xing header, which is what Fish
-  sends), an Opus by music-metadata reading to the last page. [answer.ts](../server/providers/answer.ts)
-  turns a 200 carrying JSON, an empty body, a different container from the one asked for, or
-  something unreadable into a failure a person can read.
-- A line split at `maxChars` is joined per format: WAV as before, MP3 by laying the parts' audio
-  frames end to end with every tag and Xing/Info frame dropped
-  ([mp3.ts](../server/audio/mp3.ts)). An Opus line that would need parts fails before any request:
-  chained Ogg streams are legal, but players seek them badly and report the first one's length.
-- The fake answers WAV whatever it is asked for, and the clip is kept as what it is; a simulated
-  endpoint offers WAV alone.
-- Changing an endpoint's format stales nothing: it applies to the next line rendered.
+  `data ffffff00`, about 4 GB); [wav.ts](../server/providers/wav.ts) keeps the samples that arrived,
+  in whole frames, under a plain 44-byte header. An MP3 or Opus answer is kept byte for byte.
+  [probe.ts](../server/audio/probe.ts) is the one reader of a clip: a WAV by its header, an MP3's
+  length by counting its frames (music-metadata estimates the length of an MP3 with no Xing header,
+  which is what Fish sends), an Opus by reading to the last page. A 200 carrying JSON, an empty
+  body, the wrong container or something unreadable becomes a failure a person can read.
+- A line split at `maxChars` is joined per format: WAV end to end, MP3 by laying the parts' frames
+  end to end with every tag and Xing/Info frame dropped ([mp3.ts](../server/audio/mp3.ts)). An Opus
+  line that would need parts fails before any request: chained Ogg streams are legal, but players
+  seek them badly.
+
+### Voices, samples and test requests
 
 **Voices** come from `POST /api/endpoints/voices` `{ id, source, query?, language?, page? }`,
-answering `{ voices, total, page, hasMore }` ([voices.ts](../server/providers/voices.ts), which
-asks the endpoint's wire module). The saved
-endpoint and key are used, even by a test that narrates through the fakes: listing voices spends
-nothing and reads the account, it does not narrate. A simulated endpoint is asked nothing and
-answers with the voices it names. For Fish, `library` is every model in your workspace (`self=true`, every page up to a thousand) and `public` one page of Fish's
-public catalogue by title and language, TTS models only; a pasted 32-character id is looked up
-directly. A public voice carries Fish's own recording of it as `sample: { url, text }` when the
-model has one at an `https` link — the Voices tab plays it straight from Fish's CDN, free — and adding
-the voice keeps only its id, label and gender. OpenAI has no voice-list API, so its documented voices are answered without a request;
-any other OpenAI-shaped server is asked `GET /audio/voices`. A provider's failure is answered as
-the voice sample's and a clone's are, by one rule (`providerFailure` in
-[ops.ts](../server/endpoints/ops.ts)): refused before any request — no key, a provider that cannot
-do this — is a `400`; a 4xx the provider answered, other than a timeout (408) or a rate limit
-(429), is the request's to fix too — a key it does not know, a recording it cannot read — and is a
-`400` carrying what it said; a rate limit, a fault on its side or no answer at all is a `502` with
-the code `upstream` and what it said. None of these messages carries the key.
+answering `{ voices, total, page, hasMore }` ([voices.ts](../server/providers/voices.ts), which asks
+the wire module) with the saved endpoint and key — listing voices spends nothing. A simulated
+endpoint answers with the voices it names. For Fish, `library` is every model in your workspace and
+`public` one page of Fish's public catalogue, TTS models only; a pasted 32-character id is looked up
+directly, and a public voice carries Fish's own recording as `sample: { url, text }` for the Voices
+tab to play from Fish's CDN, free. Gemini's and OpenAI's documented voices are answered without a
+request; any other OpenAI-shaped server is asked `GET /audio/voices`.
 
-**A voice sample** is `POST /api/endpoints/sample` `{ id, voice }`, answering the audio itself —
-`content-type` the format it is in, `x-sample-source` `recording` or `rendered`, `x-sample-kept`
-`1` when nothing was asked of the provider this time, and `x-audio-duration` its length in seconds
-when the server knows it (a provider's recording is timed by the page, from the file). It is what
-every ▶ plays: the Voices tab's, the demo button beside a speaker on the Narration page, and the
-one beside each voice in the voice picker. It is found in this order:
+A provider's failure here, in a voice sample and in a clone is answered by one rule
+(`providerFailure` in [ops.ts](../server/endpoints/ops.ts)): refused before any request — no key, a
+provider that cannot do this — is a `400`; a 4xx the provider answered, other than 408 or 429, is
+the request's to fix too and is a `400` carrying what it said; a rate limit, a fault on its side or
+no answer at all is a `502` with the code `upstream`. None of these messages carries the key.
 
-1. **Kept.** What was played for the voice before, from `heard/` under the library's `VOICE_DIR`
-   (one directory per endpoint, one per voice, named by hashes). Free.
-2. **The provider's own recording** of the voice, where it keeps one — Fish does, for most voices:
-   `GET /model/{id}` on the endpoint's host with its saved key, then the first sample's file, only
-   from an `https` link on Fish's own hosts. Free, and kept. Fish not answering, or knowing no
-   such voice, is not a failure: the next step is taken.
-3. **Rendered.** The **saved** endpoint says one fixed sentence (`VOICE_SAMPLE` in
-   [endpointShapes.ts](../src/lib/endpointShapes.ts)) in that voice with its saved key, asked for
-   the way a line is — the endpoint's format and sample rate, no instructions — and tried once,
-   like a connection test. This is the one that is billed, priced into the ledger against the
-   endpoint with no book (`Voice sample · <label>` in its Activity list), and kept before the
-   answer goes back, so the next press finds it. A missing key is a `400` before any request, and
-   the provider's failures are split as the voice list's are.
+**A voice sample** is `POST /api/endpoints/sample` `{ id, voice }`, answering the audio itself with
+`x-sample-source` (`recording` or `rendered`), `x-sample-kept` (`1` when nothing was asked of the
+provider this time) and `x-audio-duration` when known. It is what every ▶ beside a voice plays, and
+it is found in this order:
+
+1. **Kept**: what was played for the voice before, from `heard/` under the library's `VOICE_DIR`.
+   Free.
+2. **The provider's own recording**, where it keeps one — Fish does, for most voices — fetched only
+   from an `https` link on Fish's own hosts. Free, and kept. Fish not having one is not a failure.
+3. **Rendered**: the saved endpoint says one fixed sentence (`VOICE_SAMPLE` in
+   [endpointShapes.ts](../src/lib/endpointShapes.ts)) in that voice, at the endpoint's format and
+   rate, tried once. This is the one that is billed, priced into the ledger against the endpoint
+   with no book (`Voice sample · <label>`), and kept before the answer goes back.
 
 A rendered sample is kept under a hash of the endpoint's base URL, model, format and rate and the
-sentence, so an endpoint changed in any of them has its samples made again, each replacing the old
-one. A simulated endpoint's tone is never kept: it costs nothing to make. Saving the endpoints
-removes what was kept for any endpoint no longer among them. The browser also keeps each sample it
-has heard for the session, which saves the round trip.
+sentence, so an endpoint changed in any of them makes its samples again. A simulated endpoint's
+tone is never kept. Saving the endpoints removes what was kept for any endpoint no longer among
+them.
 
-**Cloning a voice** is `POST /api/endpoints/voices/clone`, a multipart form of the endpoint's `id`,
-the voice's `title`, the samples under `clips` and `consent=yes`, which says the person has the
-right to clone the voice in them; without it nothing is sent. A sample is any audio of the one
-person speaking — recorded, or downloaded — and the provider makes the voice from it **once**: from
-then on a line is spoken with the new voice's id, like any other voice's. The `voice cloned` log
-line is the record that consent was given: the endpoint, the new voice's id, its title, how many
-samples and `consent: true`.
+**Test connection** is `POST /api/endpoints/test` `{ kind, id }`, answering `{ ok, message, ms }`:
+one small request to the saved endpoint with its saved key, through the provider its runs go
+through. Scripting sends a two-sentence excerpt through the path a chapter takes; each speech wire
+module has its own cheapest proof (Fish lists the account's models; an OpenAI-shaped server lists
+`/models`). The page writes any edit still waiting first, but not an unsaved connection draft:
+saving one can move queued work, which asks first.
 
-Which providers can clone, and from what, is written once beside each provider's other facts, as
-its `cloning` ([lib/providers/types.ts](../src/lib/providers/types.ts)): the most samples a voice is
-made from, the most one may be, the formats its docs take, its advice on samples, and what cloning
-costs. `canCloneVoices` is whether there is one. The route holds the form to it before anything is
-read whole: too many samples is a `400`, one over the provider's size (never above 20 MB, nor 100 MB
-in all) a `413`, and a sample is what its first bytes say (`sniffSample`), never its name or the
-type the browser gave it — WAV, MP3, M4A, Ogg Opus or FLAC, of which the provider takes the ones
-its docs name; anything else, an Ogg Vorbis, AAC or WebM file among them, is a `415` naming the
-file. How the voice is made is the provider's wire module's `clone`
-([speech/wire.ts](../server/providers/speech/wire.ts)), and an endpoint whose provider has none is a
-`400` before a request. For Fish it is `POST /model` on the API's host
-([speech/fish.ts](../server/providers/speech/fish.ts)): `type=tts`, the title, `train_mode=fast`
-so the voice is usable at once, `visibility=private`, and up to 20 samples under `voices`; Fish
-transcribes them itself. The others, each from its own docs, cited in its module:
+### Cloning a voice, and keeping its samples
+
+`POST /api/endpoints/voices/clone` is a multipart form of the endpoint's `id`, the voice's `title`,
+the recordings under `samples`, and `consent=yes` with the sentence the form showed
+(`consentText`) — without the consent nothing is sent. The provider makes the voice **once**; from
+then on a line is spoken with the new voice's id, like any other voice's.
+
+Which providers can clone, and from what, is each provider's `cloning`
+([src/lib/providers/types.ts](../src/lib/providers/types.ts)): how many samples, how big, which
+formats its docs take, which models it clones for, and what it costs. The route holds the form to it
+before anything is read whole: too many samples is a `400`, one over the provider's size (never
+above 20 MB, nor 100 MB in all) a `413`, and a sample is what its first bytes say (`sniffSample`) —
+WAV, MP3, M4A, Ogg Opus or FLAC, of which the provider takes the ones its docs name; anything else
+is a `415` naming the file. How the voice is made is the wire module's `clone`
+([speech/wire.ts](../server/providers/speech/wire.ts)):
 
 | Provider   | Request                                                                                                            | Samples                                |
 | ---------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
-| Fish Audio | `POST /model`, multipart                                                                                           | 1–20; WAV, MP3, M4A, Opus, FLAC; 20 MB |
+| Fish Audio | `POST /model`, multipart: `type=tts`, `train_mode=fast`, `visibility=private`; Fish transcribes the samples        | 1–20; WAV, MP3, M4A, Opus, FLAC; 20 MB |
 | ElevenLabs | `POST /v1/voices/add`, multipart `name` + `files` (Instant Voice Cloning)                                          | up to 20; MP3, WAV, M4A, FLAC; 10 MB   |
 | BreezeBlue | `POST /v1/voice-previews/clone`, then `POST /v1/voice-previews/{id}/save` with `language_code=en`                  | 1; WAV, MP3; 5 MB                      |
 | Cartesia   | `POST /voices/clone`, multipart `clip`, `name`, `language=en`, `access=private`                                    | 1; WAV, MP3, FLAC, Opus; 16 MB         |
 | MiniMax    | `POST /v1/files/upload` (`purpose=voice_clone`), then `POST /v1/voice_clone` with a `voice_id` made from the title | 1; WAV, MP3, M4A; 20 MB                |
 | Qwen       | `POST /api/v1/services/audio/tts/customization`, `qwen-voice-enrollment`, the sample as a data URL                 | 1; WAV, MP3, M4A; 10 MB                |
 
-A provider may clone for only some of its models (`cloning.models`): a Qwen voice is enrolled for
-`qwen3-tts-vc-2026-01-22` and speaks only with it, and Qwen-Audio 3.0 enrols only from a public URL,
-which a picked file does not have — so an endpoint on another model is refused with the model to
-change to, and its Voices tab says the same instead of offering the form. OpenAI's custom voices
-need its sales team, and Gemini's voice replication needs a recording of the speaker reading
-Google's consent sentence besides the sample, so neither clones here. The answer is the new voice,
-and the route answers `201` with it — and with a `warning` beside it when the provider said to do
-something before it speaks (ElevenLabs and BreezeBlue may ask for the voice to be verified) — which
-the page adds to the endpoint and the write-behind saves.
-
-**What a clone costs goes in the ledger**, as the provider's `cloning.fee` says, against the
-endpoint and no book, the way a voice sample is ([ledger.ts](../server/usage/ledger.ts),
-`settleClone`). Qwen charges $0.01 as the voice is made, and the row is appended then (`Voice made
-· Mara · $0.01 a voice`); BreezeBlue charges 100 credits then, which a plan prices, so its row has
-no figure and counts as unpriced. MiniMax charges $1.50 the first time a line is spoken in the voice
-and deletes one unused for 7 days, so the fee waits in `clone_fees` and the first billed request
-spoken in that voice — a line, or ▶ on the Voices tab — appends it and removes the row in one
-transaction (`Voice first spoken · …`). Fish, ElevenLabs and Cartesia charge nothing per voice; a
-plan's voice slots are not a charge. A BreezeBlue preview that was made but not saved is paid for
-and not recorded: the clone failed, and its error says to save the preview on BreezeBlue.
+A Qwen voice is enrolled for `qwen3-tts-vc-2026-01-22` and speaks only with it, so an endpoint on
+another model is refused with the model to change to. OpenAI's custom voices need its sales team,
+and Gemini's voice replication needs a recording of Google's consent sentence besides the sample,
+so neither clones here. The route answers `201` with the new voice, with a `warning` when the
+provider said to do something before it speaks (ElevenLabs and BreezeBlue may ask for the voice to
+be verified).
 
 Making a voice is not idempotent, so each of its requests goes out **once**, whatever the
-endpoint's `maxRetries` ([clone.ts](../server/providers/clone.ts)): an upload that timed out or met
-a 5xx may still have made the voice, and a second attempt would make a second, private and
-duplicate. A clone of two requests (an upload, then the clone) makes each once and says which
-failed. Its clock is ten minutes rather than the
-endpoint's per-line timeout — 100 MB over a slow uplink and the provider's work after it (Fish transcribes) — and the
-route lifts Bun's ten-second idle limit for this one request, which would otherwise close it while
-the provider works. The provider's refusals are split as the voice list's are. The server's own body ceiling
-(`maxRequestBodySize`) sits above both these routes' limit and the import's. The samples pass
-through, held once — the parsed form's files are what is sent on.
+endpoint's `maxRetries` ([clone.ts](../server/providers/clone.ts)): an upload that timed out may
+still have made the voice, and a second attempt would make a duplicate. Its clock is ten minutes
+rather than the per-line timeout, and the route lifts Bun's ten-second idle limit for this one
+request, which would otherwise close it while the provider works.
 
-**The samples are kept once the provider has answered**, never before, so a failed clone keeps nothing:
-the bytes as they were picked, named by their hash, under `VOICE_DIR` (`./data/voices`) in one
-directory per voice ([voices/files.ts](../server/voices/files.ts)), and a `cloned_voices` row with
-the time the box was ticked and the sentence it said (`consent_at`, `consent_text`) beside a
-`voice_samples` row per sample. The voice already exists on the account by then, so a failure to
-keep them answers `201` with `samplesKept: false` rather than failing the clone. Neither table
-points at `voices`, because a save of the endpoints replaces every voice row and a cascade would
-empty them on every save; `saveEndpoints` reconciles them in the same transaction instead
-([voiceSamples.ts](../server/db/voiceSamples.ts)): a voice the saved configuration holds is
-attached, an attached voice it no longer holds loses its samples, and a clone the page has not
-saved yet is spared for a day, since the clone answers before the page adds its voice. Files go
-after the commit, in the background. `GET /api/endpoints/:id/samples` lists an endpoint's voices
-with kept samples; under `/api/endpoints/:id/voices/:voice/samples`, `GET` is one voice's list
-and consent, `GET …/:file` one sample as it was picked (immutable, named by its bytes), `POST`
-keeps samples for a voice already saved — the clone's form, the endpoint's limits and consent,
-nothing sent to the provider — and `DELETE` forgets them and keeps the voice.
+**What a clone costs goes in the ledger**, as `cloning.fee` says, against the endpoint and no book
+(`settleClone` in [ledger.ts](../server/usage/ledger.ts)). Qwen charges $0.01 as the voice is made,
+and the row is appended then; BreezeBlue charges 100 credits then, which counts as unpriced. MiniMax
+charges $1.50 the first time a line is spoken in the voice, so the fee waits in `clone_fees` and the
+first billed request in that voice appends it and removes the row in one transaction. Fish,
+ElevenLabs and Cartesia charge nothing per voice.
 
-**Test connection** is `POST /api/endpoints/test` `{ kind, id }`, answering `{ ok, message, ms }`:
-one small request to the **saved** endpoint with its saved key, through the provider its runs go
-through — a simulated endpoint says it answered without one. Scripting sends a two-sentence excerpt through the same
-path a chapter takes; Fish lists the account's models, which proves the key and costs nothing; an
-OpenAI-shaped server lists `/models`. The page sends any edit still waiting to be written first,
-but not an unsaved connection draft: saving one can move queued work, which asks first.
+**The samples are kept once the provider has answered**, never before, so a failed clone keeps
+nothing: the bytes as picked, named by their hash, under `VOICE_DIR` in one directory per voice
+([voices/files.ts](../server/voices/files.ts)), with a `cloned_voices` row holding when consent was
+given and the sentence it was given to, and a `voice_samples` row per sample. The voice already
+exists on the account by then, so a failure to keep them answers `201` with `samplesKept: false`;
+the `voice cloned` log line records the same. `saveEndpoints` reconciles kept samples with the
+configuration in its own transaction ([server/db/voiceSamples.ts](../server/db/voiceSamples.ts)): a
+voice the configuration holds is attached; an attached voice it no longer holds is marked missing
+and keeps its samples for a day, so an Undo that brings it back finds them; a clone the page has
+not saved yet is spared for a day, since the clone answers before the page adds its voice. Files go
+after the commit, in the background.
+[Script export and import](script-transfer.md#kept-when-a-voice-is-cloned) has the rules in full,
+and how a script file carries the samples to another library.
 
-### What a request costs, and what a book may spend
+## What a request costs, and what a book may spend
 
 **Every request a provider sends is priced and appended to the ledger, answered or not.** A
 provider reports each one through its input's `sent` callback ([sent.ts](../server/providers/sent.ts))
-— when it went out and came back, how many attempts `call` made and whether one was a 429, what it
-used — and the job settles it with the book, the chapter's uid and a label
-([ledger.ts](../server/usage/ledger.ts)). The price is the browser's engine, `src/lib/pricing.ts`,
-imported as it is: a scripting request through `priceRequest` against its profile's card, a speech
-request through `measureSpeech` and `priceSpeechRequest` against its endpoint's, both at the rates
-in force the moment the request completed. The card read is the one stored then, not the one the
-run was queued with, and the receipt is frozen on the row, so a rate changed tomorrow re-prices
-nothing.
+— when it went out and came back, its attempts and whether one was a 429, what it used — and the job
+settles it with the book, the chapter's uid and a label ([ledger.ts](../server/usage/ledger.ts)).
+The price is the page's own engine, `src/lib/pricing.ts`, imported as it is: `priceRequest` for a
+scripting request, `measureSpeech` and `priceSpeechRequest` for a speech one, against the card
+stored when the request completed and at the rates in force then. The receipt is frozen on the row,
+so a rate changed tomorrow re-prices nothing. What a receipt holds, and why, is in
+[pricing](pricing.md).
 
-Which requests count follows what a provider bills. An answer a provider then refuses — cut off at
-the length limit, empty, a line that is not the chapter's — was billed and is priced from the usage
-it reported. A chat request that failed on the wire reported no usage and costs nothing. A speech
-request reports whether it was billed (`billed` on [sent.ts](../server/providers/sent.ts)), by one
-rule in [send.ts](../server/providers/send.ts): a 2xx was generated and is billed, even when what
-came back proved unusable — charged for what it sent on an endpoint that bills characters, bytes or
-requests, and from the usage it reported on one that bills audio. A refusal after the retries, a
-request that never got an answer, and a refusal inside a 200 (MiniMax's `base_resp`) are not billed,
-unless the provider's docs say it bills failures (`billsFailures` in `src/lib/providers/`, false for
-every provider so far; Cartesia's pricing page says outright that errors consume no credits). Such a
-request is still a row, with everything it sent counted, at nothing — each line of its receipt says
-it was not billed. A request refused before it was sent — no key, no voice, a format the endpoint
-cannot be asked for, a model Fish does not document — never happened, and has no row; nor does a
-request cancelled mid-flight, since what the provider made of it is not knowable.
+Which requests count follows what a provider bills. A chat answer the job then refuses — cut off,
+empty, not the chapter's — was billed and is priced from the usage it reported; a chat request that
+failed on the wire reported none and costs nothing. A speech request reports whether it was billed,
+by one rule in [send.ts](../server/providers/send.ts): a 2xx was generated and is billed, even when
+what came back proved unusable. A refusal after the retries, a request that never got an answer,
+and a refusal inside a 200 are not billed unless the provider's docs say it bills failures
+(`billsFailures`, false for every provider so far); such a request is still a row, at nothing, and
+its receipt says so. A request refused before it was sent never happened and has no row; nor does
+one cancelled mid-flight, since what the provider made of it is not knowable.
 
-**The fakes are metered too.** They report what they were given and what they answered, marked
-`simulated`, and the rows are priced at the endpoint's card like any other — nothing, on the
-Simulated preset's zero card. A simulated endpoint still spends no money, and a budget can be run
-into, tested and shown without a key.
+**Simulated requests are metered too**, marked `simulated` and priced at the endpoint's card like
+any other — nothing on the Simulated preset's zero card, the seeded rates on the demo's endpoints —
+so a budget can be run into, tested and shown without a key or a charge.
 
 **A book's budget is enforced here, by one question asked twice.**
 [budget.ts](../server/usage/budget.ts) asks whether some work fits: a paused book fits nothing; a
 book with a cap fits what keeps _spent + held by unfinished jobs + this_ under it; scripting must
-also fit under the script budget. The price asked about is the worst case — the dearest rates any
-window or promotion can make (a peak hour can charge more than the card), the dearest input rate,
-the whole output ceiling — because a run lasts long enough for a promotion to end or a peak to
-start inside it, which is the rule `src/stores/README.md` sets for the browser.
+also fit under the script budget. The price asked about is the worst case, because a run lasts long
+enough for a promotion to end or a peak to start inside it: for scripting, the dearest rates the
+card can reach and the whole output ceiling; for speech, the dearer of today's price and the price
+without promotions ([narration/cost.ts](../server/narration/cost.ts)).
 
 - **Before anything is queued**, with the whole run's worst case. A run that does not fit queues
-  nothing and answers **409** with a sentence that says what to change. Every way of asking for
-  work goes through it: a run, a retry, a retake.
-- **Before each request goes out**, by the running job, with what it still holds and its own
-  reservation left out of the book's total. That only fails when something moved under a run that
-  fitted — a request cost more than it reserved, the cap was lowered, the book was paused — and
-  the job stops and fails with the same sentence. What it already paid for stays in the ledger.
+  nothing and answers **409** with a sentence that says what to change — a run, a retry, a retake
+  or a prompt trial alike.
+- **Before each request goes out**, by the running job, with its own reservation left out of the
+  book's total. That only fails when something moved under a run that fitted — a request cost more
+  than it reserved, the cap was lowered, the book was paused — and the job stops with the same
+  sentence, keeping what it already paid for.
 
-A job holds its reservation in `jobs.reserved`, written with the row and summed by the gate over
-unfinished jobs, and gives it back as the work settles — a scripting job each chunk's share as its
-request ends, a narration job each line's once the line is written — so what is held plus what is
-spent never counts the same money twice. A finished job holds nothing. A narration job stopped by
-the budget puts the lines it had not sent back as they were, rather than failing them; a scripting
-job stopped by it writes no script, as any failed chunk does. A run with no profile is still asked
-about the pause, but has no card to price by and writes no rows. `GET /api/books/:id/spend` answers the sums; `GET /api/endpoints/requests`
-answers one endpoint's rows for the Activity list and the charts, each with the number its chapter
-goes by now.
+A job holds its reservation in `jobs.reserved`, summed by the gate over unfinished jobs, and gives
+it back as the work settles — a scripting job each chunk's share as its request ends, a narration
+job each line's as the line is written — so held plus spent never counts the same money twice. A
+narration job stopped by the budget puts the lines it had not sent back as they were, rather than
+failing them. `GET /api/books/:id/spend` answers the sums; `GET /api/endpoints/requests` answers one
+endpoint's rows for the Activity list and the charts, each with the number its chapter goes by now.
 
-### Narration
+## Narration
 
-A narration job is the same kind of thing as a scripting job — a row in `jobs`, claimed by the
-same runner, cancelled by the same abort, recovered by the same restart rule — and what it renders
-is decided by the same rules the demo decides it by. `POST /api/books/:id/chapters/narrate` takes
-chapter numbers and a scope, and the handler asks `narrationTargets` in
-[src/lib/runPlan.ts](../src/lib/runPlan.ts) which lines the scope covers: the lines with no usable
-clip and the ones whose clip the script has moved past (`fill`), only the ones whose last request
-failed (`failed`), or every line (`all`). A chapter with nothing in the scope is left out of the
-run and the route says so (`nothing`), beside the reasons scripting already has and one more for a
-chapter that has no script yet (`unscripted`). Each line goes to a
-[`SpeechProvider`](../server/providers/speech.ts) with its text, its speaker's voice from the cast
-(the Narrator's when the speaker has none, as `effectiveVoice` decides in the browser) and its
-direction, and comes back as audio with a duration.
+A narration job is the same kind of thing as a scripting job — claimed by the same runner, cancelled
+by the same abort, recovered by the same restart rule — and what it renders is decided by the
+functions the page plans with. `POST /api/books/:id/chapters/narrate` takes chapter numbers and a
+scope, and `narrationTargets` in [src/lib/runPlan.ts](../src/lib/runPlan.ts) decides which lines it
+covers: the lines with no usable clip and the ones whose clip the script has moved past (`fill`),
+only the failed ones (`failed`), or every line (`all`). A chapter with nothing in the scope is left
+out and the route says so (`nothing`), beside `unscripted` and the reasons scripting has. Each line
+goes to the provider with its text, its speaker's voice (the Narrator's when the speaker has none)
+and its direction, and comes back as audio with a duration.
 
-**A line is sent what the dictionary makes of it.** The book's pronunciation dictionary is applied
-by `speak` in [src/lib/speech.ts](../src/lib/speech.ts) — the same function the page's
-estimates use — as each line goes out, so a term added mid-run reaches every line not yet sent. The
-clip records what it was sent: `pronounced` always, and `said` with the number of substitutions
-(`lex`) when that differs from the line, because the browser's drift rule compares `pronounced`
-against the dictionary as it now stands. Two things keep that record honest. `PUT …/lexicon`
-marks stale, in the same transaction as the list, every rendered clip the new list would send
-different words for, and answers with those lines and their chapters' revisions (`stale`), so the
-client's next edit names the revision the change moved the script to. And a clip that was out
-when the list changed is checked as it lands, since the change had nothing landed to mark: it
-lands `stale` if its words are no longer the book's. An Undo sends the old list with the lines
-the change reported (`restore`), and those whose clip matches again go back to `done` — only
-those, because a clip stale by a rename would also match and is not the dictionary's to clear.
+**A line is sent what the dictionary makes of it.** `speak` in [src/lib/speech.ts](../src/lib/speech.ts)
+applies the book's dictionary as each line goes out, so a term added mid-run reaches every line not
+yet sent. The clip records what it was sent — `pronounced`, and `said` with the number of
+substitutions (`lex`) when that differs — because the drift rule compares `pronounced` against the
+dictionary as it now stands. `PUT …/lexicon` marks stale, in the same transaction, every rendered
+clip the new list would send different words for, and answers with those lines and their chapters'
+revisions (`stale`); a clip that was out when the list changed is checked as it lands. An Undo sends
+the old list with the lines the change reported (`restore`), and only those whose clip matches again
+go back to `done` — a clip stale by a rename would match too, and is not the dictionary's to clear.
 
-**A line carries its tags, at its endpoint's rate.** The speaker's voice names an endpoint —
-`<endpointId>/<voiceId>` — and the handler reads that endpoint from the stored configuration as
-each line goes out, then hands it to `expressionPlan` in
-[src/lib/expressions.ts](../src/lib/expressions.ts), the function the page plans with: the words after
-the dictionary, with each tag placed on the line written in as that endpoint spells it. The clip
-records the plan — `expressionSignature` and the tags sent, beside `pronounced` — so the
-browser's drift rule compares like with like. A line whose tags the endpoint cannot say (support
-unconfirmed or switched off, a tag it does not list, one inside a respelled word) is failed before
-any request, with the reason, as the demo blocks it; the other lines are sent. The endpoint's
-`sampleRate` (16–48 kHz, speech endpoints only; none means the model's own) goes with the request,
-and the clip records the rate the file came back at, read from the file, so a provider that ignored
-the request cannot make the record lie. A clip that lands after the dictionary or the endpoint was
-saved under it is checked the way a dictionary change is: it lands `stale` if the book would now
-send other words, other tags or ask another rate. A voice naming an endpoint the server does not
-have is sent as before, at the model's rate, and a line carrying tags through it is held back.
+**A line carries its tags, at its endpoint's rate.** The handler reads the speaker's endpoint from
+the stored configuration as each line goes out and hands it to `expressionPlan` in
+[src/lib/expressions.ts](../src/lib/expressions.ts): the words after the dictionary, with each tag
+written in as that endpoint spells it. The clip records the plan (`expressionSignature` and the tags
+sent) so the drift rule compares like with like. A line whose tags the endpoint cannot say is failed
+before any request, with the reason; the others are sent. The endpoint's `sampleRate` (16–48 kHz;
+none means the model's own) goes with the request, and the clip records the rate the file came back
+at, read from the file, so a provider that ignored the request cannot make the record lie. A clip
+that lands after the dictionary or the endpoint was saved under it lands `stale` if the book would
+now send other words, other tags or another rate.
 
-**A line longer than its endpoint takes goes out in parts.** The plan is cut by
-`expressionParts` — the demo's call, `splitText` over the words as sent, at the endpoint's
-`splitAt` and falling down to a clause, a word, a hard cut when the boundary it prefers is not
-inside the limit — with every tag protected, so a laugh is never sent as half a token. Each part
-is its own request, in order, and the audio comes back as one file: the WAVs joined end to end
-with nothing between them, because the cuts fall where the reading already pauses and each
-part's audio brings its own breath. Parts that disagree on rate, width or channels fail the line
-rather than play at the wrong pitch. The clip records it as the demo does — `parts` and `splitAt`
-on every clip sent through an endpoint, `cuts` (offsets into what was said) when there was more
-than one — so the render details show where the line was cut and the Queue's badge counts the
-requests. A part that fails fails the line with `error.part`, and the parts before it are thrown
-away rather than kept as half a line. Its duration is the parts' together.
+**A line longer than its endpoint takes goes out in parts**, cut by `expressionParts` at the
+endpoint's `splitAt`, falling down to a clause, a word, a hard cut, with every tag protected so a
+laugh is never sent as half a token. Each part is its own request, in order, holding the line's one
+slot, and the audio comes back as one file with nothing between the parts, because the cuts fall
+where the reading already pauses. Parts that disagree on rate, width or channels fail the line
+rather than play at the wrong pitch. The clip records `parts`, `splitAt` and `cuts` for the render
+details and the Queue's badge; a part that fails fails the line with `error.part`, and the parts
+before it are thrown away rather than kept as half a line.
 
-**Lines go out as their endpoint will take them.** Every line of the run asks the speech gate
+**Lines go out as their endpoint will take them.** Every line asks the speech gate
 ([server/providers/gate.ts](../server/providers/gate.ts)) for a slot on its speaker's endpoint, in
-the chapter's order, and is sent when it has one: up to the endpoint's `concurrency` at once, none
-while it is paused, and none while it is cooling down after a rate limit — the demo's dispatch rule.
-Lines for two endpoints go out alongside each other, each at its own limit. The gate is one for the
-whole process, because the limit is the provider's, and it reads the endpoint's limits every time it
-looks, so a concurrency raised or an endpoint paused mid-run changes what the next line does; a save
-wakes it, and it looks again every second while a pause holds work. **A paused endpoint holds its
-lines** — they stay `queued`, and the job says once that it is waiting and why — rather than failing
-them, which is what separates Pause from Cancel; since the runner runs one job at a time, a pause
-holds the queue behind it too, until the endpoint is resumed or the job cancelled. **A rate limit is
-the endpoint's**: the request that met it waits its `Retry-After` (or `cooldownSec`) and tries again
-as it always has, and `call` tells the gate, which holds every other line for that endpoint until the
-same moment, so the lines behind it do not walk into the same refusal one by one. Lines land in the
-order they are answered, each written by its own id. A budget that stops covering the next line
-stops anything more going out and lets the lines already out land and be paid for; to keep that
-honest, each request's charge is given back from what its line holds as it is written to the ledger,
-so a line in flight is never counted as spent and held at once while another line asks the budget.
-What the gate has seen — lines out and waiting, rate limits, the cooldown's end — is the process's
-own, never stored, and `GET /api/endpoints/live` answers it for the Endpoints and Queue pages. A
-line's parts still go out one after another, holding the line's one slot. The presets set each
-provider's `concurrency` from its own documentation for its entry plan, the page named beside it
-([src/lib/presets/speech.ts](../src/lib/presets/speech.ts)); a bigger plan can raise it.
+the chapter's order: up to the endpoint's `concurrency` at once, none while it is paused, none while
+it is cooling down after a rate limit. The gate is one per library, because the limit is the
+provider's, and reads the endpoint's limits every time it looks, so a concurrency raised or an
+endpoint paused mid-run changes what the next line does. **A paused endpoint holds its lines** —
+they stay `queued`, and the job says once that it is waiting — which is what separates Pause from
+Cancel; since the runner runs one job at a time, a pause holds the queue behind it too. **A rate
+limit is the endpoint's**: the request that met it waits its `Retry-After` (or `cooldownSec`), and
+the gate holds every other line for that endpoint until the same moment rather than letting them
+walk into the same refusal one by one. A budget that stops covering the next line stops anything
+more going out and lets the lines already out land and be paid for. What the gate has seen is the
+process's own, never stored; `GET /api/endpoints/live` answers it.
 
 **An endpoint that takes batches is sent batches.** A speech server that answers the
-[batch speech API](speech-batch-api.md) — written for a local model that renders many lines at once
-on a GPU, and fitted to no model in particular — says so at `GET …/audio/speech/capabilities`, and a
-run asks it once per endpoint as it starts (the answer is remembered for a few minutes). Its lines
-then go in batches: each batch takes one of the endpoint's slots at the gate and is filled when it
-has one, from the lines still waiting, in the chapter's order, up to the items and characters the
-server said it takes. A line longer than an item may be goes as its parts, each an item, and is
-joined when they have all come back. The answer is a stream of JSON lines, one per item in whatever
-order the server finishes, and each line lands on its own as its items are answered — its own clip,
-its own ledger row per item, its own failure. An item the server says is worth another try, and the
-lines a dropped batch never answered, go into a later batch, up to the endpoint's retries; a batch
-refused whole is retried whole, with the endpoint's retries and cooldown, as a single request is. An
-endpoint that does not answer, or whose model does not batch, is sent one line at a time, as before;
-hosted providers are never asked. The fake takes batches too when a test asks (`batch` in
-`fakeSpeechProvider`), answering each batch last item first so nothing passes by assuming order.
+[batch speech API](speech-batch-api.md) says so at `GET …/audio/speech/capabilities`, asked once per
+endpoint as a run starts and remembered for a few minutes. Its lines then go in batches: each batch
+takes one of the endpoint's slots at the gate and is filled, in the chapter's order, up to the items
+and characters the server said it takes; a line longer than an item goes as its parts. The answer is
+a stream of JSON lines in whatever order the server finishes, and each line lands on its own — its
+own clip, its own ledger row per item, its own failure. Items worth another try, and the lines a
+dropped batch never answered, go into a later batch, up to the endpoint's retries; a batch refused
+whole is retried whole. An endpoint that does not answer, or whose model does not batch, is sent one
+line at a time; hosted providers and simulated endpoints are never asked. The fake batches too when
+a test asks (`batch` in `fakeSpeechProvider`), answering last item first so nothing passes by
+assuming order.
 
-**The endpoints are saved whole.** `PUT /api/endpoints` takes what the Endpoints page holds — speech
-endpoints, scripting profiles and the credential registry, with each endpoint's voices, rate
-schedule, promotions and expression tags — and keeps exactly that in place of what was stored, in
-one transaction ([server/endpoints/ops.ts](../server/endpoints/ops.ts)). What an endpoint observed
-(its latency history, failures, a backoff) is the session's and is dropped on the way in, and reads
-back empty. It is refused whole when two endpoints of one kind share an id, one endpoint has two
-voices, tags, windows or promotions under one id, or an endpoint names a credential that is not in
-the list. A speech endpoint and a scripting profile may share an id — the seeded `openai` is both —
-so a profile's row is kept under `scripting:<id>`; a speech endpoint keeps its bare id, because a
-voice names it. `GET` on a server nobody has saved to answers with empty lists, the same as one
-whose every endpoint was removed, and the browser hands nothing over either way: a first run
-starts with no endpoints, and the demo's seeded ones stay the demo's. Nothing already rendered is touched by a save: a clip
-records what it was rendered with, and the drift rule finds what a tag redefined or a rate changed
-reaches.
+**The endpoints are saved whole.** `PUT /api/endpoints` takes what the Endpoints page holds and
+keeps exactly that in place of what was stored, in one transaction
+([server/endpoints/ops.ts](../server/endpoints/ops.ts)), refusing it whole when two endpoints of one
+kind share an id, an endpoint has two voices, tags, windows or promotions under one id, or names a
+credential that is not in the list. A profile's row is kept under `scripting:<id>`, since a speech
+endpoint and a profile may share an id and a voice names the speech endpoint's. Nothing already
+rendered is touched by a save: a clip records what it was rendered with, and the drift rule finds
+what a change reaches.
 
-**Nothing usable is thrown away to make room.** A line that already has a playable clip renders
-its replacement beside it, in the `candidate` role, and the clip in the book keeps playing until
-the replacement lands, when it takes over and the displaced clip joins the take list. That is the
-demo's rule for a bulk run, kept because the reason for it — a re-narration of a finished chapter
-must not leave it silent for the duration of the run — holds just as well on a server. A
-replacement that fails leaves the clip it would have replaced alone, and the line reads as failed.
-A chapter's status is asked of its clips (`chapterNarration`, the same function the demo asks):
-`done` when every line is rendered, `stale` when one has been edited since, `failed` when any
-line has no usable clip after a run that should have given it one, and `none` when nothing has.
+**Nothing usable is thrown away to make room.** A line that already has a playable clip renders its
+replacement beside it, in the `candidate` role, and the clip in the book keeps playing until the
+replacement lands, when it takes over and the displaced clip joins the take list: a re-narration of
+a finished chapter must not leave it silent for the length of the run. A replacement that fails
+leaves the clip alone, and the line reads as failed. A chapter's status is asked of its clips
+(`chapterNarration`): `done` when every line is rendered, `stale` when one has been edited since,
+`failed` when a line has no usable clip after a run that should have given it one, `none` otherwise.
 
-**A clip is a row of the script, so writing one moves the script's revision.** `script_revision`
-counts every write of a chapter's script rows, whoever made it, and a clip landing is one: a
-client holding a copy read before it landed would otherwise write that copy back — its stale
-`queued` and `generating` statuses included — over the clip the server just rendered. Instead
-the edit is refused with the 409 the client already handles, and the chapter is read again. With
-the queue polled while a job runs, the client's copy is almost always the fresh one; an edit that
-does fall between a clip landing and the next poll is the one that has to be made again.
+**A retake waits for a verdict.** `POST …/chapters/:n/retakes` queues one job for the lines named
+([server/narration/ops.ts](../server/narration/ops.ts)): their clips are written `queued` in the
+transaction that creates the job, and the handler renders exactly those, as candidates that do not
+take over. `POST …/lines/:line/verdict` keeps the candidate or drops it, and both settle the chapter
+the way a run does, since a chapter's length is asked of the clips that play.
 
-**The audio is a file the server keeps.** `AUDIO_DIR` (default `./data/audio`, beside the
-database) holds one directory per book and one file per clip, named by a random token rather than
-by the chapter's number, because a renumbering must not move files; `clips.url` is the path the
-file is served at, `/api/audio/:bookId/:file`, and the player plays a clip that has one rather
-than timing it in silence. The route serves nothing whose name is not a token it could have
-made, so there is no path a request can build to a file that is not a clip. Removing a book
-removes its directory; removing a volume removes the clips its chapters rendered.
+**A clip is a row of the script, so writing one moves the script's revision.** A page holding a copy
+read before the clip landed would otherwise write that copy back — its stale `queued` status
+included — over the clip the server just rendered. Instead the edit is refused with the 409 the page
+already handles. With the queue polled while a job runs, the page's copy is almost always fresh.
 
-[The fake speech model](../server/providers/fakeSpeech.ts) is what a simulated endpoint answers
-with and what the tests narrate through. It writes a real WAV file — a short, quiet tone whose pitch depends on the speaker, long enough to
-say the line at a reading pace — so what the tests, the Narration page and the player exercise
-is a file being fetched and played, not a duration being counted down. It is deterministic, it
-honours a cancel, and a test can tell it which lines to fail.
+**The audio is a file the server keeps.** `AUDIO_DIR` holds one directory per book and one file per
+clip, named by a random token rather than by the chapter's number, because a renumbering must not
+move files; `clips.url` is `/api/audio/:bookId/:file`. The route serves nothing whose name is not a
+token it could have made, so there is no path a request can build to a file that is not a clip.
+Removing a book removes its directory; removing a volume removes the clips its chapters rendered.
 
-### Export
+## Export
 
-Building an audiobook is the third kind of job, and the first that is about a book rather than a
-chapter — its `chapterId` is null, so its dedupe key is `export:<book>:book` and a book builds one
-audiobook at a time. That is stricter than the browser's rule, which lets two audiobooks of one
-book build at once, and deliberately so: here a build reads every clip the other one might be
-replacing.
+Building an audiobook is the third kind of job, and the one about a book rather than a chapter — its
+`chapterId` is null, so its dedupe key is `export:<book>:book` and a book builds one audiobook at a
+time, because a build reads every clip another build might be replacing. The page's side is
+[export planning](exports.md).
 
 **The plan the page drew is the plan that is written.** `planOf` in
 [src/lib/exports.ts](../src/lib/exports.ts) turns the selection, the volumes and the settings into
-the output files, their order, their chapters and their names, and the handler lays down exactly
-that. Nothing on the server re-derives which chapter belongs in which file, because the page has
-already shown someone the answer and a second copy of that rule is how a preview and a file stop
-agreeing. `reviewOf` is asked the same way: a chapter with no usable audio, one still being
-narrated, or a stale one the build was not told to accept is a **409 in the page's own words**,
-since the blocker's title and detail are what the error carries. A build refuses rather than
-trimming — unlike a bulk narration run, which leaves chapters out and says so — because a chapter
-quietly missing from an audiobook is the failure this page exists to avoid.
+the output files, their order, chapters and names, and the handler lays down exactly that: a second
+copy of that rule is how a preview and a file stop agreeing. `reviewOf` is asked the same way, so a
+chapter with no usable audio, one still being narrated, or a stale one the build was not told to
+accept is a **409 in the page's own words**. A build refuses rather than trimming — unlike a bulk
+narration run — because a chapter quietly missing from an audiobook is the failure this page exists
+to avoid.
 
 **An update copies what has not moved.** A finished export records where each chapter's audio sits
 inside its file (`export_chapters.byte_start` and `byte_length`). When the next version is built
 with the same output settings, a chapter whose signature has not changed is copied straight out of
-the version on disk instead of having its clips read again; `reusedChapters` decides which, and it
-is the same function that drew "191 of its 196 chapters would be carried over" on the page. Each
-span is checked again as the build runs, so a chapter re-narrated since the build was queued, or a
-file removed behind the server's back, costs that one chapter its shortcut rather than putting
-stale audio in the file or failing the build. That includes the version being copied from removed
-mid-build: a `carry` part brings the chapter's clips along as `instead`, and an encoder that finds
-the file gone lays those down and marks the chapter `readAgain`. `exports.encoder` records what wrote a version and
-only the same encoder ever copies out of it, because a span is bytes into a WAV and milliseconds
-into an AAC stream — reading one as the other would splice noise into the middle of an audiobook.
+the version on disk; `reusedChapters` decides which, the same function that drew "191 of its 196
+chapters would be carried over" on the page. Each span is checked again as the build runs, so a
+chapter re-narrated since, or a file removed behind the server's back, costs that one chapter its
+shortcut: a `carry` part brings the chapter's clips along as `instead`, and an encoder that finds the
+file gone lays those down and marks the chapter `readAgain`. `exports.encoder` records what wrote a
+version, and only the same encoder copies out of it, because a span is bytes into a WAV and
+milliseconds into an AAC stream.
 
-**The version on disk stays current until the new one lands.** The row goes up as `building`
-immediately; the export it supersedes is marked `replaced` by the write that finishes the new one
-and not before. A build that fails keeps its row and its reason, which is what Retry reads. A
-cancelled one leaves nothing behind at all — there is no half an audiobook — and in both cases the
-half-written files go and the audiobook already there is untouched. A build the process died
-holding is re-queued by the same recovery every kind gets, and it clears the files the dead run
-left before writing its own, so a book built three times after two crashes has one audiobook on
-disk rather than three.
+**The version on disk stays current until the new one lands.** The row goes up as `building` at
+once; the export it supersedes is marked `replaced` by the write that finishes the new one. A build
+that fails keeps its row and its reason, which Retry reads; a cancelled one leaves nothing behind.
+Either way the half-written files go and the audiobook already there is untouched. A build the
+process died holding is re-queued like any job, and clears what the dead run left before writing
+its own.
 
-**The files are the server's, like the clips.** `EXPORT_DIR` (default `./data/exports`, beside the
-database) holds one directory per book and one file per output file, named by a token rather than
-by the audiobook's name — two versions of one audiobook have the same name, and a rebuild must not
-write over the version still playing. They are kept apart from the clips because a clip is an input
-the next build reads again and an audiobook is the deliverable. A download is addressed through the
-export that owns it (`…/exports/:e/files/:n`) rather than by the file's name on disk, so there is
-no path a request can build to a file this book did not produce; the name goes back on in the
-header that decides what the browser calls it. That header is Latin-1 and a title is not, so the
-name goes in the `filename*` a browser reads as UTF-8, with an ASCII stand-in beside it
-(`content-disposition` writes both); an em dash in the title used to make the download a 500. A version that has been superseded keeps its file until it is forgotten, so an
-older version can still be saved; removing a book removes both directories, and forgetting one
-audiobook removes its files and leaves the rest.
+**The files are the server's, like the clips.** `EXPORT_DIR` holds one directory per book and one
+file per output file, named by a token — two versions of one audiobook have the same name, and a
+rebuild must not write over the version still playing. They are kept apart from the clips because
+a clip is an input the next build reads again and an audiobook is the deliverable. A download is
+addressed through the export that owns it (`…/exports/:e/files/:n`), so there is no path a request
+can build to a file this book did not produce; the name goes back on in `content-disposition`, as a
+UTF-8 `filename*` with an ASCII stand-in, since the header is Latin-1 and a title is not. A
+superseded version keeps its file until it is forgotten.
 
-**A book's id is ASCII, and so is every path it names.** The id is the directory both kinds of file
-live under and part of every url that fetches one, and [http.ts](../server/lib/http.ts) holds the
-one pattern the file modules accept. `slugify` makes only what it allows: accents come off
-(`Pokémon` → `pokemon`), the few Latin letters with no base letter are spelled out (`ß` → `ss`,
-`æ` → `ae`), an apostrophe is dropped and anything else separates words. A title that kept its
-`ß` used to be a book whose audio was written and then could never be fetched or removed.
+**A book's id is ASCII, and so is every path it names.** [http.ts](../server/lib/http.ts) holds the
+one pattern the file modules accept, and `slugify` makes only what it allows: accents come off
+(`Pokémon` → `pokemon`), the Latin letters with no base letter are spelled out (`ß` → `ss`, `æ` →
+`ae`), an apostrophe is dropped and anything else separates words.
 
 **A book's work stops before the book goes.** A narration or a build still running writes into the
-book's directories as it goes, `mkdir` and all, so removing them under it only had the job put
-them back, holding files no book owns. `removeBook` cancels every live job of the book first and
-waits for the one running (`runner.finished`) — a handler honours a cancel at its next step — so
-its `onSettled` clears what it half wrote while the rows it needs are still there. Only then do the
-rows and the directories go. Removing the last volume is removing the book, and does the same.
-
-**Removing files is never waited for, and never fatal.** The rows go first and the response does
-not wait on the disk. A promise nobody holds that rejects is an unhandled rejection, which Bun
-exits on — so a removal that met a permission error, or a directory a narration job was still
-writing into, used to take the server down over a leftover directory. Every such removal goes
-through `inBackground` in [background.ts](../server/lib/background.ts), which logs the failure as
-a warning instead.
+book's directories as it goes, `mkdir` and all, so `removeBook` cancels every live job of the book
+first and waits for the one running (`runner.finished`), letting its `onSettled` clear what it half
+wrote while the rows it needs are still there. Only then do the rows and the directories go.
+**Removing files is never waited for, and never fatal**: a rejected promise nobody holds is an
+unhandled rejection, which Bun exits on, so every removal goes through `inBackground` in
+[background.ts](../server/lib/background.ts), which logs a failure as a warning.
 
 **Both are served a part at a time.** A clip and an audiobook go out through
 [serve.ts](../server/lib/serve.ts), which answers `Range` — Bun does not, for a `Response` built in a
-fetch handler, and a player that cannot ask for a part cannot seek. Every answer says
-`Accept-Ranges: bytes`; one range inside the file is a 206 with its `Content-Range`; a range past
-the end is a 416 (`range_not_satisfiable`) carrying the size. A malformed header, another unit or
-several ranges at once get the whole file, which a server may always send instead — a media element
-never asks for more than one. `range-parser`, the one Express's `send` uses, reads the header, and
-the length is set outright so a `HEAD` reports it too.
+fetch handler, and a player that cannot ask for a part cannot seek. One range inside the file is a
+206 with its `Content-Range`; a range past the end is a 416 carrying the size; a malformed header,
+another unit or several ranges get the whole file, which a server may always send. `range-parser`
+reads the header, and the length is set outright so a `HEAD` reports it too.
 
-#### The encoder, and what it will not pretend
+### The encoder, and what it will not pretend
 
 An [`AudiobookEncoder`](../server/providers/encoder.ts) is handed a list of parts — a clip, a run of
 silence, or a span of a file this export supersedes — and answers with the file it wrote, how long
-it really plays, and where each chapter landed. What container it lands in is its business, the way
-a line's audio is the speech provider's. It also declares what it can do, because the Export page
-makes three promises an encoder may not be able to keep: `markers`, `normalizes` and `carries`.
+it really plays, and where each chapter landed. It declares what it can do, because the Export page
+makes promises an encoder may not be able to keep: `markers`, `normalizes`, `carries`, `covers` and
+`tags`. What it cannot do, the job's log says. Which settings each one honours, from the page's
+side, is in [encoders and formats](exports.md#encoders-and-formats).
 
-`EXPORT_ENCODER=wav` is the default and needs nothing installed. The
-[stitcher](../server/providers/wavEncoder.ts) is the counterpart of the fake speech model: that one
-writes a real WAV per line, this one joins them into a real WAV per output file, with the book's
-pacing inside a chapter and the export's gap between two. So a fresh clone, a CI run and the test
-suite all build something that genuinely plays. It is not an M4B and writes no chapter marks, and
-rather than name a file `.m4b` that is not one, it writes `.wav`, records no markers, and the job's
-log says both in those words. It does not assume the fake's format either: every source file's RIFF
-header is read and checked, so a speech provider answering at 24 kHz or in 16-bit stitches
-correctly and one that changes format mid-chapter is an error naming the file. Neither encoder
-resamples, so one output file holds one rate: the build checks the rate each clip recorded before
-anything is written, and names the chapter that brought a second rate rather than a clip's path —
-an endpoint's rate changed between two chapters' narrations is the usual way to get there. ffmpeg
-checks each file's format as well, since its concat demuxer would otherwise play a clip at another
-rate at the wrong speed rather than fail. A pause is a whole
-number of sample frames in that format (`silenceBytes`), never a byte count rounded from seconds:
-at 16-bit, an odd number of bytes of silence puts every sample after it a byte out of step, which
-plays as noise to the end of the file, and the 8-bit fake could never have shown it. The ffmpeg
-encoder writes its silence the same way.
+`EXPORT_ENCODER=wav`, the default, needs nothing installed: the
+[stitcher](../server/providers/wavEncoder.ts) joins the clips into a real WAV per output file, with
+the book's pacing inside a chapter and the export's gap between two, so a fresh clone, a CI run and
+the test suite all build something that plays. Rather than name a file `.m4b` that is not one, it
+writes `.wav`. It reads and checks every source file's RIFF header rather than assuming the fake's
+format, so a provider answering at 24 kHz or in 16-bit stitches correctly and one that changes
+format mid-chapter is an error naming the file.
 
-`EXPORT_ENCODER=ffmpeg` writes what the settings actually asked for — AAC in an M4B with the
-chapter marks a player reads, or an MP3 — and corrects loudness with EBU R128 in two passes when
-the build asks for it. It is the one thing in this server that depends on something outside the
-process, so it is checked at boot: a server configured for it with no `ffmpeg` on `PATH` refuses to
-start, naming the binary, rather than queueing work that was always going to fail. It reports
+Neither encoder resamples, so one output file holds one rate: the build checks the rate each clip
+recorded before anything is written, and names the chapter that brought a second rate. A pause is a
+whole number of sample frames (`silenceBytes`), never a byte count rounded from seconds: at 16-bit,
+an odd number of bytes of silence puts every sample after it a byte out of step, which plays as
+noise to the end of the file.
+
+`EXPORT_ENCODER=ffmpeg` is the one thing in this server that depends on something outside the
+process, so it is checked at boot: a server configured for it with no runnable `FFMPEG_BIN` refuses
+to start, naming the binary, rather than queueing work that was always going to fail. It reports
 `carries: false`, because splicing an already-encoded span beside audio encoded in this run needs
-both to have been encoded identically — the way to do that is a file per chapter joined with
-`-c copy`, which is a different arrangement on disk from the one this server keeps. So an update
-under ffmpeg re-encodes every chapter and the job says so, rather than reporting chapters it did
-not really reuse.
+both to have been encoded identically — a file per chapter joined with `-c copy`, which is a
+different arrangement on disk from the one this server keeps. It copies the cover in untouched as
+the attached picture; a chosen image gone from disk fails the build, and the EPUB's cover gone
+missing is a warning. It writes the book's details with `-metadata`, whose generic keys ffmpeg
+spells as ID3v2.3 frames in an MP3 and iTunes atoms in an M4B: the file's own title, the book's
+title as the album so a set groups as one book, the author as artist and album artist, the narrator
+as composer — where Apple's and Audiobookshelf's readers look — the series as the grouping, the
+description as both `comment` and `description`, a track or disc number per chapter or volume file,
+and `stik` 2 on an M4B so a phone files it with its books. A blank field is left out.
 
-**The cover goes in as it is.** A build carries the image its settings chose, or the book's own
-when they chose none, and ffmpeg copies it in untouched as the file's attached picture — the MP4
-cover atom, or an ID3v2.3 front-cover frame on an MP3. A chosen image that has gone from disk fails
-the build: the audiobook asked for was one with that picture. The EPUB's gone missing is a build
-without one, and a warning. The stitcher `covers` nothing — a RIFF file has no place every player
-looks — and says so in the job's log rather than leaving the page's "embedded in every file"
-standing.
+## How the screens use it
 
-**The book's details go in as tags.** The Export page's title, author, narrator, series, year and
-description travel with every build, and ffmpeg writes them with `-metadata`, whose generic keys it
-spells as ID3v2.3 frames in an MP3 and iTunes atoms in an M4B: the title as the file's own (the
-book's, `Title · Vol. 2`, or the chapter's, as the plan names the file), the book's title as the
-album so a set groups as one book, the author as artist and album artist, the narrator as composer
-— where Apple's and Audiobookshelf's readers look for one — and the series as the grouping. A file
-per chapter gets a track number and a file per volume a disc number; an M4B is marked as an
-audiobook (`stik` 2) so a phone files it with its books. A blank field is left out rather than
-written empty, and a blank title is the book's own. An MP3's description goes in as a `TXXX`
-frame rather than `COMM`, which is what ffmpeg writes; players that read only `COMM` show none.
-The stitcher `tags` nothing and says so in the job's log.
+Every service in [src/services/](../src/services/) talks to the tab's base, so no page and no store
+has a demo branch of its own. Reads are queries, through [Pinia Colada](https://pinia-colada.esm.dev):
+one composable per resource in [src/queries/](../src/queries/) — a chapter's text, script and
+history, a book's cast, exports and spending, an endpoint's requests and live state, and the queue.
+What a query reads it installs into the store that owns it: the stores stay the working copy every
+page reads and every edit acts on. `main.ts` turns re-reads on focus and reconnect off, because what
+changes a script or a cast is a request this app made, and each one invalidates what it changed by
+key.
 
-### How the screens use it
+The queue is the one thing that moves on its own. `useBookJobs` is one shared query the shell keeps
+open, polling through the auto-refetch plugin while a job is queued or running. A job that moved has
+its book read again; a finished scripting job has its chapter's script and history and the book's
+cast invalidated; a narration job that moved has its chapter's script read again, which is how clips
+appear one by one; an export job has the book's exports read again; every move reads the book's
+spending; and while narration runs, the speech endpoints' live state is read too. Queueing, cancel,
+remove and clear are requests, and nothing is marked locally first — a cancel that failed to reach
+the server must not look like one that worked. A run the budget refuses comes back as a 409 whose
+sentence the toast shows.
 
-Reads are queries, through [Pinia Colada](https://pinia-colada.esm.dev): one composable per
-resource in [src/queries/](../src/queries/) — a chapter's text, its script, its history, a book's
-cast, its exports, and the queue — each asking the service with a server answering and the seeded
-store without one, so the mode choice is made once, there, and no page grows a demo-versus-real
-branch. What a query reads it installs into the store that owns it: the stores stay the working
-copy every page reads and every edit acts on, and a query is how that copy is filled and kept
-fresh. The query cache is a Pinia store of its own; `main.ts` installs the plugin with re-reads on
-focus and reconnect off, because what changes a script or a cast in this app is a request this app
-made, and each one invalidates what it changed by key.
+Editing is write-behind. Every edit in [scripts.ts](../src/stores/scripts.ts) acts on the store at
+once and ends with `_commit`, which writes the chapter's script as it now stands with the revision
+it was read at; writes for one chapter are serialised and coalesced, and a batch commits once under
+its own name. A refused write reads the server's script and history back with a toast saying so —
+through the service rather than by invalidating the query, because invalidation only refetches
+entries it finds, and a chapter whose page has closed has none. A revision is never taken backwards,
+whichever answer lands last. The history is the server's; an edit's answer carries the history it
+added to. The cast store's changes are requests with an exact undo, and an undo of a restore writes
+the script back before taking the restore's speakers off the cast, since a removal while the
+server's script still names them would move their lines and refuse the write.
 
-The queue is the one thing that moves on its own. `useBookJobs` is one shared query (`defineQuery`)
-that the shell keeps open for as long as the app is, polling through the auto-refetch plugin while
-a job is queued or running and going quiet when the queue does. A job that moved is a chapter that
-moved, so its book is read again; a scripting job that just finished has its chapter's script and
-history and the book's cast invalidated, since the run wrote all three. `runScripting` in
-[scripting.ts](../src/stores/scripting.ts) queues the chapters on the server, marks nothing itself
-and invalidates the queue; cancel, remove and clear are requests that do the same, and nothing is
-marked locally first — a cancel that failed to reach the server must not look like one that
-worked.
-
-Editing is write-behind. Every edit in [scripts.ts](../src/stores/scripts.ts) acts on the store as
-it does in the demo and ends with `_commit`, which writes the chapter's script as it now stands
-with the revision it was read at; writes for one chapter are serialised and coalesced, so a burst
-of edits is a few writes rather than one per keystroke, and a batch commits once under its own
-name. A flag, an expression moved or omitted, and a clip's status all reach the server the same
-way, since they live on the script's lines. A refused write reads the server's script and history
-back over the local ones with a toast saying so — read directly through the service rather than by
-invalidating the query, because invalidation refetches the entries it finds and a chapter whose
-page has closed has none. The revision a write or a cast answer carries is never taken backwards,
-whichever answer lands last. History is the server's in that mode: the store captures nothing
-itself, an edit's answer carries the history it added to, and the panel follows. The cast store's
-changes are requests too, with an exact undo — a rename renames back, a merge or a removal puts
-back the lines that moved. An undo of a restore writes the script back first and only then takes
-the speakers the restore added off the cast, since a removal while the server's script still names
-them would move their lines and refuse the write.
-[tests/jobsBackend.test.ts](../tests/jobsBackend.test.ts) drives those stores against the real app,
-through the same composables the pages use.
-
-Narration takes the same shape. `runNarration` in [narration.ts](../src/stores/narration.ts)
-queues the chapters on the server at the scope asked for and marks nothing itself; the expression
-guard, the estimate and the budget gates are the demo's and are skipped as scripting's are, because
-the server holds the budget and refuses a run that does not fit with a 409 whose sentence the toast
-shows. A narration job that moved — a clip landed, so its progress changed — has its chapter's script
-read again, which is how the Narration page shows clips arriving one by one rather than when the
-run ends; the read moves the store's revision on without showing a re-script diff, because the
-lines say the same things and only their clips differ. "Re-narrate what changed" and "retry what
-failed" are the same request at the `fill` and `failed` scopes, and a failed line retried by hand
-is retried with its chapter's other failed lines, the server's smallest unit of work. A retake is
-the same request without the `auto`: the candidate lands beside the clip in the book, and the
-verdict the listener gives replaces the line and the chapter with the server's answer.
-
-Export is the same shape one level up. `buildExport` queues a build and installs the version the
-server answers with, which goes up as `building` straight away so the Audiobooks tab shows it
-arriving rather than nothing; an export job that moved has the book's exports read again, which is
-how progress, a finish, a failure and a cancel that removed the row all reach the page. Cancel and
-Retry are the queue's, as they are for every other kind.
-
-**Every figure about money on screen is the server's.** The browser's estimate shows the same
-figures, and the server is the authority: it refuses before queuing and stops
-a running job before a request that no longer fits (see
-[what a request costs](#what-a-request-costs-and-what-a-book-may-spend)). The jobs store's
-`spent`, `reserved`, `scriptSpent` and `scriptReserved` answer from `GET /api/books/:id/spend`
-(`useBookSpend` for the open book, `useLibrarySpend` for the Endpoints page's budgets table), read
-again as the book's jobs move and after a budget is written; the Endpoints page's Activity list,
-charts and spent-today read `GET /api/endpoints/requests` (`useEndpointHistory`). A row a real
-provider answered is marked as such, and one from a simulated endpoint as simulated.
-
-## Four things the EPUB library does on import
-
-[@likecoin/epub-ts](https://github.com/likecoin/epub.ts) is the parser, through its documented Node
-entry point. Four of its behaviours are worked around in
-[parse.ts](../server/epub/parse.ts), and all are worth knowing before changing that file:
-
-- It reads `typeof window < "u" ? window.requestAnimationFrame.bind(window)`, taking any `window` at
-  all for a complete browser one. That holds in a browser and in a bare server process, and fails in
-  between — a test run where a frontend module has installed a small `window` stub, where it throws
-  on import and takes the whole file with it.
-- Importing it installs linkedom's `DOMParser` **and** a global `document`. The parser needs the
-  first; the second is a server process announcing itself as a browser, which is false and has
-  consequences for anything that branches on `typeof document`.
-
-So the library is loaded explicitly rather than by a top-level `import`: both fixes have to bracket
-the import itself, and an `import` statement gives nowhere to stand. Both globals are put back the
-way they were found.
-
-Unhandled rejections are the third thing, and they come from two directions.
-
-A `Book` holds a deferred promise per part of the package, and a file that cannot be unzipped
-rejects all of them; nothing awaits most of them, so a corrupt upload produces three unhandled
-rejections. They are settled with a no-op handler before the open, which costs nothing on a good
-file and turns a bad one into the single error the caller is already catching.
-
-The other is not reachable that way. `unpack` calls `loadNavigation(…).then(…)` with no catch, and
-the `Promise.all` that settles `opened` has none either, so an EPUB declaring a navigation document
-it does not contain rejects two promises nothing outside the library holds. The book opens, every
-chapter is present and readable, and the process takes an unhandled rejection that is fatal under
-Node's `--unhandled-rejections=throw`. `loadNavigation` is therefore shadowed **on the instance**
-and settled as "no navigation" — which is the library's own behaviour for a book that declares none,
-so the outcome is the documented one and the chapters keep their own headings for titles.
-
-The fourth is the console. The library has no logger option and `console.error`s with full stacks
-in two places an import reaches: turning every manifest asset into a blob URL for display, where
-an image the manifest lists and the zip lacks throws; and the spine's content hooks, which add a
-`<base>`, a canonical `<link>` and an identifier `<meta>` to a section's head and throw on a section
-that has none — three stacks per section. Neither is needed: sections are read through
-`readSection`, and the converter drops the head. So the book is opened with
-`replacements: "none"` and the content hooks are cleared before anything renders, which removes the
-output at its source rather than patching a process-global `console` around an `await`.
+**Money spent is the server's figure.** The jobs store's `spent`, `reserved`, `scriptSpent` and
+`scriptReserved` answer from `GET /api/books/:id/spend` (`useBookSpend`, `useLibrarySpend`); the
+Endpoints page's Activity list and charts read `GET /api/endpoints/requests` (`useEndpointHistory`).
+Estimates are the page's, worked out with the same `src/lib` functions the server prices with, and
+the server is the authority: it refuses before queuing and stops a running job before a request
+that no longer fits.
 
 ## Tests
 
-[tests/server/](../tests/server/) runs against the real routes and the real schema, with a
-`:memory:` database per test. EPUBs are assembled in memory by
-[tests/support/epub.ts](../tests/support/epub.ts) — a valid EPUB 3 package with a navigation
-document and a spine — which keeps the suite free of binary fixtures nobody can read a diff of.
-Every shape it can build is checked against EPUBCheck by a test, because the fixtures are the only
-EPUBs this suite ever sees and one that is quietly invalid is a blind spot exactly where the code
-under test is meant to be strict. That caught two: an identifier that was not a UUID, and the
-`dcterms:modified` EPUB 3 requires. Both are derived from the book rather than the clock, so the
-same input builds the same bytes.
-What it can vary is what real EPUBs vary: where the navigation document sits relative to the
-chapters, whether it calls a chapter something other than the heading inside it, whether one file
-holds several chapters, and whether a file the package promises is in the archive at all.
+[tests/server/](../tests/server/) runs against the real routes, the real schema and the real queue,
+each test on a private in-memory database copied from one migrated once per file
+([tests/support/server.ts](../tests/support/server.ts)). Conventions for the whole suite are in
+[development](development.md).
 
-| File                                                                         | Covers                                                                                                              |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| [epubImport.test.ts](../tests/server/epubImport.test.ts)                     | Reading a file: metadata, titles, text, refusals                                                                    |
-| [notices.test.ts](../tests/server/notices.test.ts)                           | Which chapters are not story                                                                                        |
-| [contentsReview.test.ts](../tests/server/contentsReview.test.ts)             | Import → review → add, volumes, removal, renumbering                                                                |
-| [volumes.test.ts](../tests/server/volumes.test.ts)                           | Removing a volume: rekeyed jobs, cancelled work, files, refusals mid-build                                          |
-| [bookSettings.test.ts](../tests/server/bookSettings.test.ts)                 | Budget, pacing and re-timing, a volume's name, and a reorder and its refusals                                       |
-| [endpoints.test.ts](../tests/server/endpoints.test.ts)                       | Saved and refused whole; tags and sample rate on a line; one rate a file; a long line sent in parts                 |
-| [covers.test.ts](../tests/server/covers.test.ts)                             | The EPUB's cover kept, an upload and its refusals, a cover in an M4B and an MP3, the book's details as tags         |
-| [markdown.test.ts](../tests/server/markdown.test.ts)                         | The converter's DOM bracket, and reading Markdown back                                                              |
-| [jobs.test.ts](../tests/server/jobs.test.ts)                                 | The queue: dedupe, cancel, restart, revision conflicts, HTTP; a chapter in a profile's chunks; its spending         |
-| [usage.test.ts](../tests/server/usage.test.ts)                               | Pricing a request into the ledger, a book's spending, the budget gate, the two ledger routes                        |
-| [narrationBudget.test.ts](../tests/server/narrationBudget.test.ts)           | A row per part, a refused part not charged, runs and retakes refused, a cap lowered mid-run                         |
-| [narration.test.ts](../tests/server/narration.test.ts)                       | Narration: scopes, replacement, failure, cancel, restart, dictionary, files                                         |
-| [narrationConcurrency.test.ts](../tests/server/narrationConcurrency.test.ts) | Lines at an endpoint's concurrency, two endpoints alongside, a pause held, a rate limit's cooldown, a cancel        |
-| [narrationBatch.test.ts](../tests/server/narrationBatch.test.ts)             | Batches filled in order to what they take, a long line's parts, a line sent again, a dropped batch, slots, a cancel |
-| [speechBatch.test.ts](../tests/server/speechBatch.test.ts)                   | The batch client against a fake batch server: capabilities, the stream, refusals, drops, idle timeout, ledger       |
-| [speechGate.test.ts](../tests/server/speechGate.test.ts)                     | The gate alone: its limit, order, pause and poll, cooldown and timer, what it tells a waiting line, cancels         |
-| [scriptEdit.test.ts](../tests/server/scriptEdit.test.ts)                     | Editing against a revision, the history rule, what a run writes                                                     |
-| [cast.test.ts](../tests/server/cast.test.ts)                                 | The cast a run leaves, rename, merge, removal, exact undo                                                           |
-| [exports.test.ts](../tests/server/exports.test.ts)                           | Building one: the file, the spans, refusals, cancel, failure, download                                              |
-| [endpointKeys.test.ts](../tests/server/endpointKeys.test.ts)                 | A key kept, never sent back or logged, kept by a save that omits it; the Test route                                 |
-| [encodedClips.test.ts](../tests/server/encodedClips.test.ts)                 | MP3 and Opus asked for, kept, read, joined, served; the stitcher's refusal; an ffmpeg build from them               |
-| [voices.test.ts](../tests/server/voices.test.ts)                             | A library read to its end, a public search, OpenAI's list, refusals                                                 |
-| [chatScripting.test.ts](../tests/server/chatScripting.test.ts)               | The chat request, a fenced answer, fidelity, a cut-off, retries, cancel, probe                                      |
-| [endpointSpeech.test.ts](../tests/server/endpointSpeech.test.ts)             | Fish and OpenAI-shaped requests, a streamed header made plain, refusals, billed or not, probe                       |
-| [speechProviders.test.ts](../tests/server/speechProviders.test.ts)           | Every other provider's request and answer from its docs; what each reports billed, and the usage kept               |
-| [fakeProvider.test.ts](../tests/server/fakeProvider.test.ts)                 | What the fake models produce — attributions, a valid WAV — and that they abort                                      |
-| [simulatedSpeech.test.ts](../tests/server/simulatedSpeech.test.ts)           | A simulated speech endpoint: its latency, its failures, its voices, and a chapter narrated with no `fetch` made     |
-| [simulatedScripting.test.ts](../tests/server/simulatedScripting.test.ts)     | A simulated scripting profile run through the real queue and ledger with no `fetch` made                            |
-| [libraries.test.ts](../tests/server/libraries.test.ts)                       | Your library and the demo kept apart: routing by path, addresses under each base, the demo's seed and its reset     |
-| [demoWorld.test.ts](../tests/server/demoWorld.test.ts)                       | The demo seeded with the browser demo's world, held to `makeWorld()` field by field; every endpoint simulated       |
-| [demoLive.test.ts](../tests/server/demoLive.test.ts)                         | Telemetry into ledger rows and a gate cooldown; runs in flight and builds on the simulated endpoints                |
-| [demoClips.test.ts](../tests/server/demoClips.test.ts)                       | A demo clip's file written on first read, once, whole; your library never writing one                               |
-| [libraryClient.test.ts](../tests/server/libraryClient.test.ts)               | The client and the API against each other                                                                           |
-| [schema.test.ts](../tests/server/schema.test.ts)                             | The seeded world through the schema and back                                                                        |
-| [../libraryBackend.test.ts](../tests/libraryBackend.test.ts)                 | The library store, with a server answering                                                                          |
-| [../jobsBackend.test.ts](../tests/jobsBackend.test.ts)                       | The jobs, scripting, narration, scripts, cast and history stores, with a server                                     |
+EPUBs are assembled in memory by [tests/support/epub.ts](../tests/support/epub.ts), so the suite has
+no binary fixtures nobody can read a diff of. Every shape it builds is checked against EPUBCheck,
+because the fixtures are the only EPUBs this suite ever sees, and the same input builds the same
+bytes. It varies what real EPUBs vary: where the navigation sits, whether it names a chapter
+differently from its heading, whether one file holds several chapters, and whether a file the
+package promises is there at all.
 
-The client tests matter more than they look. Both sides of the seam are in this repository, so "the
-API returns what the client reads" is something the suite can check rather than a comment two files
-apart — they drive the real `HttpLibraryService` and `HttpJobsService` against the real app, and a
-route that renames a field fails there rather than in the browser.
+| Area             | Files                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Import           | [epubImport](../tests/server/epubImport.test.ts), [markdown](../tests/server/markdown.test.ts), [notices](../tests/server/notices.test.ts), [covers](../tests/server/covers.test.ts), [security](../tests/server/security.test.ts)                                                                                                                                                                                                               |
+| Library          | [contentsReview](../tests/server/contentsReview.test.ts), [volumes](../tests/server/volumes.test.ts), [bookSettings](../tests/server/bookSettings.test.ts), [removal](../tests/server/removal.test.ts), [libraryClient](../tests/server/libraryClient.test.ts)                                                                                                                                                                                   |
+| Schema and store | [schema](../tests/server/schema.test.ts), [migrate](../tests/server/migrate.test.ts), [prepared](../tests/server/prepared.test.ts), [logging](../tests/server/logging.test.ts)                                                                                                                                                                                                                                                                   |
+| Scripting        | [jobs](../tests/server/jobs.test.ts), [scriptEdit](../tests/server/scriptEdit.test.ts), [cast](../tests/server/cast.test.ts), [chatScripting](../tests/server/chatScripting.test.ts), [scriptingPrompts](../tests/server/scriptingPrompts.test.ts), [promptTrial](../tests/server/promptTrial.test.ts), [simulatedScripting](../tests/server/simulatedScripting.test.ts), [fakeProvider](../tests/server/fakeProvider.test.ts)                   |
+| Narration        | [narration](../tests/server/narration.test.ts), [narrationConcurrency](../tests/server/narrationConcurrency.test.ts), [narrationBatch](../tests/server/narrationBatch.test.ts), [speechGate](../tests/server/speechGate.test.ts), [speechBatch](../tests/server/speechBatch.test.ts), [simulatedSpeech](../tests/server/simulatedSpeech.test.ts), [encodedClips](../tests/server/encodedClips.test.ts), [ranges](../tests/server/ranges.test.ts) |
+| Providers        | [endpoints](../tests/server/endpoints.test.ts), [endpointKeys](../tests/server/endpointKeys.test.ts), [endpointSpeech](../tests/server/endpointSpeech.test.ts), [speechProviders](../tests/server/speechProviders.test.ts), [voices](../tests/server/voices.test.ts), [voiceSample](../tests/server/voiceSample.test.ts), [voiceClone](../tests/server/voiceClone.test.ts) and one per other cloning provider                                    |
+| Money            | [usage](../tests/server/usage.test.ts), [narrationBudget](../tests/server/narrationBudget.test.ts), [scriptCost](../tests/server/scriptCost.test.ts), [cloneFees](../tests/server/cloneFees.test.ts)                                                                                                                                                                                                                                             |
+| Export           | [exports](../tests/server/exports.test.ts), [wavEncoder](../tests/server/wavEncoder.test.ts)                                                                                                                                                                                                                                                                                                                                                     |
+| Script files     | [scriptExport](../tests/server/scriptExport.test.ts), [scriptImport](../tests/server/scriptImport.test.ts), [speakerSamples](../tests/server/speakerSamples.test.ts)                                                                                                                                                                                                                                                                             |
+| Demo             | [libraries](../tests/server/libraries.test.ts), [demoWorld](../tests/server/demoWorld.test.ts), [demoSituations](../tests/server/demoSituations.test.ts), [demoLive](../tests/server/demoLive.test.ts), [demoClips](../tests/server/demoClips.test.ts), [demoSpeed](../tests/server/demoSpeed.test.ts)                                                                                                                                           |
+| Stores           | [libraryBackend](../tests/libraryBackend.test.ts), [jobsBackend](../tests/jobsBackend.test.ts), [endpointsBackend](../tests/endpointsBackend.test.ts)                                                                                                                                                                                                                                                                                            |
+
+The client tests matter more than they look: both sides of the seam are in this repository, so they
+drive the real `HttpLibraryService` and `HttpJobsService` against the real app, and a route that
+renames a field fails there rather than in the browser. The store tests go one layer up, through the same query
+composables the pages use, against a test's own server ([backendServer.ts](../tests/support/backendServer.ts))
+or the seeded demo ([demoServer.ts](../tests/support/demoServer.ts)).
 
 Where a run has to be genuinely in flight — to be cancelled, edited under or renumbered — the
-provider is `gatedProvider` from [tests/support/server.ts](../tests/support/server.ts), which holds
-the door until the test says so; a build has `controlledEncoder`, which is the same door on the
-encoder. Nothing in the queue's tests waits on a timer.
-
-The build's tests assert the **file**, not the row's account of itself: how long it plays is read
-out of its RIFF header, and "this chapter was carried over" is checked by comparing the bytes of
-that chapter's span in the new file against the same span in the old one. A row that agrees with
-itself and not with the disk is the failure the Export page exists to catch, so it is not a thing
-the suite can be satisfied by. The two tests that need a real encoder are skipped where `ffmpeg`
-is not installed, and are the only ones in the suite that depend on anything outside the process.
+provider is `gatedProvider` or `gatedSpeechProvider` from
+[tests/support/server.ts](../tests/support/server.ts), which holds the door until the test says so;
+a build has `controlledEncoder` in [exports.test.ts](../tests/server/exports.test.ts). Nothing in the
+queue's tests waits on a timer. The build's tests assert the **file**, not the row's account of
+itself: how long it plays is read out of its header, and "this chapter was carried over" is checked
+by comparing the bytes of that chapter's span in the new file against the old one. The tests that
+need a real encoder, in exports, covers and encodedClips, are skipped where `ffmpeg` is not
+installed.
 
 [tests/live/](../tests/live/) is the exception on purpose: `pnpm test:live` sends a few real
-requests — a short excerpt to the scripting gateway in `.env`, one sentence to Fish Audio at its
-own rate and at 24 kHz, and both connection tests — to prove the providers against the real APIs.
-`bun test` skips them unless `LIVE=1`, so the ordinary suite still never reaches the network.
+requests to the scripting gateway and the Fish Audio account named in `.env` — scripting, speech in
+each format, the voice list, the gate at the preset's concurrency, and the connection tests. They
+are skipped unless `LIVE=1`, so the ordinary suite never reaches the network.
 
-## What is not done yet
+## Known gaps
 
-`libraryStore` reads and writes through [src/services/library.ts](../src/services/library.ts), so
-the library screens are the server's. What is worth knowing about that:
-
-- **A removal cannot be undone, so it asks first.** Nothing puts a book back in the database. The
-  danger rule in [store ownership](../src/stores/README.md) has two halves — act at once with
-  Undo, or ask first — and a removal takes the second: the menu item and the volume row ask with a
-  second click, and the toast says it cannot be undone rather than offering a button that would
-  lie.
-- **An undo of a skip or a keep is exact.** Skip, include and keep are rules that only run
-  forwards — including a noted chapter records that it was looked at — so an Undo does not run the
-  inverse rule: the store records what the chapters were and sends that to
-  `POST /api/books/:id/chapters/decisions`, which puts it back as stated. A skip that is undone
-  comes back undecided, and keeping a chapter offers Undo, on both sides of the seam.
-- **An undo over HTTP is an edit.** A rename is renamed back and a merge or a removal puts back the
-  lines that moved, exactly; but undoing an edit, a bulk correction or a restore writes the previous
-  script back as an edit, so the history says an edit happened rather than forgetting the entry the
-  way the demo's snapshot does. A session that comes back to where it began leaves no entry, which
-  covers the common case; a bulk correction undone leaves its entry with an edit after it.
-
-The queue runs three kinds of job. What the scripting, narration and export slices do not do yet,
-each because a route or a table's writer is missing rather than by oversight:
-
-- **An endpoint's daily limit is shown, not enforced.** `spendLimit` and `quotaGroup` are stored
-  and the Pricing tab draws the day's spending against the limit, but only a book's cap, pause and
-  script budget hold work back — in the demo as on the server.
-- **A billed request that was aborted has no row.** When one chunk of a chapter fails, the others
-  in flight are aborted, and a request cancelled mid-flight reports nothing, since what the
-  provider made of it is not knowable. A budget stop, by contrast, lets what is out land and pays
-  for it.
-- **The opening balance has no writer.** `opening_spend` is summed into a book's spending, but only
-  the seeded world has one; a book imported on the server starts at zero.
-- **Gemini is WAV only, and ElevenLabs has no Opus.** Gemini's reference lists MP3 and Ogg Opus
-  answers, and ElevenLabs offers Opus, but neither has been tried against this server's readers,
-  so neither is offered yet. Gemini's extended voice library (`GET /v1beta/voices`) is not listed
-  either; its voices can be added by id.
+- **An endpoint's daily limit is shown, not enforced.** `spendLimit` and `quotaGroup` are stored and
+  the Pricing tab draws the day's spending against the limit, but only a book's cap, pause and
+  script budget hold work back.
+- **A billed request that was aborted has no row.** When one chunk of a chapter fails, the others in
+  flight are aborted, and a request cancelled mid-flight reports nothing, since what the provider
+  made of it is not knowable. A budget stop, by contrast, lets what is out land and pays for it.
+- **Gemini is WAV only, and ElevenLabs has no Opus.** Both providers document more, but neither has
+  been tried against this server's readers. Gemini's extended voice library
+  (`GET /v1beta/voices`) is not listed either; its voices can be added by id.
 - **OpenAI's `gpt-4o-mini-tts` audio half is an assumption.** OpenAI bills audio tokens out but
-  publishes no tokens-per-second figure and reports no usage, so the preset leaves the endpoint's
-  setting (25) in place and every figure that leans on it says so.
+  publishes no tokens-per-second figure and reports no usage, so the preset's 25 tokens a second is
+  a guess, and every figure that leans on it says so.
 - **Undoing an endpoint's removal brings it back without its key**, since the save removed the row
   the key was on.
-- **An update under ffmpeg re-encodes everything.** Carrying a chapter over is real under the
-  stitcher and refused under ffmpeg, for the reason [the encoder](#the-encoder-and-what-it-will-not-pretend)
-  gives. Making it real there means keeping an encoded file per chapter and joining those with
-  `-c copy`, which is a different arrangement on disk from the one this server has.
-- **Retrying a failed job re-queues it through the same route** it was asked for by, so a retry is
-  planned again against the book as it now stands rather than replayed as it was.
-- **A change made in another tab is noticed on the next write, not before.** Nothing pushes
+- **An update under ffmpeg re-encodes everything**, for the reason
+  [the encoder](#the-encoder-and-what-it-will-not-pretend) gives.
+- **A seeded demo audiobook has no file**, so downloading one of the demo's finished exports is a
+  404; one the demo builds has its file.
+- **A change made in another tab is noticed on the next write or poll, not before.** Nothing pushes
   events; a script edited elsewhere is found when an edit here is refused for its stale revision.
-
-The tables for the rest of the domain exist and are proven against the seeded world. The secrets a
-credential names have no route.
-The seeded demo remains the way to exercise all of it, and stays that way after the backend is
-finished — see [the demo guide](demo.md).
-
-Changing the schema means regenerating: `pnpm db:generate` after editing anything in
-[server/db/schema/](../server/db/schema/), or the next boot migrates to the old shape and the tests
-fail somewhere that does not name the cause. Migrations are versioned in [drizzle/](../drizzle/)
-and applied in order at boot; `0001` added the script revision and the queue's dedupe key, `0002`
-the version an open editing session preserved, and `0003` what a build writes — the file each
-output landed in, the span each chapter occupies inside it, and which encoder wrote it; `0004` an
-endpoint's sample rate and the rate each clip came back at; `0005` a book's cover image; `0006` an
-endpoint's key; `0007` an endpoint's audio format and bitrate; `0008` the recordings a cloned
-voice was made from, and the consent they were kept under; `0009` when a clone's voice went missing
-or its samples were forgotten; `0010` the samples a script import brought, waiting with a speaker;
-`0011` a clone's fee waiting on the first line spoken in its voice.
-
-**Foreign keys are off while migrations run.** A change drizzle-kit cannot write as `ALTER TABLE` is
-written as a rebuild — new table, copy, `DROP` the old one, rename — and with foreign keys on, that
-`DROP` cascades through every `ON DELETE CASCADE` pointing at the table. The generated SQL does say
-`PRAGMA foreign_keys=OFF`, but drizzle runs the migrations in one transaction, where SQLite ignores
-it. So [migrate.ts](../server/db/migrate.ts) turns them off on the connection before drizzle begins,
-asks `PRAGMA foreign_key_check` afterwards, and refuses to boot on a database a migration left
-with a reference to nothing. [migrate.test.ts](../tests/server/migrate.test.ts) writes the rebuild
-the next change to `chapters` would be and runs it over an imported book; before this, it wiped every
-chapter's text. The connection also waits up to five seconds on a busy database, so
-`pnpm db:migrate` beside a running server waits for a write to finish rather than failing.

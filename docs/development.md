@@ -4,59 +4,61 @@
 
 ## Setup and commands
 
-Use Node.js compatible with the installed Vite version, pnpm for the checked-in `pnpm-lock.yaml`, and Bun for the existing test runner. No provider keys are required: a fresh library has no endpoints, and the **Simulated (free)** preset on the Endpoints page adds one the server answers itself, without the network or a charge.
+You need Node.js for Vite 8, pnpm for the checked-in `pnpm-lock.yaml`, and Bun 1.4 or later, which runs the server and the tests. Installing dependencies does not install Bun. ffmpeg is optional: the server only needs it when started with `EXPORT_ENCODER=ffmpeg` ([export](exports.md)). No provider keys are needed: a fresh library has no endpoints, and the **Simulated (free)** preset on the Endpoints page adds one the server answers itself, without the network or a charge.
 
 ```sh
 pnpm install
 pnpm dev
 ```
 
-That starts the API and the frontend together. Vite prints the local URL, normally `http://localhost:5173`. If that port is occupied, use the URL it prints. There is no `prototype` script; `dev` is the current command.
+That starts the API on :8787 and Vite beside it, each line prefixed `api` or `web`; stopping either stops both. Vite prints the local URL, normally `http://localhost:5173`, and proxies `/api` and `/demo/api` to the API. Server settings and their defaults are in [.env.example](../.env.example); every one has a working default, so no `.env` is needed.
 
 The scripts are defined in [package.json](../package.json):
 
-| Command            | Purpose                                      |
-| ------------------ | -------------------------------------------- |
-| `pnpm dev`         | Start the API and the frontend together      |
-| `pnpm dev:web`     | Start the frontend alone                     |
-| `pnpm dev:server`  | Start the backend API on :8787               |
-| `pnpm typecheck`   | Run `vue-tsc --build`                        |
-| `pnpm lint`        | Check with Oxlint                            |
-| `pnpm lint:fix`    | Apply lint fixes; review the resulting diff  |
-| `pnpm fmt:check`   | Check formatting with Oxfmt                  |
-| `pnpm fmt`         | Format files; review the resulting diff      |
-| `pnpm test`        | Run the suite, one worker per core           |
-| `pnpm build`       | Typecheck and build with Vite                |
-| `pnpm preview`     | Serve the production build locally           |
-| `pnpm db:generate` | Generate SQL after editing the server schema |
-| `pnpm db:migrate`  | Apply migrations without starting the server |
-| `pnpm db:studio`   | Browse the database with Drizzle Studio      |
+| Command            | Purpose                                                                  |
+| ------------------ | ------------------------------------------------------------------------ |
+| `pnpm dev`         | Start the API and the frontend together                                  |
+| `pnpm dev:web`     | Start the frontend alone                                                 |
+| `pnpm dev:server`  | Start the API alone, applying migrations first                           |
+| `pnpm typecheck`   | Run `vue-tsc --build`                                                    |
+| `pnpm lint`        | Check with Oxlint                                                        |
+| `pnpm lint:fix`    | Apply lint fixes; review the resulting diff                              |
+| `pnpm fmt:check`   | Check formatting with Oxfmt                                              |
+| `pnpm fmt`         | Format files; review the resulting diff                                  |
+| `pnpm test`        | Run the suite, one worker per core                                       |
+| `pnpm test:live`   | Send a few real, paid requests to the providers named in `.env` (opt-in) |
+| `pnpm build`       | Typecheck and build with Vite                                            |
+| `pnpm preview`     | Serve the production build locally                                       |
+| `pnpm db:generate` | Generate SQL in `drizzle/` after editing the server schema               |
+| `pnpm db:migrate`  | Apply migrations without starting the server                             |
+| `pnpm db:studio`   | Browse the database with Drizzle Studio                                  |
 
-Run an individual test file directly with Bun, for example `bun test tests/history.test.ts`. Installing dependencies does not install the Bun executable used by the test script; `pnpm test` needs Bun 1.4 or later for `--parallel`, which runs each file in a worker of its own. The seeded demo takes about half a second to open, and a test that opens it can pass 5 s when every core is busy, so the script allows each test 20 s. Tests make their temporary folders under one root per file, removed when the file is done ([tests/support/tempRoot.ts](../tests/support/tempRoot.ts)); make yours with `mkdtemp(tmpdir())` so they land there.
+Run one test file with Bun directly, for example `bun test tests/history.test.ts`. `pnpm test` uses Bun's `--parallel`, which runs each file in a worker of its own. The seeded demo takes about half a second to open, and a test that opens it can pass 5 s when every core is busy, so the script allows each test 20 s. Tests make their temporary folders under one root per file, removed when the file is done ([tests/support/tempRoot.ts](../tests/support/tempRoot.ts)); make yours with `mkdtemp(tmpdir())` so they land there.
+
+`pnpm test:live` runs [tests/live/](../tests/live/) against real APIs with the keys in `.env` (the commented `SCRIPTING_PROVIDER_*` and `FISHAUDIO_*` lines in `.env.example`). It is the only code that reads them; the running server takes its providers from the Endpoints page.
 
 ## Code map
 
-| Location                                                          | Responsibility                                                                                              |
-| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| [src/views](../src/views) and [src/components](../src/components) | Pages and interactions                                                                                      |
-| [src/ui](../src/ui)                                               | Styled, reusable UI controls                                                                                |
-| [src/stores](../src/stores)                                       | Feature state and application actions; ownership is documented in the store guide                           |
-| [src/lib](../src/lib)                                             | Shared calculations and helpers: run plans, script comparison, pricing, wall-clock time and export planning |
-| [src/mock/fixtures](../src/mock/fixtures)                         | Hand-authored sample content and configurations the demo is seeded with                                     |
-| [src/mock/world](../src/mock/world)                               | Expands fixtures into the demo's coherent book library                                                      |
-| [src/mock/scenarios](../src/mock/scenarios)                       | The demo's repeatable situations, applied on the server                                                     |
-| [src/services](../src/services)                                   | The page's HTTP services, one base per tab: `/api`, or `/demo/api` in a demo tab                            |
-| [src/types](../src/types)                                         | Feature types, imported through `@/types`                                                                   |
-| [tests](../tests)                                                 | Bun tests for domain rules and workflows                                                                    |
-| [server](../server)                                               | The backend: EPUB import, the stored library and the job queue. Its own guide is [backend](backend.md)      |
-
-The scenario catalogue and shared store rules remain in their existing locations; this documentation does not introduce another state or service layer.
+| Location                                                          | Responsibility                                                                                                  |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| [src/views](../src/views) and [src/components](../src/components) | Pages and interactions                                                                                          |
+| [src/ui](../src/ui)                                               | Styled, reusable UI controls                                                                                    |
+| [src/stores](../src/stores)                                       | Feature state and user actions; ownership is documented in the [store guide](../src/stores/README.md)           |
+| [src/queries](../src/queries)                                     | Reads from the server on [Pinia Colada](https://pinia-colada.esm.dev), and what each write invalidates          |
+| [src/services](../src/services)                                   | The page's HTTP services, one base per tab: `/api`, or `/demo/api` in a demo tab                                |
+| [src/composables](../src/composables)                             | Shared view logic: the player, the shell's facts about a book, voice samples, the preset picker                 |
+| [src/lib](../src/lib)                                             | Pure rules shared by the page and the server: run plans, pricing, script history, export planning, providers    |
+| [src/types](../src/types)                                         | Domain types, imported through `@/types` on both sides                                                          |
+| [src/mock](../src/mock)                                           | The world, fixtures and situations the server seeds the demo with; no store imports it                          |
+| [server](../server)                                               | The API, the job queue, EPUB import, providers and files. Its own guide is [backend](backend.md)                |
+| [drizzle](../drizzle)                                             | Generated SQL migrations                                                                                        |
+| [tests](../tests)                                                 | Store and rule tests; [tests/server](../tests/server) for the server, [tests/support](../tests/support) helpers |
 
 ## State that survives a reload
 
-Everything the page shows is the server's, in SQLite: your library in `data/library.db`, and the demo — opened from the header's **Demo** chip — in `data/demo.db`, where it stays as you left it until you reset it or pick a situation. A job the server was running when it stopped is picked up again when it starts. See [backend](backend.md) and [the demo](demo.md).
+Everything the page shows is the server's, in SQLite: your library in `data/library.db`, and the demo, opened from the header's **Demo** chip, in `data/demo.db`, where it stays as you left it until you reset it or pick a situation. A job the server was running when it stopped is picked up again when it starts. See [backend](backend.md) and [the demo](demo.md).
 
-Browser localStorage retains reader typography and cast-rail preferences, the Library grid/list choice, and whether Narration’s setup panel is open. Searches, filters and some navigation state are also represented in the URL. These preferences are not persistence for library data.
+The browser's localStorage keeps reader typography and whether the cast rail shows, the Library grid/list choice, and whether Narration's setup panel is open. `sessionStorage` keeps whether this tab is in the demo and which situation it last applied. Searches, filters and some navigation state are in the URL. None of this is library data.
 
 ## Verification and test maintenance
 
@@ -81,8 +83,7 @@ breakage — name that test when you delete this one, and check it is not itself
 repeated case belongs in a `test.each` table whose row names itself in the failure, not in a copy.
 
 Keep tests inexpensive. Use the smallest fixture that still reaches the rule: `story(n)` for the few
-paragraphs a test needs rather than the default whole chapter, which renders dozens of clips and made
-single files take a minute. Replace a real wait with a gated provider or fake timers. Keep the fake
+paragraphs a test needs rather than the default whole chapter, which renders dozens of clips. Replace a real wait with a gated provider or fake timers. Keep the fake
 providers; no test makes a paid or network call. The real encoder runs only where it is the point,
 and skips where `ffmpeg` is not installed.
 
@@ -106,14 +107,11 @@ Shared setup lives in [tests/support](../tests/support); express a per-file diff
 there rather than as a local copy. Split a file when navigating it is hard, along a seam the store
 guide already names — no file-length or test-count target is imposed, in either direction.
 
-Layout, wording and visual changes get browser verification plus lint and typecheck, not another unit
-test.
-
 The topic guides name the relevant tests beside the behavior they explain. Cross-feature coverage includes [tests/stores.test.ts](../tests/stores.test.ts), [tests/demoStore.test.ts](../tests/demoStore.test.ts) and [tests/server/demoSituations.test.ts](../tests/server/demoSituations.test.ts), [tests/history.test.ts](../tests/history.test.ts), [tests/bulkRuns.test.ts](../tests/bulkRuns.test.ts), the three pricing files — [tests/pricing.rates.test.ts](../tests/pricing.rates.test.ts) for the rate in force at a given instant, [tests/pricing.tokens.test.ts](../tests/pricing.tokens.test.ts) for the scripting side and [tests/pricing.speech.test.ts](../tests/pricing.speech.test.ts) for the speech side — and [tests/server/usage.test.ts](../tests/server/usage.test.ts) for the ledger. The [demo walkthroughs](demo.md#things-to-try) are the manual testing entry point.
 
 ## Keeping documentation useful
 
-Document stable behavior in its topic guide and ownership rules in the store guide. Keep the root README as the entry point. Add meaningful design rationale to the relevant topic; use [design history](design-history.md) for chronology and superseded approaches. Label future plans and simulated behavior explicitly, and update the existing explanation instead of appending another account of the same feature.
+Document stable behavior in its topic guide and ownership rules in the store guide. Keep the root README as the entry point. Describe what the app does now, in the present tense: when a feature changes, rewrite its explanation rather than appending how it used to work. Keep the design rationale — why a rule is shaped the way it is — beside the rule, and put chronology and superseded approaches in [design history](design-history.md). Say where the demo differs from your own library, and label anything not yet built as such.
 
 ## Toasts
 

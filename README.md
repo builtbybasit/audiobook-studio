@@ -1,46 +1,41 @@
 # Audiobook Studio
 
-A personal audiobook app for turning books into reviewed, multi-voice narration. This checkout is a **Vue 3 frontend prototype with a permanent seeded demo**: use it to test the workflow without paid AI requests. A backend has been started in [server/](server/): it reads real EPUBs, stores the library, runs scripting, narration and export as queued jobs, holds each chapter's script, its history and the book's cast, and writes audio files you can play and audiobooks you can download; endpoints and pricing are still simulated.
+A personal app for turning EPUBs into reviewed, multi-voice audiobooks. It runs on your own machine: a Vue 3 page in front of a Bun server that keeps the library in SQLite, sends work to the scripting and speech endpoints you configure, and writes real audio files.
 
 Import → review contents → script → assign voices → narrate and review → export.
 
 ## Run locally
 
-Use Node.js, pnpm and Bun (the test runner). The repository includes `pnpm-lock.yaml`.
+You need Node.js (for Vite), pnpm and Bun 1.4 or later. ffmpeg is optional; see [export](docs/exports.md).
 
 ```sh
 pnpm install
 pnpm dev
 ```
 
-That starts the API on :8787 and the frontend beside it, proxying `/api` to it, in one terminal. Open the URL Vite prints, normally `http://localhost:5173`. No provider credentials are needed: the library starts with no endpoints, and adding the **Simulated (free)** preset on the Endpoints page gives you one the server answers itself — a tone per line, a script from the prose's punctuation — without the network or a charge. See [development and verification](docs/development.md) for prerequisites and all commands.
+That starts the API on :8787 and the frontend beside it, proxying `/api` to it. Open the URL Vite prints, normally `http://localhost:5173`. Every server setting has a working default, so no `.env` is needed; [.env.example](.env.example) lists them.
 
-`pnpm dev:server` and `pnpm dev:web` start the two halves on their own.
+A fresh library has no books and no endpoints, so nothing is sent anywhere until you add one. The **Simulated (free)** preset on the Endpoints page adds an endpoint the server answers itself (a script read from the prose's punctuation, a quiet tone per line), with no network and no charge. For real narration, pick a provider preset and paste its key. The key is saved on the server and never sent back to the page.
 
-**The library, Scripting, Cast, Narration, Export and Queue screens use it.** The page talks to the server through the services in [src/services/](src/services/), and the stores read and write through them: the shelf, the import, the contents review and removal are the server's; a chapter's prose is the one the EPUB contained; scripting a chapter queues a job the server runs, which writes the script, the speakers it found and a version in the chapter's history; editing a line, renaming a speaker or saving a checkpoint is a request; and the Queue page shows the server's jobs. Narrating a chapter renders a real audio file the player plays, and building an audiobook stitches those files into one you can download. Reads go through queries ([src/queries/](src/queries/), on Pinia Colada), which ask the server. Your library, the queue and the cast start empty rather than on the seeded shelf, because a real library is not something the demo can stand in for. The endpoints are the server's too, and a run goes to the ones saved there: a real provider over the network, or a simulated endpoint (`simulated://…`) that the server answers itself, free. What the server itself does is in [backend](docs/backend.md). The seeded demo is a second library on the same server, with a database of its own and every endpoint simulated: the header's **Demo** chip opens it in the current tab (it reloads the page, and **Leave demo** comes back). A server that is not running is said so on the Library; see [the demo](docs/demo.md).
+`pnpm dev:server` and `pnpm dev:web` start the two halves on their own. All commands are in [development](docs/development.md).
 
-## What works in this prototype
+## What it does
 
-- **Library and Contents:** EPUB import, volume organization, chapter previews and decisions about notices or other non-story material.
-- **Scripting and Cast:** endpoint configuration, script editing, speaker/voice assignments, pronunciation, expression annotations and bulk corrections.
-- **Script history and reruns:** named checkpoints, preview/compare/restore, bulk re-scripting and re-narration that preserve usable results while replacements run.
-- **Narration and Review:** the narration queue, failed clips, stale audio, flags, retake comparison and a list of decisions needing attention.
-- **Endpoints and pricing:** request history and charts, concurrency, cached-token pricing, TTS billing models, schedules, promotions, budgets and recorded usage.
-- **Export:** M4B/MP3 planning, file layouts, chapter marks, loudness previews and version/update workflows.
+- **Library and contents:** reads real EPUBs, one or more files per book as volumes, and flags notices, schedules and author notes for you to skip or keep before anything is added.
+- **Scripting:** a chat model splits each chapter into lines with a speaker, type and direction, held word for word against the prose. You can edit lines, split and join them, correct speakers in bulk, keep checkpoints, and compare or restore earlier versions. The prompt is editable per library, per endpoint and per book.
+- **Cast and voices:** speakers across the book, merges, a pronunciation dictionary, pacing, and voices fetched from or cloned on the speech endpoint.
+- **Narration and review:** narration renders a clip per line on the endpoint that owns the speaker's voice. You can flag and retake clips and compare takes; clips the script or dictionary has moved under are marked stale.
+- **Export:** builds an audiobook as one file, one per volume or one per chapter, updates it by carrying over unchanged chapters, and keeps the previous version until the new one lands.
+- **Endpoints and spending:** a usage ledger of every request with its receipt, rate cards with schedules and promotions, per-book budgets, and concurrency and rate-limit handling per endpoint.
+- **Script transfer:** exports a book's script, cast and voice samples as a file, and imports one into another copy of the book.
 
-## What is simulated
+## The demo
 
-In the demo, and on any simulated endpoint, provider requests are answered by the server itself: a script read from the prose, and a quiet tone per line for audio. Everything else is real in both — EPUBs are parsed, clips are audio files, audiobooks are stitched on disk, and with `EXPORT_ENCODER=ffmpeg` they are M4Bs with chapter marks and measured loudness. Costs are worked out from each endpoint's rate card; the demo's provider names and prices are examples, not current pricing guarantees, and nothing it does is billed. Voice auditions may use the browser’s speech synthesis.
+The header's **Demo** chip opens a seeded demo library in the current tab: four books in every state worth seeing, and every endpoint simulated. It is a second library on the same server, with its own database, so nothing done there touches yours and nothing is billed. Its drawer offers repeatable situations (a failed run, missing voices, a spent budget, an export that needs updating…), the speed of simulated work, and a reset. See [the demo](docs/demo.md).
 
-Books, edits, history, jobs and keys are kept by the server and survive a reload. A few UI preferences persist in localStorage; see [state that survives a reload](docs/development.md#state-that-survives-a-reload).
+## Where things are kept
 
-## Try a workflow
-
-Open **Demo** in the header and **Enter demo**. The drawer offers repeatable situations, suggested steps, the speed of simulated work and reset. Applying a situation rebuilds the demo from its seed first; reset puts the seed back and drops the work in flight. Neither touches your library.
-
-Start with a chapter with script history, a failed replacement, a book with missing voices, or an export that needs updating. The [demo guide](docs/demo.md) contains the scenario map and detailed walkthroughs.
-
-**Keep this demo when the backend is added.** The first five backend slices — reading EPUBs and storing the library, a job queue that scripts chapters, the script, history and cast a scripted chapter owns, narration that renders real audio files, and export that stitches them into an audiobook on disk — are in [server/](server/), and send their work to the providers the Endpoints page holds, simulated or real. The testing requirements are recorded in [future backend integration requirements](docs/demo.md#future-backend-integration-requirements).
+The server keeps everything the page shows: your library in `data/library.db` with clips, audiobooks and voice samples under `data/`, and the demo in `data/demo.db` and `data/demo/`. A job that was running when the server stopped is picked up again when it starts. The browser keeps only a few view preferences; see [state that survives a reload](docs/development.md#state-that-survives-a-reload).
 
 ## Documentation
 
@@ -53,8 +48,8 @@ Start with a chapter with script history, a failed replacement, a book with miss
 | Export a book's script, or import one into another copy      | [Script export and import](docs/script-transfer.md)                            |
 | Configure endpoints or inspect queue activity                | [Endpoints and queue](docs/endpoints.md)                                       |
 | Understand billing units, discounts, cache usage and budgets | [Pricing and usage](docs/pricing.md)                                           |
-| Reproduce a situation without paying for AI calls            | [Seeded demo and walkthroughs](docs/demo.md)                                   |
-| Run the server, import a real EPUB or add an endpoint        | [Backend](docs/backend.md)                                                     |
+| Try a situation without paying for AI calls                  | [Seeded demo and walkthroughs](docs/demo.md)                                   |
+| Understand how the server works and why                      | [Backend](docs/backend.md)                                                     |
 | Serve a local speech model the app can send batches to       | [Batch speech API](docs/speech-batch-api.md)                                   |
 | Work on the code, run checks or follow UI conventions        | [Development](docs/development.md) and [store ownership](src/stores/README.md) |
 | Understand earlier design choices                            | [Design history](docs/design-history.md)                                       |

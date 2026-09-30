@@ -2,21 +2,26 @@
 
 [Back to README](../README.md) · [Endpoint UI](endpoints.md) · [Ownership and invariants](../src/stores/README.md#pricing-and-usage-invariants)
 
-This guide describes the prototype’s implemented pricing rules. Provider names, rates, billing units and usage payloads are editable demo examples, not verified current billing contracts. Actual integrations will need to validate each provider’s rules.
+These are the rules every request is priced by. One engine, [src/lib/pricing.ts](../src/lib/pricing.ts),
+serves both sides: the server prices each request into the usage ledger with it, and the page
+prices its estimates with it. A provider preset carries that provider's published card on the date
+its note gives; the rates on an endpoint are whatever you saved, and a budget is held to them, so
+check them against your own plan. The demo's endpoints carry illustrative rate cards and bill
+nothing ([simulated endpoints](endpoints.md)).
 
 ## Rates, schedules and promotions
 
-Pricing is no longer a flat rate. An endpoint's **Pricing & budgets** tab still opens on the rates
-that endpoint needs — input and output per million tokens for a chat model, and the selected billing model’s rate or
-separate input/audio rates for a speech model — and everything below is a disclosure that stays shut unless that endpoint uses
-it. **Both kinds go through the same schedule and the same promotions**; what differs is which rates
-they have and what unit those rates are written in.
+An endpoint's **Pricing & budgets** tab opens on the rates that endpoint needs — input and output
+per million tokens for a chat model; the selected billing model's rate, or separate input and audio
+rates, for a speech model — and everything below is a disclosure that stays shut unless that
+endpoint uses it. **Both kinds go through the same schedule and the same promotions**; what differs
+is which rates they have and what unit those rates are written in.
 
-**Cached input** (implemented for chat endpoints only; this prototype does not offer cache pricing
-for speech endpoints). A switch adds a separate cached-input rate, and a second one adds a cache-write
-rate where the provider bills for that too. Off is not zero: it means "no separate line", and those
-tokens are charged at the ordinary input rate. The distinction matters — some providers write the
-cache for free, others charge more for it than for ordinary input.
+**Cached input** (scripting endpoints only; a speech endpoint has no cache rates). A switch adds a
+separate cached-input rate, starting at a quarter of the input rate, and a second one adds a
+cache-write rate where the provider bills for that too. Off is not zero: it means "no
+separate line", and those tokens are charged at the ordinary input rate. The distinction matters —
+some providers write the cache for free, others charge more for it than for ordinary input.
 
 **Peak / off-peak.** A schedule is an explicit IANA timezone (shown with its current local clock, so
 you can see the window you are in) and a list of recurring windows. A window whose end is at or
@@ -44,7 +49,7 @@ soonest. Nothing compounds. **Effective price now** shows all three steps per co
 base struck through, a chip per reason, the shadowed promotions named, and one line saying what
 changes next and when, in the endpoint's own timezone.
 
-**A rate nobody knows stays unknown through every discount.** The seeded Azure proxy bills per
+**A rate nobody knows stays unknown through every discount.** The demo's Azure proxy bills per
 audio minute at a rate that was never written down and has a nightly 30% window over it: the window
 is in force, the effective price is still _unknown_, and the page says so instead of producing a
 confident number. Requests through it are counted, never priced, and every total that leaves them
@@ -58,7 +63,7 @@ A speech provider meters one of several quantities and they are **not** scalings
 line of Mandarin is 12 characters, 36 UTF-8 bytes and some number of text tokens that neither figure
 predicts. So every request records all of them and only the one its endpoint bills on is charged:
 
-| Model                                | Charged on                                | Seeded as                      |
+| Model                                | Charged on                                | In the demo                    |
 | ------------------------------------ | ----------------------------------------- | ------------------------------ |
 | per 1M characters                    | billable characters — Unicode code points | OpenAI (main), $12             |
 | per 1M UTF-8 bytes                   | `TextEncoder` bytes of the same content   | Fish Audio, $15                |
@@ -69,33 +74,33 @@ predicts. So every request records all of them and only the one its endpoint bil
 
 **Characters are not `String.length`.** That counts UTF-16 code units — an emoji as two, a Han
 character as one — and is neither what a provider billing "characters" means nor what one billing
-bytes meters. `billableChars` counts code points and `utf8Bytes` counts bytes, and the Fish Audio
-demo preset uses **UTF-8 bytes** to exercise a different billing unit. This is a fixture choice,
-not a verified claim about Fish Audio’s current pricing. Under that configuration, three-byte Han characters cost
-three times their code-point count; verify the provider contract before using the preset for real billing.
+bytes meters. `billableChars` counts code points and `utf8Bytes` counts bytes. The Fish Audio
+presets bill **UTF-8 bytes**: Fish's price list talks about characters, but the quantity it meters
+is bytes, so a three-byte Han character costs three times what a character count suggests.
 
 **What is counted is what was submitted**, not what the book says: the line after the pronunciation
 dictionary has rewritten it, with the expression tags inserted and the voice instructions that
 travel beside it (a switch on the tab, since a few providers ignore that field). It is a separate
 question from how long the chapter **is** — which is what the reading-time estimate uses — and from
-the endpoint's per-request character limit, which is about payload size and lives in [lib/split.ts](../src/lib/split.ts).
-The seeded dictionary rewrites "outer sect" into `外门`, so the byte-billed speaker's requests are
+the endpoint's per-request character limit, which is about payload size and lives in
+[lib/split.ts](../src/lib/split.ts). The demo's dictionary rewrites "outer sect" into `外门`, so the
+byte-billed speaker's requests are
 measurably more bytes than characters and the difference is visible in the estimate and on the
 receipt.
 
 **Audio tokens do not follow from the text.** They follow the length of the recording, so an
 estimate goes through the audio's expected duration and a tokens-per-second conversion — an
 assumption about the provider's tokeniser rather than anything this app can measure. It is editable
-per endpoint (`audioTokensPerSecond`, seeded at 25), recorded on every receipt priced under it, and
+per endpoint (`audioTokensPerSecond`, 25 in the presets), recorded on every receipt priced under it, and
 any estimate that leans on it says so. A text-token approximation is never used for the audio side:
 that is a different quantity, not a cheaper way of getting the same one.
 
 **Estimates split input from audio.** `inputCost + audioCost = cost`, on the Pricing tab's worked
 example, in the run panel and in the queue's run details — because on a token-billed endpoint the
-audio half usually dominates, and a single total hides which one is large. The reconciliation after
-a run reports the two halves separately for the same reason: an input side that lands on the nose
-and an audio side 19% out is a different story from both being 10% out, and only one of them is
-fixed by changing a number on the Pricing tab.
+audio half usually dominates, and a single total hides which one is large. A narration job's run
+details keep the two halves of its estimate for the same reason: an input side that lands on the
+nose and an audio side 19% out is a different story from both being 10% out, and only one of them
+is fixed by changing a number on the Pricing tab.
 
 ### Cache usage comes from the API, not from an assumption
 
@@ -108,24 +113,26 @@ Providers disagree about this, so nothing reads a payload directly. `normalizeUs
 [src/lib/pricing.ts](../src/lib/pricing.ts) is the one way in and knows three shapes: OpenAI's `prompt_tokens` **includes**
 `prompt_tokens_details.cached_tokens`, Anthropic's `input_tokens` **excludes**
 `cache_read_input_tokens` and `cache_creation_input_tokens`, and a plain provider reports totals and
-nothing else. The server reads every answer through it, and its tests feed it payloads in each
-shape, so the rule is exercised rather than asserted.
+nothing else. The server reads every answer through it, and
+[tests/pricing.tokens.test.ts](../tests/pricing.tokens.test.ts) feeds it payloads in each shape, so
+the rule is exercised rather than asserted.
 
 - **Zero cached tokens and no cache report are different facts.** `cachedInput: 0` is a reported
   zero. `null` means the provider said nothing: the request is then charged with the whole input at
-  the ordinary rate — the conservative reading — its cost is labelled **estimated** rather than
-  calculated, and the row says _"How much of the input was cached was not reported. The whole input
-  is charged at the ordinary rate, so the real cost is this figure or less."_ An assumed cache miss
-  is never presented as a reported one.
+  the ordinary rate, its cost is labelled **estimated** rather than calculated, and the row says
+  _"How much of the input was cached was not reported. The whole input is charged at the ordinary
+  rate, so the real cost is this figure or less."_ — or, on a card whose cached rate is dearer than
+  its ordinary one, that the real cost could be more. An assumed cache miss is never presented as a
+  reported one.
 - **Contradictory counts are caught before the arithmetic.** Cached plus cache-write tokens adding up
   to more than the total input, a negative count, a missing one — each is repaired so no line can go
   negative, flagged on the receipt, and drops the cost to an estimate.
 - **A charge the provider reported is kept apart from one we worked out.** `CostBasis` is
   `calculated`, `provider-reported`, `estimated` or `unknown`, and where a provider reports its own
   figure the receipt shows both with a note that a provider's tokeniser and rounding are not ours.
-  On the server a scripting request whose answer says what it cost — OpenRouter's `usage.cost` —
-  is recorded at that figure (`provider-reported`), since a gateway bills at whichever provider
-  served it rather than at the listed rate; the card's figure stays on the receipt as `calculated`.
+  A scripting request whose answer says what it cost — OpenRouter's `usage.cost` — is recorded at
+  that figure (`provider-reported`), since a gateway bills at whichever provider served it rather
+  than at the listed rate; the card's figure stays on the receipt as `calculated`.
 
 ### Estimates, and what they are allowed to assume
 
@@ -149,12 +156,15 @@ at the ordinary input rate, and the run estimate only claims "the real cost is t
 card where ordinary input really is the dearest. Where it is not, the caution names the ceiling
 instead and says that is what the budget is checked against.
 
-**Narration enforces its cap in the store, at every entry point.** A bulk run, "re-narrate stale", a
-retry, a retake and "retake everything flagged" all check the undiscounted price against what has
-been spent _and_ what unfinished work has already reserved, and each narration job holds its
-chapter's price against the cap until it lands. A check that lives only in the run panel is a
-warning on one screen; two runs that each fit on their own could otherwise start together and land
-past the cap between them.
+**The server enforces the cap at every way in** (`server/usage/budget.ts`). A narration run at any
+scope, a retake of one line or of everything flagged, and a scripting run all check the
+undiscounted price against what has been spent _and_ what unfinished work has already reserved
+before anything is queued, and refuse the whole of it if it does not fit. Each job then holds its
+chapter's price against the cap while it runs and asks again before every request it sends, so it
+stops, keeping what it already paid for, if a request cost more than it reserved, the cap was
+lowered or the book was paused. A check that lived only in a run panel would be a warning on one
+screen; two runs that each fit on their own could start together and land past the cap between
+them.
 
 ### Every request keeps its own receipt
 
@@ -168,36 +178,41 @@ and whatever the provider itself reported. Where the provider reports the quanti
 receipt uses **its** number and says so; where it reports nothing, the count taken on the way out is
 used and the figure is labelled an estimate rather than presented as a reconciliation. A charge the
 provider reported itself stays distinct from one worked out here from reported usage, which in turn
-stays distinct from one worked out from our own counts. A clip is priced when it **lands**, never when it is dispatched: a per-minute endpoint
-has no audio to bill for until then, and a failed clip therefore costs a per-minute endpoint nothing
-while a per-character or per-request one still charges for what it sent. The rule travels with
-either receipt so a provider that bills at dispatch, or per batch, can adopt a different one without
-rewriting history.
+stays distinct from one worked out from our own counts. A clip is priced when it **lands**, never
+when it is dispatched: a per-minute endpoint has no audio to bill for until then. A request that
+failed is a row too, priced at nothing unless the provider billed it — it answered and the server
+then refused the answer, or the provider's docs say it bills failures (`billsFailures` in
+[lib/providers/](../src/lib/providers/)). A billed failure is charged for what it sent on an
+endpoint that bills the text or the request, and for the audio it reported on one that bills audio.
+The rule travels with either receipt so a provider that bills at dispatch, or per batch, can adopt a
+different one without rewriting history.
 
 Pricing is therefore evaluated **per request**, not once per run: a batch that straddles an off-peak
-boundary is charged at two different prices, and the activity log records the rates each request
-used. When a run finishes it reconciles itself — estimated against charged, how much of the input
-turned out to be cached, and how many requests reported no cache detail and so have an upper bound
-rather than a figure. Each chapter of a bulk run is reconciled against **its own** chunks, not
-against the run's total divided by the number of chapters, so a short chapter and a long one do not
-report an artificial underspend and overrun against each other.
+boundary is charged at two different prices, and each request's receipt records the rates it used.
+A finished scripting job reconciles itself in the queue's run details — estimated against charged,
+how much of the input turned out to be cached, and how many requests reported no cache detail and so
+have an upper bound rather than a figure. Each job is one chapter, so each chapter of a bulk run is
+reconciled against **its own** chunks, not against the run's total divided by the number of
+chapters, and a short chapter and a long one do not report an artificial underspend and overrun
+against each other.
 
 ### The ledger: what was spent is what was requested
 
-Every request that settles — a scripting chunk, a rendered clip, a retake, one that failed, one the
-provider refused — is appended to the server's `requests` table with the receipt it was priced from, and
-nothing afterwards moves it, re-prices it or takes it out. Spending is read from there.
+Every request that settles — a scripting chunk, a rendered clip, a retake, a prompt trial, a voice
+sample, a clone fee, one that failed, one the provider refused — is appended to the server's
+`requests` table ([server/usage/ledger.ts](../server/usage/ledger.ts)) with the receipt it was
+priced from, and nothing afterwards moves it, re-prices it or takes it out. Spending is read from
+there.
 
-That is a deliberate replacement for totalling the clip currently sitting on each line, which was
-wrong in both directions at once: a paid request that failed was invisible, and accepting a retake
-made the money already spent on the clip it displaced **disappear** — recorded spending went down
-and the budget handed back capacity it had genuinely used. A take carries its `SpeechCharge` into
-the take list with it, so a superseded recording still says what it cost, at what rate, and why.
+Totalling the clip each line holds now would be wrong in both directions at once: a paid request
+that failed would be invisible, and accepting a retake would make the money already spent on the
+clip it displaced **disappear** — recorded spending would go down and the budget would hand back
+capacity it had genuinely used. A take carries its `SpeechCharge` into the take list with it, so a
+superseded recording still says what it cost, at what rate, and why.
 
-The same ledger is what the Endpoints **Activity** list reads. Reading it out of the running job
-meant a request vanished from the page the moment it finished —
-the one moment its receipt is worth opening. The list shows in-flight requests, then the settled
-ones with their receipts.
+The same ledger is what the Endpoints **Activity** list reads, so a request stays on the page after
+it finishes — the moment its receipt is worth opening. The list shows in-flight requests, then the
+settled ones with their receipts.
 
 The demo's seeded narration predates its ledger, so it is an opening balance: totalled once, when
 the demo is seeded, from the clips as they were, and kept beside the ledger. Every clip rendered
@@ -206,7 +221,7 @@ a clip being retried, replaced or displaced.
 
 The reported cache percentage divides like by like: cached tokens over the input of the requests
 that **reported** a cache figure, with the traffic that said nothing left out of both halves and
-counted separately. Dividing by every request's input silently read a silent provider as a run of
+counted separately; dividing by every request's input would read a silent provider as a run of
 misses.
 
 The **Activity** list stays a list: a row shows `1.6k in (1.3k cached) / 796 out`, which cannot be
@@ -222,28 +237,31 @@ reported / contradictory side by side, off-peak rates in force, a promotion runn
 scheduled and one ended, every promotion expired, a four-chapter run crossing a pricing boundary,
 speech rates on discount, and **every billing model in one chapter** — five speakers routed at five
 models at once, so a single run produces character-billed, byte-billed, token-billed, free and
-unpriced requests and the estimate has to add all of them into one figure. The seeded endpoints cover the configuration cases between them —
-OpenAI with cached input, a midnight-crossing off-peak window, a peak surcharge and three
-promotions; Anthropic with cache-write pricing and the payload shape that excludes cache tokens
-from the input; DeepSeek reporting its own charge; a local chat model with no advanced pricing at
-all; the OpenAI speech endpoint with a nightly off-peak window and a promotion on top; a free local
-Kokoro with nothing scheduled at **zero**, which is "free" and not "unknown"; Fish Audio billing
-UTF-8 bytes with a promotion scoped to the speech rate; Gemini billing input text and output audio
-tokens with a promotion on the **audio half only**; and the Azure proxy with a window over a rate
-nobody knows.
+unpriced requests and the estimate has to add all of them into one figure.
+
+The demo's endpoints cover the configuration cases between them (`src/mock/fixtures/profiles.ts`
+and `endpoints.ts`): OpenAI with cached input, a midnight-crossing off-peak window, a peak surcharge
+and three promotions; DeepSeek with cache-write pricing and a nightly discount; Anthropic with
+cache-write pricing and a promotion on both cache lines; a local chat model with no advanced pricing
+at all; the OpenAI speech endpoint with a nightly off-peak window and a promotion on top; a local
+Kokoro at **zero**, which is "free" and not "unknown"; Fish Audio billing UTF-8 bytes with a
+promotion scoped to the speech rate; Gemini billing input text and output audio tokens with a
+promotion on the **audio half only**; and the Azure proxy with a window over a rate nobody knows.
+Every one is simulated, so its requests are priced at these cards and nothing is billed.
 
 ### Limitations
 
-Cached-input and cache-write pricing are implemented for **chat endpoints only**. Speech cache
-pricing is not modeled; this is a prototype limitation, not a claim about every TTS provider.
-Schedules and promotions are shared.
+Cached-input and cache-write pricing exist for **scripting endpoints only**. Speech cache pricing is
+not modelled; that is a limit of this app, not a claim about every speech provider. Schedules and
+promotions are shared.
 
 A speech endpoint's `price` field survives as the per-1M-characters fallback for an endpoint that
-carries no `billing` block; `billingOf` adapts that legacy field into a character rate. Modern
-calculations use the billing model. The legacy field is kept in step only where a model
-can honestly produce a per-character figure — a per-request fee has no character in it, and a byte
-or audio-token rate over non-ASCII text is a different quantity rather than a different scale, so
-`perMillionChars` returns `null` for those rather than quoting one as the other.
+carries no `billing` block; `billingOf` in `lib/endpoints.ts` adapts it into a character rate, and
+everything else prices by the billing model. The Pricing tab keeps `price` in step only where a
+model can honestly produce a per-character figure — a per-request fee has no character in it, and a
+byte or audio-token rate over non-ASCII text is a different quantity rather than a different scale,
+so `perMillionChars` returns `null` for those and `price` is set to zero rather than quoting one as
+the other.
 
 Input text tokens are estimated at four characters per token where the provider does not report a
 count, which is a rule of thumb and not a tokeniser. The audio-token conversion is likewise a single

@@ -351,20 +351,22 @@ describe("staying up to date", () => {
     const heard = segs.filter((x) => x.audio.duration > 0);
     heard[0].pause = 1;
     heard[1].pause = 2;
-    const before = chapterSignature(c, segs, DEFAULT_PACING);
+    const before = chapterSignature(c, segs, DEFAULT_PACING, undefined);
     heard[0].pause = 2;
     heard[1].pause = 1;
-    expect(chapterSignature(c, segs, DEFAULT_PACING)).not.toBe(before);
+    expect(chapterSignature(c, segs, DEFAULT_PACING, undefined)).not.toBe(before);
   });
 
   test("the fingerprint covers the clips, the stitched silence and the chapter's state", () => {
     const c = chapter(1, 1, 100);
     const segs = scriptsStore.segmentsOf("starforge", 2);
     expect(segs.length).toBeGreaterThan(0);
-    const a = chapterSignature(c, segs, DEFAULT_PACING);
-    expect(chapterSignature(c, segs, DEFAULT_PACING)).toBe(a);
-    expect(chapterSignature(c, segs, { line: 1, turn: 2 })).not.toBe(a);
-    expect(chapterSignature({ ...c, narration: "stale" }, segs, DEFAULT_PACING)).not.toBe(a);
+    const a = chapterSignature(c, segs, DEFAULT_PACING, undefined);
+    expect(chapterSignature(c, segs, DEFAULT_PACING, undefined)).toBe(a);
+    expect(chapterSignature(c, segs, { line: 1, turn: 2 }, undefined)).not.toBe(a);
+    expect(
+      chapterSignature({ ...c, narration: "stale" }, segs, DEFAULT_PACING, undefined),
+    ).not.toBe(a);
   });
 });
 

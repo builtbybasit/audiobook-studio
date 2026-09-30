@@ -71,7 +71,7 @@ describe("pacing", () => {
     expect(pauseAfter(segs[0], segs[1], DEFAULT_PACING)).toBe(DEFAULT_PACING.line);
     expect(pauseAfter(segs[1], segs[2], DEFAULT_PACING)).toBe(DEFAULT_PACING.turn);
     expect(pauseAfter(segs[2], undefined, DEFAULT_PACING)).toBe(0);
-    expect(silenceOf(segs, DEFAULT_PACING)).toBeCloseTo(
+    expect(silenceOf(segs, DEFAULT_PACING, undefined)).toBeCloseTo(
       DEFAULT_PACING.line + DEFAULT_PACING.turn,
       10,
     );
@@ -79,11 +79,11 @@ describe("pacing", () => {
 
   test("a line's own pause wins, including none at all, and unrendered lines take no time", () => {
     const segs = [seg(1, "A", 0), seg(2, "B", 2), seg(3, "B")];
-    expect(silenceOf(segs, DEFAULT_PACING)).toBeCloseTo(2, 10);
+    expect(silenceOf(segs, DEFAULT_PACING, undefined)).toBeCloseTo(2, 10);
     // the middle line was never rendered, so its own 2s gap is not stitched and #1 runs straight
     // into #3 — exactly what plays back
     segs[1].audio.duration = 0;
-    expect(silenceOf(segs, DEFAULT_PACING)).toBe(0);
+    expect(silenceOf(segs, DEFAULT_PACING, undefined)).toBe(0);
   });
 });
 

@@ -5,7 +5,6 @@
 //
 // Everything here mutates the draft it is handed and nothing here is shared, so a fresh world is a
 // fresh set of situations.
-import { silenceOf, DEFAULT_PACING } from "@/lib/speech";
 import { PALETTE } from "~/demo/seed/fixtures/style";
 import { noteOf } from "~/demo/seed/fixtures/notices";
 import { routeOf, seedAudit, timeOf } from "~/demo/seed/world/audio";
@@ -13,6 +12,7 @@ import type { WorldDraft } from "~/demo/seed/world/draft";
 import type { SegmentAudio } from "@/types";
 
 export function seedStory(w: WorldDraft, now: number): void {
+  const bookOf = (id: string) => w.books.find((b) => b.id === id);
   w.chapters.drowned[1].scripting = "failed";
   delete w.segments["drowned:2"];
   w.chapters.cliche[3].narration = "failed";
@@ -117,7 +117,7 @@ export function seedStory(w: WorldDraft, now: number): void {
     // pacing set by ear while listening: a beat after the threat lands, none before the answer
     retaken.pause = 1.5;
     if (spoken[1]) spoken[1].pause = 0;
-    w.chapters.starforge[0].duration = timeOf(segs);
+    w.chapters.starforge[0].duration = timeOf(segs, bookOf("starforge"));
   }
 
   // Thousand Gates: a long serial mid-flight. Most of it is narrated and current; a handful of
@@ -160,7 +160,7 @@ export function seedStory(w: WorldDraft, now: number): void {
             },
           };
       });
-      c.duration = segs.reduce((a, s) => a + s.audio.duration, 0) + silenceOf(segs, DEFAULT_PACING);
+      c.duration = timeOf(segs, bookOf("gates"));
     }
     // the tail is scripted but not narrated, and the last chapter is back matter
     const last = chs[chs.length - 1];

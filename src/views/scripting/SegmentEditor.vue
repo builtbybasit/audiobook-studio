@@ -7,6 +7,7 @@ import { directionOptions } from "@/lib/bulk";
 import { plural } from "@/lib/contents";
 import { modKey } from "@/lib/format";
 import { PAUSE_STEPS, secs } from "@/lib/speech";
+import { isSiteText, TYPE_LABEL } from "@/lib/siteText";
 import { useScriptsStore } from "@/stores/scripts";
 import ExpressionEditor from "@/components/ExpressionEditor.vue";
 import WordStrip from "@/components/WordStrip.vue";
@@ -14,6 +15,7 @@ import { UiCombobox, UiSelect, UiTooltip } from "@/ui";
 import {
   ChevronDown as ChevronDownIcon,
   ChevronUp as ChevronUpIcon,
+  EyeOff as SiteTextIcon,
   Scissors as SplitIcon,
   Trash2 as TrashIcon,
   Type as TextIcon,
@@ -45,7 +47,11 @@ const {
   setPause,
 } = useSegmentEditing();
 
-const typeOpts = TYPES.map((t) => ({ value: t, label: t }));
+const typeOpts = TYPES.map((t) => ({
+  value: t,
+  label: TYPE_LABEL[t],
+  group: isSiteText(t) ? "Not the story" : "Story",
+}));
 /** the rest of the cast: everyone with no line in this chapter */
 const rest = computed(() => cast.value.filter((c) => !counts.value[c.name]));
 const speakerOpts = computed(() => [
@@ -82,14 +88,32 @@ const sameSpeakerCount = (x: Segment) =>
     >
       <span class="font-mono text-[10px] text-zinc-400">#{{ s.id }}</span>
       <span class="font-medium" :style="{ color: colorOf(s.speaker) }">{{ s.speaker }}</span>
-      <span class="text-zinc-400">· {{ s.type }}</span>
+      <span class="text-zinc-400">· {{ TYPE_LABEL[s.type] }}</span>
       <span
         v-if="s.edited"
         class="rounded bg-zinc-100 px-1 text-[10px] text-zinc-500 dark:bg-zinc-800"
         >edited</span
       >
+      <!-- one click either way: a web address or a "read at…" line the model left in the story,
+           or a line of story it took for site text -->
       <button
+        v-if="!isSiteText(s.type)"
         class="btn-ghost btn-xs ml-auto"
+        title="This line is the website’s text, not the story — keep its words in the script and leave it out of the audio"
+        @click="scriptsStore.setLineType(bookId, chapterId, s.id, 'watermark')"
+      >
+        <SiteTextIcon class="icon-sm" /> Mark as site text
+      </button>
+      <button
+        v-else
+        class="btn-ghost btn-xs ml-auto"
+        title="This line is the story — read it as narration"
+        @click="scriptsStore.setLineType(bookId, chapterId, s.id, 'narration')"
+      >
+        Not site text
+      </button>
+      <button
+        class="btn-ghost btn-xs"
         :class="editingText === s.id && 'border-violet-400 text-violet-700 dark:text-violet-300'"
         :aria-pressed="editingText === s.id"
         title="Correct the words of this line — a mis-heard name, a doubled sentence, a note that isn’t story"
@@ -157,10 +181,7 @@ const sameSpeakerCount = (x: Segment) =>
         class="mt-1"
         block
         @update:model-value="
-          (v) =>
-            scriptsStore.updateSegment(bookId, chapterId, s.id, {
-              type: v as SegmentType,
-            })
+          (v) => scriptsStore.setLineType(bookId, chapterId, s.id, v as SegmentType)
         "
     /></label>
     <label class="col-span-2 2xl:col-span-1"

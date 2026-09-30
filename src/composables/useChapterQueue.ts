@@ -38,6 +38,7 @@ export function chapterQueue(
   const timeline = chapterTimeline(
     scriptsStore.segmentsOf(bookId, chId),
     castStore.pacingOf(bookId),
+    libraryStore.bookById(bookId),
   );
   if (!timeline.length) return null;
   return {
@@ -71,11 +72,14 @@ export function chapterQueue(
  *  Null for a line with no audio of its own — it isn't in the timeline at all. */
 export function segmentStart(bookId: string, chId: number, segId: number): number | null {
   const castStore = useCastStore();
+  const libraryStore = useLibraryStore();
   const scriptsStore = useScriptsStore();
 
   return (
-    chapterTimeline(scriptsStore.segmentsOf(bookId, chId), castStore.pacingOf(bookId)).find(
-      (x) => x.s.id === segId,
-    )?.start ?? null
+    chapterTimeline(
+      scriptsStore.segmentsOf(bookId, chId),
+      castStore.pacingOf(bookId),
+      libraryStore.bookById(bookId),
+    ).find((x) => x.s.id === segId)?.start ?? null
   );
 }

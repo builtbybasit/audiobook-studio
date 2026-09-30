@@ -22,7 +22,7 @@ import {
   ArrowRight as NextIcon,
   Inbox as ReviewIcon,
 } from "@lucide/vue";
-import { UiNumber } from "@/ui";
+import { UiNumber, UiSwitch } from "@/ui";
 import AddEpubDialog from "@/components/AddEpubDialog.vue";
 import BookCover from "@/components/BookCover.vue";
 import BookPromptPanel from "@/views/scripting/BookPromptPanel.vue";
@@ -508,6 +508,23 @@ const next = computed(() =>
             <component :is="budget.paused ? PlayIcon : PauseIcon" class="icon-sm icon-fill" />
             {{ budget.paused ? "Resume this book" : "Pause new work on this book" }}
           </button>
+        </div>
+        <!-- what of the chapter's own text is read aloud: site text never, notes when asked -->
+        <div class="card p-4 text-xs text-zinc-500">
+          <div class="label mb-2">Reading</div>
+          <UiSwitch
+            :model-value="!!book.readNotes"
+            label="Read translator’s notes aloud"
+            @update:model-value="(on: boolean) => libraryStore.setReadNotes(bookId, on)"
+          />
+          <p class="mt-1.5 text-[11px] leading-relaxed">
+            {{
+              book.readNotes
+                ? "Translator’s and author’s notes are narrated like the story, so a chapter with notes needs them rendered."
+                : "Notes stay in the script but are left out of the audio. Turning this on means every note line needs narrating."
+            }}
+            Site text is never read.
+          </p>
         </div>
         <div class="card p-4 text-xs text-zinc-500">
           <div class="label mb-1">Scripting profile</div>

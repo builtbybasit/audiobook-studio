@@ -1,16 +1,28 @@
 // The mock scripting model: it turns a (book, chapter) pair into an attributed script. Deterministic
 // on the pair, so the same chapter always produces the same lines — and a re-script that is meant to
 // differ says so through `opts` rather than by drawing different randomness.
+//
+// A few chapters carry text that is not the story, as a web-novel source leaves it; that is added
+// after the story lines are drawn (`fixtures/siteText.ts`), so it never moves a word of them.
 import { pick, rng } from "~/demo/seed/random";
 import { BOOK_SEEDS, MINOR_LINES } from "~/demo/seed/fixtures/books";
+import { proseOf, withSiteText, type Drafted } from "~/demo/seed/fixtures/siteText";
 import { DIRECTIONS } from "~/demo/seed/fixtures/style";
 import type { Segment, SegmentType } from "@/types";
 
-export function generateSegments(
+type Options = { aliasNoise?: boolean };
+
+export const generateSegments = (
   bookId: string,
   chapterId: number,
-  opts: { aliasNoise?: boolean } = {},
-): Segment[] {
+  opts: Options = {},
+): Segment[] => draftScript(bookId, chapterId, opts).map((d) => d.segment);
+
+/** The prose the chapter's script reads out, word for word: what the chapter's text is. */
+export const generateProse = (bookId: string, chapterId: number): string =>
+  proseOf(draftScript(bookId, chapterId));
+
+function draftScript(bookId: string, chapterId: number, opts: Options = {}): Drafted[] {
   // A freshly imported demo book has a runtime id rather than a hand-authored fixture id. It still
   // needs deterministic prose so the complete seeded workflow can be exercised after import.
   const book = BOOK_SEEDS.find((b) => b.id === bookId) ?? BOOK_SEEDS[0];
@@ -49,11 +61,12 @@ export function generateSegments(
       segs.push({ type: "dialogue", speaker, text: pick(book.dialogue[who], r) });
     }
   }
-  return segs.map((s, i) => ({
+  const story: Segment[] = segs.map((s, i) => ({
     id: i + 1,
     ...s,
     direction:
       s.type === "narration" ? (r() < 0.3 ? pick(DIRECTIONS, r) : "") : pick(DIRECTIONS, r),
     audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
   }));
+  return withSiteText(book.id, chapterId, story);
 }

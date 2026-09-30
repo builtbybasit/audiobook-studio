@@ -86,6 +86,7 @@ const Settings = v.pipe(
     scriptBudget: v.optional(v.nullable(Dollars)),
     pacing: v.optional(v.nullable(v.strictObject({ line: Seconds, turn: Seconds }))),
     prompt: v.optional(v.nullable(BookPromptSchema)),
+    readNotes: v.optional(v.nullable(v.boolean())),
   }),
   v.check((s) => Object.keys(s).length > 0, "name at least one setting"),
 );
@@ -231,7 +232,7 @@ export function bookRoutes(
   );
 
   // ---------- a book's settings, and its volumes ----------
-  /** The budget, the script budget, the pacing and the prompt; answers with the book and its re-timed chapters. */
+  /** The budget, the script budget, the pacing, the prompt and whether notes are read; answers with the book and its re-settled chapters. */
   app.patch("/:id", validate("param", BookParam), validate("json", Settings), (c) => {
     const settings = c.req.valid("json");
     if (settings.prompt) refusePrompt("The book's prompt", bookPromptProblems(settings.prompt));

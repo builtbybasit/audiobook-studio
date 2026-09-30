@@ -11,6 +11,7 @@ import type { Spoken } from "@/lib/speech";
 import { fetchCast } from "@/queries/cast";
 import { speechReadiness } from "@/lib/endpoints";
 import { norm } from "@/lib/scriptReview";
+import { isSpoken } from "@/lib/siteText";
 import { chapterSeconds, hitsIn, pacingOrDefault, speak } from "@/lib/speech";
 import { newSpeaker, voiceRef } from "@/lib/cast";
 import { clone } from "@/lib/utils";
@@ -160,8 +161,11 @@ export const useCastStore = defineStore("cast", {
       const scriptsStore = useScriptsStore();
       return (bookId: string): Record<string, CastStat> => {
         const stats: Record<string, CastStat> = {};
+        const book = libraryStore.bookById(bookId);
         for (const c of libraryStore.chapters[bookId] ?? [])
           for (const seg of scriptsStore.segments[`${bookId}:${c.id}`] ?? []) {
+            // what a speaker is given to say, as `lineCounts` counts it
+            if (!isSpoken(seg, book)) continue;
             const st = (stats[seg.speaker] ??= { lines: 0, chapters: new Set(), first: c.id });
             st.lines++;
             st.chapters.add(c.id);
@@ -314,7 +318,8 @@ export const useCastStore = defineStore("cast", {
 
       if (!names.length) return;
       const gone = new Set(names);
-      const lines = scriptsStore.lineCounts(bookId);
+      // every line that names them, read aloud or not: a line marked as site text still does
+      const lines = scriptsStore.lineCounts(bookId, null, true);
       const dropping = (this.characters[bookId] ?? []).filter(
         (c) => gone.has(c.name) && !lines[c.name],
       );
@@ -336,7 +341,7 @@ export const useCastStore = defineStore("cast", {
       if (!libraryStore.chapter(bookId, chId)) return;
       const segs = scriptsStore.segmentsOf(bookId, chId);
       libraryStore._patchChapter(bookId, chId, {
-        duration: chapterSeconds(segs, this.pacingOf(bookId)),
+        duration: chapterSeconds(segs, this.pacingOf(bookId), libraryStore.bookById(bookId)),
       });
     },
     // ---------- pronunciation & pacing ----------

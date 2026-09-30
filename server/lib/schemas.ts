@@ -54,7 +54,7 @@ export const LexEntrySchema = v.object({
   enabled: v.boolean(),
 }) satisfies v.GenericSchema<unknown, LexEntry>;
 
-const SegmentType = v.picklist(["dialogue", "narration", "thought"]);
+const SegmentType = v.picklist(["dialogue", "narration", "thought", "watermark", "note"]);
 const AudioStatus = v.picklist(["none", "queued", "generating", "done", "failed", "stale"]);
 
 /** A clip, checked for what every reader of one relies on and passed through otherwise. */
@@ -77,6 +77,9 @@ export const SegmentSchema = v.looseObject({
   fallbackCount: v.optional(v.number()),
   fallbackMismatch: v.optional(v.string()),
   edited: v.optional(v.boolean()),
+  siteCheck: v.optional(
+    v.object({ suggest: v.picklist(["watermark", "narration"]), why: v.string() }),
+  ),
   flag: v.optional(
     v.looseObject({
       kind: v.picklist(["pronunciation", "delivery", "pause", "other"]),

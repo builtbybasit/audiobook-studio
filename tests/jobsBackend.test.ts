@@ -886,7 +886,8 @@ describe("narration with a server answering", () => {
     await castStore.setPacing(id, { line: 3, turn: 3 });
     const segs = readScript(api.db, id, 1);
     const expected =
-      segs.reduce((a, s) => a + s.audio.duration, 0) + silenceOf(segs, { line: 3, turn: 3 });
+      segs.reduce((a, s) => a + s.audio.duration, 0) +
+      silenceOf(segs, { line: 3, turn: 3 }, undefined);
     // not the length of silence alone, which is what re-timing it from no clips would give
     expect(libraryStore.chapter(id, 1)?.duration).toBeCloseTo(expected, 6);
     expect(libraryStore.chapter(id, 1)?.duration).toBeGreaterThan(length);
@@ -925,12 +926,14 @@ describe("narration with a server answering", () => {
       done,
       generating: 0,
       failed: 1,
+      skipped: 0,
     });
     expect(scriptsStore.lineCountsOf(id, 2)).toEqual({
       total: 0,
       done: 0,
       generating: 0,
       failed: 0,
+      skipped: 0,
     });
     expect(jobsStore.endpointLoad.studio).toMatchObject({ done, failed: 1 });
     // once the script is here, it is what is counted, and it follows an edit before the server does

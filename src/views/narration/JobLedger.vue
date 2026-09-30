@@ -19,12 +19,16 @@ import { useNarrationStore } from "@/stores/narration";
 // rendered beside it, and nothing is decided until the listener plays both and keeps one. The
 // verdict is taken here rather than in the comparison panel, because it moves to the next retake in
 // the book — which can be in another chapter (`useRetakeReview`).
+// A line the book does not read — site text, and notes unless the book reads them — is listed where
+// it falls, dimmed and marked "not read", so the chapter is all there; it has no clip to want, so it
+// is under no status filter but "all", no count calls it missing, and it offers nothing to render.
 // Keyboard: j/k move, ↵/p play, r retry, t retake, a keep new, x keep previous, i details, e edit the line.
 import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useJob, STATUS_BG, candId, fmt, lineLink, onClip } from "@/views/narration/shared";
 import { useRetakeReview } from "@/views/narration/useRetakeReview";
 import { FLAG_LABEL } from "@/lib/scriptReview";
+import { isSpoken, TYPE_LABEL } from "@/lib/siteText";
 import { defaultPause, secs, silenceOf } from "@/lib/speech";
 import { usePlayer } from "@/composables/usePlayer";
 import { enumParam, idSetParam, useQueryParam } from "@/composables/useQueryParam";
@@ -46,7 +50,7 @@ import type { Segment } from "@/types";
 const props = defineProps<{ bookId: string; chapterId: number }>();
 /** a word the listener wants respelled, handed up to the pronunciation dictionary */
 const emit = defineEmits<{ pronounce: [word: string] }>();
-const { segments, colorOf, voiceOf, epName, drift } = useJob(props);
+const { book, segments, colorOf, voiceOf, epName, drift } = useJob(props);
 const { reviewable, bookReviewable, reviewPosition, decideTake, focusReview } = useRetakeReview(
   props,
   segments,
@@ -80,7 +84,9 @@ watch(
 );
 const FILTER_LABEL: Record<string, string> = { done: "current audio", generating: "running" };
 /** The filters a line falls under: its clip's status and its retake's, a flag, a retake to judge. */
+const spoken = (s: Segment) => isSpoken(s, book.value);
 function filtersOf(s: Segment): Set<string> {
+  if (!spoken(s)) return new Set(["all"]);
   const on = new Set(["all", s.audio.status]);
   if (s.candidate) on.add(s.candidate.status);
   if (s.flag) on.add("flagged");
@@ -103,13 +109,17 @@ const changed = computed(() => changedLines.value.length);
 const unrendered = computed(
   () => changedLines.value.filter((s) => s.audio.status === "none").length,
 );
+/** lines of this chapter that are not read aloud, which the header counts so none of them vanish */
+const unread = computed(() => segments.value.filter((s) => !spoken(s)).length);
 
 const pacing = computed(() => castStore.pacingOf(props.bookId));
 // The chapter's own length, kept by `cast._retime` on every write path and rendered by the picker
 // beside this. Two figures for one chapter is how the picker and the ledger start disagreeing.
 const total = computed(() => chapter.value.duration);
 // rounded: the header says how much of the chapter is silence, not to the millisecond
-const silence = computed(() => Math.round(silenceOf(segments.value, pacing.value) * 10) / 10);
+const silence = computed(
+  () => Math.round(silenceOf(segments.value, pacing.value, book.value) * 10) / 10,
+);
 /** the gap this book would use after a line, when the line has no pause of its own */
 const nextOf = computed(() => {
   const at = new Map<number, Segment | undefined>();
@@ -146,6 +156,9 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
   } else if (e.key === "ArrowUp" || e.key === "k") {
     e.preventDefault();
     list[i - 1]?.focus();
+  } else if (!spoken(s)) {
+    // not read: nothing to play, render, retake or flag — only its line to open
+    if (e.key === "e") void router.push(lineLink(props, s));
   } else if ((e.key === "Enter" || e.key === "p") && s.audio.duration) {
     e.preventDefault();
     play("seg" + s.id, s.audio.duration, s.audio.url);
@@ -215,7 +228,14 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
         <span v-if="silence" :title="`silence stitched between clips (Pronunciation tab)`"
           >(incl. {{ secs(silence) }} of pauses)</span
         >
-        · {{ chapter.narration }}</span
+        · {{ chapter.narration }}
+        <RouterLink
+          v-if="unread"
+          :to="{ path: `/book/${bookId}/scripting`, query: { ch: chapterId, lines: 'site' } }"
+          class="underline decoration-dotted hover:text-violet-500"
+          title="Site text, and notes this book does not read — open them in the reader"
+          >· {{ unread }} not read</RouterLink
+        ></span
       >
       <span class="ml-auto flex gap-2">
         <button
@@ -278,6 +298,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
               tabindex="0"
               class="border-t border-zinc-100 outline-none focus-visible:bg-zinc-100 dark:border-zinc-800/70 dark:focus-visible:bg-zinc-800"
               :class="[
+                !spoken(s) && 'opacity-60',
                 currentId === s.id && 'bg-violet-50 dark:bg-violet-500/10',
                 hasDetails(s) && 'cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40',
                 expanded.has(s.id) && 'bg-zinc-50 dark:bg-zinc-800/40',
@@ -289,6 +310,12 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
               <td class="px-2 font-mono text-[11px] text-zinc-400">{{ s.id }}</td>
               <td>
                 <span
+                  v-if="!spoken(s)"
+                  class="inline-block h-2 w-2 rounded-full border border-zinc-300 dark:border-zinc-600"
+                  title="not read aloud"
+                ></span>
+                <span
+                  v-else
                   class="inline-block h-2 w-2 rounded-full"
                   :class="STATUS_BG[s.audio.status]"
                   :title="s.audio.status"
@@ -314,7 +341,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
               </td>
               <td
                 class="truncate py-1 pr-3 leading-tight text-zinc-600 dark:text-zinc-300"
-                :class="s.type === 'thought' && 'italic'"
+                :class="(s.type === 'thought' || s.type === 'note') && 'italic'"
               >
                 <div
                   class="mb-0.5 flex items-center gap-1 truncate text-[10px] not-italic sm:hidden"
@@ -325,8 +352,16 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                   ></span>
                   <span class="truncate font-medium text-zinc-500">{{ s.speaker }}</span>
                 </div>
-                <div class="line-clamp-1"><ExpressionText :book-id="bookId" :segment="s" /></div>
-                <div class="flex items-center gap-1.5 truncate text-[10px]">
+                <div
+                  class="line-clamp-1"
+                  :class="s.type === 'watermark' && 'line-through decoration-zinc-400/70'"
+                >
+                  <ExpressionText :book-id="bookId" :segment="s" />
+                </div>
+                <div v-if="!spoken(s)" class="truncate text-[10px] not-italic text-zinc-500">
+                  {{ TYPE_LABEL[s.type] }} · not read
+                </div>
+                <div v-else class="flex items-center gap-1.5 truncate text-[10px]">
                   <span v-if="s.direction" class="text-violet-500">[{{ s.direction }}]</span
                   ><span v-if="s.audio.status === 'stale'" class="text-amber-600">{{
                     drift(s)[0] ?? "edited after narration — audio is from the old script"
@@ -374,11 +409,11 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                 class="hidden text-right font-mono text-xs text-zinc-500 sm:table-cell"
                 :title="s.audio.ms ? `rendered in ${(s.audio.ms / 1000).toFixed(1)}s` : ''"
               >
-                {{ s.audio.duration ? s.audio.duration.toFixed(1) + "s" : "" }}
+                {{ spoken(s) && s.audio.duration ? s.audio.duration.toFixed(1) + "s" : "" }}
               </td>
               <td class="pr-1 sm:pr-2">
                 <!-- fixed slots, so the primary action never moves between rows -->
-                <div class="flex items-center justify-end gap-0.5" @click.stop>
+                <div v-if="spoken(s)" class="flex items-center justify-end gap-0.5" @click.stop>
                   <span class="grid w-5 place-items-center">
                     <button
                       v-if="s.audio.duration"

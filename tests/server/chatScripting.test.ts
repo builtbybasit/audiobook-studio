@@ -2,6 +2,7 @@
 // sends, what it accepts back, and what it refuses — above all an answer that drops the prose.
 import { describe, expect, test } from "bun:test";
 
+import type { SegmentType } from "@/types";
 import { chatScriptingProvider, fidelity, NO_PROFILE } from "~/providers/chatScripting";
 import { ProviderError } from "~/providers/http";
 import type { ScriptInput, ScriptTarget } from "~/providers/scripting";
@@ -187,6 +188,32 @@ describe("a request", () => {
       { type: "dialogue", speaker: "Mara", text: "Come in," },
       { type: "narration", speaker: "Narrator", text: "said Mara softly." },
     ]);
+  });
+
+  // the words stay in the script, so the prose read here carries the site's line and the note too
+  test.each<[string, SegmentType]>([
+    ["watermark", "watermark"],
+    ["site", "watermark"],
+    ["Boilerplate", "watermark"],
+    ["ad", "watermark"],
+    ["note", "note"],
+    ["TL note", "note"],
+    ["translator note", "note"],
+    ["author note", "note"],
+    ["A/N", "note"],
+  ])("reads a line typed “%s” as %s, and gives it to the Narrator", async (said, type) => {
+    const text = "Read more at example.com. The door opened.";
+    const { provider } = gateway(() =>
+      completion(
+        fenced([
+          { type: said, speaker: "Mara", text: "“Read more at example.com.”" },
+          { type: "narration", speaker: "Narrator", text: "The door opened." },
+        ]),
+      ),
+    );
+    const [marked] = await provider.script(input({ text }));
+    // not a character's line, so no quotation marks are taken off it either
+    expect(marked).toEqual({ type, speaker: "Narrator", text: "“Read more at example.com.”" });
   });
 });
 

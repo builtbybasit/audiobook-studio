@@ -25,6 +25,7 @@ import type { Runner } from "~/jobs/runner";
 import { AppError, badRequest, conflict, notFound } from "~/lib/errors";
 import { slugify } from "~/lib/http";
 import { inBackground } from "~/lib/background";
+import { narrationInProgress, settleChapter } from "~/narration/chapter";
 
 /**
  * Enough of a logger to say what an import found. The request logger `hono-pino` puts on the
@@ -406,24 +407,38 @@ export async function removeVolume(
 // ---------- a book's settings, and its volumes' names and order ----------
 
 /**
- * Write a book's budget, script budget or pacing, and answer with the book and its chapters.
+ * Write a book's budget, script budget, pacing, prompt or whether it reads its notes, and answer
+ * with the book and its chapters.
  *
  * A pacing is stitched between clips rather than rendered, so changing it re-times every chapter
  * that has been narrated — `settleChapter`'s sum, clips plus the silence between them — and
  * invalidates nothing. A chapter nobody has narrated has no clips to put silence between and keeps
  * the length it has. The budget is stored and not yet enforced here: nothing the fake provider
  * does costs anything to hold against it.
+ *
+ * Reading the notes aloud changes which lines want a clip (`isSpoken`), so every narrated chapter is
+ * settled again: switched on, a chapter whose notes were never rendered is partly narrated until
+ * they are; switched off, it is narrated again, and a note's clip is kept but no longer heard. A
+ * chapter a run holds is the run's to settle when it ends.
  */
 export function updateBook(db: Db, bookId: string, settings: library.BookSettings): ImportedBook {
-  requireBook(db, bookId);
+  const before = requireBook(db, bookId);
+  const notesMoved =
+    settings.readNotes !== undefined &&
+    (settings.readNotes === true) !== (before.readNotes === true);
   db.transaction((tx) => {
     library.setBookSettings(tx, bookId, settings);
-    if (settings.pacing === undefined) return;
-    const pacing = pacingOrDefault(settings.pacing ?? undefined);
+    if (settings.pacing === undefined && !notesMoved) return;
+    const book = library.getBook(tx, bookId);
+    const pacing = pacingOrDefault(book?.pacing);
     for (const ch of library.listChapters(tx, bookId)) {
       if (ch.narration === "none") continue;
-      const segs = readScript(tx, bookId, ch.id);
-      library.setChapterDuration(tx, bookId, ch.id, chapterSeconds(segs, pacing));
+      if (notesMoved) {
+        if (!narrationInProgress(tx, bookId, ch.id)) settleChapter(tx, bookId, ch.id);
+      } else {
+        const segs = readScript(tx, bookId, ch.id);
+        library.setChapterDuration(tx, bookId, ch.id, chapterSeconds(segs, pacing, book));
+      }
     }
   });
   return bookWithChapters(db, bookId);

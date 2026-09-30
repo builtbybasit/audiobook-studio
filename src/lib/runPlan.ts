@@ -8,7 +8,9 @@
 // Nothing here mutates and nothing here reaches a store: the chapters and segments arrive as
 // arguments, and the costs a stage knows how to price arrive as callbacks.
 import { isScripted } from "@/lib/scriptReview";
+import { isSpoken } from "@/lib/siteText";
 import type {
+  Book,
   Chapter,
   ChapterState,
   NarrationStatus,
@@ -117,22 +119,31 @@ export interface NarrationTargets {
   pending: Segment[];
   /** lines whose clip or retake is already rendering — this run does not touch them */
   inFlight: number;
+  /** lines the book does not read aloud (`isSpoken`), which no scope renders */
+  skipped: number;
 }
 
 /**
  * The lines one chapter contributes to a run. A line already rendering is never queued twice, and a
  * retake waiting for a verdict is left where it is unless the run was explicitly told to replace it
- * — a pending comparison is the listener's, not a bulk run's to delete.
+ * — a pending comparison is the listener's, not a bulk run's to delete. A line the book does not
+ * read is never a target, at any scope: it has no clip to want.
  */
 export function narrationTargets(
   segs: Segment[],
   scope: NarrationScope,
   keepPending: boolean,
+  book: Pick<Book, "readNotes"> | undefined,
 ): NarrationTargets {
   const run: Segment[] = [];
   const pending: Segment[] = [];
   let inFlight = 0;
+  let skipped = 0;
   for (const s of segs) {
+    if (!isSpoken(s, book)) {
+      skipped++;
+      continue;
+    }
     if (["queued", "generating"].includes(s.audio.status)) {
       inFlight++;
       continue;
@@ -149,16 +160,26 @@ export function narrationTargets(
     }
     run.push(s);
   }
-  return { run, pending, inFlight };
+  return { run, pending, inFlight, skipped };
 }
 
 /**
  * What a chapter's narration status is, read off its clips. One definition, so a run that
  * finished, a run that was cancelled and a run that had nothing to do all leave the chapter saying
  * the same thing about the same clips. Only meaningful once nothing is in flight.
+ *
+ * Only the lines the book reads are asked: a line of site text wants no clip, so it is no gap, and
+ * a clip it kept from before it was marked makes nothing narrated. A chapter whose every line is
+ * one the book does not read has nothing missing, and reads as done.
  */
-export function chapterNarration(segs: Segment[]): NarrationStatus {
-  if (!segs.length || segs.every((s) => s.audio.status === "none")) return "none";
+export function chapterNarration(
+  all: Segment[],
+  book: Pick<Book, "readNotes"> | undefined,
+): NarrationStatus {
+  if (!all.length) return "none";
+  const segs = all.filter((s) => isSpoken(s, book));
+  if (!segs.length) return "done";
+  if (segs.every((s) => s.audio.status === "none")) return "none";
   // A chapter that is *part* rendered reads as `failed`, and deliberately so: a line with no clip is
   // a gap in the audiobook, and `readinessOf` turns this exact reading into the export's "Partly
   // narrated" blocker — "building now would leave gaps where those lines should be". Calling it
@@ -182,6 +203,7 @@ const emptyPlan = (stage: "scripting" | "narration", scope: NarrationScope | nul
   requests: 0,
   replacing: 0,
   pending: 0,
+  skippedLines: 0,
 });
 
 function tally(plan: RunPlan): RunPlan {
@@ -253,6 +275,8 @@ export interface NarrationPlanOptions {
   requestsOf: (s: Segment) => number;
   /** leave lines whose retake is waiting for a verdict out of the run */
   keepPending: boolean;
+  /** whose `readNotes` decides which lines are read aloud (`isSpoken`) */
+  book: Pick<Book, "readNotes"> | undefined;
 }
 
 /** What narrating this selection at this scope would do, line by line. */
@@ -276,7 +300,10 @@ export function narrationPlan(
       continue;
     }
     const segs = opts.segmentsOf(c.id);
-    const { run, pending } = narrationTargets(segs, scope, opts.keepPending);
+    const { run, pending, skipped } = narrationTargets(segs, scope, opts.keepPending, opts.book);
+    // counted for every chapter the run looked into, so the page can say how many lines it will
+    // not read rather than let them vanish from the count
+    plan.skippedLines += skipped;
     // nothing to run and something waiting to be judged: the retakes are the reason, so say so —
     // and they are still retakes this selection is waiting on, so they count towards the total the
     // estimate panel and the run's toast both quote. `tally` adds the surviving chapters' own.

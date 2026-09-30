@@ -150,7 +150,7 @@ function contextOver(
     },
     retime: (bookId, chId) => {
       const c = chapters(bookId).find((x) => x.id === chId);
-      if (c) c.duration = chapterSeconds(segmentsOf(bookId, chId), pacingOf(bookId));
+      if (c) c.duration = chapterSeconds(segmentsOf(bookId, chId), pacingOf(bookId), book(bookId));
     },
     importSample: (sampleId, bookId) => importInto(world, sampleId, { id: bookId }),
     shelveBook: (spec) => shelveInto(world, spec),
@@ -162,6 +162,7 @@ function contextOver(
         ids,
         (id) => segmentsOf(bookId, id),
         pacingOf(bookId),
+        b,
       );
       world.exports.push(finishedExport(nextExport(), b, chapters(bookId), ids, state));
     },

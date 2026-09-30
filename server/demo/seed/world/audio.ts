@@ -2,21 +2,21 @@
 // the voice, the model, the text as sent and what the dictionary did to it — because staleness,
 // drift and loudness are all decided from that trail rather than from a timestamp.
 import { splitText } from "@/lib/split";
-import { speak, silenceOf, speechInstructions, DEFAULT_PACING } from "@/lib/speech";
+import { speak, chapterSeconds, speechInstructions, DEFAULT_PACING } from "@/lib/speech";
 import { billingOf } from "@/lib/endpoints";
 import { PRICING_RULE, measureSpeech, priceSpeechRequest, readPricing } from "@/lib/pricing";
 import { generateSegments } from "~/demo/seed/world/script";
 import type { WorldDraft } from "~/demo/seed/world/draft";
-import type { Endpoint, Segment, SegmentAudio, VoiceRef } from "@/types";
+import type { Book, Endpoint, Segment, SegmentAudio, VoiceRef } from "@/types";
 
 /** What seeding a clip has to agree with: who reads the line, how the book says it, and where it
  *  is rendered. A world under construction satisfies this, and so does the live store — which is
  *  how a demo scenario seeds clips the same way the world did. */
 export type ClipWorld = Pick<WorldDraft, "characters" | "lexicon" | "endpoints">;
 
-/** rendered length of a chapter: the clips plus the silence stitched between them */
-export const timeOf = (segs: Segment[]): number =>
-  segs.reduce((a, s) => a + s.audio.duration, 0) + silenceOf(segs, DEFAULT_PACING);
+/** rendered length of a chapter: the clips it plays plus the silence stitched between them */
+export const timeOf = (segs: Segment[], book: Pick<Book, "readNotes"> | undefined): number =>
+  chapterSeconds(segs, DEFAULT_PACING, book);
 
 const seedCuts = (text: string, ep: Endpoint) => {
   const cuts = splitText(text, ep.maxChars, ep.splitAt);
@@ -153,7 +153,10 @@ export function seedPipeline(
             }
           : seedClip(w, bookId, s, ep, i, now);
       });
-      c.duration = timeOf(segs);
+      c.duration = timeOf(
+        segs,
+        w.books.find((b) => b.id === bookId),
+      );
     }
   }
 }

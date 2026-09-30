@@ -123,7 +123,7 @@ export function planImport(
     stale: plan.stale + moved,
     dropped: Math.max(0, plan.dropped - moved),
     unrendered: Math.max(0, plan.unrendered - moved),
-    narration: chapterNarration(plan.segments),
+    narration: chapterNarration(plan.segments, opts.book),
   };
 }
 
@@ -139,6 +139,7 @@ export const useTransferStore = defineStore("transfer", {
     /** What applying one chapter would do, worked out without touching anything. */
     previewOf(): (bookId: string, chapter: ImportChapter) => RestorePlan {
       const castStore = useCastStore();
+      const libraryStore = useLibraryStore();
       const narrationStore = useNarrationStore();
       const scriptsStore = useScriptsStore();
 
@@ -146,6 +147,7 @@ export const useTransferStore = defineStore("transfer", {
         planImport(scriptsStore.segmentsOf(bookId, chapter.chapterId), chapter.segments, {
           drift: (segment, audio) => narrationStore.clipDrift(bookId, segment, audio),
           cast: new Set(castStore.charactersOf(bookId).map((c) => c.name)),
+          book: libraryStore.bookById(bookId),
         });
     },
   },

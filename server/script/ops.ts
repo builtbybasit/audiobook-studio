@@ -11,6 +11,7 @@
 //     preserved before the new one replaces it, labelled by what produced it, so a version and the
 //     script it preceded cannot disagree about which came first.
 import type {
+  Book,
   ChapterHistory,
   ChapterScript,
   EditedScript,
@@ -22,6 +23,7 @@ import type {
   VersionOrigin,
 } from "@/types";
 import { scriptSignature } from "@/lib/scriptHistory";
+import { isSpoken } from "@/lib/siteText";
 
 import type { Db } from "~/db/client";
 import * as history from "~/db/history";
@@ -35,6 +37,7 @@ import {
   setFlag,
 } from "~/db/script";
 import { badRequest, conflict, notFound } from "~/lib/errors";
+import { narrationInProgress, settleChapter } from "~/narration/chapter";
 
 function requireRevision(db: Db, bookId: string, chapterId: number): number {
   const revision = scriptRevision(db, bookId, chapterId);
@@ -62,6 +65,45 @@ export interface EditInput {
 }
 
 /**
+ * What an edit writes of the lines it was sent, given the lines they replace.
+ *
+ * A line whose type the edit changed has had its type decided by a person, so the detector's
+ * suggestion it carried (`siteCheck`) goes, even when a copy of the line sent it back; one the
+ * edit puts back where the line had none is an Undo writing back the line as it was, and stays.
+ * A suggestion the edit left out of a line has been dismissed, and goes by being absent. The rest
+ * is written as sent — the speaker too, so a line marked as site text and back keeps whoever
+ * said it, and its clip, so marking it back as story costs no render.
+ */
+function asEdited(segments: readonly Segment[], current: readonly Segment[]): Segment[] {
+  const was = new Map(current.map((s) => [s.id, s]));
+  return segments.map((s) => {
+    const before = was.get(s.id);
+    const decided =
+      !!s.siteCheck &&
+      !!before &&
+      before.type !== s.type &&
+      JSON.stringify(before.siteCheck) === JSON.stringify(s.siteCheck);
+    if (!decided) return s;
+    const { siteCheck: _decided, ...rest } = s;
+    return rest;
+  });
+}
+
+/** Whether two scripts disagree on which of their lines are read aloud. */
+function spokenMoved(
+  from: readonly Segment[],
+  to: readonly Segment[],
+  book: Pick<Book, "readNotes"> | undefined,
+): boolean {
+  const heard = (segs: readonly Segment[]) =>
+    segs
+      .filter((s) => isSpoken(s, book))
+      .map((s) => s.id)
+      .join(",");
+  return heard(from) !== heard(to);
+}
+
+/**
  * Replace a chapter's script with what a person made of it.
  *
  * An edit joins the open editing session or opens one; a bulk correction and a restore each
@@ -71,9 +113,14 @@ export interface EditInput {
  * would have nothing left to undo from.
  *
  * A write that changes nothing a version keeps — a line flagged, a clip that finished, anything
- * about the audio — is still written, and moves the revision on, but leaves the history alone:
- * `scriptSignature` is what a version is, and a script with the same signature is the same script,
- * so there is no edit to count and no session to open.
+ * about the audio, a suggestion dismissed — is still written, and moves the revision on, but leaves
+ * the history alone: `scriptSignature` is what a version is, and a script with the same signature
+ * is the same script, so there is no edit to count and no session to open.
+ *
+ * An edit that changes which lines are read aloud — a line marked as site text, or back as story —
+ * settles the chapter's narration as a run would, since a line that is not read wants no clip and
+ * one that is read again may be missing its own; unless a run holds the chapter, which settles it
+ * when it ends.
  */
 export function editScript(
   db: Db,
@@ -92,18 +139,27 @@ export function editScript(
   try {
     return db.transaction((tx) => {
       const current = readScript(tx, bookId, chapterId);
-      const changesScript = scriptSignature(current) !== scriptSignature(input.segments);
+      const segments = asEdited(input.segments, current);
+      const changesScript = scriptSignature(current) !== scriptSignature(segments);
       if (!changesScript) {
         // nothing for the history to say
       } else if (origin.kind === "edited")
-        history.noteEdit(tx, bookId, chapterId, current, input.segments);
-      else history.capture(tx, bookId, chapterId, origin, current, input.segments);
-      const { revision } = replaceScript(tx, bookId, chapterId, input.segments, {
+        history.noteEdit(tx, bookId, chapterId, current, segments);
+      else history.capture(tx, bookId, chapterId, origin, current, segments);
+      const { revision } = replaceScript(tx, bookId, chapterId, segments, {
         ifRevision: input.ifRevision,
       });
-      const status = library.getChapter(tx, bookId, chapterId)?.scripting;
+      const chapter = library.getChapter(tx, bookId, chapterId);
+      const status = chapter?.scripting;
       if (status !== "done" && status !== "fallback")
         library.setChapterScripting(tx, bookId, chapterId, "done", 100);
+      if (
+        chapter &&
+        chapter.narration !== "none" &&
+        !narrationInProgress(tx, bookId, chapterId) &&
+        spokenMoved(current, segments, library.getBook(tx, bookId))
+      )
+        settleChapter(tx, bookId, chapterId);
       return {
         segments: readScript(tx, bookId, chapterId),
         revision,

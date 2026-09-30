@@ -406,7 +406,9 @@ export const useLibraryStore = defineStore("library", {
     _patchChapter(
       bookId: string,
       chId: number,
-      patch: Partial<Pick<Chapter, "scripting" | "narration" | "narrationProgress" | "duration">>,
+      patch: Partial<
+        Pick<Chapter, "scripting" | "narration" | "narrationProgress" | "duration" | "lines">
+      >,
     ): void {
       const c = this.chapter(bookId, chId);
       if (c) Object.assign(c, patch);
@@ -485,6 +487,26 @@ export const useLibraryStore = defineStore("library", {
       b.scriptBudget = v;
       if (await this._writeSettings(bookId, { scriptBudget: v }, "save the scripting budget"))
         await this._budgetMoved(bookId);
+    },
+    /**
+     * Whether the book reads its translator's and author's notes aloud. It changes no line, but it
+     * changes which lines are read (`isSpoken`): on, every note is a line to narrate, and a chapter
+     * whose notes have no clip is no longer finished; off, their clips stay where they are, unheard.
+     * So what each chapter lasts, still needs and counts is taken from the server's answer.
+     */
+    async setReadNotes(bookId: string, on: boolean): Promise<void> {
+      const b = this.bookById(bookId);
+      if (!b || !!b.readNotes === on) return;
+      if (on) b.readNotes = true;
+      else delete b.readNotes;
+      const answer = await this._writeSettings(
+        bookId,
+        { readNotes: on },
+        on ? "read this book's notes aloud" : "stop reading this book's notes",
+      );
+      if (!answer) return;
+      for (const { id, narration, duration, lines } of answer.chapters)
+        this._patchChapter(bookId, id, { narration, duration, ...(lines ? { lines } : {}) });
     },
     /**
      * The book's notes for the scripter and its own prompt, written whole. One that cannot be sent

@@ -23,4 +23,5 @@ export function useScript(props: ChapterProps) {
     cast.value.find((c) => c.name === name)?.color ?? "#71717a";
   return { segments, cast, counts, inChapter, colorOf };
 }
-export const TYPES: SegmentType[] = ["dialogue", "narration", "thought"];
+/** Every type a line can have, story first, in the order the type picker lists them. */
+export const TYPES: SegmentType[] = ["narration", "dialogue", "thought", "watermark", "note"];

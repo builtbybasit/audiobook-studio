@@ -16,6 +16,7 @@ import { useUiStore } from "@/stores/ui";
 import { computed, nextTick, ref, watch } from "vue";
 import type { Component } from "vue";
 import { isScripted } from "@/lib/scriptReview";
+import { TYPE_LABEL } from "@/lib/siteText";
 import { UiCheckbox, UiSelect, UiToggleGroup } from "@/ui";
 import { useFilter } from "reka-ui";
 import { useBookId } from "@/composables/useBookId";
@@ -45,7 +46,9 @@ useCast(bookId);
 const { failed: unread, loading: reading, retry: readAgain } = useBookScripts(bookId);
 const q = useQueryParam("q", textParam());
 const speaker = useQueryParam("speaker", textParam());
-const TYPES = ["all", "dialogue", "narration", "thought"];
+// the story's types, then the two that are not the story — a link can land on every line of site
+// text in the book (`?type=watermark`)
+const TYPES = ["all", "dialogue", "narration", "thought", "watermark", "note"] as const;
 const type = useQueryParam("type", enumParam(TYPES, "all"));
 const { contains } = useFilter({ sensitivity: "base" });
 const cast = computed(() => castStore.charactersOf(bookId));
@@ -244,12 +247,7 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
       <UiSelect v-model="speaker" :options="speakerOpts" class="w-44" />
       <UiToggleGroup
         v-model="type"
-        :options="[
-          { value: 'all', label: 'all' },
-          { value: 'dialogue', label: 'dialogue' },
-          { value: 'narration', label: 'narration' },
-          { value: 'thought', label: 'thought' },
-        ]"
+        :options="TYPES.map((t) => ({ value: t, label: t === 'all' ? 'All' : TYPE_LABEL[t] }))"
       />
     </div>
 
@@ -386,7 +384,12 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
             :style="{ background: colorOf(s.speaker) + '33', color: colorOf(s.speaker) }"
             >{{ s.speaker }}</span
           >
-          <span class="min-w-0 flex-1" :class="s.type === 'thought' && 'italic'"
+          <span
+            class="min-w-0 flex-1"
+            :class="[
+              (s.type === 'thought' || s.type === 'note') && 'italic',
+              s.type === 'watermark' && 'text-zinc-400 line-through decoration-zinc-400/70',
+            ]"
             ><template v-for="(p, i) in mark(s.text)" :key="i"
               ><mark v-if="p.hit" class="rounded bg-amber-300/60 px-0.5 dark:bg-amber-500/40">{{
                 p.t

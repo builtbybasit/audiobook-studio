@@ -46,6 +46,8 @@ export const books = sqliteTable("books", {
   promptReplace: integer("prompt_replace", { mode: "boolean" }),
   promptSystem: text("prompt_system"),
   promptUser: text("prompt_user"),
+  /** read the translator's and author's notes (`note` lines) aloud; null = skip them, the default */
+  readNotes: integer("read_notes", { mode: "boolean" }),
 });
 
 export const volumes = sqliteTable(

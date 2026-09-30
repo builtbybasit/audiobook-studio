@@ -10,6 +10,9 @@
 // This gathers them all, says where each one is, and hands back a link that lands on the row itself
 // rather than at the top of the page it lives on. Read-only over the stores, like `bookFacts`:
 // nothing here decides anything, and a decision settled anywhere leaves the list on the next read.
+// A site-text suggestion is the one decision the inbox can also settle where it stands — a yes or a
+// no about one line, through the same store actions and Undo as the reader's — so its rows say
+// which line (`siteCheck`) and the page offers Accept and Dismiss beside the link.
 import { useCastStore } from "@/stores/cast";
 import { useExportsStore } from "@/stores/exports";
 import { useJobsStore } from "@/stores/jobs";
@@ -22,12 +25,14 @@ import type { RouteLocationRaw } from "vue-router";
 import { flagText } from "@/lib/scriptReview";
 import type { Job } from "@/types";
 import { plural } from "@/lib/contents";
+import { UNREAD_SHARE_WARNING, unreadShare } from "@/lib/siteText";
 
 /** The stage a decision belongs to, which is also the page it is settled on. */
 export type DecisionKind =
   | "failed"
   | "contents"
   | "unverified"
+  | "sitetext"
   | "speaker"
   | "merge"
   | "expression"
@@ -50,6 +55,8 @@ export interface Decision {
   chapterId?: number;
   /** lands on the row, not the top of the page */
   to: RouteLocationRaw;
+  /** a site-text suggestion on this line, which can be accepted or dismissed from the list */
+  siteCheck?: { chapterId: number; segmentId: number; suggest: "watermark" | "narration" };
 }
 
 export type DecisionTone = "red" | "amber" | "violet" | "sky" | "zinc";
@@ -94,6 +101,14 @@ const KINDS: Record<
     many: "unverified chunks",
     label: "Chunks that didn’t verify",
     blurb: "They were kept whole and will be read by the narrator unless they are re-split.",
+    tone: "amber",
+  },
+  sitetext: {
+    one: "site-text check",
+    many: "site-text checks",
+    label: "Site text to check",
+    blurb:
+      "Lines the detector thinks are typed wrong, and chapters with an unusual share marked as site text. A line marked by mistake is silently missing from the audio.",
     tone: "amber",
   },
   speaker: {
@@ -141,6 +156,7 @@ const ORDER: DecisionKind[] = [
   "failed",
   "contents",
   "unverified",
+  "sitetext",
   "speaker",
   "merge",
   "expression",
@@ -177,6 +193,7 @@ export function reviewInbox(bookId: string): DecisionGroup[] {
     failed: [],
     contents: [],
     unverified: [],
+    sitetext: [],
     speaker: [],
     merge: [],
     expression: [],
@@ -251,6 +268,43 @@ export function reviewInbox(bookId: string): DecisionGroup[] {
         query: { filter: g.verdict === "skip" ? "suggested" : "review", kind: g.kind },
       },
     });
+  }
+
+  // ---- site text. Marking too much is the dangerous direction — a line of story marked as site
+  // text is simply not in the audiobook, and nothing else says so — so a chapter where the unread
+  // marks are an unusual share of the words is listed before the detector's line-by-line doubts.
+  const book = libraryStore.bookById(bookId);
+  for (const c of chapters) {
+    const segs = scriptsStore.segmentsOf(bookId, c.id);
+    // the figure the scripting job warns at, counted the same way (`unreadShare`)
+    const { words: all, unread, lines, share } = unreadShare(segs, book);
+    if (share > UNREAD_SHARE_WARNING)
+      items.sitetext.push({
+        id: `sitetext:share:${c.id}`,
+        kind: "sitetext",
+        title: `${Math.round(share * 100)}% of the chapter is marked as not read`,
+        where: where(c.id),
+        detail: `${plural(lines, "line")} of site text or notes — ${plural(unread, "word")} of ${all.toLocaleString()} left out of the audio. Check none of it is story.`,
+        at: 0,
+        chapterId: c.id,
+        to: { path: `/book/${bookId}/scripting`, query: { ch: String(c.id), lines: "site" } },
+      });
+    for (const s of segs)
+      if (s.siteCheck)
+        items.sitetext.push({
+          id: `sitetext:${c.id}:${s.id}`,
+          kind: "sitetext",
+          title: excerpt(s.text),
+          where: where(c.id),
+          detail:
+            s.siteCheck.suggest === "watermark"
+              ? `Read as story, looks like site text — ${s.siteCheck.why}.`
+              : `Marked as site text, reads like story — ${s.siteCheck.why}.`,
+          at: 0,
+          chapterId: c.id,
+          to: inScripting(c.id, s.id),
+          siteCheck: { chapterId: c.id, segmentId: s.id, suggest: s.siteCheck.suggest },
+        });
   }
 
   // ---- one pass over the script: unverified chunks, drifted expressions, flags, second takes
@@ -348,6 +402,8 @@ export function reviewInbox(bookId: string): DecisionGroup[] {
       case "unverified":
       case "expression":
         return { path: `/book/${bookId}/scripting`, query: { ch } };
+      case "sitetext":
+        return { path: `/book/${bookId}/scripting`, query: { ch, lines: "site" } };
       case "speaker":
         return { path: `/book/${bookId}/cast`, query: { only: "new" } };
       case "merge":
@@ -363,6 +419,7 @@ export function reviewInbox(bookId: string): DecisionGroup[] {
     failed: "Open the queue",
     contents: "Open the contents review",
     unverified: "Open the script",
+    sitetext: "Open the script’s site text",
     speaker: "Open the cast",
     merge: "Open the cast",
     expression: "Open the script",

@@ -147,6 +147,13 @@ const STEPS: Record<string, string[]> = {
     "Open Endpoints → Gemini 3.1 Flash TTS → Pricing: the worked example shows input cost + audio cost = total, and the audio-tokens-per-second assumption is editable.",
     "Change that endpoint’s billing model and switch back: the rates are parked rather than reinterpreted, and every request already recorded keeps the model and the price it was charged at.",
   ],
+  "site-text": [
+    "Open ch 8 of The Cliché Cultivation World on Scripting: three lines are marked as site text, one is a translator's note, and the detector has two suggestions.",
+    "One sentence was cut in three — narration, the site's line, narration — so the story either side of it is still read.",
+    "Accept the suggestion on “Updated first on wuxiabox.com”, and set the library-pavilion line back to narration: it is story.",
+    "Narration counts the lines it skips; the note is skipped too until the book reads its notes.",
+    "Re-script the chapter on the simulated endpoint: the boilerplate comes back marked, and every word still matches the text.",
+  ],
   "mis-attributed": [
     "Search is open on the alias: tick a chapter, or Select all matching results.",
     "Change speaker… to the main character: the panel says how many change, how many already match and how many clips go stale.",
@@ -286,6 +293,15 @@ export function demoScenarios(): DemoScenario[] {
         "Chapter 1 of The Cliché Cultivation World through four versions: OpenAI’s first pass, the corrections a person made to it, the checkpoint saved before trying another model, and the DeepSeek re-script that is the current script — with clips that no longer match it. Opens the reader with History open.",
       bookId: "cliche",
       path: "/book/cliche/scripting",
+    },
+    {
+      id: "site-text",
+      group: "review",
+      name: "Site text and a translator's note",
+      blurb:
+        "Chapter 8 of The Cliché Cultivation World as a web-novel site leaves it: its boilerplate between paragraphs and inside a sentence, a translator's note, and the detector disagreeing with the model twice. The same boilerplate recurs in chapters 9 to 11. Opens the reader on the chapter.",
+      bookId: "cliche",
+      path: "/book/cliche/scripting?ch=8",
     },
     {
       id: "mis-attributed",

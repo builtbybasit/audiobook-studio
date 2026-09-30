@@ -49,10 +49,15 @@ export const REASONING_EFFORTS: readonly ReasoningEffort[] = ["off", "low", "med
 export const OUTPUT_FORMAT = `Output format (always required):
 The script is a list of consecutive lines that together read out the excerpt from start to finish: every word of the excerpt exactly once, in the original order. Add nothing, drop nothing, summarise nothing, correct nothing, and keep the punctuation of the prose — an answer that leaves words out or adds any is refused.
 Each line has:
-- "type": "narration" for the narrator's prose, "dialogue" for words a character says aloud, "thought" for words a character thinks.
-- "speaker": "${NARRATOR}" for narration; for dialogue and thought, the name of the character speaking or thinking.
+- "type": "narration" for the narrator's prose, "dialogue" for words a character says aloud, "thought" for words a character thinks, "watermark" for text that is not the story but the website's (see below), "note" for a translator's or author's note.
+- "speaker": "${NARRATOR}" for narration, watermark and note lines; for dialogue and thought, the name of the character speaking or thinking.
 - "text": the words of the line, copied verbatim from the excerpt.
 - "direction" (optional): a few words on how the line is delivered, e.g. "whispering" or "angrily".
+
+Text that is not the story still goes in the script, word for word, on lines of its own — it is marked, never left out:
+- "watermark": a website's boilerplate or anti-scraping text, such as "Read the latest chapters at example.com", "This chapter was stolen from …", a web address, or a request to support or vote. Such text is often dropped between paragraphs or into the middle of a sentence; give it its own line even there, so the sentence becomes a narration line, a watermark line and a narration line.
+- "note": a translator's or author's note, such as "(TL note: …)" or "A/N: …", including its label and brackets.
+When unsure whether something is the story, it is the story.
 
 Answer with JSON only, in this shape:
 {"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"softly"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}]}`;

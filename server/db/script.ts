@@ -5,7 +5,7 @@
 // it. That revision is what lets a job that started against one script refuse to overwrite the
 // next: it captures the number when it reads the chapter, and the write here only goes through when
 // the number has not moved. See `writeScript`.
-import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, ne, sql } from "drizzle-orm";
 
 import type { ChapterLines, RevisedLines, Segment, SegmentAudio, SegmentFlag, Take } from "@/types";
 import { snapshotTake } from "@/lib/takes";
@@ -383,6 +383,38 @@ export function bumpRevision(tx: Tx, bookId: string, chapterId: number): number 
     .get()?.revision;
   if (revision == null) throw new ScriptConflict(0, null);
   return revision;
+}
+
+// ---------- the same words elsewhere in the book ----------
+
+/**
+ * The lines of the book's other chapters that read as one of `folded` — lower-cased, with line
+ * breaks and runs of spaces read as one space — and the chapter each is in.
+ *
+ * What the site-text detector counts: a sentence a site drops into every chapter is the same
+ * sentence every time. One statement, the candidates sent as one JSON array rather than a variable
+ * each, and only the lines that match come back, so a thousand-chapter book is not read to check
+ * one chapter. The folding here is SQLite's `lower`, which folds ASCII only; English boilerplate is.
+ */
+export function linesElsewhere(
+  db: Db | Tx,
+  bookId: string,
+  chapterId: number,
+  folded: readonly string[],
+): { chapterId: number; text: string }[] {
+  if (!folded.length) return [];
+  const spaced = sql`replace(replace(replace(replace(lower(${segments.text}), char(10), ' '), char(13), ' '), char(9), ' '), '  ', ' ')`;
+  return db
+    .select({ chapterId: segments.chapterId, text: segments.text })
+    .from(segments)
+    .where(
+      and(
+        eq(segments.bookId, bookId),
+        ne(segments.chapterId, chapterId),
+        sql`trim(replace(${spaced}, '  ', ' ')) in (select value from json_each(${JSON.stringify(folded)}))`,
+      ),
+    )
+    .all();
 }
 
 // ---------- lines by speaker ----------

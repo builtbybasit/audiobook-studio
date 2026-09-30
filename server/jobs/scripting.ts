@@ -22,7 +22,7 @@
 // the book's layers are resolved then (`resolvePrompt`) and kept on the run with the book's notes,
 // so an edit made while it waits reaches the next run and not this one. Its tags are filled in per
 // request, from the book, the chapter, its cast as it stands and the request's place in the chapter.
-import type { Job, Profile, PromptTemplate, ScriptingQueued, Segment } from "@/types";
+import type { Book, Job, Profile, PromptTemplate, ScriptingQueued, Segment } from "@/types";
 import { BUILT_IN_PROMPT, renderPrompt, resolvePrompt, type PromptVars } from "@/lib/prompt";
 import { tokenEstimate } from "@/lib/scripting";
 import { ensureSpeakers, readSpeakers } from "~/db/cast";
@@ -40,6 +40,8 @@ import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
 import { chunksOf } from "~/script/chunks";
+import { checkSiteText, siteTextTally } from "~/script/siteCheck";
+import { UNREAD_SHARE_WARNING } from "@/lib/siteText";
 import { assertWithinBudget, budgetProblem } from "~/usage/budget";
 import { scriptReasoning, settleScript } from "~/usage/ledger";
 
@@ -54,6 +56,35 @@ function settledScriptingStatus(
   // not read as failed — that is what would stop it being narrated or exported
   if (lineCount(db, bookId, chapterId)) return "done";
   return outcome === "failed" ? "failed" : "none";
+}
+
+/**
+ * What the chapter's script marked as not the story, said in the job's log: how many lines of site
+ * text and notes, and how many the detector wants a person to look at. Marked text is not read, so
+ * a chapter with much of it gets a warning — a model marking story as site text is how a
+ * paragraph would vanish from the audiobook with nothing saying so.
+ */
+function noteSiteText(
+  ctx: JobContext,
+  segs: readonly Segment[],
+  book: Pick<Book, "readNotes"> | undefined,
+): void {
+  const { watermarks, notes, toCheck, share } = siteTextTally(segs, book);
+  if (!watermarks && !notes && !toCheck) return;
+  const n = (count: number, one: string, many = `${one}s`) =>
+    `${count} ${count === 1 ? one : many}`;
+  const percent = Math.round(share * 100);
+  ctx.note(
+    `${n(watermarks, "line")} marked as site text, ${n(notes, "note")}, ${toCheck} to check`,
+    "info",
+    { watermarks, notes, toCheck, percent },
+  );
+  if (share > UNREAD_SHARE_WARNING)
+    ctx.note(
+      `${percent}% of this chapter's words are marked as site text or notes that will not be read; check the model did not mark story`,
+      "warning",
+      { percent },
+    );
 }
 
 /** The chapter as the job needs it: where it is, what it says, and which script it is replacing. */
@@ -286,7 +317,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
 
       // Stitched in reading order and numbered afresh: a line belongs to the chunk it came back
       // in, and the ids are the chapter's, 1 to n.
-      const segs: Segment[] = answers.flat().map((l, i) => ({
+      const lines: Segment[] = answers.flat().map((l, i) => ({
         id: i + 1,
         type: l.type,
         speaker: l.speaker,
@@ -303,6 +334,9 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         db.transaction((tx) => {
           const at = library.locateChapter(tx, chapter.uid);
           if (!at) throw notFound("The chapter was removed while it was being scripted");
+          // the detector's second opinion on what is site text, against the book as it stands
+          const segs = checkSiteText(tx, at.bookId, at.id, lines);
+          noteSiteText(ctx, segs, book);
           const previous = readScript(tx, at.bookId, at.id);
           const { revision } = replaceScript(tx, at.bookId, at.id, segs, {
             ifRevision: chapter.revision,

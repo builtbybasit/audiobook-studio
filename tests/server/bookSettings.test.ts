@@ -117,11 +117,11 @@ describe("a book's settings", () => {
     const before = (await read(api, id)).chapters;
     const segs = readScript(api.db, id, 1);
     const spoken = segs.reduce((n, s) => n + s.audio.duration, 0);
-    expect(before[0].duration).toBeCloseTo(spoken + silenceOf(segs, DEFAULT_PACING), 6);
+    expect(before[0].duration).toBeCloseTo(spoken + silenceOf(segs, DEFAULT_PACING, undefined), 6);
 
     const pacing = { line: 2, turn: 3 };
     const { body } = await patch(api, id, { pacing });
-    expect(body.chapters[0].duration).toBeCloseTo(spoken + silenceOf(segs, pacing), 6);
+    expect(body.chapters[0].duration).toBeCloseTo(spoken + silenceOf(segs, pacing, undefined), 6);
     expect(body.chapters[0].duration).toBeGreaterThan(before[0].duration);
     // scripted but never narrated: no clips to put silence between
     expect(body.chapters[1].duration).toBe(before[1].duration);

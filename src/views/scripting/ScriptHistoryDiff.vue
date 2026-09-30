@@ -8,8 +8,9 @@
 // out of the first and the words that came marked in the second.
 import { computed, ref, watch } from "vue";
 import { comparisonSummary } from "@/lib/scriptHistory";
+import { TYPE_LABEL } from "@/lib/siteText";
 import { ArrowRight as ToIcon, CornerDownRight as JumpIcon } from "@lucide/vue";
-import type { ChangeGroup, LineChange, ScriptComparison } from "@/types";
+import type { ChangeGroup, FieldChange, LineChange, ScriptComparison, SegmentType } from "@/types";
 
 const props = withDefaults(
   defineProps<{
@@ -74,6 +75,9 @@ const textField = (c: LineChange) => c.fields.find((f) => f.field === "text");
 /** A line whose words are the same and whose spacing is not: shown as it is written, breaks and all. */
 const spacing = (c: LineChange): string => (c.kind === "changed" && textField(c)?.detail) || "";
 const otherFields = (c: LineChange) => c.fields.filter((f) => f.field !== "text");
+/** A field's value as the reader names it: a type by its label, so "site text" reads as it does in the reader. */
+const named = (f: FieldChange, v: string): string =>
+  f.field === "type" ? (TYPE_LABEL[v as SegmentType] ?? v) : v;
 watch([() => props.comparison, filter], () => (shown.value = PAGE));
 </script>
 
@@ -219,9 +223,11 @@ watch([() => props.comparison, filter], () => (shown.value = PAGE));
           >
             <dt class="w-20 shrink-0 text-[11px] text-zinc-400">{{ FIELD_LABEL[f.field] }}</dt>
             <dd class="min-w-0 flex-1">
-              <span class="text-zinc-500 line-through decoration-zinc-400">{{ f.from }}</span>
+              <span class="text-zinc-500 line-through decoration-zinc-400">{{
+                named(f, f.from)
+              }}</span>
               <ToIcon class="icon-sm mx-1 text-zinc-400" />
-              <span class="font-medium">{{ f.to }}</span>
+              <span class="font-medium">{{ named(f, f.to) }}</span>
               <span v-if="f.detail" class="ml-1 text-zinc-400">({{ f.detail }})</span>
               <span v-if="f.field === 'pause'" class="ml-1 text-zinc-400"
                 >— stitched, so no clip is affected</span

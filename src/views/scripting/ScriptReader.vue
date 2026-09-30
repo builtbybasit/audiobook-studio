@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useBookScripts, useChapterHistory } from "@/queries";
 import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
@@ -13,6 +14,10 @@ import { useUiStore } from "@/stores/ui";
 // The model's segment boundaries are not always right — two speakers in one segment, or a sentence cut
 // in half — so the editor can split a segment at any word gap (click the gap; sentence ends are marked)
 // and join it with its neighbour. Both invalidate the audio they touch and both are undoable.
+// Text that is not the story — a site's boilerplate, a translator's note — stays in the script as a
+// line of its own and is shown for what it is: struck through or muted, with a chip saying whether
+// it is read, one click from being story again. What the site-text detector thinks otherwise is
+// shown under the line it is about, to accept or dismiss.
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useScript } from "@/views/scripting/shared";
@@ -28,8 +33,10 @@ import SegmentEditor from "@/views/scripting/SegmentEditor.vue";
 import ChapterCastRail from "@/views/scripting/ChapterCastRail.vue";
 import ExpressionText from "@/components/ExpressionText.vue";
 import { secs } from "@/lib/speech";
+import { plural } from "@/lib/contents";
+import { isSiteText, isSpoken, TYPE_LABEL } from "@/lib/siteText";
 import { usePlayer } from "@/composables/usePlayer";
-import { idParam, useQueryParam } from "@/composables/useQueryParam";
+import { enumParam, idParam, useQueryParam } from "@/composables/useQueryParam";
 import { chapterQueue, chapterQueueId, clipOf, segmentStart } from "@/composables/useChapterQueue";
 import {
   AudioLines as NarrationIcon,
@@ -43,6 +50,7 @@ import {
   Play as PlayIcon,
   RotateCcw as RetryIcon,
   Scissors as SplitIcon,
+  ScanSearch as SiteCheckIcon,
   TriangleAlert as WarnIcon,
   Users as CastIcon,
 } from "@lucide/vue";
@@ -66,6 +74,7 @@ const filterOpts = computed(() => [
   })),
 ]);
 const libraryStore = useLibraryStore();
+const narrationStore = useNarrationStore();
 const scriptingStore = useScriptingStore();
 const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
@@ -78,7 +87,14 @@ const bookScripts = useBookScripts(() => props.bookId);
 const volume = computed(() => libraryStore.volumeOf(props.bookId, props.chapterId));
 const multiVolume = computed(() => libraryStore.volumesOf(props.bookId).length > 1);
 
-const mode = ref("all"); // all | dialogue
+/**
+ * Which lines are shown. "Dialogue only" is the characters' lines, so it leaves out site text as it
+ * leaves out narration; "Site text" is the one place every marked line and every line the detector
+ * questions can be read together, and it is in the address so another page can link to it. Neither
+ * filter can make a marked line vanish: the header counts them whatever is shown, and the line
+ * under the filters says how many the filter is hiding.
+ */
+const mode = useQueryParam("lines", enumParam(["all", "dialogue", "site"], "all"));
 const warnOpen = ref(false); // the unverified-chunk banner reads as one line until asked
 const speaker = ref(""); // '' = everyone
 /** the line whose editor is open */
@@ -91,14 +107,29 @@ const linked = useQueryParam("seg", idParam());
 const editing = provideSegmentEditing(props, { open, focus });
 const { splitting, editingText, nextOf, gapOf, bookGap, setPause } = editing;
 
+const inSite = (s: Segment) => isSiteText(s.type) || !!s.siteCheck;
 const rows = computed(() =>
   segments.value.filter(
     (s) =>
-      (mode.value === "all" || s.type !== "narration") &&
+      (mode.value === "all" ||
+        (mode.value === "dialogue" ? s.type === "dialogue" || s.type === "thought" : inSite(s))) &&
       (!speaker.value || s.speaker === speaker.value),
   ),
 );
 const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterId)!);
+const book = computed(() => libraryStore.bookById(props.bookId));
+/** the lines that are not the story, and the lines the detector questions, however they are typed */
+const siteText = computed(() => segments.value.filter((s) => s.type === "watermark").length);
+const notes = computed(() => segments.value.filter((s) => s.type === "note").length);
+/** what the "Site text" filter would show: every marked line, and every line the detector questions */
+const siteRows = computed(() => segments.value.filter(inSite).length);
+/** marked lines the filters in force leave off the page */
+const hiddenSite = computed(
+  () =>
+    segments.value.filter((s) => isSiteText(s.type)).length -
+    rows.value.filter((s) => isSiteText(s.type)).length,
+);
+const spoken = (s: Segment) => isSpoken(s, book.value);
 const chars = computed(() => segments.value.reduce((a, s) => a + s.text.length, 0));
 
 function nextNew() {
@@ -169,15 +200,9 @@ watch(
 );
 
 // stale nudge: lines whose audio is out of date — edited after narration, or a half of a split that
-// has never been rendered at all (only counts once the chapter has audio)
-const stale = computed(
-  () =>
-    segments.value.filter(
-      (s) =>
-        s.audio.status === "stale" ||
-        (chapter.value.narration !== "none" && s.audio.status === "none"),
-    ).length,
-);
+// has never been rendered at all (only counts once the chapter has audio) — counted as the ledger's
+// "Re-narrate changed" counts them, so a line of site text is never one
+const stale = computed(() => narrationStore.changedSegments(props.bookId, props.chapterId).length);
 const edits = computed(() => segments.value.filter((s) => s.edited).length);
 
 // re-script: run the LLM again on this chapter, optionally re-applying manual edits; then show the
@@ -301,8 +326,10 @@ watch(open, (v) => {
             </div>
             <h2 class="truncate font-serif text-2xl">{{ chapter.title }}</h2>
             <div class="mt-0.5 text-xs text-zinc-500">
-              {{ segments.length }} segments · {{ inChapter.length }} speakers ·
-              {{ (chars / 1000).toFixed(1) }}k chars ·
+              {{ segments.length }} segments
+              <template v-if="siteText"> · {{ siteText }} site text</template
+              ><template v-if="notes"> · {{ plural(notes, "note") }}</template> ·
+              {{ inChapter.length }} speakers · {{ (chars / 1000).toFixed(1) }}k chars ·
               <span class="font-mono">chapter_{{ String(chapter.id).padStart(3, "0") }}.json</span>
             </div>
           </div>
@@ -395,11 +422,24 @@ watch(open, (v) => {
             :options="[
               { value: 'all', label: 'Everything' },
               { value: 'dialogue', label: 'Dialogue only' },
+              ...(siteRows || mode === 'site'
+                ? [{ value: 'site', label: `Site text ${siteRows}` }]
+                : []),
             ]"
           />
           <UiSelect v-model="speaker" :options="filterOpts" size="xs" class="w-40" />
           <span class="ml-auto whitespace-nowrap text-[11px] text-zinc-400"
-            >{{ rows.length }} shown · click any line to edit</span
+            >{{ rows.length }} shown<template v-if="hiddenSite">
+              ·
+              <button
+                class="underline decoration-dotted hover:text-violet-500"
+                title="Show the lines marked as site text or notes"
+                @click="((mode = 'site'), (speaker = ''))"
+              >
+                {{ hiddenSite }} marked not shown
+              </button></template
+            >
+            · click any line to edit</span
           >
         </div>
       </div>
@@ -566,6 +606,57 @@ watch(open, (v) => {
                 </div>
               </details>
             </div>
+            <!-- site text and notes: in the script, word for word, and shown for what they are -->
+            <p
+              v-else-if="isSiteText(s.type)"
+              :id="'seg-' + s.id"
+              data-line
+              class="-mx-2 mb-3 flex cursor-text items-start gap-2 rounded px-2 py-0.5 transition-colors"
+              :class="
+                open === s.id
+                  ? 'bg-violet-50 ring-1 ring-violet-300 dark:bg-violet-500/10 dark:ring-violet-500/40'
+                  : focus === s.id
+                    ? 'ring-1 ring-zinc-400'
+                    : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'
+              "
+              @click="open = open === s.id ? null : s.id"
+            >
+              <span
+                class="min-w-0 flex-1"
+                :class="
+                  s.type === 'watermark'
+                    ? 'text-zinc-400 line-through decoration-zinc-400/70 dark:text-zinc-500'
+                    : 'italic text-zinc-500 dark:text-zinc-400'
+                "
+                ><ExpressionText :book-id="bookId" :segment="s"
+              /></span>
+              <span
+                class="mt-1 shrink-0 whitespace-nowrap rounded bg-zinc-100 px-1.5 py-0.5 font-sans text-[10px] font-medium leading-none text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                :title="
+                  spoken(s)
+                    ? 'This book reads its notes aloud (Overview → Reading)'
+                    : 'Kept in the script, left out of the audio'
+                "
+                >{{ TYPE_LABEL[s.type] }} · {{ spoken(s) ? "read" : "not read" }}</span
+              >
+              <button
+                class="btn-ghost btn-xs mt-0.5 shrink-0 font-sans leading-none"
+                :title="`#${s.id} is the story — read it as narration`"
+                @click.stop="scriptsStore.setLineType(bookId, chapterId, s.id, 'narration')"
+              >
+                Not site text
+              </button>
+              <button
+                v-if="spoken(s) && s.audio.duration"
+                class="icon-btn line-tool mt-0.5 shrink-0"
+                :class="onClip(s) ? 'icon-btn-play is-on' : focus === s.id && 'is-on'"
+                :aria-label="`${onClip(s) ? 'Pause' : 'Play'} line ${s.id}`"
+                :title="`Play the chapter from this line (p) · ${secs(s.audio.duration)}`"
+                @click.stop="playLine(s)"
+              >
+                <component :is="onClip(s) ? PauseIcon : PlayIcon" class="icon-sm icon-fill" />
+              </button>
+            </p>
             <!-- narration: plain prose -->
             <p
               v-else-if="s.type === 'narration'"
@@ -667,6 +758,38 @@ watch(open, (v) => {
                   >‘<ExpressionText :book-id="bookId" :segment="s" />’</template
                 ><template v-else><ExpressionText :book-id="bookId" :segment="s" /></template>
               </p>
+            </div>
+            <!-- the detector disagrees with this line's type: it says why, and a person decides -->
+            <div
+              v-if="s.siteCheck && !s.fallback"
+              class="-mt-2 mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-1 font-sans text-[11px] leading-normal text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200"
+              role="note"
+            >
+              <SiteCheckIcon class="icon-sm shrink-0" />
+              <span class="min-w-0 flex-1"
+                ><b>{{
+                  s.siteCheck.suggest === "watermark" ? "Looks like site text" : "Reads like story"
+                }}</b>
+                — {{ s.siteCheck.why }}</span
+              >
+              <button
+                class="btn-ghost btn-xs"
+                :title="
+                  s.siteCheck.suggest === 'watermark'
+                    ? 'Mark it as site text — kept in the script, left out of the audio'
+                    : 'Read it as narration'
+                "
+                @click.stop="scriptsStore.acceptSiteCheck(bookId, chapterId, s.id)"
+              >
+                Accept
+              </button>
+              <button
+                class="btn-ghost btn-xs"
+                :title="`Keep it as ${TYPE_LABEL[s.type].toLowerCase()} and drop the suggestion`"
+                @click.stop="scriptsStore.dismissSiteCheck(bookId, chapterId, s.id)"
+              >
+                Dismiss
+              </button>
             </div>
             <!-- inline editor -->
             <SegmentEditor

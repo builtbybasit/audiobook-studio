@@ -147,9 +147,9 @@ describe("a narration scope", () => {
     segs[1].audio.status = "stale";
     const ids = [ch.id];
 
-    expect(narrationTargets(segs, "failed", true).run).toHaveLength(1);
-    expect(narrationTargets(segs, "fill", true).run).toHaveLength(2);
-    expect(narrationTargets(segs, "all", true).run).toHaveLength(segs.length);
+    expect(narrationTargets(segs, "failed", true, undefined).run).toHaveLength(1);
+    expect(narrationTargets(segs, "fill", true, undefined).run).toHaveLength(2);
+    expect(narrationTargets(segs, "all", true, undefined).run).toHaveLength(segs.length);
 
     const failed = narrationStore.estimate(BOOK, ids, "failed");
     const fill = narrationStore.estimate(BOOK, ids, "fill");

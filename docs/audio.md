@@ -4,6 +4,12 @@
 
 Every clip is a real audio file the server wrote and serves through its `url`: rendered by your speech endpoints in your library, and in the demo a tone at the speaker's pitch, made the first time something plays or builds it ([the demo](demo.md#demo-tools)). Retakes, the dictionary and pacing below behave the same in both.
 
+## What is read aloud
+
+A script holds every word of its chapter, including the words that are not the story: a site's boilerplate marked `watermark` and translator's or author's notes marked `note` ([site text](scripting.md#site-text-and-translators-notes)). Only the lines that are read aloud are rendered, timed and billed. A watermark is never read. A note is read only when the book's **Read translator's notes aloud** is on, which it is not by default. `isSpoken` in [src/lib/siteText.ts](../src/lib/siteText.ts) decides this for every part of the app that deals in audio. A narration run never sends a line that is not read and says how many it skipped. The estimate prices only the lines that are read. A chapter's running time, the player and the ledger's scrubber leave those lines out, and a chapter counts as narrated without them.
+
+A clip rendered before its line was marked as site text is kept but not heard. Marking the line back as story plays the same clip again, with nothing rendered twice, because whether a line is heard depends on its type and not on its clip. A line that becomes read, such as a note after the book turns its notes on or a watermark accepted back as narration, has no clip yet, and **Re-narrate changed** picks it up with the rest.
+
 ## Audio review and segment boundaries
 
 A request that succeeds can still produce bad audio, and the model's idea of where one line ends is not always right. These are the two fixes a listener needs.

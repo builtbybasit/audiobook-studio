@@ -25,12 +25,12 @@ const props = defineProps<{ bookId: string; chapterId: number }>();
 const castStore = useCastStore();
 const route = useRoute();
 const router = useRouter();
-const { chapter, segments, colorOf } = useJob(props);
+const { chapter, book, segments, colorOf } = useJob(props);
 const { p, playQueue, cue, seekTo, skip, next, prev, cycleRate } = usePlayer();
 const pacing = computed(() => castStore.pacingOf(props.bookId));
 // the stitched chapter is the clips *and* the silence between them, so the scrubber shows both —
 // laid out by the same `chapterTimeline` the player's queue is built from
-const timeline = computed(() => chapterTimeline(segments.value, pacing.value));
+const timeline = computed(() => chapterTimeline(segments.value, pacing.value, book.value));
 // The length of the bar below, summed from the very clips it draws rather than read off
 // `chapter.duration`. The two are the same arithmetic (`cast._retime` is Σdurations + `silenceOf`)
 // and agree whenever nothing is in flight — but a clip being rendered again drops out of `timeline`

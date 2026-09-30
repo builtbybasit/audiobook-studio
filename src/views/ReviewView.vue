@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
 import { plural } from "@/lib/contents";
 
 // The book's review inbox: every decision waiting on a person, wherever it lives, with the link
@@ -7,7 +8,8 @@ import { plural } from "@/lib/contents";
 // say how many there are altogether, and the only page that shows them side by side.
 //
 // It decides nothing itself. Every row leaves for the page that owns the decision, which is also
-// the page that owns the undo for it.
+// the page that owns the undo for it — except a site-text suggestion, a yes or no about one line,
+// which can be accepted or dismissed here through the scripts store's own actions and their Undo.
 import { computed, ref } from "vue";
 import { relative } from "@/lib/endpoints";
 import { bookFacts } from "@/views/library/bookFacts";
@@ -23,14 +25,17 @@ import {
   GitMerge as MergeIcon,
   ListChecks as ContentsIcon,
   Repeat as RetakeIcon,
+  ScanSearch as SiteTextIcon,
   Scissors as UnverifiedIcon,
   Sparkles as ExpressionIcon,
   TriangleAlert as FailedIcon,
   UserPlus as SpeakerIcon,
 } from "@lucide/vue";
 import type { Component } from "vue";
+import type { Decision } from "@/views/review/inbox";
 
 const libraryStore = useLibraryStore();
+const scriptsStore = useScriptsStore();
 const bookId = useBookId();
 useCast(bookId);
 // retakes, flags and unverified chunks are on the lines: until every scripted chapter's are in,
@@ -55,6 +60,7 @@ const ICON: Record<DecisionKind, Component> = {
   failed: FailedIcon,
   contents: ContentsIcon,
   unverified: UnverifiedIcon,
+  sitetext: SiteTextIcon,
   speaker: SpeakerIcon,
   merge: MergeIcon,
   expression: ExpressionIcon,
@@ -86,6 +92,10 @@ const TINT: Record<DecisionTone, string> = {
 // when there is nothing to decide, the page still answers "so what now?" — with the same chain the
 // shelf card and the overview banner read, not a second opinion
 const next = computed(() => bookFacts(bookId).next);
+
+/** A group of lines is read chapter by chapter: a row opens a new chapter when it is in another. */
+const opensChapter = (items: Decision[], i: number): boolean =>
+  items[i].chapterId != null && items[i].chapterId !== items[i - 1]?.chapterId;
 const now = Date.now();
 </script>
 
@@ -156,23 +166,61 @@ const now = Date.now();
         /></RouterLink>
         <p class="w-full text-xs text-zinc-500">{{ g.blurb }}</p>
       </div>
-      <RouterLink
-        v-for="d in expanded.has(g.kind) ? g.items : g.items.slice(0, FIRST)"
+      <template
+        v-for="(d, i) in expanded.has(g.kind) ? g.items : g.items.slice(0, FIRST)"
         :key="d.id"
-        :to="d.to"
-        class="relative flex items-start gap-3 border-b border-zinc-100 py-2.5 pl-5 pr-4 last:border-b-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-800/40"
       >
-        <span class="absolute inset-y-0 left-0 w-0.5" :class="BAR[g.tone]"></span>
-        <div class="min-w-0 flex-1">
-          <div class="truncate text-sm font-medium">{{ d.title }}</div>
-          <div class="mt-0.5 text-xs text-zinc-500">
-            <span class="text-zinc-400">{{ d.where }}</span> · {{ d.detail }}
+        <!-- site text is read chapter by chapter, under the chapter's name -->
+        <div
+          v-if="g.kind === 'sitetext' && opensChapter(g.items, i)"
+          class="border-b border-zinc-100 bg-zinc-50 px-4 py-1 text-[11px] font-medium text-zinc-500 dark:border-zinc-800/70 dark:bg-zinc-800/30"
+        >
+          {{ d.where }}
+        </div>
+        <div
+          class="relative flex items-start border-b border-zinc-100 last:border-b-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-800/40"
+        >
+          <span class="absolute inset-y-0 left-0 w-0.5" :class="BAR[g.tone]"></span>
+          <RouterLink :to="d.to" class="flex min-w-0 flex-1 items-start gap-3 py-2.5 pl-5 pr-4">
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-sm font-medium">{{ d.title }}</div>
+              <div class="mt-0.5 text-xs text-zinc-500">
+                <span v-if="g.kind !== 'sitetext'" class="text-zinc-400">{{ d.where }} · </span
+                >{{ d.detail }}
+              </div>
+            </div>
+            <span class="shrink-0 whitespace-nowrap pt-0.5 text-[11px] text-zinc-400">
+              <span v-if="d.at">{{ relative(d.at, now) }} · </span>open
+              <NextIcon class="icon-sm" />
+            </span>
+          </RouterLink>
+          <!-- settled here, with the Undo the reader's buttons give -->
+          <div v-if="d.siteCheck" class="flex shrink-0 items-center gap-1 py-2.5 pr-4">
+            <button
+              class="btn-ghost btn-xs"
+              :title="
+                d.siteCheck.suggest === 'watermark'
+                  ? 'Mark it as site text — kept in the script, left out of the audio'
+                  : 'Read it as narration'
+              "
+              @click="
+                scriptsStore.acceptSiteCheck(bookId, d.siteCheck.chapterId, d.siteCheck.segmentId)
+              "
+            >
+              Accept
+            </button>
+            <button
+              class="btn-ghost btn-xs"
+              title="Leave the line as it is and drop the suggestion"
+              @click="
+                scriptsStore.dismissSiteCheck(bookId, d.siteCheck.chapterId, d.siteCheck.segmentId)
+              "
+            >
+              Dismiss
+            </button>
           </div>
         </div>
-        <span class="shrink-0 whitespace-nowrap pt-0.5 text-[11px] text-zinc-400">
-          <span v-if="d.at">{{ relative(d.at, now) }} · </span>open <NextIcon class="icon-sm" />
-        </span>
-      </RouterLink>
+      </template>
       <button
         v-if="g.items.length > FIRST && !expanded.has(g.kind)"
         class="w-full px-4 py-2 text-left text-xs text-zinc-500 hover:text-violet-500"

@@ -59,7 +59,8 @@ const narrated = (bookId: string, chId: number): Segment[] =>
 const stitched = (bookId: string, chId: number): number => {
   const segs = scriptsStore.segmentsOf(bookId, chId);
   return (
-    segs.reduce((a, s) => a + s.audio.duration, 0) + silenceOf(segs, castStore.pacingOf(bookId))
+    segs.reduce((a, s) => a + s.audio.duration, 0) +
+    silenceOf(segs, castStore.pacingOf(bookId), undefined)
   );
 };
 

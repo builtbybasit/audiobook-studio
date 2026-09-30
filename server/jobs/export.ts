@@ -29,6 +29,7 @@
 import { basename } from "node:path";
 
 import type {
+  Book,
   BuildQueued,
   Chapter,
   ExportFile,
@@ -51,6 +52,7 @@ import {
   scopeOf,
   setLabel,
 } from "@/lib/exports";
+import { heardLines } from "@/lib/siteText";
 import { pacingOrDefault, pauseAfter, sampleRateLabel } from "@/lib/speech";
 import { FORMAT_LABEL } from "@/lib/endpointShapes";
 import { formatOfFile, type AudioFiles } from "~/audio/files";
@@ -142,17 +144,20 @@ function planFor(
   };
 }
 
-/** What a chapter's audio is right now: its fingerprint, and the lines that can be heard. */
+/**
+ * What a chapter's audio is right now: its fingerprint, and the lines that can be heard — a line the
+ * book does not read is left out of the stitch, clip or no clip (`heardLines`).
+ */
 function audioOf(
   db: Db | Tx,
-  bookId: string,
+  book: Book,
   chapter: Chapter,
   pacing: Pacing,
 ): { signature: string; lines: Segment[] } {
-  const segments = readScript(db, bookId, chapter.id);
+  const segments = readScript(db, book.id, chapter.id);
   return {
-    signature: chapterSignature(chapter, segments, pacing),
-    lines: segments.filter((s) => s.audio.duration > 0),
+    signature: chapterSignature(chapter, segments, pacing, book),
+    lines: heardLines(segments, book),
   };
 }
 
@@ -164,15 +169,15 @@ function audioOf(
  */
 function refuseEncodedClips(
   db: Db,
-  bookId: string,
+  book: Book,
   ids: readonly number[],
   known: Map<number, Chapter>,
 ): void {
   for (const id of ids) {
     const chapter = known.get(id);
     if (!chapter) continue;
-    for (const s of readScript(db, bookId, id)) {
-      const format = s.audio.duration > 0 && s.audio.url ? formatOfFile(s.audio.url) : null;
+    for (const s of heardLines(readScript(db, book.id, id), book)) {
+      const format = s.audio.url ? formatOfFile(s.audio.url) : null;
       if (format && format !== "wav")
         throw new Error(
           `“${chapter.title}” was narrated in ${FORMAT_LABEL[format]}, and this server builds with the WAV stitcher, which joins WAV clips only. Restart the server with EXPORT_ENCODER=ffmpeg to build from ${FORMAT_LABEL[format]}, or narrate the book again with its endpoints set to WAV.`,
@@ -253,7 +258,7 @@ export function enqueueBuild(
   const pacing = pacingOrDefault(book.pacing);
   const ordered = chapters.map((c) => c.id);
   const state: Record<number, string> = {};
-  for (const c of chapters) state[c.id] = audioOf(db, bookId, c, pacing).signature;
+  for (const c of chapters) state[c.id] = audioOf(db, book, c, pacing).signature;
   // An encoder that cannot splice re-encodes everything, and the row says so rather than
   // promising a saving the build will not make.
   const reuse = encoder.carries ? reusedChapters(prev, ordered, settings, state) : [];
@@ -365,7 +370,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
 
     const pacing = pacingOrDefault(book.pacing);
     const known = new Map(library.listChapters(db, job.bookId).map((c) => [c.id, c]));
-    if (!encoder.decodes) refuseEncodedClips(db, job.bookId, entry.chapterIds, known);
+    if (!encoder.decodes) refuseEncodedClips(db, book, entry.chapterIds, known);
     const prev = entry.replaces == null ? null : (exports.getExport(db, entry.replaces) ?? null);
     // Only a file this same encoder wrote is ever copied out of: a span is bytes into a WAV and
     // milliseconds into an AAC stream, and reading one as the other would splice noise into the
@@ -501,7 +506,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         const chapter = known.get(id);
         if (!chapter)
           throw notFound(`Chapter ${id} was removed while ${entry.filename} was being built`);
-        const { signature, lines } = audioOf(db, job.bookId, chapter, pacing);
+        const { signature, lines } = audioOf(db, book, chapter, pacing);
         signatures.set(id, signature);
         const title = markerTitle(
           chapter,

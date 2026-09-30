@@ -14,8 +14,10 @@ import type {
   LineCounts,
   NarrationStatus,
   ScriptingStatus,
+  SegmentType,
   Volume,
 } from "@/types";
+import { unspokenTypes } from "@/lib/siteText";
 import type { Db, Tx } from "~/db/client";
 import type { ChapterBody } from "~/import/assemble";
 import { rekeyActive } from "~/db/jobs";
@@ -109,7 +111,12 @@ export function getBook(db: Db | Tx, id: string): Book | undefined {
 }
 
 export function listChapters(db: Db | Tx, bookId: string): Chapter[] {
-  const lines = lineCounts(db, bookId);
+  const readNotes = db
+    .select({ readNotes: books.readNotes })
+    .from(books)
+    .where(eq(books.id, bookId))
+    .get()?.readNotes;
+  const lines = lineCounts(db, bookId, unspokenTypes({ readNotes: readNotes ?? undefined }));
   return db
     .select()
     .from(chapters)
@@ -119,22 +126,32 @@ export function listChapters(db: Db | Tx, bookId: string): Chapter[] {
     .map((row) => ({ ...toChapter(row), lines: lines.get(row.id) ?? NO_LINES }));
 }
 
-const NO_LINES: LineCounts = { total: 0, done: 0, generating: 0, failed: 0 };
+const NO_LINES: LineCounts = { total: 0, done: 0, generating: 0, failed: 0, skipped: 0 };
 
 /**
  * Each chapter's lines counted by the clip each one plays, in one pass over the book.
  *
  * A page that shows a chapter's figures — its line count in the picker, a running job's progress on
- * the Queue — reads these rather than the chapter's script, which it may never have opened.
+ * the Queue — reads these rather than the chapter's script, which it may never have opened. Only
+ * the lines the book reads aloud are counted, since only they want a clip; the rest — `unspoken`,
+ * the types `isSpoken` says no to — are `skipped`, counted apart so the page can say so.
  */
-function lineCounts(db: Db | Tx, bookId: string): Map<number, LineCounts> {
+function lineCounts(
+  db: Db | Tx,
+  bookId: string,
+  unspoken: readonly SegmentType[],
+): Map<number, LineCounts> {
+  const quiet = unspoken.length ? inArray(segments.type, [...unspoken]) : sql`0`;
+  const heard = (status: string) =>
+    sql<number>`sum(case when ${quiet} then 0 when ${clips.status} = ${status} then 1 else 0 end)`;
   const rows = db
     .select({
       chapterId: segments.chapterId,
-      total: count(),
-      done: sql<number>`sum(case when ${clips.status} = 'done' then 1 else 0 end)`,
-      generating: sql<number>`sum(case when ${clips.status} = 'generating' then 1 else 0 end)`,
-      failed: sql<number>`sum(case when ${clips.status} = 'failed' then 1 else 0 end)`,
+      total: sql<number>`sum(case when ${quiet} then 0 else 1 end)`,
+      done: heard("done"),
+      generating: heard("generating"),
+      failed: heard("failed"),
+      skipped: sql<number>`sum(case when ${quiet} then 1 else 0 end)`,
     })
     .from(segments)
     .leftJoin(
@@ -153,10 +170,11 @@ function lineCounts(db: Db | Tx, bookId: string): Map<number, LineCounts> {
     rows.map((r) => [
       r.chapterId,
       {
-        total: r.total,
+        total: Number(r.total),
         done: Number(r.done),
         generating: Number(r.generating),
         failed: Number(r.failed),
+        skipped: Number(r.skipped),
       },
     ]),
   );
@@ -604,6 +622,8 @@ export interface BookSettings {
   pacing?: { line: number; turn: number } | null;
   /** the book's notes for the scripter and its own prompt; `null` clears both */
   prompt?: BookPrompt | null;
+  /** read `note` lines aloud; `null` goes back to the default, which skips them */
+  readNotes?: boolean | null;
 }
 
 /**
@@ -625,6 +645,7 @@ export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): v
     set.pacingTurn = s.pacing?.turn ?? null;
   }
   if (s.prompt !== undefined) Object.assign(set, bookPromptValues(s.prompt));
+  if (s.readNotes !== undefined) set.readNotes = s.readNotes;
   if (!Object.keys(set).length) return;
   db.update(books).set(set).where(eq(books.id, bookId)).run();
 }

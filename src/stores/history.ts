@@ -71,6 +71,7 @@ export const useHistoryStore = defineStore("history", {
     /** What restoring one would do, worked out without touching anything. */
     restorePlanOf(): (bookId: string, chId: number, versionId: number) => RestorePlan | null {
       const castStore = useCastStore();
+      const libraryStore = useLibraryStore();
       const narrationStore = useNarrationStore();
       const scriptsStore = useScriptsStore();
 
@@ -80,6 +81,7 @@ export const useHistoryStore = defineStore("history", {
         return planRestore(scriptsStore.segmentsOf(bookId, chId), v.segments, {
           drift: (segment, audio) => narrationStore.clipDrift(bookId, segment, audio),
           cast: new Set(castStore.charactersOf(bookId).map((c) => c.name)),
+          book: libraryStore.bookById(bookId),
         });
       };
     },

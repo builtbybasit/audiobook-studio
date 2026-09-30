@@ -16,6 +16,7 @@ import { snapshotTake } from "@/lib/takes";
 import { EXPRESSION_TAGS } from "~/demo/seed/fixtures/endpoints";
 import { gapsOf } from "@/lib/gaps";
 import { SHELF_BOOKS, type ShelfBook } from "~/demo/seed/fixtures/shelf";
+import { SITE_TEXT_CHAPTER } from "~/demo/seed/fixtures/siteText";
 import { voiceRef } from "~/demo/seed/fixtures/voices";
 import { routeOf, seedClip, type ClipWorld } from "~/demo/seed/world/audio";
 import { exportDemoPrep, freshenChapters } from "~/demo/seed/scenarios/export";
@@ -208,6 +209,8 @@ export function applySituation(ctx: ScenarioContext, id: string, bookId: string)
       return misAttributed(ctx, bookId);
     case "script-history":
       return chapterHistory(ctx, bookId);
+    case "site-text":
+      return siteText(ctx, bookId);
     case "bulk-rework":
       return bulkRework(ctx, bookId);
     case "bulk-recovery":
@@ -371,6 +374,22 @@ function expressionsPlaced(ctx: ScenarioContext, bookId: string): DemoResult {
   return {
     note: `Two expressions placed on line ${a?.id ?? "?"}, and one on line ${b?.id ?? "?"} that needs its position chosen again.`,
     open: a ? `/book/${bookId}/scripting?ch=${chapter.id}&seg=${a.id}` : undefined,
+  };
+}
+
+/**
+ * The seeded web-novel chapter, as the seed has it: nothing to change, only to count, so the note
+ * says what the reader will find rather than what was done.
+ */
+function siteText(ctx: ScenarioContext, bookId: string): DemoResult {
+  const segs = ctx.segmentsOf(bookId, SITE_TEXT_CHAPTER);
+  const count = (type: string) => segs.filter((s) => s.type === type).length;
+  const suggestions = segs.filter((s) => s.siteCheck).length;
+  return {
+    note:
+      `Ch ${SITE_TEXT_CHAPTER} has ${plural(count("watermark"), "line")} marked as site text, ` +
+      `${plural(count("note"), "translator's note", "translator's notes")} and ` +
+      `${plural(suggestions, "suggestion")} from the detector.`,
   };
 }
 

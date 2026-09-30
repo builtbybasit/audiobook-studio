@@ -10,6 +10,8 @@
 // Pure, and in `src/lib` rather than on the server, so the browser can read a chapter file with
 // the same scanner the server imports it with.
 import type { ExpressionAnnotation, ExpressionTag, ScriptFileLine, Segment } from "@/types";
+import { NARRATOR } from "@/lib/cast";
+import { isSiteText } from "@/lib/siteText";
 
 export const SCRIPT_FORMAT = "audiobook-studio/script";
 export const SCRIPT_CHAPTER_FORMAT = "audiobook-studio/script-chapter";
@@ -160,7 +162,9 @@ export function toFileLine(s: Segment): ScriptFileLine {
  *
  * A tag the endpoint does not offer is still kept — dropping it would lose a decision someone made
  * — but it arrives needing review, the way a change of model already leaves one, with its id for a
- * label until someone looks. Throws `MarkerError` for a line whose markers do not parse.
+ * label until someone looks. Throws `MarkerError` for a line whose markers do not parse. A line of
+ * site text or a note is the Narrator's whoever the file names, as it is when a model or a person
+ * marks one, so a hand-edited file cannot bring a speaker into the cast that reads nothing.
  */
 export function fromFileLine(
   line: ScriptFileLine,
@@ -172,7 +176,7 @@ export function fromFileLine(
   const s: Segment = {
     id,
     type: line.type,
-    speaker: line.speaker,
+    speaker: isSiteText(line.type) ? NARRATOR : line.speaker,
     text,
     direction: line.direction ?? "",
     audio: { status: "none", endpoint: null, ms: 0, duration: 0 },

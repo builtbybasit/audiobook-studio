@@ -2,7 +2,8 @@
 // neither one touches the book: the per-book pronunciation dictionary rewrites names and invented
 // words on their way to the endpoint, and the pacing rules decide how much silence is stitched in
 // after each clip. The script the reader shows is always the original prose.
-import type { LexEntry, Pacing, SampleRate, Segment } from "@/types";
+import type { Book, LexEntry, Pacing, SampleRate, Segment } from "@/types";
+import { heardLines } from "@/lib/siteText";
 
 /** One dictionary substitution, with offsets into the *original* text. */
 export interface LexHit {
@@ -127,14 +128,20 @@ export interface TimelineClip {
 /**
  * A chapter as it plays: every line with a clip, in order, placed on one clock with the silence
  * stitched after each. Unrendered lines take no time at all, and a gap is measured to the next
- * line that *plays*, not the next line of the script.
+ * line that *plays*, not the next line of the script. So do lines the book does not read — site
+ * text, and notes unless it reads them (`isSpoken`) — even when they kept a clip from before they
+ * were marked.
  *
  * The one layout of a chapter: the player's queue, "play from here", the ledger's scrubber and the
  * chapter's silence all read it, so a line cannot start at one second on the bar and another in
  * the player.
  */
-export function chapterTimeline(segments: Segment[], pacing: Pacing): TimelineClip[] {
-  const heard = segments.filter((s) => s.audio.duration > 0);
+export function chapterTimeline(
+  segments: Segment[],
+  pacing: Pacing,
+  book: Pick<Book, "readNotes"> | undefined,
+): TimelineClip[] {
+  const heard = heardLines(segments, book);
   let t = 0;
   return heard.map((s, i) => {
     const start = t;
@@ -146,13 +153,26 @@ export function chapterTimeline(segments: Segment[], pacing: Pacing): TimelineCl
 }
 
 /** Total silence stitched between the clips of one chapter; unrendered lines take no time at all. */
-export function silenceOf(segments: Segment[], pacing: Pacing): number {
-  return chapterTimeline(segments, pacing).reduce((a, x) => a + x.gap, 0);
+export function silenceOf(
+  segments: Segment[],
+  pacing: Pacing,
+  book: Pick<Book, "readNotes"> | undefined,
+): number {
+  return chapterTimeline(segments, pacing, book).reduce((a, x) => a + x.gap, 0);
 }
 
-/** How long a chapter plays: every clip, and the silence stitched between them. */
-export const chapterSeconds = (segments: Segment[], pacing: Pacing): number =>
-  segments.reduce((a, s) => a + s.audio.duration, 0) + silenceOf(segments, pacing);
+/** How long a chapter plays: every clip it plays, and the silence stitched between them. */
+export const chapterSeconds = (
+  segments: Segment[],
+  pacing: Pacing,
+  book: Pick<Book, "readNotes"> | undefined,
+): number => {
+  const timeline = chapterTimeline(segments, pacing, book);
+  // summed as two totals, clips then silence, so a figure stored before is the figure read now
+  return (
+    timeline.reduce((a, x) => a + x.s.audio.duration, 0) + timeline.reduce((a, x) => a + x.gap, 0)
+  );
+};
 
 /** seconds, exact but never noisy: 1s, 1.75s, 0.35s */
 export const secs = (n: number): string => `${Number(n.toFixed(2))}s`;

@@ -73,6 +73,11 @@ export interface RunPlan {
   replacing: number;
   /** lines left alone because a retake is waiting on them */
   pending: number;
+  /**
+   * Lines in the chapters the run looked into that the book does not read aloud — site text, and
+   * notes unless it reads them — which no scope renders. Always 0 for scripting.
+   */
+  skippedLines: number;
 }
 
 /** How a chapter reads to the picker: the shorthand the selection summary counts. */

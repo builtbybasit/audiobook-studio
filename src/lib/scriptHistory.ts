@@ -9,6 +9,7 @@ import { diffArrays, diffWords } from "diff";
 import type {
   ChangeGroup,
   ChangeKind,
+  Book,
   ChapterHistory,
   ComparisonCounts,
   DiffRun,
@@ -24,6 +25,7 @@ import type {
 } from "@/types";
 import { describeOrigin } from "@/lib/prompt";
 import { chapterNarration } from "@/lib/runPlan";
+import { isSpoken } from "@/lib/siteText";
 import { clone } from "@/lib/utils";
 
 /** Edits less than this apart are the same editing session. */
@@ -511,6 +513,8 @@ export interface RestoreOptions {
   drift(segment: Segment, audio: SegmentAudio): string[];
   /** the speakers the book's cast has now */
   cast: Set<string>;
+  /** whose `readNotes` decides which lines want a clip (`isSpoken`) */
+  book: Pick<Book, "readNotes"> | undefined;
 }
 
 const clipText = (a: SegmentAudio): string => norm(a.text ?? "");
@@ -584,7 +588,8 @@ export function planRestore(
         else kept++;
       }
     }
-    if (next.audio.duration <= 0 && narrated) unrendered++;
+    // a line the book does not read is not missing its audio
+    if (next.audio.duration <= 0 && narrated && isSpoken(next, opts.book)) unrendered++;
     segments.push(next);
   }
 
@@ -592,7 +597,7 @@ export function planRestore(
   // What the restored chapter's narration reads as is the run's question, not a second opinion:
   // `chapterNarration` is what a finished run, a cancelled one and a cancelled queued job all write,
   // so a restore that answered it differently would be overwritten by the next thing that happened.
-  const narration = chapterNarration(segments);
+  const narration = chapterNarration(segments, opts.book);
 
   const missing = new Map<string, number>();
   for (const s of segments)

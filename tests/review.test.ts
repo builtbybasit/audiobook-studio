@@ -176,6 +176,7 @@ describe("a book part-way through", () => {
       "failed",
       "contents",
       "unverified",
+      "sitetext",
       "speaker",
       "merge",
       "expression",

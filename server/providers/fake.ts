@@ -10,6 +10,13 @@
 // `Unknown` when it names nobody. That is enough to give the Scripting page a cast to route, a
 // script to correct and clips to render, which is what the screens need to be tested against.
 //
+// Text that is not the story is marked the way the prompt asks a model to mark it (`OUTPUT_FORMAT`
+// in src/lib/prompt.ts), and by the same signals the detector reads (`siteTextSignals`): a paragraph
+// that opens as a translator's note is a `note` line, and a sentence that names a web address or
+// tells the reader where to read is a `watermark` line, cut out of the paragraph it was dropped
+// into with the story either side kept. A sentence is as fine as it cuts — boilerplate dropped into
+// the middle of one takes that sentence with it — and every word it was sent is still in a line.
+//
 // Each call reports one simulated request, with token counts worked out from the text (four
 // characters to a token), so a priced profile puts real-looking rows in the ledger and a budget can
 // be run out — in a test or a demo — without spending anything.
@@ -18,6 +25,7 @@
 // target's `simulation`: each chunk takes as long as that says, and fails as often. A test hands
 // it options instead, and a target with no simulation is answered at once, every time.
 import { normalizeUsage } from "@/lib/pricing";
+import { siteTextSignals } from "@/lib/siteText";
 import { ProviderError } from "~/providers/http";
 import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import { setTimeout as delay } from "node:timers/promises";
@@ -66,6 +74,71 @@ export function attributeParagraph(paragraph: string): ScriptedLine[] {
   }
   const rest = paragraph.slice(at).trim();
   if (rest) lines.push({ type: "narration", speaker: "Narrator", text: rest });
+  return lines;
+}
+
+/** What `siteTextSignals` says of a translator's or author's note. */
+const OPENS_A_NOTE = "opens as a translator's or author's note";
+
+/**
+ * A paragraph's sentences, every character kept. A sentence ends at a full stop, question or
+ * exclamation mark outside a quote, and only where the next one starts as a sentence does — so
+ * "novelbin . com", "etc. and" and a line of dialogue with two sentences in it stay whole.
+ */
+function sentencesOf(paragraph: string): string[] {
+  const out: string[] = [];
+  let quoted = false;
+  let from = 0;
+  for (let i = 0; i < paragraph.length; i++) {
+    const ch = paragraph[i];
+    const closes = ch === "”" || (ch === '"' && quoted);
+    if (ch === "“" || (ch === '"' && !quoted)) quoted = true;
+    else if (closes) quoted = false;
+    const ends = /[.!?…]/.test(ch) ? !quoted : closes && /[.!?…]/.test(paragraph[i - 1] ?? "");
+    if (!ends) continue;
+    let to = i + 1;
+    while (/[)\]’']/.test(paragraph[to] ?? "")) to++;
+    const next = /^\s+(?=[\p{Lu}\p{N}“"([‘])/u.exec(paragraph.slice(to));
+    if (!next) continue;
+    out.push(paragraph.slice(from, to));
+    from = to + next[0].length;
+    i = from - 1;
+  }
+  out.push(paragraph.slice(from));
+  return out.filter(Boolean);
+}
+
+const marked = (type: "watermark" | "note", text: string): ScriptedLine => ({
+  type,
+  speaker: "Narrator",
+  text,
+});
+
+/**
+ * One paragraph as lines, site text marked. A paragraph that opens as a note is one note, every
+ * sentence of it; otherwise each sentence that gives itself away is a watermark line, and the
+ * story between is attributed as it would have been. A paragraph whose signals no single sentence
+ * carries is left as story: when unsure, it is the story.
+ */
+export function scriptParagraph(paragraph: string): ScriptedLine[] {
+  const signals = siteTextSignals(paragraph);
+  if (!signals.length) return attributeParagraph(paragraph);
+  if (signals.includes(OPENS_A_NOTE)) return [marked("note", paragraph)];
+  const lines: ScriptedLine[] = [];
+  let story: string[] = [];
+  const flush = () => {
+    if (story.length) lines.push(...attributeParagraph(story.join(" ")));
+    story = [];
+  };
+  for (const sentence of sentencesOf(paragraph)) {
+    const saw = siteTextSignals(sentence);
+    if (!saw.length) story.push(sentence);
+    else {
+      flush();
+      lines.push(marked(saw.includes(OPENS_A_NOTE) ? "note" : "watermark", sentence));
+    }
+  }
+  flush();
   return lines;
 }
 
@@ -121,7 +194,7 @@ export function fakeScriptingProvider(options: FakeScriptingOptions = {}): Scrip
       for (const [i, paragraph] of paragraphs.entries()) {
         if (options.delayMs) await sleep(options.delayMs, signal);
         if (signal.aborted) throw signal.reason;
-        out.push(...attributeParagraph(paragraph));
+        out.push(...scriptParagraph(paragraph));
         progress?.(i + 1, paragraphs.length);
       }
       sent?.({

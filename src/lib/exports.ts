@@ -11,8 +11,10 @@
 //    per-line overrides on top of it) — the same numbers the reader, the ledger and the player use.
 //    Export only owns the gap *between* two chapters, because that join does not exist until the
 //    chapters are stitched. `durationOf` is therefore the only place chapter time is added up.
+import { heardLines } from "@/lib/siteText";
 import { pauseAfter } from "@/lib/speech";
 import type {
+  Book,
   Chapter,
   ChapterReadiness,
   ExportBlocker,
@@ -459,9 +461,16 @@ export const LOUDNESS_TARGETS = [
  *
  * It deliberately covers the stitched silence as well as the clips: a pause costs nothing and
  * invalidates no audio, but it does change the file, so an export built before it is out of date.
+ * It covers the clips that are heard (`heardLines`), which are the clips a build stitches: a line
+ * marked as site text leaves the file, and so leaves the fingerprint.
  */
-export function chapterSignature(c: Chapter, segments: Segment[], pacing: Pacing): string {
-  const clips = segments.filter((s) => s.audio.duration > 0);
+export function chapterSignature(
+  c: Chapter,
+  segments: Segment[],
+  pacing: Pacing,
+  book: Pick<Book, "readNotes"> | undefined,
+): string {
+  const clips = heardLines(segments, book);
   let h = 0;
   let silence = 0;
   // Each pause is folded in *where it falls*, not just added to a total: two pauses that swap
@@ -486,11 +495,12 @@ export function chapterStates(
   ids: number[],
   segmentsOf: (chId: number) => Segment[],
   pacing: Pacing,
+  book: Pick<Book, "readNotes"> | undefined,
 ): Record<number, string> {
   const out: Record<number, string> = {};
   for (const id of ids) {
     const c = chapters.find((x) => x.id === id);
-    if (c) out[id] = chapterSignature(c, segmentsOf(id), pacing);
+    if (c) out[id] = chapterSignature(c, segmentsOf(id), pacing, book);
   }
   return out;
 }

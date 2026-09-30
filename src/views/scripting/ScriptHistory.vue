@@ -26,6 +26,7 @@ import ScriptHistoryDiff from "@/views/scripting/ScriptHistoryDiff.vue";
 import { useScript } from "@/views/scripting/shared";
 import { useChapterHistory } from "@/queries";
 import { secs } from "@/lib/speech";
+import { isSiteText, TYPE_LABEL } from "@/lib/siteText";
 import { hhmm } from "@/lib/format";
 import { plural } from "@/lib/contents";
 import {
@@ -447,7 +448,24 @@ watch(
           :style="{ fontSize: reader.size + 'px', lineHeight: reader.lineHeight }"
         >
           <template v-for="s in selected.segments" :key="s.id">
-            <p v-if="s.type === 'narration'" class="mb-3 text-zinc-700 dark:text-zinc-300">
+            <!-- not the story: shown as the reader shows it, so a version that marked more or
+                 less of the chapter as site text reads that way -->
+            <p v-if="isSiteText(s.type)" class="mb-3 flex items-start gap-2">
+              <span
+                class="min-w-0 flex-1"
+                :class="
+                  s.type === 'watermark'
+                    ? 'text-zinc-400 line-through decoration-zinc-400/70 dark:text-zinc-500'
+                    : 'italic text-zinc-500 dark:text-zinc-400'
+                "
+                ><ExpressionText :book-id="bookId" :segment="s"
+              /></span>
+              <span
+                class="mt-1 shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 font-sans text-[10px] font-medium leading-none text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                >{{ TYPE_LABEL[s.type] }}</span
+              >
+            </p>
+            <p v-else-if="s.type === 'narration'" class="mb-3 text-zinc-700 dark:text-zinc-300">
               <ExpressionText :book-id="bookId" :segment="s" /><span
                 v-if="s.direction"
                 class="ml-2 font-sans text-[11px] leading-none text-violet-500/80"

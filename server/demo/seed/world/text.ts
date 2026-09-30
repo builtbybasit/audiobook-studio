@@ -4,7 +4,7 @@
 //
 // This is the one source of chapter text: the picker's peek, the contents preview, the scripting
 // estimate and the mock scripting run all read it, so they cannot disagree about what a chapter says.
-import { generateSegments } from "~/demo/seed/world/script";
+import { generateProse } from "~/demo/seed/world/script";
 import { noticeBody } from "~/demo/seed/fixtures/notices";
 import { BOOK_SEEDS } from "~/demo/seed/fixtures/books";
 import type { ContentPart } from "@/lib/contents";
@@ -17,9 +17,7 @@ const proseOf = (bookId: string, prose?: string): string =>
   BOOK_SEEDS.some((b) => b.id === bookId) ? bookId : (prose ?? BOOK_SEEDS[0].id);
 
 const storyOf = (bookId: string, chId: number, prose?: string): string =>
-  generateSegments(proseOf(bookId, prose), chId)
-    .map((x) => x.text)
-    .join("\n\n");
+  generateProse(proseOf(bookId, prose), chId);
 
 /**
  * The chapter's text in the order it is read. `prose` names the seeded book an imported one

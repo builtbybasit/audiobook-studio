@@ -22,7 +22,7 @@ A fresh library has no books and no endpoints, so nothing is sent anywhere until
 ## What it does
 
 - **Library and contents:** reads real EPUBs, one or more files per book as volumes, and flags notices, schedules and author notes for you to skip or keep before anything is added.
-- **Scripting:** a chat model splits each chapter into lines with a speaker, type and direction, held word for word against the prose. You can edit lines, split and join them, correct speakers in bulk, keep checkpoints, and compare or restore earlier versions. The prompt is editable per library, per endpoint and per book.
+- **Scripting:** a chat model splits each chapter into lines with a speaker, type and direction, held word for word against the prose. Site boilerplate and translator's notes are marked rather than cut, so they stay in the script but are left out of the audio (notes are read only if the book asks for them), and a detector suggests the lines the model got wrong. You can edit lines, split and join them, correct speakers in bulk, keep checkpoints, and compare or restore earlier versions. The prompt is editable per library, per endpoint and per book.
 - **Cast and voices:** speakers across the book, merges, a pronunciation dictionary, pacing, and voices fetched from or cloned on the speech endpoint.
 - **Narration and review:** narration renders a clip per line on the endpoint that owns the speaker's voice. You can flag and retake clips and compare takes; clips the script or dictionary has moved under are marked stale.
 - **Export:** builds an audiobook as one file, one per volume or one per chapter, updates it by carrying over unchanged chapters, and keeps the previous version until the new one lands.

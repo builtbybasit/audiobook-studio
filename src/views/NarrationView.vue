@@ -15,6 +15,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { plural } from "@/lib/contents";
+import { isSpoken } from "@/lib/siteText";
 import { speechReadiness } from "@/lib/endpoints";
 import { runActionLabel, runSummary, SCOPE_LABEL, skipSummary } from "@/lib/runPlan";
 import type { Endpoint, NarrationScope } from "@/types";
@@ -120,11 +121,13 @@ const scopes = (["fill", "failed", "all"] as NarrationScope[]).map((value) => ({
 const runNote = computed(() => {
   const plan = run.value.plan;
   if (!loaded.value || !plan.chapters.length) return "";
+  const unread = narrationStore.unreadNote(bookId, plan);
   return (
     `${SCOPE_LABEL[scope.value]} · ${runSummary(plan).join(" · ")}` +
     (plan.replacing
       ? ` · ${plural(plan.replacing, "current clip")} stay playable until replaced`
-      : "")
+      : "") +
+    (unread ? ` · ${unread}` : "")
   );
 });
 const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));
@@ -154,6 +157,20 @@ const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
 const begun = computed(
   () => chapter.value && isScripted(chapter.value) && chapter.value.narration !== "none",
 );
+/**
+ * The open chapter's lines as "Narrate this chapter" reads them: the ones read aloud, and how many
+ * of site text and notes it passes over — counted, so a line marked by mistake is not simply absent.
+ */
+const openedLines = computed(() => {
+  const book = libraryStore.bookById(bookId);
+  const segs = scriptsStore.segmentsOf(bookId, opened.value);
+  const spoken = segs.filter((s) => isSpoken(s, book)).length;
+  const unread = segs.length - spoken;
+  return (
+    `${plural(spoken, "line")} ready` +
+    (unread ? ` (${plural(unread, "line")} of site text or notes not read)` : "")
+  );
+});
 /** What "Narrate this chapter" would send — at the scope it runs, not the store's default. */
 const openedRequests = computed(() =>
   narrationStore
@@ -346,7 +363,7 @@ const openedRequests = computed(() =>
           v-else
           :icon="NarrationIcon"
           :title="chapter?.title"
-          :body="`${plural(scriptsStore.segmentsOf(bookId, opened).length, 'line')} ready. Each goes to the endpoint that owns its speaker’s voice; ${openedRequests || 'no voices routed yet'}.`"
+          :body="`${openedLines}. Each goes to the endpoint that owns its speaker’s voice; ${openedRequests || 'no voices routed yet'}.`"
         >
           <button
             class="btn-primary"

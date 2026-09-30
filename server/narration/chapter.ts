@@ -10,7 +10,7 @@ import { chapterNarration } from "@/lib/runPlan";
 import { chapterSeconds, pacingOrDefault } from "@/lib/speech";
 import { nextTakeNumber, requeue } from "@/lib/takes";
 import type { Tx } from "~/db/client";
-import { getBook, setChapterNarration } from "~/db/library";
+import { getBook, getChapter, setChapterNarration } from "~/db/library";
 import { readScript } from "~/db/script";
 import type { NarrationCost } from "~/narration/cost";
 
@@ -61,7 +61,9 @@ export function queuedSlot(
  * came to. The status is `chapterNarration`, the same reading the demo makes. The silence between
  * clips is the book's pacing, stitched rather than rendered, and is part of how long the chapter
  * plays even though no provider produced it. A run's last write and a verdict on a retake both
- * end here, so a chapter never has two ways of adding itself up.
+ * end here, so a chapter never has two ways of adding itself up. Both ask only the lines the book
+ * reads aloud (`isSpoken`), so a change to what it reads — a line marked as site text, the book's
+ * notes switched on — ends here too.
  */
 export function settleChapter(
   tx: Tx,
@@ -69,11 +71,17 @@ export function settleChapter(
   chapterId: number,
 ): { narration: NarrationStatus; seconds: number } {
   const segs = readScript(tx, bookId, chapterId);
-  const pacing = pacingOrDefault(getBook(tx, bookId)?.pacing);
-  const seconds = chapterSeconds(segs, pacing);
-  const narration = chapterNarration(segs);
+  const book = getBook(tx, bookId);
+  const seconds = chapterSeconds(segs, pacingOrDefault(book?.pacing), book);
+  const narration = chapterNarration(segs, book);
   setChapterNarration(tx, bookId, chapterId, narration, 100, seconds);
   return { narration, seconds };
+}
+
+/** Whether a narration job holds the chapter, whose status is then the run's to add up when it ends. */
+export function narrationInProgress(tx: Tx, bookId: string, chapterId: number): boolean {
+  const narration = getChapter(tx, bookId, chapterId)?.narration;
+  return narration === "queued" || narration === "running";
 }
 
 /** A narration job's run detail: what it holds, how many clips, at which scope, and what it was estimated at. */

@@ -30,7 +30,12 @@ const speaker = defineModel<string>("speaker", { required: true });
 const castStore = useCastStore();
 const scriptsStore = useScriptsStore();
 const reader = useReader();
-const { cast, counts, inChapter } = useScript(props);
+const { cast, counts, inChapter, segments } = useScript(props);
+/** lines of this chapter nobody reads — site text, and notes this book does not read — which no
+ *  speaker's count includes */
+const unspoken = computed(
+  () => segments.value.length - Object.values(counts.value).reduce((n, lines) => n + lines, 0),
+);
 const rest = computed(() => cast.value.filter((c) => !counts.value[c.name]));
 const showRest = ref(false);
 
@@ -160,6 +165,10 @@ function commitRename() {
     <p class="mt-3 text-[11px] leading-relaxed text-zinc-400">
       Click a name to filter the reader to their lines, double-click to rename, and set the voice it
       is read in right here. A speaker with no voice of their own borrows the Narrator’s.
+      <template v-if="unspoken"
+        >The counts leave out the {{ plural(unspoken, "line") }} of this chapter that
+        {{ unspoken === 1 ? "is" : "are" }} not read aloud.</template
+      >
     </p>
   </div>
 </template>

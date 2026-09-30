@@ -156,6 +156,7 @@ export function toSegment(row: SegmentRow, clipRows: readonly ClipRow[]): Segmen
   if (row.fallbackCount != null) s.fallbackCount = row.fallbackCount;
   if (row.fallbackMismatch != null) s.fallbackMismatch = row.fallbackMismatch;
   if (row.edited) s.edited = true;
+  if (row.siteCheck != null) s.siteCheck = row.siteCheck;
   if (row.flag != null) s.flag = row.flag;
   if (row.pause != null) s.pause = row.pause;
   if (candidate) s.candidate = toSegmentAudio(candidate);
@@ -183,6 +184,7 @@ export function segmentValues(
     fallbackCount: s.fallbackCount ?? null,
     fallbackMismatch: s.fallbackMismatch ?? null,
     edited: s.edited ?? null,
+    siteCheck: s.siteCheck ?? null,
     pause: s.pause ?? null,
     sep: s.sep ?? null,
     flag: s.flag ?? null,

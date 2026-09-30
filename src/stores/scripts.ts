@@ -10,6 +10,8 @@ import { bulkInvalidates, bulkOutcome, scriptFingerprint, segmentFingerprint } f
 import { remapExpressions } from "@/lib/expressions";
 import { scriptSignature } from "@/lib/scriptHistory";
 import { afterOf, beforeOf, bulkLabel, key, SKIP_SUMMARY, SKIP_TEXT } from "@/lib/scriptReview";
+import { isSiteText, isSpoken, TYPE_LABEL } from "@/lib/siteText";
+import { NARRATOR } from "@/lib/cast";
 import { clone } from "@/lib/utils";
 import type { ContentPart } from "@/lib/contents";
 import { fetchScript } from "@/queries/chapterScript";
@@ -29,6 +31,7 @@ import type {
   Segment,
   SegmentFlag,
   SegmentMap,
+  SegmentType,
   VersionOrigin,
 } from "@/types";
 import { ApiError, libraryService, type ChapterScript } from "@/services/library";
@@ -90,18 +93,27 @@ export const useScriptsStore = defineStore("scripts", {
     /**
      * A chapter's lines counted, and how many have a clip done, rendering or failed: the script's
      * own when it is here, which follows every edit, and otherwise the count the server listed the
-     * chapter with. Undefined when neither has been read.
+     * chapter with. Undefined when neither has been read. As the server counts them, only the lines
+     * the book reads aloud are lines here (`isSpoken`); the rest are `skipped`, so a chapter with a
+     * watermark in it is not a line short of finished.
      */
     lineCountsOf(s): (bookId: string, chId: number) => LineCounts | undefined {
       const libraryStore = useLibraryStore();
       return (bookId: string, chId: number): LineCounts | undefined => {
         const segs = s.segments[key(bookId, chId)];
         if (!segs) return libraryStore.chapter(bookId, chId)?.lines;
-        const counts: LineCounts = { total: segs.length, done: 0, generating: 0, failed: 0 };
-        for (const seg of segs)
+        const book = libraryStore.bookById(bookId);
+        const counts: LineCounts = { total: 0, done: 0, generating: 0, failed: 0, skipped: 0 };
+        for (const seg of segs) {
+          if (!isSpoken(seg, book)) {
+            counts.skipped++;
+            continue;
+          }
+          counts.total++;
           if (seg.audio.status === "done") counts.done++;
           else if (seg.audio.status === "generating") counts.generating++;
           else if (seg.audio.status === "failed") counts.failed++;
+        }
         return counts;
       };
     },
@@ -271,12 +283,83 @@ export const useScriptsStore = defineStore("scripts", {
       const changed = (Object.keys(patch) as (keyof Segment)[]).some((k) => s[k] !== patch[k]);
       if (patch.text != null && s.expressions && patch.expressions === undefined)
         s.expressions = remapExpressions(s.expressions, s.text, patch.text);
+      // the detector's suggestion was about the type the line had; the server drops it on the same
+      // change, and this side does so at once rather than on the next read
+      if (patch.type && patch.type !== s.type) delete s.siteCheck;
       Object.assign(s, patch);
       if (changed) {
         s.edited = true;
         this._markStale(bookId, chId, s);
         this._commit(bookId, chId);
       }
+    },
+    // ---------- site text ----------
+    // A line marked as site text is left out of the audiobook without a word anywhere else saying
+    // so — the omission is silent by design — so a mark made by accident has to be as easy to see
+    // and take back as it was to make. Every change of type that moves a line into or out of what is
+    // read aloud says so in a toast with its Undo, whichever control made it.
+    /**
+     * Give a line another type. Text that is not the story is nobody's line, so it goes to the
+     * Narrator, as the server writes it. A clip is staled only when the line will now be read
+     * differently from it: whether a line is heard at all is `isSpoken`'s to decide wherever audio
+     * is played, timed, billed or stitched, so a clip on a line marked as site text stays as it was,
+     * and marking it back as the story it was rendered as hears the same clip again (`clipDrift`).
+     */
+    setLineType(bookId: string, chId: number, segId: number, type: SegmentType): void {
+      const castStore = useCastStore();
+      const libraryStore = useLibraryStore();
+      const narrationStore = useNarrationStore();
+      const uiStore = useUiStore();
+
+      const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
+      if (!s || s.type === type) return;
+      const book = libraryStore.bookById(bookId);
+      const was = s.type;
+      const crosses = isSiteText(was) !== isSiteText(type);
+      const revert = crosses ? this._editSnapshot(bookId, chId) : null;
+      s.type = type;
+      s.edited = true;
+      delete s.siteCheck;
+      if (isSiteText(type)) s.speaker = NARRATOR;
+      // a clip that recorded what it was rendered from is judged against it; one that did not is
+      // taken to read the line as it was
+      const drifted = s.audio.at ? narrationStore.clipDrift(bookId, s).length > 0 : was !== type;
+      if (isSpoken(s, book) && drifted) this._markStale(bookId, chId, s);
+      castStore._retime(bookId, chId);
+      this._commit(bookId, chId);
+      if (revert)
+        uiStore.toast(
+          isSiteText(type)
+            ? `#${s.id} marked as ${TYPE_LABEL[type].toLowerCase()} · ${isSpoken(s, book) ? "read aloud" : "not read"}`
+            : `#${s.id} is story again, read as ${TYPE_LABEL[type].toLowerCase()}`,
+          {
+            description: `Was ${TYPE_LABEL[was].toLowerCase()}. “${s.text.length > 60 ? s.text.slice(0, 60).trimEnd() + "…" : s.text}”`,
+            undo: revert,
+          },
+        );
+    },
+    /** Take the detector's suggestion: the line gets the type it suggested, with the Undo above. */
+    acceptSiteCheck(bookId: string, chId: number, segId: number): void {
+      const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
+      if (s?.siteCheck) this.setLineType(bookId, chId, segId, s.siteCheck.suggest);
+    },
+    /**
+     * Leave the line as it is and drop the suggestion. Nothing a person hears changes, so the line
+     * is not marked edited and no clip goes stale; the script is written all the same, so the
+     * suggestion does not come back on the next read, and the Undo writes it back.
+     */
+    dismissSiteCheck(bookId: string, chId: number, segId: number): void {
+      const uiStore = useUiStore();
+
+      const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
+      if (!s?.siteCheck) return;
+      const revert = this._editSnapshot(bookId, chId);
+      delete s.siteCheck;
+      this._commit(bookId, chId);
+      uiStore.toast(`#${s.id} stays ${TYPE_LABEL[s.type].toLowerCase()}`, {
+        description: "The suggestion was dismissed.",
+        undo: revert,
+      });
     },
     // ---------- bulk script corrections (Search) ----------
     // One correction, many lines, one undo. Everything goes through the per-segment actions above,
@@ -914,13 +997,22 @@ export const useScriptsStore = defineStore("scripts", {
         libraryStore._staleChapter(bookId, chId);
       }
     },
-    lineCounts(bookId: string, chId: number | null = null): Record<string, number> {
+    /**
+     * Each speaker's lines, in one chapter or across the book's scripts that are here. Counted as
+     * they are read aloud (`isSpoken`): a line of site text, or a note this book does not read, gives
+     * its speaker nothing to say, and counting it would send a speaker with only a watermark to their
+     * name to the voice table. `every` counts every line that names a speaker, spoken or not — what
+     * taking a speaker off the cast has to ask.
+     */
+    lineCounts(bookId: string, chId: number | null = null, every = false): Record<string, number> {
+      const book = useLibraryStore().bookById(bookId);
       const counts: Record<string, number> = {};
       const keys = chId
         ? [key(bookId, chId)]
         : Object.keys(this.segments).filter((k) => k.startsWith(bookId + ":"));
       for (const k of keys)
-        for (const s of this.segments[k] ?? []) counts[s.speaker] = (counts[s.speaker] ?? 0) + 1;
+        for (const s of this.segments[k] ?? [])
+          if (every || isSpoken(s, book)) counts[s.speaker] = (counts[s.speaker] ?? 0) + 1;
       return counts;
     },
   },

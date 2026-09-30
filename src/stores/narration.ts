@@ -7,6 +7,7 @@ import {
   expressionSupport,
 } from "@/lib/expressions";
 import { narrationPlan, narrationTargets, SCOPE_LABEL, segmentFailed } from "@/lib/runPlan";
+import { isSpoken } from "@/lib/siteText";
 import { partsFor } from "@/lib/split";
 import type {
   Endpoint,
@@ -155,9 +156,15 @@ export const useNarrationStore = defineStore("narration", {
 
       return (bookId, chId) => {
         const started = libraryStore.chapter(bookId, chId)?.narration !== "none";
+        const book = libraryStore.bookById(bookId);
+        // a line the book does not read has no clip to be out of date, as `narrationTargets` has it
         return scriptsStore
           .segmentsOf(bookId, chId)
-          .filter((s) => s.audio.status === "stale" || (started && s.audio.status === "none"));
+          .filter(
+            (s) =>
+              isSpoken(s, book) &&
+              (s.audio.status === "stale" || (started && s.audio.status === "none")),
+          );
       };
     },
     /**
@@ -253,6 +260,42 @@ export const useNarrationStore = defineStore("narration", {
       };
     },
     /**
+     * What a run leaves unread, said in words: "3 lines of site text and 2 notes are not read".
+     *
+     * `plan.skippedLines` is the count, from the plan the run is queued by; this names its kinds,
+     * reading the same chapters the plan looked into — the ones it runs and the ones it found
+     * nothing or only retakes in — by the same `isSpoken`, so the words add up to the plan's figure.
+     * Empty when nothing is left unread.
+     */
+    unreadNote(): (bookId: string, plan: RunPlan) => string {
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+
+      return (bookId, plan) => {
+        if (!plan.skippedLines) return "";
+        const book = libraryStore.bookById(bookId);
+        const looked = [
+          ...plan.chapters.map((c) => c.id),
+          ...plan.skipped
+            .filter((c) => c.reason === "nothing" || c.reason === "pending")
+            .map((c) => c.id),
+        ];
+        let site = 0;
+        let notes = 0;
+        for (const id of looked)
+          for (const s of scriptsStore.segmentsOf(bookId, id))
+            if (!isSpoken(s, book)) {
+              if (s.type === "note") notes++;
+              else site++;
+            }
+        const parts = [
+          site ? `${plural(site, "line")} of site text` : "",
+          notes ? plural(notes, "note") : "",
+        ].filter(Boolean);
+        return `${parts.join(" and ")} ${site + notes === 1 ? "is" : "are"} not read`;
+      };
+    },
+    /**
      * What running this selection at this scope would do, chapter by chapter, with the reasons a
      * selected chapter is left out. The picker's summary, the button's label and the estimate are
      * all this one calculation, and the server queues a run by the same `narrationTargets`.
@@ -274,6 +317,7 @@ export const useNarrationStore = defineStore("narration", {
             segmentsOf: (chId) => scriptsStore.segmentsOf(bookId, chId),
             requestsOf: (s) => this.requestsFor(bookId, s),
             keepPending,
+            book: libraryStore.bookById(bookId),
           },
         );
     },
@@ -361,10 +405,12 @@ export const useNarrationStore = defineStore("narration", {
      * out their own.
      */
     estimateOf(): (bookId: string, plan: RunPlan, keepPending?: boolean) => NarrationEstimate {
+      const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
 
       return (bookId, plan, keepPending = true) => {
         const scope = plan.scope ?? "all";
+        const book = libraryStore.bookById(bookId);
         // The plan decides which chapters are in the run and which are left out; the estimate prices
         // what it chose. Re-deriving the eligibility cascade here is how the panel and the button
         // start disagreeing about the same press.
@@ -376,6 +422,7 @@ export const useNarrationStore = defineStore("narration", {
             scriptsStore.segmentsOf(bookId, row.id),
             scope,
             keepPending,
+            book,
           );
           for (const seg of run) {
             chars += seg.text.length;

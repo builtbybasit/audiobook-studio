@@ -37,6 +37,7 @@ import type {
   Segment,
   SegmentFlag,
   SegmentType,
+  SiteCheck,
   SpeechCharge,
   SplitMode,
   VersionOrigin,
@@ -68,8 +69,10 @@ export const segments = sqliteTable(
     fallbackCount: integer("fallback_count"),
     fallbackMismatch: text("fallback_mismatch"),
 
-    /** changed by hand; survives a re-script when "keep my edits" is on */
+    /** changed by hand */
     edited: integer("edited", { mode: "boolean" }),
+    /** the site-text detector's suggestion for this line's type, until a person decides */
+    siteCheck: text("site_check", { mode: "json" }).$type<SiteCheck>(),
     /** seconds of silence after this line, overriding the book's pacing; 0 = run straight on */
     pause: real("pause"),
     /** the exact whitespace that followed this line in the source, when it is not a single space */

@@ -108,7 +108,8 @@ export interface RetakesQueued {
   /** null when nothing was queued */
   job: Job | null;
   queued: number[];
-  skipped: { id: number; why: "missing" | "pending" }[];
+  /** `unspoken`: a line the book does not read aloud — site text, or a note it skips */
+  skipped: { id: number; why: "missing" | "pending" | "unspoken" }[];
   /** the book's chapters as they now stand: the one retaken reads as queued */
   chapters: Chapter[];
 }

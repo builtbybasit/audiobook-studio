@@ -196,15 +196,28 @@ function reasoningTokensOf(body: unknown): number | null {
   return read.success ? read.output.usage.completion_tokens_details.reasoning_tokens : null;
 }
 
+/**
+ * How a model may spell the two types that are not the story. Site text first, since "site note"
+ * is still the site's; a note is anything that says it is one, or names who wrote it.
+ */
+const WATERMARK_SPELLING = /^(?:watermark|site\b|site[-_ ]?text|boilerplate|ads?\b|advert)/;
+const NOTE_SPELLING =
+  /^(?:(?:t\/?l|tn|translator'?s?|author'?s?|editor'?s?)(?:[-_ ]?notes?)?\b|a\/n\b|notes?\b)/;
+
 /** A type as a model may spell it, read as the one it means. */
 function typeOf(said: string, speaker: string): SegmentType {
   const t = said.trim().toLowerCase();
   if (t.startsWith("narrat")) return "narration";
   if (t.startsWith("thought") || t.startsWith("think") || t === "internal") return "thought";
   if (t.startsWith("dialog") || t === "speech" || t === "spoken") return "dialogue";
+  if (WATERMARK_SPELLING.test(t)) return "watermark";
+  if (NOTE_SPELLING.test(t)) return "note";
   // anything else is judged by who says it
   return speaker === NARRATOR || !speaker ? "narration" : "dialogue";
 }
+
+/** Types a character speaks, whose words a model may have left in their quotation marks. */
+const voiced = (type: SegmentType): boolean => type === "dialogue" || type === "thought";
 
 /** Quotation marks a model left around a spoken line. */
 const WRAPPING_QUOTES = /^["“”]+|["“”]+$/gu;
@@ -236,13 +249,14 @@ export function linesOf(content: string, who: string): ScriptedLine[] {
     const speaker = (l.speaker ?? "").trim();
     const type = typeOf(l.type, speaker);
     let text = (l.text ?? "").replace(/\s+/g, " ").trim();
-    if (type !== "narration") text = text.replace(WRAPPING_QUOTES, "").trim();
+    if (voiced(type)) text = text.replace(WRAPPING_QUOTES, "").trim();
     // a line with no words — a stray dash, an ellipsis — has nothing to read out
     if (!wordsOf(text).length) continue;
     const direction = (l.direction ?? "").trim();
     out.push({
       type,
-      speaker: type === "narration" ? NARRATOR : speaker || UNKNOWN_SPEAKER,
+      // site text and notes are nobody's lines but the page's, whoever the model said
+      speaker: voiced(type) ? speaker || UNKNOWN_SPEAKER : NARRATOR,
       text,
       ...(direction ? { direction } : {}),
     });
@@ -432,9 +446,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
           sampleVars(PROBE_TEXT, { name: target.name, model: target.model, notes: given?.notes }),
         );
         const { lines, reasoningTokens } = await request(target, prompt, PROBE_TEXT, signal);
-        const speakers = [
-          ...new Set(lines.filter((l) => l.type !== "narration").map((l) => l.speaker)),
-        ];
+        const speakers = [...new Set(lines.filter((l) => voiced(l.type)).map((l) => l.speaker))];
         // a count of none is news only to someone who picked a level, "off" above all
         const thought =
           reasoningTokens !== null && (reasoningTokens > 0 || target.reasoning)

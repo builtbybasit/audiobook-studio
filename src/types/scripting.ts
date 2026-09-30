@@ -3,7 +3,7 @@
 // page shows before and after a run.
 import type { SplitMode } from "@/types/common";
 import type { PricingConfig, RateEstimate } from "@/types/pricing";
-import type { Segment } from "@/types/segment";
+import type { Segment, SegmentType } from "@/types/segment";
 
 /** What a profile's settled requests say it has been through (`scriptTelemetry`). */
 export interface ScriptEndpointTelemetry {
@@ -206,7 +206,7 @@ export interface PromptTrialResult {
   excerpt: string;
   /** the lines the model answered with, even when they fail the word check */
   lines: {
-    type: "narration" | "dialogue" | "thought";
+    type: SegmentType;
     speaker: string;
     text: string;
     direction?: string;

@@ -5,7 +5,27 @@ import type { ReqError } from "@/types/endpoint";
 import type { SpeechCharge } from "@/types/pricing";
 import type { ExpressionAnnotation } from "@/types/expression";
 
-export type SegmentType = "dialogue" | "narration" | "thought";
+/**
+ * What a line is. The first three are read aloud; the last two are words the chapter's text carries
+ * that are not the story, marked rather than removed so the script still holds every word of the
+ * prose (see `src/lib/siteText.ts`):
+ *
+ *   watermark  a site's boilerplate or anti-scraping text woven into the chapter — never read
+ *   note       a translator's or author's note — read only when the book says so (`Book.readNotes`)
+ */
+export type SegmentType = "dialogue" | "narration" | "thought" | "watermark" | "note";
+
+/**
+ * A second opinion on whether a line is site text, from the detector beside the model rather than
+ * the model itself: a line typed as story that looks like site text, or one marked as site text that
+ * reads like story. It suggests; changing the line's type, or dismissing it, clears it.
+ */
+export interface SiteCheck {
+  /** the type the detector thinks the line should have */
+  suggest: "watermark" | "narration";
+  /** what gave it away, in a few words: "names a web address", "repeated in 14 chapters" */
+  why: string;
+}
 
 export type AudioStatus = "none" | "queued" | "generating" | "done" | "failed" | "stale";
 
@@ -142,8 +162,10 @@ export interface Segment {
   fallbackMismatch?: string;
   /** a re-split of this fallback chunk is in flight */
   fallbackRetrying?: boolean;
-  /** changed by hand; survives a re-script when "keep my edits" is on */
+  /** changed by hand */
   edited?: boolean;
+  /** the site-text detector disagrees with this line's type; see `SiteCheck` */
+  siteCheck?: SiteCheck;
   /** the user flagged the *audio* — wrong pronunciation, bad delivery, awkward pause */
   flag?: SegmentFlag;
   /** seconds of silence stitched in after this line, overriding the book's pacing; 0 = run straight on */

@@ -56,6 +56,17 @@ const emit = defineEmits<{
 }>();
 const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
+/** A scripted chapter's lines, every one the script holds — the ones not read aloud are still lines
+ *  of the script, and the title says how many of them there are. Blank until the count is read. */
+function scriptLines(chId: number): { n: string; title: string } {
+  const lines = scriptsStore.lineCountsOf(props.bookId, chId);
+  if (!lines) return { n: "", title: "segments" };
+  const skipped = lines.skipped ?? 0;
+  return {
+    n: String(lines.total + skipped),
+    title: skipped ? `segments · ${skipped} not read aloud` : "segments",
+  };
+}
 const chapters = computed(() => libraryStore.chaptersOf(props.bookId));
 const volumes = computed(() => libraryStore.volumesOf(props.bookId));
 const grouped = computed(() =>
@@ -480,8 +491,8 @@ const peek = (c: Chapter) => {
             <span
               v-else-if="stage === 'scripting' && c.scripting === 'done'"
               class="font-mono text-[11px] text-zinc-400"
-              title="segments"
-              >{{ scriptsStore.lineCountsOf(bookId, c.id)?.total ?? "" }}</span
+              :title="scriptLines(c.id).title"
+              >{{ scriptLines(c.id).n }}</span
             >
             <span
               v-else-if="stage !== 'scripting' && c.duration"

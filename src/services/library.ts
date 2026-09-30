@@ -61,6 +61,8 @@ export interface BookSettings {
   pacing?: Pacing | null;
   /** the book's notes and its own prompt; `null` clears both */
   prompt?: BookPrompt | null;
+  /** read translator's and author's notes aloud (`Book.readNotes`) */
+  readNotes?: boolean;
 }
 
 /** The two forms a chapter's prose comes in. See `LibraryService.chapterText`. */

@@ -99,6 +99,7 @@ export const useExportsStore = defineStore("exports", {
         ids,
         (id) => scriptsStore.segmentsOf(bookId, id),
         castStore.pacingOf(bookId),
+        libraryStore.bookById(bookId),
       );
     },
     exportsOf(bookId: string): ExportItem[] {

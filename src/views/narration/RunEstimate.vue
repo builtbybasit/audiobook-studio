@@ -33,6 +33,7 @@ const scopes: { value: NarrationScope; label: string }[] = (
   ["fill", "failed", "all"] as NarrationScope[]
 ).map((value) => ({ value, label: SCOPE_LABEL[value] }));
 const cast = computed(() => castStore.charactersOf(props.bookId));
+const unread = computed(() => narrationStore.unreadNote(props.bookId, plan.value));
 const voiced = computed(() => cast.value.filter((c) => c.voice).length);
 const expressions = computed(() =>
   narrationStore.expressionIssues(
@@ -174,6 +175,11 @@ function rowTitle(e: EndpointEstimate): string {
         {{ est.replacing === 1 ? "plays" : "play" }} in the book — each keeps playing until its
         replacement succeeds, and the clip it displaces joins that line’s take list.</span
       >
+    </p>
+    <!-- a line of site text is no clip to render and costs nothing, so it is not in the figures
+         above; said here so a line marked by mistake is not simply missing from them -->
+    <p v-if="unread" class="mt-1 leading-snug text-zinc-500">
+      {{ unread }} — the ledger lists them, dimmed, where they fall.
     </p>
     <p v-if="skipSummary(plan)" class="mt-1 leading-snug text-amber-700 dark:text-amber-400">
       {{ skipSummary(plan) }}

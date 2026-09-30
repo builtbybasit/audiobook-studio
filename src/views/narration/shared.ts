@@ -53,6 +53,8 @@ export function useJob(props: ChapterProps) {
   const narrationStore = useNarrationStore();
   const scriptsStore = useScriptsStore();
   const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterId));
+  /** the book, for what it reads aloud (`isSpoken`) */
+  const book = computed(() => libraryStore.bookById(props.bookId));
   const segments = computed(() => scriptsStore.segmentsOf(props.bookId, props.chapterId));
   const cast = computed(() => castStore.charactersOf(props.bookId));
   const colorOf = (name: string): string =>
@@ -66,5 +68,5 @@ export function useJob(props: ChapterProps) {
   /** what differs between the clip and the script now (the reason a row is stale, made explicit) */
   const drift = (s: Segment, a?: SegmentAudio): string[] =>
     narrationStore.clipDrift(props.bookId, s, a);
-  return { chapter, segments, cast, colorOf, voiceOf, epName, drift };
+  return { chapter, book, segments, cast, colorOf, voiceOf, epName, drift };
 }

@@ -116,12 +116,17 @@ export interface Chapter {
   rescript?: { was?: ScriptingStatus; token?: number };
 }
 
-/** A chapter's lines, and how many of them have a clip done, being rendered, or failed. */
+/**
+ * A chapter's lines, and how many of them have a clip done, being rendered, or failed. Counts the
+ * lines the book reads aloud (`isSpoken` in `@/lib/siteText`); the others are `skipped`.
+ */
 export interface LineCounts {
   total: number;
   done: number;
   generating: number;
   failed: number;
+  /** lines that are not read aloud — site text, and notes unless the book reads them */
+  skipped: number;
 }
 
 export interface Volume {
@@ -176,6 +181,8 @@ export interface Book {
   pacing?: Pacing;
   /** notes for the scripter, and a whole prompt of its own it may switch on; absent = neither */
   prompt?: BookPrompt;
+  /** read translator's and author's notes (`note` lines) aloud; absent = skip them */
+  readNotes?: boolean;
 }
 
 export interface Character {

@@ -18,14 +18,14 @@ import type {
 } from "@/types";
 import { NARRATOR } from "@/lib/cast";
 import { speak } from "@/lib/speech";
-import type { Db, Tx } from "~/db/client";
+import type { Db } from "~/db/client";
 import * as cast from "~/db/cast";
 import * as library from "~/db/library";
 import { discardSpeakerSamples, moveSpeakerSamples } from "~/db/speakerSamples";
 import { attributeLines, bumpRevision, readScript, reattribute, writeClip } from "~/db/script";
 import { badRequest, conflict, notFound } from "~/lib/errors";
 import { requireBook } from "~/library/ops";
-import { settleChapter } from "~/narration/chapter";
+import { narrationInProgress, settleChapter } from "~/narration/chapter";
 
 export function bookCast(db: Db, bookId: string): Cast {
   requireBook(db, bookId);
@@ -182,15 +182,10 @@ export function putLexicon(
       if (!staled.length && !back.length) continue;
       const revision = bumpRevision(tx, bookId, chapterId);
       // a chapter a run is working through is the run's to add up when it finishes
-      if (!inProgress(tx, bookId, chapterId)) settleChapter(tx, bookId, chapterId);
+      if (!narrationInProgress(tx, bookId, chapterId)) settleChapter(tx, bookId, chapterId);
       if (staled.length) stale.push({ chapterId, ids: staled, revision });
       if (back.length) restored.push({ chapterId, ids: back, revision });
     }
     return { entries: lexicon, stale, restored };
   });
-}
-
-function inProgress(tx: Tx, bookId: string, chapterId: number): boolean {
-  const narration = library.getChapter(tx, bookId, chapterId)?.narration;
-  return narration === "queued" || narration === "running";
 }

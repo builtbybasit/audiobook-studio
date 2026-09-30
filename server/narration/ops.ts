@@ -10,6 +10,7 @@
 // is the other half. Both end by settling the chapter the way a run does, because a kept take is a
 // clip that plays and a chapter's length is asked of the clips that play.
 import type { Judged, RetakesQueued, Segment } from "@/types";
+import { isSpoken } from "@/lib/siteText";
 import type { Db } from "~/db/client";
 import { activeJob, nextRunId } from "~/db/jobs";
 import * as library from "~/db/library";
@@ -54,7 +55,8 @@ const beingNarrated = (chapterId: number, then: string) =>
  *
  * A line that already has a retake — waiting for a verdict, or still rendering — or whose own clip
  * is in flight is left out and said so, because one comparison at a time is what a verdict is a
- * verdict on; a line not in the script is said so too. A line with a playable clip gets its retake
+ * verdict on; a line not in the script is said so too, and so is one the book does not read aloud
+ * (`isSpoken`), which is never rendered. A line with a playable clip gets its retake
  * beside it, numbered after every take the line has seen; one with nothing worth keeping renders in
  * place, which is a plain re-render and not a comparison. Nothing is written when nothing is
  * queued. A chapter with a run in flight is refused rather than joined: the queue's
@@ -72,12 +74,14 @@ export function retakeLines(
   const { segs } = requireScripted(db, bookId, chapterId, "retake");
   if (activeJob(db, "narration", bookId, chapterId))
     throw beingNarrated(chapterId, "ask for the retake");
+  const book = library.getBook(db, bookId);
 
   const queued: Segment[] = [];
   const skipped: RetakesQueued["skipped"] = [];
   for (const id of ids) {
     const s = segs.find((x) => x.id === id);
     if (!s) skipped.push({ id, why: "missing" });
+    else if (!isSpoken(s, book)) skipped.push({ id, why: "unspoken" });
     else if (s.candidate || inFlight(s.audio.status)) skipped.push({ id, why: "pending" });
     else queued.push(s);
   }

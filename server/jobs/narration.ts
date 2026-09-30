@@ -44,6 +44,7 @@
 import type { Job, NarrationQueued, NarrationScope, Segment, SegmentAudio } from "@/types";
 import { encodingOf } from "@/lib/endpointShapes";
 import { chapterNarration, narrationTargets, SCOPE_LABEL } from "@/lib/runPlan";
+import { isSpoken } from "@/lib/siteText";
 import { expressionParts, expressionPlan, type ExpressionPlan } from "@/lib/expressions";
 import { speechInstructions } from "@/lib/speech";
 import { requeue } from "@/lib/takes";
@@ -128,6 +129,26 @@ function readChapter(db: Db, bookId: string, chapterId: number) {
   return { uid, title: chapter.title };
 }
 
+/**
+ * Put back what these lines hold in flight: a line waiting to render in place goes back to having
+ * no clip, and a replacement that never landed is dropped, which leaves the clip it would have
+ * replaced exactly as it was. Says how many were put back; the caller moves the revision.
+ */
+function putBack(tx: Tx, bookId: string, chapterId: number, segs: readonly Segment[]): number {
+  let n = 0;
+  for (const s of segs) {
+    if (inFlight(s.audio.status)) {
+      writeClip(tx, bookId, chapterId, s.id, "current", { ...requeue(s.audio), status: "none" });
+      n++;
+    }
+    if (s.candidate && inFlight(s.candidate.status)) {
+      dropCandidate(tx, bookId, chapterId, s.id);
+      n++;
+    }
+  }
+  return n;
+}
+
 /** A line this run renders: the slot its render goes to, and the queued clip holding it meanwhile. */
 interface Target {
   s: Segment;
@@ -157,8 +178,9 @@ function queueRender(tx: Tx, at: { bookId: string; id: number }, s: Segment): Ta
  * clip before the first request goes out, so the chapter reads as a run in progress from the first
  * moment. A line found already queued or generating is this job's own: the queue allows one
  * narration job per chapter, so an in-flight clip can only be what the last attempt was holding
- * when the server stopped, and it is picked up rather than skipped. A plan with nothing in it
- * settles the chapter's status as it stands.
+ * when the server stopped, and it is picked up rather than skipped — unless the line has since
+ * become one the book does not read, which is never sent: its clip is put back as a cancel would.
+ * A plan with nothing in it settles the chapter's status as it stands.
  */
 function planRun(db: Db, uid: string, scope: RunScope): { targets: Target[]; lines: number } {
   const targets: Target[] = [];
@@ -166,12 +188,22 @@ function planRun(db: Db, uid: string, scope: RunScope): { targets: Target[]; lin
   db.transaction((tx) => {
     const at = library.locateChapter(tx, uid);
     if (!at) throw notFound("The chapter was removed before it was narrated");
-    const segs = readScript(tx, at.bookId, at.id);
-    lines = segs.length;
+    const book = library.getBook(tx, at.bookId);
+    let segs = readScript(tx, at.bookId, at.id);
+    const cleared = putBack(
+      tx,
+      at.bookId,
+      at.id,
+      segs.filter((s) => !isSpoken(s, book)),
+    );
+    if (cleared) segs = readScript(tx, at.bookId, at.id);
+    // progress counts the lines the run could be waiting on, which a line not read never is
+    lines = segs.filter((s) => isSpoken(s, book)).length;
     const wanted = new Set(
-      scope === "pending" ? [] : narrationTargets(segs, scope, true).run.map((s) => s.id),
+      scope === "pending" ? [] : narrationTargets(segs, scope, true, book).run.map((s) => s.id),
     );
     for (const s of segs) {
+      if (!isSpoken(s, book)) continue;
       let t: Target | null = null;
       if (inFlight(s.audio.status)) t = { s, slot: "current", queued: requeue(s.audio) };
       else if (s.candidate && inFlight(s.candidate.status))
@@ -182,7 +214,8 @@ function planRun(db: Db, uid: string, scope: RunScope): { targets: Target[]; lin
       targets.push(t);
     }
     if (!targets.length) {
-      library.setChapterNarration(tx, at.bookId, at.id, chapterNarration(segs), 100);
+      library.setChapterNarration(tx, at.bookId, at.id, chapterNarration(segs, book), 100);
+      if (cleared) bumpRevision(tx, at.bookId, at.id);
       return;
     }
     library.setChapterNarration(tx, at.bookId, at.id, "running", 0);
@@ -763,20 +796,7 @@ export function narrationHandler(
       const { bookId, chapterId } = fresh;
       ctx.db.transaction((tx) => {
         if (!library.chapterExists(tx, bookId, chapterId)) return;
-        let putBack = 0;
-        for (const s of readScript(tx, bookId, chapterId)) {
-          if (inFlight(s.audio.status)) {
-            writeClip(tx, bookId, chapterId, s.id, "current", {
-              ...requeue(s.audio),
-              status: "none",
-            });
-            putBack++;
-          }
-          if (s.candidate && inFlight(s.candidate.status)) {
-            dropCandidate(tx, bookId, chapterId, s.id);
-            putBack++;
-          }
-        }
+        const back = putBack(tx, bookId, chapterId, readScript(tx, bookId, chapterId));
         const segs = readScript(tx, bookId, chapterId);
         // a run that was interrupted starts its progress again; one that ran to its end and
         // failed on a line keeps the hundred its final write recorded
@@ -784,10 +804,10 @@ export function narrationHandler(
           tx,
           bookId,
           chapterId,
-          chapterNarration(segs),
-          putBack ? 0 : undefined,
+          chapterNarration(segs, library.getBook(tx, bookId)),
+          back ? 0 : undefined,
         );
-        if (putBack) bumpRevision(tx, bookId, chapterId);
+        if (back) bumpRevision(tx, bookId, chapterId);
       });
     },
   };
@@ -842,7 +862,7 @@ export function enqueueNarration(
       skipped.push({ id, why: "busy" });
       continue;
     }
-    const { run } = narrationTargets(segs, scope, true);
+    const { run } = narrationTargets(segs, scope, true, book);
     if (!run.length) {
       skipped.push({ id, why: "nothing" });
       continue;

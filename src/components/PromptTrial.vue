@@ -30,6 +30,7 @@ import {
 import { scriptTelemetry } from "@/lib/scriptActivity";
 import { profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
 import { NARRATOR } from "@/lib/cast";
+import { isSiteText, TYPE_LABEL } from "@/lib/siteText";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
@@ -397,10 +398,18 @@ const colorOf = (name: string): string =>
           :key="i"
           class="flex items-baseline gap-2 text-[11px] leading-snug"
         >
+          <!-- text the model marked as not the story is named for what it is, as the reader shows it -->
           <span
+            v-if="isSiteText(line.type)"
+            class="max-w-[9rem] shrink-0 truncate rounded-full bg-zinc-100 px-1.5 py-px font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+            :title="`${TYPE_LABEL[line.type]} · not read unless the book reads notes`"
+            >{{ TYPE_LABEL[line.type] }}</span
+          >
+          <span
+            v-else
             class="max-w-[9rem] shrink-0 truncate rounded-full px-1.5 py-px font-medium"
             :style="{ background: colorOf(line.speaker) + '26', color: colorOf(line.speaker) }"
-            :title="`${line.speaker} · ${line.type}`"
+            :title="`${line.speaker} · ${TYPE_LABEL[line.type]}`"
             ><span v-if="line.type !== 'narration'" class="opacity-70" aria-hidden="true">{{
               line.type === "thought" ? "…" : "“"
             }}</span>
@@ -408,7 +417,11 @@ const colorOf = (name: string): string =>
           >
           <span
             class="min-w-0"
-            :class="line.type === 'thought' && 'text-zinc-600 dark:text-zinc-300'"
+            :class="[
+              line.type === 'thought' && 'text-zinc-600 dark:text-zinc-300',
+              line.type === 'watermark' && 'text-zinc-400 line-through decoration-zinc-400/70',
+              line.type === 'note' && 'italic text-zinc-500',
+            ]"
             >{{ line.text
             }}<span v-if="line.direction" class="ml-1 italic text-zinc-500"
               >— {{ line.direction }}</span

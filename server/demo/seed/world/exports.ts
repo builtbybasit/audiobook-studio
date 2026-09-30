@@ -19,6 +19,7 @@ export function makeExports(w: WorldDraft): ExportItem[] {
           w.chapters[bookId].find((c) => c.id === id)!,
           w.segments[`${bookId}:${id}`] ?? [],
           DEFAULT_PACING,
+          w.books.find((b) => b.id === bookId),
         ),
       ]),
     );

@@ -99,6 +99,13 @@
       "when": 1790683312235,
       "tag": "0013_scripting_prompts",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1790788958628,
+      "tag": "0014_site_text",
+      "breakpoints": true
     }
   ]
 }

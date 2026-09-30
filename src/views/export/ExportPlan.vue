@@ -18,6 +18,7 @@ import { computed, ref, watch } from "vue";
 import { usePlayer } from "@/composables/usePlayer";
 import { pauseAfter, secs } from "@/lib/speech";
 import { exportKey, formatOf, hash } from "@/lib/exports";
+import { heardLines, isSpoken } from "@/lib/siteText";
 import { plural } from "@/lib/contents";
 import { hms, mb } from "@/views/export/shared";
 import ExportFiles from "@/views/export/ExportFiles.vue";
@@ -132,6 +133,24 @@ const reviewLink = (kind: "flagged" | "review") => {
   };
 };
 
+/**
+ * Lines of the selected chapters the audiobook leaves out: site text, and notes unless the book
+ * reads them. Said beside what the build contains, with the way to them, because a line marked as
+ * site text by mistake is otherwise a sentence missing from the file that nothing points at.
+ */
+const notRead = computed(() => {
+  const book = libraryStore.bookById(props.bookId);
+  let site = 0;
+  let notes = 0;
+  for (const chId of props.selected)
+    for (const s of scriptsStore.segmentsOf(props.bookId, chId))
+      if (!isSpoken(s, book)) {
+        if (s.type === "note") notes++;
+        else site++;
+      }
+  return { site, notes };
+});
+
 /** Selected chapters that would contribute nothing but the gap around them. */
 const silent = computed(() => chapters.value.filter((c) => c.duration <= 0).length);
 
@@ -159,7 +178,10 @@ function previewQueue(ids: number[], title: string): Queue | null {
   const clips: Queue["clips"] = [];
   const list = chapters.value.filter((c) => ids.includes(c.id));
   list.forEach((c, ci) => {
-    const heard = scriptsStore.segmentsOf(props.bookId, c.id).filter((x) => x.audio.duration > 0);
+    const heard = heardLines(
+      scriptsStore.segmentsOf(props.bookId, c.id),
+      libraryStore.bookById(props.bookId),
+    );
     heard.forEach((seg, i) => {
       clips.push({
         id: `x${c.id}-${seg.id}`,
@@ -304,6 +326,27 @@ const ACTION_LABEL: Record<string, string> = {
         >
           {{ plural(silent, "selected chapter") }} carry no audio yet, so the figures above count
           them as nothing. The build will not start until they are dealt with below.
+        </p>
+        <p
+          v-if="notRead.site || notRead.notes"
+          class="mt-2 text-[11px] leading-relaxed text-zinc-500"
+        >
+          <template v-if="notRead.site"
+            ><RouterLink
+              :to="{ path: `/book/${bookId}/search`, query: { type: 'watermark' } }"
+              class="text-violet-600 hover:underline dark:text-violet-400"
+              >{{ plural(notRead.site, "line") }} of site text</RouterLink
+            ></template
+          ><template v-if="notRead.site && notRead.notes"> and </template
+          ><template v-if="notRead.notes"
+            ><RouterLink
+              :to="{ path: `/book/${bookId}/search`, query: { type: 'note' } }"
+              class="text-violet-600 hover:underline dark:text-violet-400"
+              >{{ plural(notRead.notes, "translator’s note") }}</RouterLink
+            ></template
+          >
+          {{ notRead.site + notRead.notes === 1 ? "is" : "are" }} not in the audio — kept in the
+          script, left out of the file.
         </p>
         <p class="mt-2 text-[11px] leading-relaxed text-zinc-400">
           {{ formatOf(settings.format).label }} · {{ settings.bitrate }} kbps ·

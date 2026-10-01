@@ -555,8 +555,7 @@ describe("voice samples in the file", () => {
   // a WAV header is all a recording needs to be here: it is sniffed, never decoded
   const wav = (tag: string) =>
     new Uint8Array([...`RIFF\0\0\0\0WAVEfmt ${tag}`].map((c) => c.charCodeAt(0)));
-  const CONSENT_AT = "2026-09-12T10:00:00.000Z";
-  const consent = (
+  const listing = (
     samples = [{ file: "sample-1.wav", name: "take-1.wav", format: "wav" }],
     over: Record<string, unknown> = {},
   ) =>
@@ -564,8 +563,6 @@ describe("voice samples in the file", () => {
       format: "audiobook-studio/voice-samples",
       version: 1,
       title: "Vex (clone)",
-      consentAt: CONSENT_AT,
-      consentText: "This is my voice.",
       samples,
       ...over,
     });
@@ -583,16 +580,16 @@ describe("voice samples in the file", () => {
     },
     samples: "voices/vex/",
   };
-  const one = { "voices/vex/consent.json": consent(), "voices/vex/sample-1.wav": wav("one") };
+  const one = { "voices/vex/samples.json": listing(), "voices/vex/sample-1.wav": wav("one") };
 
-  test("a voice whose recordings come with it says how many, how big, and under what consent", async () => {
+  test("a voice whose recordings come with it says how many and how big", async () => {
     const got = await plan(
       await zipOf({
         chapters: [chapterOf(1)],
         cast: [vex],
         wrap: "Ledger/",
         extra: {
-          "Ledger/voices/vex/consent.json": consent(),
+          "Ledger/voices/vex/samples.json": listing(),
           "Ledger/voices/vex/sample-1.wav": wav("one"),
         },
       }),
@@ -601,15 +598,21 @@ describe("voice samples in the file", () => {
     expect(got.voices[0]).toMatchObject({
       speaker: "Vex",
       match: { kind: "private" },
-      samples: {
-        kind: "ok",
-        count: 1,
-        bytes: wav("one").length,
-        consentAt: CONSENT_AT,
-        consentText: "This is my voice.",
-      },
+      samples: { kind: "ok", count: 1, bytes: wav("one").length },
     });
     expect(got.ignored).toEqual([]);
+  });
+
+  test("an older file's consent.json is read as the list, its consent fields left unread", async () => {
+    const older = listing(undefined, { consentAt: "2026-09-12T10:00:00.000Z", consentText: "" });
+    const got = await plan(
+      await zipOf({
+        chapters: [chapterOf(1)],
+        cast: [vex],
+        extra: { "voices/vex/consent.json": older, "voices/vex/sample-1.wav": wav("one") },
+      }),
+    );
+    expect(got.voices[0].samples).toEqual({ kind: "ok", count: 1, bytes: wav("one").length });
   });
 
   test.each<[string, Record<string, string | Uint8Array>, Partial<typeof SAMPLE_LIMITS>, RegExp]>([
@@ -619,24 +622,24 @@ describe("voice samples in the file", () => {
       {},
       /sample-1\.wav is not a WAV/,
     ],
-    ["no consent record", { "voices/vex/sample-1.wav": wav("one") }, {}, /no consent\.json/],
+    ["no list of recordings", { "voices/vex/sample-1.wav": wav("one") }, {}, /no samples\.json/],
     [
-      "a consent record with no consent in it",
-      { ...one, "voices/vex/consent.json": consent(undefined, { consentText: " " }) },
+      "a list with no title",
+      { ...one, "voices/vex/samples.json": listing(undefined, { title: " " }) },
       {},
-      /consentText/,
+      /title/,
     ],
     [
       "a recording named but not in the folder",
-      { "voices/vex/consent.json": consent([{ file: "gone.wav", name: "", format: "wav" }]) },
+      { "voices/vex/samples.json": listing([{ file: "gone.wav", name: "", format: "wav" }]) },
       {},
-      /gone\.wav is named in consent\.json but is not in voices\/vex\//,
+      /gone\.wav is named in samples\.json but is not in voices\/vex\//,
     ],
     ["a recording over the limit on one", one, { clip: 8 }, /over the 0\.0 MB limit on one/],
     [
       "more recordings than a voice is cloned from",
       {
-        "voices/vex/consent.json": consent([
+        "voices/vex/samples.json": listing([
           { file: "a.wav", name: "", format: "wav" },
           { file: "b.wav", name: "", format: "wav" },
         ]),
@@ -668,6 +671,6 @@ describe("voice samples in the file", () => {
   test("a folder of recordings no speaker names is a stray, listed as ignored", async () => {
     const got = await plan(await zipOf({ cast: [{ ...vex, samples: undefined }], extra: one }));
     expect(got.voices[0].samples).toBeUndefined();
-    expect(got.ignored).toEqual(["voices/vex/consent.json", "voices/vex/sample-1.wav"]);
+    expect(got.ignored).toEqual(["voices/vex/sample-1.wav", "voices/vex/samples.json"]);
   });
 });

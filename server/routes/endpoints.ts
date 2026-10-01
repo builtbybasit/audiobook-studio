@@ -6,7 +6,6 @@ import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
 import type { ClonedVoice, EndpointProbe, KeptVoiceSamples, VoiceListPage } from "@/types";
-import { CLONE_CONSENT } from "@/lib/endpointShapes";
 import { tooMuchSaid } from "@/lib/voiceSamples";
 import type { Db } from "~/db/client";
 import { clipsByEndpoint } from "~/db/script";
@@ -48,9 +47,6 @@ const Sample = v.object({
   voice: v.pipe(v.string(), v.nonEmpty(), v.maxLength(200)),
 });
 
-/** The most a consent sentence sent with the form may be; the form sends `CLONE_CONSENT`. */
-const MAX_CONSENT_CHARS = 500;
-
 const VoiceParam = v.object({
   id: v.pipe(v.string(), v.nonEmpty()),
   voice: v.pipe(v.string(), v.nonEmpty(), v.maxLength(200)),
@@ -62,21 +58,6 @@ type Form = FormData;
 /** A form's body, or the refusal that says it was not one. */
 const formOf = (req: HonoRequest): Promise<Form> =>
   req.formData().catch(() => fail(400, "The request was not a form"));
-
-/**
- * The person's say-so, and the sentence they said it to: `consent=yes`, or nothing leaves. The
- * sentence is what the form showed (`consentText`), or the server's own when a form sends none.
- */
-function consentOf(form: Form): string {
-  if (form.get("consent") !== "yes")
-    fail(
-      400,
-      "Confirm you have the right to clone this voice",
-      "Cloning someone's voice needs their permission; the form has to say it was given.",
-    );
-  const said = String(form.get("consentText") ?? "").trim();
-  return said ? said.slice(0, MAX_CONSENT_CHARS) : CLONE_CONSENT;
-}
 
 /**
  * The files under `samples`, and what is said in each under `transcripts`, one per file in the
@@ -170,13 +151,11 @@ export function endpointRoutes(
   /**
    * A voice made from samples, on a saved endpoint whose provider can keep one: a multipart form
    * of the endpoint's `id`, the voice's `title`, 1 to 20 files under `samples` with what is said
-   * in each under `transcripts` (one per file, "" for none), `consent` saying the person has the
-   * right to clone the voice in them, and the `consentText` they agreed to. Answers with the new
-   * voice, which the page then adds to the endpoint.
+   * in each under `transcripts` (one per file, "" for none). Answers with the new voice, which the
+   * page then adds to the endpoint.
    *
    * The samples are kept once the provider has answered — never before, so a failed clone keeps
-   * nothing — beside the consent they were given under, so the voice can travel with a book's
-   * script. The voice already exists on the account by then, so a failure to keep them is not a
+   * nothing — so the voice can travel with a book's script. The voice already exists on the account by then, so a failure to keep them is not a
    * failure to clone: the answer says `samplesKept: false`, and the page says so.
    *
    * The form is read by hand, where the book uploads go through `validate("form", …)`: the
@@ -196,7 +175,6 @@ export function endpointRoutes(
     const title = String(form.get("title") ?? "").trim();
     if (!id) fail(400, "Say which endpoint to make the voice on");
     if (!title || title.length > 100) fail(400, "Give the voice a name of up to 100 characters");
-    const consentText = consentOf(form);
     const {
       voice,
       samples: count,
@@ -205,7 +183,7 @@ export function endpointRoutes(
       db,
       providers,
       voiceFiles,
-      { endpointId: id, title, consentText, ...samplesOf(form) },
+      { endpointId: id, title, ...samplesOf(form) },
       c.req.raw.signal,
     );
     if (keepError)
@@ -213,10 +191,8 @@ export function endpointRoutes(
         { err: keepError, id, voice: voice.id },
         "cloned, but the samples were not kept",
       );
-    // The form cannot get here without `consent=yes`; the kept row is the lasting record of it,
-    // and this line says the same for whoever reads the log.
     c.var.logger.info(
-      { id, voice: voice.id, title, samples: count, consent: true, samplesKept: voice.samplesKept },
+      { id, voice: voice.id, title, samples: count, samplesKept: voice.samplesKept },
       "voice cloned",
     );
     return c.json(voice satisfies ClonedVoice, 201);
@@ -227,7 +203,7 @@ export function endpointRoutes(
     c.json(samples.keptFor(db, c.req.valid("param").id) satisfies KeptVoiceSamples[]),
   );
 
-  /** One voice's kept samples, and when and to what consent was given. */
+  /** One voice's kept samples. */
   app.get("/:id/voices/:voice/samples", validate("param", VoiceParam), (c) => {
     const { id, voice } = c.req.valid("param");
     return c.json(samples.keptOf(db, id, voice) satisfies KeptVoiceSamples);
@@ -245,23 +221,18 @@ export function endpointRoutes(
 
   /**
    * Keep these samples for a voice already on the saved endpoint, in place of any it had: for a
-   * voice cloned before samples were kept. The same form, limits and consent as a clone, and
+   * voice cloned before samples were kept. The same form and limits as a clone, and
    * nothing is sent to the provider.
    */
   app.post("/:id/voices/:voice/samples", validate("param", VoiceParam), samplesLimit, async (c) => {
     const { id, voice } = c.req.valid("param");
     const form = await formOf(c.req);
-    const consentText = consentOf(form);
     const kept = await clone.keepForVoice(db, voiceFiles, {
       endpointId: id,
       voiceId: voice,
-      consentText,
       ...samplesOf(form),
     });
-    c.var.logger.info(
-      { id, voice, samples: kept.samples.length, consent: true },
-      "voice samples kept",
-    );
+    c.var.logger.info({ id, voice, samples: kept.samples.length }, "voice samples kept");
     return c.json(kept satisfies KeptVoiceSamples);
   });
 

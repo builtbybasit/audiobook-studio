@@ -1,7 +1,6 @@
 // Every read and write of the recordings kept with a book's speakers from a script file.
 //
-// A row is one speaker's set of recordings and the consent they came under; its files are rows of
-// their own, in order. A discard is soft — `discarded_at` is stamped and the row stays until the
+// A row is one speaker's set of recordings; its files are rows of their own, in order. A discard is soft — `discarded_at` is stamped and the row stays until the
 // purge — so an Undo has something to bring back. What the rules are, and when the purge runs, is
 // `server/speakerSamples/store.ts`'s; this file only reads and writes.
 import { and, asc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
@@ -39,8 +38,6 @@ export const toSpeakerSamples = (db: Db | Tx, r: SampleRow): SpeakerSamples => (
   id: r.id,
   speaker: r.speaker,
   title: r.title,
-  consentAt: r.consentAt,
-  consentText: r.consentText,
   source: r.source,
   samples: filesOf(db, r.id),
 });
@@ -144,8 +141,6 @@ export function keepSpeakerSamples(
           bookId,
           speaker: k.speaker,
           title: k.voice.title,
-          consentAt: Date.parse(k.voice.consentAt),
-          consentText: k.voice.consentText,
           source,
           storedAt: at,
         })

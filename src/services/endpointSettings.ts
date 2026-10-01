@@ -10,7 +10,6 @@
 // objects it edits, so there is no single action to hang a narrower request on — and the server
 // has to check the three lists against each other anyway (a credential an endpoint names must be
 // in the same body), which a partial write could not let it do.
-import { CLONE_CONSENT } from "@/lib/endpointShapes";
 import type {
   ClonedVoice,
   Credential,
@@ -96,8 +95,7 @@ export interface EndpointSettingsService {
   sampleVoice(id: string, voice: string): Promise<VoiceSample>;
   /**
    * Make a voice from samples on the *saved* endpoint's provider, with the key the server holds.
-   * `consent` must be true: it says the person has the right to clone the voice in them. The server
-   * keeps the samples with the voice, and says whether it managed to.
+   * The server keeps the samples with the voice, and says whether it managed to.
    */
   cloneVoice(id: string, request: VoiceCloneRequest): Promise<ClonedVoice>;
   /** Every voice of the *saved* endpoint whose samples are kept. */
@@ -124,13 +122,12 @@ export interface EndpointSettingsService {
   live(): Promise<Record<string, EndpointLive>>;
 }
 
-/** What a voice is made from: a name, the samples, and the person's say-so. */
+/** What a voice is made from: a name and the samples. */
 export interface VoiceCloneRequest {
   title: string;
   samples: File[];
   /** what is said in each sample, in the same order; "" or absent where the person gave none */
   transcripts?: string[];
-  consent: boolean;
 }
 
 export class HttpEndpointSettingsService implements EndpointSettingsService {
@@ -201,16 +198,11 @@ const samplesPath = (id: string, voice: string) =>
   `/endpoints/${seg(id)}/voices/${seg(voice)}/samples`;
 
 /**
- * The samples, their transcripts and the person's say-so, as the server reads them: a `samples`
- * file and a `transcripts` text per sample, in the same order. The sentence sent is the one the
- * form shows beside the box, so what the server keeps is what was actually agreed to.
+ * The samples and their transcripts as the server reads them: a `samples` file and a `transcripts`
+ * text per sample, in the same order.
  */
 function samplesForm(request: Omit<VoiceCloneRequest, "title">): FormData {
   const form = new FormData();
-  if (request.consent) {
-    form.set("consent", "yes");
-    form.set("consentText", CLONE_CONSENT);
-  }
   for (const [i, sample] of request.samples.entries()) {
     form.append("samples", sample, sample.name);
     form.append("transcripts", request.transcripts?.[i] ?? "");

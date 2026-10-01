@@ -78,25 +78,17 @@ export interface ScriptFileSpeaker {
   voice?: VoiceHint;
   /**
    * `voices/<slug>/`, when the export was asked to carry this speaker's voice samples: the folder
-   * in the zip holding the recordings and their `consent.json`.
+   * in the zip holding the recordings and their `samples.json`.
    */
   samples?: string;
 }
 
-/**
- * `voices/<slug>/consent.json`: which recordings the folder holds, and the consent they were kept
- * under. A record of what someone agreed to, shown to the importing side — never permission for
- * it: cloning there still asks for its own consent.
- */
+/** `voices/<slug>/samples.json`: which recordings the folder holds. */
 export interface ScriptFileVoice {
   format: "audiobook-studio/voice-samples";
   version: 1;
   /** what the voice was called where it was kept */
   title: string;
-  /** ISO 8601, when the box was ticked */
-  consentAt: string;
-  /** the sentence that was ticked */
-  consentText: string;
   /** the recordings, by their names inside the folder */
   samples: { file: string; name: string; format: KeptSample["format"] }[];
 }
@@ -211,12 +203,12 @@ export interface VoiceRow {
 }
 
 /**
- * What an import found of a voice's recordings: usable, with the consent they came under, or
- * refused whole — a folder with one file that is not audio, or over the clone limits, is refused
- * and says why, and the lines and cast still import.
+ * What an import found of a voice's recordings: usable, or refused whole — a folder with one file
+ * that is not audio, or over the clone limits, is refused and says why, and the lines and cast still
+ * import.
  */
 export type VoiceRowSamples =
-  | { kind: "ok"; count: number; bytes: number; consentAt: string; consentText: string }
+  | { kind: "ok"; count: number; bytes: number }
   | { kind: "refused"; reason: string };
 
 export interface ScriptImportPlan {
@@ -256,9 +248,6 @@ export interface SpeakerSamples {
   speaker: string;
   /** the voice's title where it was kept, which the clone form starts from */
   title: string;
-  /** epoch ms, and the sentence, from the file's consent record */
-  consentAt: number;
-  consentText: string;
   /** the name of the script file they came in */
   source: string;
   samples: KeptSample[];

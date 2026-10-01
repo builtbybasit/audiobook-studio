@@ -563,8 +563,6 @@ describe("voice samples a script file carries", () => {
     id,
     speaker,
     title: `${speaker} (cloned)`,
-    consentAt: 1_700_000_000_000,
-    consentText: "This is my voice.",
     source: "The Cliche.script.zip",
     samples: [{ file: "a".repeat(32) + ".wav", name: "one.wav", format: "wav", bytes: 2048 }],
   });
@@ -606,8 +604,6 @@ describe("voice samples a script file carries", () => {
       kind: "ok",
       count: 1,
       bytes: 2048,
-      consentAt: "2026-09-12T10:00:00Z",
-      consentText: "This is my voice.",
     },
   });
 

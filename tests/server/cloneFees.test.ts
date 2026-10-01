@@ -10,7 +10,7 @@ import { cloneFees, requests } from "~/db/schema";
 import type { SentSpeech } from "~/providers/sent";
 import { settleSpeech } from "~/usage/ledger";
 import {
-  agreed,
+  cloneFields,
   cloneForm,
   postClone,
   remembering,
@@ -49,7 +49,7 @@ async function cloned(ep: Endpoint) {
   const { cloner } = remembering();
   const api = testApi({ cloner });
   await saved(api, ep);
-  const { status } = await postClone(api, cloneForm(agreed(ep.id), [sampleFile()]));
+  const { status } = await postClone(api, cloneForm(cloneFields(ep.id), [sampleFile()]));
   expect(status).toBe(201);
   return api;
 }
@@ -127,7 +127,7 @@ describe("what a clone costs", () => {
     });
     await saved(api, minimax, qwen);
     for (const id of ["minimax", "qwen"])
-      expect((await postClone(api, cloneForm(agreed(id), [sampleFile()]))).status).toBe(500);
+      expect((await postClone(api, cloneForm(cloneFields(id), [sampleFile()]))).status).toBe(500);
     expect(ledger(api)).toEqual([]);
     expect(api.db.select().from(cloneFees).all()).toEqual([]);
   });
@@ -139,7 +139,7 @@ describe("what the provider says beside the voice", () => {
     const { cloner } = remembering({ warning });
     const api = testApi({ cloner });
     await saved(api, cloneEndpoint());
-    const { body } = await postClone(api, cloneForm(agreed(), [sampleFile()]));
+    const { body } = await postClone(api, cloneForm(cloneFields(), [sampleFile()]));
     expect(body).toEqual({
       id: "new-voice-id",
       label: "Mara",

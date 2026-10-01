@@ -9,8 +9,7 @@ import { useSpeakerSamplesStore, type CloneFromSamples } from "@/stores/speakerS
 // on the account and added to this endpoint like any other: the provider makes it once, and it is
 // spoken by its id from then on. Only where the provider keeps one (its `cloning`): the samples go
 // to the provider through the server, with the saved key, and the server keeps them beside the
-// voice with the consent they were given under — so the voice can travel with a book's script to
-// someone who has to make it again. A provider that takes a transcript of each sample is asked
+// voice — so the voice can travel with a book's script to someone who has to make it again. A provider that takes a transcript of each sample is asked
 // for one beside it, kept with the sample for the same reason.
 //
 // What a pick may be is the provider's (`cloneForm.ts`): the picker offers its formats, a pick is
@@ -20,8 +19,7 @@ import { computed, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { keyInPlace } from "@/services/endpointSettings";
 import { Upload as CloneIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
-import { UiCheckbox, UiHint } from "@/ui";
-import { CLONE_CONSENT } from "@/lib/endpointShapes";
+import { UiHint } from "@/ui";
 import { cloneModelsFor, cloningOf, speechProviderOf } from "@/lib/providers";
 import {
   pickProblem,
@@ -50,7 +48,6 @@ const cloneModels = computed(() => cloneModelsFor(props.endpoint));
 const clone = reactive({
   title: "",
   samples: [] as SampleRow[],
-  consent: false,
   busy: false,
 });
 /** Why the picked samples cannot be sent, naming the file; null when nothing stops them. */
@@ -70,22 +67,20 @@ const cloneBlocked = computed(
     !clone.samples.length ||
     !!cloneProblem.value ||
     transcriptsMissing(clone.samples, cloning.value) ||
-    !clone.consent ||
     clone.busy ||
     needsKeyFirst.value,
 );
 const about = computed(
   () =>
     `Upload clips of one person speaking and ${props.endpoint.name} makes a private voice from ` +
-    "them; the clips stay on this server with your consent, so the voice can go with a book's script.",
+    "them; the clips stay on this server, so the voice can go with a book's script.",
 );
 
 // ---------- cloning from samples a script file brought ----------
 // The Cast page and the import report link here with `?book=…&samples=…&speaker=…&was=…` when a
 // script file carried the samples of a private voice. The form is filled with them and nothing
-// more: the file's consent record is shown as what someone else agreed to, the box stays unticked
-// for this person's own, and the button is theirs to press. A voice made from them goes to the
-// speaker only if the speaker's voice is still `was` — see `afterClone`.
+// more: the button is theirs to press. A voice made from them goes to the speaker only if the
+// speaker's voice is still `was` — see `afterClone`.
 const from = ref<(CloneFromSamples & { sample: SpeakerSamples }) | null>(null);
 const query = (k: string): string => {
   const v = route.query[k];
@@ -120,7 +115,6 @@ async function prefill() {
   Object.assign(clone, {
     title: sample.title,
     samples: files.map((file, i) => ({ file, transcript: sample.samples[i]?.transcript ?? "" })),
-    consent: false,
   });
 }
 watch(
@@ -134,7 +128,7 @@ function forgetLink() {
   void router.replace({ query: rest });
 }
 function reset() {
-  Object.assign(clone, { title: "", samples: [], consent: false });
+  Object.assign(clone, { title: "", samples: [] });
 }
 function putAside() {
   from.value = null;
@@ -148,7 +142,6 @@ async function makeVoice() {
     const voice = await endpointsStore.cloneVoice(props.endpoint, {
       title: clone.title,
       ...requestOf(clone.samples),
-      consent: clone.consent,
     });
     if (voice) {
       if (from.value) {
@@ -185,10 +178,7 @@ async function makeVoice() {
         <button type="button" class="btn-ghost btn-xs" @click="putAside">Put them aside</button>
       </div>
       <p class="text-zinc-600 dark:text-zinc-400">
-        Consent recorded {{ new Date(from.sample.consentAt).toLocaleDateString() }}: “{{
-          from.sample.consentText
-        }}” — someone else's record, so tick the box only if it holds for you too. The voice goes to
-        {{ from.speaker }} if their voice is unchanged since the link was opened.
+        The voice goes to {{ from.speaker }} if their voice is unchanged since the link was opened.
       </p>
     </div>
     <form class="mt-2 space-y-2" @submit.prevent="makeVoice">
@@ -209,10 +199,6 @@ async function makeVoice() {
       >
         <WarnIcon class="icon-sm" /> {{ cloneProblem }}
       </p>
-      <label class="flex items-start gap-2 text-xs">
-        <UiCheckbox v-model="clone.consent" />
-        <span>{{ CLONE_CONSENT }}</span>
-      </label>
       <div class="flex items-center gap-2">
         <button class="btn-primary btn-xs" type="submit" :disabled="cloneBlocked">
           <CloneIcon class="icon-sm" /> {{ clone.busy ? "Making the voice…" : "Make voice" }}

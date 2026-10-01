@@ -13,7 +13,7 @@ import { clonedVoices } from "~/db/schema";
 import type { CloneRequest, VoiceCloner, VoiceClonerOptions } from "~/providers/clone";
 import { miniMaxVoiceId } from "~/providers/speech/minimax";
 import {
-  agreed,
+  cloneFields,
   answering,
   cloneForm,
   cloneTarget,
@@ -255,7 +255,7 @@ async function routeWith(cloner: VoiceCloner): Promise<TestApi> {
 }
 
 const post = (api: TestApi, samples: File[]) =>
-  postClone(api, cloneForm(agreed("minimax"), samples));
+  postClone(api, cloneForm(cloneFields("minimax"), samples));
 
 describe("a MiniMax clone, through the route", () => {
   test("MiniMax's limits are its docs': one sample of MP3, M4A or WAV, up to 20 MB", () => {

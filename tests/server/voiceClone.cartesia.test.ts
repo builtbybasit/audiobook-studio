@@ -9,7 +9,7 @@ import { describe, expect, test } from "bun:test";
 import type { CloneRequest } from "~/providers/clone";
 import { CARTESIA_VERSION, cartesiaWire } from "~/providers/speech/cartesia";
 import {
-  agreed,
+  cloneFields,
   answering,
   cloneForm,
   cloneTarget,
@@ -176,7 +176,7 @@ describe("a Cartesia clone, through the route", () => {
         apiKey: "sk_car_key",
       }),
     );
-    const { status, body } = await postClone(api, cloneForm(agreed("cartesia"), samples));
+    const { status, body } = await postClone(api, cloneForm(cloneFields("cartesia"), samples));
     return { status, body, message: body.error?.message ?? "", sent: f.sent };
   }
 

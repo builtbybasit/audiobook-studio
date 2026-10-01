@@ -26,9 +26,6 @@ export const clonedVoices = sqliteTable(
     title: text("title").notNull(),
     /** epoch ms the samples were kept */
     madeAt: integer("made_at").notNull(),
-    /** epoch ms the person ticked the box, and the sentence they ticked */
-    consentAt: integer("consent_at").notNull(),
-    consentText: text("consent_text").notNull(),
     /**
      * A saved configuration has held this voice. Until one has, the voice is the page's to add — the
      * clone answers before the page saves it — so a save without it is not yet a removal.

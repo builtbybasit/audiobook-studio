@@ -30,10 +30,9 @@ import {
   X as RemoveIcon,
   Search as SearchIcon,
 } from "@lucide/vue";
-import { UiCheckbox, UiHint, UiSelect, UiTooltip } from "@/ui";
+import { UiHint, UiSelect, UiTooltip } from "@/ui";
 import { plural } from "@/lib/contents";
 import { isFishAudio } from "@/lib/endpoints";
-import { CLONE_CONSENT } from "@/lib/endpointShapes";
 import { cloningOf, speechProviderOf } from "@/lib/providers";
 import {
   pickProblem,
@@ -107,8 +106,7 @@ const clonable = computed(() => !!cloning.value);
 // ---------- kept samples ----------
 // Which voices here have the samples they were made from kept on the server. A voice cloned before
 // samples were kept has none, and the server cannot tell it from any other voice on the account —
-// so every voice without them offers to keep them, under the same consent and the same provider
-// limits as a clone. Removing a voice from this list keeps its samples for a day, so the removal's
+// so every voice without them offers to keep them, under the same provider limits as a clone. Removing a voice from this list keeps its samples for a day, so the removal's
 // Undo brings them back with it; a save after that takes them. The list is asked again whenever the
 // voices change, which is how a voice put back by an Undo shows its samples again.
 const kept = ref<Record<string, KeptVoiceSamples>>({});
@@ -124,12 +122,11 @@ watch(
 const keptTitle = (k: KeptVoiceSamples) =>
   `${plural(k.samples.length, "sample")} kept on this server, ${sizeLabel(
     k.samples.reduce((n, x) => n + x.bytes, 0),
-  )}. Consent given ${new Date(k.consentAt).toLocaleDateString()}: “${k.consentText}”`;
+  )}`;
 
 const keep = reactive({
   voiceId: null as string | null,
   samples: [] as SampleRow[],
-  consent: false,
   busy: false,
 });
 const keepVoice = computed(() => props.endpoint.voices.find((v) => v.id === keep.voiceId));
@@ -149,21 +146,20 @@ const keepBlocked = computed(
     !keep.samples.length ||
     !!keepProblem.value ||
     transcriptsMissing(keep.samples, cloning.value) ||
-    !keep.consent ||
     keep.busy,
 );
 function openKeep(v: Voice) {
   Object.assign(keep, { voiceId: keep.voiceId === v.id ? null : v.id, samples: [] });
-  keep.consent = false;
 }
 async function keepSamples() {
   if (keepBlocked.value || !keep.voiceId) return;
   keep.busy = true;
   try {
-    const k = await endpointsStore.keepVoiceSamples(props.endpoint, keep.voiceId, {
-      ...requestOf(keep.samples),
-      consent: keep.consent,
-    });
+    const k = await endpointsStore.keepVoiceSamples(
+      props.endpoint,
+      keep.voiceId,
+      requestOf(keep.samples),
+    );
     if (k) {
       kept.value = { ...kept.value, [k.voiceId]: k };
       keep.voiceId = null;
@@ -431,10 +427,6 @@ const sampleTitle = computed(() =>
         >
           <WarnIcon class="icon-sm" /> {{ keepProblem }}
         </p>
-        <label class="flex items-start gap-2 text-xs">
-          <UiCheckbox v-model="keep.consent" />
-          <span>{{ CLONE_CONSENT }}</span>
-        </label>
         <div class="flex items-center gap-2">
           <button class="btn-primary btn-xs" type="submit" :disabled="keepBlocked">
             <KeptIcon class="icon-sm" /> {{ keep.busy ? "Keeping…" : "Keep samples" }}

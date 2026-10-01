@@ -8,7 +8,7 @@
 // whole of it to find out would be a copy of every sample.
 //
 // The samples are kept once the provider has answered — never before, so a failed clone keeps
-// nothing — beside the consent they were given under, so the voice can travel with a book's script.
+// nothing — so the voice can travel with a book's script.
 // The voice already exists on the account by then, so a failure to keep them is not a failure to
 // clone: the answer says `samplesKept: false`, and the page says so.
 import type { ClonedVoice, KeptVoiceSamples } from "@/types";
@@ -96,7 +96,6 @@ export async function readSamples(
 export interface CloneForm {
   endpointId: string;
   title: string;
-  consentText: string;
   files: File[];
   /** what is said in each file, in the files' order; "" where the person gave none */
   transcripts: string[];
@@ -146,7 +145,6 @@ export async function cloneVoice(
       endpointId: ep.id,
       voiceId: made.id,
       title: form.title,
-      consentText: form.consentText,
       samples,
       attached: false,
     });
@@ -182,7 +180,6 @@ export async function keepForVoice(
     endpointId: ep.id,
     voiceId: voice.id,
     title: voice.label,
-    consentText: request.consentText,
     samples,
     attached: true,
   });

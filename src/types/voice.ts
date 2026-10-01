@@ -41,16 +41,13 @@ export interface KeptSample {
   transcript?: string;
 }
 
-/** The samples kept for one voice, and the consent they were kept under. */
+/** The samples kept for one voice. */
 export interface KeptVoiceSamples {
   voiceId: string;
   /** what the voice was called when its samples were kept */
   title: string;
   /** epoch ms */
   madeAt: number;
-  /** epoch ms the person ticked the box, and the sentence they ticked */
-  consentAt: number;
-  consentText: string;
   samples: KeptSample[];
 }
 

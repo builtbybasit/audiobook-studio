@@ -48,13 +48,10 @@ export interface SampleOptions {
 
 // ---------- reading ----------
 
-/** A voice an export carries again: the speaker, the consent, and how to read each recording. */
+/** A voice an export carries again: the speaker, and how to read each recording. */
 export interface WaitingVoice {
   speaker: string;
   title: string;
-  /** epoch ms */
-  consentAt: number;
-  consentText: string;
   samples: {
     name: string;
     format: SampleFormat;
@@ -64,8 +61,8 @@ export interface WaitingVoice {
 }
 
 /**
- * The recordings still waiting with this book's speakers, for an export to carry again with the
- * consent they came under. A discarded row is not carried: the person said they are not wanted.
+ * The recordings still waiting with this book's speakers, for an export to carry again. A
+ * discarded row is not carried: the person said they are not wanted.
  */
 export function readSpeakerSamplesForExport(
   db: Db,
@@ -77,8 +74,6 @@ export function readSpeakerSamplesForExport(
     .map((w) => ({
       speaker: w.speaker,
       title: w.title,
-      consentAt: w.consentAt,
-      consentText: w.consentText,
       // A recording gone from disk — removed by hand, a folder cleared — is left out rather than
       // failing the export, and a voice with none left is not carried at all.
       samples: w.samples.flatMap((s) => {
@@ -128,7 +123,7 @@ export function purgeDiscarded(
 }
 
 /**
- * Keep the recordings `upload` carries for `speakers`, with the consent the file records for them.
+ * Keep the recordings `upload` carries for `speakers`.
  *
  * Every speaker must be one this book has, and one whose recordings the file carries and the
  * judgement passes: this is the apply step of a plan the page already showed, so a speaker that

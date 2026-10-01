@@ -16,7 +16,6 @@ import type {
   ScriptFileVoice,
   ScriptManifest,
 } from "@/types";
-import { CLONE_CONSENT } from "@/lib/endpointShapes";
 import { clonedVoices } from "~/db/schema";
 import { sourceHash } from "~/script/transfer";
 import { keepSampleFiles } from "~/voices/ops";
@@ -176,7 +175,6 @@ describe("voice samples", () => {
       endpointId: "fish",
       voiceId: "v1",
       title: "Mara (clone)",
-      consentText: CLONE_CONSENT,
       attached: true,
       samples: recordings.map((r, i) => ({
         name: `take-${i + 1}.wav`,
@@ -203,23 +201,20 @@ describe("voice samples", () => {
     }
   });
 
-  test("asked, it carries the clone's recordings as they were kept, with the consent they came under", async () => {
-    const { api, speaker, recordings, zipOf, summary } = await cloned();
+  test("asked, it carries the clone's recordings as they were kept, listed in samples.json", async () => {
+    const { speaker, recordings, zipOf, summary } = await cloned();
     const zip = await zipOf("?samples=1");
     const cast = JSON.parse(await zip.file("cast.json")!.async("string")) as ScriptFileSpeaker[];
     const folder = cast.find((c) => c.name === speaker)!.samples!;
     expect(folder).toMatch(/^voices\/[a-z0-9-]+\/$/);
 
     const record = JSON.parse(
-      await zip.file(folder + "consent.json")!.async("string"),
+      await zip.file(folder + "samples.json")!.async("string"),
     ) as ScriptFileVoice;
-    const row = api.db.select().from(clonedVoices).get()!;
     expect(record).toEqual({
       format: "audiobook-studio/voice-samples",
       version: 1,
       title: "Mara (clone)",
-      consentAt: new Date(row.consentAt).toISOString(),
-      consentText: CLONE_CONSENT,
       samples: [
         { file: "sample-1.wav", name: "take-1.wav", format: "wav" },
         { file: "sample-2.wav", name: "take-2.wav", format: "wav" },
@@ -240,7 +235,7 @@ describe("voice samples", () => {
     });
   });
 
-  test("recordings still waiting from an import go again, under the consent they came with", async () => {
+  test("recordings still waiting from an import go again, an older consent.json's listing with them", async () => {
     const api = testApi();
     const { body } = await api.import<{ book: Book }>(
       await epubFile({ title: "Ledger", chapters: [{ title: "One", paragraphs: story(1) }] }),
@@ -285,15 +280,17 @@ describe("voice samples", () => {
         },
       ]),
     );
+    // an older export: the listing was called consent.json and carried two fields nothing reads now
     const original: ScriptFileVoice = {
       format: "audiobook-studio/voice-samples",
       version: 1,
       title: "Vex (clone)",
-      consentAt: "2026-09-12T10:00:00.000Z",
-      consentText: "Vex agreed.",
       samples: [{ file: "take.wav", name: "take.wav", format: "wav" }],
     };
-    carried.file("voices/vex/consent.json", JSON.stringify(original));
+    carried.file(
+      "voices/vex/consent.json",
+      JSON.stringify({ ...original, consentAt: "2026-09-12T10:00:00.000Z", consentText: "Yes." }),
+    );
     carried.file("voices/vex/take.wav", wav("vex"));
     const form = new FormData();
     form.set(
@@ -311,7 +308,8 @@ describe("voice samples", () => {
     );
     const cast = JSON.parse(await zip.file("cast.json")!.async("string")) as ScriptFileSpeaker[];
     const folder = cast.find((c) => c.name === "Vex")!.samples!;
-    expect(JSON.parse(await zip.file(folder + "consent.json")!.async("string"))).toEqual({
+    expect(zip.file(folder + "consent.json")).toBeNull();
+    expect(JSON.parse(await zip.file(folder + "samples.json")!.async("string"))).toEqual({
       ...original,
       samples: [{ file: "sample-1.wav", name: "take.wav", format: "wav" }],
     });

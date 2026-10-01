@@ -24,7 +24,6 @@ export interface KeepRequest {
   endpointId: string;
   voiceId: string;
   title: string;
-  consentText: string;
   samples: SampleUpload[];
   /** the voice is already in a saved configuration */
   attached: boolean;
@@ -56,7 +55,6 @@ export async function keepSampleFiles(db: Db, files: VoiceFiles, keep: KeepReque
         voiceId: keep.voiceId,
         title: keep.title,
         at: Date.now(),
-        consentText: keep.consentText,
         attached: keep.attached,
         samples,
       }),

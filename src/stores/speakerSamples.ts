@@ -4,9 +4,9 @@
 // A script file can carry the samples a private voice was cloned from. Nothing here can speak
 // with them — the voice lives on someone else's account — so they wait with the speaker until
 // someone clones them on the Voices tab, or discards them. **Nothing clones by itself:** the clone
-// link only fills the form, the person still ticks their own consent and presses the button, and
-// only then does the new voice go to the speaker — and only if the speaker's voice is still the one
-// they had when the link was opened, so a choice made meanwhile is never overwritten.
+// link only fills the form, the person still presses the button, and only then does the new voice
+// go to the speaker — and only if the speaker's voice is still the one they had when the link was
+// opened, so a choice made meanwhile is never overwritten.
 import { defineStore } from "pinia";
 import type { RouteLocationRaw } from "vue-router";
 import { cloningOf, type CloneSupport } from "@/lib/providers";

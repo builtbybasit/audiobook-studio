@@ -11,7 +11,7 @@ import type { Endpoint } from "@/types";
 import type { CloneRequest } from "~/providers/clone";
 import type { ProviderTarget } from "~/providers/target";
 import {
-  agreed,
+  cloneFields,
   answering,
   cloneForm,
   cloneTarget,
@@ -272,7 +272,7 @@ describe("what each provider takes, through the route", () => {
     const f = answering(answer);
     const api = testApi({ cloner: f.cloner });
     await saved(api, ep);
-    const { status, body } = await postClone(api, cloneForm(agreed(ep.id), samples));
+    const { status, body } = await postClone(api, cloneForm(cloneFields(ep.id), samples));
     return { status, message: body.error?.message ?? "", body, sent: f.sent };
   }
   const made = () => Response.json({ voice_id: "v1", requires_verification: false });

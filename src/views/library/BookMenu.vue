@@ -69,7 +69,7 @@ const samplesNote = computed(() => {
   const bytes = v.reduce((n, x) => n + x.bytes, 0);
   return (
     `Recordings of ${plural(v.length, "voice")} (${v.map((x) => x.speaker).join(", ")}) · ` +
-    `${sizeLabel(bytes)}. Share them only with someone the voice's owner agreed to.`
+    `${sizeLabel(bytes)}.`
   );
 });
 /** What the item is about to take, in the menu's own words. */

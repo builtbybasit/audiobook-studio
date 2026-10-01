@@ -100,11 +100,15 @@ const { ready: loaded, error: loadError, retry } = useNarrationData(bookId, open
  * strip cannot green-light a press the server then turns down, and a retry from the Queue is held
  * to the same list. They are worked out here rather than in the estimate panel because the strip
  * has to say how many there are while it is closed.
+ *
+ * Nothing is planned until every script is in: each one that lands would otherwise plan and price
+ * the whole selection again — hundreds of chapters, line by line, hundreds of times over — for a
+ * label on a button that cannot be pressed yet and a count that is not true until the last lands.
  */
 const run = computed(() => {
   const plan = narrationStore.narrationRunPlan(
     bookId,
-    selected.value,
+    loaded.value ? selected.value : [],
     scope.value,
     keepPending.value,
   );

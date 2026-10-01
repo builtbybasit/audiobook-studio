@@ -223,11 +223,21 @@ export function tokenEstimate(
   at: number = Date.now(),
   opts: { prompt?: PromptTemplate; reasoningPerInputToken?: number } = {},
 ) {
+  return tokenEstimator(p, at, opts)(text);
+}
+
+/**
+ * `tokenEstimate` for many chunks sent to one endpoint at one instant. The prompt's overhead and
+ * the rates are the same for every chunk, and working them out — rendering the prompt, resolving
+ * the pricing windows — costs far more than the chunk's own arithmetic, so they are worked out
+ * once and the returned function only counts each chunk.
+ */
+export function tokenEstimator(
+  p: Profile,
+  at: number = Date.now(),
+  opts: { prompt?: PromptTemplate; reasoningPerInputToken?: number } = {},
+) {
   const overhead = opts.prompt ? Math.ceil(promptOverhead(opts.prompt) / 4) : 500;
-  const inputTokens = Math.ceil((text.length / 4) * 1.6) + overhead;
-  /** of `outputTokens`, the thinking a reasoning model is expected to bill as output */
-  const reasoningTokens = Math.ceil(inputTokens * (opts.reasoningPerInputToken ?? 0));
-  const outputTokens = Math.ceil((text.length / 4) * 1.15) + ANSWER_EXTRAS + reasoningTokens;
   // a scripting profile always has both token rates; the shared card is nullable because a speech
   // card leaves them empty, so they are read back through the profile's own numbers
   const base = baseRates(p);
@@ -237,14 +247,20 @@ export function tokenEstimate(
   const ceiling = ceilingRates(base, ensurePricing(p));
   const reserveIn = dearestInput(ceiling) ?? p.inPrice;
   const reserveOut = ceiling.output ?? p.outPrice;
-  return {
-    inputTokens,
-    outputTokens,
-    reasoningTokens,
-    inputCost: (inputTokens * inRate) / 1e6,
-    outputCost: (outputTokens * outRate) / 1e6,
-    cost: (inputTokens * inRate + outputTokens * outRate) / 1e6,
-    reserve: (inputTokens * reserveIn + p.maxOutputTokens * reserveOut) / 1e6,
+  return (text: string) => {
+    const inputTokens = Math.ceil((text.length / 4) * 1.6) + overhead;
+    /** of `outputTokens`, the thinking a reasoning model is expected to bill as output */
+    const reasoningTokens = Math.ceil(inputTokens * (opts.reasoningPerInputToken ?? 0));
+    const outputTokens = Math.ceil((text.length / 4) * 1.15) + ANSWER_EXTRAS + reasoningTokens;
+    return {
+      inputTokens,
+      outputTokens,
+      reasoningTokens,
+      inputCost: (inputTokens * inRate) / 1e6,
+      outputCost: (outputTokens * outRate) / 1e6,
+      cost: (inputTokens * inRate + outputTokens * outRate) / 1e6,
+      reserve: (inputTokens * reserveIn + p.maxOutputTokens * reserveOut) / 1e6,
+    };
   };
 }
 

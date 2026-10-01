@@ -51,7 +51,7 @@ const { unread } = useChapterTexts(
 );
 // One plan behind the button's label, the line under it and the work the run queues.
 const plan = computed(() => scriptingStore.scriptPlan(bookId, selected.value));
-const estimate = computed(() => scriptingStore.scriptEstimate(bookId, selected.value));
+const estimate = computed(() => scriptingStore.scriptEstimateOf(bookId, plan.value));
 const runNote = computed(() => {
   if (!plan.value.chapters.length) return "";
   // the request count comes last, and is not a count until every chapter's text is in
@@ -128,7 +128,7 @@ function scriptFirst() {
           />
         </div>
         <div class="card shrink-0 p-3">
-          <ScriptSettings :book-id="bookId" :selected="selected" @configure="configure" />
+          <ScriptSettings :book-id="bookId" :plan="plan" :est="estimate" @configure="configure" />
         </div>
         <div class="flex shrink-0 items-center gap-3 px-1 text-xs text-zinc-500">
           <span>Script file</span>

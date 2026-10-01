@@ -8,7 +8,7 @@ import { scriptingPlan } from "@/lib/runPlan";
 import { jobsService } from "@/services/jobs";
 import { baseRates, ensurePricing, estimateRates } from "@/lib/pricing";
 import { resolvePrompt } from "@/lib/prompt";
-import { makeScriptSettings, profileErrors, scriptParts, tokenEstimate } from "@/lib/scripting";
+import { makeScriptSettings, profileErrors, scriptParts, tokenEstimator } from "@/lib/scripting";
 import { recentCacheRate, scriptTelemetry } from "@/lib/scriptActivity";
 import { isScripted } from "@/lib/scriptReview";
 import { chapterTextRead, loadChapterTexts } from "@/queries/chapterTexts";
@@ -25,6 +25,34 @@ import { useUiStore } from "@/stores/ui";
 interface ScriptingState {
   scriptSettings: ScriptSettings;
 }
+
+/**
+ * A chapter's text as it would be sent, cut the way `p` cuts it. `text` is null while no query has
+ * read it, and `parts` is empty then and without a profile (`cutProfile`) to cut by.
+ *
+ * Kept until the chapter's text or the cut settings change. The plan and the estimate run again
+ * over every selected chapter each time one more chapter's text lands, and cutting is the costly
+ * part: without this, selecting hundreds of chapters cut each one hundreds of times.
+ * `chapterTextRead` hands back the same string while a chapter's read stands, so checking the text
+ * has not changed compares two references, not two chapters' worth of characters.
+ */
+function chapterCut(bookId: string, chapterId: number, p: Profile | undefined) {
+  const text = chapterTextRead(bookId, chapterId, "plain");
+  if (text == null || !p) return { text, parts: [] };
+  const key = `${bookId}:${chapterId}`;
+  const hit = cuts.get(key);
+  if (hit?.text === text && hit.maxChars === p.maxChars && hit.splitAt === p.splitAt)
+    return { text, parts: hit.parts };
+  const parts = scriptParts(text, p);
+  cuts.set(key, { text, maxChars: p.maxChars, splitAt: p.splitAt, parts });
+  return { text, parts };
+}
+// ponytail: one entry per chapter cut this session, never evicted; key it by book if memory matters
+const cuts = new Map<
+  string,
+  { text: string; maxChars: number; splitAt: string; parts: string[] }
+>();
+
 export const useScriptingStore = defineStore("scripting", {
   state: (): ScriptingState => ({ scriptSettings: makeScriptSettings() }),
   getters: {
@@ -41,6 +69,11 @@ export const useScriptingStore = defineStore("scripting", {
         profiles.find((p) => p.id === this.scriptSettings.profile) ??
         profiles.find((p) => p.enabled && !profileErrors(p).length)
       );
+    },
+    /** `runProfile` while its settings are sound enough to cut a chapter by; none otherwise. */
+    cutProfile(): Profile | undefined {
+      const p = this.runProfile;
+      return p && !profileErrors(p).length ? p : undefined;
     },
     /** Why `runProfile` cannot take a run, in the words the page shows; none when it can. */
     runBlockers(): string[] {
@@ -70,11 +103,10 @@ export const useScriptingStore = defineStore("scripting", {
       const libraryStore = useLibraryStore();
 
       return (bookId, ids) => {
-        const p = this.runProfile;
-        const usable = p && !profileErrors(p).length;
+        const picked = new Set(ids);
         return scriptingPlan(
-          libraryStore.chaptersOf(bookId).filter((c) => ids.includes(c.id)),
-          (c) => (usable ? scriptParts(chapterTextRead(bookId, c.id, "plain") ?? "", p).length : 0),
+          libraryStore.chaptersOf(bookId).filter((c) => picked.has(c.id)),
+          (c) => chapterCut(bookId, c.id, this.cutProfile).parts.length,
           isScripted,
         );
       };
@@ -88,26 +120,32 @@ export const useScriptingStore = defineStore("scripting", {
       bookId: string,
       ids: number[],
     ) => ScriptEstimate & { reasoningTokens: number } {
+      return (bookId, ids) => this.scriptEstimateOf(bookId, this.scriptPlan(bookId, ids));
+    },
+    /**
+     * What running `plan` would cost: `scriptEstimate` for a page that already has the plan in
+     * hand, so it is worked out once for the button and the estimate both.
+     */
+    scriptEstimateOf(): (
+      bookId: string,
+      plan: RunPlan,
+    ) => ScriptEstimate & { reasoningTokens: number } {
       const endpointsStore = useEndpointsStore();
       const jobsStore = useJobsStore();
       const libraryStore = useLibraryStore();
 
-      return (bookId: string, ids: number[]): ScriptEstimate & { reasoningTokens: number } => {
-        // the plan decides which chapters a run would touch; the estimate prices exactly those
-        const chs = this.scriptPlan(bookId, ids).chapters.map((row) =>
-          libraryStore.chapter(bookId, row.id)!,
-        );
+      return (bookId, plan) => {
         const p = this.runProfile;
         const blockers = [...this.runBlockers];
         if (libraryStore.bookById(bookId)?.budget?.paused)
           blockers.push("This book is paused. Resume it from the overview.");
+        // the plan decides which chapters a run would touch; the estimate prices exactly those
+        const cut = plan.chapters.map((row) => chapterCut(bookId, row.id, this.cutProfile));
         // a chapter not read yet is not a chapter with no text: the run waits until it is counted
-        const read = chs.map((c) => chapterTextRead(bookId, c.id, "plain"));
-        const reading = read.filter((t) => t == null).length;
+        const reading = cut.filter((c) => c.text == null).length;
         if (reading) blockers.push(`Reading the text of ${plural(reading, "chapter")}…`);
-        const texts = read.map((t) => t ?? "");
-        const parts =
-          p && !profileErrors(p).length ? texts.map((text) => scriptParts(text, p)) : [];
+        // a chapter with nothing to send takes no time, whatever the profile says of time
+        const parts = cut.map((c) => c.parts).filter((xs) => xs.length);
         // one instant for the whole estimate, so the figures on screen agree with each other
         const at = Date.now();
         // priced with the prompt the run would send: the book's, the endpoint's or the library's
@@ -122,9 +160,11 @@ export const useScriptingStore = defineStore("scripting", {
         const reasoningPerInputToken = p
           ? scriptTelemetry(scriptActivityNow(p.id), p).reasoning?.perInputToken
           : undefined;
-        const tokens = parts
-          .flat()
-          .map((text) => tokenEstimate(text, p!, at, { prompt, reasoningPerInputToken }));
+        // the prompt and the rates are the same for every chunk, so they are worked out once
+        const perChunk = parts.length
+          ? tokenEstimator(p!, at, { prompt, reasoningPerInputToken })
+          : undefined;
+        const tokens = perChunk ? parts.flat().map((text) => perChunk(text)) : [];
         const inputCost = tokens.reduce((n, t) => n + t.inputCost, 0);
         const outputCost = tokens.reduce((n, t) => n + t.outputCost, 0);
         const rates = p
@@ -171,8 +211,8 @@ export const useScriptingStore = defineStore("scripting", {
         if (tokens.some((t) => t.reserve > remaining))
           blockers.push("Budget cannot reserve one request at its output token limit.");
         return {
-          chapters: chs.length,
-          chars: texts.reduce((n, t) => n + t.length, 0),
+          chapters: plan.chapters.length,
+          chars: cut.reduce((n, c) => n + (c.text?.length ?? 0), 0),
           chunks: tokens.length,
           inputTokens: tokens.reduce((n, t) => n + t.inputTokens, 0),
           outputTokens: tokens.reduce((n, t) => n + t.outputTokens, 0),

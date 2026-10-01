@@ -6,7 +6,8 @@ import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-import { test, expect, beforeAll, beforeEach, describe } from "bun:test";
+import { test, expect, beforeAll, beforeEach, describe, spyOn } from "bun:test";
+import * as scripting from "@/lib/scripting";
 import { newProfile, profileErrors, scriptParts } from "@/lib/scripting";
 import type { Book, Job } from "@/types";
 
@@ -246,6 +247,28 @@ describe("a selection not read yet", () => {
     expect(shown.value.chunks).toBeGreaterThan(1);
     expect(shown.value.cost).toBeGreaterThan(0);
     expect(shown.value.blockers).toEqual([]);
+  });
+
+  test("each chapter is cut once: not again for the estimate, nor when another chapter's text lands", () => {
+    const cache = pinia.run(() => useQueryCache());
+    const shown = computed(() => [
+      scriptingStore.scriptPlan(book, [1, 2, 3]).requests,
+      scriptingStore.scriptEstimate(book, [1, 2, 3]).chunks,
+    ]);
+    const [requests, chunks] = shown.value;
+    expect(requests).toBe(chunks);
+    const cut = spyOn(scripting, "scriptParts");
+    try {
+      // a new read of chapter 2 alone, as each of hundreds of reads lands on the page
+      const two = cache.getQueryData<{ text: string }[]>(keys.chapterText(book, 2, "plain"))!;
+      const text = `${two[0].text} One more sentence.`;
+      cache.setQueryData(keys.chapterText(book, 2, "plain"), [{ text }]);
+      const [after, priced] = shown.value;
+      expect(after).toBe(priced);
+      expect(cut.mock.calls.map(([text]) => text)).toEqual([text]);
+    } finally {
+      cut.mockRestore();
+    }
   });
 
   test("a book with a cap whose spending is not read yet has an unknown amount left, not all of it", () => {

@@ -378,6 +378,25 @@ describe("the queue with a server answering", () => {
     await api.runner.idle();
   });
 
+  test("run next goes to the server, and the queue reads the order it set", async () => {
+    const gate = gatedProvider();
+    wire({ scripting: gate.provider });
+    const id = await shelved();
+    await scriptingStore.runScripting(id, [1, 2, 3], { quiet: true });
+    await gate.started;
+    await settle();
+
+    const last = jobsStore.jobs.find((j) => j.chapterId === 3)!;
+    sent.length = 0;
+    jobsStore.runNext([last.id]);
+    await settle();
+    expect(sent).toEqual([{ path: "/api/jobs/run-next", body: { ids: [last.id] } }]);
+    expect(jobsStore.jobs.find((j) => j.id === last.id)?.priority).toBe(1);
+
+    gate.release();
+    await api.runner.idle();
+  });
+
   test("clearing the history and removing a job go through the server", async () => {
     const id = await shelved();
     await scriptingStore.runScripting(id, [1, 2], { quiet: true });

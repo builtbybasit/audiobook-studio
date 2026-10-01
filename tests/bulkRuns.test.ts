@@ -218,7 +218,7 @@ describe("a run can be stopped and picked up again", () => {
   type Ask =
     | { kind: "narrate"; ids: number[]; scope: NarrationScope }
     | { kind: "script"; ids: number[] }
-    | { kind: "cancel"; id: number };
+    | { kind: "cancel"; ids: number[] };
   let asked: Ask[];
   beforeEach(() => {
     asked = [];
@@ -233,9 +233,9 @@ describe("a run can be stopped and picked up again", () => {
           asked.push({ kind: "script", ids });
           return none;
         },
-        cancel: async (id: number) => {
-          asked.push({ kind: "cancel", id });
-          return jobsStore.jobs.find((j) => j.id === id)!;
+        cancelMany: async (ids: number[]) => {
+          asked.push({ kind: "cancel", ids });
+          return ids;
         },
       }),
     );
@@ -275,10 +275,7 @@ describe("a run can be stopped and picked up again", () => {
     ];
     useQueryCache().setQueryData(keys.jobs, run);
     expect(jobsStore.cancelRun(7)).toBe(2);
-    expect(asked).toEqual([
-      { kind: "cancel", id: run[1].id },
-      { kind: "cancel", id: run[2].id },
-    ]);
+    expect(asked).toEqual([{ kind: "cancel", ids: [run[1].id, run[2].id] }]);
   });
 
   test("a run whose replacements failed is retried at the failed scope, which the chapter's status cannot ask for", async () => {

@@ -647,6 +647,75 @@ describe("the queue over HTTP", () => {
     expect(text.status).toBe(400);
     expect(text.body.error.detail).toContain("chapterId");
   });
+
+  test("cancels a list of jobs in one request and says which were live", async () => {
+    const gate = gatedProvider();
+    const { api, id } = await shelved(testApi({ scripting: gate.provider }));
+    const run = await script(api, id, [1, 2, 3]);
+    await gate.started;
+    const ids = run.body.jobs.map((j) => j.id);
+    const first = await api.request<{ cancelled: number[] }>("/api/jobs/cancel", jsonBody({ ids }));
+    expect(first.status).toBe(200);
+    expect(first.body.cancelled).toEqual(ids);
+    gate.release();
+    await api.runner.idle();
+    for (const j of ids) expect((await jobById(api, j)).status).toBe("cancelled");
+    // nothing left to stop
+    const again = await api.request<{ cancelled: number[] }>("/api/jobs/cancel", jsonBody({ ids }));
+    expect(again.body.cancelled).toEqual([]);
+    expect((await api.request<Failure>("/api/jobs/cancel", jsonBody({ ids: [] }))).status).toBe(
+      400,
+    );
+  });
+});
+
+describe("run next", () => {
+  test("the oldest runs first until jobs are moved; a moved run goes as a block, and a later move goes ahead of it", () => {
+    const db = testDb();
+    db.run(
+      "insert into books (id, title, author, cover_from, cover_to, added_at) values ('b','B','A','#000','#111',0)",
+    );
+    const [a, b, c, d, e] = [1, 2, 3, 4, 5].map((n) => {
+      db.run(
+        `insert into chapters (book_id, id, uid, volume_id, volume_index, title, words) values ('b',${n},'u${n}',1,${n},'C${n}',3)`,
+      );
+      return queue.enqueueJob(db, { kind: "scripting", bookId: "b", chapterId: n, label: "Script" })
+        .job.id;
+    });
+    const claimed = () => queue.claimNext(db)?.id;
+
+    expect(claimed()).toBe(a);
+    queue.finishJob(db, a, "done");
+    // asked for out of order, and with one that has finished: the two queued ones move, oldest first
+    expect(queue.runNext(db, [e, d, a]).sort((x, y) => x - y)).toEqual([d, e]);
+    expect(queue.runNext(db, [c])).toEqual([c]);
+    expect(claimed()).toBe(c);
+    // a running job is not queued any more, so there is nothing to move
+    expect(queue.runNext(db, [c])).toEqual([]);
+    expect([claimed(), claimed(), claimed()]).toEqual([d, e, b]);
+  });
+
+  test("over HTTP: says which moved, and refuses a body with no ids", async () => {
+    const gate = gatedProvider();
+    const { api, id } = await shelved(testApi({ scripting: gate.provider }));
+    const run = await script(api, id, [1, 2, 3]);
+    await gate.started;
+    const [running, , last] = run.body.jobs.map((j) => j.id);
+    const moved = await api.request<{ moved: number[] }>(
+      "/api/jobs/run-next",
+      jsonBody({ ids: [last, running] }),
+    );
+    expect(moved.status).toBe(200);
+    expect(moved.body.moved).toEqual([last]);
+    expect((await jobById(api, last)).priority).toBe(1);
+
+    for (const body of [{}, { ids: [] }, { ids: ["3"] }, { ids: [0] }]) {
+      const { status } = await api.request<Failure>("/api/jobs/run-next", jsonBody(body));
+      expect(status).toBe(400);
+    }
+    gate.release();
+    await api.runner.idle();
+  });
 });
 
 // ---- a chapter cut into the requests its profile allows ----

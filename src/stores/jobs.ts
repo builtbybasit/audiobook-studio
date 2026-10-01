@@ -155,7 +155,7 @@ export const useJobsStore = defineStore("jobs", {
      */
     cancelRun(runId: number): number {
       const pending = this.runJobs(runId).filter((j) => !j.finishedAt);
-      for (const j of pending) this.cancelJob(j.id);
+      this.cancelJobs(pending.map((j) => j.id));
       return pending.length;
     },
     /**
@@ -191,16 +191,36 @@ export const useJobsStore = defineStore("jobs", {
         // the cancel may have gone through even when the remove did not
         .finally(() => this._changed());
     },
-    cancelJob(id: number): void {
-      const job = this.jobs.find((j) => j.id === id);
-      if (!job || job.finishedAt || job.cancelled) return;
-      // The server's job, so the server stops it: what comes back is the job as it now stands, and
-      // the chapter it was for is read again with it. Nothing is marked locally first — a cancel
-      // that failed to reach the server must not look like one that worked.
+    /** Move queued jobs — one, or a whole run's — ahead of everything else waiting. */
+    runNext(ids: number[]): void {
+      if (!ids.length) return;
       void jobsService()
-        .cancel(id)
+        .runNext(ids)
         .then(() => this._changed())
-        .catch((cause: unknown) => toastFailure("cancel this job", cause));
+        .catch((cause: unknown) => toastFailure("move these jobs up", cause));
+    },
+    cancelJob(id: number): void {
+      this.cancelJobs([id]);
+    },
+    /**
+     * Stop these jobs, in one request however many — a run can be hundreds of chapters.
+     *
+     * The server's jobs, so the server stops them, and the queue and their chapters are read again
+     * after. Nothing is marked locally first — a cancel that failed to reach the server must not
+     * look like one that worked.
+     */
+    cancelJobs(ids: number[]): void {
+      const live = ids.filter((id) => {
+        const job = this.jobs.find((j) => j.id === id);
+        return job && !job.finishedAt && !job.cancelled;
+      });
+      if (!live.length) return;
+      void jobsService()
+        .cancelMany(live)
+        .then(() => this._changed())
+        .catch((cause: unknown) =>
+          toastFailure(live.length === 1 ? "cancel this job" : "cancel these jobs", cause),
+        );
     },
     retryJob(id: number): void {
       const exportsStore = useExportsStore();
@@ -269,8 +289,10 @@ export const useJobsStore = defineStore("jobs", {
         .catch((cause: unknown) => toastFailure("clear the history", cause));
     },
     cancelAll(): void {
-      for (const j of this.jobs.filter((j) => j.status === "queued")) this.cancelJob(j.id);
-      for (const j of this.jobs.filter((j) => j.status === "running")) this.cancelJob(j.id);
+      // the waiting ones first, so stopping the running one does not let the next one start
+      const ids = (status: Job["status"]) =>
+        this.jobs.filter((j) => j.status === status).map((j) => j.id);
+      this.cancelJobs([...ids("queued"), ...ids("running")]);
     },
     /**
      * The failed jobs "Retry all failed" would actually re-run — one per chapter, newest kept.

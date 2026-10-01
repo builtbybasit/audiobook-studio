@@ -12,6 +12,7 @@ import { useNow } from "@vueuse/core";
 
 import StatusDot from "@/components/StatusDot.vue";
 import JobDetails from "@/views/queue/JobDetails.vue";
+import UpNext from "@/views/queue/UpNext.vue";
 import type { Job, JobKind } from "@/types";
 import type { Component } from "vue";
 import {
@@ -290,57 +291,7 @@ async function toggleNotify() {
           </div>
         </section>
 
-        <!-- queued -->
-        <section class="card overflow-hidden">
-          <div
-            class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"
-          >
-            <span class="label">Up next</span
-            ><span class="text-xs text-zinc-400">{{ queued.length }}</span>
-            <button
-              v-if="queued.length"
-              class="ml-auto whitespace-nowrap text-xs text-zinc-400 hover:text-red-500"
-              @click="queued.forEach((j) => jobsStore.cancelJob(j.id))"
-            >
-              cancel queued
-            </button>
-          </div>
-          <div v-if="!queued.length" class="px-4 py-4 text-sm text-zinc-500">Nothing waiting.</div>
-          <div class="max-h-80 overflow-y-auto">
-            <div
-              v-for="(j, i) in queued"
-              :key="j.id"
-              class="flex cursor-pointer items-center gap-3 border-b border-zinc-100 px-4 py-2 text-sm last:border-0 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-900"
-              @click="openRow($event, j)"
-            >
-              <span class="w-5 font-mono text-xs text-zinc-400">{{ i + 1 }}</span>
-              <component :is="icon[j.kind]" class="icon-sm text-zinc-400" />
-              <button
-                class="min-w-0 flex-1 truncate text-left hover:text-violet-500 hover:underline"
-                :aria-label="`View activity for ${j.label}`"
-                @click="selectedId = j.id"
-              >
-                {{ j.label }} <span class="text-zinc-500">· {{ book(j)?.title }}</span
-                ><span v-if="j.bulk" class="ml-1.5 text-[10px] text-zinc-400"
-                  >{{ j.bulk.index }}/{{ j.bulk.total }}</span
-                >
-              </button>
-              <button
-                class="text-xs text-zinc-400 hover:text-red-500"
-                @click="jobsStore.cancelJob(j.id)"
-              >
-                cancel
-              </button>
-              <button
-                class="text-xs text-zinc-400 hover:text-red-500"
-                title="Cancel and remove"
-                @click="jobsStore.removeJob(j.id)"
-              >
-                <CloseIcon class="icon-sm" />
-              </button>
-            </div>
-          </div>
-        </section>
+        <UpNext :queued="queued" @open="selectedId = $event" />
 
         <!-- history -->
         <section class="card overflow-hidden">

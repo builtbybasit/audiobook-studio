@@ -20,6 +20,7 @@ export function toJob(row: JobRow, events: readonly EventRow[] = []): Job {
     cancelled: row.cancelled,
   };
   if (row.waitingReason != null) j.waitingReason = row.waitingReason;
+  if (row.priority) j.priority = row.priority;
   if (row.bulkId != null)
     j.bulk = {
       id: row.bulkId,
@@ -70,6 +71,7 @@ export function jobValues(j: Job): typeof jobs.$inferInsert {
     finishedAt: j.finishedAt,
     cancelled: j.cancelled,
     waitingReason: j.waitingReason ?? null,
+    priority: j.priority ?? 0,
     bulkId: j.bulk?.id ?? null,
     bulkOp: j.bulk?.op ?? null,
     bulkIndex: j.bulk?.index ?? null,

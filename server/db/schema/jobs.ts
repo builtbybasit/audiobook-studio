@@ -49,6 +49,8 @@ export const jobs = sqliteTable(
     finishedAt: integer("finished_at"),
     cancelled: integer("cancelled", { mode: "boolean" }).notNull().default(false),
     waitingReason: text("waiting_reason"),
+    /** raised by "Run next"; the claim takes the highest first, then the oldest (`claimNext`) */
+    priority: integer("priority").notNull().default(0),
 
     /**
      * The bulk run this job belongs to. Every chapter asked for in one press shares an id, which is

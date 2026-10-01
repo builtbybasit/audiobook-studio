@@ -815,6 +815,75 @@ describe("the cast with a server answering", () => {
     ).toEqual(tobinLines);
   });
 
+  test("removing several speakers is one toast, and its one undo puts every line back", async () => {
+    const { id } = await scriptedAndOpen();
+    const linesOf = (name: string) =>
+      readScript(api.db, id, 1)
+        .filter((s) => s.speaker === name)
+        .map((s) => s.id);
+    const mara = linesOf("Mara");
+    const tobin = linesOf("Tobin");
+    expect(mara.length && tobin.length).toBeGreaterThan(0);
+    const before = toasts.length;
+    // the Narrator and a name the cast does not have are passed over, not refused
+    await castStore.removeMany(id, ["Mara", "Narrator", "Nobody", "Tobin"]);
+    expect(toasts.slice(before).map((t) => t.msg)).toEqual([
+      `Removed 2 speakers · ${mara.length + tobin.length} lines now read by the Narrator`,
+    ]);
+    expect(castStore.charactersOf(id).map((c) => c.name)).not.toContain("Mara");
+    expect(castStore.charactersOf(id).map((c) => c.name)).toContain("Narrator");
+    expect(linesOf("Mara")).toEqual([]);
+    expect(linesOf("Tobin")).toEqual([]);
+    await toasts.at(-1)!.undo!();
+    expect(castStore.charactersOf(id).map((c) => c.name)).toEqual(
+      expect.arrayContaining(["Mara", "Tobin"]),
+    );
+    expect(linesOf("Mara")).toEqual(mara);
+    expect(linesOf("Tobin")).toEqual(tobin);
+  });
+
+  test("a removal the server refuses ends the run, and what went before it can still be undone", async () => {
+    const { id } = await scriptedAndOpen();
+    const linesOf = (name: string) =>
+      readScript(api.db, id, 1)
+        .filter((s) => s.speaker === name)
+        .map((s) => s.id);
+    const mara = linesOf("Mara");
+    const tobin = linesOf("Tobin");
+    // the server refuses Tobin, and is asked about no one after
+    const real = castStore._service();
+    const asked: string[] = [];
+    castStore._service = () =>
+      Object.assign(Object.create(real) as typeof real, {
+        deleteCharacter: (bookId: string, name: string) => {
+          asked.push(name);
+          return name === "Tobin"
+            ? Promise.reject(new Error("offline"))
+            : real.deleteCharacter(bookId, name);
+        },
+      });
+    castStore.addCharacter(id, "Ines");
+    await settle();
+    const before = toasts.length;
+    await castStore.removeMany(id, ["Mara", "Tobin", "Ines"]);
+    expect(asked).toEqual(["Mara", "Tobin"]);
+    const said = toasts.slice(before);
+    expect(said.filter((t) => t.kind === "error").map((t) => t.msg)).toEqual([
+      "Could not remove this speaker",
+    ]);
+    expect(said.filter((t) => t.undo).map((t) => t.msg)).toEqual([
+      `Removed “Mara” · ${mara.length} line${mara.length === 1 ? "" : "s"} now read by the Narrator`,
+    ]);
+    expect(linesOf("Mara")).toEqual([]);
+    expect(linesOf("Tobin")).toEqual(tobin);
+    expect(castStore.charactersOf(id).map((c) => c.name)).toEqual(
+      expect.arrayContaining(["Tobin", "Ines"]),
+    );
+    await said.find((t) => t.undo)!.undo!();
+    expect(linesOf("Mara")).toEqual(mara);
+    expect(castStore.charactersOf(id).map((c) => c.name)).toContain("Mara");
+  });
+
   test("what is said about a speaker is written as stated, and the dictionary whole", async () => {
     const { id } = await scriptedAndOpen();
     await castStore.updateCharacter(id, "Mara", { gender: "f", major: true });

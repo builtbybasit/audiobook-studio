@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // A character's description, hidden until asked for. The model writes descriptions from the whole
 // book, so one read before its chapter can give away who someone turns out to be; the reader and the
-// cast list show a button in its place, and the text once it is pressed.
+// cast list show a button in its place, and the text once it is pressed. The default slot replaces
+// what is shown once it is — the Cast page's record puts the editable description there.
 import { ref } from "vue";
 
 withDefaults(
@@ -18,14 +19,16 @@ const revealed = ref(false);
 </script>
 
 <template>
-  <span v-if="!text" class="italic text-zinc-400">{{ empty }}</span>
-  <template v-else-if="revealed || !hidden">{{ text }}</template>
   <button
-    v-else
+    v-if="text && hidden && !revealed"
     type="button"
     class="rounded border border-dashed border-zinc-300 px-2 py-1 italic text-zinc-400 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
     @click="revealed = true"
   >
     description hidden — spoilers · show
   </button>
+  <slot v-else
+    ><span v-if="!text" class="italic text-zinc-400">{{ empty }}</span
+    ><template v-else>{{ text }}</template></slot
+  >
 </template>

@@ -31,6 +31,7 @@ import { readScript } from "~/db/script";
 import { plainText } from "~/epub/markdown";
 import { notFound } from "~/lib/errors";
 import { wordsOf } from "~/providers/chatScripting";
+import { SAMPLES_MANIFEST, VOICE_SAMPLES_FORMAT } from "~/speakerSamples/folder";
 import { readSpeakerSamplesForExport } from "~/speakerSamples/store";
 import type { VoiceFiles } from "~/voices/files";
 
@@ -85,19 +86,16 @@ interface CarriedSample {
   read(): Promise<Uint8Array>;
 }
 
-/** A speaker whose voice's recordings an export can carry, with the consent they were kept under. */
+/** A speaker whose voice's recordings an export can carry. */
 interface CarriedVoice {
   speaker: string;
   title: string;
-  /** epoch ms */
-  consentAt: number;
-  consentText: string;
   samples: CarriedSample[];
 }
 
 /**
- * Recordings that came in a script file and still wait with a speaker, to be carried again with
- * their original consent. A discarded set is not carried.
+ * Recordings that came in a script file and still wait with a speaker, to be carried again. A
+ * discarded set is not carried.
  */
 function waitingVoices(db: Db, bookId: string, audioDir: string): CarriedVoice[] {
   return readSpeakerSamplesForExport(db, bookId, audioDir);
@@ -123,8 +121,6 @@ function keptCloneOf(
   return {
     speaker: c.name,
     title: clone.title,
-    consentAt: clone.consentAt,
-    consentText: clone.consentText,
     samples: clone.samples.map((s) => ({
       name: s.name,
       format: s.format,
@@ -265,11 +261,9 @@ export async function buildScriptExport(
     for (const v of carriedVoices(db, bookId, samples.audioDir, samples.voices)) {
       const folder = folderOf(v.speaker, taken);
       const record: ScriptFileVoice = {
-        format: "audiobook-studio/voice-samples",
+        format: VOICE_SAMPLES_FORMAT,
         version: 1,
         title: v.title,
-        consentAt: new Date(v.consentAt).toISOString(),
-        consentText: v.consentText,
         samples: [],
       };
       for (const [i, s] of v.samples.entries()) {
@@ -277,7 +271,7 @@ export async function buildScriptExport(
         zip.file(folder + file, await s.read(), { compression: "STORE" });
         record.samples.push({ file, name: s.name, format: s.format });
       }
-      zip.file(folder + "consent.json", json(record));
+      zip.file(folder + SAMPLES_MANIFEST, json(record));
       folders.set(v.speaker, folder);
     }
   }

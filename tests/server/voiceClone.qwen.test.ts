@@ -12,7 +12,7 @@ import type { CloneRequest } from "~/providers/clone";
 import type { SpeechInput } from "~/providers/speech";
 import { qwenPreferredName, qwenWire } from "~/providers/speech/qwen";
 import {
-  agreed,
+  cloneFields,
   answering,
   cloneForm,
   cloneTarget,
@@ -258,7 +258,7 @@ describe("the clone route, for Model Studio", () => {
     const q = answering(() => Response.json({ output: { voice: "qwen-tts-vc-Mara-1" } }));
     const api = testApi({ cloner: q.cloner });
     await saved(api, qwenEndpoint());
-    const { status, body } = await postClone(api, cloneForm(agreed("qwen"), [sampleFile()]));
+    const { status, body } = await postClone(api, cloneForm(cloneFields("qwen"), [sampleFile()]));
     expect(status).toBe(201);
     expect(body).toMatchObject({ id: "qwen-tts-vc-Mara-1", label: "Mara", gender: "?" });
     expect(q.sent).toHaveLength(1);
@@ -269,7 +269,7 @@ describe("the clone route, for Model Studio", () => {
     const api = testApi({ cloner: q.cloner });
     await saved(api, qwenEndpoint());
     const refused = async (samples: File[]) => {
-      const { status, body } = await postClone(api, cloneForm(agreed("qwen"), samples));
+      const { status, body } = await postClone(api, cloneForm(cloneFields("qwen"), samples));
       return [status, body.error?.message];
     };
     expect(await refused([sampleFile("a.wav"), sampleFile("b.wav")])).toEqual([
@@ -294,7 +294,7 @@ describe("the clone route, for Model Studio", () => {
     const q = answering(() => Response.json({ output: { voice: "v" } }));
     const api = testApi({ cloner: q.cloner });
     await saved(api, qwenEndpoint({ model: "qwen-audio-3.0-tts-flash" }));
-    const { status, body } = await postClone(api, cloneForm(agreed("qwen"), [sampleFile()]));
+    const { status, body } = await postClone(api, cloneForm(cloneFields("qwen"), [sampleFile()]));
     expect(status).toBe(400);
     expect(body.error?.message).toBe(
       "Qwen VC cannot make a voice with the model qwen-audio-3.0-tts-flash; change its model to qwen3-tts-vc-2026-01-22 first",

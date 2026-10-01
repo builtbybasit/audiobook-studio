@@ -28,7 +28,7 @@
 // what a line is spoken with. The answer also says whether the voice `requires_verification`: then
 // it exists on the account but ElevenLabs will not speak with it until the person has verified it
 // on ElevenLabs' site. It is answered all the same, named so it says what is left to do — failing
-// here would leave the voice made on the account, the recordings and the consent unkept, and a
+// here would leave the voice made on the account and the recordings unkept, and a
 // second try would make a second voice.
 import type { EndpointProbe, SpeechUsage, Voice } from "@/types";
 import { normalizeSpeechUsage } from "@/lib/pricing";

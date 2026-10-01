@@ -646,7 +646,7 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `POST`   | `/api/endpoints/sample`                           | One saved voice, heard: kept, its own recording, or rendered                                                 |
 | `POST`   | `/api/endpoints/voices/clone`                     | A voice made from samples on the provider (multipart, 201)                                                   |
 | `GET`    | `/api/endpoints/:id/samples`                      | An endpoint's voices with kept samples                                                                       |
-| `GET`    | `/api/endpoints/:id/voices/:voice/samples`        | One voice's kept samples and consent; `…/:file` one sample                                                   |
+| `GET`    | `/api/endpoints/:id/voices/:voice/samples`        | One voice's kept samples; `…/:file` one sample                                                               |
 | `POST`   | `/api/endpoints/:id/voices/:voice/samples`        | Keep samples for a voice already saved; nothing sent                                                         |
 | `DELETE` | `/api/endpoints/:id/voices/:voice/samples`        | Forget them, keep the voice; `POST …/restore` takes it back                                                  |
 | `GET`    | `/api/endpoints/requests`                         | One endpoint's requests, newest first; `?kind&id&range`                                                      |
@@ -1044,9 +1044,8 @@ saving one can move queued work, which asks first.
 ### Cloning a voice, and keeping its samples
 
 `POST /api/endpoints/voices/clone` is a multipart form of the endpoint's `id`, the voice's `title`,
-the recordings under `samples`, and `consent=yes` with the sentence the form showed
-(`consentText`) — without the consent nothing is sent. The provider makes the voice **once**; from
-then on a line is spoken with the new voice's id, like any other voice's.
+and the recordings under `samples`. The provider makes the voice **once**; from then on a line is
+spoken with the new voice's id, like any other voice's.
 
 Which providers can clone, and from what, is each provider's `cloning`
 ([src/lib/providers/types.ts](../src/lib/providers/types.ts)): how many samples, how big, which
@@ -1088,8 +1087,8 @@ ElevenLabs and Cartesia charge nothing per voice.
 
 **The samples are kept once the provider has answered**, never before, so a failed clone keeps
 nothing: the bytes as picked, named by their hash, under `VOICE_DIR` in one directory per voice
-([voices/files.ts](../server/voices/files.ts)), with a `cloned_voices` row holding when consent was
-given and the sentence it was given to, and a `voice_samples` row per sample, with its transcript
+([voices/files.ts](../server/voices/files.ts)), with a `cloned_voices` row holding the voice's
+title and when they were kept, and a `voice_samples` row per sample, with its transcript
 when the form gave one (`transcripts`, one text per `samples` file, in order; Fish's `texts` go only
 when every sample has one, Qwen's `text` with its one clip). The voice already
 exists on the account by then, so a failure to keep them answers `201` with `samplesKept: false`;

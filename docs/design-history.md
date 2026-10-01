@@ -62,6 +62,8 @@ Folded in from D1: the rail is mini by default with a widening toggle (`uiStore.
 
 Moving the demo onto the server removed the browser's simulators, its in-memory key store and its local usage store: a demo tab is the same page talking to `/demo/api`, and no store has a demo branch.
 
+Cloning a voice, and keeping its samples, asked for a consent tick until 2026-10-01; the sentence and its time were kept with the samples and carried in a script file's `consent.json`. The voices cloned here are made-up narrator voices, so the tick recorded an attestation nobody was making, and it went — the form, the columns (migration `0018_drop_clone_consent`) and the fields; the folder's list is `samples.json` now, and an older `consent.json` still reads as one.
+
 ## Historical measurements and references
 
 The player notes originally reported a 12 kB gzip waveform chunk. That was a build-specific measurement, not a size guarantee; the playback guide retains the reason the component is lazy-loaded. Re-measure with the current build when size matters.

@@ -37,7 +37,7 @@ The Gate.script.zip
 ├── lexicon.json
 ├── chapters/0012-at-the-gate.json
 └── voices/mira/                  only with "Include voice samples"
-    ├── consent.json
+    ├── samples.json
     └── sample-1.wav
 ```
 
@@ -307,15 +307,15 @@ names them does not hand their lines to the Narrator.
 
 A private clone exists only on the account that made it, so in someone else's hands it is a name
 with nothing behind it. Carrying the samples it was made from lets the recipient make the voice
-again on their own account, with their own consent.
+again on their own account.
 
 ### Kept when a voice is cloned
 
 An export can only carry what the server kept, so cloning keeps its samples: once the provider
-answers, the samples are written under `VOICE_DIR` beside a `cloned_voices` row holding when
-consent was given and the sentence that was agreed to, a `voice_samples` row per sample holding its
-transcript when the person gave one. A transcript does not yet travel in a script file:
-`consent.json` lists only each sample's file, name and format, and the import's
+answers, the samples are written under `VOICE_DIR` beside a `cloned_voices` row holding the
+voice's title and when they were kept, and a `voice_samples` row per sample holding its transcript
+when the person gave one. A transcript does not yet travel in a script file: `samples.json` lists
+only each sample's file, name and format, and the import's
 `speaker_sample_files` table has no column for one; when a kept row does carry a transcript, the
 clone form's prefill fills it in.
 [The providers](backend.md#the-providers-and-where-a-key-lives) describes which providers clone,
@@ -326,7 +326,7 @@ the voice, with Undo.
 **Older clones can be given samples.** Nothing marks a voice on the account as a clone, so the
 server cannot tell a voice cloned before samples were kept from any other. Every voice without kept
 samples on an endpoint that clones offers **Keep its samples…**, which takes the same picker,
-limits and consent tick as cloning and sends nothing to the provider. The alternative, re-cloning,
+and limits as cloning and sends nothing to the provider. The alternative, re-cloning,
 would leave a duplicate private voice on the account.
 
 **Reconciled on save, not cascaded.** A save of the endpoints replaces every voice row, so a
@@ -336,8 +336,8 @@ configuration in the same transaction instead. A clone whose voice has left is m
 rather than deleted, because removing a voice or an endpoint offers Undo and a settings import can
 drop a voice and bring it back; a clone the page has not saved yet is spared, because the clone
 answers before the page saves the voice it made. Either goes on the first save a day later, as a
-forget does. Removing a voice removes its samples in the end on purpose: keeping someone's
-recordings after the voice itself is gone is exactly what the consent never covered.
+forget does. Removing a voice removes its samples in the end on purpose: they were kept to make
+that voice again, not to outlive it.
 
 ### In the export
 
@@ -345,55 +345,53 @@ recordings after the voice itself is gone is exactly what the consent never cove
 the export can carry, **Export script** in the book menu becomes **Export script…** and opens one
 checkbox, **Include voice samples**, unticked every time: recordings of a person are not a setting
 to remember. Under it, one line says what ticking it adds, from
-`GET /api/books/:id/script-export/samples`: _Recordings of 3 voices (Mira, Kael, Vex) · 41 MB.
-Share them only with someone the voice's owner agreed to._ The download is then
+`GET /api/books/:id/script-export/samples`: _Recordings of 3 voices (Mira, Kael, Vex) · 41 MB._
+The download is then
 `GET …/script-export?samples=1`. The Scripting page's link always exports without samples.
 
 A speaker's samples are those of the clone they are voiced by, unless its samples were forgotten or
 the voice has left the saved configuration; failing that, samples still waiting with the speaker
-from an earlier import, carried again under their original consent. A recording gone from disk is
+from an earlier import, carried again. A recording gone from disk is
 left out, and a voice with none left is not carried.
 
 **The folder.** Each carried voice gets `voices/<slug>/`, the slug from the speaker's name (with
 `-2`, `-3` for a clash), and that speaker's `cast.json` entry names it: `"samples": "voices/mira/"`.
 The recordings are `sample-1.<ext>`, `sample-2.<ext>` and so on, stored uncompressed because audio
-barely compresses, byte for byte as they were kept. Beside them `consent.json` says what they are
-and what was agreed to:
+barely compresses, byte for byte as they were kept. Beside them `samples.json` says what they are:
 
 ```json
 {
   "format": "audiobook-studio/voice-samples",
   "version": 1,
   "title": "Mira",
-  "consentAt": "2026-09-12T10:04:31.000Z",
-  "consentText": "This is my voice, or …",
   "samples": [{ "file": "sample-1.wav", "name": "mira-take-2.wav", "format": "wav" }]
 }
 ```
 
-`title` is the voice's name where it was kept, `consentAt` when the box was ticked, `consentText`
-the sentence it said, and each sample's `name` the name it was picked under. `format` is one of
+`title` is the voice's name where it was kept, and each sample's `name` the name it was picked
+under. `format` is one of
 `wav`, `mp3`, `m4a`, `opus`, `flac`.
 
 ### In the import
 
 **Judged a folder at a time, against the clone limits**
 ([server/speakerSamples/folder.ts](../server/speakerSamples/folder.ts)). A folder is usable when
-its `consent.json` reads and every recording it names is there, is audio by its first bytes
+its `samples.json` reads and every recording it names is there, is audio by its first bytes
 (`sniffSample`, whatever its name says), and fits the limits a clone is held to: 20 MB a recording,
 100 MB a voice, at most 20 recordings. A folder that fails is refused whole and says why; the
-lines, the cast and every other voice still import.
+lines, the cast and every other voice still import. A file from an older export names the list
+`consent.json` and adds `consentAt` and `consentText` to it; it is read the same way, and those two
+fields are ignored.
 
-**A record of consent, not permission.** On a voice row that is private or could not be checked,
-the plan adds _Samples included · 3 recordings, 12 MB · consent recorded 12/09/2026: "This is my
-voice, or …"_, or _Samples not kept_ with the reason. It never ticks the recipient's box.
+On a voice row that is private or could not be checked, the plan adds _Samples included · 3
+recordings, 12 MB_, or _Samples not kept_ with the reason.
 
 **They wait with the speaker, not with a voice.** An imported sample has no voice to belong to,
 because no provider has made one here. When the import is applied, the page sends the same file to
 `POST /api/books/:id/speaker-samples` with the speakers whose samples to keep, and the server reads
 and judges it again, since the plan route wrote nothing and a request is not trusted to say what a
 file holds ([server/speakerSamples/store.ts](../server/speakerSamples/store.ts)). Each speaker gets
-a `speaker_samples` row (book, speaker, voice title, consent, source file name) with a foreign key
+a `speaker_samples` row (book, speaker, voice title, source file name) with a foreign key
 to `characters(book_id, name)` that cascades on update, so a rename carries them the way it carries
 the lines, and a `speaker_sample_files` row per recording. The files live in
 `<AUDIO_DIR>/<bookId>/samples/`, named by a hash of their bytes, so removing the book removes them
@@ -413,17 +411,15 @@ tab, so the toast offers Undo. The import report shows the same link.
 
 ### Cloning from them
 
-**Import never clones.** Cloning is a one-shot upload that needs the person's own consent, so it
-stays a step taken on the Voices tab.
+**Import never clones.** Cloning is a one-shot upload that may cost money and leaves a voice on the
+account, so it stays a step taken on the Voices tab.
 
 **The link fills the form; it does not submit it.** The link opens the Voices tab of the enabled
 endpoint that takes the samples best: one that takes every sample as it is, else one that takes
 each sample's format and size but fewer of them, else the first that clones at all, where the tab
 says what stands in the way. When nothing can clone, the link is replaced by one to the Endpoints
 page. The tab fetches the recordings as files and fills the clone form's name and samples, cut to
-what that provider takes. It shows the file's consent record as someone else's, and the consent box
-starts unticked whatever the file says; the person reads the form, ticks it and presses **Make
-voice**. The speaker comes from the server's row, not the address, so a rename after the link was
+what that provider takes; the person reads the form and presses **Make voice**. The speaker comes from the server's row, not the address, so a rename after the link was
 made still finds them.
 
 **After cloning, the voice goes to the speaker.** The link came from one speaker, so a trip back to
@@ -449,16 +445,16 @@ aside: the clone has kept them now.
   needing review.
 - [tests/server/scriptExport.test.ts](../tests/server/scriptExport.test.ts): `sourceHash` across
   markup and one changed word; the zip's manifest, cast with voice hints, dictionary and one file
-  per scripted chapter; voice samples only when asked, with their consent, and when a clone's are
+  per scripted chapter; voice samples only when asked, with their `samples.json`, and when a clone's are
   left out.
 - [tests/server/scriptImport.test.ts](../tests/server/scriptImport.test.ts): reading a hand-made or
   broken zip and a lone chapter; matching by source, the fidelity check, duplicate hashes; cast and
   dictionary differences; voice matching, lookups and default ticks; voice folders judged and
-  refused; that the route writes nothing.
+  refused, an older `consent.json` read as the list; that the route writes nothing.
 - [tests/server/speakerSamples.test.ts](../tests/server/speakerSamples.test.ts): keeping waiting
   samples, a rename, a merge, a removed speaker or book, discard and its purge a day later.
 - [tests/server/voiceClone.test.ts](../tests/server/voiceClone.test.ts) ("the recordings a voice was
-  made from"): samples kept byte for byte with their consent, a keep that fails, a removal and its
+  made from"): samples kept byte for byte, a keep that fails, a removal and its
   grace period, keeping samples for an older voice.
 - [tests/cloneForm.test.ts](../tests/cloneForm.test.ts) ("where a clone link opens"): which endpoint
   the clone link picks.

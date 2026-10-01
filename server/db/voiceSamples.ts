@@ -23,13 +23,12 @@ export interface DroppedSamples {
   files: string[];
 }
 
-/** What to keep: the voice, the consent it was kept under, and the samples already on disk. */
+/** What to keep: the voice and the samples already on disk. */
 export interface KeepSamples {
   endpointId: string;
   voiceId: string;
   title: string;
   at: number;
-  consentText: string;
   /** a voice already in a saved configuration, as when an older voice is given its samples */
   attached: boolean;
   samples: KeptSample[];
@@ -88,8 +87,6 @@ function keptOf(v: typeof clonedVoices.$inferSelect): Omit<KeptVoiceSamples, "sa
     voiceId: v.voiceId,
     title: v.title,
     madeAt: v.madeAt,
-    consentAt: v.consentAt,
-    consentText: v.consentText,
   };
 }
 
@@ -123,8 +120,6 @@ export function keepSamples(tx: Tx, keep: KeepSamples): string[] {
       voiceId: keep.voiceId,
       title: keep.title,
       madeAt: keep.at,
-      consentAt: keep.at,
-      consentText: keep.consentText,
       attached: keep.attached,
     })
     .run();
@@ -181,8 +176,7 @@ export function restoreSamples(tx: Tx, endpointId: string, voiceId: string): boo
  * - An attached voice the configuration no longer holds is **missing** from this save on. Removing
  *   a voice or an endpoint offers Undo and a settings import can bring a voice back, so it keeps
  *   its samples — and gets them back if it returns — until a save after the grace period, when
- *   they go: consent was given for making that voice, not for keeping a person's samples after
- *   it.
+ *   they go: they were kept for making that voice, not to outlive it.
  * - An unattached voice is spared: the clone answered before the page saved the voice it made, and
  *   a save in that moment is not a removal. One that has waited past the grace period is a voice
  *   the page never kept, and it goes.

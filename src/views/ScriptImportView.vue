@@ -202,10 +202,7 @@ function apply() {
 /** The line a private voice's row gives the recordings the file carries for it. */
 function samplesLine(s: VoiceRowSamples): string {
   if (s.kind === "refused") return `Samples not kept: ${s.reason}`;
-  return (
-    `Samples included · ${plural(s.count, "recording")}, ${sizeLabel(s.bytes)} · ` +
-    `consent recorded ${new Date(s.consentAt).toLocaleDateString()}: “${s.consentText}”`
-  );
+  return `Samples included · ${plural(s.count, "recording")}, ${sizeLabel(s.bytes)}`;
 }
 
 // ---------- the report ----------
@@ -344,8 +341,7 @@ const SKIPPED = {
             <h2 class="text-sm font-semibold">Voice samples waiting</h2>
             <p class="mt-1 text-xs text-zinc-500">
               The file carried the recordings these private voices were made from. They wait with
-              the speaker until you clone them — nothing is cloned for you, and cloning asks for
-              your own consent.
+              the speaker until you clone them — nothing is cloned for you.
             </p>
             <div
               v-for="k in keptSamples"

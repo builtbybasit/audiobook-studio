@@ -39,8 +39,6 @@ const keptOf = (voiceId: string): KeptVoiceSamples => ({
   voiceId,
   title: "Mara",
   madeAt: 1,
-  consentAt: 1,
-  consentText: "yes",
   samples: [{ file: `${"a".repeat(32)}.wav`, name: "take.wav", format: "wav", bytes: 8 }],
 });
 
@@ -123,7 +121,7 @@ class FakeService implements EndpointSettingsService {
     source: "rendered",
   };
   /** what each clone was asked, with how many writes had gone out by then */
-  cloned: { id: string; title: string; samples: number; consent: boolean; puts: number }[] = [];
+  cloned: { id: string; title: string; samples: number; puts: number }[] = [];
   cloneAnswer: ClonedVoice | ApiError = {
     id: "cloned-1",
     label: "Mara",
@@ -135,7 +133,6 @@ class FakeService implements EndpointSettingsService {
       id,
       title: request.title,
       samples: request.samples.length,
-      consent: request.consent,
       puts: this.puts.length,
     });
     if (this.cloneAnswer instanceof ApiError) throw this.cloneAnswer;
@@ -759,12 +756,9 @@ describe("cloning a voice with a server answering", () => {
     const voice = await endpointsStore.cloneVoice(ep, {
       title: "Mara",
       samples: [recording(), recording()],
-      consent: true,
     });
     expect(voice).toEqual({ id: "cloned-1", label: "Mara", gender: "?" });
-    expect(svc.cloned).toEqual([
-      { id: "srv-tts", title: "Mara", samples: 2, consent: true, puts: 1 },
-    ]);
+    expect(svc.cloned).toEqual([{ id: "srv-tts", title: "Mara", samples: 2, puts: 1 }]);
     expect(ep.voices.at(-1)).toEqual({ id: "cloned-1", label: "Mara", gender: "?" });
     expect(toasts.at(-1)).toMatchObject({ kind: "success" });
     // the new voice is saved like any other
@@ -773,7 +767,7 @@ describe("cloning a voice with a server answering", () => {
 
     // a voice made whose recordings the server could not keep is still made, and the page says so
     svc.cloneAnswer = { id: "cloned-2", label: "Kael", gender: "?", samplesKept: false };
-    await endpointsStore.cloneVoice(ep, { title: "Kael", samples: [recording()], consent: true });
+    await endpointsStore.cloneVoice(ep, { title: "Kael", samples: [recording()] });
     expect(ep.voices.at(-1)).toEqual({ id: "cloned-2", label: "Kael", gender: "?" });
     expect(toasts.at(-1)).toMatchObject({ kind: "warn" });
   });
@@ -783,16 +777,12 @@ describe("cloning a voice with a server answering", () => {
     await endpointsStore.load();
     const ep = endpointsStore.endpoints[0];
     const before = ep.voices.length;
-    svc.cloneAnswer = new ApiError("Confirm you have the right to clone this voice", 400);
+    svc.cloneAnswer = new ApiError("take.wav is not audio a voice can be made from", 415);
     expect(
-      await endpointsStore.cloneVoice(ep, {
-        title: "Mara",
-        samples: [recording()],
-        consent: false,
-      }),
+      await endpointsStore.cloneVoice(ep, { title: "Mara", samples: [recording()] }),
     ).toBeNull();
     expect(toasts).toEqual([
-      { msg: "Confirm you have the right to clone this voice", kind: "error" },
+      { msg: "take.wav is not audio a voice can be made from", kind: "error" },
     ]);
     expect(ep.voices).toHaveLength(before);
   });

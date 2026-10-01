@@ -137,10 +137,9 @@ removed. Each voice shows how many speakers across the library use it.
 **Clone a voice** appears on an endpoint whose provider clones — Fish Audio, ElevenLabs,
 BreezeBlue, Cartesia, MiniMax, or Qwen on `qwen3-tts-vc-2026-01-22`; a Qwen endpoint on another
 model names the model to switch to. It makes a voice from uploaded samples of one person speaking — any audio
-file of that one voice you have the right to use:
+file of that one voice:
 
-- The form takes a name, the samples the provider takes, and a box saying the voice is yours or its
-  owner agreed; nothing is sent without the box.
+- The form takes a name and the samples the provider takes; the button is ready once both are.
 - The picker offers only the provider's formats and says the limits in one line — Fish and
   ElevenLabs take up to 20 samples, the others one — and lists each sample with its size. A pick
   past that keeps the first and says so, and a file too large or in a format the provider does not
@@ -159,11 +158,10 @@ file of that one voice you have the right to use:
   toast.
 
 **Kept samples.** The server keeps a clone's samples beside the voice, each with its transcript
-when one was given, and the sentence that was agreed to and when, so the voice can travel with a
-book's script
+when one was given, so the voice can travel with a book's script
 ([script export](script-transfer.md#kept-when-a-voice-is-cloned)). The voice's row then says
 **N samples kept**; **Forget** drops them and keeps the voice, with Undo. A voice with none offers
-**Keep its samples…**: the same picker, limits and consent box, with nothing sent to the provider.
+**Keep its samples…**: the same picker and limits, with nothing sent to the provider.
 Removing a voice or its endpoint keeps its samples for a day, so the removal's Undo, or a settings
 import that brings the voice back, finds them; the first save after that removes them.
 

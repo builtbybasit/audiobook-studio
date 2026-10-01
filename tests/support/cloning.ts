@@ -120,8 +120,8 @@ export function cloneForm(
   return f;
 }
 
-/** The clone form's fields for endpoint `id`, with consent given. */
-export const agreed = (id = "fish") => ({ id, title: "Mara", consent: "yes" });
+/** The clone form's fields for endpoint `id`. */
+export const cloneFields = (id = "fish") => ({ id, title: "Mara" });
 
 export const postClone = (api: TestApi, body: FormData) =>
   api.request<ClonedVoice & { error?: { message: string } }>("/api/endpoints/voices/clone", {

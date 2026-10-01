@@ -135,8 +135,6 @@ describe("where a clone link opens", () => {
     id: 7,
     speaker: "Mara",
     title: "Mara (cloned)",
-    consentAt: 1_700_000_000_000,
-    consentText: "This is my voice.",
     source: "The Cliche.script.zip",
     samples,
   });

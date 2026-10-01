@@ -20,7 +20,6 @@ import { testApi, type TestApi } from "../support/server";
 // a WAV header is all a recording needs to be here: it is sniffed, never decoded
 const wav = (tag: string) =>
   new Uint8Array([...`RIFF\0\0\0\0WAVEfmt ${tag}`].map((c) => c.charCodeAt(0)));
-const CONSENT_AT = "2026-09-12T10:00:00.000Z";
 
 const speaker = (name: string, folder?: string): ScriptFileSpeaker => ({
   name,
@@ -55,13 +54,11 @@ async function scriptFile(cast: ScriptFileSpeaker[], recordings: Record<string, 
     if (!s.samples) continue;
     const files = recordings[s.name] ?? [];
     zip.file(
-      `${s.samples}consent.json`,
+      `${s.samples}samples.json`,
       JSON.stringify({
         format: "audiobook-studio/voice-samples",
         version: 1,
         title: `${s.name} (clone)`,
-        consentAt: CONSENT_AT,
-        consentText: `${s.name} agreed.`,
         samples: files.map((_, i) => ({
           file: `sample-${i + 1}.wav`,
           name: `take-${i + 1}.wav`,
@@ -125,15 +122,13 @@ const both = () =>
   });
 
 describe("keeping them", () => {
-  test("keeps the recordings of the speakers named, and only theirs, with the file's consent", async () => {
+  test("keeps the recordings of the speakers named, and only theirs", async () => {
     const res = await store(await both(), ["Vex"]);
     expect(res.status).toBe(201);
     const [vex] = res.body.stored;
     expect(vex).toMatchObject({
       speaker: "Vex",
       title: "Vex (clone)",
-      consentAt: Date.parse(CONSENT_AT),
-      consentText: "Vex agreed.",
       source: "Ledger.script.zip",
     });
     expect(vex.samples.map((s) => [s.name, s.format, s.bytes])).toEqual([

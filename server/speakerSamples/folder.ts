@@ -1,4 +1,4 @@
-// One voice's folder in a script file — `voices/<slug>/`, its recordings and their `consent.json` —
+// One voice's folder in a script file — `voices/<slug>/`, its recordings and their `samples.json` —
 // judged whole: usable, or refused saying why. See docs/script-transfer.md, slice 3.
 //
 // **Held to the clone route's own limits.** These recordings exist to be cloned from, and the clone
@@ -34,15 +34,15 @@ export const SAMPLE_LIMITS: SampleLimits = {
 
 export const VOICE_SAMPLES_FORMAT = "audiobook-studio/voice-samples";
 
+/** The file in a voice's folder that lists its recordings. */
+export const SAMPLES_MANIFEST = "samples.json";
+/** What an older export called it; read the same, and its consent fields left unread. */
+const OLD_SAMPLES_MANIFEST = "consent.json";
+
 const ScriptFileVoiceSchema = v.object({
   format: v.literal(VOICE_SAMPLES_FORMAT),
   version: v.literal(1),
   title: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),
-  consentAt: v.pipe(
-    v.string(),
-    v.check((s) => !Number.isNaN(Date.parse(s)), "must be a date"),
-  ),
-  consentText: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),
   samples: v.pipe(
     v.array(
       v.object({
@@ -93,8 +93,8 @@ const decoder = new TextDecoder("utf-8");
 
 /**
  * Judge the recordings in `folder`: `entries` holds every file of the zip under the manifest's
- * folder, by its path relative to it. A folder is usable when its `consent.json` reads, and every
- * recording it names is there, is audio, and fits the limits.
+ * folder, by its path relative to it. A folder is usable when its `samples.json` (an older file's
+ * `consent.json`) reads, and every recording it names is there, is audio, and fits the limits.
  */
 export function judgeVoiceFolder(
   folder: string,
@@ -102,20 +102,24 @@ export function judgeVoiceFolder(
   limits: SampleLimits = SAMPLE_LIMITS,
 ): JudgedVoice {
   const refused = (reason: string): JudgedVoice => ({ ok: false, reason });
-  const consent = entries.get(`${folder}consent.json`);
-  if (!consent) return refused(`${folder} has no consent.json saying what the recordings are`);
-  if (!consent.bytes) return refused(`${folder}consent.json could not be unzipped`);
+  const name = entries.has(`${folder}${SAMPLES_MANIFEST}`)
+    ? SAMPLES_MANIFEST
+    : OLD_SAMPLES_MANIFEST;
+  const listing = entries.get(`${folder}${name}`);
+  if (!listing)
+    return refused(`${folder} has no ${SAMPLES_MANIFEST} saying what the recordings are`);
+  if (!listing.bytes) return refused(`${folder}${name} could not be unzipped`);
   let json: unknown;
   try {
-    json = JSON.parse(decoder.decode(consent.bytes).replace(/^﻿/, ""));
+    json = JSON.parse(decoder.decode(listing.bytes).replace(/^﻿/, ""));
   } catch {
-    return refused(`${folder}consent.json is not valid JSON`);
+    return refused(`${folder}${name} is not valid JSON`);
   }
   const parsed = v.safeParse(ScriptFileVoiceSchema, json);
   if (!parsed.success) {
     const issue = parsed.issues[0];
     return refused(
-      `${folder}consent.json could not be read: ${[v.getDotPath(issue), issue.message].filter(Boolean).join(": ")}`,
+      `${folder}${name} could not be read: ${[v.getDotPath(issue), issue.message].filter(Boolean).join(": ")}`,
     );
   }
   const voice = parsed.output;
@@ -128,7 +132,7 @@ export function judgeVoiceFolder(
   let total = 0;
   for (const s of voice.samples) {
     const entry = entries.get(`${folder}${s.file}`);
-    if (!entry) return refused(`${s.file} is named in consent.json but is not in ${folder}`);
+    if (!entry) return refused(`${s.file} is named in ${name} but is not in ${folder}`);
     if (entry.size > limits.clip)
       return refused(
         `${s.file} is ${mb(entry.size)}, over the ${mb(limits.clip)} limit on one recording`,
@@ -156,8 +160,6 @@ export function rowSamples(judged: JudgedVoice): VoiceRowSamples {
     kind: "ok",
     count: judged.clips.length,
     bytes: judged.bytes,
-    consentAt: judged.voice.consentAt,
-    consentText: judged.voice.consentText,
   };
 }
 

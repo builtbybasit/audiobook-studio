@@ -24,9 +24,6 @@ export const speakerSamples = sqliteTable(
     speaker: text("speaker").notNull(),
     /** the voice's title where it was kept, which the clone form starts from */
     title: text("title").notNull(),
-    /** epoch ms and sentence from the file's consent record — what someone agreed to, elsewhere */
-    consentAt: integer("consent_at").notNull(),
-    consentText: text("consent_text").notNull(),
     /** the name of the script file they came in */
     source: text("source").notNull(),
     /** epoch ms they were stored here */

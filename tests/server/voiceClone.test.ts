@@ -2,11 +2,11 @@
 // it was made from under `/api/endpoints/:id/voices/:voice/samples`.
 //
 // Four parts. What counts as a recording, read from a file's first bytes. The route, with a cloner
-// that answers from memory: what it refuses before anything leaves — no consent, no recordings,
+// that answers from memory: what it refuses before anything leaves — no recordings, no name,
 // something that is not a recording — what it hands the cloner, and what it logs. And the real
 // cloner, against a `fetch` that answers from memory: the multipart request Fish Audio's docs give,
 // that it goes out once whatever fails, and how Fish's refusals reach the page. And the recordings
-// kept after a clone: byte for byte, beside the consent, and gone with the voice they made.
+// kept after a clone: byte for byte, and gone with the voice they made.
 import { describe, expect, test } from "bun:test";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -14,7 +14,6 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 
 import type { Endpoint, KeptVoiceSamples, Voice } from "@/types";
-import { CLONE_CONSENT } from "@/lib/endpointShapes";
 import { MAX_SAMPLE_BYTES, MAX_TRANSCRIPT_CHARS, MAX_VOICE_SAMPLES } from "@/lib/voiceSamples";
 import { SPEECH_PROVIDERS } from "@/lib/providers";
 import { fish } from "@/lib/providers/fish";
@@ -25,7 +24,7 @@ import { SPEECH_WIRES } from "~/providers/speech/registry";
 import { keepSampleFiles } from "~/voices/ops";
 import { voiceFiles, type VoiceFiles } from "~/voices/files";
 import {
-  agreed,
+  cloneFields,
   answering,
   cloneForm,
   cloneTarget,
@@ -87,7 +86,7 @@ describe("the clone route", () => {
     await saved(api, cloneEndpoint());
     const { status, body } = await postClone(
       api,
-      cloneForm({ ...agreed(), title: " Narrator — Mara " }, [
+      cloneForm({ ...cloneFields(), title: " Narrator — Mara " }, [
         sampleFile("a.wav"),
         sampleFile("b.mp3", HEADS.mp3Frame, "audio/mpeg", 2048),
       ]),
@@ -117,17 +116,17 @@ describe("the clone route", () => {
     await saved(api, cloneEndpoint());
     const { status } = await postClone(
       api,
-      cloneForm(agreed(), [sampleFile("a.wav"), sampleFile("b.wav")], ["  Come in. ", ""]),
+      cloneForm(cloneFields(), [sampleFile("a.wav"), sampleFile("b.wav")], ["  Come in. ", ""]),
     );
     expect(status).toBe(201);
     expect(asked[0].samples.map((s) => s.transcript)).toEqual(["Come in.", undefined]);
     // a form from before transcripts, with no `transcripts` field at all, is as good as none
-    await postClone(api, cloneForm(agreed(), [sampleFile("c.wav")]));
+    await postClone(api, cloneForm(cloneFields(), [sampleFile("c.wav")]));
     expect(asked[1].samples[0].transcript).toBeUndefined();
     // one that runs on is refused by the file's name
     const { body } = await postClone(
       api,
-      cloneForm(agreed(), [sampleFile("long.wav")], ["x".repeat(MAX_TRANSCRIPT_CHARS + 1)]),
+      cloneForm(cloneFields(), [sampleFile("long.wav")], ["x".repeat(MAX_TRANSCRIPT_CHARS + 1)]),
     );
     expect(body.error?.message).toBe("The transcript of long.wav runs past 1000 characters");
   });
@@ -150,18 +149,17 @@ describe("the clone route", () => {
     ).toEqual([undefined]);
   });
 
-  test("the log line is the record that consent was given", async () => {
+  test("the log line says what was cloned", async () => {
     const { cloner } = remembering();
     const api = testApi({ cloner });
     await saved(api, cloneEndpoint());
-    expect((await postClone(api, cloneForm(agreed(), [sampleFile()]))).status).toBe(201);
+    expect((await postClone(api, cloneForm(cloneFields(), [sampleFile()]))).status).toBe(201);
     const line = api.logs.find((l) => l.msg === "voice cloned");
     expect(line).toMatchObject({
       id: "fish",
       voice: "new-voice-id",
       title: "Mara",
       samples: 1,
-      consent: true,
     });
   });
 
@@ -173,24 +171,19 @@ describe("the clone route", () => {
       const { status, body } = await postClone(api, cloneForm(fields, samples));
       return [status, body.error?.message];
     };
-    // consent is the person's say-so, and nothing goes without it
-    expect(await refused({ id: "fish", title: "Mara" }, [sampleFile()])).toEqual([
-      400,
-      "Confirm you have the right to clone this voice",
-    ]);
-    expect(await refused(agreed(), [])).toEqual([400, "Add at least one sample of the voice"]);
-    expect(await refused({ ...agreed(), title: "" }, [sampleFile()])).toEqual([
+    expect(await refused(cloneFields(), [])).toEqual([400, "Add at least one sample of the voice"]);
+    expect(await refused({ ...cloneFields(), title: "" }, [sampleFile()])).toEqual([
       400,
       "Give the voice a name of up to 100 characters",
     ]);
     expect(
       await refused(
-        agreed(),
+        cloneFields(),
         Array.from({ length: 21 }, (_, i) => sampleFile(`t${i}.wav`)),
       ),
     ).toEqual([400, "Use at most 20 samples"]);
     expect(
-      await refused(agreed(), [sampleFile("silence.wav", new Uint8Array(), "audio/wav", 0)]),
+      await refused(cloneFields(), [sampleFile("silence.wav", new Uint8Array(), "audio/wav", 0)]),
     ).toEqual([400, "silence.wav is empty"]);
     expect(asked).toEqual([]);
   });
@@ -201,7 +194,7 @@ describe("the clone route", () => {
     await saved(api, cloneEndpoint());
     const accepted = await postClone(
       api,
-      cloneForm(agreed(), [
+      cloneForm(cloneFields(), [
         sampleFile("memo", HEADS.m4a, "application/octet-stream"),
         sampleFile("note.opus", HEADS.opus, ""),
         sampleFile("master.flac", HEADS.flac, "audio/x-flac"),
@@ -222,7 +215,7 @@ describe("the clone route", () => {
     ] as const) {
       const { status, body } = await postClone(
         api,
-        cloneForm(agreed(), [sampleFile(name, head, type)]),
+        cloneForm(cloneFields(), [sampleFile(name, head, type)]),
       );
       expect([status, body.error?.message]).toEqual([
         415,
@@ -235,7 +228,7 @@ describe("the clone route", () => {
   test("an endpoint that was never saved is not found", async () => {
     const { cloner, asked } = remembering();
     const api = testApi({ cloner });
-    const missing = await postClone(api, cloneForm(agreed(), [sampleFile()]));
+    const missing = await postClone(api, cloneForm(cloneFields(), [sampleFile()]));
     expect(missing.status).toBe(404);
     expect(asked).toEqual([]);
   });
@@ -347,7 +340,7 @@ describe("a failure to clone, through the route", () => {
     const f = answering(answer);
     const api = testApi({ cloner: f.cloner });
     await saved(api, ep);
-    const { status, body } = await postClone(api, cloneForm(agreed(ep.id), [sampleFile()]));
+    const { status, body } = await postClone(api, cloneForm(cloneFields(ep.id), [sampleFile()]));
     return { status, message: body.error?.message ?? "", sent: f.sent, api };
   }
   /** A failed clone keeps nothing: no row, and not a byte on disk. */
@@ -438,23 +431,19 @@ async function eventually(read: () => unknown, expected: unknown): Promise<void>
 }
 
 describe("the recordings a voice was made from", () => {
-  test("are kept byte for byte, typed by their bytes, beside the consent that was given", async () => {
+  test("are kept byte for byte, typed by their bytes", async () => {
     const { cloner } = remembering();
     const api = testApi({ cloner });
     await saved(api, cloneEndpoint());
     const memo = sampleFile("memo", HEADS.m4a, "application/octet-stream", 3000);
     const sent = new Uint8Array(await memo.arrayBuffer());
-    const said = "Mara agreed on the phone, 12 September.";
-    const { body: voice } = await postClone(
-      api,
-      cloneForm({ ...agreed(), consentText: said }, [memo, sampleFile()]),
-    );
+    const { body: voice } = await postClone(api, cloneForm(cloneFields(), [memo, sampleFile()]));
     expect(voice.samplesKept).toBe(true);
 
     const { status, body: kept } = await samplesOf(api);
     expect(status).toBe(200);
-    expect(kept).toMatchObject({ voiceId: "new-voice-id", title: "Mara", consentText: said });
-    expect(kept.consentAt).toBeGreaterThan(0);
+    expect(kept).toMatchObject({ voiceId: "new-voice-id", title: "Mara" });
+    expect(kept.madeAt).toBeGreaterThan(0);
     expect(kept.samples.map((s) => [s.name, s.format, s.bytes])).toEqual([
       ["memo", "m4a", 3000],
       ["take-1.wav", "wav", 1024],
@@ -468,15 +457,11 @@ describe("the recordings a voice was made from", () => {
     expect(res.headers.get("cache-control")).toContain("immutable");
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(sent);
 
-    // a form that sends no sentence is held to the one the Voices tab shows
-    await postClone(api, cloneForm(agreed(), [sampleFile()]));
-    expect((await samplesOf(api)).body.consentText).toBe(CLONE_CONSENT);
-
     // a transcript is kept with its sample, and a sample without one carries none
     const { body: told } = await postClone(
       api,
       cloneForm(
-        { ...agreed(), title: "Told" },
+        { ...cloneFields(), title: "Told" },
         [sampleFile("a.wav"), sampleFile("b.wav")],
         ["Come in.", ""],
       ),
@@ -495,7 +480,7 @@ describe("the recordings a voice was made from", () => {
     writeFileSync(blocked, "");
     const api = testApi({ cloner, voiceDir: blocked });
     await saved(api, cloneEndpoint());
-    const { status, body } = await postClone(api, cloneForm(agreed(), [sampleFile()]));
+    const { status, body } = await postClone(api, cloneForm(cloneFields(), [sampleFile()]));
     expect([status, body.samplesKept]).toEqual([201, false]);
     expect(asked).toHaveLength(1);
     expect((await samplesOf(api)).status).toBe(404);
@@ -506,7 +491,7 @@ describe("the recordings a voice was made from", () => {
     const { cloner } = remembering();
     const api = testApi({ cloner });
     await saved(api, cloneEndpoint());
-    await postClone(api, cloneForm(agreed(), [sampleFile()]));
+    await postClone(api, cloneForm(cloneFields(), [sampleFile()]));
     const save = (voices: Voice[]) => api.request("/api/endpoints", configWith(voices));
     const aged = (set: Partial<typeof clonedVoices.$inferInsert>) =>
       api.db.update(clonedVoices).set(set).where(eq(clonedVoices.voiceId, "new-voice-id")).run();
@@ -531,7 +516,7 @@ describe("the recordings a voice was made from", () => {
     await eventually(() => readdirSync(api.voiceDir), []);
 
     // a clone the page never saved is dropped by the first save after a day
-    await postClone(api, cloneForm(agreed(), [sampleFile()]));
+    await postClone(api, cloneForm(cloneFields(), [sampleFile()]));
     aged({ madeAt: dayAgo });
     await save([]);
     expect((await samplesOf(api)).status).toBe(404);
@@ -553,7 +538,6 @@ describe("the recordings a voice was made from", () => {
         endpointId: "fish",
         voiceId: "v",
         title: "Mara",
-        consentText: CLONE_CONSENT,
         attached: true,
         samples: samples.map((c) => ({ name: c.name, blob: c, format: "wav" as const })),
       });
@@ -571,34 +555,25 @@ describe("the recordings a voice was made from", () => {
     expect((await samplesOf(api, "v")).body.samples.map((s) => s.name)).toEqual(["a.wav"]);
   });
 
-  test("an older voice can be given its recordings, under the same consent and limits", async () => {
+  test("an older voice can be given its recordings, under the same limits", async () => {
     const api = testApi();
     const old: Voice = { id: "old-voice", label: "Old Tomas", gender: "m" };
     await saved(api, cloneEndpoint({ voices: [old] }));
-    const keep = (fields: Record<string, string>, samples: File[], voice = "old-voice") =>
+    const keep = (samples: File[], voice = "old-voice") =>
       api.request<KeptVoiceSamples & { error?: { message: string } }>(
         `/api/endpoints/fish/voices/${voice}/samples`,
-        { method: "POST", body: cloneForm(fields, samples) },
+        { method: "POST", body: cloneForm({}, samples) },
       );
 
-    expect((await keep({}, [sampleFile()])).body.error?.message).toBe(
-      "Confirm you have the right to clone this voice",
-    );
     const tooMany = Array.from({ length: 21 }, (_, i) => sampleFile(`t${i}.wav`));
-    expect((await keep({ consent: "yes" }, tooMany)).body.error?.message).toBe(
-      "Use at most 20 samples",
-    );
-    expect((await keep({ consent: "yes" }, [sampleFile()], "nobody")).status).toBe(404);
+    expect((await keep(tooMany)).body.error?.message).toBe("Use at most 20 samples");
+    expect((await keep([sampleFile()], "nobody")).status).toBe(404);
 
-    const first = await keep({ consent: "yes" }, [
-      sampleFile("a.wav", HEADS.wav, "audio/wav", 1500),
-    ]);
+    const first = await keep([sampleFile("a.wav", HEADS.wav, "audio/wav", 1500)]);
     expect(first.status).toBe(200);
     expect(first.body).toMatchObject({ voiceId: "old-voice", title: "Old Tomas" });
     // kept for a voice already saved: the next save without it takes them
-    const replaced = await keep({ consent: "yes" }, [
-      sampleFile("b.mp3", HEADS.mp3Frame, "audio/mpeg"),
-    ]);
+    const replaced = await keep([sampleFile("b.mp3", HEADS.mp3Frame, "audio/mpeg")]);
     expect(replaced.body.samples.map((s) => s.name)).toEqual(["b.mp3"]);
     await eventually(
       () => readdirSync(join(api.voiceDir, readdirSync(api.voiceDir)[0])),

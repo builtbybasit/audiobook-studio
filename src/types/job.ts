@@ -27,6 +27,11 @@ export interface Job {
   startedAt: number | null;
   finishedAt: number | null;
   cancelled: boolean;
+  /**
+   * Moved ahead of the queue by "Run next": higher runs first, ties oldest first (`byRunOrder`).
+   * Absent on a job never moved, which counts as 0.
+   */
+  priority?: number;
   /** What the job reported as it ran, oldest first; absent for a job that reported nothing. */
   activity?: JobEvent[];
   droppedEvents?: number;

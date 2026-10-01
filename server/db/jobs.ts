@@ -176,7 +176,34 @@ export function enqueueJob(db: Db, input: EnqueueInput, at = Date.now()): Enqueu
 }
 
 /**
- * Take the oldest queued job and mark it running, in one transaction.
+ * Move these queued jobs ahead of everything else waiting, keeping their order among themselves.
+ *
+ * They all take one priority above the highest any queued job has, so moving a whole run moves it
+ * as a block, and moving another job after it puts that one ahead again. Jobs that are no longer
+ * queued are left alone. Returns the ids that moved.
+ */
+export function runNext(db: Db, ids: readonly number[]): number[] {
+  if (!ids.length) return [];
+  return db.transaction((tx) => {
+    const top =
+      tx
+        .select({ p: max(jobs.priority) })
+        .from(jobs)
+        .where(eq(jobs.status, "queued"))
+        .get()?.p ?? 0;
+    return tx
+      .update(jobs)
+      .set({ priority: top + 1 })
+      .where(and(inArray(jobs.id, [...ids]), eq(jobs.status, "queued")))
+      .returning({ id: jobs.id })
+      .all()
+      .map((r) => r.id);
+  });
+}
+
+/**
+ * Take the next queued job — the highest priority, then the oldest — and mark it running, in one
+ * transaction. The Queue page lists "Up next" by the same rule (`byRunOrder`).
  *
  * Nothing here looks at `cancelled`: `requestCancel` is the only writer of that flag and it
  * finishes a queued job on the spot, so a queued row is never a cancelled one. Settling a row
@@ -189,7 +216,7 @@ export function claimNext(db: Db, at = Date.now()): Job | undefined {
         .select()
         .from(jobs)
         .where(eq(jobs.status, "queued"))
-        .orderBy(asc(jobs.id))
+        .orderBy(desc(jobs.priority), asc(jobs.id))
         .get();
       if (!row) return undefined;
       tx.update(jobs)

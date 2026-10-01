@@ -654,6 +654,8 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `GET`    | `/api/jobs`                                       | Every job, oldest first; `?bookId=` narrows it                                                               |
 | `GET`    | `/api/jobs/:id`                                   | One job, with its activity                                                                                   |
 | `POST`   | `/api/jobs/:id/cancel`                            | Stop it: a queued job never starts, a running one stops                                                      |
+| `POST`   | `/api/jobs/cancel`                                | `{ ids }`: stop these, in one request — a whole run; `{ cancelled }` says which were live                    |
+| `POST`   | `/api/jobs/run-next`                              | `{ ids }`: move these queued jobs ahead of the rest, in their order; `{ moved }` says which                  |
 | `DELETE` | `/api/jobs/:id`                                   | Take a finished job out of the history                                                                       |
 | `POST`   | `/api/jobs/clear`                                 | Clear the history; live jobs stay                                                                            |
 
@@ -775,10 +777,14 @@ A job is a row in `jobs`, laid out to hold the frontend's `Job`. Each rule below
   get the same job back — whatever order the requests arrive in, because it is the index that
   refuses, not a check a second request could slip past. The route says which chapters it left out
   for being `busy`.
-- **One job at a time.** [runner.ts](../server/jobs/runner.ts) claims the oldest queued job, moving
-  it to `running` in the same transaction that reads it, and runs its handler to the end before
-  claiming the next, so one book's chapters run in order and roster and recap carry forward. An
-  enqueue wakes it; a slow interval is only a safety net.
+- **One job at a time.** [runner.ts](../server/jobs/runner.ts) claims the next queued job — the
+  highest `priority`, then the oldest — moving it to `running` in the same transaction that reads
+  it, and runs its handler to the end before claiming the next, so one book's chapters run in order
+  and roster and recap carry forward. An enqueue wakes it; a slow interval is only a safety net.
+- **Run next is a priority, not a reorder.** `POST /api/jobs/run-next` gives the queued jobs it
+  names one priority above the highest waiting, so a whole run moves as a block in its own order,
+  and a later move goes ahead of it. Every job starts at 0, so with nothing moved the queue is
+  oldest first. A chapter moved ahead of the one before it is scripted without that one's recap.
 - **A cancel is an abort.** A running job's `AbortController` is aborted, the provider sees `signal`
   and stops, and the job is recorded `cancelled` rather than failed; a queued one is finished as
   cancelled without starting. Either way the handler gets the last word (`onSettled`) — which is how

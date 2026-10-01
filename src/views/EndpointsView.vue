@@ -148,7 +148,7 @@ const confirmCancel = ref(false);
 function cancelWork(u: UnifiedEndpoint) {
   const jobs = jobsUsing(u);
   if (!jobs.length) return;
-  for (const j of jobs) jobsStore.cancelJob(j.id);
+  jobsStore.cancelJobs(jobs.map((j) => j.id));
   confirmCancel.value = false;
   uiStore.toast(`Cancelled ${plural(jobs.length, "job")} on ${u.name}`, {
     kind: "warn",

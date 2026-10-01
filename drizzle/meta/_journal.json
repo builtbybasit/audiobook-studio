@@ -141,6 +141,13 @@
       "when": 1790862996609,
       "tag": "0019_character_voice",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1790864674634,
+      "tag": "0020_job_priority",
+      "breakpoints": true
     }
   ]
 }

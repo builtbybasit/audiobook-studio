@@ -312,6 +312,7 @@ describe("the queue", () => {
       startedAt: 1_700_000_001_000,
       finishedAt: null,
       cancelled: false,
+      priority: 2,
       bulk: { id: 7, op: "Narrate", index: 2, total: 8, scope: "fill" },
       narrationRun: {
         reserved: 1.25,

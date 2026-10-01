@@ -20,6 +20,10 @@ export interface JobsService {
   list(): Promise<Job[]>;
   /** Stop a job: a queued one never starts, a running one is told to stop. */
   cancel(id: number): Promise<Job>;
+  /** Stop several jobs, in the order given. Returns the ids that were live and now stop. */
+  cancelMany(ids: number[]): Promise<number[]>;
+  /** Move queued jobs ahead of the rest, in their own order. Returns the ids that moved. */
+  runNext(ids: number[]): Promise<number[]>;
   /** Take a finished job out of the history. */
   remove(id: number): Promise<void>;
   /** Clear the history; live jobs stay. Returns how many went. */
@@ -54,6 +58,14 @@ export class HttpJobsService implements JobsService {
 
   async cancel(id: number): Promise<Job> {
     return (await this.http.post<{ job: Job }>(`/jobs/${id}/cancel`)).job;
+  }
+
+  async cancelMany(ids: number[]): Promise<number[]> {
+    return (await this.http.post<{ cancelled: number[] }>("/jobs/cancel", { ids })).cancelled;
+  }
+
+  async runNext(ids: number[]): Promise<number[]> {
+    return (await this.http.post<{ moved: number[] }>("/jobs/run-next", { ids })).moved;
   }
 
   async remove(id: number): Promise<void> {

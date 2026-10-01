@@ -24,6 +24,8 @@ import {
 export interface SampleRow {
   file: File;
   transcript: string;
+  /** cut in the form, so a transcript typed for the whole file may no longer match it */
+  trimmed?: boolean;
 }
 
 /** The names a sample of each format goes by; Opus is as often in an Ogg file as on its own. */

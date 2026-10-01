@@ -1,16 +1,14 @@
 <script setup lang="ts">
-import { sizeLabel } from "@/lib/audioFormat";
-
 // The samples a clone or a keep is made from, as a form holds them: a picker that adds files, and
-// a row per sample with its name, its size, a remove button and — where the provider takes one —
-// the transcript of what is said in it. Whatever rows the form hands over are held to the most
+// a row per sample (`SampleRowItem`) to hear it, see it, trim it, remove it and — where the provider
+// takes one — say what is said in it. Whatever rows the form hands over are held to the most
 // the provider takes, and the cut is said; what else may stop them is the form's to say
 // (`pickProblem`), since it is what blocks the button.
 import { computed, ref, watch } from "vue";
-import { Upload as PickIcon, X as RemoveIcon } from "@lucide/vue";
+import { Upload as PickIcon } from "@lucide/vue";
 import { UiHint } from "@/ui";
 import type { CloneSupport } from "@/lib/providers";
-import { MAX_TRANSCRIPT_CHARS, maxSamplesOf } from "@/lib/voiceSamples";
+import { maxSamplesOf } from "@/lib/voiceSamples";
 import {
   acceptOf,
   leftOutSaid,
@@ -18,6 +16,7 @@ import {
   pickOf,
   type SampleRow,
 } from "@/views/endpoints/cloneForm";
+import SampleRowItem from "@/views/endpoints/SampleRowItem.vue";
 
 const props = defineProps<{ cloning: CloneSupport }>();
 /** The person picked files by hand, as against rows the form filled in from elsewhere. */
@@ -50,9 +49,8 @@ function remove(i: number) {
   rows.value = rows.value.filter((_, j) => j !== i);
   leftOut.value = 0;
 }
-function said(i: number, e: Event) {
-  const transcript = (e.target as HTMLInputElement).value;
-  rows.value = rows.value.map((r, j) => (j === i ? { ...r, transcript } : r));
+function set(i: number, row: SampleRow) {
+  rows.value = rows.value.map((r, j) => (j === i ? row : r));
 }
 const asks = computed(() => props.cloning.transcript !== "none");
 const must = computed(() => props.cloning.transcript === "required");
@@ -81,34 +79,15 @@ const must = computed(() => props.cloning.transcript === "required");
       </span>
     </div>
     <ul v-if="rows.length" class="divide-y divide-zinc-100 dark:divide-zinc-800">
-      <li v-for="(row, i) in rows" :key="`${i}:${row.file.name}`" class="py-1 text-xs">
-        <div class="flex items-center gap-2">
-          <span class="min-w-0 flex-1 truncate" :title="row.file.name">{{ row.file.name }}</span>
-          <span class="shrink-0 text-[11px] text-zinc-500">{{ sizeLabel(row.file.size) }}</span>
-          <button
-            type="button"
-            class="btn-ghost btn-xs shrink-0 hover:text-red-500"
-            :aria-label="`Remove ${row.file.name}`"
-            @click="remove(i)"
-          >
-            <RemoveIcon class="icon-sm" />
-          </button>
-        </div>
-        <input
-          v-if="asks"
-          :value="row.transcript"
-          class="input mt-1 w-full py-0.5"
-          :maxlength="MAX_TRANSCRIPT_CHARS"
-          :required="must"
-          :placeholder="
-            must
-              ? 'What is said in this sample (required)'
-              : 'What is said in this sample (optional)'
-          "
-          :aria-label="`Transcript of ${row.file.name}`"
-          @input="said(i, $event)"
-        />
-      </li>
+      <SampleRowItem
+        v-for="(row, i) in rows"
+        :key="`${i}:${row.file.name}`"
+        :row="row"
+        :asks="asks"
+        :must="must"
+        @change="(r) => set(i, r)"
+        @remove="remove(i)"
+      />
     </ul>
   </div>
 </template>

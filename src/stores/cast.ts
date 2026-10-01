@@ -706,23 +706,56 @@ export const useCastStore = defineStore("cast", {
         },
       });
     },
-    async deleteCharacter(bookId: string, name: string): Promise<void> {
+    deleteCharacter(bookId: string, name: string): Promise<void> {
+      return this.removeMany(bookId, [name]);
+    },
+    /**
+     * Take speakers off the cast, their lines read by the Narrator, under one toast and one Undo.
+     *
+     * One request per speaker, in turn: the first the server refuses is said and ends the run, so a
+     * server that is down says so once rather than once per name. What was removed before it stays
+     * removed, and the Undo puts back exactly those. The Narrator, and a name not in the cast, are
+     * passed over — the server refuses the one and has nothing to do for the other.
+     */
+    async removeMany(bookId: string, names: Iterable<string>): Promise<void> {
       const uiStore = useUiStore();
 
+      const removed: { name: string; lines: number; undo: Undo }[] = [];
+      for (const name of new Set(names)) {
+        // the cast as it stands now: each removal installs the server's
+        if (name === "Narrator" || !this.characters[bookId]?.some((c) => c.name === name)) continue;
+        const r = await this._remove(bookId, name);
+        if (!r) break;
+        removed.push({ name, ...r });
+      }
+      if (!removed.length) return;
+      const n = removed.reduce((sum, r) => sum + r.lines, 0);
+      const who = removed.length === 1 ? `“${removed[0].name}”` : `${removed.length} speakers`;
+      uiStore.toast(`Removed ${who} · ${n} line${n === 1 ? "" : "s"} now read by the Narrator`, {
+        undo: async () => {
+          for (const r of [...removed].reverse()) await r.undo();
+        },
+      });
+    },
+    /**
+     * A removal on the server, applied here. Resolves to how many lines the Narrator now reads and
+     * the undo, which puts the speaker back as they were on exactly those lines; null when refused.
+     */
+    async _remove(bookId: string, name: string): Promise<{ lines: number; undo: Undo } | null> {
       const svc = this._service();
       const c = this.characters[bookId]?.find((x) => x.name === name);
-      if (!c) return;
+      if (!c) return null;
       const was = clone(c);
       let result: MovedLines;
       try {
         result = await svc.deleteCharacter(bookId, name);
       } catch (cause) {
         toastFailure("remove this speaker", cause);
-        return;
+        return null;
       }
       this._moved(bookId, result, "Narrator");
-      const n = result.moved.reduce((sum, m) => sum + m.ids.length, 0);
-      uiStore.toast(`Removed “${name}” · ${n} line${n === 1 ? "" : "s"} now read by the Narrator`, {
+      return {
+        lines: result.moved.reduce((sum, m) => sum + m.ids.length, 0),
         undo: async () => {
           try {
             this._moved(bookId, await svc.attribute(bookId, was, result.moved), name);
@@ -730,7 +763,7 @@ export const useCastStore = defineStore("cast", {
             toastFailure("put this speaker back", cause);
           }
         },
-      });
+      };
     },
     autoAssignPlan(bookId: string): AutoVoiceAssignment[] {
       const endpointsStore = useEndpointsStore();

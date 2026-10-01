@@ -19,21 +19,14 @@ import { useRoute } from "vue-router";
 import { useBookId } from "@/composables/useBookId";
 import { useBookScripts, useCast } from "@/queries";
 import { GENDER } from "@/lib/scriptReview";
-import { UiSelect, UiCombobox, UiCheckbox, UiTooltip } from "@/ui";
+import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
+import { UiSelect, UiCheckbox, UiHint, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
 import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
-import { appearanceStrip } from "@/views/cast/strip";
 import { Plus as AddIcon } from "@lucide/vue";
 import CastRecord from "@/views/cast/CastRecord.vue";
+import CastSelectionBar from "@/views/cast/CastSelectionBar.vue";
 import type { Character, Gender } from "@/types";
-const castOpts = computed(() =>
-  cast.value.map((c) => ({
-    value: c.name,
-    label: c.name,
-    color: c.color,
-    keywords: c.aliases.join(" "),
-  })),
-);
 
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
@@ -58,13 +51,6 @@ const total = computed(() => libraryStore.chaptersOf(bookId).length);
 const unreviewed = computed(() => cast.value.filter((c) => c.isNew).length);
 const voiced = computed(() => cast.value.filter((c) => c.voice).length);
 const colorOf = computed(() => new Map(cast.value.map((c) => [c.name, c.color])));
-/** every speaker's appearance strip, drawn once per change of the counts rather than per render */
-const strips = computed(() => {
-  const out: Record<string, Record<string, string>> = {};
-  for (const [name, st] of Object.entries(stats.value))
-    out[name] = appearanceStrip(st.chapters, total.value);
-  return out;
-});
 
 const rows = computed(() => {
   const needle = q.value.toLowerCase();
@@ -90,15 +76,13 @@ const rows = computed(() => {
     );
 });
 
-function toggle(name: string) {
-  const s = new Set(sel.value);
-  if (s.has(name)) s.delete(name);
-  else s.add(name);
-  sel.value = s;
-}
-function mergeSelectedInto(into: string | number | null) {
-  castStore.mergeMany(bookId, [...sel.value], String(into));
-  sel.value = new Set();
+// a run over the rows on screen, in their order; the Narrator has no box, so no run includes them
+const range = useRangeSelect(() =>
+  rows.value.map((r) => r.c.name).filter((name) => name !== "Narrator"),
+);
+/** Tick or untick a row, or with shift the run from the last one, to the state this box turns to. */
+function tick(name: string, e?: MouseEvent) {
+  sel.value = applySpan(sel.value, range.span(name, e), !sel.value.has(name));
 }
 // One voice picker serves every row — a reka popover per row was most of a long cast's
 // components — anchored to the row's voice button that opened it.
@@ -116,7 +100,10 @@ function voiceClick(name: string, e: MouseEvent) {
 }
 function onRowKey(e: KeyboardEvent, c: Character) {
   const t = e.target as HTMLElement;
-  if (["INPUT", "TEXTAREA"].includes(t.tagName) || t.closest("[role=dialog],[role=listbox]"))
+  if (
+    ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) ||
+    t.closest("[role=dialog],[role=listbox]")
+  )
     return;
   const row = e.currentTarget as HTMLElement;
   const list = [...(row.parentElement?.querySelectorAll<HTMLElement>("tr[data-row]") ?? [])];
@@ -135,7 +122,7 @@ function onRowKey(e: KeyboardEvent, c: Character) {
     startRename(c);
   } else if (e.key === "x" && c.name !== "Narrator") {
     e.preventDefault();
-    toggle(c.name);
+    tick(c.name);
   }
 }
 function startRename(c: Character) {
@@ -151,10 +138,15 @@ function commit() {
   if (editing.value) castStore.renameCharacter(bookId, editing.value, draft.value);
   editing.value = null;
 }
+// unknown reads as a quiet dash: it is most rows of a fresh cast, and orange on all of them was noise
 const GENDERS = (["f", "m", "n", "?"] as Gender[]).map((value) => ({
   value,
-  label: GENDER[value] ?? "unknown",
+  label: GENDER[value] ?? "—",
 }));
+function setGender(name: string, e: Event) {
+  const gender = (e.target as HTMLSelectElement).value as Gender;
+  void castStore.updateCharacter(bookId, name, { gender });
+}
 
 // ---------- the full record ----------
 // One row at a time: the detail is wide, and two open at once is a diff nobody asked for.
@@ -162,7 +154,7 @@ const open = ref<string | null>(null);
 const toggleOpen = (name: string) => (open.value = open.value === name ? null : name);
 
 /** Gender is not cosmetic — `autoAssignByGender` pools voices by it, so an unknown is a speaker
- *  auto-assign has to skip. Worth saying next to the field rather than in a tooltip nobody opens. */
+ *  auto-assign has to skip. The header counts them. */
 const unknownGender = computed(() => cast.value.filter((c) => c.gender === "?").length);
 
 /** A row's position is not final until the page has laid out and painted: on first mount the table
@@ -251,33 +243,20 @@ const duplicate = computed(
         <h1 class="text-2xl font-semibold">Cast</h1>
         <p class="text-sm text-zinc-500">
           {{ cast.length }} speakers across {{ total }} chapters · {{ unreviewed }} unreviewed ·
-          {{ voiced }} voiced ·
-          <UiTooltip
-            text="Auto-assign pools voices by gender, so it skips a speaker whose gender is unknown. Open a row to set it."
-            ><span
-              v-if="unknownGender"
-              class="cursor-help underline decoration-dotted underline-offset-2"
-              >{{ unknownGender }} unknown gender</span
-            ></UiTooltip
+          {{ voiced }} voiced<template v-if="unknownGender">
+            ·
+            <UiTooltip
+              text="Auto-assign pools voices by gender, so it skips a speaker whose gender is unknown."
+              ><span class="cursor-help underline decoration-dotted underline-offset-2"
+                >{{ unknownGender }} unknown gender</span
+              ></UiTooltip
+            ></template
           >
-          <span v-if="unknownGender">·</span>
-          <kbd
-            class="rounded border border-zinc-200 px-1 font-mono text-[10px] dark:border-zinc-700"
-            >j</kbd
-          >/<kbd
-            class="rounded border border-zinc-200 px-1 font-mono text-[10px] dark:border-zinc-700"
-            >k</kbd
-          >
-          <kbd
-            class="rounded border border-zinc-200 px-1 font-mono text-[10px] dark:border-zinc-700"
-            >v</kbd
-          >
-          voice
-          <kbd
-            class="rounded border border-zinc-200 px-1 font-mono text-[10px] dark:border-zinc-700"
-            >x</kbd
-          >
-          tick
+          <UiHint
+            class="ml-1"
+            label="the keyboard"
+            text="j/k move · v voice · x tick · shift-click a range · Enter rename"
+          />
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
@@ -359,22 +338,6 @@ const duplicate = computed(
       </div>
     </div>
 
-    <div
-      v-if="sel.size"
-      class="flex items-center gap-2 rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-sm dark:border-violet-500/40 dark:bg-violet-500/10"
-    >
-      <b>{{ sel.size }} selected</b> → merge into
-      <UiCombobox
-        action
-        :options="castOpts.filter((o) => !sel.has(o.value))"
-        placeholder="choose a speaker…"
-        size="xs"
-        class="w-56"
-        @pick="mergeSelectedInto"
-      />
-      <button class="ml-auto text-xs text-zinc-500" @click="sel = new Set()">clear</button>
-    </div>
-
     <ReadFailure
       v-if="unread.length"
       :message="`${scriptsUnread(unread.length)}, so the speakers’ line counts are not shown.`"
@@ -382,7 +345,7 @@ const duplicate = computed(
     />
 
     <div class="card overflow-x-auto">
-      <table class="w-full min-w-[760px] text-sm">
+      <table class="w-full min-w-[600px] text-sm">
         <thead
           class="bg-zinc-50 text-left text-[11px] uppercase tracking-wider text-zinc-500 dark:bg-zinc-900"
         >
@@ -391,9 +354,8 @@ const duplicate = computed(
             <th>Speaker</th>
             <th class="w-20">Gender</th>
             <th class="w-16 pr-4 text-right">Lines</th>
-            <th class="w-44 pl-2">Chapters</th>
             <th class="w-52">Voice</th>
-            <th class="w-24"></th>
+            <th class="w-10"></th>
           </tr>
         </thead>
         <tbody>
@@ -403,14 +365,14 @@ const duplicate = computed(
               :data-speaker="c.name"
               tabindex="0"
               class="border-t border-zinc-100 outline-none focus-visible:bg-zinc-100 dark:border-zinc-800/70 dark:focus-visible:bg-zinc-800"
-              :class="c.isNew && 'bg-amber-400/5'"
               @keydown="onRowKey($event, c)"
             >
               <td class="px-3">
                 <UiCheckbox
                   v-if="c.name !== 'Narrator'"
                   :model-value="sel.has(c.name)"
-                  @update:model-value="toggle(c.name)"
+                  :aria-label="`Select ${c.name}`"
+                  @click="tick(c.name, $event)"
                 />
               </td>
               <td class="py-2">
@@ -470,33 +432,34 @@ const duplicate = computed(
                     >minor</span
                   >
                 </div>
-                <div class="pl-4.5 text-[11px] text-zinc-500">
-                  <span v-if="c.aliases.length">a.k.a. {{ c.aliases.join(", ") }}</span
-                  ><span v-if="c.description" class="ml-1 italic opacity-70"
-                    >· {{ c.description.slice(0, 70)
-                    }}{{ c.description.length > 70 ? "…" : "" }}</span
-                  >
+                <!-- no description here: it is written from the whole book, and would spoil it -->
+                <div v-if="c.aliases.length" class="pl-4.5 text-[11px] text-zinc-500">
+                  a.k.a. {{ c.aliases.join(", ") }}
                 </div>
               </td>
               <td class="text-xs">
-                <button
-                  class="rounded px-1 py-0.5 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                  :class="c.gender === '?' ? 'text-amber-600 dark:text-amber-400' : 'text-zinc-500'"
-                  :title="`Set ${c.name}’s gender`"
-                  @click="toggleOpen(c.name)"
+                <!-- a native select: a reka one per row is heavy at three hundred speakers -->
+                <select
+                  :value="c.gender"
+                  :aria-label="`${c.name}’s gender`"
+                  class="-ml-1 cursor-pointer appearance-none rounded bg-transparent px-1 py-0.5 scheme-light hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:scheme-dark dark:hover:bg-zinc-800"
+                  :class="
+                    c.gender === '?'
+                      ? 'text-zinc-400 dark:text-zinc-500'
+                      : 'text-zinc-600 dark:text-zinc-300'
+                  "
+                  @change="setGender(c.name, $event)"
                 >
-                  {{ GENDER[c.gender] ?? "unknown" }}
-                </button>
+                  <option v-for="g in GENDERS" :key="g.value" :value="g.value">
+                    {{ g.label }}
+                  </option>
+                </select>
               </td>
-              <td class="pr-4 text-right font-mono text-xs">{{ counted ? st.lines : "…" }}</td>
-              <td class="pl-2">
-                <div
-                  class="h-3 rounded-sm bg-zinc-200 dark:bg-zinc-800"
-                  :style="strips[c.name]"
-                  :title="`in ${st.chapters.size} chapters, first in ch ${st.first ?? '—'}`"
-                ></div>
+              <!-- how many chapters, never which: where a speaker turns up is a spoiler -->
+              <td class="pr-4 text-right font-mono text-xs">
+                {{ counted ? st.lines : "…" }}
                 <div v-if="counted" class="text-[10px] text-zinc-400">
-                  {{ st.chapters.size }} ch · first ch {{ st.first ?? "—" }}
+                  {{ st.chapters.size }} ch
                 </div>
               </td>
               <td class="py-1 pr-2">
@@ -544,16 +507,10 @@ const duplicate = computed(
               <td class="pr-3 text-right">
                 <button
                   v-if="c.name !== 'Narrator'"
-                  class="text-xs text-zinc-400 hover:text-violet-500"
-                  @click="startRename(c)"
-                >
-                  rename
-                </button>
-                <button
-                  v-if="c.name !== 'Narrator'"
-                  class="ml-2 text-xs text-zinc-400 hover:text-red-500"
+                  class="text-xs text-zinc-400 hover:text-red-500"
                   @click="castStore.deleteCharacter(bookId, c.name)"
-                  title="Merge into Narrator"
+                  title="Remove — their lines go to the Narrator"
+                  :aria-label="`Remove ${c.name}`"
                 >
                   <svg
                     class="icon-sm"
@@ -577,7 +534,7 @@ const duplicate = computed(
             <!-- the full record: every field a speaker has, in the one place that has them all -->
             <tr v-if="open === c.name" class="bg-zinc-50/70 dark:bg-zinc-900/60">
               <td></td>
-              <td colspan="6" class="px-1 py-3 pr-4">
+              <td colspan="5" class="px-1 py-3 pr-4">
                 <CastRecord :book-id="bookId" :c="c" />
               </td>
             </tr>
@@ -593,5 +550,6 @@ const duplicate = computed(
         @update:model-value="(v) => voiceFor && castStore.setVoice(bookId, voiceFor.name, v)"
       />
     </div>
+    <CastSelectionBar v-if="sel.size" :book-id="bookId" :selected="sel" @clear="sel = new Set()" />
   </div>
 </template>

@@ -103,14 +103,23 @@ export const useCastStore = defineStore("cast", {
         return "";
       };
     },
+    /** Each book's cast by name, the first of a name as `find` would have it: looked up per line. */
+    byName(s): Record<string, Map<string, Character>> {
+      const out: Record<string, Map<string, Character>> = {};
+      for (const [bookId, cast] of Object.entries(s.characters)) {
+        const m = (out[bookId] = new Map<string, Character>());
+        for (const c of cast) if (!m.has(c.name)) m.set(c.name, c);
+      }
+      return out;
+    },
     // a character with no voice of their own is read in the Narrator's voice
     effectiveVoice(): (bookId: string, name: string) => EffectiveVoice {
       const endpointsStore = useEndpointsStore();
 
       return (bookId, name) => {
-        const cast = this.characters[bookId] ?? [];
-        const c = cast.find((x) => x.name === name);
-        const ref = c?.voice || cast.find((x) => x.name === "Narrator")?.voice || null;
+        const cast = this.byName[bookId];
+        const c = cast?.get(name);
+        const ref = c?.voice || cast?.get("Narrator")?.voice || null;
         const r = endpointsStore.resolveVoice(ref);
         return {
           ref,
@@ -176,47 +185,47 @@ export const useCastStore = defineStore("cast", {
     },
     mergeSuggestions(s): (bookId: string) => MergeSuggestion[] {
       return (bookId: string): MergeSuggestion[] => {
-        const cast = s.characters[bookId] ?? [];
+        // every name normalized once rather than per pair, and read off the reactive cast once: a
+        // 350-speaker cast is 120k pairs
+        const cast = (s.characters[bookId] ?? [])
+          .filter((c) => c.name !== "Narrator")
+          .map(({ name, major, isNew, keep, aliases }) => {
+            const n = norm(name);
+            return {
+              name,
+              major,
+              isNew,
+              keep,
+              n,
+              words: new Set(n.split(" ")),
+              aliases: new Set(aliases.map(norm)),
+              noAliases: aliases.length === 0,
+            };
+          });
+        // `keep` is the user saying "this name is its own speaker". Without it here the
+        // suggestion came straight back on the next read, so dismissing it settled nothing —
+        // and the review inbox would have listed the same decision for ever. A major speaker is
+        // never the one merged away.
+        const minor = cast.filter((c) => !c.major && !c.keep);
         const out: MergeSuggestion[] = [];
-        for (const a of cast)
-          for (const b of cast) {
-            // `keep` is the user saying "this name is its own speaker". Without it here the
-            // suggestion came straight back on the next read, so dismissing it settled nothing —
-            // and the review inbox would have listed the same decision for ever.
-            if (a === b || a.name === "Narrator" || b.name === "Narrator" || b.keep) continue;
-            const na = norm(a.name);
-            const nb = norm(b.name);
-            if (
-              a.major &&
-              !b.major &&
-              b.aliases.length === 0 &&
-              a.aliases.some((x) => norm(x) === nb)
-            )
-              out.push({
-                from: b.name,
-                into: a.name,
-                reason: `“${b.name}” is a known alias of ${a.name}`,
-              });
-            else if (!b.major && na !== nb && na.split(" ").includes(nb) && nb.length > 2)
-              out.push({
-                from: b.name,
-                into: a.name,
-                reason: `“${b.name}” looks like a short form of ${a.name}`,
-              });
-            else if (!b.major && b.isNew && na !== nb && na.includes(nb) && nb.length > 3)
-              out.push({
-                from: b.name,
-                into: a.name,
-                reason: `“${b.name}” is contained in ${a.name}`,
-              });
-          }
+        // one suggestion per name, the first pair that makes it
         const seen = new Set<string>();
-        return out.filter((x) => {
-          const k = x.from;
-          if (seen.has(k)) return false;
-          seen.add(k);
-          return true;
-        });
+        for (const a of cast)
+          for (const b of minor) {
+            if (a === b || seen.has(b.name)) continue;
+            let reason: string | null = null;
+            if (a.major && b.noAliases && a.aliases.has(b.n))
+              reason = `“${b.name}” is a known alias of ${a.name}`;
+            else if (a.n === b.n) continue;
+            else if (b.n.length > 2 && a.words.has(b.n))
+              reason = `“${b.name}” looks like a short form of ${a.name}`;
+            else if (b.isNew && b.n.length > 3 && a.n.includes(b.n))
+              reason = `“${b.name}” is contained in ${a.name}`;
+            if (!reason) continue;
+            seen.add(b.name);
+            out.push({ from: b.name, into: a.name, reason });
+          }
+        return out;
       };
     },
   },

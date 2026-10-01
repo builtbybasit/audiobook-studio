@@ -34,7 +34,7 @@ import { isSiteText, TYPE_LABEL } from "@/lib/siteText";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
-import { UiSelect } from "@/ui";
+import { UiCombobox, UiSelect } from "@/ui";
 import { money } from "@/lib/pricing";
 import type { PromptTrialResult } from "@/types";
 
@@ -290,16 +290,19 @@ const colorOf = (name: string): string =>
           (v) => ((pickedBook = v == null ? null : String(v)), (pickedChapter = null))
         "
       />
-      <UiSelect
-        v-if="props.chapterId === null && bookId"
-        :model-value="chapterId"
-        :options="chapterOptions"
-        size="xs"
-        placeholder="Choose a chapter…"
-        aria-label="Chapter to try it on"
-        class="min-w-0 flex-1"
-        @update:model-value="(v) => (pickedChapter = v == null ? null : Number(v))"
-      />
+      <!-- a book's every chapter: searched by typing, not scrolled -->
+      <label v-if="props.chapterId === null && bookId" class="flex min-w-0 flex-1">
+        <span class="sr-only">Chapter to try it on</span>
+        <UiCombobox
+          :model-value="chapterId"
+          :options="chapterOptions"
+          size="xs"
+          placeholder="Choose a chapter…"
+          block
+          class="min-w-0 flex-1"
+          @update:model-value="(v) => (pickedChapter = v == null ? null : Number(v))"
+        />
+      </label>
       <UiSelect
         v-if="parts.length > 1"
         :model-value="part"

@@ -20,12 +20,13 @@ import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 
+import { defineStore } from "pinia";
 import { computed, type ComputedRef, type MaybeRefOrGetter, toValue } from "vue";
 import type { RouteLocationRaw } from "vue-router";
 import { flagText } from "@/lib/scriptReview";
 import type { Job } from "@/types";
 import { plural } from "@/lib/contents";
-import { UNREAD_SHARE_WARNING, unreadShare } from "@/lib/siteText";
+import { isSpoken, UNREAD_SHARE_WARNING, unreadShare } from "@/lib/siteText";
 
 /** The stage a decision belongs to, which is also the page it is settled on. */
 export type DecisionKind =
@@ -167,8 +168,25 @@ const ORDER: DecisionKind[] = [
 const excerpt = (t: string, n = 64): string =>
   t.length > n ? t.slice(0, n).trimEnd() + "…" : t || "(empty line)";
 
+/**
+ * One inbox per book, worked out once per change to the stores it reads however many surfaces show
+ * it — the shell's tabs and rail, the Review page, the overview, the palette. Each is a computed, so
+ * it is never stale: a read after any change it depends on works it out again.
+ */
+const useInboxes = defineStore("reviewInbox", () => {
+  const books = new Map<string, ComputedRef<DecisionGroup[]>>();
+  function of(bookId: string): DecisionGroup[] {
+    let inbox = books.get(bookId);
+    if (!inbox) books.set(bookId, (inbox = computed(() => gather(bookId))));
+    return inbox.value;
+  }
+  return { of };
+});
+
 /** Every decision on this book, grouped, empty groups dropped. */
-export function reviewInbox(bookId: string): DecisionGroup[] {
+export const reviewInbox = (bookId: string): DecisionGroup[] => useInboxes().of(bookId);
+
+function gather(bookId: string): DecisionGroup[] {
   const castStore = useCastStore();
   const exportsStore = useExportsStore();
   const jobsStore = useJobsStore();
@@ -177,8 +195,10 @@ export function reviewInbox(bookId: string): DecisionGroup[] {
   const scriptsStore = useScriptsStore();
 
   const chapters = libraryStore.chaptersOf(bookId);
+  // `where` is asked once per row, and a long book has hundreds of rows and chapters
+  const byId = new Map(chapters.map((c) => [c.id, c]));
   const where = (chId: number): string => {
-    const c = libraryStore.chapter(bookId, chId);
+    const c = byId.get(chId);
     return c ? `Ch ${c.id} · ${c.title}` : `Ch ${chId}`;
   };
   const inNarration = (chId: number, segId: number, filter: string): RouteLocationRaw => ({
@@ -203,14 +223,17 @@ export function reviewInbox(bookId: string): DecisionGroup[] {
 
   // ---- runs that failed. Built from what is still broken rather than from the job history: a
   // chapter retried successfully is not a decision any more, however many failures it logged.
+  // the latest failure of each stage of each chapter, in one pass over the history (the later
+  // listed of two that finished together)
+  const failures = new Map<string, Job>();
+  for (const j of jobsStore.jobs) {
+    if (j.bookId !== bookId || j.status !== "failed") continue;
+    const k = `${j.kind}:${j.chapterId}`;
+    const was = failures.get(k);
+    if (!was || (j.finishedAt ?? 0) >= (was.finishedAt ?? 0)) failures.set(k, j);
+  }
   const lastFailure = (kind: Job["kind"], chId: number): Job | undefined =>
-    jobsStore.jobs
-      .filter(
-        (j) =>
-          j.bookId === bookId && j.kind === kind && j.chapterId === chId && j.status === "failed",
-      )
-      .sort((a, b) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0))
-      .at(-1);
+    failures.get(`${kind}:${chId}`);
   // the first error, not the last: a failed run signs off with "Job failed", and the line before it
   // is the one that says what actually went wrong
   const errorOf = (j: Job | undefined): string =>
@@ -276,8 +299,16 @@ export function reviewInbox(bookId: string): DecisionGroup[] {
   const book = libraryStore.bookById(bookId);
   for (const c of chapters) {
     const segs = scriptsStore.segmentsOf(bookId, c.id);
-    // the figure the scripting job warns at, counted the same way (`unreadShare`)
-    const { words: all, unread, lines, share } = unreadShare(segs, book);
+    // the figure the scripting job warns at, counted the same way (`unreadShare`) — and only where
+    // something is unread, since counting a chapter's words is the costly part
+    const {
+      words: all,
+      unread,
+      lines,
+      share,
+    } = segs.some((s) => !isSpoken(s, book))
+      ? unreadShare(segs, book)
+      : { words: 0, unread: 0, lines: 0, share: 0 };
     if (share > UNREAD_SHARE_WARNING)
       items.sitetext.push({
         id: `sitetext:share:${c.id}`,
@@ -350,9 +381,13 @@ export function reviewInbox(bookId: string): DecisionGroup[] {
         });
       }
     }
+  // only chapters with an expression in them can have one out of place: working out a line's
+  // render reads its whole text through the dictionary
   for (const issue of narrationStore.expressionIssues(
     bookId,
-    chapters.map((c) => c.id),
+    chapters
+      .filter((c) => scriptsStore.segmentsOf(bookId, c.id).some((s) => s.expressions?.length))
+      .map((c) => c.id),
   ))
     items.expression.push({
       id: `expression:${issue.chId}:${issue.segId}:${issue.annotationId}`,

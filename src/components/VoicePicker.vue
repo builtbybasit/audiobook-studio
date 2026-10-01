@@ -5,6 +5,11 @@ import { useEndpointsStore } from "@/stores/endpoints";
 // Voice picker for a character: a popover with search, gender filter, voices grouped by endpoint
 // (paused ones listed but disabled), "used by N" and an inline demo button. Built on reka Popover +
 // Listbox so arrows/Enter work. v-model is the voice ref (`endpointId/voiceId`) or null.
+//
+// Given an `anchor` — even a null one, before the first open — it draws no trigger of its own, and
+// one picker serves a whole list, as the Cast page's: the list opens it with `v-model:open` and
+// moves it to another row by changing `anchor`. A click on any `[data-voice-anchor]` button is that
+// move, not a click outside. Closing hands focus back to the anchor, unless a click elsewhere took it.
 import { computed, ref, watch } from "vue";
 
 import { SAMPLE_TITLE, useVoiceSample } from "@/composables/useVoiceSample";
@@ -43,13 +48,14 @@ const props = withDefaults(
     size?: "xs" | "sm";
     block?: boolean;
     speaker?: string;
+    anchor?: HTMLElement | null;
   }>(),
   { modelValue: null, nullLabel: "Narrator’s voice", size: "sm", speaker: undefined },
 );
 const emit = defineEmits<{ "update:modelValue": [VoiceRef | null] }>();
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
-const open = ref(false);
+const open = defineModel<boolean>("open", { default: false });
 const q = ref("");
 const gender = ref("all");
 const { contains } = useFilter({ sensitivity: "base" });
@@ -89,12 +95,26 @@ function pick(v: unknown) {
   open.value = false;
 }
 const voiceSample = useVoiceSample();
-defineExpose({ open });
+
+/** focus moved outside while open, so closing must not pull it back */
+let left = false;
+function onOutside(e: Event) {
+  if (props.anchor === undefined) return;
+  if ((e.target as HTMLElement | null)?.closest?.("[data-voice-anchor]")) e.preventDefault();
+  else left = true;
+}
+function onClosed(e: Event) {
+  if (props.anchor === undefined) return;
+  e.preventDefault();
+  if (!left) props.anchor?.focus();
+  left = false;
+}
 </script>
 
 <template>
   <PopoverRoot v-model:open="open">
     <PopoverTrigger
+      v-if="anchor === undefined"
       class="ui-select-trigger"
       :class="[
         size === 'xs' ? 'py-0.5 text-xs' : 'py-1 text-sm',
@@ -119,10 +139,13 @@ defineExpose({ open });
     </PopoverTrigger>
     <PopoverPortal>
       <PopoverContent
+        :reference="anchor ?? undefined"
         :side-offset="4"
         align="start"
         class="ui-popup w-[min(360px,92vw)]"
         @open-auto-focus.prevent
+        @interact-outside="onOutside"
+        @close-auto-focus="onClosed"
       >
         <ListboxRoot :model-value="undefined" highlight-on-hover @update:model-value="pick">
           <div

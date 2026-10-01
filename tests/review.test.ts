@@ -25,6 +25,8 @@ import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 import { reviewCount, reviewInbox, type DecisionGroup } from "@/views/review/inbox";
+import { newSpeaker } from "@/lib/cast";
+import type { Character } from "@/types";
 import { demoServer, type DemoServer } from "./support/demoServer";
 import { testPinia, type TestPinia } from "./support/pinia";
 
@@ -259,4 +261,31 @@ test("a book with nothing decided against it shows an empty inbox, not an empty 
   expect(group("drowned", "retake")).toBeUndefined();
   expect(group("drowned", "failed")).toBeUndefined();
   expect(reviewInbox("drowned").every((g) => g.items.length > 0)).toBe(true);
+});
+
+test("a long cast still has its alias, short form and contained name suggested, once each", () => {
+  // the names are normalized once per read, not per pair; the pairs found must be the same
+  const speaker = (name: string, c: Partial<Character> = {}): Character => ({
+    ...newSpeaker(name, 0),
+    isNew: false,
+    ...c,
+  });
+  castStore._install("long", {
+    characters: [
+      speaker("Narrator"),
+      ...Array.from({ length: 300 }, (_, i) => speaker(`Extra Number${i}`)),
+      speaker("Ji Ning", { major: true, aliases: ["Little Ning!"] }),
+      speaker("Shen Wuyan", { major: true }),
+      speaker("little ning"),
+      speaker("Ning"),
+      speaker("Wuya", { isNew: true }),
+      speaker("Wuyan", { keep: true }),
+    ],
+    lexicon: [],
+  });
+  expect(castStore.mergeSuggestions("long")).toEqual([
+    { from: "little ning", into: "Ji Ning", reason: "“little ning” is a known alias of Ji Ning" },
+    { from: "Ning", into: "Ji Ning", reason: "“Ning” looks like a short form of Ji Ning" },
+    { from: "Wuya", into: "Shen Wuyan", reason: "“Wuya” is contained in Shen Wuyan" },
+  ]);
 });

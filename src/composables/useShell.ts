@@ -6,6 +6,7 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 
+import { createSharedComposable } from "@vueuse/core";
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 import { endpointErrors, speechReadiness, unifyEndpoint, unifyProfile } from "@/lib/endpoints";
@@ -26,7 +27,10 @@ export type BookPage = (typeof BOOK_PAGES)[number];
 
 const isBookPage = (k: string): k is BookPage => (BOOK_PAGES as readonly string[]).includes(k);
 
-export function useShell() {
+// One shell for the header, the tabs and the rail, so what each shows is worked out once. The shared
+// scope is set up in the first caller's setup, App's, which is mounted for as long as the app is —
+// so `useRoute` is called where it can be, and the route it holds is the app's one.
+export const useShell = createSharedComposable(() => {
   const castStore = useCastStore();
   const endpointsStore = useEndpointsStore();
   const jobsStore = useJobsStore();
@@ -81,4 +85,4 @@ export function useShell() {
     pageName,
     others,
   };
-}
+});

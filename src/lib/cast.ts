@@ -68,11 +68,16 @@ export const narrator = (voice: Character["voice"] = null): Character => ({
   major: true,
 });
 
+/** Which of the Character voice's slots a speaker of this gender is read in. */
+export const characterSlot = (
+  cv: CharacterVoice,
+  gender: Gender,
+): "one" | "male" | "female" | "other" =>
+  cv.by === "one" ? "one" : gender === "m" ? "male" : gender === "f" ? "female" : "other";
+
 /** The book's Character voice for a speaker of this gender, or null where it names none. */
 export function characterVoiceFor(cv: CharacterVoice | undefined, gender: Gender): VoiceRef | null {
-  if (!cv) return null;
-  if (cv.by === "one") return cv.one;
-  return gender === "m" ? cv.male : gender === "f" ? cv.female : cv.other;
+  return cv ? cv[characterSlot(cv, gender)] : null;
 }
 
 /** Where a speaker's voice comes from: their own, the book's Character voice, or the Narrator's. */

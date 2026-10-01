@@ -111,9 +111,6 @@ const examples = computed(() => preview.value?.rows.filter((r) => r.changes).sli
 const voice = computed(() =>
   speaker.value ? castStore.effectiveVoice(props.bookId, speaker.value) : null,
 );
-const narratorVoice = computed(() =>
-  endpointsStore.voiceLabel(castStore.effectiveVoice(props.bookId, "Narrator").ref),
-);
 const segOf = (t: BulkTarget) =>
   scriptsStore.segmentsOf(props.bookId, t.chId).find((s) => s.id === t.segId);
 const withDirection = computed(() => props.targets.filter((t) => segOf(t)?.direction).length);
@@ -284,9 +281,11 @@ function apply() {
       >
         <WarnIcon class="icon shrink-0" />
         <span class="min-w-0 flex-1"
-          ><b>{{ speaker }}</b> has no voice — the script correction is fine, but narrating these
-          lines needs an assignment<span v-if="narratorVoice">
-            (they would fall back to the Narrator’s {{ narratorVoice }})</span
+          ><b>{{ speaker }}</b> has no voice of their own — the script correction is fine, but
+          narrating these lines needs an assignment<span v-if="voice.ref">
+            (they would fall back to
+            {{ voice.from === "character" ? "the Character voice," : "the Narrator’s" }}
+            {{ endpointsStore.voiceLabel(voice.ref) }})</span
           >.</span
         >
         <RouterLink

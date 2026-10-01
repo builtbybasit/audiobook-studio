@@ -26,7 +26,7 @@ export interface NextStepContext {
   failedNarration: number;
   /** speakers first seen in a re-script and not yet reviewed — usually aliases to merge */
   unreviewed: number;
-  /** main cast still borrowing the Narrator's voice */
+  /** main cast with no voice of their own */
   unvoiced: number;
   /** finished audiobooks */
   exports: number;
@@ -79,8 +79,8 @@ export function nextStepOf(p: BookProgress, extra: NextStepContext): NextStep {
     return {
       label: "Assign voices",
       text: `${plural(extra.unvoiced, "main character")} still ${
-        extra.unvoiced === 1 ? "uses" : "use"
-      } the Narrator’s voice.`,
+        extra.unvoiced === 1 ? "has" : "have"
+      } no voice of their own.`,
       to: "narration",
       tone: "sky",
     };

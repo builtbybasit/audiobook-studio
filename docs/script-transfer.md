@@ -274,8 +274,8 @@ so the clips a term change stales are staled and restored the way a dictionary e
 
 **Chosen per speaker, because voices are the part of a book most tuned by hand.** One row per
 speaker whose voice the file names: the book's voice now, the file's, and a tick, with a tick for
-all at the top. A row starts ticked only for a speaker the import adds or one on the Narrator's
-voice (`voice: null`), and only when the voice can be used; a voice you chose starts unticked.
+all at the top. A row starts ticked only for a speaker the import adds or one with no voice of
+their own (`voice: null`), and only when the voice can be used; a voice you chose starts unticked.
 
 **A voice applies only when it is plainly the same voice.** The hint names a voice by host, id and
 label; an endpoint id means nothing on another install. A row is usable when an **enabled**
@@ -291,7 +291,7 @@ first. Every lookup in one plan shares a 15-second deadline.
 
 **A private clone offers Keep or Replace.** A clone lives on someone else's account and cannot be
 fetched. Its row names the voice the file expected, _a private voice on another account_, and
-offers **Keep** (the current voice, or the Narrator's for a new speaker) or **Replace…**, the voice
+offers **Keep** (the current voice, or none of their own for a new speaker) or **Replace…**, the voice
 picker over this install's voices. A provider that could not be asked in time, or refused, is not
 called private: the row says it could not check the host and why, and offers the same two choices.
 

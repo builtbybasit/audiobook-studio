@@ -164,7 +164,8 @@ function commitRename() {
     </div>
     <p class="mt-3 text-[11px] leading-relaxed text-zinc-400">
       Click a name to filter the reader to their lines, double-click to rename, and set the voice it
-      is read in right here. A speaker with no voice of their own borrows the Narrator’s.
+      is read in right here. A speaker with no voice of their own is read in the Character voice, or
+      else the Narrator’s.
       <template v-if="unspoken"
         >The counts leave out the {{ plural(unspoken, "line") }} of this chapter that
         {{ unspoken === 1 ? "is" : "are" }} not read aloud.</template

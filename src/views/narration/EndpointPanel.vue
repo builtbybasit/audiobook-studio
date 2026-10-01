@@ -22,6 +22,7 @@ import {
 import { DOT, TEXT, speechReadiness } from "@/lib/endpoints";
 import type { HealthTone } from "@/lib/endpoints";
 import { plural } from "@/lib/contents";
+import type { VoiceSource } from "@/lib/cast";
 import type { Endpoint } from "@/types";
 
 const props = defineProps<{ bookId: string }>();
@@ -90,14 +91,20 @@ function statusOf(e: Endpoint): Status {
 interface Route {
   endpoint: Endpoint;
   lines: number;
-  speakers: { name: string; lines: number; own: boolean; voice: string }[];
+  speakers: { name: string; lines: number; from: VoiceSource; voice: string }[];
 }
 
+/** what a speaker's tooltip adds after a voice that is not their own */
+const borrowed: Record<VoiceSource, string> = {
+  own: "",
+  character: " (the Character voice)",
+  narrator: " (the Narrator’s voice)",
+};
 const counts = computed(() => scriptsStore.lineCounts(props.bookId));
 const linesOf = (name: string) => counts.value[name] ?? 0;
 
 /** Every speaker resolved the way narration resolves it — a speaker with no voice of its own is
- *  read in the Narrator's, and lands on the Narrator's endpoint. */
+ *  read in the Character voice or the Narrator's, and lands on that voice's endpoint. */
 const resolved = computed(() => {
   const routes: Route[] = [];
   const unvoiced: { name: string; lines: number }[] = [];
@@ -113,7 +120,7 @@ const resolved = computed(() => {
     let row = routes.find((r) => r.endpoint!.id === v.endpoint!.id);
     if (!row) routes.push((row = { endpoint: v.endpoint, lines: 0, speakers: [] }));
     row.lines += lines;
-    row.speakers.push({ name: c.name, lines, own: v.own, voice: v.label ?? "" });
+    row.speakers.push({ name: c.name, lines, from: v.from, voice: v.label ?? "" });
   }
   for (const r of routes) r.speakers.sort((a, b) => b.lines - a.lines);
   routes.sort((a, b) => b.lines - a.lines);
@@ -240,9 +247,9 @@ const blocked = computed(() => resolved.value.routes.filter((r) => status(r.endp
             v-for="s in r.speakers.slice(0, 12)"
             :key="s.name"
             class="inline-flex items-center gap-1 rounded-full border border-zinc-200 py-0.5 pl-2 pr-1.5 text-[11px] dark:border-zinc-700"
-            :title="`${s.name} → ${s.voice}${s.own ? '' : ' (the Narrator’s voice)'} · ${s.lines} line${s.lines === 1 ? '' : 's'}`"
+            :title="`${s.name} → ${s.voice}${borrowed[s.from]} · ${s.lines} line${s.lines === 1 ? '' : 's'}`"
           >
-            <span :class="!s.own && 'text-zinc-400'">{{ s.name }}</span>
+            <span :class="s.from !== 'own' && 'text-zinc-400'">{{ s.name }}</span>
             <span class="text-zinc-400">{{ s.voice }}</span>
             <span class="font-mono text-[9px] text-zinc-400">{{ s.lines }}</span>
           </span>
@@ -285,8 +292,7 @@ const blocked = computed(() => resolved.value.routes.filter((r) => status(r.endp
         </p>
         <p v-if="resolved.unvoiced.length" class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
           {{ resolved.unvoiced.length }} speaker{{ resolved.unvoiced.length === 1 ? "" : "s" }} have
-          no voice and no Narrator to borrow from — assign the Narrator’s voice first and the rest
-          follow it.
+          no voice to fall back on — assign the Narrator’s voice first and the rest follow it.
         </p>
       </div>
 

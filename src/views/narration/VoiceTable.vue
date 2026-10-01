@@ -4,7 +4,8 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useScriptsStore } from "@/stores/scripts";
 
 // Cast → voice assignment. Main cast as cards; minor cast collapsed and falling back to the
-// Narrator's voice unless given one. Search, "unassigned only", auto-assign by gender.
+// Character voice or the Narrator's unless given one. Search, "unassigned only", auto-assign by
+// gender.
 import { computed, ref } from "vue";
 
 import { SAMPLE_TITLE, useVoiceSample } from "@/composables/useVoiceSample";
@@ -57,6 +58,13 @@ const minor = computed(() =>
     .filter(match),
 );
 const narrator = computed(() => all.value.find((c) => c.name === "Narrator"));
+/** What the minor cast with no voice of their own is read in, said once for all of them. */
+const minorFallback = computed(() => {
+  const labels = new Set(
+    minor.value.filter((c) => !c.voice).map((c) => castStore.fallbackLabel(props.bookId, c.name)),
+  );
+  return labels.size > 1 ? "Character or Narrator’s voice" : ([...labels][0] ?? "Narrator’s voice");
+});
 const assignmentPlan = computed(() => castStore.autoAssignPlan(props.bookId));
 const genderLabel = (g: Gender): string => GENDER[g] ?? "unknown";
 /** The Cast page holds the whole record; this opens it on one speaker rather than at the top of a
@@ -66,7 +74,7 @@ const editLink = (c: Character) => ({
   query: { speaker: c.name },
 });
 const voiceSample = useVoiceSample();
-/** The voice a speaker is read in: their own, or the Narrator's they borrow. */
+/** The voice a speaker is read in: their own, or the one they borrow. */
 const heardRef = (c: Character) => castStore.effectiveVoice(props.bookId, c.name).ref;
 function applyAssignments() {
   castStore.autoAssignByGender(props.bookId);
@@ -77,7 +85,8 @@ function applyAssignments() {
 <template>
   <div class="p-3">
     <!-- No summary line: the tab above reads "Voices 5/22", and a speaker with no voice of its own
-         shows "Narrator’s voice" right in its picker. Filters left, bulk actions right. -->
+         shows "Character voice" or "Narrator’s voice" right in its picker. Filters left, bulk
+         actions right. -->
     <div class="mb-3 flex flex-wrap items-center gap-2">
       <input v-model="q" class="input w-44 py-1" placeholder="Find a speaker…" />
       <label class="flex items-center gap-1.5 text-xs"
@@ -103,7 +112,8 @@ function applyAssignments() {
       v-if="!narrator?.voice"
       class="mb-3 rounded-md border border-amber-400 bg-amber-400/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
     >
-      Assign the Narrator’s voice first: every unvoiced character borrows it.
+      Assign the Narrator’s voice first: narration and every speaker with no other voice are read in
+      it.
     </div>
     <div
       v-if="!voiceOpts.length"
@@ -212,7 +222,8 @@ function applyAssignments() {
         />
         <b>Minor cast ({{ minor.length }})</b>
         <span class="text-xs text-zinc-500"
-          >{{ minor.filter((c) => c.voice).length }} assigned · rest use the Narrator’s voice</span
+          >{{ minor.filter((c) => c.voice).length }} assigned · rest use the
+          {{ minorFallback }}</span
         >
       </CollapsibleTrigger>
       <CollapsibleContent

@@ -50,7 +50,7 @@ const props = withDefaults(
     speaker?: string;
     anchor?: HTMLElement | null;
   }>(),
-  { modelValue: null, nullLabel: "Narrator’s voice", size: "sm", speaker: undefined },
+  { modelValue: null, size: "sm", speaker: undefined },
 );
 const emit = defineEmits<{ "update:modelValue": [VoiceRef | null] }>();
 const castStore = useCastStore();
@@ -66,6 +66,12 @@ watch(open, (o) => {
   }
 });
 
+/** The empty choice: what this speaker is read in with no voice of their own, unless told. */
+const emptyLabel = computed(
+  () =>
+    props.nullLabel ??
+    (props.speaker ? castStore.fallbackLabel(props.bookId, props.speaker) : "Narrator’s voice"),
+);
 const current = computed(() => endpointsStore.resolveVoice(props.modelValue));
 const missing = computed(() => props.modelValue && !current.value);
 const usedBy = computed(() => {
@@ -133,7 +139,7 @@ function onClosed(e: Event) {
           >{{ current.voice.label }}
           <span class="text-zinc-400">· {{ current.endpoint.name }}</span></template
         >
-        <template v-else>{{ nullLabel }}</template>
+        <template v-else>{{ emptyLabel }}</template>
       </span>
       <ChevronDownIcon class="ml-1 icon-sm text-zinc-400" aria-hidden />
     </PopoverTrigger>
@@ -169,7 +175,8 @@ function onClosed(e: Event) {
           </div>
           <ListboxContent class="max-h-[300px] overflow-auto p-1">
             <ListboxItem value="__null__" class="ui-item italic text-zinc-500"
-              >{{ nullLabel }}<CheckIcon v-if="!modelValue" class="ml-auto icon-sm text-violet-500"
+              >{{ emptyLabel
+              }}<CheckIcon v-if="!modelValue" class="ml-auto icon-sm text-violet-500"
             /></ListboxItem>
             <ListboxGroup v-for="g in rows" :key="g.endpoint.id">
               <ListboxGroupLabel

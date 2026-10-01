@@ -192,7 +192,7 @@ export interface VoiceRow {
   speaker: string;
   /** the speaker is added by this import */
   isNew: boolean;
-  /** the book's voice for them now; null = the Narrator's */
+  /** the book's voice for them now; null = none of their own */
   current: VoiceRef | null;
   hint: VoiceHint;
   match: VoiceMatch;

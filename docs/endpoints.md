@@ -45,7 +45,9 @@ source.
 
 - Queue wait (our side, waiting for a slot) is totalled separately from provider response time; the
   latency chart stacks the two.
-- Throughput is tokens per minute for scripting and minutes of audio per minute for speech.
+- Throughput is tokens per minute for scripting and minutes of audio per minute for speech, over
+  the requests that reported usage; the rest show as "N without usage", never as zero. When none
+  reported, the tile reads "—" and "usage not reported" and the chart plots requests per minute.
 - Outcomes separate first-attempt success from eventual success and count rate limits, retries and
   failures.
 - Clicking a bar filters the Activity tab to exactly the requests in that bucket; chart and list are
@@ -215,8 +217,13 @@ stay shut on an endpoint that has neither. A blank rate means unknown, never $0.
 
 The tab sets the endpoint's scope beside the books' scope:
 
-- **Daily limit** (one endpoint, all books) is saved with the endpoint and shown against today's
-  spend. Nothing on the server enforces it yet; only book budgets stop work.
+- **Daily limit** (one endpoint, all books) is what the endpoint may be charged since local
+  midnight, shown against today's spend; blank is no limit. A run bigger than the limit is still
+  queued, since a long run spans days, and is refused only when the limit cannot cover its first
+  request. Before each request the server adds what was spent today, what requests out now hold
+  and this request's worst case; one that would pass the limit stops the run the way a book
+  budget does, and the chapter fails naming the endpoint and its limit. Voice samples and clone
+  fees count against it too.
 - **Book budgets** (one book, all endpoints) are listed with what each book has spent and any
   scripting sub-cap, and are set on each book's overview. When the remaining budget cannot cover
   another request, the run stops dispatching: requests in flight land and are recorded, nothing

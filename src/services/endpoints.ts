@@ -101,6 +101,7 @@ const emptyTotals = (): MetricTotals => ({
   responseMs: 0,
   p95Ms: 0,
   throughput: 0,
+  unreported: 0,
   cost: 0,
   unknownCost: 0,
   inputTokens: 0,
@@ -119,6 +120,22 @@ const p95 = (xs: number[]): number => {
   const s = [...xs].sort((a, b) => a - b);
   return s[Math.min(s.length - 1, Math.floor(s.length * 0.95))];
 };
+
+/**
+ * What a request produced, in the unit its kind's throughput is judged by — tokens for scripting,
+ * audio minutes for speech. `null` when the provider did not say, which is never the same as none.
+ */
+const producedBy = (r: RequestRecord, kind: EndpointKind): number | null => {
+  const u = r.usage;
+  if (kind !== "scripting") return u.audioSeconds == null ? null : u.audioSeconds / 60;
+  return u.inputTokens == null && u.outputTokens == null
+    ? null
+    : (u.inputTokens ?? 0) + (u.outputTokens ?? 0);
+};
+
+/** Work per minute over the requests that reported it; unknown when requests finished and none did. */
+const rate = (work: number, reported: number, unreported: number, minutes: number) =>
+  unreported && !reported ? null : work / minutes;
 
 /** When a request counts towards a bucket: when it settled, or when it was queued if it hasn't. */
 export const recordAt = (r: RequestRecord): number => r.finishedAt ?? r.startedAt ?? r.queuedAt;
@@ -150,12 +167,15 @@ export function seriesFrom(
     responseMs: 0,
     p95Ms: 0,
     throughput: 0,
+    unreported: 0,
     cost: 0,
     unknownCost: 0,
   }));
   const queueSamples: number[][] = buckets.map(() => []);
   const responseSamples: number[][] = buckets.map(() => []);
+  // what the requests that reported usage produced, and how many of them there were
   const work: number[] = buckets.map(() => 0);
+  const reported: number[] = buckets.map(() => 0);
   const totals = emptyTotals();
   const allResponses: number[] = [];
 
@@ -214,11 +234,17 @@ export function seriesFrom(
     }
     totals.chars += u.chars ?? 0;
     totals.audioSeconds += u.audioSeconds ?? 0;
-    // throughput is measured on what the endpoint produced, in the unit that kind is judged by
-    work[i] +=
-      kind === "scripting"
-        ? (u.inputTokens ?? 0) + (u.outputTokens ?? 0)
-        : (u.audioSeconds ?? 0) / 60;
+    // throughput is measured on what the endpoint produced. A finished request whose provider
+    // reported no usage is counted apart rather than as zero; one that failed without usage
+    // produced nothing, and that is a known zero.
+    const made = producedBy(r, kind);
+    if (made != null) {
+      work[i] += made;
+      reported[i]++;
+    } else if (r.status === "done") {
+      b.unreported++;
+      totals.unreported++;
+    }
   }
 
   const minutes = width / 60000;
@@ -228,14 +254,17 @@ export function seriesFrom(
     b.queueMs = q.length ? q.reduce((a, x) => a + x, 0) / q.length : 0;
     b.responseMs = s.length ? s.reduce((a, x) => a + x, 0) / s.length : 0;
     b.p95Ms = p95(s);
-    b.throughput = work[i] / minutes;
+    b.throughput = rate(work[i], reported[i], b.unreported, minutes);
   });
   const settled = totals.eventualOk + totals.failures;
   totals.queueMs = settled ? totals.queueMs / settled : 0;
   totals.responseMs = settled ? totals.responseMs / settled : 0;
   totals.p95Ms = p95(allResponses);
-  totals.throughput =
-    (kind === "scripting" ? totals.inputTokens + totals.outputTokens : totals.audioSeconds / 60) /
-    (spec.ms / 60000);
+  totals.throughput = rate(
+    work.reduce((a, x) => a + x, 0),
+    reported.reduce((a, x) => a + x, 0),
+    totals.unreported,
+    spec.ms / 60000,
+  );
   return { kind, range, from, to, buckets, totals };
 }

@@ -139,11 +139,8 @@ export const speechPricing = (e: Endpoint) => speechPricingOf({ ...e, billing: b
 
 /** The one-line pricing shown on a card — at the rates in force now, not the base card. */
 export function pricingLabel(u: UnifiedEndpoint, now: number = Date.now()): string {
-  if (u.profile) {
-    const { inPrice, outPrice } = u.profile;
-    if (!inPrice && !outPrice) return "no rates entered";
+  if (u.profile)
     return pricingOneLiner(effectiveRates(baseRates(u.profile), ensurePricing(u.profile), now));
-  }
   const { base, config, unit } = speechPricing(u.endpoint!);
   return pricingOneLiner(effectiveRates(base, config, now), unit);
 }

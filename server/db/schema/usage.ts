@@ -104,6 +104,12 @@ export const requests = sqliteTable(
     cost: real("cost"),
     costBasis: text("cost_basis").$type<CostBasis>().notNull(),
     /**
+     * What the request held against the budgets while it was out — its undiscounted worst case —
+     * kept only on a row whose `cost` is null. A request the provider billed without saying for
+     * what still cost something, so every budget counts this in its place rather than nothing.
+     */
+    held: real("held"),
+    /**
      * The receipt, frozen when the request completed. A scripting request gets `priced` — tokens,
      * with the cache split; a rendered clip gets `speech` — characters, bytes, audio seconds and
      * the unit its endpoint bills by. Editing a rate or letting a promotion expire never touches

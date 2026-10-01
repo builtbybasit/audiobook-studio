@@ -133,6 +133,10 @@ the rule is exercised rather than asserted.
   A scripting request whose answer says what it cost — OpenRouter's `usage.cost` — is recorded at
   that figure (`provider-reported`), since a gateway bills at whichever provider served it rather
   than at the listed rate; the card's figure stays on the receipt as `calculated`.
+- **An answer with no usage is unknown, not free.** A scripting request the provider answered
+  without saying what it used is recorded `unknown` with no cost — unless every rate on the card is
+  zero, when $0 is known. The row keeps the worst case it held while out (`held`), and every budget
+  counts that figure in its place, so a provider that never reports usage cannot spend past a cap.
 
 ### Estimates, and what they are allowed to assume
 

@@ -269,8 +269,11 @@ export interface MetricBucket {
   /** mean ms waiting for the provider */
   responseMs: number;
   p95Ms: number;
-  /** tokens/minute (scripting) or generated audio minutes per minute (TTS) */
-  throughput: number;
+  /** tokens/minute (scripting) or generated audio minutes per minute (TTS), over the requests
+   *  that reported what they produced; `null` when requests finished and none of them did */
+  throughput: number | null;
+  /** finished requests whose provider reported no usage — left out of `throughput`, never as 0 */
+  unreported: number;
   cost: number;
   /** requests in this bucket whose cost could not be priced */
   unknownCost: number;
@@ -286,7 +289,9 @@ export interface MetricTotals {
   queueMs: number;
   responseMs: number;
   p95Ms: number;
-  throughput: number;
+  /** as on a bucket: `null` when requests finished and none reported usage */
+  throughput: number | null;
+  unreported: number;
   cost: number;
   unknownCost: number;
   inputTokens: number;

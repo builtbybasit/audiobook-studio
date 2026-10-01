@@ -57,6 +57,12 @@ export interface RequestFor {
    * not the profile's now. What its reasoning tokens are read against for the next estimate.
    */
   reasoning?: ReasoningEffort | null;
+  /**
+   * What the request held against the budgets while it was out, at its undiscounted worst case:
+   * kept on a row whose cost is unknown, which the budgets count in its place. $0 here means the
+   * card charges nothing for it, so a request that reported nothing is known to be free.
+   */
+  held?: number;
 }
 
 const errorOf = (sent: SentScript | SentSpeech): ReqError | undefined =>
@@ -73,9 +79,12 @@ export function append(
   db: Db | Tx,
   r: Omit<RequestRecord, "id" | "chapterId">,
   chapterUid: string | null,
+  held?: number,
 ): RequestRecord {
   const record: RequestRecord = { ...r, id: crypto.randomUUID(), chapterId: null };
-  db.insert(requests).values(requestValues(record, chapterUid)).run();
+  db.insert(requests)
+    .values({ ...requestValues(record, chapterUid), held: r.cost == null ? held : null })
+    .run();
   return record;
 }
 
@@ -92,10 +101,13 @@ function timing(sent: SentScript | SentSpeech, work: RequestFor) {
 
 /**
  * Price one scripting request against `profile`'s card and append it. A request that reported no
- * usage — it failed before the provider counted anything — costs nothing and says so: no chat
- * completion is billed for an error. A provider that says what the request cost — OpenRouter does,
- * at whichever of its providers served it — is taken at its word; the figure worked out from the
- * card is kept on the receipt beside it.
+ * usage costs nothing when it was refused — no chat completion is billed for an error. One that
+ * was answered — done, or a 2xx this server could not use — was billed for something nobody here
+ * knows: its cost is unknown, never $0, which would have the budgets count a paid request as free,
+ * and its row keeps what it held for them to count instead; unless the most it could have cost
+ * (`work.held`) is nothing, when it is known to be free. A
+ * provider that says what the request cost — OpenRouter does, at whichever of its providers served
+ * it — is taken at its word; the figure worked out from the card is kept on the receipt beside it.
  */
 export function settleScript(
   db: Db | Tx,
@@ -122,6 +134,9 @@ export function settleScript(
       }
     : {};
   const error = errorOf(sent);
+  const code = sent.error?.code ?? 0;
+  const answered = sent.status === "done" || (code >= 200 && code < 300);
+  const cost = priced ? priced.total : answered && work.held !== 0 ? null : 0;
   return append(
     db,
     {
@@ -134,14 +149,15 @@ export function settleScript(
       ...timing(sent, work),
       usage,
       ...(work.reasoning ? { reasoningEffort: work.reasoning } : {}),
-      cost: priced ? priced.total : 0,
-      costBasis: priced ? priced.basis : "calculated",
+      cost,
+      costBasis: priced ? priced.basis : cost == null ? "unknown" : "calculated",
       ...(priced ? { priced } : {}),
       ...(sent.rateLimited ? { rateLimited: true } : {}),
       ...(error ? { error } : {}),
       simulated: sent.simulated,
     },
     work.chapterUid,
+    work.held,
   );
 }
 
@@ -200,6 +216,7 @@ export function settleSpeech(
       simulated: sent.simulated,
     },
     work.chapterUid,
+    work.held,
   );
 }
 
@@ -313,13 +330,15 @@ export function chapterUidOf(db: Db | Tx, bookId: string, chapterId: number): st
 
 /**
  * A book's spending, from the ledger and the queue. `exceptJob` leaves one job's reservation out,
- * which is how a running job asks whether the rest of the book leaves room for what it holds.
+ * which is how a running job asks whether the rest of the book leaves room for what it holds. A
+ * request whose cost is unknown is counted at what it held while it was out (`held`), and is one
+ * of the `unpriced`.
  */
 export function bookSpend(db: Db | Tx, bookId: string, exceptJob?: number): BookSpend {
   const byKind = db
     .select({
       kind: requests.kind,
-      cost: sum(requests.cost).mapWith(Number),
+      cost: sum(sql`coalesce(${requests.cost}, ${requests.held})`).mapWith(Number),
       unpriced: sql<number>`sum(case when ${requests.cost} is null then 1 else 0 end)`,
     })
     .from(requests)
@@ -357,6 +376,32 @@ export function bookSpend(db: Db | Tx, bookId: string, exceptJob?: number): Book
     scriptReserved: heldBy("scripting"),
     unpriced: byKind.reduce((n, r) => n + Number(r.unpriced ?? 0), 0),
   };
+}
+
+/**
+ * What one endpoint has been charged since `since`, across every book: what its daily limit is held
+ * to. A request whose cost is unknown is counted at what it held while it was out (`held`).
+ */
+export function endpointSpend(
+  db: Db | Tx,
+  kind: EndpointKind,
+  endpointId: string,
+  since: number,
+): number {
+  return (
+    db
+      .select({ cost: sum(sql`coalesce(${requests.cost}, ${requests.held})`).mapWith(Number) })
+      .from(requests)
+      .where(
+        and(
+          eq(requests.kind, kind),
+          eq(requests.endpointId, endpointId),
+          // as the Endpoints page reads a row's time
+          gte(sql`coalesce(${requests.finishedAt}, ${requests.queuedAt})`, since),
+        ),
+      )
+      .get()?.cost ?? 0
+  );
 }
 
 /**

@@ -110,10 +110,12 @@ export async function tryPrompt(
   };
   const prompt = renderPrompt(template, vars);
 
+  const reserve = tokenEstimate(excerpt, profile, Date.now(), { prompt: template }).reserve;
   assertWithinBudget(db, bookId, {
     kind: "scripting",
-    cost: tokenEstimate(excerpt, profile, Date.now(), { prompt: template }).reserve,
+    cost: reserve,
     what: "this trial",
+    requests: [{ endpoint: profile.id, cost: reserve }],
   });
 
   let sent: SentScript | null = null;
@@ -129,6 +131,7 @@ export async function tryPrompt(
           bookId,
           chapterUid: uid,
           label: `Prompt trial · ch ${request.chapterId} · part ${part}/${chunks.length}`,
+          held: reserve,
         },
         report,
       );

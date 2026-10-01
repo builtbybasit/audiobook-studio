@@ -41,7 +41,14 @@
 // goes through — a slot, the budget, the audit trail, the landing — is `lineRun`; what sending a
 // line in parts adds is `server/narration/parts.ts`, and what sending lines in batches adds is
 // `server/narration/batch.ts`.
-import type { Job, NarrationQueued, NarrationScope, Segment, SegmentAudio } from "@/types";
+import type {
+  Endpoint,
+  Job,
+  NarrationQueued,
+  NarrationScope,
+  Segment,
+  SegmentAudio,
+} from "@/types";
 import { encodingOf } from "@/lib/endpointShapes";
 import { chapterNarration, narrationTargets, SCOPE_LABEL } from "@/lib/runPlan";
 import { isSpoken } from "@/lib/siteText";
@@ -99,7 +106,7 @@ import {
 import type { SentSpeech } from "~/providers/sent";
 import type { BatchLimits, RenderedClip, SpeechProvider } from "~/providers/speech";
 import { speechTarget } from "~/providers/target";
-import { assertWithinBudget, budgetProblem } from "~/usage/budget";
+import { assertWithinBudget, budgetProblem, holdToday, type EndpointRequest } from "~/usage/budget";
 import { settleSpeech } from "~/usage/ledger";
 
 /** The way back from a label the Queue page shows to the scope it names; `SCOPE_LABEL` is one-to-one. */
@@ -238,6 +245,15 @@ interface Line extends BatchLine<Target> {
   release(): void;
 }
 
+/** A line's delivery, what it is sent as, and the worst case it holds while it is out. */
+interface Priced {
+  who: Delivery;
+  instructions: string;
+  ep: Endpoint | undefined;
+  plan: ExpressionPlan;
+  worst: number;
+}
+
 /** What a run's lines came to, for the log's last word and the job's verdict. */
 interface Tally {
   rendered: number;
@@ -264,6 +280,8 @@ function lineRun(o: {
   renderLine(t: Target): Promise<void>;
   /** why the budget stopped the run, or null */
   refused(): string | null;
+  /** give back what lines still out hold against their endpoints' daily limits: the run is over */
+  close(): void;
   tally: Tally;
 } {
   const { ctx, provider, files, gate, chapter, deliveryOf, targets, lines, stop } = o;
@@ -329,22 +347,45 @@ function lineRun(o: {
   const halted = (): boolean => stop.aborted || refused != null;
 
   /**
-   * The budget, asked before a line goes out, with what the job still holds and its own
-   * reservation left out of the book's: a run that fitted when it was queued stops here when the
-   * cap was lowered, the book was paused, or other lines cost more than they held. The lines not
-   * yet sent are put back as they were (`onSettled`), and the clips landed stay.
+   * Who says a line, what it is sent as and what it holds at worst, worked out as it goes out —
+   * once, for the budget and then its commit, which follow each other with nothing in between.
    */
-  const budgetStops = ({ s }: Target): boolean => {
+  const pricing = new Map<Target, Priced>();
+  const priceOf = (t: Target): Priced => {
+    let p = pricing.get(t);
+    if (!p) {
+      const who = deliveryOf(t.s.speaker);
+      const instructions = speechInstructions({ style: who.style, direction: t.s.direction });
+      const ep = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;
+      const plan = expressionPlan(t.s, ep, readLexicon(db, job.bookId));
+      const worst = lineWorstCase(ep, plan, instructions, Date.now());
+      pricing.set(t, (p = { who, instructions, ep, plan, worst }));
+    }
+    return p;
+  };
+  /** what lines out hold against their endpoints' daily limits, given back as each settles */
+  const out = new Set<(n?: number) => void>();
+
+  /**
+   * The budget, asked before a line goes out: the book's with what the job still holds and its own
+   * reservation left out — a run that fitted when it was queued stops here when the cap was
+   * lowered, the book was paused, or other lines cost more than they held — and the endpoint's
+   * daily limit with the line's own worst case. The lines not yet sent are put back as they were
+   * (`onSettled`), and the clips landed stay.
+   */
+  const budgetStops = (t: Target): boolean => {
+    const { ep, worst } = priceOf(t);
     const problem = budgetProblem(db, job.bookId, {
       kind: "narration",
       cost: held,
       jobId: job.id,
       what: "the next line",
+      requests: ep ? [{ endpoint: ep.id, cost: worst }] : [],
     });
     if (!problem) return false;
     refused = problem;
-    const note = `Stopped before line ${s.id}: the book's budget does not cover it`;
-    ctx.note(note, "warning", { line: s.id, why: problem });
+    const note = `Stopped before line ${t.s.id}: the budget does not cover it`;
+    ctx.note(note, "warning", { line: t.s.id, why: problem });
     return true;
   };
 
@@ -363,19 +404,21 @@ function lineRun(o: {
    */
   const commit = (t: Target, maxChars?: number | null): Line | null => {
     const { s, slot } = t;
-    const who = deliveryOf(s.speaker);
-    const instructions = speechInstructions({ style: who.style, direction: s.direction });
-    const ep = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;
-    const plan = expressionPlan(s, ep, readLexicon(db, job.bookId));
-    // What this line gives back to the cap: each request's charge as it is written to the
-    // ledger, so what a line has spent is never also still held while another line asks the
-    // budget, and whatever is left once the line has settled, whether it rendered, failed or
-    // was never sent — from then on its cost is in the ledger, or it was never going to be.
-    let left = lineWorstCase(ep, plan, instructions, Date.now());
+    const { who, instructions, ep, plan, worst } = priceOf(t);
+    pricing.delete(t);
+    // What this line gives back to the cap and to its endpoint's daily limit: each request's
+    // charge as it is written to the ledger, so what a line has spent is never also still held
+    // while another line asks the budget, and whatever is left once the line has settled, whether
+    // it rendered, failed or was never sent — from then on its cost is in the ledger, or it was
+    // never going to be.
+    let left = worst;
+    const today = ep ? holdToday(db, "tts", ep.id, left) : undefined;
+    if (today) out.add(today);
     const give = (amount: number): void => {
       const back = Math.min(left, Math.max(0, amount));
       if (!back) return;
       left -= back;
+      today?.(back);
       held = Math.max(0, held - back);
       setReserved(db, job.id, held);
     };
@@ -394,7 +437,9 @@ function lineRun(o: {
       if (!priced || !library.getBook(db, job.bookId)) return;
       // a chapter removed mid-request is still where the money went; the label says which
       const chapterUid = library.locateChapter(db, chapter.uid) ? chapter.uid : null;
-      give(settleSpeech(db, priced, { ...work, chapterUid }, sent).cost ?? 0);
+      // a charge nobody knows is counted at what the line still holds, which it then gives back
+      const { cost } = settleSpeech(db, priced, { ...work, chapterUid, held: left }, sent);
+      give(cost ?? left);
     };
     // Where the line is cut to fit the endpoint's `maxChars` — or a batch's shorter limit —
     // decided before it goes out so the clip can say so while it renders. A line with an issue
@@ -653,6 +698,10 @@ function lineRun(o: {
     land,
     renderLine,
     refused: () => refused,
+    close: () => {
+      for (const give of out) give();
+      out.clear();
+    },
     tally,
   };
 }
@@ -759,6 +808,8 @@ export function narrationHandler(
           }),
         ),
       );
+      // every line has landed or been stopped: none is out at its endpoint any more
+      run.close();
       signal.removeEventListener("abort", onAbort);
       if (signal.aborted) throw signal.reason;
       if (fatal) throw (fatal as { error: unknown }).error;
@@ -826,7 +877,9 @@ export function narrationHandler(
  * The run is priced before anything is queued, chapter by chapter at its worst case, and checked
  * against the book's budget whole: a run that does not fit is refused with a 409 and no chapter of
  * it is queued, because half a run is not what anyone asked for. Each job holds its own chapter's
- * figure until its lines settle.
+ * figure until its lines settle. An endpoint's daily limit refuses the run only when it cannot
+ * cover even the first line that endpoint is sent; past that, the job stops at the line that would
+ * pass it.
  */
 export function enqueueNarration(
   db: Db,
@@ -874,10 +927,16 @@ export function enqueueNarration(
       cost: narrationCost(db, bookId, run, at),
     });
   }
+  // each endpoint's first line, in the order the chapters were asked for
+  const firsts = new Map<string, EndpointRequest>();
+  for (const t of targets)
+    for (const f of t.cost.firsts) if (!firsts.has(f.endpoint)) firsts.set(f.endpoint, f);
   if (targets.length)
     assertWithinBudget(db, bookId, {
       kind: "narration",
       cost: targets.reduce((n, t) => n + t.cost.reserved, 0),
+      requests: [...firsts.values()],
+      request: "the first line",
     });
 
   const runId = nextRunId(db);

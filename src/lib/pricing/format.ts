@@ -323,7 +323,9 @@ export function pricingOneLiner(snapshot: PricingSnapshot, unit?: TtsBillingUnit
   const head =
     unit !== undefined
       ? speechOneLiner(snapshot, unit)
-      : `${money(i.rate ?? 0)} in / ${money(o.rate ?? 0)} out · 1M tokens`;
+      : !i.rate && !o.rate
+        ? "no charge"
+        : `${money(i.rate ?? 0)} in / ${money(o.rate ?? 0)} out · 1M tokens`;
   const notes: string[] = [];
   if (snapshot.window) notes.push(snapshot.window.label);
   for (const p of snapshot.applied) notes.push(p.label);

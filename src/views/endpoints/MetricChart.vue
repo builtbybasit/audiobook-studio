@@ -12,6 +12,9 @@
 // Throughput and spend are interval totals, while errors are discrete event counts, so bars make
 // their magnitude and empty buckets easy to compare. Latency is a trend: one line shows the total
 // wait a user experienced, while the readout retains the queue/provider split needed to diagnose it.
+//
+// When nothing in the range reported usage, throughput is unknown rather than zero, so the
+// throughput chart plots requests a minute instead of an empty strip.
 import { computed, ref } from "vue";
 import { plural } from "@/lib/contents";
 import { CurveType } from "@unovis/ts";
@@ -48,6 +51,8 @@ const emit = defineEmits<{ pick: [MetricBucket | null] }>();
 /** Each metric is one or more series. Non-latency series are drawn as stacked bars. */
 interface ChartBucket extends MetricBucket {
   latencyMs: number;
+  /** requests a minute — what the throughput chart plots when no request reported usage */
+  requestRate: number;
 }
 interface Part {
   key: keyof ChartBucket;
@@ -76,10 +81,19 @@ const latencyView = ref<"total" | "breakdown">("total");
 const setLatencyView = (value: string | number | null) => {
   if (value === "total" || value === "breakdown") latencyView.value = value;
 };
+const REQUEST_RATE: Part[] = [
+  { key: "requestRate", label: "requests/min", color: "var(--chart-1)" },
+];
+/** Throughput with no usage reported anywhere in the range: plot how many requests ran instead. */
+const byRequests = computed(
+  () => props.metric === "throughput" && props.series.totals.throughput == null,
+);
 const parts = computed(() =>
   props.metric === "latency" && latencyView.value === "breakdown"
     ? LATENCY_BREAKDOWN
-    : PARTS[props.metric],
+    : byRequests.value
+      ? REQUEST_RATE
+      : PARTS[props.metric],
 );
 /** Latency plots one total line, but its tooltip also names the two values that make up that total. */
 const chartConfig = computed<ChartConfig>(() => {
@@ -96,6 +110,7 @@ const buckets = computed<ChartBucket[]>(() =>
   props.series.buckets.map((bucket) => ({
     ...bucket,
     latencyMs: bucket.queueMs + bucket.responseMs,
+    requestRate: bucket.requests / ((bucket.to - bucket.from) / 60_000),
   })),
 );
 /** Bars are placed on a time axis, so Unovis needs the spacing to size them. */
@@ -103,8 +118,11 @@ const step = computed(() => {
   const [a, b] = buckets.value;
   return b ? b.from - a.from : 60_000;
 });
+/** A bucket's reading of one part; `undefined` where it is not known (no bar is drawn). */
+const valueOf = (b: ChartBucket, key: keyof ChartBucket): number | undefined =>
+  (b[key] as number | null) ?? undefined;
 const totalOf = (b: ChartBucket): number =>
-  parts.value.reduce((n, p) => n + (b[p.key] as number), 0);
+  parts.value.reduce((n, p) => n + (valueOf(b, p.key) ?? 0), 0);
 
 const x = (b: ChartBucket) => b.from;
 const hasLatency = (b: ChartBucket): boolean => b.responseMs > 0 || b.queueMs > 0;
@@ -114,7 +132,7 @@ const chartData = computed(() =>
 const y = computed(() =>
   parts.value.map(
     (p) => (b: ChartBucket) =>
-      props.metric === "latency" && !hasLatency(b) ? undefined : (b[p.key] as number),
+      props.metric === "latency" && !hasLatency(b) ? undefined : valueOf(b, p.key),
   ),
 );
 const color = (_b: ChartBucket, i: number): string => parts.value[i]?.color ?? "var(--chart-1)";
@@ -196,8 +214,9 @@ const shown = computed(() => {
   if (i != null) return buckets.value[i] ?? null;
   return buckets.value.find(isSelected) ?? null;
 });
+/** the request-rate fallback carries its unit in its label, so the values go bare */
 const unit = computed(() =>
-  props.metric === "throughput" ? " " + throughputUnit(props.series.kind) : "",
+  props.metric === "throughput" && !byRequests.value ? " " + throughputUnit(props.series.kind) : "",
 );
 
 /** Unovis wants tooltip content as an HTML string, so the shadcn card is rendered to one. Rebuilt
@@ -343,8 +362,12 @@ const tooltip = computed(() =>
           · total {{ format(shown.latencyMs) }} · provider {{ format(shown.responseMs) }} · queue
           {{ format(shown.queueMs) }}
         </template>
-        <template v-for="p in metric === 'latency' ? [] : parts" :key="String(p.key)">
-          · {{ p.label }} {{ format(shown[p.key] as number) }}{{ unit }}
+        <template v-for="p in metric === 'latency' || byRequests ? [] : parts" :key="String(p.key)">
+          · {{ p.label }}
+          {{ valueOf(shown, p.key) == null ? "—" : format(valueOf(shown, p.key)!) + unit }}
+        </template>
+        <template v-if="metric === 'throughput' && shown.unreported">
+          · {{ shown.unreported }} without usage
         </template>
         <template v-if="shown.unknownCost"> · {{ shown.unknownCost }} not priced </template>
         <span v-if="isSelected(shown)" class="text-violet-600 dark:text-violet-400">

@@ -278,7 +278,7 @@ over an imported book. The connection also waits up to five seconds on a busy da
 | [server/exports/](../server/exports/)                                                         | The finished audiobooks: listed, downloaded, forgotten, and where their files live                    |
 | [server/endpoints/ops.ts](../server/endpoints/ops.ts)                                         | The endpoint configuration saved whole; a voice sample; a provider's failure as a refusal             |
 | [server/voices/](../server/voices/), [speakerSamples/](../server/speakerSamples/)             | The recordings a cloned voice was made from, and the ones a script file brought for a speaker         |
-| [server/usage/](../server/usage/)                                                             | The ledger, and a book's budget held against it                                                       |
+| [server/usage/](../server/usage/)                                                             | The ledger, and the budgets held against it                                                           |
 | [server/jobs/](../server/jobs/)                                                               | The runner, and the scripting, narration and build jobs with the enqueue half of each                 |
 | [server/providers/](../server/providers/)                                                     | The ports a scripting model, a speech model and an encoder are reached through, and what is behind    |
 | [server/epub/](../server/epub/), [import/](../server/import/)                                 | Reading an EPUB, cutting it into chapters, deciding which are notices, assembling a book              |
@@ -1116,7 +1116,10 @@ so a rate changed tomorrow re-prices nothing. What a receipt holds, and why, is 
 
 Which requests count follows what a provider bills. A chat answer the job then refuses — cut off,
 empty, not the chapter's — was billed and is priced from the usage it reported; a chat request that
-failed on the wire reported none and costs nothing. A speech request reports whether it was billed,
+failed on the wire reported none and costs nothing. An answered chat request that reported no usage
+was billed for something nobody here knows: its cost is unknown, never $0 — unless its card charges
+nothing — and its row keeps in `held` the worst case it held while it was out, which every budget
+counts in place of the cost. A speech request reports whether it was billed,
 by one rule in [send.ts](../server/providers/send.ts): a 2xx was generated and is billed, even when
 what came back proved unusable. A refusal after the retries, a request that never got an answer,
 and a refusal inside a 200 are not billed unless the provider's docs say it bills failures
@@ -1152,6 +1155,19 @@ run's own figure together, so the Queue does not show a cancelled or failed run 
 its unsent lines had reserved. A narration job stopped by the budget puts the lines it had not sent
 back as they were, rather than failing them. `GET /api/books/:id/spend` answers the sums;
 `GET /api/endpoints/requests` answers one endpoint's rows for the Activity list and the charts, each with the number its chapter goes by now.
+
+**An endpoint's daily limit is enforced by the same question, per request.** `spendLimit` is what
+one endpoint may be charged since local midnight on the server, across every book; null is no
+limit. Spent is the ledger's cost on that endpoint since midnight, and held is what its requests
+out right now hold at their worst case — kept in memory (`holdToday`), since only this process
+sends and nothing is out after a restart. What queued jobs reserve is not counted: a long run
+legitimately spans days, and counting its queued chapters would stop it at its first request.
+So a run is refused before anything is queued only when the limit cannot cover even the first
+request it sends that endpoint; otherwise each request asks, with its own worst case, before it goes
+out, and the one that would pass the limit stops the job the way a book's cap does — what is out
+lands and is paid for, nothing more is sent, and the chapter fails with a sentence naming the
+endpoint and its limit. A voice sample and a fee charged as a voice is made are billed to the
+endpoint, so they are held to its limit too; a connection test writes no ledger row and is not.
 
 ## Narration
 
@@ -1470,9 +1486,8 @@ are skipped unless `LIVE=1`, so the ordinary suite never reaches the network.
 
 ## Known gaps
 
-- **An endpoint's daily limit is shown, not enforced.** `spendLimit` and `quotaGroup` are stored and
-  the Pricing tab draws the day's spending against the limit, but only a book's cap, pause and
-  script budget hold work back.
+- **Endpoints in one quota group do not share a limit.** `quotaGroup` is stored, but each endpoint's
+  daily limit is held to that endpoint's own spending alone.
 - **A billed request that was aborted has no row.** When one chunk of a chapter fails, the others in
   flight are aborted, and a request cancelled mid-flight reports nothing, since what the provider
   made of it is not knowable. A budget stop, by contrast, lets what is out land and pays for it.

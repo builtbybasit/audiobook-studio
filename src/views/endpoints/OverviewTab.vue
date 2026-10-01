@@ -7,9 +7,12 @@
 //
 // Success is also two numbers — right first time, and right in the end — because an endpoint that
 // only ever succeeds on its third attempt is not the same as a healthy one.
+//
+// A request whose provider reported no usage is counted apart, never as zero: throughput is over
+// the requests that did report, and when none did the tile says so and the chart plots requests.
 import { computed } from "vue";
 import { plural } from "@/lib/contents";
-import { UiToggleGroup, UiTooltip } from "@/ui";
+import { UiHint, UiToggleGroup, UiTooltip } from "@/ui";
 import MetricChart from "@/views/endpoints/MetricChart.vue";
 import { RANGES } from "@/services/endpoints";
 import {
@@ -78,7 +81,9 @@ const rangeLabel = computed(() => RANGES.find((r) => r.value === props.range)!.l
         />
         <span class="text-[11px] text-zinc-500">{{
           metric === "throughput"
-            ? throughputLabel(u.kind)
+            ? series?.totals.throughput === null
+              ? "Requests per minute · usage not reported"
+              : throughputLabel(u.kind)
             : metric === "latency"
               ? "Average latency · switch between total and component lines"
               : metric === "spend"
@@ -102,17 +107,28 @@ const rangeLabel = computed(() => RANGES.find((r) => r.value === props.range)!.l
       <div class="card p-3">
         <dt class="label">{{ u.kind === "scripting" ? "Throughput" : "Audio produced" }}</dt>
         <dd class="mt-0.5 font-mono text-lg leading-tight">
-          {{ t ? metricValue(t.throughput) : "—" }}
-          <span class="text-[11px] text-zinc-500">{{ throughputUnit(u.kind) }}</span>
+          {{ t && t.throughput !== null ? metricValue(t.throughput) : "—" }}
+          <span v-if="!t || t.throughput !== null" class="text-[11px] text-zinc-500">{{
+            throughputUnit(u.kind)
+          }}</span>
         </dd>
         <dd class="text-[11px] text-zinc-500">
-          <template v-if="t && u.kind === 'scripting'"
+          <template v-if="t && t.throughput === null"
+            >{{ plural(t.requests, "request") }} · usage not reported
+            <UiHint
+              label="usage not reported"
+              :text="`The provider sent no ${u.kind === 'scripting' ? 'token counts' : 'audio length'}, so the chart shows requests per minute.`"
+          /></template>
+          <template v-else-if="t && u.kind === 'scripting'"
             >{{ compact(t.inputTokens) }} in · {{ compact(t.outputTokens) }} out</template
           >
           <template v-else-if="t"
             >{{ (t.audioSeconds / 60).toFixed(1) }} min from {{ compact(t.chars) }} chars</template
           >
           <template v-else>no requests in this range</template>
+          <template v-if="t && t.throughput !== null && t.unreported">
+            · {{ t.unreported }} without usage</template
+          >
         </dd>
       </div>
 

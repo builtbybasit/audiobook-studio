@@ -61,6 +61,7 @@ const totals = (over: Partial<MetricTotals> = {}): MetricTotals => ({
   responseMs: 0,
   p95Ms: 0,
   throughput: 0,
+  unreported: 0,
   cost: 0,
   unknownCost: 0,
   inputTokens: 0,
@@ -94,6 +95,11 @@ test("a rate that isn't known is never rendered as zero", () => {
   expect(maybeMoney(null)).toBe("unknown");
   expect(maybeMoney(0)).toBe("$0.00");
   expect(pricingLabel(unifyEndpoint(ttsEndpoint({ billing: unknown })))).toBe("rate not known");
+});
+
+test("a scripting endpoint at $0 in and out is free, not missing its rates", () => {
+  const free = unifyProfile({ ...newProfile(), inPrice: 0, outPrice: 0 });
+  expect(pricingLabel(free, NOW)).toBe("no charge");
 });
 
 test("per-request billing has no per-character equivalent for the run estimator", () => {
@@ -249,6 +255,45 @@ test("throughput is tokens a minute for scripting and audio minutes a minute for
     NOW,
   );
   expect(audio.totals.throughput).toBeCloseTo(10 / 60, 6); // 10 audio minutes over 60
+});
+
+test("throughput is unknown, not zero, when no finished request reported usage", () => {
+  const noUsage = { usage: {}, cost: null, costBasis: "unknown" as const };
+  const s = seriesFrom([record(noUsage), record(noUsage)], "scripting", "1h", NOW);
+  expect(s.totals.throughput).toBeNull();
+  expect(s.totals.unreported).toBe(2);
+  expect(s.totals.unknownCost).toBe(2);
+  const hit = s.buckets.filter((b) => b.requests);
+  expect(hit.map((b) => b.throughput)).toEqual([null]);
+  // the rest of the range ran nothing, which is a measured zero
+  expect(s.buckets.filter((b) => !b.requests).every((b) => b.throughput === 0)).toBe(true);
+
+  // a speech endpoint that never learned how much audio came back is the same
+  const tts = seriesFrom([record({ kind: "tts", usage: { chars: 40 } })], "tts", "1h", NOW);
+  expect(tts.totals.throughput).toBeNull();
+});
+
+test("a mix measures throughput over the requests that reported and counts the rest", () => {
+  const s = seriesFrom(
+    [
+      record({ usage: { inputTokens: 600, outputTokens: 0 } }),
+      record({ usage: {} }),
+      // failed without usage: it produced nothing, which is known
+      record({ usage: {}, status: "failed" }),
+    ],
+    "scripting",
+    "1h",
+    NOW,
+  );
+  expect(s.totals.throughput).toBeCloseTo(10, 6);
+  expect(s.totals.unreported).toBe(1);
+});
+
+test("an empty range has zero throughput and nothing unreported", () => {
+  const s = seriesFrom([], "scripting", "1h", NOW);
+  expect(s.totals.requests).toBe(0);
+  expect(s.totals.throughput).toBe(0);
+  expect(s.totals.unreported).toBe(0);
 });
 
 test("records outside the range do not reach the buckets", () => {

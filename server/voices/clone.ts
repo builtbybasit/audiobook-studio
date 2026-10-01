@@ -37,6 +37,7 @@ import {
 } from "~/providers/clone";
 import { ProviderError } from "~/providers/http";
 import { speechTarget, type Providers } from "~/providers/target";
+import { assertWithinBudget } from "~/usage/budget";
 import { settleClone } from "~/usage/ledger";
 import type { VoiceFiles } from "~/voices/files";
 import { keepSampleFiles, keptOf } from "~/voices/ops";
@@ -121,6 +122,14 @@ export async function cloneVoice(
   signal: AbortSignal,
 ): Promise<Cloned> {
   const ep = clonableEndpoint(db, form.endpointId);
+  // a fee charged as the voice is made is billed to the endpoint, so held to its daily limit
+  const fee = ep.cloning.fee?.when === "made" ? (ep.cloning.fee.usd ?? 0) : 0;
+  assertWithinBudget(db, null, {
+    kind: "narration",
+    cost: fee,
+    requests: [{ endpoint: ep.id, cost: fee }],
+    request: "this voice's fee",
+  });
   const samples = await readSamples(form.files, form.transcripts, ep.cloning);
   const cloner = providers.cloner ?? endpointVoiceCloner();
   let voice;

@@ -73,6 +73,11 @@ export interface NarrationCost {
   estimatedInput: number;
   /** null when no endpoint in the run bills on the audio it returns */
   estimatedAudio: number | null;
+  /**
+   * The first line each endpoint is sent, at its worst case: what that endpoint's daily limit must
+   * cover for the run to start (`~/usage/budget`).
+   */
+  firsts: { endpoint: string; cost: number }[];
 }
 
 /**
@@ -89,17 +94,18 @@ export function narrationCost(
   const lexicon: LexEntry[] = readLexicon(db, bookId);
   const endpoints = new Map<string, Endpoint | undefined>();
   const per = new Map<string, { ep: Endpoint; units: BillableUnits }>();
+  const firsts: NarrationCost["firsts"] = [];
   for (const s of segs) {
     const who = deliveryOf(s.speaker);
     if (!who.endpoint) continue;
     if (!endpoints.has(who.endpoint)) endpoints.set(who.endpoint, readEndpoint(db, who.endpoint));
     const ep = endpoints.get(who.endpoint);
     if (!ep) continue;
-    const units = plannedSpeechUnits(
-      expressionPlan(s, ep, lexicon),
-      ep,
-      speechInstructions({ style: who.style, direction: s.direction }),
-    );
+    const plan = expressionPlan(s, ep, lexicon);
+    const instructions = speechInstructions({ style: who.style, direction: s.direction });
+    const units = plannedSpeechUnits(plan, ep, instructions);
+    if (!per.has(ep.id))
+      firsts.push({ endpoint: ep.id, cost: lineWorstCase(ep, plan, instructions, at) });
     const group = per.get(ep.id) ?? { ep, units: noUnits() };
     group.units = addUnits(group.units, units);
     per.set(ep.id, group);
@@ -109,6 +115,7 @@ export function narrationCost(
     estimated: 0,
     estimatedInput: 0,
     estimatedAudio: null,
+    firsts,
   };
   for (const { ep, units } of per.values()) {
     const priced = estimateSpeech(billingOf(ep), readPricing(ep), units, at);

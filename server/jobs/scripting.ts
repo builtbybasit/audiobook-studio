@@ -44,7 +44,7 @@ import { scriptTarget } from "~/providers/target";
 import { beforeOf, chunksOf } from "~/script/chunks";
 import { checkSiteText, siteTextTally } from "~/script/siteCheck";
 import { UNREAD_SHARE_WARNING } from "@/lib/siteText";
-import { assertWithinBudget, budgetProblem } from "~/usage/budget";
+import { assertWithinBudget, budgetProblem, holdToday } from "~/usage/budget";
 import { scriptReasoning, settleScript } from "~/usage/ledger";
 
 /** The status a chapter reads as when no job is running on it: asked of its script, not remembered. */
@@ -226,6 +226,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
               label: `Script chunk ${i + 1} · ch ${at?.id ?? job.chapterId}`,
               queuedAt: job.queuedAt,
               reasoning: run.profile.reasoning ?? null,
+              held: holds[i],
             },
             sent,
           );
@@ -243,9 +244,11 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         setScriptRun(db, job.id, run);
       };
       /**
-       * Why the next request may not go out, or null. It asks with everything this job still holds
-       * — what is in flight and what is still to send — against what the rest of the book has
-       * spent and holds, so it only answers when the world moved under a run that fitted.
+       * Why the next request may not go out, or null. It asks the book with everything this job
+       * still holds — what is in flight and what is still to send — against what the rest of the
+       * book has spent and holds, so that only answers when the world moved under a run that
+       * fitted; and it asks the profile's daily limit with the next request's own hold, since a
+       * long run is let spend across days.
        */
       const refusal = (): string | null =>
         budgetProblem(db, job.bookId, {
@@ -253,6 +256,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           cost: run?.reserved ?? 0,
           jobId: job.id,
           what: "the next request",
+          requests: run ? [{ endpoint: run.profile.id, cost: holds[next] }] : [],
         });
       let refused: string | null = null;
 
@@ -273,6 +277,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           const i = next++;
           if (run) run.active++;
           counted();
+          // what it holds against the profile's daily limit while it is out
+          const out = run && holdToday(db, "scripting", run.profile.id, holds[i]);
           try {
             answers[i] = await provider.script({
               title: chapter.title,
@@ -296,6 +302,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           } finally {
             if (run) run.active--;
             release(i);
+            out?.();
           }
           share[i] = 1;
           if (run) run.completed++;
@@ -430,7 +437,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
  *
  * So is a run the book cannot afford, whole: its worst case is checked against the budget before
  * any chapter is queued, and a run that does not fit queues nothing (409). A paused book refuses
- * every run, a free one included.
+ * every run, a free one included. The profile's daily limit refuses a run only when it cannot
+ * cover even the first request; past that, the job stops at the request that would pass it.
  */
 export function enqueueScripting(
   db: Db,
@@ -489,16 +497,19 @@ export function enqueueScripting(
   };
 
   // Each chapter's worst case, cut exactly as its job will cut it, and what it is expected to cost
-  // at today's rates for the reconciliation afterwards.
+  // at today's rates for the reconciliation afterwards; and its first request's, which is what the
+  // profile's daily limit must cover for the run to start.
   const priced = new Map(
     targets.map((id) => {
-      if (!chosen) return [id, { reserve: 0, estimated: 0 }] as const;
+      if (!chosen) return [id, { reserve: 0, estimated: 0, first: 0 }] as const;
       const text = plainText(library.getChapterBody(db, bookId, id) ?? "");
       const chunks = chunksOf(text, chosen);
+      const holds = holdsOf(chunks, chosen, prompt);
       return [
         id,
         {
-          reserve: holdsOf(chunks, chosen, prompt).reduce((a, b) => a + b, 0),
+          reserve: holds.reduce((a, b) => a + b, 0),
+          first: holds[0] ?? 0,
           estimated: chunks.reduce(
             (n, c) =>
               n + tokenEstimate(c, chosen, Date.now(), { prompt, reasoningPerInputToken }).cost,
@@ -512,6 +523,7 @@ export function enqueueScripting(
     assertWithinBudget(db, bookId, {
       kind: "scripting",
       cost: [...priced.values()].reduce((n, p) => n + p.reserve, 0),
+      requests: chosen ? [{ endpoint: chosen.id, cost: priced.get(targets[0])!.first }] : [],
     });
 
   const runId = nextRunId(db);

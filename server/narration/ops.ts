@@ -89,7 +89,13 @@ export function retakeLines(
     return { job: null, queued: [], skipped, chapters: library.listChapters(db, bookId) };
   // held to the book's budget as a bulk run is, before anything is written
   const cost = narrationCost(db, bookId, queued);
-  assertWithinBudget(db, bookId, { kind: "narration", cost: cost.reserved, what: "this retake" });
+  assertWithinBudget(db, bookId, {
+    kind: "narration",
+    cost: cost.reserved,
+    what: "this retake",
+    requests: cost.firsts,
+    request: "the retake's first line",
+  });
 
   const { job, created } = runner.enqueue({
     kind: "narration",

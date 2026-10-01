@@ -12,6 +12,9 @@
 import type { Credential, Endpoint, EndpointProbe, VoiceListPage } from "@/types";
 import { profilePromptProblems, promptProblems, resolvePrompt } from "@/lib/prompt";
 import { isSimulated } from "@/lib/providers";
+import { billingOf } from "@/lib/endpoints";
+import { worstCaseOf } from "@/lib/narrationCost";
+import { AUDIO_CHARS_PER_SECOND, estimateSpeech, measureSpeech, readPricing } from "@/lib/pricing";
 import { encodingOf, VOICE_SAMPLE } from "@/lib/endpointShapes";
 import type { Db, Tx } from "~/db/client";
 import {
@@ -31,6 +34,7 @@ import { ProviderError } from "~/providers/http";
 import { SAMPLE_MIME, type SampleFormat } from "~/providers/clone";
 import { scriptTarget, speechTarget, type Providers } from "~/providers/target";
 import { endpointVoiceLister, type VoiceQuery } from "~/providers/voices";
+import { assertWithinBudget, holdToday } from "~/usage/budget";
 import { settleSpeech } from "~/usage/ledger";
 import type { VoiceFiles } from "~/voices/files";
 import { removeDropped } from "~/voices/ops";
@@ -304,6 +308,15 @@ export async function sampleVoice(
   const voice = ep.voices.find((v) => v.id === voiceId);
   const speaker = voice?.label || voiceId;
   const provider = providers.samples ?? endpointSpeechProvider();
+  // billed to the endpoint like a line of narration, so held to its daily limit like one
+  const cost = sampleWorstCase(ep);
+  assertWithinBudget(db, null, {
+    kind: "narration",
+    cost,
+    requests: [{ endpoint: ep.id, cost }],
+    request: "this voice sample",
+  });
+  const out = holdToday(db, "tts", ep.id, cost);
   let clip;
   try {
     clip = await provider.speak({
@@ -326,12 +339,15 @@ export async function sampleVoice(
             chapterUid: null,
             label: `Voice sample · ${speaker}`,
             voiceRef: `${ep.id}/${voiceId}`,
+            held: cost,
           },
           request,
         ),
     });
   } catch (e) {
     throw e instanceof ProviderError ? providerFailure(e) : e;
+  } finally {
+    out();
   }
   // Paid for, so kept — before answering, so the next press finds it. A sample that could not be
   // kept still plays, and the log says so.
@@ -342,6 +358,16 @@ export async function sampleVoice(
       { id, voiceId },
     );
   return heard(clip.bytes, clip.format, rendered, false, clip.duration);
+}
+
+/** What saying the sample sentence holds at worst, measured as a line of narration is. */
+function sampleWorstCase(ep: Endpoint): number {
+  const billing = billingOf(ep);
+  const units = measureSpeech(
+    { text: VOICE_SAMPLE, audioSeconds: VOICE_SAMPLE.length / AUDIO_CHARS_PER_SECOND },
+    billing,
+  );
+  return worstCaseOf(estimateSpeech(billing, readPricing(ep), units, Date.now()));
 }
 
 /**

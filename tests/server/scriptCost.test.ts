@@ -9,7 +9,7 @@ import { describe, expect, test } from "bun:test";
 import type { Book, Profile } from "@/types";
 import { chatScriptingProvider } from "~/providers/chatScripting";
 import type { SentScript } from "~/providers/sent";
-import { chapterUidOf, settleScript } from "~/usage/ledger";
+import { bookSpend, chapterUidOf, endpointSpend, settleScript } from "~/usage/ledger";
 import { epubFile, story } from "../support/epub";
 import { testApi } from "../support/server";
 import { openaiProfile } from "../support/profiles";
@@ -95,5 +95,70 @@ describe("a scripting request's recorded cost", () => {
     expect(row.cost).toBeCloseTo(FROM_CARD, 12);
     expect(row.costBasis).not.toBe("provider-reported");
     expect(row.priced?.reported).toBeNull();
+  });
+});
+
+describe("a scripting request that reports no usage", () => {
+  /** A request that ended without the provider saying what it used. */
+  const silent = (over: Partial<SentScript> = {}): SentScript => ({
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    attempts: 1,
+    rateLimited: false,
+    status: "done",
+    simulated: false,
+    usage: null,
+    ...over,
+  });
+
+  test("answered, costs what nobody knows — never $0 — and the budgets count what it held", async () => {
+    const { api, work: w } = await work();
+    const row = settleScript(api.db, profile, { ...w, held: 0.25 }, silent());
+    expect(row.cost).toBeNull();
+    expect(row.costBasis).toBe("unknown");
+    const spend = bookSpend(api.db, w.bookId);
+    expect(spend.spent).toBeCloseTo(0.25, 12);
+    expect(spend.scriptSpent).toBeCloseTo(0.25, 12);
+    expect(spend.unpriced).toBe(1);
+    expect(endpointSpend(api.db, "scripting", profile.id, 0)).toBeCloseTo(0.25, 12);
+  });
+
+  test("answered with a 2xx this server could not use, is unknown too: the provider billed it", async () => {
+    const { api, work: w } = await work();
+    const error = { code: 200, message: "the answer was not a script" };
+    const row = settleScript(
+      api.db,
+      profile,
+      { ...w, held: 0.25 },
+      silent({ status: "failed", error }),
+    );
+    expect(row.cost).toBeNull();
+    expect(bookSpend(api.db, w.bookId).spent).toBeCloseTo(0.25, 12);
+  });
+
+  test("refused, costs nothing, as no chat completion is billed for an error", async () => {
+    const { api, work: w } = await work();
+    const error = { code: 500, message: "upstream down" };
+    const row = settleScript(
+      api.db,
+      profile,
+      { ...w, held: 0.25 },
+      silent({ status: "failed", error }),
+    );
+    expect(row.cost).toBe(0);
+    expect(row.costBasis).toBe("calculated");
+    expect(bookSpend(api.db, w.bookId).spent).toBe(0);
+  });
+
+  test("on a card that charges nothing, is known to be free", async () => {
+    const { api, work: w } = await work();
+    const row = settleScript(
+      api.db,
+      { ...profile, inPrice: 0, outPrice: 0 },
+      { ...w, held: 0 },
+      silent(),
+    );
+    expect(row.cost).toBe(0);
+    expect(row.costBasis).toBe("calculated");
   });
 });

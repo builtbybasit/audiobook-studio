@@ -3,7 +3,6 @@ import { useCastStore } from "@/stores/cast";
 import { plural } from "@/lib/contents";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
-import { sizeLabel } from "@/lib/audioFormat";
 import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 
 // Book-wide cast, and the one place every field of a speaker can be edited.
@@ -20,11 +19,12 @@ import { useRoute } from "vue-router";
 import { useBookId } from "@/composables/useBookId";
 import { useBookScripts, useCast } from "@/queries";
 import { GENDER } from "@/lib/scriptReview";
-import { UiSelect, UiCombobox, UiCheckbox, UiSwitch, UiTooltip } from "@/ui";
+import { UiSelect, UiCombobox, UiCheckbox, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
 import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
 import { appearanceStrip } from "@/views/cast/strip";
-import { Plus as AddIcon, X as CloseIcon } from "@lucide/vue";
+import { Plus as AddIcon } from "@lucide/vue";
+import CastRecord from "@/views/cast/CastRecord.vue";
 import type { Character, Gender } from "@/types";
 const castOpts = computed(() =>
   cast.value.map((c) => ({
@@ -164,11 +164,6 @@ const toggleOpen = (name: string) => (open.value = open.value === name ? null : 
 /** Gender is not cosmetic — `autoAssignByGender` pools voices by it, so an unknown is a speaker
  *  auto-assign has to skip. Worth saying next to the field rather than in a tooltip nobody opens. */
 const unknownGender = computed(() => cast.value.filter((c) => c.gender === "?").length);
-
-const alias = ref("");
-function addAlias(c: Character) {
-  if (castStore.addAlias(bookId, c.name, alias.value)) alias.value = "";
-}
 
 /** A row's position is not final until the page has laid out and painted: on first mount the table
  *  is already in the document but the scrolling container is not settled, and scrolling then lands
@@ -583,164 +578,7 @@ const duplicate = computed(
             <tr v-if="open === c.name" class="bg-zinc-50/70 dark:bg-zinc-900/60">
               <td></td>
               <td colspan="6" class="px-1 py-3 pr-4">
-                <div class="grid gap-4 lg:grid-cols-2">
-                  <div class="space-y-2.5">
-                    <label class="block space-y-1 text-xs font-medium"
-                      ><span>Name</span
-                      ><input
-                        :value="c.name"
-                        class="input w-full"
-                        @change="
-                          castStore.renameCharacter(
-                            bookId,
-                            c.name,
-                            ($event.target as HTMLInputElement).value,
-                          )
-                        "
-                      />
-                      <span class="block text-[11px] font-normal text-zinc-500"
-                        >Renaming re-points every line. Typing an existing speaker’s name merges
-                        into them.</span
-                      ></label
-                    >
-                    <div class="flex flex-wrap items-end gap-3">
-                      <label class="space-y-1 text-xs font-medium"
-                        ><span>Gender</span>
-                        <UiSelect
-                          :model-value="c.gender"
-                          :options="GENDERS"
-                          size="xs"
-                          class="w-32"
-                          :aria-label="`Gender for ${c.name}`"
-                          @update:model-value="
-                            (g) =>
-                              castStore.updateCharacter(bookId, c.name, { gender: g as Gender })
-                          "
-                      /></label>
-                      <label class="flex items-center gap-2 pb-1 text-xs font-medium"
-                        ><UiSwitch
-                          :model-value="c.major"
-                          @update:model-value="
-                            (v) => castStore.updateCharacter(bookId, c.name, { major: v })
-                          "
-                        />
-                        Main cast</label
-                      >
-                    </div>
-                    <p class="text-[11px] leading-relaxed text-zinc-500">
-                      Gender pools the voices auto-assign draws from — an unknown is skipped. Main
-                      cast get their own card on the Narration stage; minor speakers are collapsed
-                      there and read in the Narrator’s voice until given one.
-                    </p>
-                    <label class="block space-y-1 text-xs font-medium"
-                      ><span>Voice</span>
-                      <VoicePicker
-                        :model-value="c.voice"
-                        @update:model-value="(v) => castStore.setVoice(bookId, c.name, v)"
-                        :book-id="bookId"
-                        :speaker="c.name"
-                        block
-                    /></label>
-                    <div
-                      v-for="w in waiting(c.name)"
-                      :key="w.id"
-                      class="rounded border border-violet-200 bg-violet-50 px-2 py-1.5 text-[11px] dark:border-violet-500/30 dark:bg-violet-500/10"
-                    >
-                      <div class="font-medium">Samples waiting</div>
-                      <div class="text-zinc-500">
-                        {{ plural(w.samples.length, "recording") }} of “{{ w.title }}”,
-                        {{ sizeLabel(w.samples.reduce((n, x) => n + x.bytes, 0)) }} · from
-                        {{ w.source }}
-                      </div>
-                      <div class="mt-1 flex flex-wrap items-center gap-3">
-                        <RouterLink
-                          v-if="samplesStore.cloneLink(bookId, w)"
-                          :to="samplesStore.cloneLink(bookId, w)!"
-                          class="text-violet-700 hover:underline dark:text-violet-300"
-                          >Clone on the Voices tab →</RouterLink
-                        >
-                        <RouterLink v-else to="/endpoints" class="text-zinc-500 hover:underline"
-                          >Add a Fish endpoint to clone this voice</RouterLink
-                        >
-                        <button
-                          class="text-zinc-500 hover:text-red-600"
-                          @click="samplesStore.discard(bookId, w)"
-                        >
-                          Discard samples
-                        </button>
-                      </div>
-                    </div>
-                    <label class="block space-y-1 text-xs font-medium"
-                      ><span>Delivery style</span
-                      ><input
-                        :value="c.style"
-                        class="input w-full"
-                        placeholder="e.g. gravelly, elderly; speaks slowly"
-                        @input="
-                          castStore.updateCharacter(bookId, c.name, {
-                            style: ($event.target as HTMLInputElement).value,
-                          })
-                        "
-                      />
-                      <span class="block text-[11px] font-normal text-zinc-500"
-                        >A note carried with every line this speaker has.</span
-                      ></label
-                    >
-                  </div>
-
-                  <div class="space-y-2.5">
-                    <label class="block space-y-1 text-xs font-medium"
-                      ><span>Description</span
-                      ><textarea
-                        :value="c.description"
-                        rows="4"
-                        class="input w-full resize-y leading-relaxed"
-                        placeholder="Who they are — kept out of the way on the Narration cards because it spoils."
-                        @input="
-                          castStore.updateCharacter(bookId, c.name, {
-                            description: ($event.target as HTMLTextAreaElement).value,
-                          })
-                        "
-                      ></textarea>
-                    </label>
-                    <div class="space-y-1 text-xs font-medium">
-                      <span>Also called</span>
-                      <div class="flex flex-wrap items-center gap-1">
-                        <span
-                          v-for="a in c.aliases"
-                          :key="a"
-                          class="inline-flex items-center gap-1 rounded-full border border-zinc-200 py-0.5 pl-2 pr-1 text-[11px] font-normal dark:border-zinc-700"
-                          >{{ a }}
-                          <button
-                            class="rounded px-0.5 text-zinc-400 hover:text-red-500"
-                            :aria-label="`Remove alias ${a}`"
-                            @click="castStore.removeAlias(bookId, c.name, a)"
-                          >
-                            <CloseIcon class="icon-sm" />
-                          </button>
-                        </span>
-                        <span v-if="!c.aliases.length" class="text-[11px] font-normal text-zinc-400"
-                          >none</span
-                        >
-                      </div>
-                      <form class="flex items-center gap-1 pt-1" @submit.prevent="addAlias(c)">
-                        <input
-                          v-model="alias"
-                          class="input w-40 py-0.5"
-                          placeholder="another name"
-                          :aria-label="`Add an alias for ${c.name}`"
-                        />
-                        <button class="btn-ghost btn-xs" type="submit">
-                          <AddIcon class="icon-sm" /> Add
-                        </button>
-                      </form>
-                      <p class="text-[11px] font-normal leading-relaxed text-zinc-500">
-                        Names the same speaker is called by, used when matching and searching. To
-                        move another speaker’s lines here, tick them above and merge instead.
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                <CastRecord :book-id="bookId" :c="c" />
               </td>
             </tr>
           </template>

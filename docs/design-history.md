@@ -31,6 +31,10 @@ The sidebar used to carry a numbered stage nav (Library, Scripting, Narration, E
 
 Folded in from D1: the rail is mini by default with a widening toggle (`uiStore.railExpanded`, not persisted — like the theme, that is the backend's to remember); under `lg` the drawer lists the book's pages with counts in place of the tab row; the header's chips drop their words under `sm` so the selector keeps its title on a phone; the selector's search appears from six books up.
 
+## The book overview — 2026-10-01
+
+Ten shapes of the book overview were prototyped on the existing `/book/:bookId` route behind a `?variant=` switcher and compared in the browser against the real library and the seeded demo: a tightened version of the current page, a chapter map, a stat board, an activity feed, an editorial page with the status written as sentences, and five checklist shapes (a stepper with a sidebar, the stepper over tabs, an accordion, master–detail, a horizontal track). The checklist came closest but none was adopted; the current overview stays. The full set is on the `prototype/book-overview` branch (commit `cecb087`), which is not merged.
+
 ## Prototype rounds
 
 | Original milestone                                                           | Date recorded | Where its details live now                                                                                                  |

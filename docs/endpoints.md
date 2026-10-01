@@ -293,18 +293,22 @@ write decides for itself — a book's own prompt pulls an endpoint's notes in by
 where they are typed, with a button that adds the tag.
 
 **Tags** are `{{name}}` and are filled in per request: `{{excerpt}}` (the text; required once, in
-the user message), `{{part}}` / `{{parts}}`, `{{chapter.title}}`, `{{chapter.number}}`, `{{cast}}`
-(the known speakers' names), `{{cast.details}}` (one line per speaker with gender, other names and
-description), `{{book.title}}`, `{{book.author}}`, `{{book.notes}}`, `{{endpoint.name}}`,
-`{{endpoint.notes}}` and `{{model}}`. A line whose tags all come out empty is left out, so
+the user message), `{{excerpt.before}}` (the last paragraphs of the chunk before, up to about 800
+characters; empty for a chapter's first request), `{{part}}` / `{{parts}}`, `{{chapter.title}}`,
+`{{chapter.number}}`, `{{previous.recap}}` (where the chapter before left off, as its model put
+it), `{{cast}}` (the known speakers' names, each with gender and other names), `{{cast.details}}`
+(one line per speaker, the description too), `{{book.title}}`, `{{book.author}}`,
+`{{book.notes}}`, `{{endpoint.name}}`, `{{endpoint.notes}}` and `{{model}}`. A line whose tags all come out empty is left out, so
 `Notes on this book: {{book.notes}}` vanishes for a book without notes. An unknown tag, a missing or
 repeated `{{excerpt}}` or a message over 20,000 characters stops the save. A tag that changes every
 chapter is allowed in the _system_ prompt with a warning: it stops the provider caching the system
 prompt, and cached input is cheaper.
 
-**The output format is not editable.** The answer is parsed as `{"lines":[…]}` and held word for
-word against the prose, so the format and the verbatim rule are added after the system prompt of
-every request; the editor shows them read-only.
+**The output format is not editable.** The answer is parsed as `{"lines":[…],"cast":[…],"recap":"…"}`
+and its lines held word for word against the prose, so the format and the verbatim rule are added
+after the system prompt of every request; the editor shows them read-only. `cast` and `recap` are
+what a run [remembers between requests](scripting.md#what-a-run-remembers), and a prompt trial
+shows both under the lines.
 
 A run snapshots the resolved prompt and the book's notes when it is queued, so editing a prompt
 mid-run changes only later runs. The estimate and the budget hold price the prompt's real length.

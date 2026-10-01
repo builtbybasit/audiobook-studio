@@ -115,7 +115,7 @@ describe("a simulated scripting profile", () => {
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ProviderError);
     expect((error as ProviderError).retryable).toBe(true);
-    expect(await fake(0.5).script(input(failing))).not.toHaveLength(0);
+    expect((await fake(0.5).script(input(failing))).lines).not.toHaveLength(0);
   });
 
   test("takes as long as its simulation says, and stops when the run is cancelled", async () => {

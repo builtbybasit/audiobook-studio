@@ -5,7 +5,7 @@
 // cuts it (`scriptParts`), the layers resolved (`resolvePrompt`) — each one the draft when the
 // page sent one, else what is saved — and the tags filled from the book, the chapter, its cast and
 // the chunk's place in it. What differs is what happens to the answer. Nothing is written: not the
-// script, not its history, not the cast. The lines come back to the page with the word-for-word
+// script, not its history, not the cast, not the recap — those two come back beside the lines. The lines come back to the page with the word-for-word
 // check a run would hold them to, and an answer a run would refuse — a model that dropped a
 // sentence, a refusal, something that is not a script — is shown as what came back, not raised.
 //
@@ -36,10 +36,10 @@ import { plainText } from "~/epub/markdown";
 import { badRequest, conflict, notFound } from "~/lib/errors";
 import { fidelity } from "~/providers/chatScripting";
 import { ProviderError } from "~/providers/http";
-import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
+import type { ScriptAnswer, ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
-import { chunksOf } from "~/script/chunks";
+import { beforeOf, chunksOf } from "~/script/chunks";
 import { assertWithinBudget } from "~/usage/budget";
 import { settleScript } from "~/usage/ledger";
 
@@ -104,6 +104,8 @@ export async function tryPrompt(
     parts: chunks.length,
     cast: speakers,
     excerpt,
+    before: beforeOf(chunks, part - 1),
+    recap: library.previousRecap(db, bookId, request.chapterId),
     endpoint: { name: profile.name, model: profile.model, notes: layers.profile?.notes ?? "" },
   };
   const prompt = renderPrompt(template, vars);
@@ -137,10 +139,10 @@ export async function tryPrompt(
   };
 
   const started = performance.now();
-  let lines: ScriptedLine[] = [];
+  let answer: ScriptAnswer = { lines: [] };
   let error: string | undefined;
   try {
-    lines = await provider.script({
+    answer = await provider.script({
       title: chapter.title,
       text: excerpt,
       signal,
@@ -157,6 +159,7 @@ export async function tryPrompt(
   }
   const ms = Math.round(performance.now() - started);
   const usage = (sent as SentScript | null)?.usage ?? null;
+  const { lines } = answer;
 
   return {
     prompt,
@@ -170,6 +173,8 @@ export async function tryPrompt(
       ...(l.direction ? { direction: l.direction } : {}),
     })),
     fidelity: fidelity(excerpt, lines),
+    cast: answer.cast ?? [],
+    ...(answer.recap ? { recap: answer.recap } : {}),
     ms,
     usage: usage && {
       inputTokens: usage.inputTokens,

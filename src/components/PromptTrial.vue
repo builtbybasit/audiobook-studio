@@ -18,7 +18,7 @@ import { useScriptActivity } from "@/queries/scriptActivity";
 import { keyInPlace } from "@/services/endpointSettings";
 import { ApiError } from "@/services/http";
 import { isSimulated } from "@/lib/providers/simulated";
-import { resolvePrompt } from "@/lib/prompt";
+import { resolvePrompt, speakerLine } from "@/lib/prompt";
 import {
   fidelitySummary,
   trialLayers,
@@ -429,6 +429,22 @@ const colorOf = (name: string): string =>
           >
         </li>
       </ol>
+
+      <dl
+        v-if="result.answer.cast.length || result.answer.recap"
+        class="space-y-1.5 text-[11px] leading-snug text-zinc-600 dark:text-zinc-300"
+      >
+        <div v-if="result.answer.cast.length">
+          <dt class="label" title="A run fills in only what the cast leaves blank">
+            What it said of the cast
+          </dt>
+          <dd v-for="c in result.answer.cast" :key="c.name">{{ speakerLine(c) }}</dd>
+        </div>
+        <div v-if="result.answer.recap">
+          <dt class="label" title="A run sends it with the next chapter">Where it leaves off</dt>
+          <dd>{{ result.answer.recap }}</dd>
+        </div>
+      </dl>
 
       <details>
         <summary class="cursor-pointer select-none text-[11px] text-zinc-600 dark:text-zinc-300">

@@ -99,11 +99,13 @@ describe("the detector", () => {
 const typing = (typeOf: (paragraph: string) => SegmentType): ScriptingProvider => ({
   name: "Typing",
   async script({ text }) {
-    return text
-      .split(/\n+/)
-      .map((p) => p.trim())
-      .filter(Boolean)
-      .map((p) => ({ type: typeOf(p), speaker: "Narrator", text: p }));
+    return {
+      lines: text
+        .split(/\n+/)
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .map((p) => ({ type: typeOf(p), speaker: "Narrator", text: p })),
+    };
   },
 });
 

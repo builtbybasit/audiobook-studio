@@ -55,6 +55,36 @@ Every part of the Scripting page names the same endpoint, `scripting.runProfile`
 
 **What is not read yet is not zero.** The plan and the estimate count each chapter's plain text, and the page reads the text of every chapter ticked or open (`useChapterTexts`); until it is in, the estimate says it is reading and Run waits, rather than pricing the chapter at no requests and $0. The same goes for the book's spending under a cap, the corrected lines a re-script would carry, the opened chapter's script, the chapter's history, the rest of the cast's line counts and the endpoint's recent requests: each says it is being read until it is. Whether a chapter has a script to replace is the chapter's own status, which the server keeps as scripted when a re-script fails. The budget a run is checked against is the lower of the book's scripting budget and its overall cap, and the run settings show that one figure.
 
+## What a run remembers
+
+A model reads one chunk at a time, and a web novel's chapter often opens in the middle of a
+conversation — "Then we go tonight." — without saying who speaks. So each request is sent what came
+before it, and each answer says what the next request will need:
+
+- **The cast, with what tells its members apart.** `{{cast}}` names every speaker the book has with
+  their gender and other names ("Havoc (male; also called the mercenary)"), so a "she said" can be
+  narrowed down and "the Captain" is given the name the book already uses rather than becoming a new
+  speaker. Descriptions go only with `{{cast.details}}`: a web novel's cast runs to hundreds, and
+  every character of the prompt is sent, and billed, with every request.
+- **What the model learnt of them.** An answer's `cast` gives the gender, other names and a
+  one-sentence description of the speakers the excerpt says something new about. The run fills in
+  only what the cast leaves blank — a gender or description set by hand, or by an earlier chapter,
+  stands, and other names are only added — so a speaker arrives on the Cast page ready to give a
+  voice to. A name mentioned but never given a line is not added.
+- **Where the chapter before left off.** An answer's `recap` says who is present (the silent ones
+  too), where, who spoke last and to whom, and what is still unanswered. The chapter keeps its last
+  request's recap, and the next chapter's requests send it as `{{previous.recap}}`. The nearest
+  chapter before that is not skipped is the one asked; if it has no recap — never scripted, or
+  scripted before recaps — nothing is sent, rather than an older scene. A re-script replaces the
+  recap, and one with none clears it.
+- **The prose before the chunk.** Inside a chapter the chunks are sent side by side, so a chunk
+  cannot wait for the one before it to come back. It is sent that chunk's last paragraphs instead,
+  as `{{excerpt.before}}`, marked as context and not part of the excerpt.
+
+Neither `cast` nor `recap` can change a word of the script, so the word-for-word check still guards
+the text; a wrong one misleads who a line is given to, which is seen and corrected like any other
+attribution. The job's log shows the recap it kept and the speakers it filled in.
+
 ## Site text and translator's notes
 
 Web-novel chapters carry words that are not the story. A site's boilerplate ("Read the latest chapters at novelbin.com", "This chapter was stolen from …", a bare web address, a request to vote or to support a Patreon) sits between paragraphs, and anti-scraping lines are dropped into the middle of a sentence. Translators and authors add notes of their own: "(TL note: …)", "A/N: …". None of it is the story the audiobook is for.

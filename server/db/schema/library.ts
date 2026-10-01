@@ -111,6 +111,12 @@ export const chapters = sqliteTable(
      * `writeScript` in `server/db/script.ts` and nothing else.
      */
     scriptRevision: integer("script_revision").notNull().default(0),
+    /**
+     * Where the chapter leaves off, as the model that last scripted it summed it up: who is
+     * present, who spoke last. Sent with the next chapter's requests (`{{previous.recap}}`), so a
+     * chapter that opens mid-conversation is still attributed. Null until a model gives one.
+     */
+    recap: text("recap"),
   },
   (t) => [
     primaryKey({ columns: [t.bookId, t.id] }),

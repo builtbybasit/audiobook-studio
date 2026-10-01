@@ -182,6 +182,10 @@ export function scriptParts(text: string, p: Profile): string[] {
     .map((cut) => cut.text)
     .filter(Boolean);
 }
+
+/** The tokens an answer spends besides its lines: a few speakers' notes and a recap. */
+const ANSWER_EXTRAS = 150;
+
 /**
  * How many tokens one chunk is expected to use, and what that costs at an explicit instant.
  *
@@ -190,7 +194,8 @@ export function scriptParts(text: string, p: Profile): string[] {
  * taken as tokens four to one; without one it is the flat 500 tokens the estimate used before the
  * prompt could be edited.
  *
- * The output is the script, and for a model that reasons, the thinking it bills as output too:
+ * The output is the script, the cast notes and recap beside it (`ANSWER_EXTRAS`), and for a model
+ * that reasons, the thinking it bills as output too:
  * `opts.reasoningPerInputToken` is what the endpoint's recent requests at its current reasoning
  * level thought per input token (`ScriptEndpointTelemetry.reasoning`), and adds that share of this
  * chunk's input. Without it nothing is added — a level nobody has measured yet is not guessed at.
@@ -222,7 +227,7 @@ export function tokenEstimate(
   const inputTokens = Math.ceil((text.length / 4) * 1.6) + overhead;
   /** of `outputTokens`, the thinking a reasoning model is expected to bill as output */
   const reasoningTokens = Math.ceil(inputTokens * (opts.reasoningPerInputToken ?? 0));
-  const outputTokens = Math.ceil((text.length / 4) * 1.15) + reasoningTokens;
+  const outputTokens = Math.ceil((text.length / 4) * 1.15) + ANSWER_EXTRAS + reasoningTokens;
   // a scripting profile always has both token rates; the shared card is nullable because a speech
   // card leaves them empty, so they are read back through the profile's own numbers
   const base = baseRates(p);

@@ -11,6 +11,7 @@ import { eq } from "drizzle-orm";
 import type {
   Book,
   BookPrompt,
+  Cast,
   Chapter,
   ChapterHistory,
   Job,
@@ -19,7 +20,7 @@ import type {
 } from "@/types";
 import { BUILT_IN_PROMPT, OUTPUT_FORMAT } from "@/lib/prompt";
 import { scriptTelemetry } from "@/lib/scriptActivity";
-import { characters, endpoints, requests } from "~/db/schema";
+import { chapters, characters, endpoints, requests } from "~/db/schema";
 import { profileKey } from "~/db/rows/endpoints";
 import { fakeScriptingProvider } from "~/providers/fake";
 import type { ScriptInput, ScriptingProvider } from "~/providers/scripting";
@@ -371,6 +372,102 @@ describe("a run's prompt", () => {
     await api.runner.idle();
     expect(rec.inputs[0].prompt!.system).toStartWith(BUILT_IN_PROMPT.system.split("\n")[0]);
     expect(rec.inputs[0].prompt!.system).not.toContain("Notes on this book");
+  });
+});
+
+describe("what a model says beside its lines", () => {
+  /** Gives every request to Tobiah, and says the same of the cast each time, and a recap. */
+  function telling() {
+    const inputs: ScriptInput[] = [];
+    const provider: ScriptingProvider = {
+      name: "Telling (test)",
+      async script(input) {
+        inputs.push(input);
+        return {
+          lines: [{ type: "dialogue", speaker: "Tobiah", text: input.text }],
+          cast: [
+            {
+              name: "Tobiah",
+              gender: "m",
+              aliases: ["the old man", "m"],
+              description: "An innkeeper.",
+            },
+            { name: "Mara", gender: "m", aliases: ["the clerk"], description: "Someone else." },
+            { name: "Ghost", gender: "f", aliases: [], description: "Mentioned, never heard." },
+          ],
+          recap: `Tobiah spoke last, in ${input.title}.`,
+        };
+      },
+    };
+    return { provider, inputs };
+  }
+
+  test("fills in the cast without overwriting it, and carries the recap to the next chapter", async () => {
+    const rec = telling();
+    const api = testApi({ scripting: rec.provider });
+    const id = await shelved(api, ["One", "Two"], 6);
+    api.db
+      .insert(characters)
+      .values({
+        bookId: id,
+        name: "Mara",
+        aliases: ["M"],
+        gender: "f",
+        description: "Keeps the ledger.",
+        color: "#c33",
+      })
+      .run();
+    await put(api, {
+      profiles: [openaiProfile({ maxChars: 700, splitAt: "sentence", concurrency: 1 })],
+    });
+    await api.request(
+      `/api/books/${id}/chapters/script`,
+      jsonBody({ ids: [1, 2], profile: "openai" }),
+    );
+    await api.runner.idle();
+
+    const one = rec.inputs.filter((i) => i.title === "One");
+    const two = rec.inputs.filter((i) => i.title === "Two");
+    expect(one.length).toBeGreaterThan(1);
+    // the first request of the book has nothing before it; every later one of a chapter its prose
+    expect(one[0].prompt!.user).not.toContain("left off");
+    expect(one[0].prompt!.user).not.toContain("Just before this excerpt");
+    const tail = one[0].text
+      .trim()
+      .split(/\n\s*\n/)
+      .at(-1)!
+      .replace(/\s+/g, " ");
+    expect(one[1].prompt!.user).toContain("(context only, not part of the excerpt): ");
+    expect(one[1].prompt!.user).toContain(`${tail}\n\nExcerpt:`);
+    // the second chapter opens where the first left off, and knows who Tobiah is by then
+    expect(two[0].prompt!.user).toContain(
+      "Where the previous chapter left off: Tobiah spoke last, in One.",
+    );
+    expect(two[0].prompt!.user).toContain("Tobiah (male; also called the old man)");
+
+    const { characters: cast } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
+    const named = (name: string) => cast.find((c) => c.name === name);
+    expect(named("Tobiah")).toMatchObject({
+      gender: "m",
+      // "m" is Mara's already, whatever its case
+      aliases: ["the old man"],
+      description: "An innkeeper.",
+    });
+    expect(named("Mara")).toMatchObject({
+      gender: "f",
+      aliases: ["M", "the clerk"],
+      description: "Keeps the ledger.",
+    });
+    expect(named("Ghost")).toBeUndefined();
+    const recap = api.db
+      .select({ id: chapters.id, recap: chapters.recap })
+      .from(chapters)
+      .where(eq(chapters.bookId, id))
+      .all();
+    expect(recap).toEqual([
+      { id: 1, recap: "Tobiah spoke last, in One." },
+      { id: 2, recap: "Tobiah spoke last, in Two." },
+    ]);
   });
 });
 

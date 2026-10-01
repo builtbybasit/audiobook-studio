@@ -116,6 +116,49 @@ export function ensureSpeakers(db: Db | Tx, bookId: string, names: Iterable<stri
   return added;
 }
 
+/**
+ * Fill in what a scripting model learnt of the book's speakers — gender, other names, a
+ * description — where the cast has nothing yet, and say whose entries changed.
+ *
+ * It never overwrites: a gender or description a person set, or an earlier chapter brought, stands,
+ * and other names are only ever added. An alias another speaker already goes by, as a name or an
+ * alias, stays theirs. A note on someone the cast does not have — mentioned, but never given a
+ * line — is dropped, as is anything said of the Narrator.
+ */
+export function learnCast(
+  db: Db | Tx,
+  bookId: string,
+  notes: readonly PromptCastMember[],
+): string[] {
+  const cast = readCast(db, bookId);
+  const byName = new Map(cast.map((c) => [c.name, c]));
+  const taken = new Set(cast.flatMap((c) => [c.name, ...c.aliases]).map((n) => n.toLowerCase()));
+  const changed = new Set<string>();
+  for (const note of notes) {
+    const c = byName.get(note.name);
+    if (!c || c.name === NARRATOR) continue;
+    let touched = false;
+    if (c.gender === "?" && note.gender && note.gender !== "?") {
+      c.gender = note.gender;
+      touched = true;
+    }
+    if (!c.description.trim() && note.description?.trim()) {
+      c.description = note.description.trim();
+      touched = true;
+    }
+    for (const alias of note.aliases ?? []) {
+      if (taken.has(alias.toLowerCase())) continue;
+      c.aliases.push(alias);
+      taken.add(alias.toLowerCase());
+      touched = true;
+    }
+    if (!touched) continue;
+    upsertCharacter(db, bookId, c);
+    changed.add(c.name);
+  }
+  return [...changed];
+}
+
 // ---------- the pronunciation dictionary ----------
 
 export function readLexicon(db: Db | Tx, bookId: string): LexEntry[] {

@@ -52,15 +52,19 @@ Each line has:
 - "type": "narration" for the narrator's prose, "dialogue" for words a character says aloud, "thought" for words a character thinks, "watermark" for text that is not the story but the website's (see below), "note" for a translator's or author's note.
 - "speaker": "${NARRATOR}" for narration, watermark and note lines; for dialogue and thought, the name of the character speaking or thinking.
 - "text": the words of the line, copied verbatim from the excerpt.
-- "direction" (optional): a few words on how the line is delivered, e.g. "whispering" or "angrily".
+- "direction" (optional): how the line is delivered, in a few words for the voice (see the rules).
 
 Text that is not the story still goes in the script, word for word, on lines of its own — it is marked, never left out:
 - "watermark": a website's boilerplate or anti-scraping text, such as "Read the latest chapters at example.com", "This chapter was stolen from …", a web address, or a request to support or vote. Such text is often dropped between paragraphs or into the middle of a sentence; give it its own line even there, so the sentence becomes a narration line, a watermark line and a narration line.
 - "note": a translator's or author's note, such as "(TL note: …)" or "A/N: …", including its label and brackets.
 When unsure whether something is the story, it is the story.
 
+Besides the lines, the answer has:
+- "cast": what the excerpt tells you about the characters who speak or think in it, for each one the known cast does not list or lists without it — "name" (as used for "speaker"), "gender" ("male", "female", "non-binary" or "unknown"), "aliases" (the other names, titles and nicknames the text calls them, e.g. "the Captain") and "description" (one short sentence: who they are, and how they sound when the text says). Leave out characters with nothing new; [] when there are none.
+- "recap": one to three sentences on where the excerpt leaves off, for whoever scripts the text that follows it: who is present, including anyone who has not spoken; where they are; who spoke last and to whom; any question left unanswered; and what the text is calling each of them. Use the names from "speaker".
+
 Answer with JSON only, in this shape:
-{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"softly"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}]}`;
+{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","aliases":["the lamplighter"],"description":"A young lamplighter, quick and wary."}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."}`;
 
 /** The prompt a library starts with, and what Reset puts back. */
 export const BUILT_IN_PROMPT: PromptTemplate = {
@@ -70,14 +74,16 @@ Rules:
 1. Thoughts are usually in italics or marked "she thought"; they are "thought" lines, not narration.
 2. Dialogue text is the spoken words without their surrounding quotation marks. A quotation interrupted by narration becomes three lines: dialogue, narration, dialogue.
 3. Attribution tags such as "said Mara" or "he asked, frowning" are narration, read by the ${NARRATOR}; they are never part of the dialogue line.
-4. Work out who is speaking from the tags and from the conversation's back-and-forth. When a speaker is one of the known cast, use exactly that name; otherwise use the name the text gives them (e.g. "Old Tobiah", "the Captain"). Use "Unknown" only when nothing in the excerpt says who speaks.
+4. Work out who is speaking from the tags, the conversation's back-and-forth, and where the text before the excerpt left off. A character goes by one name all through the book: resolve pronouns, titles and nicknames ("the girl", "the Captain") to it, using the known cast's other names. When a speaker is one of the known cast, use exactly that name; otherwise use the name the text gives them (e.g. "Old Tobiah"). Use "Unknown" only when nothing says who speaks.
 5. Consecutive sentences of narration may share one line; start a new line at every change of speaker or type, and at paragraph breaks.
-6. Give a direction only when the prose itself says how a line is delivered; leave it out otherwise.
+6. A direction is all the voice engine is told besides the words, and it knows nothing of the story — no names, no plot — so describe the sound: tone, pace, volume, breath. Not "mocking his plan" but "lazy, open contempt"; not "shaking her head" but "flat, tired refusal". Base it on the prose (speech tags, punctuation, what the narrator says of the speaker); keep the same wording while a character's mood holds; leave it out for plain delivery. Never put cues such as [sighs] in "text".
 
 Notes on this book: {{book.notes}}
 Notes for this model: {{endpoint.notes}}`,
   user: `Chapter: {{chapter.title}}
 Known cast: {{cast}}
+Where the previous chapter left off: {{previous.recap}}
+Just before this excerpt, already scripted (context only, not part of the excerpt): {{excerpt.before}}
 
 Excerpt:
 {{excerpt}}`,
@@ -102,18 +108,30 @@ export const PROMPT_TAGS: readonly PromptTag[] = [
     about: "The text of this request. Required, once, in the user message",
     scope: "request",
   },
+  {
+    name: "excerpt.before",
+    about: "The end of the text before this request's, for context; empty for a chapter's first",
+    scope: "request",
+  },
   { name: "part", about: "Which request of the chapter this is, from 1", scope: "request" },
   { name: "parts", about: "How many requests the chapter is cut into", scope: "chapter" },
   { name: "chapter.title", about: "The chapter's title", scope: "chapter" },
   { name: "chapter.number", about: "The chapter's number in the book", scope: "chapter" },
   {
     name: "cast",
-    about: "The known speakers' names, comma-separated, or “(none yet)”",
+    about:
+      "The known speakers' names with gender and other names, comma-separated, or “(none yet)”",
     scope: "chapter",
   },
   {
     name: "cast.details",
     about: "One line per known speaker: name, gender, other names, description",
+    scope: "chapter",
+  },
+  {
+    name: "previous.recap",
+    about:
+      "Where the chapter before left off, as its script's model summed it up; empty when it has none",
     scope: "chapter",
   },
   { name: "book.title", about: "The book's title", scope: "book" },
@@ -160,6 +178,10 @@ export interface PromptVars {
   /** the book's speakers; the Narrator and "Unknown" are left out of both cast tags */
   cast: readonly PromptCastMember[];
   excerpt: string;
+  /** the end of the text before the excerpt, when it is not the chapter's first request */
+  before?: string;
+  /** the recap the chapter before's script left; absent or empty when it has none */
+  recap?: string;
   /** `notes` absent is none, as for an endpoint with nothing typed */
   endpoint: { name: string; model: string; notes?: string };
 }
@@ -172,20 +194,30 @@ function castOf(vars: PromptVars): PromptCastMember[] {
   return vars.cast.filter((c) => c.name !== NARRATOR && c.name !== UNKNOWN);
 }
 
-function detailOf(c: PromptCastMember): string {
+/** "Mara (female; also called Mar)": what tells a speaker apart, without the description. */
+function nameOf(c: PromptCastMember): string {
   const facts = [
     GENDER[c.gender ?? "?"],
     c.aliases?.length ? `also called ${c.aliases.join(", ")}` : "",
   ].filter(Boolean);
-  const description = (c.description ?? "").replace(/\s+/g, " ").trim();
-  return `- ${c.name}${facts.length ? ` (${facts.join("; ")})` : ""}${description ? `: ${description}` : ""}`;
+  return `${c.name}${facts.length ? ` (${facts.join("; ")})` : ""}`;
 }
+
+/** "Mara (female; also called Mar): A lamplighter." — everything known of a speaker, on one line. */
+export function speakerLine(c: PromptCastMember): string {
+  const description = (c.description ?? "").replace(/\s+/g, " ").trim();
+  return `${nameOf(c)}${description ? `: ${description}` : ""}`;
+}
+
+const detailOf = (c: PromptCastMember): string => `- ${speakerLine(c)}`;
 
 /** A tag's value for one request; undefined for a name that is not a tag. */
 function valueOf(name: string, vars: PromptVars): string | undefined {
   switch (name) {
     case "excerpt":
       return vars.excerpt;
+    case "excerpt.before":
+      return (vars.before ?? "").trim();
     case "part":
       return String(vars.part);
     case "parts":
@@ -195,11 +227,13 @@ function valueOf(name: string, vars: PromptVars): string | undefined {
     case "chapter.number":
       return String(vars.chapter.number);
     case "cast": {
-      const names = castOf(vars).map((c) => c.name);
+      const names = castOf(vars).map(nameOf);
       return names.length ? names.join(", ") : "(none yet)";
     }
     case "cast.details":
       return castOf(vars).map(detailOf).join("\n");
+    case "previous.recap":
+      return (vars.recap ?? "").replace(/\s+/g, " ").trim();
     case "book.title":
       return vars.book.title;
     case "book.author":
@@ -417,8 +451,9 @@ export function sampleVars(excerpt: string, endpoint: PromptVars["endpoint"]): P
 
 /**
  * Roughly how many characters a request sends besides its excerpt: both messages rendered with an
- * empty excerpt, a cast of ten and a paragraph of each kind of notes, the output format included. For estimates
- * and budget holds, which are made before the cast and the chunks are known.
+ * empty excerpt, a cast of ten, a paragraph of each kind of notes, of text before the excerpt and of
+ * recap, the output format included. For estimates and budget holds, which are made before the cast
+ * and the chunks are known.
  */
 export function promptOverhead(t: PromptTemplate): number {
   const cast = Array.from({ length: 10 }, (_, i) => ({
@@ -434,6 +469,8 @@ export function promptOverhead(t: PromptTemplate): number {
     parts: 1,
     cast,
     excerpt: "",
+    before: "x".repeat(600),
+    recap: "x".repeat(400),
     endpoint: { name: "An endpoint", model: "a-model-id", notes: "x".repeat(300) },
   };
   const r = renderPrompt(t, vars);

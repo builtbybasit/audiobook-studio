@@ -27,7 +27,12 @@
 import { normalizeUsage } from "@/lib/pricing";
 import { siteTextSignals } from "@/lib/siteText";
 import { ProviderError } from "~/providers/http";
-import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
+import type {
+  ScriptAnswer,
+  ScriptInput,
+  ScriptedLine,
+  ScriptingProvider,
+} from "~/providers/scripting";
 import { setTimeout as delay } from "node:timers/promises";
 
 export interface FakeScriptingOptions {
@@ -162,7 +167,7 @@ export function fakeScriptingProvider(options: FakeScriptingOptions = {}): Scrip
   const random = options.random ?? Math.random;
   return {
     name: "Simulated scripting",
-    async script({ text, signal, progress, sent, target }: ScriptInput): Promise<ScriptedLine[]> {
+    async script({ text, signal, progress, sent, target }: ScriptInput): Promise<ScriptAnswer> {
       const startedAt = Date.now();
       const simulation = target?.simulation;
       if (simulation?.latencyMs) await sleep(simulation.latencyMs, signal);
@@ -213,7 +218,7 @@ export function fakeScriptingProvider(options: FakeScriptingOptions = {}): Scrip
           "internal",
         ),
       });
-      return out;
+      return { lines: out };
     },
     async probe() {
       return { ok: true, message: "Simulated: answered here, without a request", ms: 0 };

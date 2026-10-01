@@ -686,9 +686,9 @@ function recording(wait: (text: string) => number = () => 0) {
     async script(input) {
       sent.push(input.text);
       await sleep(wait(input.text), input.signal);
-      const lines = await inner.script(input);
-      answered.set(input.text, lines);
-      return lines;
+      const answer = await inner.script(input);
+      answered.set(input.text, answer.lines);
+      return answer;
     },
   };
   return { provider, sent, answered };

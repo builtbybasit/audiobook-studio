@@ -141,9 +141,14 @@ file of that one voice:
 
 - The form takes a name and the samples the provider takes; the button is ready once both are.
 - The picker offers only the provider's formats and says the limits in one line — Fish and
-  ElevenLabs take up to 20 samples, the others one — and lists each sample with its size. A pick
-  past that keeps the first and says so, and a file too large or in a format the provider does not
-  take blocks the button by name.
+  ElevenLabs take up to 20 samples, the others one — and lists each sample with a play button, its
+  waveform (click to seek), its length and its size. A pick past that keeps the first and says so,
+  and a file too large or in a format the provider does not take blocks the button by name.
+- **Trim** on a sample selects part of it on the waveform: drag the selection or type its edges,
+  **Trim silence** selects from where speech starts to where it ends, and **Play selection** plays
+  just that. **Apply** replaces the sample with the selection as a WAV; a transcript already typed
+  for it stays, with a note to check it still matches. A file the browser cannot decode plays where
+  it can but has no waveform or trim.
 - Where the provider takes a transcript of a sample — Fish Audio and Qwen do, as an option — each
   listed sample has a one-line field for what is said in it. Fish is sent them only when every
   sample has one and transcribes the samples itself otherwise; Qwen uses it to improve the clone.

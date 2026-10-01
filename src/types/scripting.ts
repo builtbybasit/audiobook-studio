@@ -1,7 +1,7 @@
 // Scripting: the LLM side. A profile is one chat endpoint, the telemetry is what its requests in
 // the server's ledger say it has been through, and the estimate and the diff are what the Scripting
 // page shows before and after a run.
-import type { SplitMode } from "@/types/common";
+import type { Gender, SplitMode } from "@/types/common";
 import type { PricingConfig, RateEstimate } from "@/types/pricing";
 import type { Segment, SegmentType } from "@/types/segment";
 
@@ -213,6 +213,10 @@ export interface PromptTrialResult {
   }[];
   /** the word-for-word check a run would hold them to */
   fidelity: { words: number; missing: number; added: number; examples: string[]; ok: boolean };
+  /** what the model said of the speakers, which a run would fill the cast in from */
+  cast: { name: string; gender?: Gender; aliases?: readonly string[]; description?: string }[];
+  /** where the model said the excerpt leaves off, which a run keeps for the next chapter */
+  recap?: string;
   ms: number;
   usage: { inputTokens: number; outputTokens: number; reasoningTokens: number | null } | null;
   /** USD, as the ledger priced it; null when it could not be priced */

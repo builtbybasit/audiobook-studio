@@ -112,14 +112,16 @@ describe("isSpoken", () => {
 });
 
 describe("the simulated scripter marks site text", () => {
-  const script = (text: string) =>
-    fakeScriptingProvider().script({
-      title: "t",
-      target: null,
-      cast: [],
-      text,
-      signal: new AbortController().signal,
-    });
+  const script = async (text: string) =>
+    (
+      await fakeScriptingProvider().script({
+        title: "t",
+        target: null,
+        cast: [],
+        text,
+        signal: new AbortController().signal,
+      })
+    ).lines;
 
   test("a paragraph of boilerplate between two of story is a watermark line of its own", async () => {
     const text = [
@@ -233,7 +235,7 @@ describe("the demo's web-novel chapter", () => {
   });
 
   test("a simulated re-script marks it again and still holds every word", async () => {
-    const lines = await fakeScriptingProvider().script({
+    const { lines } = await fakeScriptingProvider().script({
       title: chapter.title,
       target: null,
       cast: [],

@@ -17,6 +17,7 @@ import type {
   RenderedPrompt,
   SegmentType,
 } from "@/types";
+import type { PromptCastMember } from "@/lib/prompt";
 import type { SentScript } from "~/providers/sent";
 import type { ProviderTarget } from "~/providers/target";
 
@@ -70,6 +71,19 @@ export interface ScriptedLine {
   direction?: string;
 }
 
+/**
+ * What one request came back with: the lines, and what the model noticed beside them. Neither of
+ * the two extras is checked against the prose, and neither can change a word of the script — a
+ * wrong one misleads who a later line is given to, which a person can see and correct.
+ */
+export interface ScriptAnswer {
+  lines: ScriptedLine[];
+  /** what the excerpt says of its speakers; absent from a provider that does not ask */
+  cast?: PromptCastMember[];
+  /** where the excerpt leaves off, for whoever scripts the text after it */
+  recap?: string;
+}
+
 export interface ScriptingProvider {
   /** what the Queue page names, and the log */
   readonly name: string;
@@ -78,7 +92,7 @@ export interface ScriptingProvider {
    * than the provider — which for the fake is the honest answer.
    */
   readonly callsProfile?: boolean;
-  script(input: ScriptInput): Promise<ScriptedLine[]>;
+  script(input: ScriptInput): Promise<ScriptAnswer>;
   /**
    * One small request to see the profile answers — the Test button; absent, it cannot be tested.
    * `prompt` is the template the profile's runs would be sent (the library's, or its own

@@ -21,11 +21,13 @@
 // The prompt is fixed when the run is queued, like the profile: the library's, the endpoint's and
 // the book's layers are resolved then (`resolvePrompt`) and kept on the run with the book's notes,
 // so an edit made while it waits reaches the next run and not this one. Its tags are filled in per
-// request, from the book, the chapter, its cast as it stands and the request's place in the chapter.
+// request, from the book, the chapter, its cast as it stands, the request's place in the chapter,
+// the prose before it and where the chapter before left off. What the model says beside its lines
+// — the speakers' gender, other names and description, and a recap — is kept with the script.
 import type { Book, Job, Profile, PromptTemplate, ScriptingQueued, Segment } from "@/types";
 import { BUILT_IN_PROMPT, renderPrompt, resolvePrompt, type PromptVars } from "@/lib/prompt";
 import { tokenEstimate } from "@/lib/scripting";
-import { ensureSpeakers, readSpeakers } from "~/db/cast";
+import { ensureSpeakers, learnCast, readSpeakers } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { capture } from "~/db/history";
 import { readProfiles } from "~/db/endpoints";
@@ -36,10 +38,10 @@ import { ScriptConflict, lineCount, readScript, replaceScript, scriptRevision } 
 import { plainText } from "~/epub/markdown";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
-import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
+import type { ScriptAnswer, ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
-import { chunksOf } from "~/script/chunks";
+import { beforeOf, chunksOf } from "~/script/chunks";
 import { checkSiteText, siteTextTally } from "~/script/siteCheck";
 import { UNREAD_SHARE_WARNING } from "@/lib/siteText";
 import { assertWithinBudget, budgetProblem } from "~/usage/budget";
@@ -135,6 +137,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       // the built-in one, which is what it would have been sent then.
       const template = queued?.prompt ?? BUILT_IN_PROMPT;
       const book = library.getBook(db, job.bookId);
+      const recap = library.previousRecap(db, job.bookId, number);
       const varsFor = (i: number): PromptVars => ({
         book: {
           title: book?.title ?? "",
@@ -146,6 +149,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         parts: chunks.length,
         cast: speakers,
         excerpt: chunks[i],
+        before: beforeOf(chunks, i),
+        recap,
         endpoint: {
           name: queued?.profile.name ?? "",
           model: queued?.profile.model ?? "",
@@ -254,7 +259,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       // Up to the profile's concurrency at once, the answers kept in the chapter's order. The
       // first chunk that fails stops the others and fails the chapter: half a script is never
       // written, and the attempt says which request it was.
-      const answers: ScriptedLine[][] = chunks.map(() => []);
+      const answers: ScriptAnswer[] = chunks.map(() => ({ lines: [] }));
       const stop = new AbortController();
       const onAbort = (): void => stop.abort(signal.reason);
       signal.addEventListener("abort", onAbort, { once: true });
@@ -299,7 +304,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           if (chunks.length > 1)
             ctx.note(`Request ${i + 1} of ${chunks.length} answered`, "info", {
               characters: chunks[i].length,
-              lines: answers[i].length,
+              lines: answers[i].lines.length,
             });
         }
       };
@@ -317,14 +322,22 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
 
       // Stitched in reading order and numbered afresh: a line belongs to the chunk it came back
       // in, and the ids are the chapter's, 1 to n.
-      const lines: Segment[] = answers.flat().map((l, i) => ({
-        id: i + 1,
-        type: l.type,
-        speaker: l.speaker,
-        text: l.text,
-        direction: l.direction ?? "",
-        audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
-      }));
+      const lines: Segment[] = answers
+        .flatMap((a) => a.lines)
+        .map((l, i) => ({
+          id: i + 1,
+          type: l.type,
+          speaker: l.speaker,
+          text: l.text,
+          direction: l.direction ?? "",
+          audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
+        }));
+      // where the chapter leaves off is where its last chunk that said so left off
+      const leftOff =
+        answers
+          .map((a) => a.recap)
+          .filter(Boolean)
+          .at(-1) ?? null;
 
       // The write: by uid, against the revision the job started from, all in one transaction —
       // the script, the version it replaces, and the speakers it brought into the cast. A run
@@ -362,12 +375,22 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             at.bookId,
             segs.map((s) => s.speaker),
           );
+          // after the new speakers are in, so what the model said of them has somewhere to go
+          const learnt = learnCast(
+            tx,
+            at.bookId,
+            answers.flatMap((a) => a.cast ?? []),
+          );
+          // a recap belongs to the script it came with: one written without leaves none
+          library.setChapterRecap(tx, at.bookId, at.id, leftOff);
           library.setChapterScripting(tx, at.bookId, at.id, "done", 100);
           ctx.note("Script written", "info", {
             lines: segs.length,
             speakers: new Set(segs.map((s) => s.speaker)).size,
             revision,
             ...(added.length ? { speakersAdded: added.join(", ") } : {}),
+            ...(learnt.length ? { speakersFilledIn: learnt.join(", ") } : {}),
+            ...(leftOff ? { recap: leftOff } : {}),
             ...(version != null ? { preserved: `v${version}` } : {}),
             ...(at.id !== job.chapterId ? { chapterNow: at.id } : {}),
           });

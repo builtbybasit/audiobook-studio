@@ -44,7 +44,7 @@ describe.skipIf(!env.LIVE || !env.SCRIPTING_PROVIDER_URL)("a real scripting mode
     "scripts an excerpt word for word, with its speakers named",
     async () => {
       const started = performance.now();
-      const lines = await chatScriptingProvider().script({
+      const { lines, cast, recap } = await chatScriptingProvider().script({
         title: "The Inn at the Ford",
         text: EXCERPT,
         signal: new AbortController().signal,
@@ -56,6 +56,8 @@ describe.skipIf(!env.LIVE || !env.SCRIPTING_PROVIDER_URL)("a real scripting mode
         console.log(
           `${l.type.padEnd(9)} ${l.speaker.padEnd(8)} ${l.direction ? `[${l.direction}] ` : ""}${l.text}`,
         );
+
+      console.log("cast:", JSON.stringify(cast), "\nrecap:", recap);
 
       expect(fidelity(EXCERPT, lines).ok).toBe(true);
       const said = (words: string) => lines.find((l) => l.text.includes(words));

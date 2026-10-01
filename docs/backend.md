@@ -887,6 +887,14 @@ how many and which — an audiobook that silently skips a paragraph is the worst
 do. Word counts, not order, so it catches a dropped sentence but not a moved one. A bad answer is
 not retried, so a failure never spends tokens twice without anyone asking.
 
+Beside the lines the answer carries `cast` — gender, other names and a description of the speakers
+the excerpt says something new about — and a `recap` of where the excerpt leaves off. Both are read
+apart from the lines and item by item, so a malformed entry is dropped and never costs the script.
+The job fills the cast in with `learnCast` ([server/db/cast.ts](../server/db/cast.ts)), in the
+transaction that writes the script, only where the cast is blank, and keeps the last request's
+recap in `chapters.recap` (migration `0015_chapter_recap`) for the next chapter's
+`{{previous.recap}}` ([docs/scripting.md](scripting.md#what-a-run-remembers)).
+
 **The prompt** has three layers ([src/lib/prompt.ts](../src/lib/prompt.ts)), described from the
 page's side in [endpoints](endpoints.md): the library's default in `settings` under `prompt` (no row
 is the built-in one), saved with the Endpoints `PUT`; a profile's notes, replacement and reasoning

@@ -41,7 +41,8 @@ describe("fill", () => {
       { name: "Mara", gender: "f" as const, aliases: ["Mar"], description: "A lamplighter." },
       { name: "Tobiah" },
     ];
-    expect(fill("{{cast}}", vars({ cast }))).toBe("Mara, Tobiah");
+    // gender and other names go to everyone; the description only with the details
+    expect(fill("{{cast}}", vars({ cast }))).toBe("Mara (female; also called Mar), Tobiah");
     expect(fill("{{cast.details}}", vars({ cast }))).toBe(
       "- Mara (female; also called Mar): A lamplighter.\n- Tobiah",
     );
@@ -56,11 +57,23 @@ describe("fill", () => {
 describe("renderPrompt", () => {
   test("the built-in prompt sends today's user message and ends the system prompt with the format", () => {
     const r = renderPrompt(BUILT_IN_PROMPT, vars());
+    // a chapter's first request with no recap before it: both context lines drop out
     expect(r.user).toBe(
-      "Chapter: The Bridge\nKnown cast: Mara\n\nExcerpt:\n“Is someone there?” Mara whispered.",
+      "Chapter: The Bridge\nKnown cast: Mara (female)\n\nExcerpt:\n“Is someone there?” Mara whispered.",
     );
     expect(r.system.endsWith(OUTPUT_FORMAT)).toBe(true);
     expect(r.system).not.toContain("Notes on this book");
+  });
+
+  test("the built-in prompt sends the previous chapter's recap and the text before the excerpt", () => {
+    const { user } = renderPrompt(
+      BUILT_IN_PROMPT,
+      vars({ recap: "Mara and Tobiah  at the door;\nTobiah spoke last.", before: "“Who is it?”" }),
+    );
+    expect(user).toContain(
+      "Where the previous chapter left off: Mara and Tobiah at the door; Tobiah spoke last.\n",
+    );
+    expect(user).toContain("(context only, not part of the excerpt): “Who is it?”\n\nExcerpt:");
   });
 
   test("an empty system prompt still sends the output format", () => {

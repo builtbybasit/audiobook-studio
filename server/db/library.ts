@@ -4,7 +4,7 @@
 // served over HTTP. An import writes a book, its volume, its chapters and their text in one
 // transaction, so a crash halfway through a nine-hundred-chapter file leaves no half-imported book
 // behind for the review to choke on.
-import { and, asc, count, eq, inArray, max, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, lt, max, sql } from "drizzle-orm";
 
 import type {
   Book,
@@ -223,6 +223,37 @@ export function locateChapter(
     .from(chapters)
     .where(eq(chapters.uid, uid))
     .get();
+}
+
+/** Keep where a chapter's script leaves off, for the chapter after it. */
+export function setChapterRecap(
+  db: Db | Tx,
+  bookId: string,
+  chapterId: number,
+  recap: string | null,
+): void {
+  db.update(chapters).set({ recap }).where(chapterAt(bookId, chapterId)).run();
+}
+
+/**
+ * Where the chapter before this one in the audiobook left off: the recap of the nearest earlier
+ * chapter that is not skipped, or "" when that one has none — an older chapter's recap would be
+ * the wrong scene, so the search stops there.
+ */
+export function previousRecap(db: Db | Tx, bookId: string, chapterId: number): string {
+  const row = db
+    .select({ recap: chapters.recap })
+    .from(chapters)
+    .where(
+      and(
+        eq(chapters.bookId, bookId),
+        lt(chapters.id, chapterId),
+        sql`coalesce(${chapters.excluded}, 0) = 0`,
+      ),
+    )
+    .orderBy(desc(chapters.id))
+    .get();
+  return row?.recap ?? "";
 }
 
 /** A chapter's scripting status and how far along it is; the job keeps it, and a person's edit. */

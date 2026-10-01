@@ -22,8 +22,8 @@
 // `temperature` is left out where that host refuses or ignores it beside a reasoning level.
 import * as v from "valibot";
 
-import type { EndpointProbe, RenderedPrompt, SegmentType, TokenUsage } from "@/types";
-import { BUILT_IN_PROMPT, renderPrompt, sampleVars } from "@/lib/prompt";
+import type { EndpointProbe, Gender, RenderedPrompt, SegmentType, TokenUsage } from "@/types";
+import { BUILT_IN_PROMPT, renderPrompt, sampleVars, type PromptCastMember } from "@/lib/prompt";
 import { NARRATOR } from "@/lib/cast";
 import { normalizeUsage } from "@/lib/pricing";
 import { reasoningRequest } from "@/lib/reasoning";
@@ -37,6 +37,7 @@ import {
   type CallStats,
 } from "~/providers/http";
 import type {
+  ScriptAnswer,
   ScriptInput,
   ScriptTarget,
   ScriptedLine,
@@ -140,7 +141,58 @@ const Line = v.object({
   text: v.optional(v.nullable(v.string()), ""),
   direction: v.optional(v.nullable(v.string())),
 });
-const Answer = v.object({ lines: v.array(Line) });
+const Answer = v.object({
+  lines: v.array(Line),
+  // read apart from the lines, item by item: a malformed note must not cost a good script
+  cast: v.optional(v.unknown()),
+  recap: v.optional(v.unknown()),
+});
+
+const CastNote = v.object({
+  name: v.string(),
+  gender: v.optional(v.nullable(v.string())),
+  aliases: v.optional(v.nullable(v.array(v.string()))),
+  description: v.optional(v.nullable(v.string())),
+});
+
+/** The longest description kept from a model, which a chatty one can run to a paragraph. */
+const DESCRIPTION_MAX = 300;
+
+const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/** A gender as a model may spell it. */
+function genderOf(said: string | null | undefined): Gender {
+  const g = (said ?? "").trim().toLowerCase();
+  if (/^(?:non[- ]?binary|nb|enby|n)$/.test(g)) return "n";
+  if (/^(?:f|female|woman|girl)$/.test(g)) return "f";
+  if (/^(?:m|male|man|boy)$/.test(g)) return "m";
+  return "?";
+}
+
+/**
+ * What an answer says of its speakers, the entries that can be read: one with no name, or naming
+ * the Narrator or "Unknown", says nothing about anyone, and an alias that is the name is none.
+ */
+function castOf(said: unknown): PromptCastMember[] {
+  if (!Array.isArray(said)) return [];
+  const out: PromptCastMember[] = [];
+  for (const item of said) {
+    const read = v.safeParse(CastNote, item);
+    if (!read.success) continue;
+    const name = oneLine(read.output.name);
+    if (!name || name === NARRATOR || name === UNKNOWN_SPEAKER) continue;
+    const aliases = [
+      ...new Set((read.output.aliases ?? []).map(oneLine).filter((a) => a && a !== name)),
+    ];
+    out.push({
+      name,
+      gender: genderOf(read.output.gender),
+      aliases,
+      description: oneLine(read.output.description ?? "").slice(0, DESCRIPTION_MAX),
+    });
+  }
+  return out;
+}
 
 const Completion = v.object({
   choices: v.pipe(
@@ -231,8 +283,8 @@ function jsonIn(content: string): unknown {
   return JSON.parse(unfenced.slice(from, to + 1));
 }
 
-/** The lines an answer's content holds, normalised; throws a readable `ProviderError` otherwise. */
-export function linesOf(content: string, who: string): ScriptedLine[] {
+/** The script an answer's content holds, normalised; throws a readable `ProviderError` otherwise. */
+export function answerOf(content: string, who: string): ScriptAnswer {
   let parsed: v.InferOutput<typeof Answer>;
   try {
     parsed = v.parse(Answer, jsonIn(content));
@@ -261,7 +313,8 @@ export function linesOf(content: string, who: string): ScriptedLine[] {
       ...(direction ? { direction } : {}),
     });
   }
-  return out;
+  const recap = typeof parsed.recap === "string" ? oneLine(parsed.recap) : "";
+  return { lines: out, cast: castOf(parsed.cast), ...(recap ? { recap } : {}) };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -287,7 +340,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     signal: AbortSignal,
     sent?: (request: SentScript) => void,
     lenient = false,
-  ): Promise<{ lines: ScriptedLine[]; reasoningTokens: number | null }> {
+  ): Promise<{ answer: ScriptAnswer; reasoningTokens: number | null }> {
     requireKey(target);
     const reasoning = reasoningRequest(target.baseUrl, target.reasoning);
     const body = {
@@ -343,9 +396,9 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     const usage = usageOf(raw);
     const reasoningTokens = reasoningTokensOf(raw);
     try {
-      const lines = readAnswer(target, text, res.status, raw, lenient);
+      const answer = readAnswer(target, text, res.status, raw, lenient);
       report(usage);
-      return { lines, reasoningTokens };
+      return { answer, reasoningTokens };
     } catch (e) {
       if (e instanceof ProviderError) report(usage, e);
       throw e;
@@ -362,7 +415,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     status: number,
     raw: unknown,
     lenient: boolean,
-  ): ScriptedLine[] {
+  ): ScriptAnswer {
     const parsed = v.safeParse(Completion, raw);
     if (!parsed.success)
       throw new ProviderError(
@@ -388,7 +441,8 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     const content = choice.message?.content ?? "";
     if (!content.trim())
       throw new ProviderError(`${target.name} answered with no script at all`, status, false);
-    const lines = linesOf(content, target.name);
+    const answer = answerOf(content, target.name);
+    const { lines } = answer;
     if (!lines.length)
       throw new ProviderError(`${target.name} answered with a script of no lines`, status, false);
     const check = fidelity(text, lines);
@@ -406,7 +460,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         false,
       );
     }
-    return lines;
+    return answer;
   }
 
   return {
@@ -425,7 +479,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     }: ScriptInput) {
       if (!target) throw new ProviderError(NO_PROFILE, 0, false);
       progress?.(0, 1);
-      const { lines } = await request(
+      const { answer } = await request(
         target,
         prompt ?? builtInPrompt(title, cast, text),
         text,
@@ -434,7 +488,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         lenient,
       );
       progress?.(1, 1);
-      return lines;
+      return answer;
     },
     async probe(target, signal, given): Promise<EndpointProbe> {
       const started = performance.now();
@@ -445,7 +499,10 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
           given?.template ?? BUILT_IN_PROMPT,
           sampleVars(PROBE_TEXT, { name: target.name, model: target.model, notes: given?.notes }),
         );
-        const { lines, reasoningTokens } = await request(target, prompt, PROBE_TEXT, signal);
+        const {
+          answer: { lines },
+          reasoningTokens,
+        } = await request(target, prompt, PROBE_TEXT, signal);
         const speakers = [...new Set(lines.filter((l) => voiced(l.type)).map((l) => l.speaker))];
         // a count of none is news only to someone who picked a level, "off" above all
         const thought =

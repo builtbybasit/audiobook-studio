@@ -113,7 +113,7 @@ describe("a request", () => {
   test("goes to /chat/completions with the model, the key and the output cap, and the fenced answer is read", async () => {
     const { sent, provider } = gateway(() => completion(fenced(LINES)));
     const seen: [number, number][] = [];
-    const lines = await provider.script(input({ progress: (d, t) => seen.push([d, t]) }));
+    const { lines } = await provider.script(input({ progress: (d, t) => seen.push([d, t]) }));
     expect(lines).toEqual([
       { type: "narration", speaker: "Narrator", text: "The door opened." },
       { type: "dialogue", speaker: "Mara", text: "Come in,", direction: "softly" },
@@ -183,11 +183,57 @@ describe("a request", () => {
         ]),
       ),
     );
-    expect(await provider.script(input())).toEqual([
+    expect((await provider.script(input())).lines).toEqual([
       { type: "narration", speaker: "Narrator", text: "The door opened." },
       { type: "dialogue", speaker: "Mara", text: "Come in," },
       { type: "narration", speaker: "Narrator", text: "said Mara softly." },
     ]);
+  });
+
+  test("reads what the answer says of the cast and where it leaves off, and drops what it cannot", async () => {
+    const { provider } = gateway(() =>
+      completion(
+        JSON.stringify({
+          lines: LINES,
+          cast: [
+            {
+              name: " Mara ",
+              gender: "Female",
+              aliases: ["the lamplighter", "Mara", "the lamplighter"],
+              description: "A young  lamplighter.",
+            },
+            { name: "Tobiah", gender: "man" },
+            { name: "Kit", gender: "non-binary", aliases: null },
+            { name: "Narrator", gender: "male" },
+            { name: "Unknown" },
+            { gender: "female" },
+            "Mara is a girl",
+          ],
+          recap: "Mara  let a stranger in;\nshe spoke last.",
+        }),
+      ),
+    );
+    const answer = await provider.script(input());
+    expect(answer.lines).toHaveLength(3);
+    expect(answer.cast).toEqual([
+      {
+        name: "Mara",
+        gender: "f",
+        aliases: ["the lamplighter"],
+        description: "A young lamplighter.",
+      },
+      { name: "Tobiah", gender: "m", aliases: [], description: "" },
+      { name: "Kit", gender: "n", aliases: [], description: "" },
+    ]);
+    expect(answer.recap).toBe("Mara let a stranger in; she spoke last.");
+  });
+
+  test("an answer with a cast and recap it cannot read is still a script", async () => {
+    const { provider } = gateway(() =>
+      completion(JSON.stringify({ lines: LINES, cast: "Mara", recap: { who: "Mara" } })),
+    );
+    const answer = await provider.script(input());
+    expect(answer).toEqual({ lines: expect.any(Array), cast: [] });
   });
 
   // the words stay in the script, so the prose read here carries the site's line and the note too
@@ -211,7 +257,9 @@ describe("a request", () => {
         ]),
       ),
     );
-    const [marked] = await provider.script(input({ text }));
+    const {
+      lines: [marked],
+    } = await provider.script(input({ text }));
     // not a character's line, so no quotation marks are taken off it either
     expect(marked).toEqual({ type, speaker: "Narrator", text: "“Read more at example.com.”" });
   });
@@ -269,7 +317,7 @@ describe("a refusal", () => {
       () => completion(fenced(LINES)),
     );
     const report = reported();
-    expect(await provider.script(report.input)).toHaveLength(3);
+    expect((await provider.script(report.input)).lines).toHaveLength(3);
     expect(sent).toHaveLength(2);
     expect(report.sent).toMatchObject([{ status: "done", attempts: 2, rateLimited: true }]);
   });
@@ -311,7 +359,7 @@ describe("a lenient request (a prompt trial)", () => {
   test("hands back lines that fail the word check, reported as answered", async () => {
     const { provider } = gateway(() => completion(fenced(LINES.slice(0, 2)), "stop", USAGE));
     const { sent, input } = reported({ lenient: true });
-    const lines = await provider.script(input);
+    const { lines } = await provider.script(input);
     expect(lines).toHaveLength(2);
     expect(fidelity(TEXT, lines)).toMatchObject({ ok: false, missing: 3 });
     expect(sent).toMatchObject([{ status: "done", usage: { inputTokens: 1200 } }]);

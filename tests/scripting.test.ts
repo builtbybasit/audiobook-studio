@@ -41,7 +41,7 @@ function useTestProfile() {
     maxChars: 500,
     inPrice: 1,
     outPrice: 2,
-    maxOutputTokens: 200,
+    maxOutputTokens: 400,
   });
   endpointsStore.profiles = [p];
   scriptingStore.scriptSettings.profile = p.id;
@@ -138,7 +138,7 @@ describe("the estimate", () => {
         .scriptEstimate(book, [1])
         .blockers.some((x) => x.includes("output token limit")),
     ).toBe(true);
-    endpointsStore.profiles[0].maxOutputTokens = 200;
+    endpointsStore.profiles[0].maxOutputTokens = 400;
     endpointsStore.profiles[0].inPrice = 0;
     endpointsStore.profiles[0].outPrice = 0;
     libraryStore.bookById(book)!.scriptBudget = 0;

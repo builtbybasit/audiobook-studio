@@ -20,7 +20,12 @@ import type { AudiobookEncoder, EncoderChoice, ExportPorts } from "~/providers/e
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import { createSpeechGate, type SpeechGate } from "~/providers/gate";
 import { wavEncoders } from "~/providers/wavEncoder";
-import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
+import type {
+  ScriptAnswer,
+  ScriptInput,
+  ScriptedLine,
+  ScriptingProvider,
+} from "~/providers/scripting";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 import type { VoiceCloner } from "~/providers/clone";
 import type { VoiceLister } from "~/providers/voices";
@@ -366,13 +371,13 @@ export function gatedProvider(
       name: "Gated scripting (test)",
       script(input) {
         onStart(input);
-        return new Promise<ScriptedLine[]>((resolve, reject) => {
+        return new Promise<ScriptAnswer>((resolve, reject) => {
           const abort = () => reject(input.signal.reason);
           if (input.signal.aborted) return abort();
           input.signal.addEventListener("abort", abort, { once: true });
           void gate.then(() => {
             input.signal.removeEventListener("abort", abort);
-            resolve(answer);
+            resolve({ lines: answer });
           });
         });
       },

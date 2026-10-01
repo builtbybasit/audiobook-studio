@@ -15,6 +15,7 @@
 // is what the plan makes of what was read.
 import type {
   Character,
+  CharacterVoice,
   Endpoint,
   ExpressionTag,
   FoundVoice,
@@ -73,13 +74,14 @@ export async function planScriptImport(
   upload: ScriptUpload,
   ports: ImportPorts = {},
 ): Promise<ScriptImportPlan> {
-  if (!getBook(db, bookId)) throw notFound("There is no book by that id", `id: ${bookId}`);
+  const book = getBook(db, bookId);
+  if (!book) throw notFound("There is no book by that id", `id: ${bookId}`);
   const limits = ports.sampleLimits ?? SAMPLE_LIMITS;
   const file = await readScriptFile(upload, limits);
 
   const cast = readCast(db, bookId);
   const endpoints = readEndpoints(db);
-  const tagsFor = tagsOf(cast, endpoints);
+  const tagsFor = tagsOf(cast, book.characterVoice, endpoints);
 
   const { chapters, refused } = matchChapters(db, bookId, file.chapters, tagsFor);
   refused.push(...file.refused);
@@ -100,12 +102,13 @@ export async function planScriptImport(
 
 // ---------- matching ----------
 
-/** The tags a speaker's lines are spoken with: their voice's endpoint's, else the Narrator's. */
+/** The tags a speaker's lines are spoken with: those of the endpoint their voice is on. */
 function tagsOf(
   cast: Character[],
+  characterVoice: CharacterVoice | undefined,
   endpoints: readonly Endpoint[],
 ): (speaker: string) => readonly ExpressionTag[] {
-  const delivery = deliveryFor(cast);
+  const delivery = deliveryFor(cast, characterVoice);
   return (speaker) => {
     const id = delivery(speaker).endpoint;
     return endpoints.find((e) => e.id === id)?.expressions?.tags ?? [];

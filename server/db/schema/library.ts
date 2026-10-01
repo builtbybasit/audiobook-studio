@@ -20,6 +20,8 @@ import {
   unique,
 } from "drizzle-orm/sqlite-core";
 
+import type { CharacterVoice } from "@/types";
+
 export const books = sqliteTable("books", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
@@ -48,6 +50,8 @@ export const books = sqliteTable("books", {
   promptUser: text("prompt_user"),
   /** read the translator's and author's notes (`note` lines) aloud; null = skip them, the default */
   readNotes: integer("read_notes", { mode: "boolean" }),
+  /** the voice a speaker with none of their own is read in (`CharacterVoice`); null = the Narrator's */
+  characterVoice: text("character_voice", { mode: "json" }).$type<CharacterVoice>(),
 });
 
 export const volumes = sqliteTable(

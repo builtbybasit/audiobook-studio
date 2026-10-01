@@ -1,0 +1,1 @@
+ALTER TABLE `books` ADD `character_voice` text;

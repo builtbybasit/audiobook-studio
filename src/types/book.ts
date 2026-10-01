@@ -183,6 +183,22 @@ export interface Book {
   prompt?: BookPrompt;
   /** read translator's and author's notes (`note` lines) aloud; absent = skip them */
   readNotes?: boolean;
+  /** the voice a speaker with none of their own is read in; absent = the Narrator's */
+  characterVoice?: CharacterVoice;
+}
+
+/**
+ * The book's Character voice: what a speaker with no voice of their own is read in, before the
+ * Narrator's. One voice for all of them, or one by gender — neutral and unknown share `other`,
+ * since unknown is most of a fresh cast. Both shapes are kept, so switching between them loses
+ * nothing; a slot left empty falls through to the Narrator's voice.
+ */
+export interface CharacterVoice {
+  by: "one" | "gender";
+  one: VoiceRef | null;
+  male: VoiceRef | null;
+  female: VoiceRef | null;
+  other: VoiceRef | null;
 }
 
 export interface Character {

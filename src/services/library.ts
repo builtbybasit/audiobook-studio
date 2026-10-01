@@ -9,6 +9,7 @@
 import type {
   Book,
   BookPrompt,
+  CharacterVoice,
   Cast,
   Chapter,
   ChapterHistory,
@@ -63,6 +64,8 @@ export interface BookSettings {
   prompt?: BookPrompt | null;
   /** read translator's and author's notes aloud (`Book.readNotes`) */
   readNotes?: boolean;
+  /** the voice for speakers with none of their own (`Book.characterVoice`); `null` = the Narrator's */
+  characterVoice?: CharacterVoice | null;
 }
 
 /** The two forms a chapter's prose comes in. See `LibraryService.chapterText`. */

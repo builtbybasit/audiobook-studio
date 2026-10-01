@@ -13,7 +13,7 @@ import { speechReadiness } from "@/lib/endpoints";
 import { norm } from "@/lib/scriptReview";
 import { isSpoken } from "@/lib/siteText";
 import { chapterSeconds, hitsIn, pacingOrDefault, speak } from "@/lib/speech";
-import { newSpeaker, voiceRef } from "@/lib/cast";
+import { newSpeaker, speakerVoice, voiceRef } from "@/lib/cast";
 import { clone } from "@/lib/utils";
 import {
   type Cast,
@@ -112,18 +112,26 @@ export const useCastStore = defineStore("cast", {
       }
       return out;
     },
-    // a character with no voice of their own is read in the Narrator's voice
+    // a character with no voice of their own is read in the book's Character voice, or else the
+    // Narrator's — `speakerVoice`, the rule the narration job keeps too
     effectiveVoice(): (bookId: string, name: string) => EffectiveVoice {
       const endpointsStore = useEndpointsStore();
+      const libraryStore = useLibraryStore();
 
       return (bookId, name) => {
         const cast = this.byName[bookId];
         const c = cast?.get(name);
-        const ref = c?.voice || cast?.get("Narrator")?.voice || null;
+        const { ref, from } = speakerVoice(
+          name,
+          c,
+          cast?.get("Narrator")?.voice ?? null,
+          libraryStore.bookById(bookId)?.characterVoice,
+        );
         const r = endpointsStore.resolveVoice(ref);
         return {
           ref,
-          own: !!c?.voice,
+          own: from === "own",
+          from,
           voice: r?.voice.id ?? null,
           label: r ? r.voice.label : ref ? "missing" : null,
           endpoint: r?.endpoint ?? null,

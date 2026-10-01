@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Select built on reka-ui. Options: [{ value, label, group?, disabled?, color? }]. `nullValue` lets a
 // v-model of null map to a real option (reka needs a concrete value), e.g. "Narrator’s voice".
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import {
   SelectContent,
   SelectGroup,
@@ -64,10 +64,15 @@ const groups = computed(() => {
 });
 // a value no option has shows the placeholder, marked, never the value itself
 const current = computed(() => selectLabel(props.modelValue, props.options, props.nullValue));
+// Items exist only while the list is open. Closed, reka still mounts every item into a detached
+// fragment — six thousand components for a book's chapters — for SelectValue's label, which
+// `current` gives instead, and for typeahead on the trigger, which there only focuses an item that
+// is not on the page. Opening mounts the items afresh either way, so the list opens as it did.
+const open = ref(false);
 </script>
 
 <template>
-  <SelectRoot v-model="inner" :disabled="disabled">
+  <SelectRoot v-model="inner" v-model:open="open" :disabled="disabled">
     <SelectTrigger
       class="ui-select-trigger"
       :class="[
@@ -95,7 +100,7 @@ const current = computed(() => selectLabel(props.modelValue, props.options, prop
           maxHeight: 'min(320px, var(--reka-select-content-available-height))',
         }"
       >
-        <SelectViewport class="p-1">
+        <SelectViewport v-if="open" class="p-1">
           <SelectItem
             v-if="nullValue !== undefined"
             :value="NULL"

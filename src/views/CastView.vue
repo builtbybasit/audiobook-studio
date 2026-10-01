@@ -23,12 +23,8 @@ import { GENDER } from "@/lib/scriptReview";
 import { UiSelect, UiCombobox, UiCheckbox, UiSwitch, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
 import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
-import {
-  ChevronDown as OpenIcon,
-  ChevronRight as ClosedIcon,
-  Plus as AddIcon,
-  X as CloseIcon,
-} from "@lucide/vue";
+import { appearanceStrip } from "@/views/cast/strip";
+import { Plus as AddIcon, X as CloseIcon } from "@lucide/vue";
 import type { Character, Gender } from "@/types";
 const castOpts = computed(() =>
   cast.value.map((c) => ({
@@ -43,7 +39,6 @@ const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const samplesStore = useSpeakerSamplesStore();
-const voiceOpts = computed(() => endpointsStore.voiceOptions);
 const bookId = useBookId();
 // the cast: read from the server when the page opens, or the seeded world's
 const { characters: cast } = useCast(bookId);
@@ -60,19 +55,31 @@ const sel = ref(new Set<string>());
 const editing = ref<string | null>(null);
 const draft = ref("");
 const total = computed(() => libraryStore.chaptersOf(bookId).length);
+const unreviewed = computed(() => cast.value.filter((c) => c.isNew).length);
+const voiced = computed(() => cast.value.filter((c) => c.voice).length);
+const colorOf = computed(() => new Map(cast.value.map((c) => [c.name, c.color])));
+/** every speaker's appearance strip, drawn once per change of the counts rather than per render */
+const strips = computed(() => {
+  const out: Record<string, Record<string, string>> = {};
+  for (const [name, st] of Object.entries(stats.value))
+    out[name] = appearanceStrip(st.chapters, total.value);
+  return out;
+});
 
-const rows = computed(() =>
-  cast.value
+const rows = computed(() => {
+  const needle = q.value.toLowerCase();
+  return cast.value
     .filter(
       (c) =>
-        !q.value ||
-        c.name.toLowerCase().includes(q.value.toLowerCase()) ||
-        c.aliases.some((a) => a.toLowerCase().includes(q.value.toLowerCase())),
+        !needle ||
+        c.name.toLowerCase().includes(needle) ||
+        c.aliases.some((a) => a.toLowerCase().includes(needle)),
     )
     .filter((c) => !onlyNew.value || c.isNew)
     .map((c) => ({
       c,
       st: stats.value[c.name] ?? { lines: 0, chapters: new Set<number>(), first: 0 },
+      voice: endpointsStore.resolveVoice(c.voice),
     }))
     .sort((a, b) =>
       sort.value === "lines"
@@ -80,8 +87,8 @@ const rows = computed(() =>
         : sort.value === "first"
           ? (a.st.first ?? 999) - (b.st.first ?? 999)
           : a.c.name.localeCompare(b.c.name),
-    ),
-);
+    );
+});
 
 function toggle(name: string) {
   const s = new Set(sel.value);
@@ -93,7 +100,20 @@ function mergeSelectedInto(into: string | number | null) {
   castStore.mergeMany(bookId, [...sel.value], String(into));
   sel.value = new Set();
 }
-const pickers = ref<Record<string, { open: boolean } | null>>({});
+// One voice picker serves every row — a reka popover per row was most of a long cast's
+// components — anchored to the row's voice button that opened it.
+const voiceOpen = ref(false);
+const voiceFor = ref<{ name: string; anchor: HTMLElement } | null>(null);
+function showVoice(name: string, anchor: HTMLElement | null | undefined) {
+  if (!anchor) return;
+  voiceFor.value = { name, anchor };
+  voiceOpen.value = true;
+}
+/** the row's voice button: opens the picker on its row, or closes it if it is already there */
+function voiceClick(name: string, e: MouseEvent) {
+  if (voiceOpen.value && voiceFor.value?.name === name) voiceOpen.value = false;
+  else showVoice(name, e.currentTarget as HTMLElement);
+}
 function onRowKey(e: KeyboardEvent, c: Character) {
   const t = e.target as HTMLElement;
   if (["INPUT", "TEXTAREA"].includes(t.tagName) || t.closest("[role=dialog],[role=listbox]"))
@@ -109,8 +129,7 @@ function onRowKey(e: KeyboardEvent, c: Character) {
     list[i - 1]?.focus();
   } else if (e.key === "v") {
     e.preventDefault();
-    const pk = pickers.value[c.name];
-    if (pk) pk.open = true;
+    showVoice(c.name, row.querySelector<HTMLElement>("[data-voice-anchor]"));
   } else if (e.key === "Enter") {
     e.preventDefault();
     startRename(c);
@@ -236,9 +255,8 @@ const duplicate = computed(
       <div>
         <h1 class="text-2xl font-semibold">Cast</h1>
         <p class="text-sm text-zinc-500">
-          {{ cast.length }} speakers across {{ total }} chapters ·
-          {{ cast.filter((c) => c.isNew).length }} unreviewed ·
-          {{ cast.filter((c) => c.voice).length }} voiced ·
+          {{ cast.length }} speakers across {{ total }} chapters · {{ unreviewed }} unreviewed ·
+          {{ voiced }} voiced ·
           <UiTooltip
             text="Auto-assign pools voices by gender, so it skips a speaker whose gender is unknown. Open a row to set it."
             ><span
@@ -321,13 +339,13 @@ const duplicate = computed(
       >
         <span
           class="rounded-full px-2 py-0.5 text-xs"
-          :style="{ background: (cast.find((c) => c.name === s.from)?.color ?? '#999') + '33' }"
+          :style="{ background: (colorOf.get(s.from) ?? '#999') + '33' }"
           >{{ s.from }}</span
         >
         <span class="text-zinc-400">→</span>
         <span
           class="rounded-full px-2 py-0.5 text-xs"
-          :style="{ background: (cast.find((c) => c.name === s.into)?.color ?? '#999') + '33' }"
+          :style="{ background: (colorOf.get(s.into) ?? '#999') + '33' }"
           >{{ s.into }}</span
         >
         <span class="min-w-0 flex-1 truncate text-xs text-zinc-500"
@@ -384,7 +402,7 @@ const duplicate = computed(
           </tr>
         </thead>
         <tbody>
-          <template v-for="{ c, st } in rows" :key="c.name">
+          <template v-for="{ c, st, voice } in rows" :key="c.name">
             <tr
               data-row
               :data-speaker="c.name"
@@ -408,7 +426,23 @@ const duplicate = computed(
                     :aria-label="`${open === c.name ? 'Close' : 'Open'} the full record for ${c.name}`"
                     @click="toggleOpen(c.name)"
                   >
-                    <component :is="open === c.name ? OpenIcon : ClosedIcon" class="icon-sm" />
+                    <!-- lucide's chevron-right as plain markup (turned down when open): an icon
+                         component is two instances, and every row drew three -->
+                    <svg
+                      :class="['icon-sm', open === c.name && 'rotate-90']"
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="m9 18 6-6-6-6" />
+                    </svg>
                   </button>
                   <span
                     class="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -462,30 +496,55 @@ const duplicate = computed(
               <td class="pr-4 text-right font-mono text-xs">{{ counted ? st.lines : "…" }}</td>
               <td class="pl-2">
                 <div
-                  class="flex h-3 gap-px"
+                  class="h-3 rounded-sm bg-zinc-200 dark:bg-zinc-800"
+                  :style="strips[c.name]"
                   :title="`in ${st.chapters.size} chapters, first in ch ${st.first ?? '—'}`"
-                >
-                  <span
-                    v-for="i in total"
-                    :key="i"
-                    class="flex-1 rounded-sm"
-                    :class="st.chapters.has(i) ? 'bg-violet-500' : 'bg-zinc-200 dark:bg-zinc-800'"
-                  ></span>
-                </div>
+                ></div>
                 <div v-if="counted" class="text-[10px] text-zinc-400">
                   {{ st.chapters.size }} ch · first ch {{ st.first ?? "—" }}
                 </div>
               </td>
               <td class="py-1 pr-2">
-                <VoicePicker
-                  :ref="(el) => (pickers[c.name] = el as { open: boolean } | null)"
-                  :model-value="c.voice"
-                  @update:model-value="(v) => castStore.setVoice(bookId, c.name, v)"
-                  :book-id="bookId"
-                  :speaker="c.name"
-                  size="xs"
-                  block
-                />
+                <!-- VoicePicker's trigger, drawn as a plain button that opens the shared picker -->
+                <button
+                  type="button"
+                  data-voice-anchor
+                  aria-haspopup="dialog"
+                  :aria-expanded="voiceOpen && voiceFor?.name === c.name"
+                  :data-state="voiceOpen && voiceFor?.name === c.name ? 'open' : 'closed'"
+                  class="ui-select-trigger w-full py-0.5 text-xs"
+                  :class="[
+                    !c.voice && 'italic text-zinc-400',
+                    c.voice && !voice && 'ring-1 ring-amber-400',
+                  ]"
+                  @click="voiceClick(c.name, $event)"
+                >
+                  <span class="min-w-0 flex-1 truncate text-left">
+                    <template v-if="!c.voice">Narrator’s voice</template>
+                    <template v-else-if="voice"
+                      >{{ voice.voice.label }}
+                      <span class="text-zinc-400">· {{ voice.endpoint.name }}</span></template
+                    >
+                    <span v-else class="not-italic text-amber-600"
+                      >{{ c.voice.split("/")[1] }} — missing</span
+                    >
+                  </span>
+                  <svg
+                    class="ml-1 icon-sm text-zinc-400"
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </button>
               </td>
               <td class="pr-3 text-right">
                 <button
@@ -501,7 +560,22 @@ const duplicate = computed(
                   @click="castStore.deleteCharacter(bookId, c.name)"
                   title="Merge into Narrator"
                 >
-                  <CloseIcon class="icon-sm" />
+                  <svg
+                    class="icon-sm"
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M18 6 6 18" />
+                    <path d="m6 6 12 12" />
+                  </svg>
                 </button>
               </td>
             </tr>
@@ -672,6 +746,14 @@ const duplicate = computed(
           </template>
         </tbody>
       </table>
+      <VoicePicker
+        v-model:open="voiceOpen"
+        :anchor="voiceFor?.anchor ?? null"
+        :model-value="cast.find((c) => c.name === voiceFor?.name)?.voice ?? null"
+        :book-id="bookId"
+        :speaker="voiceFor?.name"
+        @update:model-value="(v) => voiceFor && castStore.setVoice(bookId, voiceFor.name, v)"
+      />
     </div>
   </div>
 </template>

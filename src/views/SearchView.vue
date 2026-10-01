@@ -17,7 +17,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import type { Component } from "vue";
 import { isScripted } from "@/lib/scriptReview";
 import { TYPE_LABEL } from "@/lib/siteText";
-import { UiCheckbox, UiSelect, UiToggleGroup } from "@/ui";
+import { UiCheckbox, UiCombobox, UiToggleGroup } from "@/ui";
 import { useFilter } from "reka-ui";
 import { useBookId } from "@/composables/useBookId";
 import { enumParam, textParam, useQueryParam } from "@/composables/useQueryParam";
@@ -244,7 +244,10 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
         placeholder="Search text, a speaker, or a direction…"
         autofocus
       />
-      <UiSelect v-model="speaker" :options="speakerOpts" class="w-44" />
+      <label class="w-44">
+        <span class="sr-only">Speaker</span>
+        <UiCombobox v-model="speaker" :options="speakerOpts" block />
+      </label>
       <UiToggleGroup
         v-model="type"
         :options="TYPES.map((t) => ({ value: t, label: t === 'all' ? 'All' : TYPE_LABEL[t] }))"

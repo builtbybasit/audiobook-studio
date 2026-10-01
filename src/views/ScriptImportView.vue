@@ -495,7 +495,7 @@ const SKIPPED = {
                   :model-value="ticked.has(c.chapterId)"
                   :disabled="busy(c)"
                   :aria-label="c.title"
-                  @click.prevent="tick(c, $event)"
+                  @click="tick(c, $event)"
                 />
                 <div class="min-w-0 flex-1">
                   <div class="truncate">

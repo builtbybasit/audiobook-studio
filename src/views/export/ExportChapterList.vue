@@ -15,7 +15,7 @@ import { readinessOf, READINESS } from "@/lib/exports";
 import { enumParam, idSetParam, textParam, useQueryParam } from "@/composables/useQueryParam";
 import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
 import { clock } from "@/views/export/shared";
-import StatusDot from "@/components/StatusDot.vue";
+import { dotClass } from "@/components/statusDot";
 import { UiCheckbox, UiSelect } from "@/ui";
 import {
   ChevronDown as ChevronDownIcon,
@@ -319,7 +319,10 @@ const tone: Record<string, string> = {
               :aria-label="`Include chapter ${c.id}, ${c.title}`"
               @click="toggle(c.id, $event)"
             />
-            <StatusDot :status="READINESS[readiness.get(c.id)!].dot" />
+            <span
+              :class="dotClass(READINESS[readiness.get(c.id)!].dot)"
+              :title="READINESS[readiness.get(c.id)!].dot"
+            ></span>
             <span class="min-w-0 flex-1 truncate" :title="c.title">
               <span class="mr-1.5 font-mono text-[11px] text-zinc-400">{{
                 String(c.id).padStart(String(counts.total).length, "0")

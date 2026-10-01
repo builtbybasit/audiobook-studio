@@ -92,12 +92,16 @@ export const useNarrationStore = defineStore("narration", {
       return (bookId: string, ids: number[]) =>
         ids.flatMap((chId) =>
           scriptsStore.segmentsOf(bookId, chId).flatMap((s) =>
-            this.expressionRender(bookId, s).issues.map((issue) => ({
-              ...issue,
-              chId,
-              segId: s.id,
-              speaker: s.speaker,
-            })),
+            // an issue is always about one of the line's own expressions: a line with none has none,
+            // and rendering it — its text through the dictionary — is most of a long book's cost here
+            s.expressions?.length
+              ? this.expressionRender(bookId, s).issues.map((issue) => ({
+                  ...issue,
+                  chId,
+                  segId: s.id,
+                  speaker: s.speaker,
+                }))
+              : [],
           ),
         );
     },

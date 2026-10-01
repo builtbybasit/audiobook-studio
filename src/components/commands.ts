@@ -219,12 +219,13 @@ export function paletteCommands(router: Router, mod: string): Command[] {
           router.push(`/book/${b}/narration`);
         },
       });
-    if (castStore.mergeSuggestions(b).length)
+    const merges = castStore.mergeSuggestions(b).length;
+    if (merges)
       out.push({
         id: "act-merge",
         group: "Actions",
         label: "Review merge suggestions",
-        hint: `${castStore.mergeSuggestions(b).length}`,
+        hint: `${merges}`,
         keywords: "alias duplicate cast",
         run: go(`/book/${b}/cast`),
       });

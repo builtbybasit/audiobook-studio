@@ -6,16 +6,16 @@ import { useScriptsStore } from "@/stores/scripts";
 // novel spans several EPUBs; each volume header can collapse and select/deselect its chapters.
 // Each row has a peek (raw text preview) and can be skipped (excluded from every stage).
 // Keyboard: ↑↓ move, space ticks, ↵ opens, / focuses search.
-// A book can have near a thousand rows, so a row keeps to plain elements — a native tick box, and
+// A book can have near a thousand rows, so a row keeps to cheap elements — a native tick box, and
 // a peek button that opens the one popover the list shares — and what it shows is worked out once.
-import { computed, nextTick, ref } from "vue";
+import { computed, ref } from "vue";
 import { isNarrated } from "@/lib/scriptReview";
 import { chapterState, selectionSummary } from "@/lib/runPlan";
 import { idSetParam, textParam, useQueryParam } from "@/composables/useQueryParam";
 import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
 import { clockDuration } from "@/lib/time";
 import ChapterPeek from "@/components/ChapterPeek.vue";
-import StatusDot from "@/components/StatusDot.vue";
+import { dotClass } from "@/components/statusDot";
 import { UiCheckbox, UiSelect } from "@/ui";
 import {
   ChevronDown as ChevronDownIcon,
@@ -144,13 +144,6 @@ function jump(id: string | number | null) {
 function toggle(id: number, e?: MouseEvent | KeyboardEvent) {
   const on = !picked.value.has(id);
   emit("update:modelValue", [...applySpan(props.modelValue, range.span(id, e), on)]);
-}
-/** A native tick box flips itself before the click reaches here; once the selection has moved, the
- *  box shows what the selection says, so a tick the page does not take is not left drawn. */
-function tick(id: number, e: MouseEvent) {
-  const box = e.currentTarget as HTMLInputElement;
-  toggle(id, e);
-  void nextTick(() => (box.checked = picked.value.has(id)));
 }
 function all() {
   emit("update:modelValue", visiblePickable.value);
@@ -439,15 +432,16 @@ function openPeek(c: Chapter, e: MouseEvent) {
             ]"
             @keydown="onRowKey($event, c)"
           >
-            <input
-              type="checkbox"
-              class="h-4 w-4 shrink-0 accent-violet-600 scheme-light disabled:opacity-40 dark:scheme-dark"
-              :checked="picked.has(c.id)"
+            <UiCheckbox
+              :model-value="picked.has(c.id)"
               :disabled="!pickable"
               :aria-label="`Select chapter ${c.id}`"
-              @click="tick(c.id, $event)"
+              @click="toggle(c.id, $event)"
             />
-            <StatusDot :status="c.excluded ? 'none' : status" />
+            <span
+              :class="dotClass(c.excluded ? 'none' : status)"
+              :title="c.excluded ? 'none' : status"
+            ></span>
             <button
               class="min-w-0 flex-1 truncate text-left"
               :class="[
@@ -472,7 +466,25 @@ function openPeek(c: Chapter, e: MouseEvent) {
               :aria-expanded="peekOpen && peekId === c.id"
               @click="openPeek(c, $event)"
             >
-              <PeekIcon class="icon-sm" />
+              <!-- lucide's eye as plain markup: an icon component is two instances a row -->
+              <svg
+                class="icon-sm"
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path
+                  d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
+                />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
             </button>
             <span v-if="tag" class="text-[11px]" :class="tag.class" :title="tag.title">{{
               tag.text

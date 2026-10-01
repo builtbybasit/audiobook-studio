@@ -4,7 +4,10 @@
 import { expect, test } from "bun:test";
 
 import {
+  DECODE_RATE,
+  EDGE_FADE,
   encodeWav,
+  sampleRateOf,
   SPEECH_PADDING,
   speechBounds,
   trimmedName,
@@ -91,4 +94,30 @@ test("a trimmed file trimmed again keeps the one -trimmed", () => {
   expect(trimmedName("narrator-trimmed.wav")).toBe("narrator-trimmed.wav");
   expect(trimmedName("voice.take.2.flac")).toBe("voice.take.2-trimmed.wav");
   expect(trimmedName("noext")).toBe("noext-trimmed.wav");
+});
+
+test("a cut fades in and out at its edges and leaves the middle as it was", async () => {
+  const loud: SampleAudio = {
+    samples: new Float32Array(RATE).fill(0.5),
+    sampleRate: RATE,
+    duration: 1,
+  };
+  const file = trimSample(loud, 0, 1, "a.wav");
+  const pcm = new Int16Array((await file.arrayBuffer()).slice(44));
+  const fade = EDGE_FADE * RATE;
+  expect(pcm[0]).toBe(0);
+  expect(pcm[fade / 2]).toBeCloseTo(0.25 * 0x7fff, -2);
+  expect(pcm[pcm.length - 1]).toBe(0);
+  expect(pcm[RATE / 2]).toBe(Math.round(0.5 * 0x7fff));
+  // the decoded audio the row keeps for another cut is not faded with it
+  expect(loud.samples[0]).toBe(0.5);
+});
+
+test("a sample is decoded at the rate its header gives, else at the fallback", async () => {
+  const wav = (rate: number) => new Blob([encodeWav(new Float32Array(rate), rate)]);
+  expect(await sampleRateOf(wav(16_000))).toBe(16_000);
+  expect(await sampleRateOf(wav(44_100))).toBe(44_100);
+  // past what every browser decodes at, and a file that names no rate at all
+  expect(await sampleRateOf(wav(192_000))).toBe(DECODE_RATE);
+  expect(await sampleRateOf(new Blob(["not audio"]))).toBe(DECODE_RATE);
 });

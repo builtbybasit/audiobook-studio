@@ -14,11 +14,27 @@ export interface SampleAudio {
 }
 
 /**
- * The rate a sample is decoded at. Web Audio resamples whatever it decodes to its context's rate
- * and has no way to ask a file for its own, so the context is set at 48 kHz: at or above what any
- * voice recording is made at, so nothing a provider would hear is lost.
+ * Web Audio resamples whatever it decodes to its context's rate and cannot ask a file for its own,
+ * so the rate is read off the file's header (music-metadata, which the server reads audio with too)
+ * and the context set to it: a trimmed 16 kHz recording stays 16 kHz rather than tripling in size,
+ * and a 44.1 kHz one is not resampled. A header that does not say, or says something Web Audio will
+ * not take, falls back to 48 kHz: at or above what any voice is recorded at, so nothing is lost.
  */
 export const DECODE_RATE = 48_000;
+const RATES = { min: 8_000, max: 96_000 };
+
+/** The rate the file was recorded at, from its header; `DECODE_RATE` when it does not say. */
+export async function sampleRateOf(file: Blob): Promise<number> {
+  try {
+    // loaded with the first sample picked, and only the reader for that file's format with it
+    const { parseBlob } = await import("music-metadata");
+    const { format } = await parseBlob(file, { duration: false, skipCovers: true });
+    const rate = format.sampleRate;
+    return rate && rate >= RATES.min && rate <= RATES.max ? rate : DECODE_RATE;
+  } catch {
+    return DECODE_RATE;
+  }
+}
 
 // `src/lib` is also checked with the server's code, which has no DOM, so the one piece of Web Audio
 // used here is named as far as it is used. In the browser it is the real `OfflineAudioContext`.
@@ -39,7 +55,7 @@ declare const OfflineAudioContext: new (
 /** Decode a picked file and mix it to mono. Rejects when the browser cannot decode it. */
 export async function decodeSample(file: File): Promise<SampleAudio> {
   // An offline context needs no user gesture and plays nothing; its length is only a placeholder.
-  const ctx = new OfflineAudioContext(1, 1, DECODE_RATE);
+  const ctx = new OfflineAudioContext(1, 1, await sampleRateOf(file));
   const buffer = await ctx.decodeAudioData(await file.arrayBuffer());
   const samples = new Float32Array(buffer.length);
   for (let c = 0; c < buffer.numberOfChannels; c++) {
@@ -124,13 +140,26 @@ export function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffe
 export const trimmedName = (name: string): string =>
   `${name.replace(/\.[^./]*$/, "").replace(/-trimmed$/, "")}-trimmed.wav`;
 
-/** The part of the sample between `start` and `end` seconds, as a WAV file named after the original. */
+/** How long the cut's edges fade in and out, in seconds: too short to hear, long enough to stop a click. */
+export const EDGE_FADE = 0.01;
+
+/**
+ * The part of the sample between `start` and `end` seconds, as a WAV file named after the original.
+ * A cut made mid-sound starts or ends on a jump from nothing to wherever the wave was, heard as a
+ * click, so the first and last `EDGE_FADE` ramp in from and out to silence.
+ */
 export function trimSample(audio: SampleAudio, start: number, end: number, name: string): File {
   const from = Math.min(Math.max(0, start), audio.duration);
   const to = Math.min(Math.max(from, end), audio.duration);
-  const part = audio.samples.subarray(
+  // a copy: the fade must not reach the decoded audio, which the row keeps for another cut
+  const part = audio.samples.slice(
     Math.round(from * audio.sampleRate),
     Math.round(to * audio.sampleRate),
   );
+  const fade = Math.min(Math.round(EDGE_FADE * audio.sampleRate), Math.floor(part.length / 2));
+  for (let i = 0; i < fade; i++) {
+    part[i]! *= i / fade;
+    part[part.length - 1 - i]! *= i / fade;
+  }
   return new File([encodeWav(part, audio.sampleRate)], trimmedName(name), { type: "audio/wav" });
 }

@@ -164,8 +164,8 @@ function resetVoices() {
       ref: row.match.kind === "here" ? (row.match.options[0]?.ref ?? null) : null,
     };
 }
-const voiceLabel = (ref: VoiceRef | null) =>
-  ref ? endpointsStore.voiceLabel(ref) : "Narrator’s voice";
+const voiceLabel = (ref: VoiceRef | null, speaker: string) =>
+  ref ? endpointsStore.voiceLabel(ref) : castStore.fallbackLabel(bookId, speaker);
 const usable = (row: VoiceRow) => row.match.kind === "public" || !!choices[row.speaker]?.ref;
 const voiceRows = computed(() => plan.value?.voices ?? []);
 const allVoices = computed<boolean | "indeterminate">(() => {
@@ -553,7 +553,7 @@ const SKIPPED = {
                 {{ row.speaker }}
                 <span v-if="row.isNew" class="text-[10px] font-normal text-violet-600">new</span>
               </div>
-              <div class="text-zinc-500">{{ voiceLabel(row.current) }}</div>
+              <div class="text-zinc-500">{{ voiceLabel(row.current, row.speaker) }}</div>
               <div>
                 <template v-if="row.match.kind === 'here'">
                   <UiSelect

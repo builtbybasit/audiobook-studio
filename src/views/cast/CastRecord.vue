@@ -96,7 +96,7 @@ function addAlias(c: Character) {
           >
           <UiHint
             label="main cast"
-            text="Main cast get their own card on the Narration stage; minor speakers are collapsed there and read in the Narrator’s voice until given one."
+            text="Main cast get their own card on the Narration stage; minor speakers are collapsed there and read in the Character voice or the Narrator’s until given one."
           />
         </div>
       </div>

@@ -26,6 +26,7 @@ import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
 import { Plus as AddIcon } from "@lucide/vue";
 import CastRecord from "@/views/cast/CastRecord.vue";
 import CastSelectionBar from "@/views/cast/CastSelectionBar.vue";
+import CharacterVoiceRow from "@/views/cast/CharacterVoiceRow.vue";
 import type { Character, Gender } from "@/types";
 
 const castStore = useCastStore();
@@ -66,6 +67,8 @@ const rows = computed(() => {
       c,
       st: stats.value[c.name] ?? { lines: 0, chapters: new Set<number>(), first: 0 },
       voice: endpointsStore.resolveVoice(c.voice),
+      // a speaker with no voice of their own borrows the Character voice or the Narrator's
+      borrowed: c.voice ? null : castStore.effectiveVoice(bookId, c.name),
     }))
     .sort((a, b) =>
       sort.value === "lines"
@@ -359,7 +362,9 @@ const duplicate = computed(
           </tr>
         </thead>
         <tbody>
-          <template v-for="{ c, st, voice } in rows" :key="c.name">
+          <!-- first whatever the sort or filter: it is the book's, not a speaker to find -->
+          <CharacterVoiceRow :book-id="bookId" />
+          <template v-for="{ c, st, voice, borrowed } in rows" :key="c.name">
             <tr
               data-row
               :data-speaker="c.name"
@@ -478,7 +483,12 @@ const duplicate = computed(
                   @click="voiceClick(c.name, $event)"
                 >
                   <span class="min-w-0 flex-1 truncate text-left">
-                    <template v-if="!c.voice">Narrator’s voice</template>
+                    <template v-if="!c.voice"
+                      >{{ borrowed?.from === "character" ? "Character voice" : "Narrator’s voice"
+                      }}<span v-if="borrowed?.label" class="text-zinc-300 dark:text-zinc-600">
+                        · {{ borrowed?.label }}</span
+                      ></template
+                    >
                     <template v-else-if="voice"
                       >{{ voice.voice.label }}
                       <span class="text-zinc-400">· {{ voice.endpoint.name }}</span></template

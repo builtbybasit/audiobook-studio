@@ -1177,8 +1177,9 @@ scope, and `narrationTargets` in [src/lib/runPlan.ts](../src/lib/runPlan.ts) dec
 covers: the lines with no usable clip and the ones whose clip the script has moved past (`fill`),
 only the failed ones (`failed`), or every line (`all`). A chapter with nothing in the scope is left
 out and the route says so (`nothing`), beside `unscripted` and the reasons scripting has. Each line
-goes to the provider with its text, its speaker's voice (the Narrator's when the speaker has none)
-and its direction, and comes back as audio with a duration.
+goes to the provider with its text, its speaker's voice — their own, else the book's Character
+voice, else the Narrator's (`speakerVoice` in [src/lib/cast.ts](../src/lib/cast.ts)) — and its
+direction, and comes back as audio with a duration.
 
 **A line is sent what the dictionary makes of it.** `speak` in [src/lib/speech.ts](../src/lib/speech.ts)
 applies the book's dictionary as each line goes out, so a term added mid-run reaches every line not

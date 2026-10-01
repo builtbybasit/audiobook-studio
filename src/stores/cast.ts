@@ -13,7 +13,7 @@ import { speechReadiness } from "@/lib/endpoints";
 import { norm } from "@/lib/scriptReview";
 import { isSpoken } from "@/lib/siteText";
 import { chapterSeconds, hitsIn, pacingOrDefault, speak } from "@/lib/speech";
-import { newSpeaker, speakerVoice, voiceRef } from "@/lib/cast";
+import { characterSlot, NARRATOR, newSpeaker, speakerVoice, voiceRef } from "@/lib/cast";
 import { clone } from "@/lib/utils";
 import {
   type Cast,
@@ -139,36 +139,60 @@ export const useCastStore = defineStore("cast", {
       };
     },
     /**
-     * Speakers whose own voice cannot be rendered: the voice is gone, or its endpoint is paused or
-     * has no key (`speechReadiness`). A cooldown passes on its own and is not an issue; a speaker
-     * with no voice of their own borrows the Narrator's, and is covered by the Narrator's row.
+     * What a speaker with no voice of their own is read in — "Character voice" or "Narrator’s
+     * voice" — whether or not they have one now: what the empty choice in their picker means.
+     */
+    fallbackLabel(): (bookId: string, name: string) => string {
+      const libraryStore = useLibraryStore();
+
+      return (bookId, name) => {
+        const c = this.byName[bookId]?.get(name);
+        const cv = libraryStore.bookById(bookId)?.characterVoice;
+        return speakerVoice(name, c && { ...c, voice: null }, null, cv).from === "character"
+          ? "Character voice"
+          : "Narrator’s voice";
+      };
+    },
+    /**
+     * Voices the cast routes to that cannot be rendered: the voice is gone, or its endpoint is
+     * paused or has no key (`speechReadiness`). A cooldown passes on its own and is not an issue.
+     * A speaker's own voice is named for them; a Character voice slot some speaker with no voice
+     * of their own is read in is named "Character voice", or "Character voice (male)" by gender;
+     * and the Narrator's row covers everyone who falls through to the Narrator's.
      */
     routingIssues(): (bookId: string) => RoutingIssue[] {
       const endpointsStore = useEndpointsStore();
+      const libraryStore = useLibraryStore();
 
       return (bookId) => {
         const out: RoutingIssue[] = [];
-        for (const c of this.characters[bookId] ?? []) {
-          if (!c.voice) continue;
-          const r = endpointsStore.resolveVoice(c.voice);
+        const check = (name: string, ref: VoiceRef) => {
+          const r = endpointsStore.resolveVoice(ref);
           if (!r) {
-            out.push({
-              name: c.name,
-              ref: c.voice,
-              reason: "voice no longer exists",
-              kind: "missing",
-            });
-            continue;
+            out.push({ name, ref, reason: "voice no longer exists", kind: "missing" });
+            return;
           }
           const { state } = speechReadiness(r.endpoint, Date.now());
           if (state === "paused" || state === "nokey")
             out.push({
-              name: c.name,
-              ref: c.voice,
+              name,
+              ref,
               reason: `${r.endpoint.name} ${state === "paused" ? "is paused" : "has no API key"}`,
               kind: state,
               endpoint: r.endpoint,
             });
+        };
+        const cast = this.characters[bookId] ?? [];
+        for (const c of cast) if (c.voice) check(c.name, c.voice);
+        const cv = libraryStore.bookById(bookId)?.characterVoice;
+        if (cv) {
+          const slots = new Set<ReturnType<typeof characterSlot>>();
+          for (const c of cast)
+            if (!c.voice && c.name !== NARRATOR) slots.add(characterSlot(cv, c.gender));
+          for (const slot of slots) {
+            const ref = cv[slot];
+            if (ref) check(slot === "one" ? "Character voice" : `Character voice (${slot})`, ref);
+          }
         }
         return out;
       };
@@ -670,9 +694,10 @@ export const useCastStore = defineStore("cast", {
       Object.assign(c, rest);
       return this._push(bookId, name);
     },
-    /** Give a speaker a voice, or take theirs away so they borrow the Narrator's. What every
-     *  voice picker writes through: a picker bound straight to `c.voice` would change this copy
-     *  and never tell the server, and the choice would be gone on the next read. */
+    /** Give a speaker a voice, or take theirs away so they fall back to the Character voice or the
+     *  Narrator's. What every voice picker writes through: a picker bound straight to `c.voice`
+     *  would change this copy and never tell the server, and the choice would be gone on the next
+     *  read. */
     setVoice(bookId: string, name: string, voice: VoiceRef | null): Promise<void> {
       return this.updateCharacter(bookId, name, { voice });
     },

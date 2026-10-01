@@ -340,7 +340,7 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         id: "sp-" + c.name,
         group: "Speakers",
         label: c.name,
-        hint: c.voice ? endpointsStore.voiceLabel(c.voice) : "Narrator’s voice",
+        hint: c.voice ? endpointsStore.voiceLabel(c.voice) : castStore.fallbackLabel(b, c.name),
         color: c.color,
         keywords: `speaker cast ${c.aliases.join(" ")}`,
         run: go(`/book/${b}/cast`),

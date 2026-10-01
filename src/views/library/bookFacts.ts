@@ -16,7 +16,7 @@ export interface BookFacts {
   next: NextStep;
   failedScripting: number;
   failedNarration: number;
-  /** new speakers awaiting review, and main cast still on the Narrator's voice — the next step
+  /** new speakers awaiting review, and main cast with no voice of their own — the next step
    *  chain reads both, so a card can say "Review cast" the way the overview does */
   unreviewed: number;
   unvoiced: number;

@@ -298,9 +298,16 @@ describe("a refusal", () => {
     });
   });
 
-  test("an answer that is not a script is quoted back", async () => {
+  test("an answer that is not a script is quoted back, and kept whole for the Activity tab", async () => {
     const { provider } = gateway(() => completion("Sorry, I can't help with that."));
-    await expect(provider.script(input())).rejects.toThrow(/did not answer with a script: “Sorry/);
+    await expect(provider.script(input())).rejects.toThrow(
+      /did not answer with a script \(no JSON object\): “Sorry/,
+    );
+    const broken = '```json\n{ "lines": [ { "type": "narration", "text": "He said "hi"" } ] }\n```';
+    const { provider: again } = gateway(() => completion(broken));
+    const { sent, input: reporting } = reported();
+    await expect(again.script(reporting)).rejects.toThrow(/did not answer with a script \(JSON/);
+    expect(sent[0].error?.body).toBe(broken);
   });
 
   test("a 401 is not retried, and reads as the gateway's own words", async () => {

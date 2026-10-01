@@ -23,8 +23,11 @@ interface SentRequest {
   attempts: number;
   rateLimited: boolean;
   status: "done" | "failed";
-  /** for a failed request: what went wrong, and the status it answered with (0 for none) */
-  error?: { code: number; message: string };
+  /**
+   * for a failed request: what went wrong, the status it answered with (0 for none), and what the
+   * answer said where it was refused for its content, so the endpoint's Activity can show it whole
+   */
+  error?: { code: number; message: string; body?: string };
   /** true for the fakes: nothing was really sent and nobody will bill for it */
   simulated: boolean;
 }

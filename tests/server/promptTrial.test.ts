@@ -316,7 +316,7 @@ describe("a prompt trial", () => {
     );
     const { status, body } = await trial();
     expect(status).toBe(200);
-    expect(body.error).toMatch(/did not answer with a script: “Sorry/);
+    expect(body.error).toMatch(/did not answer with a script \(no JSON object\): “Sorry/);
     expect(body.lines).toEqual([]);
     expect(body.fidelity.ok).toBe(false);
     expect(body.fidelity.missing).toBe(body.fidelity.words);

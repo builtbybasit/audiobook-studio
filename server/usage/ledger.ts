@@ -67,7 +67,7 @@ export interface RequestFor {
 
 const errorOf = (sent: SentScript | SentSpeech): ReqError | undefined =>
   sent.error
-    ? { code: sent.error.code, message: sent.error.message, body: "", at: sent.finishedAt }
+    ? { code: sent.error.code, message: sent.error.message, body: sent.error.body ?? "", at: sent.finishedAt }
     : undefined;
 
 /**

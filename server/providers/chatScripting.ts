@@ -287,11 +287,18 @@ function jsonIn(content: string): unknown {
 export function answerOf(content: string, who: string): ScriptAnswer {
   let parsed: v.InferOutput<typeof Answer>;
   try {
-    parsed = v.parse(Answer, jsonIn(content));
-  } catch {
+    const read = v.safeParse(Answer, jsonIn(content));
+    if (!read.success) {
+      const [issue] = read.issues;
+      const at = v.getDotPath(issue);
+      throw new Error(at ? `${at}: ${issue.message}` : issue.message);
+    }
+    parsed = read.output;
+  } catch (e) {
     const said = content.replace(/\s+/g, " ").trim();
+    const why = e instanceof Error ? e.message : String(e);
     throw new ProviderError(
-      `${who} did not answer with a script: “${said.length > 120 ? said.slice(0, 120) + "…" : said}”`,
+      `${who} did not answer with a script (${why}): “${said.length > 80 ? said.slice(0, 80) + "…" : said}”`,
       200,
       false,
     );
@@ -319,6 +326,13 @@ export function answerOf(content: string, who: string): ScriptAnswer {
 
 // ---------------------------------------------------------------------------------------------
 // The provider
+
+/** What an answer said: its message's content, or the whole body when it is not a completion. */
+function said(raw: unknown): string {
+  const read = v.safeParse(Completion, raw);
+  const content = read.success ? read.output.choices[0].message?.content : null;
+  return content || (raw === undefined ? "" : JSON.stringify(raw, null, 2));
+}
 
 /** Said to a run that reached a real provider with no profile to send it to. */
 export const NO_PROFILE =
@@ -357,14 +371,14 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     const stats: CallStats = { attempts: 0, rateLimited: false };
     const startedAt = Date.now();
     /** The one report for this request: what it used, and how it ended. */
-    const report = (usage: TokenUsage | null, error?: ProviderError): void =>
+    const report = (usage: TokenUsage | null, error?: ProviderError, body?: string): void =>
       sent?.({
         startedAt,
         finishedAt: Date.now(),
         attempts: Math.max(1, stats.attempts),
         rateLimited: stats.rateLimited,
         status: error ? "failed" : "done",
-        ...(error ? { error: { code: error.status, message: error.message } } : {}),
+        ...(error ? { error: { code: error.status, message: error.message, body } } : {}),
         simulated: false,
         usage,
       });
@@ -400,7 +414,8 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
       report(usage);
       return { answer, reasoningTokens };
     } catch (e) {
-      if (e instanceof ProviderError) report(usage, e);
+      // the answer was refused for what it said, so keep what it said for the Activity tab
+      if (e instanceof ProviderError) report(usage, e, said(raw));
       throw e;
     }
   }

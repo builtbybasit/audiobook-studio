@@ -57,7 +57,7 @@ import { speechInstructions } from "@/lib/speech";
 import { requeue } from "@/lib/takes";
 import type { AudioFiles } from "~/audio/files";
 import { probeClip } from "~/audio/probe";
-import { readCast, readLexicon } from "~/db/cast";
+import { readLexicon } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
 import { activeJob, getJob, nextRunId, setReserved } from "~/db/jobs";
@@ -84,7 +84,7 @@ import {
   type Slot,
 } from "~/narration/chapter";
 import {
-  deliveryFor,
+  bookDelivery,
   lineWorstCase,
   narrationCost,
   type Delivery,
@@ -718,10 +718,11 @@ export function narrationHandler(
       const chapter = readChapter(db, job.bookId, job.chapterId);
       const scope = scopeOf(job);
 
-      // A speaker's voice is their own or the Narrator's, and their style is their own: the cast
-      // store's `effectiveVoice`, read once, because the cast is the book's and a rename mid-run
-      // is the rename's problem — it marks the clips it moved stale.
-      const deliveryOf = deliveryFor(readCast(db, job.bookId));
+      // A speaker's voice is `speakerVoice`'s — their own, the Character voice, or the Narrator's —
+      // and their style is their own: the cast store's `effectiveVoice`, read once, because the
+      // cast is the book's and a rename mid-run is the rename's problem — it marks the clips it
+      // moved stale.
+      const deliveryOf = bookDelivery(db, job.bookId);
 
       const { targets, lines } = planRun(db, chapter.uid, scope);
       if (!targets.length) {

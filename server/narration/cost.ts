@@ -11,8 +11,15 @@
 // The same figure is held twice: whole, before anything is queued, to refuse a run that does not
 // fit; and line by line while the job runs, released as each line settles, so the job's check
 // before its next line does not count again what has already been spent.
-import type { BillableUnits, Character, Endpoint, LexEntry, Segment } from "@/types";
-import { NARRATOR } from "@/lib/cast";
+import type {
+  BillableUnits,
+  Character,
+  CharacterVoice,
+  Endpoint,
+  LexEntry,
+  Segment,
+} from "@/types";
+import { NARRATOR, speakerVoice } from "@/lib/cast";
 import { billingOf } from "@/lib/endpoints";
 import { expressionPlan, type ExpressionPlan } from "@/lib/expressions";
 import { plannedSpeechUnits, worstCaseOf } from "@/lib/narrationCost";
@@ -21,6 +28,7 @@ import { speechInstructions } from "@/lib/speech";
 import { readCast, readLexicon } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
+import { getBook } from "~/db/library";
 
 /** Everything a clip records about how it was asked for, so drift can compare the line to it later. */
 export interface Delivery {
@@ -31,14 +39,18 @@ export interface Delivery {
 }
 
 /**
- * Who says a line, and how: the speaker's own voice or the Narrator's, and the speaker's own style
- * — the cast store's `effectiveVoice`, over the cast as it was read.
+ * Who says a line, and how: the voice `speakerVoice` gives the speaker — their own, the book's
+ * Character voice, or the Narrator's — and the speaker's own style; the cast store's
+ * `effectiveVoice`, over the cast as it was read.
  */
-export function deliveryFor(cast: Character[]): (speaker: string) => Delivery {
+export function deliveryFor(
+  cast: Character[],
+  characterVoice?: CharacterVoice,
+): (speaker: string) => Delivery {
   const narratorVoice = cast.find((c) => c.name === NARRATOR)?.voice ?? null;
   return (speaker) => {
     const who = cast.find((c) => c.name === speaker);
-    const voiceRef = who?.voice || narratorVoice;
+    const voiceRef = speakerVoice(speaker, who, narratorVoice, characterVoice).ref;
     const slash = voiceRef?.indexOf("/") ?? -1;
     return {
       voiceRef,
@@ -84,13 +96,18 @@ export interface NarrationCost {
  * What rendering `segs` of `bookId` would cost, grouped per endpoint as the browser's estimate
  * groups it, so the figure the gate holds is the figure the estimate panel shows.
  */
+/** `deliveryFor` over a book as it stands: its cast and its Character voice, read now. */
+export function bookDelivery(db: Db | Tx, bookId: string): (speaker: string) => Delivery {
+  return deliveryFor(readCast(db, bookId), getBook(db, bookId)?.characterVoice);
+}
+
 export function narrationCost(
   db: Db | Tx,
   bookId: string,
   segs: readonly Segment[],
   at: number = Date.now(),
 ): NarrationCost {
-  const deliveryOf = deliveryFor(readCast(db, bookId));
+  const deliveryOf = bookDelivery(db, bookId);
   const lexicon: LexEntry[] = readLexicon(db, bookId);
   const endpoints = new Map<string, Endpoint | undefined>();
   const per = new Map<string, { ep: Endpoint; units: BillableUnits }>();

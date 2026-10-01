@@ -48,6 +48,7 @@ export function toBook(row: BookRow, vols: readonly VolumeRow[], counts?: Chapte
   const prompt = toBookPrompt(row);
   if (prompt) book.prompt = prompt;
   if (row.readNotes != null) book.readNotes = row.readNotes;
+  if (row.characterVoice != null) book.characterVoice = row.characterVoice;
   return book;
 }
 
@@ -129,6 +130,7 @@ export function bookValues(book: Book, addedAt: number): typeof books.$inferInse
     pacingTurn: book.pacing?.turn ?? null,
     ...bookPromptValues(book.prompt),
     readNotes: book.readNotes ?? null,
+    characterVoice: book.characterVoice ?? null,
   };
 }
 

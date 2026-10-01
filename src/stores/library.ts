@@ -32,6 +32,7 @@ import type {
   Book,
   BookPrompt,
   Chapter,
+  CharacterVoice,
   ContentsSummary,
   NoticeGroup,
   Pacing,
@@ -507,6 +508,18 @@ export const useLibraryStore = defineStore("library", {
       if (!answer) return;
       for (const { id, narration, duration, lines } of answer.chapters)
         this._patchChapter(bookId, id, { narration, duration, ...(lines ? { lines } : {}) });
+    },
+    /**
+     * The book's Character voice — what a speaker with no voice of their own is read in — or null
+     * to go back to the Narrator's. It changes no line and no clip: a clip made in the voice it
+     * replaced shows as made in another voice, as one does when a speaker's own voice changes.
+     */
+    async setCharacterVoice(bookId: string, cv: CharacterVoice | null): Promise<void> {
+      const b = this.bookById(bookId);
+      if (!b) return;
+      if (cv) b.characterVoice = cv;
+      else delete b.characterVoice;
+      await this._writeSettings(bookId, { characterVoice: cv }, "save the Character voice");
     },
     /**
      * The book's notes for the scripter and its own prompt, written whole. One that cannot be sent

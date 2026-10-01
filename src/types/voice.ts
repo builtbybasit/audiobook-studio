@@ -65,11 +65,13 @@ export interface ResolvedVoice {
   voice: Voice;
 }
 
-/** Which voice actually renders a speaker, after falling back to the Narrator's. */
+/** Which voice actually renders a speaker, after falling back to the Character voice or the Narrator's. */
 export interface EffectiveVoice {
   ref: VoiceRef | null;
-  /** false when the speaker is borrowing the Narrator's voice */
+  /** false when the speaker is borrowing the Character voice or the Narrator's */
   own: boolean;
+  /** where the voice comes from (`speakerVoice`) */
+  from: "own" | "character" | "narrator";
   voice: string | null;
   label: string | null;
   endpoint: Endpoint | null;

@@ -76,6 +76,8 @@ const Decisions = v.object({
 /** Seconds of silence: a pause nobody would sit through is a typo, not a setting. */
 const Seconds = v.pipe(v.number(), v.minValue(0), v.maxValue(60));
 const Dollars = v.pipe(v.number(), v.minValue(0));
+/** A voice as `<endpointId>/<voiceId>`, or none. */
+const Voice = v.nullable(v.pipe(v.string(), v.nonEmpty(), v.maxLength(200)));
 
 /** A book's settings: a key left out is left alone, and `null` clears it. */
 const Settings = v.pipe(
@@ -87,6 +89,17 @@ const Settings = v.pipe(
     pacing: v.optional(v.nullable(v.strictObject({ line: Seconds, turn: Seconds }))),
     prompt: v.optional(v.nullable(BookPromptSchema)),
     readNotes: v.optional(v.nullable(v.boolean())),
+    characterVoice: v.optional(
+      v.nullable(
+        v.strictObject({
+          by: v.picklist(["one", "gender"]),
+          one: Voice,
+          male: Voice,
+          female: Voice,
+          other: Voice,
+        }),
+      ),
+    ),
   }),
   v.check((s) => Object.keys(s).length > 0, "name at least one setting"),
 );

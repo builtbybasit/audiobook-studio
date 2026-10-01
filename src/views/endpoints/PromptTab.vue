@@ -16,7 +16,7 @@ import { computed, useId } from "vue";
 import { Info as InfoIcon } from "@lucide/vue";
 import PromptEditor from "@/components/PromptEditor.vue";
 import PromptTrial from "@/components/PromptTrial.vue";
-import { UiToggleGroup } from "@/ui";
+import { UiHint, UiToggleGroup } from "@/ui";
 import {
   NOTES_MAX_CHARS,
   libraryPrompt,
@@ -133,14 +133,18 @@ const count = (n: number) => n.toLocaleString("en");
       class="rounded-md bg-zinc-50 px-3 py-2 text-[11px] leading-relaxed text-zinc-500 dark:bg-zinc-800/60"
     >
       <InfoIcon class="icon-sm" />
-      A simulated endpoint scripts from the text alone and ignores the prompt. What is set here is
-      kept, and sent once the endpoint points at a real model.
+      A simulated endpoint ignores the prompt; what is set here is kept for a real model.
     </p>
 
     <!-- notes: kept whatever the mode, so above it -->
     <section class="card space-y-1.5 p-3 text-xs">
       <div class="flex flex-wrap items-baseline justify-between gap-2">
-        <label :for="`${id}-notes`" class="label">Notes for this model</label>
+        <span class="label"
+          ><label :for="`${id}-notes`">Notes for this model</label>
+          <UiHint
+            label="model notes"
+            text="A model’s quirks, kept in either mode; a book with a prompt of its own sends them only if that prompt has the tag."
+        /></span>
         <span
           class="font-mono text-[10px]"
           :class="
@@ -160,10 +164,9 @@ const count = (n: number) => n.toLocaleString("en");
         class="input w-full resize-y text-xs leading-relaxed"
         @input="editProfilePrompt(u, { notes: ($event.target as HTMLTextAreaElement).value })"
       ></textarea>
-      <p :id="`${id}-notes-hint`" class="text-[11px] leading-relaxed text-zinc-500">
-        Sent where the prompt says <code class="font-mono">{{ NOTES_TAG }}</code
-        >, whichever prompt this endpoint sends. A book with a prompt of its own sends them only if
-        that prompt has the tag.
+      <p :id="`${id}-notes-hint`" class="text-[11px] text-zinc-500">
+        Sent where the prompt in use says <code class="font-mono">{{ NOTES_TAG }}</code
+        >.
       </p>
       <div :id="`${id}-notes-status`" aria-live="polite" class="space-y-1">
         <p
@@ -171,8 +174,8 @@ const count = (n: number) => n.toLocaleString("en");
           class="rounded-md bg-amber-400/10 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300"
         >
           <template v-if="draft.mode === 'replace'"
-            >This endpoint’s prompt below has no <code class="font-mono">{{ NOTES_TAG }}</code
-            >, so these notes are not sent. Add the tag where they should go.</template
+            >The prompt below has no <code class="font-mono">{{ NOTES_TAG }}</code
+            >, so these notes are not sent; add the tag where they should go.</template
           >
           <template v-else
             >The library’s default prompt has no <code class="font-mono">{{ NOTES_TAG }}</code
@@ -197,7 +200,13 @@ const count = (n: number) => n.toLocaleString("en");
 
     <section class="card space-y-3 p-3">
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <h3 class="label">This endpoint’s prompt</h3>
+        <h3 class="label">
+          This endpoint’s prompt
+          <UiHint
+            label="prompt precedence"
+            text="A book with a prompt of its own sends it in place of whatever is set here."
+          />
+        </h3>
         <UiToggleGroup
           :model-value="draft.mode"
           :options="MODES"
@@ -206,9 +215,8 @@ const count = (n: number) => n.toLocaleString("en");
         />
       </div>
       <p class="text-xs text-zinc-600 dark:text-zinc-300">{{ ABOUT[draft.mode] }}</p>
-      <p class="text-[11px] leading-relaxed text-zinc-500">
-        A book with a prompt of its own sends it in place of this endpoint’s Replace. The library’s
-        default is edited under
+      <p class="text-[11px] text-zinc-500">
+        The library’s default is edited under
         <button
           type="button"
           class="text-violet-600 underline-offset-2 hover:underline dark:text-violet-400"

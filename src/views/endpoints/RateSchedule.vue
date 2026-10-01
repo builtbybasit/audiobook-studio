@@ -152,12 +152,11 @@ const kindOf = (w: RateWindow): "percent" | "rates" => (w.rates ? "rates" : "per
           @update:model-value="(v) => (config.timezone = String(v))"
         />
         <span class="block text-[11px] font-normal text-zinc-500">
-          Windows below are read in this zone. It is
-          <b class="font-mono">{{ clockLabel(here.minutes) }}</b> on
+          <b class="font-mono">{{ clockLabel(here.minutes) }}</b>
           {{
             ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][here.day]
           }}
-          there now.
+          there now — the windows below are read in this zone.
         </span></label
       >
       <button class="btn-ghost btn-xs" @click="addWindow">
@@ -166,7 +165,7 @@ const kindOf = (w: RateWindow): "percent" | "rates" => (w.rates ? "rates" : "per
     </div>
 
     <p v-if="!config.windows.length" class="text-[11px] leading-relaxed text-zinc-500">
-      No schedule. The base rates above apply at every hour of every day.
+      No schedule — the base rates apply at every hour of every day.
     </p>
 
     <ol v-else class="space-y-2">

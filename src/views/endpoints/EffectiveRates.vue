@@ -92,8 +92,7 @@ const suffix = (c: RateComponent) => rateSuffix(c, props.unit);
       <span
         ><b>{{ snapshot.next.label }}</b>
         {{ whenPhrase(snapshot.next.at, now, snapshot.timezone) }} —
-        {{ stamp(snapshot.next.at, snapshot.timezone) }} ({{ snapshot.timezone }}). Requests that
-        land after it are charged at the new rates; requests already recorded keep theirs.</span
+        {{ stamp(snapshot.next.at, snapshot.timezone) }} ({{ snapshot.timezone }})</span
       >
     </p>
     <p v-else class="text-[11px] text-zinc-500">
@@ -106,8 +105,8 @@ const suffix = (c: RateComponent) => rateSuffix(c, props.unit);
     >
       <WarnIcon class="icon-sm mt-0.5 shrink-0" />
       <span
-        >“{{ snapshot.timezone }}” is not a timezone this browser knows, so the schedule is being
-        read in UTC. Pick one that is, or the windows are not the hours you think they are.</span
+        >“{{ snapshot.timezone }}” is not a timezone this browser knows, so the schedule is read in
+        UTC — pick one that is.</span
       >
     </p>
 

@@ -21,6 +21,8 @@ import {
   limitsSaid,
   pickOf,
   pickProblem,
+  requestOf,
+  transcriptsMissing,
 } from "@/views/endpoints/cloneForm";
 
 const FISH = fish.cloning!;
@@ -29,6 +31,7 @@ const ONE: CloneSupport = {
   maxSamples: 1,
   maxSampleBytes: 10 * 1024 * 1024,
   formats: ["wav", "mp3"],
+  transcript: "required",
   advice: "Use one clean clip of 10 seconds to a minute.",
   cost: "Making a voice costs a one-off fee.",
   fee: { usd: 3, when: "made", said: "$3 a voice" },
@@ -48,12 +51,24 @@ describe("the picker and what it says", () => {
     expect(formatsSaid(["mp3"])).toBe("MP3");
   });
 
-  test("says the limits in one sentence, and one sample as one", () => {
-    expect(limitsSaid(FISH)).toBe(
-      "WAV, MP3, M4A, Opus or FLAC; up to 20 samples of up to 20 MB each.",
-    );
-    expect(limitsSaid(ONE)).toBe("One sample, WAV or MP3, of up to 10 MB.");
+  test("says the limits in one short line, and one sample as one", () => {
+    expect(limitsSaid(FISH)).toBe("Up to 20 files, 20 MB each · WAV, MP3, M4A, Opus or FLAC");
+    expect(limitsSaid(ONE)).toBe("One file, up to 10 MB · WAV or MP3");
     expect(sizeSaid(512 * 1024)).toBe("512 KB");
+  });
+
+  test("a provider that needs a transcript is owed one for every sample, trimmed", () => {
+    const rows = [
+      { file: file("a.wav"), transcript: " Come in. " },
+      { file: file("b.wav"), transcript: "  " },
+    ];
+    expect(transcriptsMissing(rows, ONE)).toBe(true);
+    expect(transcriptsMissing(rows, FISH)).toBe(false);
+    expect(transcriptsMissing([rows[0]], ONE)).toBe(false);
+    expect(requestOf(rows)).toEqual({
+      samples: [rows[0].file, rows[1].file],
+      transcripts: ["Come in.", ""],
+    });
   });
 
   test("never takes more than the app keeps with a voice, whatever a provider says", () => {

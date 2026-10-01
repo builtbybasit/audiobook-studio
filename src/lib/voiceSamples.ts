@@ -1,6 +1,6 @@
 // What a voice sample may be, said once for the page and the server alike.
 //
-// A sample is any audio of one person speaking — recorded, or downloaded — that a voice is cloned
+// A sample is any audio file of one person speaking, uploaded as it is, that a voice is cloned
 // from and then kept with. Each provider says what it takes in its `cloning` (`lib/providers/`);
 // this is the app's own ceiling above all of them, and the words both sides use for a limit, so the
 // page's note before a pick is sent and the server's refusal after it say the same thing.
@@ -12,6 +12,8 @@ export const MAX_VOICE_SAMPLES = 20;
 export const MAX_SAMPLE_BYTES = 20 * 1024 * 1024;
 /** The most one voice's samples may come to together, in bytes. */
 export const MAX_SAMPLES_BYTES = 100 * 1024 * 1024;
+/** The most a sample's transcript may run to: a minute of speech is under two hundred words. */
+export const MAX_TRANSCRIPT_CHARS = 1000;
 
 /** What each format is called in a sentence. */
 export const SAMPLE_FORMAT_NAME: Record<SampleFormat, string> = {
@@ -54,6 +56,13 @@ export const tooLargeSaid = (name: string, cloning: CloneSupport, who = "this pr
 
 export const tooMuchSaid = (): string =>
   `The samples come to more than ${sizeSaid(MAX_SAMPLES_BYTES)}`;
+
+/** A provider that needs a transcript of each sample was sent one without. */
+export const noTranscriptSaid = (name: string, who = "this provider"): string =>
+  `Say what is said in ${name}: ${who} needs a transcript of each sample`;
+
+export const transcriptTooLongSaid = (name: string): string =>
+  `The transcript of ${name} runs past ${MAX_TRANSCRIPT_CHARS} characters`;
 
 export const wrongFormatSaid = (
   name: string,

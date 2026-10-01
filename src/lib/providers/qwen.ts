@@ -9,7 +9,7 @@ import type { SpeechProviderShape } from "@/lib/providers/types";
  * (https://www.alibabacloud.com/help/en/model-studio/voice-cloning-user-guide, and its HTTP
  * reference https://www.alibabacloud.com/help/doc-detail/3027318.html) makes a voice for one
  * `target_model`, and only that model can speak it. For the Qwen-Audio 3.0 models it takes the
- * recording only as a publicly reachable link, which an app on your own machine does not have; for
+ * clip only as a publicly reachable link, which an app on your own machine does not have; for
  * the Qwen-TTS family (`qwen-voice-enrollment`) it also takes the file itself, as a data URL. Of
  * that family's models only this one is spoken over HTTP — the others are its realtime ones, which
  * this app does not speak — so a voice made for any other would cost a cent and never be heard.
@@ -55,18 +55,20 @@ export const qwen: SpeechProviderShape = {
   // nothing in Model Studio's docs says a refused request is charged
   billsFailures: false,
   // https://www.alibabacloud.com/help/en/model-studio/voice-cloning-user-guide and the HTTP
-  // reference https://www.alibabacloud.com/help/doc-detail/3027318.html: one recording per voice,
+  // reference https://www.alibabacloud.com/help/doc-detail/3027318.html: one clip per voice,
   // WAV (16-bit), MP3 or M4A — sent as `audio/wav`, `audio/mpeg` or `audio/mp4` — of at most 10 MB,
   // 10 to 20 seconds recommended and 60 at most, mono at 24 kHz or more. The limit is on the file;
-  // the request carries it as base64, a third larger again.
+  // the request carries it as base64, a third larger again. An optional `text` is "the transcript
+  // of the audio, used to improve cloning quality".
   cloning: {
     maxSamples: 1,
     maxSampleBytes: 10 * 1024 * 1024,
     formats: ["wav", "mp3", "m4a"],
     // Qwen-Audio 3.0 enrols only from a public URL, which a file picked here does not have
     models: QWEN_CLONE_MODELS,
+    transcript: "optional",
     advice:
-      "Model Studio makes a voice from one recording of 10–20 seconds (60 at most): mono, " +
+      "Model Studio makes a voice from one clip of 10–20 seconds (60 at most): mono, " +
       "24 kHz or better, one speaker in complete sentences with no music or noise. The voice " +
       "works only with the model it was made for, qwen3-tts-vc-2026-01-22 — change the " +
       "endpoint's model and it can no longer be spoken with.",

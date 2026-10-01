@@ -15,14 +15,19 @@ import { useLibraryStore } from "@/stores/library";
 //
 // Ordinary pricing is the top card and nothing else. The schedule and the promotions are behind
 // disclosures that stay shut on an endpoint that has neither, which is most of them.
+//
+// The page says what a number is in its label and at most one short line beside it; the why — what
+// the server does with it, what it never does — is a sentence behind a "?" mark, and the full rules
+// are docs/pricing.md.
 import { computed } from "vue";
 import { useNow } from "@vueuse/core";
 
-import { UiNumber, UiSwitch } from "@/ui";
+import { UiHint, UiNumber, UiSwitch } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
 import { billingOf, opsOf, speechPricing } from "@/lib/endpoints";
 import {
   baseRates,
+  COMPONENT_HINT,
   effectiveRates,
   ensurePricing,
   money,
@@ -162,13 +167,20 @@ const limitUsed = computed(() =>
   <div class="space-y-3">
     <!-- ordinary pricing: the card rates, and nothing else -->
     <section class="card p-3">
-      <h3 class="label mb-2">Rates</h3>
+      <h3 class="label mb-2">
+        Rates
+        <UiHint
+          label="rates"
+          text="A blank rate means unknown, never $0; unpriced requests are counted but left out of every total."
+        />
+      </h3>
 
       <!-- scripting: two prices, per million tokens -->
       <div v-if="u.profile" class="space-y-3">
         <div class="grid gap-3 sm:grid-cols-2">
-          <label class="space-y-1 text-xs font-medium"
-            ><span>Input tokens</span>
+          <!-- divs, not labels: the hint is a button, and each field names itself (`label`) -->
+          <div class="space-y-1 text-xs font-medium">
+            <span>Input tokens <UiHint label="input tokens" :text="COMPONENT_HINT.input" /></span>
             <UiNumber
               v-model="u.profile.inPrice"
               class="w-full"
@@ -178,12 +190,11 @@ const limitUsed = computed(() =>
               :step="0.05"
               label="Input token price per million"
             />
-            <span class="block text-[11px] font-normal text-zinc-500"
-              >The chapter text, the prompt, and any context carried forward.</span
-            ></label
-          >
-          <label class="space-y-1 text-xs font-medium"
-            ><span>Output tokens</span>
+          </div>
+          <div class="space-y-1 text-xs font-medium">
+            <span
+              >Output tokens <UiHint label="output tokens" :text="COMPONENT_HINT.output"
+            /></span>
             <UiNumber
               v-model="u.profile.outPrice"
               class="w-full"
@@ -193,19 +204,17 @@ const limitUsed = computed(() =>
               :step="0.05"
               label="Output token price per million"
             />
-            <span class="block text-[11px] font-normal text-zinc-500"
-              >The script that comes back — lines, speaker labels and directions.</span
-            ></label
-          >
+          </div>
         </div>
 
         <!-- cached input: off by default, because most providers this app talks to don't have it -->
         <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
-          <UiSwitch
-            :model-value="config.cachedInput != null"
-            label="This provider charges a different rate for cached input"
-            @update:model-value="setCached"
-          />
+          <UiSwitch :model-value="config.cachedInput != null" @update:model-value="setCached"
+            >This provider charges a different rate for cached input
+            <UiHint
+              label="cached input"
+              text="Off is not free: cached tokens are then charged at the ordinary input rate. On, the cached slice of a request is charged here and the rest at the input rate."
+          /></UiSwitch>
           <div v-if="config.cachedInput != null" class="mt-2 flex flex-wrap items-center gap-3">
             <UiNumber
               :model-value="config.cachedInput"
@@ -217,47 +226,31 @@ const limitUsed = computed(() =>
               label="Cached input price per million"
               @update:model-value="(v) => (config.cachedInput = v ?? 0)"
             />
-            <span class="text-[11px] text-zinc-500"
-              >{{
-                u.profile.inPrice
-                  ? Math.round((config.cachedInput / u.profile.inPrice) * 100) +
-                    "% of the input rate"
-                  : "set an input rate to compare"
-              }}. A request is usually part cached: the cached tokens are charged here and the rest
-              at the input rate, never both.</span
-            >
+            <span class="text-[11px] text-zinc-500">{{
+              u.profile.inPrice
+                ? Math.round((config.cachedInput / u.profile.inPrice) * 100) + "% of the input rate"
+                : "set an input rate to compare"
+            }}</span>
           </div>
-          <p v-else class="mt-1 text-[11px] leading-relaxed text-zinc-500">
-            Off means <b>no separate line</b> — cached tokens are charged at the ordinary input
-            rate. That is not the same as free.
-          </p>
 
           <div class="mt-2 border-t border-zinc-100 pt-2 dark:border-zinc-800">
-            <UiSwitch
-              :model-value="config.cacheWrite != null"
-              label="…and a different rate again for writing the cache"
-              @update:model-value="setCacheWrite"
+            <UiSwitch :model-value="config.cacheWrite != null" @update:model-value="setCacheWrite"
+              >…and a different rate again for writing the cache
+              <UiHint
+                label="cache writes"
+                text="Only some providers bill cache writes, usually dearer than input; off, those tokens are charged at the ordinary input rate."
+            /></UiSwitch>
+            <UiNumber
+              v-if="config.cacheWrite != null"
+              :model-value="config.cacheWrite"
+              class="mt-2 w-36"
+              prefix="$"
+              unit="/ 1M"
+              :min="0"
+              :step="0.01"
+              label="Cache write price per million"
+              @update:model-value="(v) => (config.cacheWrite = v ?? 0)"
             />
-            <div v-if="config.cacheWrite != null" class="mt-2 flex flex-wrap items-center gap-3">
-              <UiNumber
-                :model-value="config.cacheWrite"
-                class="w-36"
-                prefix="$"
-                unit="/ 1M"
-                :min="0"
-                :step="0.01"
-                label="Cache write price per million"
-                @update:model-value="(v) => (config.cacheWrite = v ?? 0)"
-              />
-              <span class="text-[11px] text-zinc-500"
-                >Only some providers bill this. Where they do it is usually dearer than ordinary
-                input, because the first request pays for the ones after it.</span
-              >
-            </div>
-            <p v-else class="mt-1 text-[11px] leading-relaxed text-zinc-500">
-              Leave this off unless your provider bills cache writes separately. Off, any reported
-              cache-write tokens are charged at the ordinary input rate.
-            </p>
           </div>
         </div>
       </div>
@@ -276,17 +269,15 @@ const limitUsed = computed(() =>
         class="mt-2 rounded bg-zinc-100 px-2 py-1.5 text-[11px] leading-relaxed text-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-300"
       >
         Both rates are zero, so this endpoint is treated as free — right for a model you host
-        yourself, wrong if the provider bills you. Enter the rates and past requests keep the price
-        they were recorded at.
+        yourself, wrong if the provider bills you.
       </p>
       <!-- the one thing the billing panel cannot say, because it does not know what is below it -->
       <p
         v-if="unknownRate && (config.windows.length || config.promotions.length)"
         class="mt-2 rounded bg-amber-400/10 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300"
       >
-        <WarnIcon class="icon-sm" /> A schedule and promotions are configured below, and while the
-        rate is unknown they change nothing: a discount on a price nobody knows is still a price
-        nobody knows.
+        <WarnIcon class="icon-sm" /> The schedule and promotions below change nothing while the rate
+        is unknown.
       </p>
       <p
         v-for="w in warnings"
@@ -299,7 +290,13 @@ const limitUsed = computed(() =>
 
     <!-- what is actually charged right now, and when that changes -->
     <section class="card p-3">
-      <h3 class="label mb-2">Effective price now</h3>
+      <h3 class="label mb-2">
+        Effective price now
+        <UiHint
+          label="the effective price"
+          text="Card rate, then the schedule, then the one promotion that makes each component cheapest; a request is priced at the rates in force when it completes."
+        />
+      </h3>
       <EffectiveRates
         :snapshot="snapshot"
         :now="now"
@@ -359,60 +356,67 @@ const limitUsed = computed(() =>
       <h3 class="label mb-2">Estimated, reserved, recorded</h3>
       <dl class="grid gap-3 sm:grid-cols-3">
         <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
-          <dt class="text-xs font-medium">Estimated</dt>
-          <dd class="mt-1 text-[11px] leading-relaxed text-zinc-500">
-            Worked out from these rates before a run starts, from the text to be sent.
-            <template v-if="u.kind === 'scripting'"
-              >Cache use isn’t knowable in advance, so an estimate assumes <b>none</b> and the real
-              figure comes in at or under it.</template
-            >
-            It moves when you change the rates, and it is never charged to anything.
-          </dd>
+          <dt class="text-xs font-medium">
+            Estimated
+            <UiHint
+              label="estimates"
+              :text="
+                u.kind === 'scripting'
+                  ? 'Worked out from these rates before a run starts; it assumes no cache savings, so the real figure comes in at or under it, and it is never charged to anything.'
+                  : 'Worked out from these rates and the text before a run starts; it is never charged to anything.'
+              "
+            />
+          </dt>
+          <dd class="mt-1 text-[11px] text-zinc-500">From these rates, before a run starts.</dd>
         </div>
         <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
-          <dt class="text-xs font-medium">Reserved</dt>
+          <dt class="text-xs font-medium">
+            Reserved
+            <UiHint
+              label="reservations"
+              :text="
+                u.kind === 'scripting'
+                  ? 'Held against a book’s cap while requests are in flight, at undiscounted rates with the whole output ceiling, and released as each request settles.'
+                  : 'A speech request’s cost is known from the text before it is sent, so the estimate is the reservation.'
+              "
+            />
+          </dt>
           <!-- A reservation is held against a *book's* cap and records no endpoint, so there is no
                honest per-endpoint figure to show here. The number says what it is instead of
                implying it belongs to the endpoint whose tab it is on. -->
           <dd class="mt-1 font-mono text-sm">
             {{ u.kind === "scripting" ? moneyOrUnknown(reservedAll) : "—" }}
-            <span v-if="u.kind === 'scripting'" class="font-sans text-[11px] text-zinc-500"
-              >· every book, every scripting endpoint</span
-            >
-          </dd>
-          <dd class="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
-            <template v-if="u.kind === 'scripting'"
-              >Held against the budget while requests are in flight — input cost plus the
-              <b>whole</b> output ceiling, at the <b>undiscounted</b> rates, so neither a long
-              answer nor a promotion ending mid-run can push a run past its cap. Released and
-              replaced by the real figure when each request settles. A reservation is held against a
-              <b>book’s</b> cap and does not record which endpoint will serve it, so this is the
-              whole queue’s scripting reservation rather than this endpoint’s share of it.</template
-            >
-            <template v-else
-              >Speech requests aren’t reserved: their cost is known from the text before they are
-              sent, so the estimate is the reservation.</template
-            >
+            <span class="font-sans text-[11px] text-zinc-500">{{
+              u.kind === "scripting"
+                ? "· every book, every scripting endpoint"
+                : "· speech requests aren’t reserved"
+            }}</span>
           </dd>
         </div>
         <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
-          <dt class="text-xs font-medium">Recorded</dt>
+          <dt class="text-xs font-medium">
+            Recorded
+            <UiHint
+              label="recorded spend"
+              text="Priced per request from the usage that came back, at the rates in force when it completed; changing a rate today does not re-price yesterday."
+            />
+          </dt>
           <dd class="mt-1 font-mono text-sm">
             {{ totals ? money(totals.cost) : "—" }}
             <span class="text-[11px] font-sans text-zinc-500">· {{ rangeLabel }}</span>
           </dd>
-          <dd class="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
-            Priced per request, from the usage that actually came back, at the rates in force when
-            each one completed. Changing a rate today does not re-price yesterday.
+          <dd
+            v-if="totals?.unknownCost || totals?.estimatedCost || totals?.providerReported"
+            class="mt-0.5 text-[11px] leading-relaxed text-zinc-500"
+          >
             <span v-if="totals?.unknownCost" class="text-amber-600 dark:text-amber-400"
-              >{{ totals.unknownCost }} of these could not be priced.</span
+              >{{ totals.unknownCost }} not priced.</span
             >
             <span v-if="totals?.estimatedCost" class="text-amber-600 dark:text-amber-400"
-              >{{ totals.estimatedCost }} are estimates: part of their usage was missing.</span
+              >{{ totals.estimatedCost }} estimated — part of their usage was missing.</span
             >
             <span v-if="totals?.providerReported"
-              >{{ totals.providerReported }} were priced from a charge the provider reported
-              itself.</span
+              >{{ totals.providerReported }} priced from the provider’s own figure.</span
             >
           </dd>
         </div>
@@ -423,7 +427,13 @@ const limitUsed = computed(() =>
         v-if="u.kind === 'scripting' && totals"
         class="mt-3 rounded-md border border-zinc-200 p-2.5 text-[11px] leading-relaxed dark:border-zinc-800"
       >
-        <div class="mb-1 text-xs font-medium">Cache, as reported</div>
+        <div class="mb-1 text-xs font-medium">
+          Cache, as reported
+          <UiHint
+            label="the cache figure"
+            text="Only requests that reported cache detail count; those that said nothing are left out rather than read as misses, and their cost is an upper bound."
+          />
+        </div>
         <template v-if="totals.cacheReported">
           <!-- both halves of the fraction come from the same requests: dividing reported cached
                tokens by every request's input would count traffic that said nothing about its
@@ -431,7 +441,7 @@ const limitUsed = computed(() =>
           <p>
             <b class="font-mono">{{ totals.cachedInputTokens.toLocaleString() }}</b> of
             <b class="font-mono">{{ totals.cacheReportedInputTokens.toLocaleString() }}</b> input
-            tokens came back marked as cached —
+            tokens cached —
             <b
               >{{
                 totals.cacheReportedInputTokens
@@ -439,36 +449,37 @@ const limitUsed = computed(() =>
                   : 0
               }}%</b
             >
-            over {{ rangeLabel }}, across the {{ totals.cacheReported }} of
+            over {{ rangeLabel }}, from the {{ totals.cacheReported }} of
             {{ totals.requests }} requests that reported it.
           </p>
           <p v-if="totals.cacheReported < totals.requests" class="mt-1 text-zinc-500">
-            The other {{ totals.requests - totals.cacheReported }} reported no cache detail at all,
-            and their
+            The other {{ totals.requests - totals.cacheReported }} reported no cache detail; their
             <b class="font-mono">{{
               (totals.inputTokens - totals.cacheReportedInputTokens).toLocaleString()
             }}</b>
-            input tokens are left out of that percentage entirely. They are not counted as misses —
-            they are simply unknown, and their cost is an upper bound rather than a fact.
+            input tokens are left out.
           </p>
           <p v-if="observed" class="mt-1 text-zinc-500">
-            Its most recent requests averaged
-            {{ Math.round(observed.hitRate * 100) }}% cached over {{ observed.samples }} requests.
-            Run estimates can show that figure beside the conservative one; they never use it for a
-            budget check.
+            Last {{ observed.samples }} requests: {{ Math.round(observed.hitRate * 100) }}% cached
+            on average.
           </p>
         </template>
         <p v-else class="text-zinc-500">
-          Nothing through this endpoint has reported cache detail in {{ rangeLabel }}. Costs are
-          worked out with every input token at the ordinary rate and labelled estimates, which is an
-          upper bound — not a claim that nothing was cached.
+          No request reported cache detail in {{ rangeLabel }}; costs assume none and are labelled
+          estimates.
         </p>
       </div>
     </section>
 
     <!-- limits -->
     <section class="card p-3">
-      <h3 class="label mb-2">Spending limits</h3>
+      <h3 class="label mb-2">
+        Spending limits
+        <UiHint
+          label="spending limits"
+          text="Checked at undiscounted rates with no cache savings, since a promotion can end mid-run, against what the server priced each request at — never your provider’s invoice."
+        />
+      </h3>
       <div class="grid gap-3 lg:grid-cols-2">
         <!-- endpoint scope -->
         <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
@@ -506,23 +517,19 @@ const limitUsed = computed(() =>
               :style="{ width: limitUsed + '%' }"
             ></div>
           </div>
-          <p class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
-            Caps what <b>this endpoint</b> spends, added up across every book. Leave it blank for no
-            endpoint limit.
-          </p>
         </div>
 
         <!-- book scope -->
         <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
           <div class="mb-1.5 flex items-center justify-between gap-2">
-            <span class="text-xs font-medium">Book budgets</span>
+            <span class="text-xs font-medium"
+              >Book budgets
+              <UiHint
+                label="book budgets"
+                text="Each cap limits what one book spends across every endpoint; it is set on the book’s overview page."
+            /></span>
             <span class="chip chip-off">all endpoints</span>
           </div>
-          <p class="text-[11px] leading-relaxed text-zinc-500">
-            A different scope: each cap below limits what <b>one book</b> spends across
-            <b>every</b> endpoint. A request has to fit under its book’s cap <i>and</i> under this
-            endpoint’s daily limit.
-          </p>
           <table v-if="anyBudget" class="mt-2 w-full text-[11px]">
             <thead class="text-zinc-500">
               <tr>
@@ -562,22 +569,13 @@ const limitUsed = computed(() =>
         </div>
       </div>
 
-      <div
-        class="mt-3 rounded-md bg-zinc-50 p-2.5 text-[11px] leading-relaxed text-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-300"
-      >
-        <b>When the remaining budget can’t cover another request</b> the run stops dispatching
-        rather than half-finishing a chapter: requests already in flight are allowed to land and are
-        recorded, nothing queued is sent, and the chapter is marked failed with the reason. Raise
-        the cap and retry the chapter — the requests that already completed keep their recorded cost
-        and are not paid for twice. A budget check never leans on a discount or a cache hit: it uses
-        the undiscounted price with no cache savings, because a promotion can expire and an off-peak
-        window can close while a run is still going. An endpoint whose rate is unknown can’t be
-        checked against a budget at all, which is the other reason not to leave a rate blank for a
-        provider that bills you.
-      </div>
-      <p class="mt-2 text-[11px] text-zinc-500">
-        The server holds these budgets against what its requests were priced at; it never sees your
-        provider's invoice. A simulated endpoint's requests count against them and bill nothing.
+      <p class="mt-3 text-[11px] text-zinc-500">
+        When a book’s budget can’t cover another request, the run stops dispatching; in-flight
+        requests land and are recorded.
+        <UiHint
+          label="a run out of budget"
+          text="The chapter fails with the reason; raise the cap and retry it — the requests that already completed keep their recorded cost and are not paid for twice."
+        />
       </p>
     </section>
   </div>

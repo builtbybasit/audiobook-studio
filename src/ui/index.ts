@@ -9,3 +9,4 @@ export { default as UiTooltip } from "@/ui/UiTooltip.vue";
 export { default as UiDialog } from "@/ui/UiDialog.vue";
 export { default as UiSheet } from "@/ui/UiSheet.vue";
 export { default as UiTabs } from "@/ui/UiTabs.vue";
+export { default as UiHint } from "@/ui/UiHint.vue";

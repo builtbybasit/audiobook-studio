@@ -9,7 +9,7 @@
 // Promotions do not stack. Where two of them cover the same component, only the one that makes it
 // cheapest applies; the other is shown as outranked rather than silently ignored.
 import { computed } from "vue";
-import { UiNumber, UiSelect } from "@/ui";
+import { UiHint, UiNumber, UiSelect } from "@/ui";
 import { Plus as AddIcon, Trash2 as RemoveIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
 import {
   COMPONENT_LABEL,
@@ -180,11 +180,12 @@ function preview(p: Promotion): string {
 <template>
   <div class="space-y-2">
     <div class="flex items-center justify-between gap-2">
-      <p class="text-[11px] leading-relaxed text-zinc-500">
-        A promotion applies on top of whatever the schedule left.
-        <b>They do not stack</b>: where two cover the same rate, only the one that makes it cheapest
-        applies. One expires on its own date — it is never deleted for you, and it never re-prices a
-        request it already priced.
+      <p v-if="config.promotions.length" class="text-[11px] text-zinc-500">
+        Promotions do not stack: where two cover one rate, the cheaper applies.
+        <UiHint
+          label="promotions"
+          text="A promotion applies on top of whatever the schedule left; one expires on its own date, is never deleted for you, and never re-prices a request it already priced."
+        />
       </p>
       <button class="btn-ghost btn-xs shrink-0" @click="addPromotion">
         <AddIcon class="icon-sm" /> Add
@@ -192,7 +193,7 @@ function preview(p: Promotion): string {
     </div>
 
     <p v-if="!config.promotions.length" class="text-[11px] text-zinc-500">
-      No promotions. The schedule above, or the base rates, decide the price.
+      No promotions — the schedule, or the base rates, decide the price.
     </p>
 
     <template v-for="group in groups" :key="group.title">
@@ -222,7 +223,7 @@ function preview(p: Promotion): string {
             <span
               v-else-if="shadowed(p)"
               class="chip chip-off text-amber-700 dark:text-amber-400"
-              title="Another promotion makes every rate this one covers cheaper. Discounts do not stack, so only that one applies."
+              title="Another promotion makes every rate this one covers cheaper, and discounts do not stack."
               ><WarnIcon class="icon-sm" /> outranked</span
             >
             <span v-else-if="promotionPending(p, now)" class="chip chip-off">not started</span>

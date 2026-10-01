@@ -1089,7 +1089,9 @@ ElevenLabs and Cartesia charge nothing per voice.
 **The samples are kept once the provider has answered**, never before, so a failed clone keeps
 nothing: the bytes as picked, named by their hash, under `VOICE_DIR` in one directory per voice
 ([voices/files.ts](../server/voices/files.ts)), with a `cloned_voices` row holding when consent was
-given and the sentence it was given to, and a `voice_samples` row per sample. The voice already
+given and the sentence it was given to, and a `voice_samples` row per sample, with its transcript
+when the form gave one (`transcripts`, one text per `samples` file, in order; Fish's `texts` go only
+when every sample has one, Qwen's `text` with its one clip). The voice already
 exists on the account by then, so a failure to keep them answers `201` with `samplesKept: false`;
 the `voice cloned` log line records the same. `saveEndpoints` reconciles kept samples with the
 configuration in its own transaction ([server/db/voiceSamples.ts](../server/db/voiceSamples.ts)): a

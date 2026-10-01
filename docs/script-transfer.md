@@ -306,14 +306,18 @@ names them does not hand their lines to the Narrator.
 ## Voice samples
 
 A private clone exists only on the account that made it, so in someone else's hands it is a name
-with nothing behind it. Carrying the recordings it was made from lets the recipient make the voice
+with nothing behind it. Carrying the samples it was made from lets the recipient make the voice
 again on their own account, with their own consent.
 
 ### Kept when a voice is cloned
 
 An export can only carry what the server kept, so cloning keeps its samples: once the provider
-answers, the recordings are written under `VOICE_DIR` beside a `cloned_voices` row holding when
-consent was given and the sentence that was agreed to, a `voice_samples` row per recording.
+answers, the samples are written under `VOICE_DIR` beside a `cloned_voices` row holding when
+consent was given and the sentence that was agreed to, a `voice_samples` row per sample holding its
+transcript when the person gave one. A transcript does not yet travel in a script file:
+`consent.json` lists only each sample's file, name and format, and the import's
+`speaker_sample_files` table has no column for one; when a kept row does carry a transcript, the
+clone form's prefill fills it in.
 [The providers](backend.md#the-providers-and-where-a-key-lives) describes which providers clone,
 the limits, the tables and the routes under `/api/endpoints/:id/voices/:voice/samples`. On the
 Voices tab a voice with kept samples says **N samples kept**, and **Forget** drops them and keeps

@@ -78,9 +78,14 @@ function consentOf(form: Form): string {
   return said ? said.slice(0, MAX_CONSENT_CHARS) : CLONE_CONSENT;
 }
 
-/** The files under `samples`; what each one is, and whether the provider takes it, is `readSamples`'. */
-const filesOf = (form: Form): File[] =>
-  form.getAll("samples").filter((f): f is File => f instanceof File);
+/**
+ * The files under `samples`, and what is said in each under `transcripts`, one per file in the
+ * same order; what each file is, and whether the provider takes it, is `readSamples`'.
+ */
+const samplesOf = (form: Form): { files: File[]; transcripts: string[] } => ({
+  files: form.getAll("samples").filter((f): f is File => f instanceof File),
+  transcripts: form.getAll("transcripts").map((t) => (typeof t === "string" ? t : "")),
+});
 
 const samplesLimit = bodyLimit({
   maxSize: CLONE_BODY_BYTES,
@@ -163,18 +168,19 @@ export function endpointRoutes(
   });
 
   /**
-   * A voice made from recordings, on a saved endpoint whose provider can keep one: a multipart form
-   * of the endpoint's `id`, the voice's `title`, 1 to 20 samples under `samples`, `consent` saying
-   * the person has the right to clone the voice in them, and the `consentText` they agreed to.
-   * Answers with the new voice, which the page then adds to the endpoint.
+   * A voice made from samples, on a saved endpoint whose provider can keep one: a multipart form
+   * of the endpoint's `id`, the voice's `title`, 1 to 20 files under `samples` with what is said
+   * in each under `transcripts` (one per file, "" for none), `consent` saying the person has the
+   * right to clone the voice in them, and the `consentText` they agreed to. Answers with the new
+   * voice, which the page then adds to the endpoint.
    *
-   * The recordings are kept once the provider has answered — never before, so a failed clone keeps
+   * The samples are kept once the provider has answered — never before, so a failed clone keeps
    * nothing — beside the consent they were given under, so the voice can travel with a book's
    * script. The voice already exists on the account by then, so a failure to keep them is not a
    * failure to clone: the answer says `samplesKept: false`, and the page says so.
    *
    * The form is read by hand, where the book uploads go through `validate("form", …)`: the
-   * validator hands back a lone file for one recording and an array for several, and answers every
+   * validator hands back a lone file for one sample and an array for several, and answers every
    * refusal as "the form was not valid" — where each refusal here has its own words for the page.
    */
   app.post("/voices/clone", samplesLimit, async (c) => {
@@ -199,7 +205,7 @@ export function endpointRoutes(
       db,
       providers,
       voiceFiles,
-      { endpointId: id, title, consentText, files: filesOf(form) },
+      { endpointId: id, title, consentText, ...samplesOf(form) },
       c.req.raw.signal,
     );
     if (keepError)
@@ -216,30 +222,30 @@ export function endpointRoutes(
     return c.json(voice satisfies ClonedVoice, 201);
   });
 
-  /** Every voice of a saved endpoint that has the recordings it was made from kept. */
+  /** Every voice of a saved endpoint that has the samples it was made from kept. */
   app.get("/:id/samples", validate("param", v.object({ id: VoiceParam.entries.id })), (c) =>
     c.json(samples.keptFor(db, c.req.valid("param").id) satisfies KeptVoiceSamples[]),
   );
 
-  /** One voice's kept recordings, and when and to what consent was given. */
+  /** One voice's kept samples, and when and to what consent was given. */
   app.get("/:id/voices/:voice/samples", validate("param", VoiceParam), (c) => {
     const { id, voice } = c.req.valid("param");
     return c.json(samples.keptOf(db, id, voice) satisfies KeptVoiceSamples);
   });
 
-  /** One kept recording, as it was picked. Named by its bytes, so it may be cached for good. */
+  /** One kept sample, as it was picked. Named by its bytes, so it may be cached for good. */
   app.get("/:id/voices/:voice/samples/:file", validate("param", SampleParam), async (c) => {
     const { id, voice, file } = c.req.valid("param");
     const { path, type } = samples.sampleFile(db, voiceFiles, id, voice, file);
     return serveFile(c, path, type, {
-      missing: "There is no such recording",
+      missing: "There is no such sample",
       detail: `file: ${file}`,
     });
   });
 
   /**
-   * Keep these recordings for a voice already on the saved endpoint, in place of any it had: for a
-   * voice cloned before recordings were kept. The same form, limits and consent as a clone, and
+   * Keep these samples for a voice already on the saved endpoint, in place of any it had: for a
+   * voice cloned before samples were kept. The same form, limits and consent as a clone, and
    * nothing is sent to the provider.
    */
   app.post("/:id/voices/:voice/samples", validate("param", VoiceParam), samplesLimit, async (c) => {
@@ -250,7 +256,7 @@ export function endpointRoutes(
       endpointId: id,
       voiceId: voice,
       consentText,
-      files: filesOf(form),
+      ...samplesOf(form),
     });
     c.var.logger.info(
       { id, voice, samples: kept.samples.length, consent: true },
@@ -259,7 +265,7 @@ export function endpointRoutes(
     return c.json(kept satisfies KeptVoiceSamples);
   });
 
-  /** Forget one voice's recordings; the voice stays, and the forget can be taken back for a while. */
+  /** Forget one voice's samples; the voice stays, and the forget can be taken back for a while. */
   app.delete("/:id/voices/:voice/samples", validate("param", VoiceParam), (c) => {
     const { id, voice } = c.req.valid("param");
     samples.forgetSampleFiles(db, id, voice);
@@ -267,7 +273,7 @@ export function endpointRoutes(
     return c.json({ voiceId: voice });
   });
 
-  /** Take back a forget whose recordings no save has removed yet; answers with them. */
+  /** Take back a forget whose samples no save has removed yet; answers with them. */
   app.post("/:id/voices/:voice/samples/restore", validate("param", VoiceParam), (c) => {
     const { id, voice } = c.req.valid("param");
     const kept = samples.restoreSampleFiles(db, id, voice);

@@ -103,7 +103,7 @@ export function formatDefaults(
 
 /**
  * What a voice sample can be, read from its first bytes (`sniffSample` on the server) rather
- * than from its name. A sample is any audio of the person speaking: recorded, or downloaded.
+ * than from its name. A sample is any audio file of the person speaking, uploaded as it is.
  */
 export type SampleFormat = "wav" | "mp3" | "m4a" | "opus" | "flac";
 
@@ -123,6 +123,13 @@ export interface CloneSupport {
    * not others — a Qwen voice is made for one model and spoken only with it. Absent: any model.
    */
   models?: readonly string[];
+  /**
+   * Whether the provider takes a transcript of each sample beside it: never, as an option it does
+   * without (Fish and Qwen transcribe a sample themselves), or as a must. The form asks for one per
+   * sample where it is not "none", and the server refuses a sample without one where it is
+   * "required".
+   */
+  transcript: "none" | "optional" | "required";
   /**
    * The provider's own advice on samples, a sentence or two for the Voices tab: how long, how
    * many, what kind of audio. From its docs, not invented.

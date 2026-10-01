@@ -14,7 +14,7 @@
 //      million audio tokens, so switching parks the old rates rather than carrying them across, and
 //      switching back restores them instead of asking for them again.
 import { computed } from "vue";
-import { UiNumber, UiSelect, UiSwitch } from "@/ui";
+import { UiHint, UiNumber, UiSelect, UiSwitch } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
 import {
   BILLING_UNITS,
@@ -168,8 +168,11 @@ const free = computed(() => components.value.every((c) => snapshot.value.compone
       >
       <div class="space-y-2">
         <!-- one field per component this model prices, and no others -->
-        <label v-for="f in fields" :key="f.component" class="block space-y-1 text-xs font-medium"
-          ><span>{{ f.label }}</span>
+        <!-- a div, not a label: the hint is a button, and the field names itself (`label`) -->
+        <div v-for="f in fields" :key="f.component" class="block space-y-1 text-xs font-medium">
+          <span
+            >{{ f.label }} <UiHint v-if="f.hint" :label="f.label.toLowerCase()" :text="f.hint"
+          /></span>
           <UiNumber
             :model-value="f.value"
             class="w-full"
@@ -182,10 +185,7 @@ const free = computed(() => components.value.every((c) => snapshot.value.compone
             :label="f.label"
             @update:model-value="f.set"
           />
-          <span v-if="f.hint" class="block text-[11px] font-normal leading-relaxed text-zinc-500">{{
-            f.hint
-          }}</span></label
-        >
+        </div>
       </div>
     </div>
 
@@ -194,8 +194,13 @@ const free = computed(() => components.value.every((c) => snapshot.value.compone
       v-if="billsAudioTokens(billing.unit)"
       class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800"
     >
-      <label class="flex flex-wrap items-center justify-between gap-3 text-xs font-medium"
-        ><span>Audio tokens per second</span>
+      <div class="flex flex-wrap items-center justify-between gap-3 text-xs font-medium">
+        <span
+          >Audio tokens per second
+          <UiHint
+            label="audio tokens per second"
+            text="An assumption about your provider’s tokeniser, taken from its documentation; used for estimates and for any request whose response reported no token count."
+        /></span>
         <UiNumber
           :model-value="audioTokensPerSecondOf(billing)"
           class="w-32"
@@ -206,35 +211,34 @@ const free = computed(() => components.value.every((c) => snapshot.value.compone
           @update:model-value="
             (v) => patch({ audioTokensPerSecond: v ?? DEFAULT_AUDIO_TOKENS_PER_SECOND })
           "
-      /></label>
-      <p class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
-        Audio tokens don’t follow from the text — they follow the length of the recording — so an
-        estimate has to go through the audio’s expected duration and this conversion. It is
-        <b>an assumption about your provider’s tokeniser</b>, not something this app can measure:
-        set it from their documentation. It is used for estimates and for any completed request
-        whose response didn’t report a token count; where the provider does report one, that number
-        is used instead and the receipt says so.
-      </p>
+        />
+      </div>
     </div>
 
     <!-- instructions: submitted content, so a provider that meters what it receives meters these -->
-    <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
+    <div
+      class="flex items-center gap-1.5 rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800"
+    >
       <UiSwitch
         :model-value="billing.billsInstructions ?? true"
         label="Voice instructions sent with the line are billable"
         @update:model-value="(v) => patch({ billsInstructions: v })"
       />
-      <p class="mt-1 text-[11px] leading-relaxed text-zinc-500">
-        A character’s style and a line’s direction go over the wire with the text. Most providers
-        meter what they receive; a few ignore the instructions field entirely. Off, they are still
-        sent and still recorded — they are simply left out of the billable count.
-      </p>
+      <UiHint
+        label="billable instructions"
+        text="Most providers meter what they receive; a few ignore the instructions field. Off, instructions are still sent and recorded but left out of the billable count."
+      />
     </div>
 
     <!-- what the rates make one request cost. The working, not just the answer. -->
     <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
       <div class="mb-1 flex items-baseline justify-between gap-2">
-        <span class="text-xs font-medium">One line, at these rates</span>
+        <span class="text-xs font-medium"
+          >One line, at these rates
+          <UiHint
+            label="the worked example"
+            text="The same line counted every way a provider meters; only the quantity this model bills on is charged, at the rates in force now."
+        /></span>
         <span class="text-[10px] uppercase tracking-wider text-zinc-400">worked example</span>
       </div>
       <p class="mb-1.5 font-mono text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-300">
@@ -246,7 +250,7 @@ const free = computed(() => components.value.every((c) => snapshot.value.compone
         }}
         text tokens · {{ preview.seconds }}s of audio<span v-if="preview.units.audioTokens != null">
           · ~{{ preview.units.audioTokens }} audio tokens</span
-        >. The same line, counted four ways — only the one this model bills on is charged.
+        >
       </p>
       <table class="w-full text-[11px]">
         <tbody>
@@ -279,7 +283,7 @@ const free = computed(() => components.value.every((c) => snapshot.value.compone
         v-if="snapshot.window || snapshot.applied.length"
         class="mt-1.5 text-[11px] leading-relaxed text-violet-600 dark:text-violet-400"
       >
-        At the rates in force right now, not the card rates:
+        At the rates in force now, not the card rates:
         {{
           [snapshot.window?.label, ...snapshot.applied.map((p) => p.label)]
             .filter(Boolean)
@@ -294,35 +298,29 @@ const free = computed(() => components.value.every((c) => snapshot.value.compone
 
     <!-- what was configured under another model, kept rather than thrown away -->
     <p v-if="parkedNote" class="text-[11px] leading-relaxed text-zinc-500">
-      Rates kept from another billing model: {{ parkedNote }}. They are not applied and never
-      reinterpreted — switch back to that model and they return. Requests already recorded keep the
-      model and the rates they were charged under, whatever you change here.
+      Rates kept from another billing model: {{ parkedNote }} — switch back and they return.
     </p>
 
     <p
       v-if="halfConfigured"
       class="rounded bg-amber-400/10 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300"
     >
-      <WarnIcon class="icon-sm" /> This model bills the text and the audio separately and only the
-      text rate is set. Knowing half a price is not half an answer: requests are recorded with an
+      <WarnIcon class="icon-sm" /> Only the text rate is set: requests are recorded with an
       <b>unknown</b> cost until both rates are filled in.
     </p>
     <p
       v-else-if="unknownRate"
       class="rounded bg-amber-400/10 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300"
     >
-      <WarnIcon class="icon-sm" /> No rate set. Requests through this endpoint are recorded with an
-      <b>unknown</b> cost: counted, never priced, and excluded from every total on this page — so
-      those totals are floors, not the full bill. Leave it blank only if you genuinely don’t know
-      the rate; enter <b>0</b> for a model you host yourself.
+      <WarnIcon class="icon-sm" /> No rate set: requests are counted, never priced, and left out of
+      every total. Enter <b>0</b> for a model you host yourself.
     </p>
     <p
       v-else-if="free"
       class="rounded bg-zinc-100 px-2 py-1.5 text-[11px] leading-relaxed text-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-300"
     >
-      Zero, not unknown: this endpoint is treated as <b>free</b> and its requests are priced at
-      $0.00 rather than left unpriced. Right for a model you host yourself, wrong if the provider
-      bills you.
+      The rate is zero, so this endpoint is treated as <b>free</b> — right for a model you host
+      yourself, wrong if the provider bills you.
     </p>
   </div>
 </template>

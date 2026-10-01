@@ -25,11 +25,12 @@
 // (https://www.alibabacloud.com/help/en/model-studio/voice-cloning-user-guide, and the HTTP
 // reference https://www.alibabacloud.com/help/doc-detail/3027318.html): model
 // `qwen-voice-enrollment`, action `create`, the endpoint's model as `target_model` — the voice
-// works with that model and no other — a `preferred_name` made from the title, and the recording
-// itself as a base64 data URL under `audio.data`. The answer's `output.voice` is the id a line is
+// works with that model and no other — a `preferred_name` made from the title, the sample itself
+// as a base64 data URL under `audio.data`, and its transcript as `text` when the person gave one
+// ("used to improve cloning quality"). The answer's `output.voice` is the id a line is
 // spoken with. The Qwen-Audio 3.0 models are cloned for through the older `voice-enrollment`, which
-// takes a recording only as a public link, so for them the clone is refused before anything is
-// sent. The recording's language is sent as English: Model Studio assumes Chinese when none is
+// takes a sample only as a public link, so for them the clone is refused before anything is
+// sent. The sample's language is sent as English: Model Studio assumes Chinese when none is
 // named, and the books this app reads are English.
 import type { SpeechUsage } from "@/types";
 import { AUDIO_MIME } from "@/lib/endpointShapes";
@@ -142,7 +143,7 @@ export const qwenWire: SpeechWire = {
   async clone(target, request, signal, options) {
     const problem = uncloneableModel(target);
     if (problem) throw new ProviderError(problem, 0, false);
-    // one recording: the route holds a clone to `cloning.maxSamples`, which is 1
+    // one sample: the route holds a clone to `cloning.maxSamples`, which is 1
     const [sample] = request.samples;
     const data = Buffer.from(await sample.blob.arrayBuffer()).toString("base64");
     const res = await call(
@@ -159,6 +160,7 @@ export const qwenWire: SpeechWire = {
             preferred_name: qwenPreferredName(request.title),
             // the blob is typed by its bytes: audio/wav, audio/mpeg or audio/mp4, as the docs list
             audio: { data: `data:${sample.blob.type};base64,${data}` },
+            ...(sample.transcript ? { text: sample.transcript } : {}),
             language: "en",
           },
         }),

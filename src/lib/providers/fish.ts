@@ -82,14 +82,17 @@ export const fish: SpeechProviderShape = {
   models: FISH_MODELS,
   // https://docs.fish.audio/features/voice-cloning and the create-model reference: 1 to 20 samples
   // under `voices`, WAV, MP3, M4A or Opus for a model — and FLAC, which the speech reference takes
-  // as reference audio and a model upload has taken too.
+  // as reference audio and a model upload has taken too. `texts`, "corresponding to the voices",
+  // is optional: "if unspecified, ASR will be performed on the voices".
   cloning: {
     maxSamples: 20,
     maxSampleBytes: 20 * 1024 * 1024,
     formats: ["wav", "mp3", "m4a", "opus", "flac"],
+    transcript: "optional",
     advice:
       "Fish recommends two or three clips of 15–20 seconds each, at least 10 seconds in all: " +
-      "one speaker, a quiet room, an even tone. It transcribes them itself.",
+      "one speaker, a quiet room, an even tone. It transcribes a clip itself when no transcript " +
+      "is given.",
     cost: null,
     fee: null,
   },

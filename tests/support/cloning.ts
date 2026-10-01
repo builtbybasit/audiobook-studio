@@ -102,11 +102,21 @@ export async function saved(api: TestApi, ...endpoints: Endpoint[]): Promise<voi
   expect(status).toBe(200);
 }
 
-/** The clone form: its fields, and the files under `samples`. */
-export function cloneForm(fields: Record<string, string>, samples: File[]): FormData {
+/**
+ * The clone form: its fields, the files under `samples`, and what is said in each under
+ * `transcripts` when the test gives them — one per file, as the page sends them.
+ */
+export function cloneForm(
+  fields: Record<string, string>,
+  samples: File[],
+  transcripts?: string[],
+): FormData {
   const f = new FormData();
   for (const [k, v] of Object.entries(fields)) f.set(k, v);
-  for (const s of samples) f.append("samples", s, s.name);
+  for (const [i, s] of samples.entries()) {
+    f.append("samples", s, s.name);
+    if (transcripts) f.append("transcripts", transcripts[i] ?? "");
+  }
   return f;
 }
 

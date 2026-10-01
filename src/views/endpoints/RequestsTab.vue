@@ -11,7 +11,7 @@
 // its recent requests at this level were seen to spend.
 import { computed, ref, watch } from "vue";
 import { plural } from "@/lib/contents";
-import { UiNumber, UiSelect } from "@/ui";
+import { UiHint, UiNumber, UiSelect } from "@/ui";
 import NumberSlider from "@/components/NumberSlider.vue";
 import { ChevronLeft as PrevIcon, ChevronRight as NextIcon, Check as OkIcon } from "@lucide/vue";
 import { SPLIT_MODES, splitText } from "@/lib/split";
@@ -251,19 +251,29 @@ const limitNote = computed(() => {
         <p v-if="limitNote" class="mt-1.5 text-[11px] text-amber-700 dark:text-amber-400">
           {{ limitNote }}. Requests already in flight are finishing.
         </p>
-        <p class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
-          Shared across every book. Type any number — the slider’s range grows to fit it, so 2,500
-          is as easy to set as 4.
-          <template v-if="u.kind === 'scripting'"
-            >Chunks of a chapter run in parallel; chapters stay ordered.</template
-          >
-          <template v-else>Lines of a chapter run in parallel up to this limit.</template>
+        <p class="mt-1.5 text-[11px] text-zinc-500">
+          Shared across every book.
+          <UiHint
+            label="concurrency"
+            :text="
+              u.kind === 'scripting'
+                ? 'Chunks of a chapter run in parallel up to this limit; chapters stay in order. Type any number and the slider grows to fit it.'
+                : 'Lines of a chapter run in parallel up to this limit. Type any number and the slider grows to fit it.'
+            "
+          />
         </p>
       </section>
 
       <!-- timing -->
       <section class="card p-3">
-        <h3 class="label mb-2">Timeouts and retries</h3>
+        <h3 class="label mb-2">
+          Timeouts and retries
+          <UiHint
+            v-if="u.kind === 'tts'"
+            label="the cooldown"
+            text="A rate limit holds every line on this endpoint until the cooldown ends, not only the one refused."
+          />
+        </h3>
         <div class="space-y-2.5 text-sm">
           <label class="flex items-center justify-between gap-3"
             ><span class="min-w-0"
@@ -314,20 +324,19 @@ const limitNote = computed(() => {
               label="Rate-limit cooldown in seconds"
           /></label>
         </div>
-        <p v-if="u.kind === 'tts'" class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-          The server uses all three from the next request. A rate limit holds every line for this
-          endpoint until the cooldown ends, not only the one refused.
-        </p>
-        <p v-else class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-          The server uses all three; a run keeps the ones it was queued with.
-        </p>
       </section>
     </div>
 
     <div class="space-y-3">
       <!-- how a simulated endpoint answers -->
       <section v-if="simulated" class="card p-3">
-        <h3 class="label mb-2">Simulated answers</h3>
+        <h3 class="label mb-2">
+          Simulated answers
+          <UiHint
+            label="simulated answers"
+            text="Nothing is sent or billed, a failure included; both apply from the next request."
+          />
+        </h3>
         <div class="space-y-2.5 text-sm">
           <label class="flex items-center justify-between gap-3"
             ><span class="min-w-0"
@@ -362,10 +371,6 @@ const limitNote = computed(() => {
               label="Fails, as a percentage of requests"
           /></label>
         </div>
-        <p class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-          Nothing is sent anywhere and nothing is billed, a failure included. Both apply from the
-          next request.
-        </p>
       </section>
 
       <!-- input limits -->
@@ -377,14 +382,15 @@ const limitNote = computed(() => {
           :initial-max="u.kind === 'scripting' ? 12000 : 4096"
           unit="chars"
         />
-        <p class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
+        <p class="mt-1.5 text-[11px] text-zinc-500">
           <template v-if="u.kind === 'scripting'"
-            >0 sends the whole chapter in one request. Prompt and carried context are extra input
-            tokens on top.</template
-          >
+            >0 sends the whole chapter in one request.
+            <UiHint
+              label="the character limit"
+              text="The prompt and carried context are extra input tokens on top of this."
+          /></template>
           <template v-else
-            >0 sends whole lines. Longer lines are cut, sent as several requests, and the audio
-            joined back together.</template
+            >0 sends whole lines; longer ones are cut and the audio joined back together.</template
           >
         </p>
         <label class="mt-3 flex items-center justify-between gap-3 text-sm"
@@ -403,17 +409,19 @@ const limitNote = computed(() => {
             :initial-max="16384"
             unit="/ request"
           />
-          <p class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
-            The script coming back is longer than you expect — speaker labels and directions add up.
-            This ceiling is also what each request reserves against the budget before it is sent.
+          <p class="mt-1.5 text-[11px] text-zinc-500">
+            Reserved against the budget before each request is sent.
+            <UiHint
+              label="max output tokens"
+              text="Scripts run longer than the prose — speaker labels and directions add up — and a model’s thinking counts against this too."
+            />
           </p>
           <template v-if="!isSimulated(u.baseUrl)">
             <label class="mt-3 flex items-center justify-between gap-3 text-sm"
               ><span class="min-w-0"
                 >Reasoning
                 <span class="block text-[11px] text-zinc-500"
-                  >How long a model that reasons thinks before it answers. Most hosts bill the
-                  thinking as output tokens.</span
+                  >Thinking before the answer, billed as output tokens.</span
                 ></span
               ><UiSelect
                 :model-value="u.profile.reasoning ?? null"
@@ -436,7 +444,13 @@ const limitNote = computed(() => {
 
       <!-- audio: speech only — a chat model returns text, which has no format or rate -->
       <section v-if="u.kind === 'tts' && u.endpoint" class="card p-3">
-        <h3 class="label mb-2">Audio</h3>
+        <h3 class="label mb-2">
+          Audio
+          <UiHint
+            label="audio formats"
+            text="MP3 and Opus are about a tenth of WAV’s size but need ffmpeg on the server to build an audiobook; rendered clips keep their format, and a rate change marks clips at another rate for re-render."
+          />
+        </h3>
         <div class="space-y-2.5 text-sm">
           <label class="flex items-center justify-between gap-3"
             ><span class="min-w-0"
@@ -473,8 +487,8 @@ const limitNote = computed(() => {
                 >
                 <template v-else
                   >{{ FORMAT_LABEL[encoding.format] }} here offers
-                  {{ support?.rates?.map(sampleRateLabel).join(", ") }}. The default sends no rate;
-                  the clip records what came back.</template
+                  {{ support?.rates?.map(sampleRateLabel).join(", ") }}; the default sends
+                  none.</template
                 >
               </span></span
             ><UiSelect
@@ -492,8 +506,7 @@ const limitNote = computed(() => {
           <span class="text-zinc-500"> per minute of speech · {{ size.basis }}</span>
         </p>
         <p v-else class="mt-2 text-[11px] text-zinc-500">
-          The size per minute depends on the model’s own rate and bitrate, which this API does not
-          say.
+          Size per minute unknown: this API does not say the model’s rate or bitrate.
         </p>
         <p
           v-for="n in repairNotes"
@@ -510,12 +523,6 @@ const limitNote = computed(() => {
           role="alert"
         >
           {{ p }}. The server refuses a line until this is fixed.
-        </p>
-        <p class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
-          MP3 and Opus are about a tenth the size of WAV. Building an audiobook from them needs
-          ffmpeg on the server (<code class="font-mono">EXPORT_ENCODER=ffmpeg</code>). Clips already
-          rendered keep the format they were made in; changing the rate marks clips at another rate
-          as needing a re-render, since one audiobook file can only hold one rate.
         </p>
       </section>
 
@@ -577,54 +584,26 @@ const limitNote = computed(() => {
         >
           <OkIcon v-if="preserved" class="icon-sm" />
           <template v-if="preserved"
-            >All {{ text.length.toLocaleString() }} characters preserved — the pieces rejoin to the
-            source exactly, whitespace included.</template
+            >All {{ text.length.toLocaleString() }} characters preserved, whitespace
+            included.</template
           >
           <template v-else
-            >The pieces do not rejoin to the source. This is a bug — please report it.</template
+            >The pieces do not rejoin to the source — a bug, please report it.</template
           >
         </p>
       </section>
     </div>
 
-    <!-- what applies when -->
-    <section class="card p-3 xl:col-span-2">
-      <h3 class="label mb-2">When these changes take effect</h3>
-      <dl class="grid gap-x-6 gap-y-1.5 text-[11px] leading-relaxed sm:grid-cols-2">
-        <div class="flex gap-2">
-          <dt class="w-24 shrink-0 font-medium text-emerald-600 dark:text-emerald-400">
-            Immediately
-          </dt>
-          <dd v-if="u.kind === 'scripting'" class="text-zinc-500">
-            Pause and resume: a paused endpoint can’t start a run. One already queued or going
-            carries on.
-          </dd>
-          <dd v-else class="text-zinc-500">
-            Pause and resume, and concurrency — the dispatcher reads them before every request, so
-            lowering concurrency mid-run just narrows the next batch. Character limit and cut
-            boundary too: each line is split as it goes out.
-          </dd>
-        </div>
-        <div class="flex gap-2">
-          <dt class="w-24 shrink-0 font-medium text-violet-600 dark:text-violet-400">Next job</dt>
-          <dd class="text-zinc-500">
-            <template v-if="u.kind === 'scripting'"
-              >Base URL, model, chunking, output ceiling, reasoning and prices, the prompt, and
-              concurrency, timeouts and retries. A queued job carries a snapshot of all of these, so
-              a run finishes on the settings it started with and its recorded cost stays
-              honest.</template
-            >
-            <template v-else
-              >Base URL, model, audio format, sample rate and prices. Clips already rendered keep
-              the model, format, rate and cost they were recorded with.</template
-            >
-          </dd>
-        </div>
-      </dl>
-      <p class="mt-2 text-[11px] text-zinc-500">
-        Saved to the server a moment after each change, and read by the next
-        {{ u.kind === "tts" ? "line" : "run" }} it sends.
-      </p>
-    </section>
+    <!-- when it applies: a queued run keeps its snapshot; a line is dispatched on what is saved now -->
+    <p class="text-[11px] text-zinc-500 xl:col-span-2">
+      <template v-if="u.kind === 'scripting'"
+        >Saved as you go. Everything here applies to the next run; a run already queued keeps the
+        settings it started with.</template
+      >
+      <template v-else
+        >Saved as you go. Concurrency, timeouts, retries and cutting apply to the next line; format
+        and sample rate to the next job.</template
+      >
+    </p>
   </div>
 </template>

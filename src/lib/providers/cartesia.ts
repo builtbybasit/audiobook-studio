@@ -57,6 +57,8 @@ export const cartesia: SpeechProviderShape = {
     maxSamples: 1,
     maxSampleBytes: 16 * 1024 * 1024,
     formats: ["wav", "mp3", "flac", "opus"],
+    // the clone reference (version 2026-08-14) takes a clip, a name and a language, no transcript
+    transcript: "none",
     advice:
       "Cartesia makes a voice from one clip: 10 seconds is enough, and up to 60 keeps more of the " +
       "accent. One speaker, no background noise, spoken naturally in the mood the voice should have.",

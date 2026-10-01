@@ -2,12 +2,12 @@
 // provider (`cloning`) rather than written for any one of them.
 //
 // The server refuses a sample outside what the provider takes, with the file's own name
-// (`server/voices/clone.ts`), in the words of `lib/voiceSamples.ts`, which the page says too. The page holds the same limits up front so a pick is fixed
-// before anything is sent: the picker offers only the formats the provider takes, a pick past the
-// most it takes is cut and the cut said, and a file too large, or named as a format the provider
-// does not take, blocks the button with its name. The server still reads each file's first bytes
-// and is the one that decides; a name is only a guess, so a file named as no known format is left
-// for it to judge.
+// (`server/voices/clone.ts`), in the words of `lib/voiceSamples.ts`, which the page says too. The
+// page holds the same limits up front so a pick is fixed before anything is sent: the picker offers
+// only the formats the provider takes, a pick past the most it takes is cut and the cut said, and a
+// file too large, or named as a format the provider does not take, blocks the button with its name.
+// The server still reads each file's first bytes and is the one that decides; a name is only a
+// guess, so a file named as no known format is left for it to judge.
 import type { CloneSupport, SampleFormat } from "@/lib/providers";
 import {
   formatsSaid,
@@ -19,6 +19,12 @@ import {
   tooMuchSaid,
   wrongFormatSaid,
 } from "@/lib/voiceSamples";
+
+/** One sample as a form holds it: the file, and what is said in it when the person gave that. */
+export interface SampleRow {
+  file: File;
+  transcript: string;
+}
 
 /** The names a sample of each format goes by; Opus is as often in an Ogg file as on its own. */
 const EXTENSIONS: Record<SampleFormat, readonly string[]> = {
@@ -34,25 +40,23 @@ export const acceptOf = (cloning: CloneSupport): string =>
   cloning.formats.flatMap((f) => EXTENSIONS[f]).join(",");
 
 /**
- * One sentence on what a pick may be, under the provider's advice: "WAV, MP3, M4A, Opus or FLAC;
- * up to 20 samples of up to 20 MB each." or, for a provider that takes one, "One sample, WAV or
- * MP3, of up to 10 MB."
+ * The limits in one short line beside the picker: "Up to 20 files, 20 MB each · WAV, MP3, M4A,
+ * Opus or FLAC", or for a provider that takes one, "One file, up to 10 MB · WAV or MP3".
  */
 export function limitsSaid(cloning: CloneSupport): string {
   const max = maxSamplesOf(cloning);
   const size = sizeSaid(maxSampleBytesOf(cloning));
-  return max === 1
-    ? `One sample, ${formatsSaid(cloning.formats)}, of up to ${size}.`
-    : `${formatsSaid(cloning.formats)}; up to ${max} samples of up to ${size} each.`;
+  const count = max === 1 ? `One file, up to ${size}` : `Up to ${max} files, ${size} each`;
+  return `${count} · ${formatsSaid(cloning.formats)}`;
 }
 
-/** The files picked, up to the most one voice is made from, and how many were not. */
-export function pickOf(
-  files: readonly File[],
+/** The samples picked, up to the most one voice is made from, and how many were not. */
+export function pickOf<T>(
+  items: readonly T[],
   cloning: CloneSupport,
-): { samples: File[]; leftOut: number } {
-  const samples = files.slice(0, maxSamplesOf(cloning));
-  return { samples, leftOut: files.length - samples.length };
+): { samples: T[]; leftOut: number } {
+  const samples = items.slice(0, maxSamplesOf(cloning));
+  return { samples, leftOut: items.length - samples.length };
 }
 
 /** What the page says of a pick cut short: "Only the first 20 are used: 3 left out." */
@@ -91,3 +95,13 @@ export function pickProblem(
   if (samples.reduce((n, f) => n + f.size, 0) > MAX_SAMPLES_BYTES) return `${tooMuchSaid()}.`;
   return null;
 }
+
+/** Whether a provider that needs a transcript of each sample is still owed one for some row. */
+export const transcriptsMissing = (rows: readonly SampleRow[], cloning: CloneSupport): boolean =>
+  cloning.transcript === "required" && rows.some((r) => !r.transcript.trim());
+
+/** The rows as the store's request takes them: the files, and the transcripts beside them. */
+export const requestOf = (rows: readonly SampleRow[]) => ({
+  samples: rows.map((r) => r.file),
+  transcripts: rows.map((r) => r.transcript.trim()),
+});

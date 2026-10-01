@@ -80,6 +80,17 @@ describe("the Model Studio cloner", () => {
     });
   });
 
+  test("sends the sample's transcript as `text` when the person gave one", async () => {
+    const q = answering(() => Response.json({ output: { voice: "v1" } }));
+    const [sample] = request.samples;
+    await q.cloner.clone(
+      target,
+      { ...request, samples: [{ ...sample, transcript: "Come in." }] },
+      signal(),
+    );
+    expect(JSON.parse(q.sent[0].init.body as string).input.text).toBe("Come in.");
+  });
+
   test("goes to the endpoint's own host, a workspace's among them", async () => {
     const q = answering(() => Response.json({ output: { voice: "v1" } }));
     await q.cloner.clone(

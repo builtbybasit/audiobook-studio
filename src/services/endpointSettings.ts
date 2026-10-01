@@ -95,25 +95,25 @@ export interface EndpointSettingsService {
   /** Have the *saved* speech endpoint say a sentence in one voice. A real, priced request. */
   sampleVoice(id: string, voice: string): Promise<VoiceSample>;
   /**
-   * Make a voice from recordings on the *saved* endpoint's provider, with the key the server holds.
+   * Make a voice from samples on the *saved* endpoint's provider, with the key the server holds.
    * `consent` must be true: it says the person has the right to clone the voice in them. The server
-   * keeps the recordings with the voice, and says whether it managed to.
+   * keeps the samples with the voice, and says whether it managed to.
    */
   cloneVoice(id: string, request: VoiceCloneRequest): Promise<ClonedVoice>;
-  /** Every voice of the *saved* endpoint whose recordings are kept. */
+  /** Every voice of the *saved* endpoint whose samples are kept. */
   keptSamples(id: string): Promise<KeptVoiceSamples[]>;
   /**
-   * Keep recordings for a voice already on the *saved* endpoint, in place of any it had — for a
-   * voice cloned before recordings were kept. Nothing is sent to the provider.
+   * Keep samples for a voice already on the *saved* endpoint, in place of any it had — for a
+   * voice cloned before samples were kept. Nothing is sent to the provider.
    */
   keepSamples(
     id: string,
     voice: string,
     request: Omit<VoiceCloneRequest, "title">,
   ): Promise<KeptVoiceSamples>;
-  /** Forget one voice's kept recordings; the voice stays. */
+  /** Forget one voice's kept samples; the voice stays. */
   forgetSamples(id: string, voice: string): Promise<void>;
-  /** Take back a forget no save has made final yet; answers with the recordings. */
+  /** Take back a forget no save has made final yet; answers with the samples. */
   restoreSamples(id: string, voice: string): Promise<KeptVoiceSamples>;
   /**
    * What the server's process has seen of each speech endpoint it has sent to: lines out and held,
@@ -124,10 +124,12 @@ export interface EndpointSettingsService {
   live(): Promise<Record<string, EndpointLive>>;
 }
 
-/** What a voice is made from: a name, the recordings, and the person's say-so. */
+/** What a voice is made from: a name, the samples, and the person's say-so. */
 export interface VoiceCloneRequest {
   title: string;
   samples: File[];
+  /** what is said in each sample, in the same order; "" or absent where the person gave none */
+  transcripts?: string[];
   consent: boolean;
 }
 
@@ -154,7 +156,7 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
   }
 
   cloneVoice(id: string, request: VoiceCloneRequest): Promise<ClonedVoice> {
-    const form = recordingsForm(request);
+    const form = samplesForm(request);
     form.set("id", id);
     form.set("title", request.title.trim());
     return this.http.postFormData<ClonedVoice>("/endpoints/voices/clone", form);
@@ -169,10 +171,7 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
     voice: string,
     request: Omit<VoiceCloneRequest, "title">,
   ): Promise<KeptVoiceSamples> {
-    return this.http.postFormData<KeptVoiceSamples>(
-      samplesPath(id, voice),
-      recordingsForm(request),
-    );
+    return this.http.postFormData<KeptVoiceSamples>(samplesPath(id, voice), samplesForm(request));
   }
 
   async forgetSamples(id: string, voice: string): Promise<void> {
@@ -202,16 +201,20 @@ const samplesPath = (id: string, voice: string) =>
   `/endpoints/${seg(id)}/voices/${seg(voice)}/samples`;
 
 /**
- * The recordings and the person's say-so, as the server reads them. The sentence sent is the one
- * the form shows beside the box, so what the server keeps is what was actually agreed to.
+ * The samples, their transcripts and the person's say-so, as the server reads them: a `samples`
+ * file and a `transcripts` text per sample, in the same order. The sentence sent is the one the
+ * form shows beside the box, so what the server keeps is what was actually agreed to.
  */
-function recordingsForm(request: Omit<VoiceCloneRequest, "title">): FormData {
+function samplesForm(request: Omit<VoiceCloneRequest, "title">): FormData {
   const form = new FormData();
   if (request.consent) {
     form.set("consent", "yes");
     form.set("consentText", CLONE_CONSENT);
   }
-  for (const sample of request.samples) form.append("samples", sample, sample.name);
+  for (const [i, sample] of request.samples.entries()) {
+    form.append("samples", sample, sample.name);
+    form.append("transcripts", request.transcripts?.[i] ?? "");
+  }
   return form;
 }
 

@@ -33,9 +33,11 @@
 // A voice is cloned with `POST /model` on the API's host
 // (https://docs.fish.audio/api-reference/endpoint/model/create-model), as multipart, with
 // `type=tts`, a title, `train_mode=fast` — the model is usable at once — and 1 to 20 samples under
-// `voices`. With no `texts` Fish transcribes the samples itself. The voice is made private: only the
-// account that made it can use it. The answer is the new model, whose `_id` is the `reference_id` a
-// line is spoken with.
+// `voices`. `texts` are the samples' transcripts, one per sample in the same order, and go only
+// when every sample has one: with no `texts` Fish transcribes the samples itself, and a sample
+// with an empty text in its place would be read as saying nothing. The voice is made private: only
+// the account that made it can use it. The answer is the new model, whose `_id` is the
+// `reference_id` a line is spoken with.
 //
 // Voices come from two catalogues, because Fish has two: the account's own library (`self=true`),
 // which is what "Fetch from server" merges in, and the public catalogue anyone's voice can be
@@ -102,6 +104,8 @@ export const fishWire: SpeechWire = {
     form.set("train_mode", "fast");
     form.set("visibility", "private");
     for (const sample of request.samples) form.append("voices", sample.blob, sample.name);
+    if (request.samples.every((s) => s.transcript))
+      for (const sample of request.samples) form.append("texts", sample.transcript!);
     const res = await call(
       target,
       `${fishApiRoot(target.baseUrl)}/model`,

@@ -1,12 +1,12 @@
-// The recordings a cloned voice was made from, kept with the voice.
+// The samples a cloned voice was made from, kept with the voice.
 //
 // A clone is made in one request and the provider keeps only the voice; without these rows the
-// recordings would be gone the moment the upload finished, and a voice could never travel with a
+// samples would be gone the moment the upload finished, and a voice could never travel with a
 // book's script to someone who has to make it again on their own account.
 //
 // **Neither table points at `voices`.** Saving the endpoints clears every endpoint and voice row
 // and lays the whole configuration down again (`server/db/endpoints.ts`), so a cascade from
-// `voices` would delete every recording on every save. The two are tied to a voice by value —
+// `voices` would delete every sample on every save. The two are tied to a voice by value —
 // `(endpoint_id, voice_id)`, as a character's `VoiceRef` is — and `saveEndpoints` reconciles them
 // against what was saved: see `reconcileClones` in `server/db/voiceSamples.ts`.
 import { foreignKey, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
@@ -14,7 +14,7 @@ import { foreignKey, integer, primaryKey, sqliteTable, text } from "drizzle-orm/
 import type { SampleFormat } from "~/providers/clone";
 
 /**
- * A voice whose recordings are kept: one made here, or one made before recordings were kept and
+ * A voice whose samples are kept: one made here, or one made before samples were kept and
  * given them afterwards.
  */
 export const clonedVoices = sqliteTable(
@@ -24,7 +24,7 @@ export const clonedVoices = sqliteTable(
     voiceId: text("voice_id").notNull(),
     /** what the voice was called when it was made */
     title: text("title").notNull(),
-    /** epoch ms the recordings were kept */
+    /** epoch ms the samples were kept */
     madeAt: integer("made_at").notNull(),
     /** epoch ms the person ticked the box, and the sentence they ticked */
     consentAt: integer("consent_at").notNull(),
@@ -37,12 +37,12 @@ export const clonedVoices = sqliteTable(
     /**
      * Epoch ms a save first went without this attached voice. Removing a voice or an endpoint on
      * the page offers Undo, and a settings import can drop a voice and bring it back, so a missing
-     * voice keeps its recordings for a grace period and gets them back when it returns; a later
+     * voice keeps its samples for a grace period and gets them back when it returns; a later
      * save after the grace period removes them.
      */
     missingSince: integer("missing_since"),
     /**
-     * Epoch ms the person forgot these recordings. Hidden from every read at once, restorable by
+     * Epoch ms the person forgot these samples. Hidden from every read at once, restorable by
      * the forget's Undo until a save after the grace period removes them.
      */
     forgottenAt: integer("forgotten_at"),
@@ -50,7 +50,7 @@ export const clonedVoices = sqliteTable(
   (t) => [primaryKey({ columns: [t.endpointId, t.voiceId] })],
 );
 
-/** One kept recording. The bytes are on disk under `VOICE_DIR`, named by their hash. */
+/** One kept sample. The bytes are on disk under `VOICE_DIR`, named by their hash. */
 export const voiceSamples = sqliteTable(
   "voice_samples",
   {
@@ -63,6 +63,8 @@ export const voiceSamples = sqliteTable(
     /** what the bytes say they are, which is what they are served as */
     format: text("format").$type<SampleFormat>().notNull(),
     bytes: integer("bytes").notNull(),
+    /** what is said in it, as the person gave it; null when they gave none */
+    transcript: text("transcript"),
     position: integer("position").notNull().default(0),
   },
   (t) => [

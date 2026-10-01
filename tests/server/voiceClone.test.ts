@@ -15,8 +15,10 @@ import { eq } from "drizzle-orm";
 
 import type { Endpoint, KeptVoiceSamples, Voice } from "@/types";
 import { CLONE_CONSENT } from "@/lib/endpointShapes";
-import { MAX_SAMPLE_BYTES, MAX_VOICE_SAMPLES } from "@/lib/voiceSamples";
+import { MAX_SAMPLE_BYTES, MAX_TRANSCRIPT_CHARS, MAX_VOICE_SAMPLES } from "@/lib/voiceSamples";
 import { SPEECH_PROVIDERS } from "@/lib/providers";
+import { fish } from "@/lib/providers/fish";
+import { readSamples } from "~/voices/clone";
 import { clonedVoices } from "~/db/schema";
 import { sniffSample, type CloneRequest } from "~/providers/clone";
 import { SPEECH_WIRES } from "~/providers/speech/registry";
@@ -107,6 +109,45 @@ describe("the clone route", () => {
     expect(new Uint8Array(await asked[0].samples[1].blob.arrayBuffer()).subarray(0, 2)).toEqual(
       new Uint8Array([0xff, 0xfb]),
     );
+  });
+
+  test("a transcript beside a sample goes to the cloner trimmed, and none goes as none", async () => {
+    const { cloner, asked } = remembering();
+    const api = testApi({ cloner });
+    await saved(api, cloneEndpoint());
+    const { status } = await postClone(
+      api,
+      cloneForm(agreed(), [sampleFile("a.wav"), sampleFile("b.wav")], ["  Come in. ", ""]),
+    );
+    expect(status).toBe(201);
+    expect(asked[0].samples.map((s) => s.transcript)).toEqual(["Come in.", undefined]);
+    // a form from before transcripts, with no `transcripts` field at all, is as good as none
+    await postClone(api, cloneForm(agreed(), [sampleFile("c.wav")]));
+    expect(asked[1].samples[0].transcript).toBeUndefined();
+    // one that runs on is refused by the file's name
+    const { body } = await postClone(
+      api,
+      cloneForm(agreed(), [sampleFile("long.wav")], ["x".repeat(MAX_TRANSCRIPT_CHARS + 1)]),
+    );
+    expect(body.error?.message).toBe("The transcript of long.wav runs past 1000 characters");
+  });
+
+  test("a provider that needs a transcript of each sample is refused one without", async () => {
+    const needs = { ...fish.cloning!, transcript: "required" as const };
+    const read = (transcripts: string[]) =>
+      readSamples([sampleFile("a.wav"), sampleFile("b.wav")], transcripts, needs);
+    await expect(read(["Come in.", " "])).rejects.toThrow(
+      "Say what is said in b.wav: this provider needs a transcript of each sample",
+    );
+    expect((await read(["Come in.", "Sit down."])).map((s) => s.transcript)).toEqual([
+      "Come in.",
+      "Sit down.",
+    ]);
+    // and one that takes none is sent none, whatever the form carried
+    const none = { ...fish.cloning!, transcript: "none" as const };
+    expect(
+      (await readSamples([sampleFile()], ["Come in."], none)).map((s) => s.transcript),
+    ).toEqual([undefined]);
   });
 
   test("the log line is the record that consent was given", async () => {
@@ -246,6 +287,25 @@ describe("the Fish Audio cloner", () => {
       ["a.wav", 3, "audio/wav"],
       ["b.mp3", 2, "audio/mpeg"],
     ]);
+    // no transcripts, no `texts`: Fish transcribes the samples itself
+    expect(body.has("texts")).toBe(false);
+  });
+
+  test("sends the transcripts as `texts`, one per sample, only when every sample has one", async () => {
+    const [a, b] = request.samples;
+    const sent = async (samples: CloneRequest["samples"]) => {
+      const f = answering(() => Response.json({ _id: "a1b2c3" }, { status: 201 }));
+      await f.cloner.clone(target, { ...request, samples }, signal());
+      return (f.sent[0].init.body as FormData).getAll("texts");
+    };
+    expect(
+      await sent([
+        { ...a, transcript: "Come in." },
+        { ...b, transcript: "Sit down." },
+      ]),
+    ).toEqual(["Come in.", "Sit down."]);
+    // one sample without: an empty text would be read as that sample saying nothing
+    expect(await sent([{ ...a, transcript: "Come in." }, b])).toEqual([]);
   });
 
   test("an upload that outlasts its clock is not sent again", async () => {
@@ -411,6 +471,21 @@ describe("the recordings a voice was made from", () => {
     // a form that sends no sentence is held to the one the Voices tab shows
     await postClone(api, cloneForm(agreed(), [sampleFile()]));
     expect((await samplesOf(api)).body.consentText).toBe(CLONE_CONSENT);
+
+    // a transcript is kept with its sample, and a sample without one carries none
+    const { body: told } = await postClone(
+      api,
+      cloneForm(
+        { ...agreed(), title: "Told" },
+        [sampleFile("a.wav"), sampleFile("b.wav")],
+        ["Come in.", ""],
+      ),
+    );
+    expect(told.samplesKept).toBe(true);
+    expect((await samplesOf(api)).body.samples.map((s) => s.transcript)).toEqual([
+      "Come in.",
+      undefined,
+    ]);
   });
 
   test("a voice made but not kept is still made, and the answer says so", async () => {

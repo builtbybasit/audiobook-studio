@@ -16,7 +16,7 @@ import { useUiStore } from "@/stores/ui";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { TabsContent, TabsRoot } from "reka-ui";
-import { UiTabs, UiToggleGroup, UiTooltip } from "@/ui";
+import { UiHint, UiTabs, UiToggleGroup, UiTooltip } from "@/ui";
 import {
   Ban as CancelIcon,
   Pause as PauseIcon,
@@ -274,12 +274,6 @@ function pickBucket(b: MetricBucket | null) {
     <div class="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 class="text-2xl font-semibold">Endpoints</h1>
-        <p class="max-w-2xl text-sm text-zinc-500">
-          Every scripting and speech endpoint the server holds, across every book. Health,
-          throughput and spend are what its jobs actually sent, priced as each request completed; a
-          simulated endpoint is answered by the server itself, never reaches a provider and bills
-          nothing.
-        </p>
       </div>
       <div class="flex flex-wrap gap-2">
         <button class="btn-ghost btn-xs" @click="add('scripting')">
@@ -428,10 +422,9 @@ function pickBucket(b: MetricBucket | null) {
             }}.
           </p>
         </div>
-        <p class="text-[11px] leading-relaxed text-zinc-500">
+        <p class="text-[11px] text-zinc-500">
           {{ all.filter((u) => u.kind === "scripting").length }} scripting ·
-          {{ all.filter((u) => u.kind === "tts").length }} speech. Pausing one leaves the rest
-          running.
+          {{ all.filter((u) => u.kind === "tts").length }} speech
         </p>
       </aside>
 
@@ -492,13 +485,12 @@ function pickBucket(b: MetricBucket | null) {
               >
                 <CancelIcon class="icon-sm" /> Cancel {{ busyJobs.length || "" }}
               </button>
+              <UiHint
+                label="pause and cancel"
+                text="Pause holds new requests and lets those in flight finish; Cancel stops the jobs themselves."
+              />
             </div>
           </div>
-
-          <p class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-            <b>Pause</b> stops new dispatches and lets requests already in flight finish.
-            <b>Cancel</b> stops the jobs themselves.
-          </p>
 
           <div
             v-if="confirmCancel && busyJobs.length"
@@ -516,10 +508,9 @@ function pickBucket(b: MetricBucket | null) {
               }}{{ busyJobs.length > 3 ? `, +${busyJobs.length - 3} more` : "" }}.
             </p>
             <p class="mt-1 text-zinc-600 dark:text-zinc-300">
-              Requests already in flight are allowed to land and stay in the history with their
-              recorded cost. Queued requests are dropped; their chapters go back to what they were
-              before the run. Nothing already scripted or rendered is deleted, and no spend is
-              refunded or removed.
+              Requests in flight land and stay recorded with their cost; queued ones are dropped and
+              their chapters go back to how they were. Nothing already scripted or rendered is
+              deleted.
             </p>
             <div class="mt-2 flex gap-2">
               <button class="btn-ghost btn-xs" @click="confirmCancel = false">Keep running</button>

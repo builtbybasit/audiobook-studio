@@ -36,7 +36,7 @@ import {
 } from "@/components/ui/chart";
 import { metricValue, throughputUnit } from "@/lib/endpoints";
 import { money } from "@/lib/pricing";
-import { UiToggleGroup } from "@/ui";
+import { UiHint, UiToggleGroup } from "@/ui";
 
 const props = defineProps<{
   series: MetricSeries;
@@ -240,7 +240,10 @@ const tooltip = computed(() =>
             @update:model-value="setLatencyView"
           />
         </span>
-        <span class="text-zinc-400">← → walks the buckets, Enter filters</span>
+        <UiHint
+          label="the chart’s keys"
+          text="Focus the chart: ← → walk the buckets, Enter filters the Activity list to one, Esc clears."
+        />
       </span>
     </div>
 
@@ -353,7 +356,7 @@ const tooltip = computed(() =>
       </template>
       <template v-else>
         Hover or arrow through a {{ metric === "latency" ? "point" : "bar" }} for its numbers; pick
-        one to filter the Activity tab.
+        one to filter Activity.
       </template>
     </p>
   </ChartContainer>

@@ -73,6 +73,8 @@ export const elevenlabs: SpeechProviderShape = {
     maxSamples: 20,
     maxSampleBytes: 10 * 1024 * 1024,
     formats: ["mp3", "wav", "m4a", "flac"],
+    // the IVC reference takes a name, the files, a description and labels: no transcript
+    transcript: "none",
     advice:
       "ElevenLabs recommends 1–2 minutes of audio in all, and no more than 3 — how many clips does " +
       "not matter: one speaker, no background noise or reverb, an even tone and volume. It advises " +

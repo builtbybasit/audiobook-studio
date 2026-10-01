@@ -30,22 +30,21 @@ import {
   X as RemoveIcon,
   Search as SearchIcon,
 } from "@lucide/vue";
-import { UiCheckbox, UiSelect, UiTooltip } from "@/ui";
+import { UiCheckbox, UiHint, UiSelect, UiTooltip } from "@/ui";
 import { plural } from "@/lib/contents";
 import { isFishAudio } from "@/lib/endpoints";
 import { CLONE_CONSENT } from "@/lib/endpointShapes";
 import { cloningOf, speechProviderOf } from "@/lib/providers";
 import {
-  acceptOf,
-  leftOutSaid,
-  limitsSaid,
-  pickOf,
   pickProblem,
+  requestOf,
+  transcriptsMissing,
+  type SampleRow,
 } from "@/views/endpoints/cloneForm";
 import CloneVoicePanel from "@/views/endpoints/CloneVoicePanel.vue";
 import FishVoiceSearch from "@/views/endpoints/FishVoiceSearch.vue";
 import { GENDER_ICON, GENDERS } from "@/views/endpoints/genders";
-import { maxSamplesOf } from "@/lib/voiceSamples";
+import SamplePicker from "@/views/endpoints/SamplePicker.vue";
 import type { Endpoint, Gender, KeptVoiceSamples, Voice } from "@/types";
 
 const props = defineProps<{ endpoint: Endpoint }>();
@@ -129,8 +128,7 @@ const keptTitle = (k: KeptVoiceSamples) =>
 
 const keep = reactive({
   voiceId: null as string | null,
-  samples: [] as File[],
-  leftOut: 0,
+  samples: [] as SampleRow[],
   consent: false,
   busy: false,
 });
@@ -138,30 +136,32 @@ const keepVoice = computed(() => props.endpoint.voices.find((v) => v.id === keep
 /** Why the picked samples cannot be kept, naming the file; null when nothing stops them. */
 const keepProblem = computed(() =>
   cloning.value
-    ? pickProblem(keep.samples, cloning.value, speechProviderOf(props.endpoint).label)
+    ? pickProblem(
+        keep.samples.map((r) => r.file),
+        cloning.value,
+        speechProviderOf(props.endpoint).label,
+      )
     : null,
 );
 const keepBlocked = computed(
-  () => !keep.samples.length || !!keepProblem.value || !keep.consent || keep.busy,
+  () =>
+    !cloning.value ||
+    !keep.samples.length ||
+    !!keepProblem.value ||
+    transcriptsMissing(keep.samples, cloning.value) ||
+    !keep.consent ||
+    keep.busy,
 );
 function openKeep(v: Voice) {
-  Object.assign(keep, { voiceId: keep.voiceId === v.id ? null : v.id, samples: [], leftOut: 0 });
+  Object.assign(keep, { voiceId: keep.voiceId === v.id ? null : v.id, samples: [] });
   keep.consent = false;
-}
-/** The samples picked, up to the most one voice is made from, and how many were not. */
-function pickKept(e: Event) {
-  const all = [...((e.target as HTMLInputElement).files ?? [])];
-  Object.assign(
-    keep,
-    cloning.value ? pickOf(all, cloning.value) : { samples: [], leftOut: all.length },
-  );
 }
 async function keepSamples() {
   if (keepBlocked.value || !keep.voiceId) return;
   keep.busy = true;
   try {
     const k = await endpointsStore.keepVoiceSamples(props.endpoint, keep.voiceId, {
-      samples: keep.samples,
+      ...requestOf(keep.samples),
       consent: keep.consent,
     });
     if (k) {
@@ -200,12 +200,16 @@ const sampleTitle = computed(() =>
     <section class="card p-3">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0">
-          <h3 class="label mb-1">Voice catalogue</h3>
+          <h3 class="label mb-1">
+            Voice catalogue
+            <UiHint
+              label="the voice catalogue"
+              text="A character can only be given a voice that is on this list, which every book draws on."
+            />
+          </h3>
           <p class="text-[11px] leading-relaxed text-zinc-500">
             {{ plural(endpoint.voices.length, "voice") }} on <b>{{ endpoint.name }}</b
-            ><span v-if="routed">, {{ routed }} of them assigned to a speaker somewhere</span>. A
-            character can only be given a voice that exists here, and every book draws on this one
-            list.
+            ><span v-if="routed">, {{ routed }} assigned to a speaker somewhere</span>.
           </p>
         </div>
         <div class="flex shrink-0 flex-wrap gap-2">
@@ -236,15 +240,27 @@ const sampleTitle = computed(() =>
         class="mt-3 flex flex-wrap items-end gap-2 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50"
         @submit.prevent="add"
       >
-        <label class="space-y-1 text-xs font-medium"
-          ><span>Voice ID</span
-          ><input
+        <!-- a div, not a label: the hint is a button, so the input is named on its own -->
+        <div class="space-y-1 text-xs font-medium">
+          <span
+            >Voice ID
+            <UiHint
+              label="the voice id"
+              :text="
+                fish
+                  ? 'Fish Audio quotes a voice as a reference_id: a model from your library, or a public one found above.'
+                  : 'Exactly what the provider expects in the request’s voice field; the label is yours.'
+              "
+          /></span>
+          <input
             v-model="draft.id"
-            class="input w-48 font-mono"
+            class="input block w-48 font-mono"
             spellcheck="false"
             :placeholder="fish ? 'reference_id' : 'alloy'"
+            aria-label="Voice ID"
             required
-        /></label>
+          />
+        </div>
         <label class="space-y-1 text-xs font-medium"
           ><span>Label</span><input v-model="draft.label" class="input w-40" placeholder="optional"
         /></label>
@@ -253,21 +269,8 @@ const sampleTitle = computed(() =>
           <UiSelect v-model="draft.gender" :options="GENDERS" size="xs" class="w-32" />
         </label>
         <button class="btn-primary btn-xs" type="submit" :disabled="duplicate">Add</button>
-        <p class="w-full text-[11px] text-zinc-500">
-          <template v-if="duplicate"
-            ><span class="text-amber-600 dark:text-amber-400"
-              >This endpoint already has a voice with that id.</span
-            ></template
-          >
-          <template v-else-if="fish"
-            >Fish Audio quotes a voice as a <code class="font-mono">reference_id</code> — a model
-            from your library or a public one, found by searching above.</template
-          >
-          <template v-else
-            >Exactly what the provider expects in the request’s
-            <code class="font-mono">voice</code> field. The label is yours; gender only steers
-            auto-assignment.</template
-          >
+        <p v-if="duplicate" class="w-full text-[11px] text-amber-600 dark:text-amber-400">
+          This endpoint already has a voice with that id.
         </p>
       </form>
 
@@ -275,8 +278,8 @@ const sampleTitle = computed(() =>
         v-if="needsKeyFirst"
         class="mt-2 rounded bg-amber-400/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
       >
-        <WarnIcon class="icon-sm" /> No key is set for this endpoint. Voices can still be listed
-        here, but nothing routed to them renders until one is added on the Connection tab.
+        <WarnIcon class="icon-sm" /> No key is set: voices can be listed, but nothing renders with
+        them until one is added on the Connection tab.
       </p>
     </section>
 
@@ -285,7 +288,13 @@ const sampleTitle = computed(() =>
 
     <section class="card p-3">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h3 class="label">Voices</h3>
+        <h3 class="label">
+          Voices
+          <UiHint
+            label="the voices"
+            text="Renaming a voice re-routes nothing, since the id is what is sent; removing one leaves its speakers unrouted in every book, undoable from the toast."
+          />
+        </h3>
         <div v-if="endpoint.voices.length > 8" class="relative">
           <SearchIcon
             class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 icon"
@@ -303,8 +312,7 @@ const sampleTitle = computed(() =>
         v-if="!endpoint.voices.length"
         class="rounded-lg border border-dashed border-zinc-300 px-3 py-6 text-center text-xs leading-relaxed text-zinc-500 dark:border-zinc-700"
       >
-        No voices yet. Fetch the server’s list, or add one by its id — until this endpoint has at
-        least one, no speaker in any book can be routed to it.
+        No voices yet: fetch the server’s list, or add one by its id.
       </p>
       <p
         v-else-if="!shown.length"
@@ -413,27 +421,9 @@ const sampleTitle = computed(() =>
       >
         <p class="text-[11px] leading-relaxed text-zinc-500">
           Keep the samples <b>{{ keepVoice.label }}</b> was made from, so it can go with a book's
-          script to someone who has to make it again. Nothing is sent to {{ endpoint.name }}.
-          {{ limitsSaid(cloning) }}
+          script; nothing is sent to {{ endpoint.name }}.
         </p>
-        <div class="flex flex-wrap items-end gap-2">
-          <label class="space-y-1 text-xs font-medium"
-            ><span>{{ maxSamplesOf(cloning) === 1 ? "Sample" : "Samples" }}</span
-            ><input
-              type="file"
-              :accept="acceptOf(cloning)"
-              :multiple="maxSamplesOf(cloning) > 1"
-              class="block text-xs"
-              @change="pickKept"
-          /></label>
-          <span v-if="keep.samples.length" class="text-[11px] text-zinc-500">
-            {{ plural(keep.samples.length, "sample") }},
-            {{ sizeLabel(keep.samples.reduce((n, f) => n + f.size, 0)) }}
-          </span>
-          <span v-if="keep.leftOut" class="text-[11px] text-amber-600 dark:text-amber-400">
-            {{ leftOutSaid(keep.leftOut, cloning) }}
-          </span>
-        </div>
+        <SamplePicker v-model="keep.samples" :cloning="cloning" />
         <p
           v-if="keepProblem"
           class="rounded bg-amber-400/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300"
@@ -454,13 +444,6 @@ const sampleTitle = computed(() =>
           </button>
         </div>
       </form>
-
-      <p class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-        Labels and gender are yours to change and take effect at once — the id is what goes in the
-        request, so renaming a voice re-routes nothing. Removing one leaves the speakers that used
-        it unrouted in every book, and is undoable from the toast; any samples kept for it are held
-        for a day in case it comes back, then go.
-      </p>
     </section>
   </div>
 </template>

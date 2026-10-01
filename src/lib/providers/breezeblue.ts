@@ -53,6 +53,8 @@ export const breezeblue: SpeechProviderShape = {
     maxSamples: 1,
     maxSampleBytes: 5 * 1024 * 1024,
     formats: ["wav", "mp3"],
+    // its guide: "custom scripts, performance instructions, and language hints are not accepted"
+    transcript: "none",
     advice:
       "BreezeBlue makes a voice from one clip of at least 3 seconds: one speaker, no music or " +
       "background noise. It listens to the first minute and keeps up to 30 seconds of it, so put " +

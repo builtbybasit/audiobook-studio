@@ -27,6 +27,8 @@ endpoints needing attention (a button that opens the first one). Searchable card
 by All / Scripting / TTS and show name, model, enabled state, observed health, active-over-configured
 concurrency and one line of pricing at the rates in force now. The header exports and imports
 endpoints, scripting profiles, the default prompt and script settings as JSON, never keys.
+Explanations sit behind a **?** beside each label (`UiHint`, one sentence on click); what stays
+inline is at most a line, plus warnings and counts.
 
 The selected endpoint fills the right side behind tabs. A scripting endpoint has Overview,
 Connection, Requests, Prompt, Pricing & budgets and Activity; a speech endpoint has Voices and
@@ -132,23 +134,31 @@ removed. Each voice shows how many speakers across the library use it.
 
 **Clone a voice** appears on an endpoint whose provider clones — Fish Audio, ElevenLabs,
 BreezeBlue, Cartesia, MiniMax, or Qwen on `qwen3-tts-vc-2026-01-22`; a Qwen endpoint on another
-model names the model to switch to. It makes a voice from samples of one person, recorded or
-downloaded:
+model names the model to switch to. It makes a voice from uploaded samples of one person speaking — any audio
+file of that one voice you have the right to use:
 
 - The form takes a name, the samples the provider takes, and a box saying the voice is yours or its
   owner agreed; nothing is sent without the box.
-- The picker offers only the provider's formats. Fish and ElevenLabs take up to 20 samples, the
-  others one; a pick past that keeps the first and says so, and a file too large or in a format the
-  provider does not take blocks the button by name.
-- The provider's own advice and what it charges are shown. A clone fee is a row in the Activity
-  list.
+- The picker offers only the provider's formats and says the limits in one line — Fish and
+  ElevenLabs take up to 20 samples, the others one — and lists each sample with its size. A pick
+  past that keeps the first and says so, and a file too large or in a format the provider does not
+  take blocks the button by name.
+- Where the provider takes a transcript of a sample — Fish Audio and Qwen do, as an option — each
+  listed sample has a one-line field for what is said in it. Fish is sent them only when every
+  sample has one and transcribes the samples itself otherwise; Qwen uses it to improve the clone.
+  The transcript is kept with the sample. Cartesia, ElevenLabs and BreezeBlue take none, and
+  MiniMax's text field is a check that refuses a clone whose transcript does not match, so it is
+  not offered.
+- The provider's advice sits behind the ? beside the picker; what it charges is one line above
+  the form, and a clone fee is a row in the Activity list.
 - The request is sent once and never retried, so a failure never leaves a second copy on the
   account. The provider keeps the voice as a private voice, and it is added to the list and spoken
   by its id from then on. A provider that asks for the voice to be verified first says so in the
   toast.
 
-**Kept samples.** The server keeps a clone's samples beside the voice, with the sentence that was
-agreed to and when, so the voice can travel with a book's script
+**Kept samples.** The server keeps a clone's samples beside the voice, each with its transcript
+when one was given, and the sentence that was agreed to and when, so the voice can travel with a
+book's script
 ([script export](script-transfer.md#kept-when-a-voice-is-cloned)). The voice's row then says
 **N samples kept**; **Forget** drops them and keeps the voice, with Undo. A voice with none offers
 **Keep its samples…**: the same picker, limits and consent box, with nothing sent to the provider.
@@ -182,7 +192,11 @@ Cloning mechanics are in [the providers](backend.md#the-providers-and-where-a-ke
   answers each chunk in a tenth of the time its run estimate allows a chunk (`secPerChunk`), and
   never fails.
 
-A footer says which settings apply immediately and which apply to the next job.
+One line at the foot says when the settings apply: on a scripting endpoint, everything to the
+next run, and a run already queued keeps the settings it started with; on a speech endpoint,
+concurrency, timeouts, retries and cutting to the next line, and format and sample rate to the next
+job. Pause, resume and concurrency are read before every request, so lowering concurrency mid-run
+narrows the next batch.
 
 ### Expressions
 
@@ -225,7 +239,10 @@ requests already in flight land and are recorded, queued lines wait, and the run
 left off. A paused scripting endpoint cannot start a run; one already queued or going carries on.
 Cancel stops the jobs, and says first how many it will hit, that in-flight work is kept with its
 recorded cost, and that nothing already scripted or rendered is deleted. Removing an endpoint
-explains the same ground, and has Undo.
+explains the same ground, and has Undo. Pausing is per endpoint: a sibling that shares the base
+URL and credential keeps running. Cancel drops queued requests and puts their chapters back as they
+were; nothing is refunded. A connection change saved while jobs are unfinished applies to jobs
+started after the save — nothing is re-sent or re-priced.
 
 An unused endpoint is never called "Healthy": it reads **Not tested** until something answers and
 **No recent activity** once it falls quiet.

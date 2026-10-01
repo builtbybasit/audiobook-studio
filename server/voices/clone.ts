@@ -15,10 +15,13 @@ import type { ClonedVoice, KeptVoiceSamples } from "@/types";
 import { cloneModelsFor, cloningOf, type CloneSupport } from "@/lib/providers";
 import {
   formatsHint,
+  MAX_TRANSCRIPT_CHARS,
   maxSampleBytesOf,
   maxSamplesOf,
+  noTranscriptSaid,
   tooLargeSaid,
   tooManySaid,
+  transcriptTooLongSaid,
   wrongFormatSaid,
 } from "@/lib/voiceSamples";
 import type { Db } from "~/db/client";
@@ -54,17 +57,25 @@ function clonableEndpoint(db: Db, id: string) {
 
 /**
  * The form's files, each typed by what its first bytes say it is and held to what the provider
- * takes: how many, how large, which formats. Refused with the file's own name.
+ * takes: how many, how large, which formats, and — where it needs one — a transcript, the
+ * `transcripts` field beside each file. Refused with the file's own name.
  */
-export async function readSamples(files: File[], cloning: CloneSupport): Promise<SampleUpload[]> {
+export async function readSamples(
+  files: File[],
+  transcripts: string[],
+  cloning: CloneSupport,
+): Promise<SampleUpload[]> {
   if (!files.length) fail(400, "Add at least one sample of the voice");
   if (files.length > maxSamplesOf(cloning)) fail(400, tooManySaid(cloning));
   const samples: SampleUpload[] = [];
-  for (const f of files) {
+  for (const [i, f] of files.entries()) {
     // a file can reach the form without a name, and a refusal still has to say which one
     const named = f.name || "One of the samples";
     if (f.size > maxSampleBytesOf(cloning)) fail(413, tooLargeSaid(named, cloning));
     if (!f.size) fail(400, `${named} is empty`);
+    const transcript = cloning.transcript === "none" ? "" : (transcripts[i] ?? "").trim();
+    if (cloning.transcript === "required" && !transcript) fail(400, noTranscriptSaid(named));
+    if (transcript.length > MAX_TRANSCRIPT_CHARS) fail(400, transcriptTooLongSaid(named));
     const head = await f.slice(0, SAMPLE_HEAD_BYTES).arrayBuffer();
     const format = sniffSample(new Uint8Array(head));
     if (!format) fail(415, `${named} is not audio a voice can be made from`, formatsHint(cloning));
@@ -75,6 +86,7 @@ export async function readSamples(files: File[], cloning: CloneSupport): Promise
       name: f.name || `sample.${format}`,
       blob: f.slice(0, f.size, SAMPLE_MIME[format]),
       format,
+      ...(transcript ? { transcript } : {}),
     });
   }
   return samples;
@@ -85,6 +97,8 @@ export interface CloneForm {
   title: string;
   consentText: string;
   files: File[];
+  /** what is said in each file, in the files' order; "" where the person gave none */
+  transcripts: string[];
 }
 
 /** What a clone came to: the voice, and how many samples it was made from. */
@@ -107,7 +121,7 @@ export async function cloneVoice(
   signal: AbortSignal,
 ): Promise<Cloned> {
   const ep = clonableEndpoint(db, form.endpointId);
-  const samples = await readSamples(form.files, ep.cloning);
+  const samples = await readSamples(form.files, form.transcripts, ep.cloning);
   const cloner = providers.cloner ?? endpointVoiceCloner();
   let voice;
   try {
@@ -148,13 +162,13 @@ export async function cloneVoice(
 export async function keepForVoice(
   db: Db,
   voiceFiles: VoiceFiles,
-  request: { endpointId: string; voiceId: string; consentText: string; files: File[] },
+  request: Omit<CloneForm, "title"> & { voiceId: string },
 ): Promise<KeptVoiceSamples> {
   const ep = clonableEndpoint(db, request.endpointId);
   const voice = ep.voices.find((v) => v.id === request.voiceId);
   if (!voice)
     throw notFound(`${ep.name} has no saved voice by that id`, `voice: ${request.voiceId}`);
-  const samples = await readSamples(request.files, ep.cloning);
+  const samples = await readSamples(request.files, request.transcripts, ep.cloning);
   await keepSampleFiles(db, voiceFiles, {
     endpointId: ep.id,
     voiceId: voice.id,

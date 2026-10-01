@@ -66,6 +66,10 @@ export const minimax: SpeechProviderShape = {
     maxSamples: 1,
     maxSampleBytes: 20 * 1024 * 1024,
     formats: ["wav", "mp3", "m4a"],
+    // The clone reference's `text_validation` is not a transcript the voice is made with but a
+    // check: MiniMax transcribes the sample and refuses the clone (1043) when the two differ, so
+    // none is sent. `clone_prompt.prompt_text` belongs to a second, prompt clip this app does not send.
+    transcript: "none",
     advice:
       "MiniMax makes a voice from one clip of 10 seconds to 5 minutes. " +
       "It shows under Fetch from server once a line has been spoken with it.",

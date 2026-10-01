@@ -9,6 +9,7 @@
 // which is the server's word for "forget it"; every other write leaves the key alone.
 import { ref, watch } from "vue";
 import { Check as OkIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
+import { UiHint } from "@/ui";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 import type { EndpointKind } from "@/types";
@@ -75,7 +76,12 @@ function remove() {
 
 <template>
   <div class="space-y-1 text-xs font-medium">
-    <span :id="`${kind}-${id}-key-label`">API key</span>
+    <span
+      ><span :id="`${kind}-${id}-key-label`">API key</span>
+      <UiHint
+        label="the API key"
+        text="Sent to the server once and kept there, never in this browser or in a settings export."
+    /></span>
     <div
       v-if="hasKey && !replacing"
       class="flex flex-wrap items-center gap-2 rounded-md border border-zinc-200 px-2 py-1.5 dark:border-zinc-700"
@@ -122,9 +128,6 @@ function remove() {
         Cancel
       </button>
     </form>
-    <p class="text-[11px] font-normal text-zinc-500">
-      Sent to the server once and kept there, never in this browser. It is not in a settings export.
-    </p>
     <p
       v-if="typed.trim() && !saving"
       class="rounded bg-violet-50 px-2 py-1 text-[11px] font-normal text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
@@ -135,8 +138,8 @@ function remove() {
       v-else-if="needsKey && !hasKey"
       class="rounded bg-amber-400/10 px-2 py-1 text-[11px] font-normal text-amber-700 dark:text-amber-300"
     >
-      <WarnIcon class="icon-sm" /> No key on the server — requests routed here fail with a “no API
-      key” error until one is saved.
+      <WarnIcon class="icon-sm" /> No key on the server — requests routed here fail until one is
+      saved.
     </p>
   </div>
 </template>

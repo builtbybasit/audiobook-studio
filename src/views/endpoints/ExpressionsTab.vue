@@ -5,7 +5,7 @@ import { useScriptsStore } from "@/stores/scripts";
 
 import { computed, ref } from "vue";
 import { Plus as AddIcon, Trash2 as RemoveIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
-import { UiSelect } from "@/ui";
+import { UiHint, UiSelect } from "@/ui";
 
 import { configErrors, expressionId, validToken } from "@/lib/expressions";
 import { tagSyntaxOf } from "@/lib/providers";
@@ -86,23 +86,22 @@ function save() {
 
 <template>
   <section class="card space-y-4 p-4 text-sm" data-expression-editor>
-    <div>
-      <h3 class="font-semibold">Expression support</h3>
-      <p class="mt-1 text-xs leading-relaxed text-zinc-500">
-        Declare what <b class="break-all">{{ endpoint.model }}</b> understands. Saved tags become
-        choices for every speaker using this model. No provider support is assumed.
-      </p>
-    </div>
+    <h3 class="font-semibold">
+      Expression support
+      <UiHint
+        label="expression support"
+        :text="`What ${endpoint.model} understands, declared here: saved tags become choices for every speaker on this model, and nothing is assumed of the provider.`"
+      />
+    </h3>
     <p
       v-if="modelChanged"
       class="rounded-md bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
     >
-      <WarnIcon class="icon-sm" /> The model or server changed. Review this list, then save to
-      confirm it for {{ endpoint.model }}. Expressions are blocked until reviewed.
+      <WarnIcon class="icon-sm" /> The model or server changed; expressions are blocked until this
+      list is confirmed for {{ endpoint.model }}.
     </p>
-    <p v-if="!syntax" class="text-xs leading-relaxed text-zinc-500">
-      {{ endpoint.model }} takes no expression tags: its provider documents none, and a tag sent to
-      it would be read out as words. Give delivery as the line's direction instead.
+    <p v-if="!syntax" class="text-xs text-zinc-500">
+      {{ endpoint.model }} takes no expression tags — a tag sent to it would be read out as words.
     </p>
     <label class="block text-xs text-zinc-500"
       >This model supports
@@ -118,11 +117,12 @@ function save() {
       />
     </label>
     <template v-if="draft.status === 'supported'">
-      <p class="text-xs leading-relaxed text-zinc-500">
-        {{ syntax?.hint ?? "This model takes no expression tags." }} Copy exact syntax from the
-        documentation: a name such as “Laughter” can map to <code>{{ example }}</code> here and a
-        different tag on another model.
-        {{ kinds.length > 1 ? "Vocal sounds and delivery instructions have separate groups." : "" }}
+      <p class="text-xs text-zinc-500">
+        {{ syntax?.hint ?? "This model takes no expression tags." }}
+        <UiHint label="tag syntax"
+          >Copy the exact syntax from the provider’s documentation: a name such as “Laughter” maps
+          to <code>{{ example }}</code> here and to a different tag on another model.</UiHint
+        >
       </p>
       <div v-if="draft.tags.length" class="space-y-3">
         <div
@@ -191,14 +191,15 @@ function save() {
       </form>
     </template>
     <p v-else class="text-xs text-zinc-500">
-      Plain narration still works. Lines with active expression annotations will need review before
-      rendering.
+      Plain narration still works; annotated lines need review before rendering.
     </p>
     <div class="border-t border-zinc-200 pt-3 dark:border-zinc-800">
       <p class="mb-3 text-xs text-zinc-500">
         {{ affected }} annotated {{ affected === 1 ? "line uses" : "lines use" }} this endpoint.
-        Changes apply to future requests; rendered audio is marked stale when its expressions
-        differ. In-flight audio keeps its original tags.
+        <UiHint
+          label="saving expressions"
+          text="Changes apply to future requests; rendered audio whose expressions differ is marked stale, and audio in flight keeps its tags."
+        />
       </p>
       <p
         v-for="message in attempted ? errors : []"

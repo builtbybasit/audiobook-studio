@@ -14,7 +14,7 @@ import { plural } from "@/lib/contents";
 import { computed, ref, watch } from "vue";
 import { keyInPlace } from "@/services/endpointSettings";
 import ServerKeyField from "@/views/endpoints/ServerKeyField.vue";
-import { UiSelect, UiSwitch, UiTooltip } from "@/ui";
+import { UiHint, UiSelect, UiSwitch, UiTooltip } from "@/ui";
 import {
   Check as OkIcon,
   Plus as AddIcon,
@@ -202,15 +202,20 @@ function newCredential() {
         class="mt-2 rounded bg-white/70 p-2 leading-relaxed text-zinc-600 dark:bg-zinc-900/60 dark:text-zinc-300"
       >
         <WarnIcon class="icon-sm text-amber-500" />
-        {{ plural(busy, "job") }} on this endpoint {{ busy === 1 ? "is" : "are" }}
-        unfinished. They keep the base URL, model and credential they were queued with — this change
-        only applies to jobs started after you save. Nothing is re-sent, and nothing already
-        recorded is re-priced.
+        {{ plural(busy, "job") }} on this endpoint {{ busy === 1 ? "is" : "are" }} unfinished and
+        {{ busy === 1 ? "keeps" : "keep" }} the base URL, model and credential they were queued
+        with. This change applies to jobs started after you save.
       </p>
     </div>
 
     <section class="card p-3">
-      <h3 class="label mb-2">Provider</h3>
+      <h3 class="label mb-2">
+        Provider
+        <UiHint
+          label="presets"
+          :text="`A preset fills in the base URL, model and ${u.kind === 'scripting' ? 'token prices' : 'billing'}; every field stays editable.`"
+        />
+      </h3>
       <div class="flex flex-wrap items-center gap-2">
         <UiSelect
           :model-value="presetId"
@@ -219,14 +224,8 @@ function newCredential() {
           aria-label="Start from a provider preset"
           @update:model-value="choosePreset"
         />
-        <span class="text-[11px] text-zinc-500">
-          Fills in the base URL, model and
-          {{ u.kind === "scripting" ? "token prices" : "billing" }}. Every field stays editable.
-        </span>
+        <UiHint v-if="presetNote" label="the preset chosen" side="bottom" :text="presetNote" />
       </div>
-      <p v-if="presetNote" class="mt-2 text-[11px] leading-relaxed text-zinc-500">
-        {{ presetNote }}
-      </p>
     </section>
 
     <div class="grid gap-3 lg:grid-cols-2">
@@ -246,16 +245,14 @@ function newCredential() {
               >Yours, not the provider’s. Two configurations may share one connection.</span
             ></label
           >
-          <div class="flex items-start justify-between gap-3 text-xs">
-            <span class="font-medium">Endpoint type</span>
-            <span class="text-right">
-              <span class="chip chip-on">{{ KIND_LABEL[u.kind] }}</span>
-              <span class="mt-1 block text-[11px] text-zinc-500"
-                >Fixed — {{ u.kind === "scripting" ? "scripting" : "speech" }} endpoints are picked
-                by {{ u.kind === "scripting" ? "a run" : "a voice" }}, so this can’t change in
-                place.</span
-              >
-            </span>
+          <div class="flex items-center justify-between gap-3 text-xs">
+            <span class="font-medium"
+              >Endpoint type
+              <UiHint
+                label="endpoint type"
+                :text="`Fixed: ${u.kind === 'scripting' ? 'scripting' : 'speech'} endpoints are picked by ${u.kind === 'scripting' ? 'a run' : 'a voice'}, so the type can’t change in place.`"
+            /></span>
+            <span class="chip chip-on">{{ KIND_LABEL[u.kind] }}</span>
           </div>
           <label class="block space-y-1 text-xs font-medium"
             ><span>Model ID</span
@@ -272,29 +269,38 @@ function newCredential() {
       <section class="card p-3">
         <h3 class="label mb-2">Provider connection</h3>
         <div class="space-y-2.5">
-          <label class="block space-y-1 text-xs font-medium"
-            ><span>Base URL</span
-            ><input
+          <div class="space-y-1 text-xs font-medium">
+            <span
+              ><span :id="`${u.key}-url-label`">Base URL</span>
+              <UiHint label="the base URL"
+                >Any OpenAI-compatible server; include <code class="font-mono">/v1</code> only if
+                the provider needs it.</UiHint
+              ></span
+            >
+            <input
               v-model.trim="draft.baseUrl"
               type="url"
               class="input w-full font-mono"
               spellcheck="false"
               placeholder="https://your-provider.com/v1"
+              :aria-labelledby="`${u.key}-url-label`"
             />
             <span v-if="simulated" class="block text-[11px] font-normal text-zinc-500"
-              >Simulated: this server answers it and nothing is sent anywhere, so it needs no key
-              and costs nothing.</span
+              >Simulated — answered by this server; no key, no cost.</span
             >
             <span v-else class="block text-[11px] font-normal text-zinc-500"
-              >Any OpenAI-compatible server. Requests append
-              <code class="font-mono">{{ path }}</code
-              >; include <code class="font-mono">/v1</code> only if your provider needs it.</span
-            ></label
-          >
+              >Requests append <code class="font-mono">{{ path }}</code></span
+            >
+          </div>
 
           <template v-if="!simulated">
             <div class="space-y-1 text-xs font-medium">
-              <span id="cred-label">Credential</span>
+              <span
+                ><span id="cred-label">Credential</span>
+                <UiHint
+                  label="credentials"
+                  text="Names the account this endpoint uses; the server still keeps one key per endpoint, saved below."
+              /></span>
               <div class="flex items-center gap-2">
                 <UiSelect
                   v-model="credential"
@@ -307,10 +313,6 @@ function newCredential() {
                   <AddIcon class="icon-sm" /> New
                 </button>
               </div>
-              <p class="text-[11px] font-normal text-zinc-500">
-                A named credential says which account this endpoint uses. The server keeps one key
-                per endpoint, so each endpoint on the account has its key saved below.
-              </p>
             </div>
 
             <ServerKeyField
@@ -328,7 +330,13 @@ function newCredential() {
 
     <!-- quota group + who shares what -->
     <section class="card p-3">
-      <h3 class="label mb-2">Shared quota group</h3>
+      <h3 class="label mb-2">
+        Shared quota group
+        <UiHint
+          label="quota groups"
+          text="Endpoints in one group share a provider account: a rate limit on one backs the others off and their spend adds up. Leave empty for an account of its own."
+        />
+      </h3>
       <div class="grid gap-3 sm:grid-cols-[220px_minmax(0,1fr)]">
         <label class="block space-y-1 text-xs font-medium"
           ><span>Group</span
@@ -344,19 +352,13 @@ function newCredential() {
               :value="g!"
             ></option></datalist
         ></label>
-        <div class="text-[11px] leading-relaxed text-zinc-500">
-          <p>
-            Endpoints in one group draw on the same provider account: a rate limit hit by one backs
-            the others off, and their spend adds up against the same quota. Leave it empty when this
-            endpoint has an account to itself.
-          </p>
-          <p v-if="sameQuota.length" class="mt-1.5 text-zinc-600 dark:text-zinc-300">
+        <div class="space-y-1.5 self-center text-[11px] text-zinc-600 dark:text-zinc-300">
+          <p v-if="sameQuota.length">
             <b>{{ group }}</b> is shared with {{ sameQuota.map((x) => x.name).join(", ") }}.
           </p>
-          <p v-if="sameConnection.length" class="mt-1.5 text-zinc-600 dark:text-zinc-300">
+          <p v-if="sameConnection.length">
             The same base URL and credential are also used by
-            {{ sameConnection.map((x) => x.name).join(", ") }} — they are separate saved
-            configurations, so pausing this one does not pause them.
+            {{ sameConnection.map((x) => x.name).join(", ") }}.
           </p>
         </div>
       </div>
@@ -366,24 +368,27 @@ function newCredential() {
     <section class="card p-3">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0">
-          <h3 class="label mb-1">Connection test</h3>
-          <p v-if="isSimulated(u.baseUrl)" class="text-[11px] leading-relaxed text-zinc-500">
-            Asks this server’s simulated provider for <b>one</b> answer<template v-if="u.endpoint">
+          <h3 class="label mb-1">
+            Connection test
+            <UiHint
+              label="the connection test"
+              text="One request from the server with the saved settings and key; it touches no book, queues no job and writes nothing to any chapter."
+            />
+          </h3>
+          <p v-if="isSimulated(u.baseUrl)" class="text-[11px] text-zinc-500">
+            One simulated answer<template v-if="u.endpoint">
               in <b>{{ encodingSummary(u.endpoint) }}</b></template
-            >. Nothing reaches the network, and it touches no book, queues no job and writes nothing
-            to any chapter.
+            >; nothing reaches the network.
           </p>
-          <p v-else class="break-words text-[11px] leading-relaxed text-zinc-500">
-            Sends <b>one</b> request to
+          <p v-else class="break-words text-[11px] text-zinc-500">
+            One request to
             <code class="font-mono">{{ (u.baseUrl || "…").replace(/\/$/, "") }}{{ path }}</code>
             <template v-if="u.endpoint">
               for <b>{{ encodingSummary(u.endpoint) }}</b></template
             >
-            using <b>the key saved on the server</b>. It touches no book, queues no job, and writes
-            nothing to any chapter.
+            with the key saved on the server.
           </p>
           <p class="mt-1 text-[11px] text-zinc-500">
-            Scope:
             {{
               u.kind === "scripting"
                 ? "~24 input and 8 output tokens"
@@ -393,7 +398,7 @@ function newCredential() {
             <b :class="probeCost == null && 'text-amber-600 dark:text-amber-400'">{{
               maybeMoney(probeCost)
             }}</b>
-            at the rates set on the Pricing tab.
+            at the Pricing tab’s rates.
           </p>
         </div>
         <button
@@ -432,20 +437,13 @@ function newCredential() {
         <p class="mt-1 leading-relaxed text-zinc-600 dark:text-zinc-300">{{ test.detail }}</p>
       </div>
       <p v-else class="mt-2 text-[11px] text-zinc-500">
-        Not tested yet. Until something has answered, this endpoint’s health reads
-        <b>Not tested</b> rather than healthy.
+        Not tested yet — health reads <b>Not tested</b> until something answers.
       </p>
       <p
         v-if="changes.length"
         class="mt-2 rounded bg-violet-50 px-2 py-1 text-[11px] text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
       >
-        This tests the saved settings. The unsaved changes above ({{ changeList }}) are not part of
-        it — save them first to test them.
-      </p>
-      <p class="mt-2 border-t border-zinc-100 pt-2 text-[11px] text-zinc-500 dark:border-zinc-800">
-        The server sends this request itself, from the settings and key it has saved, and the
-        provider may bill it. A simulated endpoint is answered by the server without calling anyone,
-        and says so.
+        Tests the saved settings; save the changes above ({{ changeList }}) to include them.
       </p>
     </section>
 
@@ -453,20 +451,17 @@ function newCredential() {
     <section class="card border-red-200 p-3 dark:border-red-500/30">
       <h3 class="label mb-1">Remove this endpoint</h3>
       <UiTooltip text="Removal is undoable from the toast that appears." side="top">
-        <p class="text-[11px] leading-relaxed text-zinc-500">
+        <p class="text-[11px] text-zinc-500">
           <template v-if="busy"
-            >{{ plural(busy, "unfinished job") }} would have to be cancelled first — cancel them
-            from the header, then remove.</template
+            >Cancel {{ plural(busy, "unfinished job") }} from the header first.</template
           >
           <template v-else-if="u.kind === 'tts'"
-            >Speakers whose voice lives here lose their routing and show as unrouted until they are
-            repicked. Clips already rendered keep playing and keep their recorded cost, and the
-            requests it served stay in the spending ledger.</template
+            >Speakers whose voice lives here show as unrouted until repicked; rendered clips and
+            recorded spend are kept.</template
           >
           <template v-else
-            >Jobs already recorded keep the model and prices they ran with, so past spend does not
-            change. If this endpoint is the one selected for runs, pick another before starting
-            one.</template
+            >Past jobs keep the model and prices they ran with; a run needs another endpoint picked
+            for it.</template
           >
         </p>
       </UiTooltip>

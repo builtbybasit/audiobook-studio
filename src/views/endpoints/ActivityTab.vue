@@ -632,8 +632,8 @@ function clearAll() {
                       class="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-white p-2 font-mono text-[10px] text-zinc-600 dark:bg-zinc-950 dark:text-zinc-400"
                       >{{ sanitize(r.error.body) }}</pre>
                     <p v-if="r.error.body" class="mt-1 text-zinc-500">
-                      Redacted before display: anything key-shaped in the provider’s reply is
-                      replaced with <code class="font-mono">[redacted]</code>.
+                      Anything key-shaped is replaced with
+                      <code class="font-mono">[redacted]</code>.
                     </p>
                   </div>
 
@@ -777,10 +777,9 @@ function clearAll() {
       </div>
     </div>
 
-    <p class="text-[11px] leading-relaxed text-zinc-500">
-      A <span class="inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle"></span> marks
-      a request sent to a real provider, priced when it completed; the rest were answered by a
-      simulated provider and billed nothing.
+    <p class="text-[11px] text-zinc-500">
+      <span class="inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle"></span> sent to
+      a real provider; the rest were simulated and billed nothing.
     </p>
   </div>
 </template>

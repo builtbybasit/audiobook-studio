@@ -18,18 +18,18 @@ export interface FoundVoice extends Voice {
   sample?: { url: string; text: string };
 }
 
-/** A voice made here from recordings, as the provider answered; `samplesKept` says whether they were. */
 /** A voice a provider has just made from samples, and anything it said to do before using it. */
 export interface MadeVoice extends Voice {
   /** what the person must do before a line is spoken with it — verify it on the provider, say */
   warning?: string;
 }
 
+/** A voice made here from samples, as the provider answered; `samplesKept` says whether they were. */
 export interface ClonedVoice extends MadeVoice {
   samplesKept: boolean;
 }
 
-/** One kept recording a voice was made from. */
+/** One kept sample a voice was made from. */
 export interface KeptSample {
   /** `<sha>.<ext>`, the name the server keeps and serves it under */
   file: string;
@@ -37,12 +37,14 @@ export interface KeptSample {
   name: string;
   format: "wav" | "mp3" | "m4a" | "opus" | "flac";
   bytes: number;
+  /** what is said in it, when the person gave one, so the voice can be made again elsewhere */
+  transcript?: string;
 }
 
-/** The recordings kept for one voice, and the consent they were kept under. */
+/** The samples kept for one voice, and the consent they were kept under. */
 export interface KeptVoiceSamples {
   voiceId: string;
-  /** what the voice was called when its recordings were kept */
+  /** what the voice was called when its samples were kept */
   title: string;
   /** epoch ms */
   madeAt: number;

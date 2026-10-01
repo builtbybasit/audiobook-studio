@@ -8,6 +8,7 @@
 // Staged and saved with a button, like an endpoint's own prompt; see `state.ts` for why.
 import { computed } from "vue";
 import PromptEditor from "@/components/PromptEditor.vue";
+import { UiHint } from "@/ui";
 import {
   BUILT_IN_PROMPT,
   promptProblems,
@@ -86,19 +87,20 @@ function save() {
   <div class="space-y-3">
     <div class="card p-3">
       <div class="flex flex-wrap items-center gap-2">
-        <h2 class="text-lg font-semibold">Default prompt</h2>
+        <h2 class="text-lg font-semibold">
+          Default prompt
+          <UiHint label="the default prompt" side="bottom"
+            >What every scripting endpoint sends unless it replaces it or a book has its own; notes
+            go where it says <code class="font-mono">{{ ENDPOINT_NOTES_TAG }}</code> or
+            <code class="font-mono">{{ NOTES_TAG }}</code
+            >.</UiHint
+          >
+        </h2>
         <span class="chip chip-off">{{ endpointsStore.prompt ? "edited" : "built-in" }}</span>
         <span v-if="dirty" class="chip chip-on" title="You have unsaved prompt changes"
           >unsaved</span
         >
       </div>
-      <p class="mt-1 max-w-3xl text-xs leading-relaxed text-zinc-500">
-        What every scripting endpoint tells the model, for every book. An endpoint can replace it,
-        or give notes for <code class="font-mono">{{ ENDPOINT_NOTES_TAG }}</code
-        >, on its Prompt tab; a book can replace it, or give notes for
-        <code class="font-mono">{{ NOTES_TAG }}</code
-        >, on its Scripting page.
-      </p>
       <p v-if="replacing.length" class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
         Replaced on {{ replacing.join(", ") }}.
       </p>

@@ -15,9 +15,10 @@
 // and try again knowingly.
 //
 // **What counts as a sample** is read from the file's first bytes, the way a cover's type is
-// (`covers/files.ts`), rather than from its name or the type the browser guessed: a clip
-// downloaded from the web is as good as one recorded, whatever it was saved as. The sniffer knows
-// WAV, MP3, M4A, Opus and FLAC; each provider's `cloning.formats` says which of those it takes.
+// (`covers/files.ts`), rather than from its name or the type the browser guessed: a file is what
+// it holds, whatever it was saved as. The sniffer knows WAV, MP3, M4A, Opus and FLAC; each
+// provider's `cloning.formats` says which of those it takes. A sample may come with a transcript
+// of what is said in it, which a provider whose `cloning.transcript` is not "none" is sent.
 import type { MadeVoice } from "@/types";
 import { speechProviderOf, type SampleFormat } from "@/lib/providers";
 import { ProviderError, requireKey, type CallOptions } from "~/providers/http";
@@ -33,10 +34,12 @@ export interface SampleUpload {
   /** what its first bytes say it is — one of the provider's `cloning.formats` */
   format: SampleFormat;
   /**
-   * The recording as the form parser holds it, typed by what its bytes say it is — handed to the
+   * The file as the form parser holds it, typed by what its bytes say it is — handed to the
    * provider's form as it stands, so the upload is kept in memory once rather than copied again.
    */
   blob: Blob;
+  /** what is said in it, trimmed; absent when the person gave none */
+  transcript?: string;
 }
 
 export interface CloneRequest {
@@ -69,8 +72,8 @@ export const SAMPLE_HEAD_BYTES = 512;
 
 /**
  * The brands an MP4 file names in its `ftyp` that are audio a phone or an encoder writes: an
- * iPhone's voice memo is `M4A `, an Android recorder's `isom`, `mp42` or `3gp4`. A `.mov`, a HEIC
- * photo or an AVIF image is an `ftyp` file too, and none of those is a recording.
+ * iPhone's voice memo is `M4A `, an Android voice app's `isom`, `mp42` or `3gp4`. A `.mov`, a HEIC
+ * photo or an AVIF image is an `ftyp` file too, and none of those is a sample.
  */
 const M4A_BRANDS = /^(M4A |M4B |mp4[12]|iso[m2-6]|dash|3gp[4-6]|3g2a)$/;
 

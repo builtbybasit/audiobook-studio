@@ -23,7 +23,7 @@ import {
   Plus as AddIcon,
   Search as SearchIcon,
 } from "@lucide/vue";
-import { UiSelect } from "@/ui";
+import { UiHint, UiSelect } from "@/ui";
 import { GENDER_ICON } from "@/views/endpoints/genders";
 import type { Endpoint, FoundVoice, Voice } from "@/types";
 
@@ -109,11 +109,13 @@ async function playFound(v: FoundVoice) {
 
 <template>
   <section class="card p-3">
-    <h3 class="label mb-1"><PublicIcon class="icon-sm" /> Public voices</h3>
-    <p class="mb-2 text-[11px] leading-relaxed text-zinc-500">
-      Search Fish Audio’s public catalogue by title, or paste a voice’s id to find that one. Best
-      rated first. Adding one puts it in this endpoint’s list; it is spoken with like your own.
-    </p>
+    <h3 class="label mb-2">
+      <PublicIcon class="icon-sm" /> Public voices
+      <UiHint
+        label="public voices"
+        text="Search Fish Audio’s public catalogue by title, or paste a voice’s id; adding one puts it on this endpoint’s list, best rated first."
+      />
+    </h3>
     <form class="flex flex-wrap items-center gap-2" @submit.prevent="runSearch(1)">
       <div class="relative min-w-48 flex-1">
         <SearchIcon

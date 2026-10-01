@@ -74,5 +74,16 @@ export function chapterTextRead(
   const cached = useQueryCache().getQueryData<ContentPart[]>(
     keys.chapterText(bookId, chapterId, format),
   );
-  return cached ? partsText(cached) : null;
+  if (!cached) return null;
+  let text = joined.get(cached);
+  if (text === undefined) joined.set(cached, (text = partsText(cached)));
+  return text;
 }
+
+/**
+ * Each read's prose, joined once. A getter over hundreds of chapters runs again each time one more
+ * lands, and would otherwise join every chapter's text anew; the same string each time also lets
+ * the scripting store tell that a chapter's text has not changed without comparing it. Keyed by
+ * what the cache holds, so a read the cache lets go of is let go of here too.
+ */
+const joined = new WeakMap<ContentPart[], string>();

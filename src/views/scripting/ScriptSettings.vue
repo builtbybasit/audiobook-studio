@@ -2,10 +2,10 @@
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
-import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 
 import { computed } from "vue";
+import type { RunPlan, ScriptEstimate } from "@/types";
 import { money } from "@/lib/pricing";
 import { plural } from "@/lib/contents";
 import { useChapterScripts } from "@/queries";
@@ -20,22 +20,24 @@ import {
   CircleHelp as HintIcon,
   ExternalLink as ExternalIcon,
 } from "@lucide/vue";
-const props = defineProps<{ bookId: string; selected: number[] }>();
+// the page's plan and its estimate, worked out once there for the run button and this panel both
+const props = defineProps<{
+  bookId: string;
+  plan: RunPlan;
+  est: ScriptEstimate & { reasoningTokens: number };
+}>();
 defineEmits<{ configure: [] }>();
 const endpointsStore = useEndpointsStore();
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
-const scriptingStore = useScriptingStore();
 const scriptsStore = useScriptsStore();
 // the estimate's "if cache holds" figure is read off the profile's recent requests in the ledger,
 // which the store finds in the query cache: reading them here is what puts them there
 useScriptActivity();
-const est = computed(() => scriptingStore.scriptEstimate(props.bookId, props.selected));
-const plan = computed(() => scriptingStore.scriptPlan(props.bookId, props.selected));
 // The corrections a re-script would replace are on the scripts it replaces, which are read here:
 // a script nobody has opened is not one without corrections.
 const replaced = computed(() =>
-  plan.value.chapters.filter((row) => row.contribution === "replace").map((row) => row.id),
+  props.plan.chapters.filter((row) => row.contribution === "replace").map((row) => row.id),
 );
 const { failed: unread, retry: readAgain } = useChapterScripts(() => props.bookId, replaced);
 const edits = computed(() =>
@@ -51,7 +53,7 @@ const spent = computed(() => jobsStore.scriptSpent(props.bookId));
 const reserved = computed(() => jobsStore.scriptReserved(props.bookId));
 /** what the estimate checks against: the scripting budget and the book's overall cap, whichever is lower */
 const remaining = computed(() =>
-  Number.isFinite(est.value.remaining) ? Math.max(0, est.value.remaining) : null,
+  Number.isFinite(props.est.remaining) ? Math.max(0, props.est.remaining) : null,
 );
 const runs = computed(() =>
   jobsStore.jobs.filter((j) => j.bookId === props.bookId && !j.finishedAt && j.scriptRun),

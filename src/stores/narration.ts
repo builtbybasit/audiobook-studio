@@ -309,9 +309,10 @@ export const useNarrationStore = defineStore("narration", {
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
 
-      return (bookId, ids, scope = "all", keepPending = true) =>
-        narrationPlan(
-          libraryStore.chaptersOf(bookId).filter((c) => ids.includes(c.id)),
+      return (bookId, ids, scope = "all", keepPending = true) => {
+        const picked = new Set(ids);
+        return narrationPlan(
+          libraryStore.chaptersOf(bookId).filter((c) => picked.has(c.id)),
           scope,
           {
             segmentsOf: (chId) => scriptsStore.segmentsOf(bookId, chId),
@@ -320,6 +321,7 @@ export const useNarrationStore = defineStore("narration", {
             book: libraryStore.bookById(bookId),
           },
         );
+      };
     },
     /**
      * What these lines would submit to each endpoint, and what that would cost at `at`.

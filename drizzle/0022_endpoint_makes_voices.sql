@@ -1,0 +1,1 @@
+ALTER TABLE `endpoints` ADD `makes_voices` integer DEFAULT false NOT NULL;

@@ -46,6 +46,7 @@ import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { encodingOf } from "@/lib/endpointShapes";
 import type {
+  BatchLimits,
   ConnectionTest,
   Credential,
   Endpoint,
@@ -492,6 +493,23 @@ export const useEndpointsStore = defineStore("endpoints", {
         else if (cur) delete cur.hasKey;
       }
       return true;
+    },
+    /**
+     * Whether the saved speech endpoint's server takes batches, for the Requests tab: its limits,
+     * null when it takes none, or why it could not be asked. What the write-behind holds is sent
+     * first, as for a test.
+     */
+    async batchesOf(id: string): Promise<{ limits: BatchLimits | null } | { error: string }> {
+      try {
+        await this.flushWrites();
+        return await this._service().batchLimits(id);
+      } catch (cause) {
+        const api = cause instanceof ApiError ? cause : null;
+        if (api?.status === 404) return { error: "Not saved on the server yet" };
+        return {
+          error: api ? api.message : cause instanceof Error ? cause.message : String(cause),
+        };
+      }
     },
     /**
      * Ask the server to test what it holds for this endpoint, as the Connection tab's result.

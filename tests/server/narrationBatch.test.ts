@@ -80,6 +80,29 @@ describe("narrating through an endpoint that takes batches", () => {
     expect(job.activity?.some((e) => e.message === "Sending in batches")).toBe(true);
   });
 
+  test("switched off, sends one line a request though the server takes batches", async () => {
+    const { api, job, lines, batches } = await run({}, speech({ batch: false }));
+    expect(job.status).toBe("done");
+    expect(batches).toEqual([]);
+    expect(lines.every((s) => s.audio.status === "done")).toBe(true);
+    // kept switched off, and the server is still asked, so the page can say what it would take
+    const saved = (await api.request<{ endpoints: Endpoint[] }>("/api/endpoints")).body.endpoints;
+    expect(saved[0].batch).toBe(false);
+    const asked = await api.request("/api/endpoints/batch", jsonBody({ id: "local" }));
+    expect(asked.body).toEqual({
+      limits: { maxItems: 4, maxInputChars: null, maxItemChars: null },
+    });
+  });
+
+  test("the page is told when a server takes no batches, and refused for an endpoint not saved", async () => {
+    const api = testApi({ speech: fakeSpeechProvider() });
+    await book(api, speech());
+    const none = await api.request("/api/endpoints/batch", jsonBody({ id: "local" }));
+    expect(none.body).toEqual({ limits: null });
+    const missing = await api.request("/api/endpoints/batch", jsonBody({ id: "gone" }));
+    expect(missing.status).toBe(404);
+  });
+
   test("fills a batch only up to the characters it takes, and always sends a line on its own if it must", async () => {
     const { lines, batches } = await run({
       batch: { maxItems: 10, maxInputChars: 120, maxItemChars: null },

@@ -143,6 +143,24 @@ export interface EndpointProbe {
   ms: number;
 }
 
+/**
+ * How much one batch may carry, as a speech endpoint's server says (`docs/speech-batch-api.md`). A
+ * null is no limit of that kind.
+ */
+export interface BatchLimits {
+  /** lines in one request */
+  maxItems: number | null;
+  /** characters of text across every line of one request */
+  maxInputChars: number | null;
+  /** characters in one line; a longer one is sent as parts, each its own item */
+  maxItemChars: number | null;
+}
+
+/** What a saved speech endpoint's server said about batches: `null` when it takes none. */
+export interface EndpointBatches {
+  limits: BatchLimits | null;
+}
+
 /** A page of voices the server found. Nothing is added to the endpoint until the page adds it. */
 export interface VoiceListPage {
   /** a public Fish voice carries Fish's own recording of it, when it has one */

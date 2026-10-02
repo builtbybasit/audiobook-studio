@@ -5,7 +5,13 @@ import { bodyLimit } from "hono/body-limit";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
-import type { ClonedVoice, EndpointProbe, KeptVoiceSamples, VoiceListPage } from "@/types";
+import type {
+  ClonedVoice,
+  EndpointBatches,
+  EndpointProbe,
+  KeptVoiceSamples,
+  VoiceListPage,
+} from "@/types";
 import { tooMuchSaid } from "@/lib/voiceSamples";
 import type { Db } from "~/db/client";
 import { clipsByEndpoint } from "~/db/script";
@@ -41,6 +47,8 @@ const Probe = v.object({
   kind: v.picklist(["tts", "scripting"]),
   id: v.pipe(v.string(), v.nonEmpty()),
 });
+
+const Saved = v.object({ id: v.pipe(v.string(), v.nonEmpty()) });
 
 const Sample = v.object({
   id: v.pipe(v.string(), v.nonEmpty()),
@@ -125,6 +133,13 @@ export function endpointRoutes(
     const answer = await ops.testEndpoint(db, providers, kind, id, c.req.raw.signal);
     c.var.logger.info({ kind, id, ok: answer.ok, ms: answer.ms }, "endpoint tested");
     return c.json(answer satisfies EndpointProbe);
+  });
+
+  /** What a saved speech endpoint's server says about batches: the Requests tab's Batches. */
+  app.post("/batch", validate("json", Saved), async (c) => {
+    const { id } = c.req.valid("json");
+    const answer = await ops.batchLimits(db, providers, id, c.req.raw.signal);
+    return c.json(answer satisfies EndpointBatches);
   });
 
   /**

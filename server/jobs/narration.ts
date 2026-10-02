@@ -766,14 +766,15 @@ export function narrationHandler(
       });
 
       // Which endpoints take batches, asked once per run of each endpoint its lines go to; one
-      // that cannot say — no such route, a model it does not batch, no answer — is sent one line
-      // at a time, as every endpoint was before.
+      // that cannot say — no such route, a model it does not batch, no answer — or whose batches
+      // are switched off is sent one line at a time.
       const groups = new Map<string, Target[]>();
       const alone: Target[] = [];
       for (const t of targets) {
         const id = deliveryOf(t.s.speaker).endpoint;
         const ep = id ? readEndpoint(db, id) : undefined;
-        if (!id || !ep || !provider.batchLimits || !provider.speakBatch) alone.push(t);
+        if (!id || !ep || ep.batch === false || !provider.batchLimits || !provider.speakBatch)
+          alone.push(t);
         else groups.set(id, [...(groups.get(id) ?? []), t]);
       }
       const batched: [string, Target[], BatchLimits][] = [];

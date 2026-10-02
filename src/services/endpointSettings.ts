@@ -16,6 +16,7 @@ import type {
   Endpoint,
   EndpointKind,
   EndpointLive,
+  EndpointBatches,
   EndpointProbe,
   KeptVoiceSamples,
   Profile,
@@ -89,6 +90,8 @@ export interface EndpointSettingsService {
   putSettings(body: EndpointConfig): Promise<EndpointSettings>;
   /** Test the *saved* endpoint, with the key the server holds for it. */
   testEndpoint(kind: EndpointKind, id: string): Promise<EndpointProbe>;
+  /** Ask the *saved* speech endpoint's server, with the key it holds, whether it takes batches. */
+  batchLimits(id: string): Promise<EndpointBatches>;
   /** Ask the *saved* speech endpoint, with the key the server holds, what voices it offers. */
   listVoices(id: string, query: VoiceListQuery): Promise<VoiceListPage>;
   /** Have the *saved* speech endpoint say a sentence in one voice. A real, priced request. */
@@ -146,6 +149,10 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
 
   testEndpoint(kind: EndpointKind, id: string): Promise<EndpointProbe> {
     return this.http.post<EndpointProbe>("/endpoints/test", { kind, id });
+  }
+
+  batchLimits(id: string): Promise<EndpointBatches> {
+    return this.http.post<EndpointBatches>("/endpoints/batch", { id });
   }
 
   listVoices(id: string, query: VoiceListQuery): Promise<VoiceListPage> {

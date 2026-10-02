@@ -11,12 +11,12 @@
 // its recent requests at this level were seen to spend.
 import { computed, ref, watch } from "vue";
 import { plural } from "@/lib/contents";
-import { UiHint, UiNumber, UiSelect } from "@/ui";
+import { UiHint, UiNumber, UiSelect, UiSwitch } from "@/ui";
 import NumberSlider from "@/components/NumberSlider.vue";
 import { ChevronLeft as PrevIcon, ChevronRight as NextIcon, Check as OkIcon } from "@lucide/vue";
 import { SPLIT_MODES, splitText } from "@/lib/split";
 import { compact, opsOf } from "@/lib/endpoints";
-import { isSimulated } from "@/lib/providers";
+import { isSimulated, speechProviderOf } from "@/lib/providers";
 import { reasoningRequest } from "@/lib/reasoning";
 import { REASONING_LEVELS, reasoningEstimateNote, tokenEstimate } from "@/lib/scripting";
 import { resolvePrompt } from "@/lib/prompt";
@@ -35,6 +35,7 @@ import {
 import type { LiveActivity } from "@/views/endpoints/live";
 import type {
   AudioFormat,
+  BatchLimits,
   ReasoningEffort,
   SampleRate,
   ScriptEndpointTelemetry,
@@ -96,6 +97,49 @@ const thinkingNote = computed(() =>
       )
     : null,
 );
+
+// ---------- batches ----------
+// Only an OpenAI-compatible server can speak the batch speech API; whether this one does is asked
+// of the saved endpoint whenever its address, model or key changes, and on "Check again".
+const batchable = computed(
+  () => props.u.endpoint && speechProviderOf(props.u.endpoint).id === "compatible",
+);
+const batches = ref<
+  | { state: "asking" }
+  | { state: "answered"; limits: BatchLimits | null }
+  | { state: "failed"; error: string }
+>({ state: "asking" });
+async function askBatches() {
+  const e = props.u.endpoint;
+  if (!e || !batchable.value) return;
+  batches.value = { state: "asking" };
+  const answer = await endpointsStore.batchesOf(e.id);
+  if (props.u.endpoint !== e) return;
+  batches.value =
+    "error" in answer
+      ? { state: "failed", error: answer.error }
+      : { state: "answered", limits: answer.limits };
+}
+watch(
+  () => [props.u.endpoint?.id, props.u.baseUrl, props.u.endpoint?.model, props.u.endpoint?.hasKey],
+  askBatches,
+  { immediate: true },
+);
+const batchesOn = computed(() => props.u.endpoint?.batch !== false);
+const batchNote = computed(() => {
+  const b = batches.value;
+  if (b.state === "asking") return "Asking the server…";
+  if (b.state === "failed") return `Could not ask the server: ${b.error}`;
+  const l = b.limits;
+  if (!l) return "This server doesn't take batches; lines go one at a time.";
+  const items = l.maxItems == null ? "any number of lines" : `up to ${plural(l.maxItems, "line")}`;
+  if (!batchesOn.value) return `Off. The server takes ${items} a request.`;
+  const atOnce =
+    l.maxItems == null || props.u.concurrency < 2
+      ? ""
+      : ` — up to ${(l.maxItems * props.u.concurrency).toLocaleString("en")} at once`;
+  return `Sending ${items} a request${atOnce}.`;
+});
 
 const AT_LABEL: Record<SplitMode, string> = {
   sentence: "sentence end",
@@ -261,6 +305,44 @@ const limitNote = computed(() => {
                 : 'Lines of a chapter run in parallel up to this limit. Type any number and the slider grows to fit it.'
             "
           />
+        </p>
+      </section>
+
+      <!-- batches: a compatible server that speaks the batch speech API -->
+      <section v-if="batchable && u.endpoint" class="card p-3">
+        <div class="flex items-center justify-between gap-3">
+          <h3 class="label">
+            Batches
+            <UiHint
+              label="batches"
+              text="Many lines in one request, for a server that speaks the batch speech API (docs/speech-batch-api.md). Each batch takes one concurrency slot."
+            />
+          </h3>
+          <UiSwitch
+            :model-value="batchesOn"
+            label="Send in batches"
+            @update:model-value="(v) => (u.endpoint!.batch = v)"
+          />
+        </div>
+        <p
+          class="mt-1.5 text-[11px]"
+          :class="
+            batches.state === 'failed' ||
+            (batches.state === 'answered' && batchesOn && !batches.limits)
+              ? 'text-amber-700 dark:text-amber-400'
+              : 'text-zinc-500'
+          "
+          role="status"
+        >
+          {{ batchNote }}
+          <button
+            v-if="batches.state !== 'asking'"
+            type="button"
+            class="ml-1 underline decoration-dotted hover:text-zinc-700 dark:hover:text-zinc-300"
+            @click="askBatches"
+          >
+            Check again
+          </button>
         </p>
       </section>
 

@@ -173,6 +173,7 @@ export function toEndpoint(row: EndpointRow, parts: EndpointParts): Endpoint {
   const expressions = toExpressions(row, parts);
   if (expressions) e.expressions = expressions;
   if (row.sampleRate != null) e.sampleRate = row.sampleRate;
+  if (!row.batch) e.batch = false;
   if (row.audioFormat != null)
     e.encoding = {
       format: row.audioFormat,
@@ -297,6 +298,7 @@ export function endpointValues(
     sampleRate: e.sampleRate ?? null,
     audioFormat: e.encoding?.format ?? null,
     audioBitrate: e.encoding?.bitrate ?? null,
+    batch: e.batch ?? true,
     ...opsValues(e),
   };
 }

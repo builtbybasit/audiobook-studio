@@ -1,0 +1,1 @@
+ALTER TABLE `endpoints` ADD `batch` integer DEFAULT true NOT NULL;

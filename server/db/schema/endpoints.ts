@@ -71,6 +71,8 @@ export const endpoints = sqliteTable(
     audioFormat: text("audio_format").$type<AudioFormat>(),
     /** speech only: MP3 kbps or Opus bps as the API spells it; null = the provider's default */
     audioBitrate: integer("audio_bitrate"),
+    /** speech only: send lines in batches when the server takes them; false = one a request */
+    batch: integer("batch", { mode: "boolean" }).notNull().default(true),
     position: integer("position").notNull().default(0),
 
     // ---- scripting rates: USD per 1M tokens ----

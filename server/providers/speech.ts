@@ -15,7 +15,14 @@
 // A line is asked for in the endpoint's format — WAV, MP3 or Opus — and the clip says which format
 // it really came back in, because that is what it is kept as and served as. The fake answers WAV
 // whatever it is asked for, and says so.
-import type { AudioEncoding, AudioFormat, EndpointProbe, SegmentType, VoiceRef } from "@/types";
+import type {
+  AudioEncoding,
+  AudioFormat,
+  BatchLimits,
+  EndpointProbe,
+  SegmentType,
+  VoiceRef,
+} from "@/types";
 import { ProviderError } from "~/providers/http";
 import type { SentSpeech } from "~/providers/sent";
 import type { ProviderTarget } from "~/providers/target";
@@ -77,18 +84,7 @@ export interface RenderedClip {
   voice: string | null;
 }
 
-/**
- * How much one batch may carry, as the endpoint says (`docs/speech-batch-api.md`). A null is no
- * limit of that kind.
- */
-export interface BatchLimits {
-  /** lines in one request */
-  maxItems: number | null;
-  /** characters of text across every line of one request */
-  maxInputChars: number | null;
-  /** characters in one line; a longer one is sent as parts, each its own item */
-  maxItemChars: number | null;
-}
+export type { BatchLimits };
 
 /** How one line of a batch ended: its clip, or why it has none. */
 export type BatchOutcome = { clip: RenderedClip } | { error: Error };

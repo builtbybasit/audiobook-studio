@@ -29,7 +29,14 @@ import {
 import { useEndpointsStore, WRITE_DELAY_MS } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 import { clone } from "@/lib/utils";
-import type { ClonedVoice, Endpoint, EndpointKind, EndpointLive, KeptVoiceSamples } from "@/types";
+import type {
+  ClonedVoice,
+  Endpoint,
+  EndpointBatches,
+  EndpointKind,
+  EndpointLive,
+  KeptVoiceSamples,
+} from "@/types";
 import { testPinia, type TestPinia } from "./support/pinia";
 
 const TELEMETRY = ["history", "failures", "rateLimits", "backoffUntil", "lastError", "fetching"];
@@ -99,6 +106,9 @@ class FakeService implements EndpointSettingsService {
     for (const p of stored.profiles) take("scripting", p);
     this.held = stored;
     return this.answer();
+  }
+  async batchLimits(): Promise<EndpointBatches> {
+    return { limits: null };
   }
   async testEndpoint(kind: EndpointKind, id: string): Promise<EndpointProbe> {
     this.tests.push({ kind, id });

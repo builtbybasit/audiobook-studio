@@ -642,6 +642,7 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `GET`    | `/api/endpoints`                                  | Endpoints, profiles, credentials, prompt, script settings                                                    |
 | `PUT`    | `/api/endpoints`                                  | The whole configuration, in place of what is stored                                                          |
 | `POST`   | `/api/endpoints/test`                             | One small request to a saved endpoint with its saved key                                                     |
+| `POST`   | `/api/endpoints/batch`                            | Whether a saved speech endpoint's server takes batches, and how many lines                                   |
 | `POST`   | `/api/endpoints/voices`                           | A saved endpoint's voices: its library, or a public search                                                   |
 | `POST`   | `/api/endpoints/sample`                           | One saved voice, heard: kept, its own recording, or rendered                                                 |
 | `POST`   | `/api/endpoints/voices/clone`                     | A voice made from samples on the provider (multipart, 201)                                                   |
@@ -1249,7 +1250,8 @@ another try, or the stream was cut off before reaching it (`BatchCut`). A batch 
 whole is retried by `call`, as any request is, and its lines then fail with the status it answered —
 sending them again in another batch would try each line (1 + retries)² times
 ([narrationBatch.test.ts](../tests/server/narrationBatch.test.ts) counts them). An endpoint that
-does not answer, or whose model does not batch, is sent one line at a time; hosted providers and simulated endpoints are never asked. The fake batches too when
+does not answer, whose model does not batch, or whose batches are switched off (`batch: false`) is
+sent one line at a time; hosted providers and simulated endpoints are never asked. The fake batches too when
 a test asks (`batch` in `fakeSpeechProvider`), answering last item first so nothing passes by
 assuming order.
 

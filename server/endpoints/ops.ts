@@ -9,7 +9,7 @@
 // not in the registry being saved with it. The scripting prompts saved with them — the library's
 // default, and each profile's say over it — are held to the rules the editor shows (`@/lib/prompt`),
 // and the scripting settings may only choose a profile saved with them.
-import type { Credential, Endpoint, EndpointProbe, VoiceListPage } from "@/types";
+import type { Credential, Endpoint, EndpointBatches, EndpointProbe, VoiceListPage } from "@/types";
 import { profilePromptProblems, promptProblems, resolvePrompt } from "@/lib/prompt";
 import { isSimulated } from "@/lib/providers";
 import { billingOf } from "@/lib/endpoints";
@@ -219,6 +219,30 @@ export async function listVoices(
   const lister = providers.voices ?? endpointVoiceLister();
   try {
     return await lister.list(speechTarget(db, ep), query, signal);
+  } catch (e) {
+    throw e instanceof ProviderError ? providerFailure(e) : e;
+  }
+}
+
+/**
+ * What a saved speech endpoint's server says about batches, asked with its saved key: the limits a
+ * run would send it batches under, or null when it takes none — a provider with no batch route, a
+ * simulated endpoint, a server that does not answer the capabilities route for this model. Asked
+ * whether or not the endpoint's batches are switched on, so the page can say what turning them on
+ * would do. The answer is kept a few minutes, as a run keeps it.
+ */
+export async function batchLimits(
+  db: Db,
+  providers: Providers,
+  id: string,
+  signal: AbortSignal,
+): Promise<EndpointBatches> {
+  const ep = readEndpoint(db, id);
+  if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
+  const ask = providers.speech.batchLimits;
+  if (!ask) return { limits: null };
+  try {
+    return { limits: await ask.call(providers.speech, speechTarget(db, ep), signal) };
   } catch (e) {
     throw e instanceof ProviderError ? providerFailure(e) : e;
   }

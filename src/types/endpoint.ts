@@ -101,6 +101,12 @@ export interface Endpoint {
    * What an endpoint can be asked for is `speechFormats` in `lib/endpointShapes.ts`.
    */
   encoding?: AudioEncoding | null;
+  /**
+   * Whether a run sends this endpoint's lines in batches when its server takes them — one that
+   * speaks the batch speech API (`docs/speech-batch-api.md`). Absent means yes; false sends one
+   * line a request whatever the server says.
+   */
+  batch?: boolean;
 }
 
 /** A container this app can keep a clip in. */

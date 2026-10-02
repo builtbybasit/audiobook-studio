@@ -578,4 +578,29 @@ export const TTS_PRESETS: TtsPreset[] = [
       failRate: 0.025,
     },
   },
+  {
+    id: "omnivoice",
+    group: "On your machine",
+    label: "OmniVoice server · batches",
+    hint: "omnivoice-fastapi on :8000, many lines a request",
+    note:
+      "omnivoice-fastapi speaks the batch speech API, so a run sends it many lines a request; " +
+      "the Requests tab says how many it takes and switches batches off. Voices live on the " +
+      "server — Fetch lists them. Lines over 1,500 characters are split, the server's own " +
+      "limit. Nothing is billed.",
+    apply: {
+      name: "OmniVoice (local)",
+      baseUrl: "http://127.0.0.1:8000/v1",
+      model: "omnivoice",
+      needsKey: false,
+      price: 0,
+      billing: { unit: "chars", rate: 0 },
+      maxChars: 1500,
+      splitAt: "sentence",
+      // the server renders on one model thread, so a second batch only waits behind the first
+      concurrency: 1,
+      latency: 4000,
+      failRate: 0.025,
+    },
+  },
 ];

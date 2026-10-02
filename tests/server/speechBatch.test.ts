@@ -134,6 +134,19 @@ describe("capabilities", () => {
     expect(none.requests).toHaveLength(1);
   });
 
+  test("asked afresh, show a limit raised on the server at once, and keep it for the next run", async () => {
+    const options: BatchServerOptions = { batch: { max_items: 16 } };
+    const s = server(options);
+    const p = provider(s.fetch);
+    const signal = new AbortController().signal;
+    expect((await p.batchLimits!(omni, signal))?.maxItems).toBe(16);
+    options.batch = { max_items: 64 };
+    expect((await p.batchLimits!(omni, signal))?.maxItems).toBe(16);
+    expect((await p.batchLimits!(omni, signal, true))?.maxItems).toBe(64);
+    expect((await p.batchLimits!(omni, signal))?.maxItems).toBe(64);
+    expect(s.requests).toHaveLength(2);
+  });
+
   test("are no batches from a server without the route, or that does not batch the model", async () => {
     const signal = new AbortController().signal;
     for (const status of [404, 405, 501]) {

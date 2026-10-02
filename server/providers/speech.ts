@@ -131,9 +131,14 @@ export interface SpeechProvider {
   /**
    * Whether the endpoint takes lines in batches, and how many; null when it takes one at a time.
    * Asked before a run sends to the endpoint, and cheap to ask again: a provider remembers the
-   * answer for a while. Absent, a provider never batches.
+   * answer for a while — unless `fresh`, which asks the server again and keeps what it says now,
+   * for a limit raised on the server since. Absent, a provider never batches.
    */
-  batchLimits?(target: ProviderTarget, signal: AbortSignal): Promise<BatchLimits | null>;
+  batchLimits?(
+    target: ProviderTarget,
+    signal: AbortSignal,
+    fresh?: boolean,
+  ): Promise<BatchLimits | null>;
   /**
    * Send a batch the endpoint said it takes. Resolves once every item has been `answered`; throws
    * when the batch as a whole went wrong — refused after the endpoint's retries, or cut off part

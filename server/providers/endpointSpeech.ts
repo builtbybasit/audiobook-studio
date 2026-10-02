@@ -104,13 +104,17 @@ export function endpointSpeechProvider(options: EndpointSpeechOptions = {}): Spe
       return { ...audio, ms: Date.now() - started, model: target.model, voice };
     },
 
-    async batchLimits(target: ProviderTarget, signal: AbortSignal): Promise<BatchLimits | null> {
+    async batchLimits(
+      target: ProviderTarget,
+      signal: AbortSignal,
+      fresh = false,
+    ): Promise<BatchLimits | null> {
       if (isSimulated(target.baseUrl)) return null;
       const { wire } = wireOf(target);
       if (!wire.batchLimits) return null;
       const key = limitsKey(target);
       const kept = limits.get(key);
-      if (kept && Date.now() - kept.at < LIMITS_KEPT_MS) return kept.limits;
+      if (!fresh && kept && Date.now() - kept.at < LIMITS_KEPT_MS) return kept.limits;
       // A failure to ask — no answer, a refused key — is thrown and not kept: the job takes it as
       // no batches for now, and the next time it asks, the server is asked again.
       requireKey(target);

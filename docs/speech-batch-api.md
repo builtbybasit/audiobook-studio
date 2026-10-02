@@ -266,7 +266,8 @@ client sends it once, with no retries. A server that does not make voices answer
 ## How this app uses it
 
 - **The Requests tab** has a **Batches** switch, on by default, and says what the server answered —
-  how many lines a request it takes, or that it takes none (`POST /api/endpoints/batch`). Off, a run
+  how many lines a request it takes, or that it takes none (`POST /api/endpoints/batch`), asked
+  afresh each time so a limit raised on the server shows at once and the next run uses it. Off, a run
   sends one line a request whatever the server takes. The **OmniVoice server** preset fills in
   omnivoice-fastapi's address and model.
 - **Test** asks for the capabilities and says what it found — "… · takes batches of up to 16 lines" —

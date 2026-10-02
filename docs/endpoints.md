@@ -179,9 +179,10 @@ Cloning mechanics are in [the providers](backend.md#the-providers-and-where-a-ke
   as easy to set as 4), with three readouts: configured, in flight now, and the effective limit in
   force (zero while paused, cooling down or missing a key).
 - **Batches** (OpenAI-compatible speech servers only): a switch, on by default, and what the saved
-  endpoint's server says when asked — "Sending up to 16 lines a request — up to 32 at once", "This
-  server doesn't take batches", or why it could not be asked, with **Check again**. Off, a run
-  sends one line a request whatever the server takes (`batch: false`). The
+  endpoint's server says, asked afresh each time — "Sending up to 16 lines a request, the server's
+  limit — up to 32 at once", "This server doesn't take batches", or why it could not be asked,
+  with **Check again**. Off, a run sends one line a request whatever the server takes
+  (`batch: false`). The
   [batch speech API](speech-batch-api.md) is what a server answers to take them; the **OmniVoice
   server** preset points at [omnivoice-fastapi](https://github.com/builtbybasit/omnivoice-fastapi)
   on `:8000`.

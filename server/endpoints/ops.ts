@@ -229,7 +229,8 @@ export async function listVoices(
  * run would send it batches under, or null when it takes none — a provider with no batch route, a
  * simulated endpoint, a server that does not answer the capabilities route for this model. Asked
  * whether or not the endpoint's batches are switched on, so the page can say what turning them on
- * would do. The answer is kept a few minutes, as a run keeps it.
+ * would do. Always asked afresh, so a limit raised on the server shows at once, and the next run
+ * goes by what it said.
  */
 export async function batchLimits(
   db: Db,
@@ -242,7 +243,7 @@ export async function batchLimits(
   const ask = providers.speech.batchLimits;
   if (!ask) return { limits: null };
   try {
-    return { limits: await ask.call(providers.speech, speechTarget(db, ep), signal) };
+    return { limits: await ask.call(providers.speech, speechTarget(db, ep), signal, true) };
   } catch (e) {
     throw e instanceof ProviderError ? providerFailure(e) : e;
   }

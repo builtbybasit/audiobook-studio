@@ -138,7 +138,7 @@ const batchNote = computed(() => {
     l.maxItems == null || props.u.concurrency < 2
       ? ""
       : ` — up to ${(l.maxItems * props.u.concurrency).toLocaleString("en")} at once`;
-  return `Sending ${items} a request${atOnce}.`;
+  return `Sending ${items} a request, the server's limit${atOnce}.`;
 });
 
 const AT_LABEL: Record<SplitMode, string> = {
@@ -315,7 +315,7 @@ const limitNote = computed(() => {
             Batches
             <UiHint
               label="batches"
-              text="Many lines in one request, for a server that speaks the batch speech API (docs/speech-batch-api.md). Each batch takes one concurrency slot."
+              text="Many lines in one request, for a server that speaks the batch speech API. The server sets how many (omnivoice-fastapi: OMNIVOICE_MAX_BATCH_ITEMS); each batch takes one concurrency slot."
             />
           </h3>
           <UiSwitch

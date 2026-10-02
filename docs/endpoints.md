@@ -136,7 +136,10 @@ removed. Each voice shows how many speakers across the library use it.
 
 **Clone a voice** appears on an endpoint whose provider clones — Fish Audio, ElevenLabs,
 BreezeBlue, Cartesia, MiniMax, or Qwen on `qwen3-tts-vc-2026-01-22`; a Qwen endpoint on another
-model names the model to switch to. It makes a voice from uploaded samples of one person speaking — any audio
+model names the model to switch to. An OpenAI-compatible server clones only once its **Make voices
+on this server** switch is on (`makesVoices`, off by default — the OmniVoice preset turns it on):
+the app cannot tell a server that makes voices from one that does not, and sends one recording and
+its transcript to the batch speech API's [`POST /audio/voices`](speech-batch-api.md#voices). It makes a voice from uploaded samples of one person speaking — any audio
 file of that one voice:
 
 - The form takes a name and the samples the provider takes; the button is ready once both are.

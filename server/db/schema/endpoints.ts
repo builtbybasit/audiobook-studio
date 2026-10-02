@@ -73,6 +73,8 @@ export const endpoints = sqliteTable(
     audioBitrate: integer("audio_bitrate"),
     /** speech only: send lines in batches when the server takes them; false = one a request */
     batch: integer("batch", { mode: "boolean" }).notNull().default(true),
+    /** speech only: a compatible server that makes voices at POST …/audio/voices */
+    makesVoices: integer("makes_voices", { mode: "boolean" }).notNull().default(false),
     position: integer("position").notNull().default(0),
 
     // ---- scripting rates: USD per 1M tokens ----

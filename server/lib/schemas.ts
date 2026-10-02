@@ -395,6 +395,7 @@ export const EndpointSchema = v.object({
     ),
   ),
   batch: v.optional(v.boolean()),
+  makesVoices: v.optional(v.boolean()),
 }) satisfies v.GenericSchema<unknown, StoredEndpoint>;
 
 // ---- the scripting prompt ----

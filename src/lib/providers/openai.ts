@@ -55,6 +55,20 @@ export const compatible: SpeechProviderShape = {
   }),
   // a server you run yourself bills nothing; a gateway that bills is priced by its own card
   billsFailures: false,
-  cloning: null,
+  // `POST /audio/voices` in the batch speech API (docs/speech-batch-api.md#voices), for a server
+  // whose endpoint says it makes voices. Its form has one transcript for every sample, and
+  // OmniVoice clones from one clip, so a voice is made from one recording.
+  cloning: {
+    maxSamples: 1,
+    maxSampleBytes: 20 * 1024 * 1024,
+    formats: ["wav", "mp3", "flac", "m4a", "opus"],
+    transcript: "optional",
+    advice:
+      "One clip of one speaker, about 5 to 15 seconds, with no music or background noise. A " +
+      "transcript of what is said helps a model that would otherwise work it out.",
+    cost: null,
+    fee: null,
+    optIn: true,
+  },
   models: [],
 };

@@ -53,10 +53,14 @@ export const speechProviderOf = (e: Pick<Endpoint, "baseUrl">): SpeechProviderSh
 
 /**
  * How an endpoint makes a voice from samples, or null when it cannot: its provider has no cloning,
- * or clones only for other models than the endpoint's (`cloning.models`).
+ * clones only for other models than the endpoint's (`cloning.models`), or clones only where the
+ * endpoint says its server makes voices (`cloning.optIn`) and this one does not.
  */
-export function cloningOf(e: Pick<Endpoint, "baseUrl" | "model">): CloneSupport | null {
+export function cloningOf(
+  e: Pick<Endpoint, "baseUrl" | "model" | "makesVoices">,
+): CloneSupport | null {
   const cloning = speechProviderOf(e).cloning;
+  if (cloning?.optIn && !e.makesVoices) return null;
   if (!cloning?.models) return cloning;
   return cloning.models.includes(e.model.trim()) ? cloning : null;
 }

@@ -26,9 +26,15 @@
 // OpenAI itself has no such route, so its wire has neither member. The Test button asks a
 // compatible server's capabilities too and says when it takes batches; a server that cannot say
 // has still passed the test, which was about the address and the key.
-import type { Gender, Voice } from "@/types";
+//
+// Voices made from a recording: the same API's `POST /audio/voices`, for an endpoint that says its
+// server makes voices (`makesVoices`) — nothing else tells a server that does from one that does
+// not. OpenAI's own voice creation is another API this app does not speak.
+import type { Gender, MadeVoice, Voice } from "@/types";
 import { compatible, openai } from "@/lib/providers/openai";
-import { call, jsonHeaders, ProviderError } from "~/providers/http";
+import { authHeaders, call, jsonHeaders, ProviderError } from "~/providers/http";
+import type { CloneRequest } from "~/providers/clone";
+import type { SpeechCallOptions } from "~/providers/send";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 import { batchCapabilities, sendBatch, takesBatches } from "~/providers/speech/batch";
@@ -109,9 +115,59 @@ function voicesFromList(body: unknown): Voice[] | null {
     const id = typeof entry === "string" ? entry : (rec?.id ?? rec?.voice_id ?? rec?.name);
     if (typeof id !== "string" || !id.trim()) continue;
     const name = typeof rec?.name === "string" && rec.name.trim() ? rec.name.trim() : id;
-    voices.push({ id: id.trim(), label: name, gender: genderOfName(id) });
+    // the batch speech API's list says `f` or `m` where it knows
+    const gender = rec?.gender === "f" || rec?.gender === "m" ? rec.gender : genderOfName(id);
+    voices.push({ id: id.trim(), label: name, gender });
   }
   return voices;
+}
+
+/**
+ * A voice made from one recording (`cloning.maxSamples`) at `POST /audio/voices`, as the batch
+ * speech API gives it: `name`, the recording as `samples`, and `transcript` when there is one,
+ * answered with the voice as the list shows it. A server that makes no voices answers 404 or 405.
+ */
+async function makeVoice(
+  target: ProviderTarget,
+  request: CloneRequest,
+  signal: AbortSignal,
+  options: SpeechCallOptions,
+): Promise<MadeVoice> {
+  const [sample] = request.samples;
+  const form = new FormData();
+  form.set("name", request.title);
+  form.set("samples", sample.blob, sample.name);
+  if (sample.transcript) form.set("transcript", sample.transcript);
+  const url = `${target.baseUrl}/audio/voices`;
+  let res: Response;
+  try {
+    // no content-type: the multipart boundary is the form's to write
+    res = await call(
+      target,
+      url,
+      { method: "POST", headers: authHeaders(target), body: form },
+      { signal, ...options },
+    );
+  } catch (e) {
+    if (e instanceof ProviderError && [404, 405, 501].includes(e.status))
+      throw new ProviderError(
+        `${target.name} makes no voices: POST ${url} answered ${e.status}. ` +
+          "Turn off “Make voices on this server” on its Voices tab.",
+        e.status,
+        false,
+      );
+    throw e;
+  }
+  // the spec's voice names its id; a list entry may go by its name, but a made voice may not
+  const body = (await res.json().catch(() => null)) as { id?: unknown } | null;
+  const [voice] = typeof body?.id === "string" ? (voicesFromList([body]) ?? []) : [];
+  if (!voice)
+    throw new ProviderError(
+      `${target.name} answered ${res.status} without the new voice's id`,
+      res.status,
+      false,
+    );
+  return voice;
 }
 
 /** The shape both share; `hosted` is OpenAI's own API, and differs where OpenAI documents more. */
@@ -208,6 +264,7 @@ function openaiShaped(hosted: boolean): SpeechWire {
 export const openaiWire = openaiShaped(true);
 export const compatibleWire: SpeechWire = {
   ...openaiShaped(false),
+  clone: makeVoice,
   batchLimits: batchCapabilities,
   speakBatch: sendBatch,
 };

@@ -586,12 +586,13 @@ export const TTS_PRESETS: TtsPreset[] = [
     note:
       "omnivoice-fastapi speaks the batch speech API, so a run sends it many lines a request; " +
       "the Requests tab says how many it takes and switches batches off. Voices live on the " +
-      "server — Fetch lists them. Lines over 1,500 characters are split, the server's own " +
-      "limit. Nothing is billed.",
+      "server — Fetch lists them, and the Voices tab clones new ones from a recording. Lines " +
+      "over 1,500 characters are split, the server's own limit. Nothing is billed.",
     apply: {
       name: "OmniVoice (local)",
       baseUrl: "http://127.0.0.1:8000/v1",
       model: "omnivoice",
+      makesVoices: true,
       needsKey: false,
       price: 0,
       billing: { unit: "chars", rate: 0 },

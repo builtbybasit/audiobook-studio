@@ -145,6 +145,11 @@ export interface CloneSupport {
    * charges nothing for one, or say nothing (a plan's slots are not a charge).
    */
   fee: CloneFee | null;
+  /**
+   * Offered only on an endpoint that says its server makes voices (`makesVoices`): for the
+   * compatible shape, which is every server no other description claims, most of which make none.
+   */
+  optIn?: boolean;
 }
 
 /** A charge for making a voice, as the provider's docs give it. */

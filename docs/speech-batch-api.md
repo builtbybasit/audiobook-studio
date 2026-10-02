@@ -283,6 +283,9 @@ client sends it once, with no retries. A server that does not make voices answer
   retried whole, with the endpoint's retries and cooldown; an item that failed `retryable` goes into
   a later batch, up to the endpoint's retries; one that did not, fails its line.
 - **A retake** of one line is a batch of one.
+- **Voices**: an endpoint whose **Make voices on this server** switch is on (the Voices tab) clones
+  through `POST /v1/audio/voices`: `name`, one recording under `samples`, and `transcript` when the
+  person gave one. Designed voices (`description`) are not offered yet.
 - **What it sends**: `model`, `response_format`, and per item `id` (its place in the batch, as a
   string), `input`, `voice` and `instructions` when the line has any — whether or not the
   capabilities say the model reads them; a server that does not ignores them. It sends no

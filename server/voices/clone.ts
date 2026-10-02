@@ -12,7 +12,7 @@
 // The voice already exists on the account by then, so a failure to keep them is not a failure to
 // clone: the answer says `samplesKept: false`, and the page says so.
 import type { ClonedVoice, KeptVoiceSamples } from "@/types";
-import { cloneModelsFor, cloningOf, type CloneSupport } from "@/lib/providers";
+import { cloneModelsFor, cloningOf, speechProviderOf, type CloneSupport } from "@/lib/providers";
 import {
   formatsHint,
   MAX_TRANSCRIPT_CHARS,
@@ -52,7 +52,9 @@ function clonableEndpoint(db: Db, id: string) {
   throw badRequest(
     models.length
       ? `${ep.name} cannot make a voice with the model ${ep.model}; change its model to ${models.join(" or ")} first`
-      : `${ep.name} cannot make a voice from samples`,
+      : speechProviderOf(ep).cloning?.optIn
+        ? `${ep.name} does not say its server makes voices; turn that on on its Voices tab first`
+        : `${ep.name} cannot make a voice from samples`,
   );
 }
 

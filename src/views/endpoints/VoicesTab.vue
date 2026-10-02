@@ -30,7 +30,7 @@ import {
   X as RemoveIcon,
   Search as SearchIcon,
 } from "@lucide/vue";
-import { UiHint, UiSelect, UiTooltip } from "@/ui";
+import { UiHint, UiSelect, UiSwitch, UiTooltip } from "@/ui";
 import { plural } from "@/lib/contents";
 import { isFishAudio } from "@/lib/endpoints";
 import { cloningOf, speechProviderOf } from "@/lib/providers";
@@ -102,6 +102,8 @@ const fetchBlocked = computed(() => fish.value && needsKeyFirst.value);
 // what the provider takes as a voice's samples, which keeping them is held to as cloning is
 const cloning = computed(() => cloningOf(props.endpoint));
 const clonable = computed(() => !!cloning.value);
+// a compatible server may or may not make voices, and nothing says which until it is asked to
+const cloningOptIn = computed(() => !!speechProviderOf(props.endpoint).cloning?.optIn);
 
 // ---------- kept samples ----------
 // Which voices here have the samples they were made from kept on the server. A voice cloned before
@@ -280,6 +282,20 @@ const sampleTitle = computed(() =>
     </section>
 
     <FishVoiceSearch v-if="fish" :endpoint="endpoint" />
+    <section v-if="cloningOptIn" class="card flex items-center justify-between gap-3 p-3">
+      <h3 class="label">
+        Voice cloning
+        <UiHint
+          label="voice cloning"
+          text="For a server that makes voices at POST /audio/voices, as omnivoice-fastapi does (the batch speech API). Kokoro and most others do not."
+        />
+      </h3>
+      <UiSwitch
+        :model-value="!!endpoint.makesVoices"
+        label="Make voices on this server"
+        @update:model-value="(v) => (endpoint.makesVoices = v)"
+      />
+    </section>
     <CloneVoicePanel :endpoint="endpoint" @cloned="loadKept" />
 
     <section class="card p-3">

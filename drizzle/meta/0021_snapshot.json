@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "700067dd-e8f7-4444-abcb-da41aa86d185",
+  "id": "4b5315c4-d70b-4525-8e3f-282e35b3e39d",
   "prevId": "695f3991-ccf1-4432-83b5-d673fc700a77",
   "tables": {
     "books": {
@@ -1541,6 +1541,14 @@
           "notNull": true,
           "autoincrement": false,
           "default": true
+        },
+        "makes_voices": {
+          "name": "makes_voices",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
         },
         "position": {
           "name": "position",

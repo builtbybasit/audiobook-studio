@@ -107,6 +107,12 @@ export interface Endpoint {
    * line a request whatever the server says.
    */
   batch?: boolean;
+  /**
+   * An OpenAI-compatible server makes voices from samples at `POST …/audio/voices`
+   * (`docs/speech-batch-api.md#voices`), so the Voices tab offers cloning. Absent means no: nothing
+   * says whether such a server can until it is asked to.
+   */
+  makesVoices?: boolean;
 }
 
 /** A container this app can keep a clip in. */

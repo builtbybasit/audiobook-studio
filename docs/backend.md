@@ -602,6 +602,7 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `DELETE` | `/api/books/:id/volumes/:volumeId`                | Remove a volume; the last one removes the book; 409 mid-build                                                |
 | `PUT`    | `/api/books/:id/volumes/order`                    | Read the volumes in this order; chapters renumber to follow                                                  |
 | `POST`   | `/api/books/:id/covers`                           | A JPEG or PNG for an audiobook's cover → its url                                                             |
+| `POST`   | `/api/books/:id/cover`                            | A JPEG or PNG as the book's own cover → the book                                                             |
 | `GET`    | `/api/books/:id/covers/:file`                     | A cover's bytes                                                                                              |
 | `GET`    | `/api/books/:id/chapters/:n/text`                 | A chapter's prose, as Markdown or plain                                                                      |
 | `POST`   | `/api/books/:id/chapters/skip`, `include`, `keep` | Skip chapters, put them back, or keep a noted one                                                            |
@@ -670,6 +671,9 @@ knowing:
   `201 { cover }`. It does not change the book's `coverImage`: it is what an export's
   `settings.cover` names, and a build refuses any other `settings.cover` with a 400, since a picture
   this server could never find would otherwise be a build failing halfway.
+- `POST …/cover` takes the same `file` and makes it the book's `coverImage` — the shelf's, the
+  overview's, and an audiobook's when its export names none — answering `{ book }`. The EPUB's
+  image stays on disk under its own url.
 - `POST …/chapters/script` answers with the jobs it made, the chapters it left out and why
   (`excluded`, `busy`, `missing`), and the book's chapters as they now stand, so the page can say
   "2 already being scripted". The body names the scripting `profile` the page has chosen; see

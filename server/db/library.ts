@@ -685,6 +685,11 @@ export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): v
   db.update(books).set(set).where(eq(books.id, bookId)).run();
 }
 
+/** The image the book is shown with, a url of its own covers. */
+export function setBookCover(db: Db, bookId: string, url: string): void {
+  db.update(books).set({ coverImage: url }).where(eq(books.id, bookId)).run();
+}
+
 export function renameVolume(db: Db, bookId: string, volumeId: number, name: string): void {
   db.update(volumes)
     .set({ name })

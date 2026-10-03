@@ -15,6 +15,7 @@
 // skip come back as "looked at".
 import { useQueryCache } from "@pinia/colada";
 import { noticeGroups, plural, summarize } from "@/lib/contents";
+import { coverRefusal } from "@/lib/exports";
 import { bookPromptProblems } from "@/lib/prompt";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { invalidate } from "@/queries/invalidate";
@@ -665,6 +666,22 @@ export const useLibraryStore = defineStore("library", {
         if (vol) this._dropVolume(bookId, vol.id);
       }
       return discarded;
+    },
+    /** A picked image as the book's cover; a refusal says why and leaves the cover as it was. */
+    async changeCover(bookId: string, file: File): Promise<void> {
+      const refused = coverRefusal(file);
+      if (refused) {
+        useUiStore().toast(refused, {
+          kind: "warn",
+          description: `${file.name} was not used; the cover is as it was.`,
+        });
+        return;
+      }
+      try {
+        this._putBook(await this._service().changeCover(bookId, file));
+      } catch (cause) {
+        toastFailure("change the cover", cause);
+      }
     },
     /**
      * A new name for a volume. Like the settings above it is an input, so the name changes here at

@@ -204,19 +204,34 @@ export function bookRoutes(
 
   // ---------- covers ----------
   if (covers) {
+    const coverLimit = bodyLimit({
+      // a little over the limit, for the multipart envelope around the image
+      maxSize: MAX_COVER_BYTES + 64 * 1024,
+      onError: () => fail(413, `That image is larger than ${MAX_COVER_BYTES / 1024 / 1024} MB`),
+    });
     /** An image for an audiobook's cover; answers with the url its settings name it by. */
     app.post(
       "/:id/covers",
-      bodyLimit({
-        // a little over the limit, for the multipart envelope around the image
-        maxSize: MAX_COVER_BYTES + 64 * 1024,
-        onError: () => fail(413, `That image is larger than ${MAX_COVER_BYTES / 1024 / 1024} MB`),
-      }),
+      coverLimit,
       validate("param", BookParam),
       validate("form", CoverForm),
       async (c) => {
         const bytes = new Uint8Array(await c.req.valid("form").file.arrayBuffer());
         return c.json(await ops.uploadCover(db, covers, c.req.valid("param").id, bytes), 201);
+      },
+    );
+
+    /** An image for the book's own cover, the shelf's and the overview's; answers with the book. */
+    app.post(
+      "/:id/cover",
+      coverLimit,
+      validate("param", BookParam),
+      validate("form", CoverForm),
+      async (c) => {
+        const bytes = new Uint8Array(await c.req.valid("form").file.arrayBuffer());
+        return c.json({
+          book: await ops.changeBookCover(db, covers, c.req.valid("param").id, bytes),
+        });
       },
     );
 

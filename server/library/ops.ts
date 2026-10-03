@@ -237,6 +237,22 @@ export async function uploadCover(
   return { cover: (await covers.write(bookId, bytes, type)).url };
 }
 
+/**
+ * Make an image the book's own cover: the one the shelf and the overview show, and the one an
+ * audiobook carries when its export names none. Kept the way an export's cover is, so the image
+ * the EPUB brought stays on disk under its own url.
+ */
+export async function changeBookCover(
+  db: Db,
+  covers: CoverFiles,
+  bookId: string,
+  bytes: Uint8Array,
+): Promise<Book> {
+  const { cover } = await uploadCover(db, covers, bookId, bytes);
+  library.setBookCover(db, bookId, cover);
+  return requireBook(db, bookId);
+}
+
 /** The review is done: the book, or its new volume, joins the library. Nothing starts running. */
 export function confirmImport(db: Db, bookId: string): Book {
   requireBook(db, bookId);

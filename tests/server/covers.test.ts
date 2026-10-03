@@ -167,6 +167,39 @@ describe("an uploaded cover", () => {
   });
 });
 
+describe("the book's own cover", () => {
+  test("is replaced by an image chosen for it, and the EPUB's stays where it was", async () => {
+    const api = testApi();
+    const book = await imported(api, { cover: { bytes: PNG } });
+    const form = new FormData();
+    form.set("file", new File([JPEG_HEAD], "new.jpg"));
+    const put = await api.request<Imported & Failure>(`/api/books/${book.id}/cover`, {
+      method: "POST",
+      body: form,
+    });
+    expect(put.status).toBe(200);
+    expect(put.body.book.coverImage).toMatch(/\.jpg$/);
+    expect((await bytesAt(api, put.body.book.coverImage!)).bytes).toEqual(JPEG_HEAD);
+    expect((await bytesAt(api, book.coverImage!)).status).toBe(200);
+    const read = await api.request<Imported>(`/api/books/${book.id}`);
+    expect(read.body.book.coverImage).toBe(put.body.book.coverImage);
+  });
+
+  test("refuses what is not a JPEG or PNG and leaves the cover as it was", async () => {
+    const api = testApi();
+    const book = await imported(api, { cover: { bytes: PNG } });
+    const form = new FormData();
+    form.set("file", new File([GIF], "cover.png"));
+    const put = await api.request<Failure>(`/api/books/${book.id}/cover`, {
+      method: "POST",
+      body: form,
+    });
+    expect(put.status).toBe(415);
+    const read = await api.request<Imported>(`/api/books/${book.id}`);
+    expect(read.body.book.coverImage).toBe(book.coverImage);
+  });
+});
+
 // ---- building with a cover ----
 
 const settingsFor = (over: Partial<ExportSettings> = {}): ExportSettings => ({

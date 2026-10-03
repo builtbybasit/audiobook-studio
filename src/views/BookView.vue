@@ -86,6 +86,12 @@ function addVolume(e: Event) {
   input.value = "";
   if (picked) pendingAdd.value = pendingFor(picked, bookId);
 }
+function changeCover(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (file) void libraryStore.changeCover(bookId, file);
+}
 const editing = ref<number | null>(null);
 const draft = ref("");
 const dragging = ref<number | null>(null);
@@ -172,7 +178,20 @@ const next = computed(() =>
 <template>
   <div v-if="book" class="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
     <div class="flex flex-col gap-5 sm:flex-row">
-      <BookCover :book="book" class="h-40 w-28 shrink-0 rounded-lg shadow-lg" />
+      <label class="group relative h-40 w-28 shrink-0 cursor-pointer" title="Change cover">
+        <BookCover :book="book" class="h-full w-full rounded-lg shadow-lg" />
+        <span
+          class="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 text-xs font-medium text-white opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100"
+          >Change cover</span
+        >
+        <input
+          type="file"
+          accept="image/jpeg,image/png"
+          class="sr-only"
+          aria-label="Change cover"
+          @change="changeCover"
+        />
+      </label>
       <div class="min-w-0 flex-1">
         <h1 class="font-serif text-3xl">{{ book.title }}</h1>
         <div class="text-zinc-500">

@@ -128,6 +128,8 @@ export interface LibraryService {
    * chapter on the server, so the chapters come back with the book.
    */
   updateBook(bookId: string, settings: BookSettings): Promise<ImportedBook>;
+  /** Make this JPEG or PNG the book's own cover, the shelf's and the overview's. */
+  changeCover(bookId: string, file: File): Promise<Book>;
   /** Give a volume a new name. */
   renameVolume(bookId: string, volumeId: number, name: string): Promise<Book>;
   /**
@@ -326,6 +328,10 @@ export class HttpLibraryService implements LibraryService {
 
   updateBook(bookId: string, settings: BookSettings): Promise<ImportedBook> {
     return this.http.patch<ImportedBook>(`/books/${seg(bookId)}`, settings);
+  }
+
+  async changeCover(bookId: string, file: File): Promise<Book> {
+    return (await this.http.postForm<{ book: Book }>(`/books/${seg(bookId)}/cover`, file, {})).book;
   }
 
   async renameVolume(bookId: string, volumeId: number, name: string): Promise<Book> {

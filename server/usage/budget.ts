@@ -26,7 +26,7 @@
 import type { EndpointKind } from "@/types";
 import { money } from "@/lib/pricing";
 import type { Db } from "~/db/client";
-import { readEndpoint, readProfiles } from "~/db/endpoints";
+import { readEndpoint, readProfiles, readTranscribers } from "~/db/endpoints";
 import { getBook } from "~/db/library";
 import { conflict } from "~/lib/errors";
 import { bookSpend, endpointSpend } from "~/usage/ledger";
@@ -39,7 +39,7 @@ export interface EndpointRequest {
 
 /** What is being asked for: which budget it draws on, and its worst-case price in USD. */
 export interface BudgetAsk {
-  kind: "scripting" | "narration";
+  kind: "scripting" | "narration" | "transcription";
   cost: number;
   /** a running job asking about itself: its own reservation is left out of what others hold */
   jobId?: number;
@@ -48,7 +48,7 @@ export interface BudgetAsk {
   /**
    * The next request on each endpoint the work goes to, held to that endpoint's daily limit: the
    * one about to go out, or before anything is queued the first one. Scripting goes to scripting
-   * profiles and narration to speech endpoints.
+   * profiles, narration to speech endpoints and transcription to transcription endpoints.
    */
   requests?: readonly EndpointRequest[];
   /** what the daily limit's refusal calls the request; `what` when not given */
@@ -64,7 +64,7 @@ export interface BudgetAsk {
 export function budgetProblem(db: Db, bookId: string | null, ask: BudgetAsk): string | null {
   const book = bookId == null ? null : bookProblem(db, bookId, ask);
   if (book) return book;
-  const kind: EndpointKind = ask.kind === "scripting" ? "scripting" : "tts";
+  const kind: EndpointKind = ask.kind === "narration" ? "tts" : ask.kind;
   for (const r of ask.requests ?? []) {
     const problem = dailyProblem(db, kind, r, ask.request ?? ask.what ?? "the first request");
     if (problem) return problem;
@@ -151,12 +151,20 @@ export function holdToday(
   };
 }
 
+function endpointOf(db: Db, kind: EndpointKind, id: string) {
+  switch (kind) {
+    case "tts":
+      return readEndpoint(db, id);
+    case "scripting":
+      return readProfiles(db).find((p) => p.id === id);
+    case "transcription":
+      return readTranscribers(db).find((t) => t.id === id);
+  }
+}
+
 /** Why `r` would take its endpoint past its daily limit, or null; see the header. */
 function dailyProblem(db: Db, kind: EndpointKind, r: EndpointRequest, what: string): string | null {
-  const ep =
-    kind === "tts"
-      ? readEndpoint(db, r.endpoint)
-      : readProfiles(db).find((p) => p.id === r.endpoint);
+  const ep = endpointOf(db, kind, r.endpoint);
   const limit = ep?.spendLimit ?? null;
   if (!ep || limit == null) return null;
   const spent = endpointSpend(db, kind, ep.id, startOfToday());

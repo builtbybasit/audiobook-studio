@@ -23,6 +23,8 @@ import type {
   RequestUsage,
   ScriptEndpointTelemetry,
   SpeechCharge,
+  Transcriber,
+  TtsBilling,
 } from "@/types";
 import { billingOf } from "@/lib/endpoints";
 import {
@@ -36,7 +38,9 @@ import {
 import type { Db, Tx } from "~/db/client";
 import { toRequestRecord, requestValues } from "~/db/rows/usage";
 import { chapters, cloneFees, jobs, openingSpend, requests } from "~/db/schema";
-import type { SentScript, SentSpeech } from "~/providers/sent";
+import type { SentScript, SentSpeech, SentTranscription } from "~/providers/sent";
+
+type Sent = SentScript | SentSpeech | SentTranscription;
 
 /** Which work a request was for. The chapter by its uid, which a renumbering never moves. */
 export interface RequestFor {
@@ -65,9 +69,14 @@ export interface RequestFor {
   held?: number;
 }
 
-const errorOf = (sent: SentScript | SentSpeech): ReqError | undefined =>
+const errorOf = (sent: Sent): ReqError | undefined =>
   sent.error
-    ? { code: sent.error.code, message: sent.error.message, body: sent.error.body ?? "", at: sent.finishedAt }
+    ? {
+        code: sent.error.code,
+        message: sent.error.message,
+        body: sent.error.body ?? "",
+        at: sent.finishedAt,
+      }
     : undefined;
 
 /**
@@ -88,7 +97,7 @@ export function append(
   return record;
 }
 
-function timing(sent: SentScript | SentSpeech, work: RequestFor) {
+function timing(sent: Sent, work: RequestFor) {
   const queuedAt = Math.min(work.queuedAt ?? sent.startedAt, sent.startedAt);
   return {
     queuedAt,
@@ -208,6 +217,47 @@ export function settleSpeech(
         audioSeconds: units.audioSeconds,
         ...(units.audioTokens != null ? { audioTokens: units.audioTokens } : {}),
       },
+      cost: charge.amount,
+      costBasis: charge.basis,
+      speech: charge,
+      ...(sent.rateLimited ? { rateLimited: true } : {}),
+      ...(error ? { error } : {}),
+      simulated: sent.simulated,
+    },
+    work.chapterUid,
+    work.held,
+  );
+}
+
+/**
+ * Price one transcription request by the minute of audio it sent, against `transcriber`'s card,
+ * and append it. One that was not billed (`sent.billed`) is a row that costs nothing, as speech is.
+ */
+export function settleTranscription(
+  db: Db | Tx,
+  transcriber: Transcriber,
+  work: RequestFor,
+  sent: SentTranscription,
+): RequestRecord {
+  const billing: TtsBilling = { unit: "minute", rate: transcriber.perMinute };
+  const units = measureSpeech({ text: "", audioSeconds: sent.audioSeconds }, billing);
+  const priced = priceSpeechRequest(billing, readPricing(transcriber), units, {
+    at: sent.finishedAt,
+    rule: PRICING_RULE,
+  });
+  const charge = sent.billed ? priced : unbilled(priced);
+  const error = errorOf(sent);
+  return append(
+    db,
+    {
+      endpointId: transcriber.id,
+      kind: "transcription",
+      bookId: work.bookId,
+      label: work.label,
+      status: sent.status,
+      attempts: sent.attempts,
+      ...timing(sent, work),
+      usage: { audioSeconds: units.audioSeconds },
       cost: charge.amount,
       costBasis: charge.basis,
       speech: charge,
@@ -368,7 +418,8 @@ export function bookSpend(db: Db | Tx, bookId: string, exceptJob?: number): Book
   const scriptSpent = spentOn("scripting");
   const speechSpent = spentOn("tts");
   return {
-    spent: scriptSpent + speechSpent + opening,
+    // every kind, transcription among them, though only the two above are told apart
+    spent: byKind.reduce((n, r) => n + (r.cost ?? 0), 0) + opening,
     scriptSpent,
     speechSpent,
     opening,

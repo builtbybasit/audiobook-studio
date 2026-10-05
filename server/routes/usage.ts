@@ -8,6 +8,7 @@ import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
+import { ENDPOINT_KINDS } from "@/lib/endpointShapes";
 import type { Db } from "~/db/client";
 import { getBook } from "~/db/library";
 import { notFound } from "~/lib/errors";
@@ -19,7 +20,7 @@ import { bookSpend, endpointRequests } from "~/usage/ledger";
 const RANGE_MS = { "1h": 3_600_000, "6h": 21_600_000, "24h": 86_400_000, "7d": 604_800_000 };
 
 const RequestsQuery = v.object({
-  kind: v.picklist(["tts", "scripting"]),
+  kind: v.picklist(ENDPOINT_KINDS),
   id: v.pipe(v.string(), v.nonEmpty()),
   range: v.optional(v.picklist(["1h", "6h", "24h", "7d"]), "24h"),
 });

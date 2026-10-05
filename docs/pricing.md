@@ -72,6 +72,10 @@ predicts. So every request records all of them and only the one its endpoint bil
 | per audio minute                     | the recording that came back              | Azure proxy, rate unknown      |
 | per request                          | a flat fee per call                       | —                              |
 
+A transcription endpoint (speech to text) has one model only: **per audio minute sent**. Its row
+keeps the seconds of the recording it was sent in `usage.audioSeconds` and a speech receipt in the
+`minute` unit, through the same schedule and promotions as any other rate.
+
 **Characters are not `String.length`.** That counts UTF-16 code units — an emoji as two, a Han
 character as one — and is neither what a provider billing "characters" means nor what one billing
 bytes meters. `billableChars` counts code points and `utf8Bytes` counts bytes. The Fish Audio

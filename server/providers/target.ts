@@ -5,13 +5,14 @@
 // which is the only thing that ever puts the key on the wire. A target is never stored and never
 // logged whole: `apiKey` is on the logger's redaction list, but the rule is not to spread one into
 // a log record in the first place.
-import type { Endpoint, EndpointOps, Profile } from "@/types";
+import type { Endpoint, EndpointKind, EndpointOps, Profile, Transcriber } from "@/types";
 import { OPS_DEFAULTS } from "@/lib/endpointShapes";
 import { isSimulated } from "@/lib/providers";
 import type { Db, Tx } from "~/db/client";
 import { readEndpointKey } from "~/db/endpoints";
 import type { ScriptTarget, ScriptingProvider } from "~/providers/scripting";
 import type { SpeechProvider } from "~/providers/speech";
+import type { TranscriptionProvider } from "~/providers/transcription";
 import type { VoiceCloner } from "~/providers/clone";
 import type { VoiceLister } from "~/providers/voices";
 
@@ -35,6 +36,11 @@ export interface Providers {
    * is a click that asks for exactly this, and only a test hands over another.
    */
   cloner?: VoiceCloner;
+  /**
+   * What hears a clone sample, or a rendered line, back as words. The transcription endpoints' own
+   * by default; only a test hands over another.
+   */
+  transcription?: TranscriptionProvider;
 }
 
 export interface ProviderTarget {
@@ -82,9 +88,14 @@ export function scriptTarget(db: Db | Tx, p: Profile): ScriptTarget {
   };
 }
 
+/** A transcription endpoint as a request needs it, and its key now. */
+export function transcriberTarget(db: Db | Tx, t: Transcriber): ProviderTarget {
+  return targetOf(t, "transcription", readEndpointKey(db, "transcription", t.id));
+}
+
 function targetOf(
-  e: Endpoint | Profile,
-  kind: "tts" | "scripting",
+  e: Endpoint | Profile | Transcriber,
+  kind: EndpointKind,
   apiKey: string | null,
 ): ProviderTarget {
   const d = OPS_DEFAULTS[kind];
@@ -103,7 +114,10 @@ function targetOf(
       simulation: {
         // a profile has no latency of its own: it answers in a tenth of the time it estimates a
         // chunk takes, the pace the browser's demo scripts at
-        latencyMs: Math.max(0, ("latency" in e ? e.latency : e.secPerChunk * 100) || 0),
+        latencyMs: Math.max(
+          0,
+          ("latency" in e ? e.latency : "secPerChunk" in e ? e.secPerChunk * 100 : 0) || 0,
+        ),
         failRate: "failRate" in e ? Math.min(1, Math.max(0, e.failRate || 0)) : 0,
       },
     }),

@@ -105,6 +105,7 @@ describe("the endpoints' configuration", () => {
     expect(await read(testApi())).toEqual({
       endpoints: [],
       profiles: [],
+      transcribers: [],
       credentials: [],
       prompt: null,
       script: NO_SCRIPT,
@@ -152,6 +153,7 @@ describe("the endpoints' configuration", () => {
     expect(back).toEqual({
       endpoints: [],
       profiles: [],
+      transcribers: [],
       credentials: [],
       prompt: null,
       script: NO_SCRIPT,

@@ -1,8 +1,8 @@
 // Endpoints, scripting profiles and their rate cards.
 //
-// The app talks to two kinds of OpenAI-compatible server — a chat model that turns prose into an
-// attributed script, and a speech model that renders a line — and they are configured, paused, rate
-// limited and billed the same way. They are two tables rather than one because their rate cards
+// The app talks to three kinds of OpenAI-compatible server — a chat model that turns prose into an
+// attributed script, a speech model that renders a line, and a transcription model that hears one
+// back — and they are configured, paused, rate limited and billed the same way. They are two tables rather than one because their rate cards
 // price different components and their operational settings differ in the middle, but everything
 // that *is* shared (the ops columns, the schedule, the promotions) is shared by structure.
 //
@@ -41,11 +41,12 @@ export const credentials = sqliteTable("credentials", {
 });
 
 /**
- * One configured endpoint, of either kind.
+ * One configured endpoint, of any kind.
  *
  * `kind` decides which half of the rate columns means anything: a `scripting` row prices tokens
  * (`in_price`, `out_price`, `cached_input`, `cache_write`), a `tts` row prices speech in whatever
- * unit it bills in (`billing_unit`, `billing_rate`, `billing_audio_rate`). A rate is `null` when it
+ * unit it bills in (`billing_unit`, `billing_rate`, `billing_audio_rate`), and a `transcription`
+ * row the minute of audio sent (`billing_unit` = `minute`, `billing_rate`). A rate is `null` when it
  * is **not known**, which is never the same as `0` — a local endpoint you host yourself is free; a
  * provider whose price list nobody has typed in yet cannot be priced at all.
  */

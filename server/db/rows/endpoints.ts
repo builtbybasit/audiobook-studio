@@ -8,6 +8,7 @@
 // a cooldown for a rate limit that expired days ago.
 import type {
   Endpoint,
+  EndpointOps,
   ExpressionConfig,
   ExpressionTag,
   PricingConfig,
@@ -15,6 +16,7 @@ import type {
   ProfilePrompt,
   Promotion,
   RateWindow,
+  Transcriber,
   TtsBilling,
   Voice,
 } from "@/types";
@@ -188,14 +190,18 @@ export function toEndpoint(row: EndpointRow, parts: EndpointParts): Endpoint {
 /**
  * Where a scripting profile's row is kept.
  *
- * The two kinds share a table, but not a namespace: the app keys them `tts:<id>` and
- * `scripting:<id>`, and the seeded world has a speech endpoint and a scripting profile that are
+ * The kinds share a table, but not a namespace: the app keys them `tts:<id>`, `scripting:<id>` and
+ * `transcription:<id>`, and the seeded world has a speech endpoint and a scripting profile that are
  * both `openai`. A speech endpoint keeps its bare id, because a character's voice names it —
- * `<endpointId>/<voiceId>` — and the narration job looks it up by that; a profile's row is kept
- * under the page's own key for it, so the two never meet.
+ * `<endpointId>/<voiceId>` — and the narration job looks it up by that; the other kinds' rows are
+ * kept under the page's own key for them, so none of them meet.
  */
 export const PROFILE_KEY = "scripting:";
 export const profileKey = (id: string): string => PROFILE_KEY + id;
+
+/** Where a transcription endpoint's row is kept; see `PROFILE_KEY`. */
+export const TRANSCRIBER_KEY = "transcription:";
+export const transcriberKey = (id: string): string => TRANSCRIBER_KEY + id;
 
 /**
  * A profile's say over the prompt, or nothing when it has never had one. Any of the four columns
@@ -254,7 +260,25 @@ export function toProfile(row: EndpointRow, parts: EndpointParts): Profile {
   };
 }
 
-const opsValues = (e: Partial<StoredEndpoint>) => ({
+/** A transcription endpoint. Same table, `kind = "transcription"`, its rate kept per minute. */
+export function toTranscriber(row: EndpointRow, parts: EndpointParts): Transcriber {
+  const pricing = toPricingConfig(row, parts);
+  return {
+    id: row.id.startsWith(TRANSCRIBER_KEY) ? row.id.slice(TRANSCRIBER_KEY.length) : row.id,
+    name: row.name,
+    baseUrl: row.baseUrl,
+    model: row.model,
+    enabled: row.enabled,
+    concurrency: row.concurrency,
+    needsKey: row.needsKey,
+    perMinute: row.billingRate ?? 0,
+    ...(pricing ? { pricing } : {}),
+    ...(row.apiKey ? { hasKey: true } : {}),
+    ...ops(row),
+  };
+}
+
+const opsValues = (e: Partial<EndpointOps>) => ({
   timeoutSec: e.timeoutSec ?? null,
   maxRetries: e.maxRetries ?? null,
   cooldownSec: e.cooldownSec ?? null,
@@ -396,3 +420,26 @@ export const expressionTagValues = (
   kind: t.kind,
   position,
 });
+
+export function transcriberValues(
+  t: Transcriber,
+  position: number,
+  apiKey: string | null = null,
+): typeof endpoints.$inferInsert {
+  return {
+    id: transcriberKey(t.id),
+    kind: "transcription",
+    name: t.name,
+    baseUrl: t.baseUrl,
+    model: t.model,
+    enabled: t.enabled,
+    concurrency: t.concurrency,
+    needsKey: t.needsKey,
+    apiKey,
+    position,
+    billingUnit: "minute",
+    billingRate: t.perMinute,
+    timezone: t.pricing?.timezone ?? null,
+    ...opsValues(t),
+  };
+}

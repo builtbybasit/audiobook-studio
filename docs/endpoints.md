@@ -16,9 +16,9 @@ demo library every endpoint is simulated: each keeps its provider's name and rat
 
 ## Endpoints page
 
-`/endpoints` is app-wide: every scripting and speech endpoint in one list, across every book. The
+`/endpoints` is app-wide: every scripting, speech and transcription endpoint in one list, across every book. The
 per-book panels on the Scripting and Narration pages keep the routing work that belongs beside a
-book and link here, and `⌘K` reaches the page and can pause or resume either kind from anywhere.
+book and link here, and `⌘K` reaches the page and can pause or resume any of them from anywhere.
 The route is lazy (`() => import("@/views/EndpointsView.vue")`), which keeps the charting library
 out of the entry chunk.
 
@@ -396,6 +396,37 @@ its thinking as a share of input tokens, which a run's estimate, the chunk previ
 to the output ("incl. ~1,240 thinking tokens a chunk, from the last 12 requests at this level").
 Until such a request has been made, the estimate says thinking is not counted yet. The budget hold
 reserves the whole max-output ceiling, which already covers any thinking.
+
+## Transcription endpoints
+
+A third kind, **Speech to text**, turns audio back into words. It is any server that answers
+OpenAI's `POST /audio/transcriptions`: one recording a request, sent as a multipart form with the
+model, priced by the minute of audio **sent** (`perMinute`, the Pricing tab's one rate). It has
+Connection, Requests (concurrency, timeout, retries), Pricing and Activity tabs, and no voices,
+formats or splitting.
+
+What uses it:
+
+- **Clone samples.** Beside each sample's transcript in the Voices tab's clone form, where the
+  provider takes one, **Transcribe** sends that sample to the first transcription endpoint switched
+  on (`POST /api/endpoints/transcribe`) and fills the box with what it heard, to be corrected by
+  hand. The request is priced into the ledger with no book, held to the endpoint's daily limit and
+  tried once.
+
+**Word times.** Asked for `verbose_json` with `timestamp_granularities[]=word`, a server says when
+each word starts and ends. `whisper-1`, Fermion's Phonon and faster-whisper servers do;
+`gpt-4o-transcribe` and `gpt-4o-mini-transcribe` answer `json` only, so they give the words
+without their times. `prompt` carries names the audio is likely to hold: Whisper reads it as
+context, Phonon as words to favour.
+
+**Fermion Phonon, locally.** `pip install fermion-research`, then `fermion serve phonon-2 --port
+8001` (its default, 8000, is the OmniVoice server's), and the **Fermion Phonon (local)** preset.
+English only, free, and far faster than real time. `/v1/models` lists it by its full name; the
+Test button says so and the requests still go through, since the server takes `phonon-2` as an
+alias.
+
+A simulated transcription endpoint (`simulated://…`) hears the same fixed sentence in every
+recording and gives no word times.
 
 ## Queue job activity
 

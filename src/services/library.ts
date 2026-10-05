@@ -12,6 +12,7 @@ import type {
   CharacterVoice,
   Cast,
   Chapter,
+  ChapterHeard,
   ChapterHistory,
   ChapterLines,
   ChapterScript,
@@ -64,6 +65,8 @@ export interface BookSettings {
   prompt?: BookPrompt | null;
   /** read translator's and author's notes aloud (`Book.readNotes`) */
   readNotes?: boolean;
+  /** check each chapter by ear once it is narrated (`Book.checkByEar`) */
+  checkByEar?: boolean;
   /** the voice for speakers with none of their own (`Book.characterVoice`); `null` = the Narrator's */
   characterVoice?: CharacterVoice | null;
 }
@@ -101,6 +104,8 @@ export interface LibraryService {
   chapterText(bookId: string, chapterId: number, format?: TextFormat): Promise<string>;
   /** The chapter's script as it stands on the server: empty until a scripting job has written one. */
   chapterScript(bookId: string, chapterId: number): Promise<ChapterScript>;
+  /** What was heard of a chapter's current clips, by segment id (`HeardLine`). */
+  chapterHeard(bookId: string, chapterId: number): Promise<ChapterHeard>;
   /** Read an EPUB into a new book waiting for its contents review. */
   importBook(file: File, options?: { title?: string }): Promise<ImportedBook>;
   /** Read an EPUB into one more volume of a book already in the library. */
@@ -272,6 +277,14 @@ export class HttpLibraryService implements LibraryService {
 
   chapterScript(bookId: string, chapterId: number): Promise<ChapterScript> {
     return this.http.get<ChapterScript>(`/books/${seg(bookId)}/chapters/${chapterId}/script`);
+  }
+
+  async chapterHeard(bookId: string, chapterId: number): Promise<ChapterHeard> {
+    return (
+      await this.http.get<{ lines: ChapterHeard }>(
+        `/books/${seg(bookId)}/chapters/${chapterId}/heard`,
+      )
+    ).lines;
   }
 
   importBook(file: File, { title }: { title?: string } = {}): Promise<ImportedBook> {

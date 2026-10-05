@@ -5,6 +5,7 @@
 // `jobsService()`; no view knows which answered.
 import type {
   BuildQueued,
+  CheckQueued,
   ExportSettings,
   Job,
   NarrationQueued,
@@ -35,6 +36,8 @@ export interface JobsService {
   scriptChapters(bookId: string, ids: number[], profile?: string): Promise<ScriptingQueued>;
   /** Narrate these chapters of a book, as one run, at the scope named. */
   narrateChapters(bookId: string, ids: number[], scope: NarrationScope): Promise<NarrationQueued>;
+  /** Hear these chapters' current clips on the first transcription endpoint switched on, as one run. */
+  checkChapters(bookId: string, ids: number[]): Promise<CheckQueued>;
   /** Render these lines of a chapter again, each beside the clip it may replace, as one job. */
   retakeLines(bookId: string, chapterId: number, ids: number[]): Promise<RetakesQueued>;
   /** Stitch these chapters of a book into one audiobook, as one job. */
@@ -88,6 +91,10 @@ export class HttpJobsService implements JobsService {
       ids,
       scope,
     });
+  }
+
+  checkChapters(bookId: string, ids: number[]): Promise<CheckQueued> {
+    return this.http.post<CheckQueued>(`/books/${seg(bookId)}/chapters/check`, { ids });
   }
 
   retakeLines(bookId: string, chapterId: number, ids: number[]): Promise<RetakesQueued> {

@@ -19,6 +19,7 @@ import {
   AudioLines as NarrationIcon,
   Download as ExportIcon,
   PencilLine as ScriptingIcon,
+  Ear as CheckIcon,
   RotateCcw as RetryIcon,
   X as CloseIcon,
 } from "@lucide/vue";
@@ -51,6 +52,7 @@ const icon: Record<JobKind, Component> = {
   scripting: ScriptingIcon,
   narration: NarrationIcon,
   export: ExportIcon,
+  check: CheckIcon,
 };
 const running = computed(() => jobsStore.jobs.filter((j) => j.status === "running"));
 const queued = computed(() => jobsStore.jobs.filter((j) => j.status === "queued"));

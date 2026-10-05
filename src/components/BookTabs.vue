@@ -58,6 +58,7 @@ const on = (k: string) => activeKey.value === k && TAB_ON;
         >{{ p.narrated }}/{{ p.total }}</span
       ></RouterLink
     >
+    <RouterLink :to="`${base}/listen`" :class="[TAB, on('listen')]">Listen</RouterLink>
     <RouterLink :to="`${base}/export`" :class="[TAB, on('export')]"
       >Export
       <span class="text-zinc-400"

@@ -17,6 +17,7 @@ import {
   BookOpen as OverviewIcon,
   ChevronsLeft as CollapseIcon,
   ChevronsRight as ExpandIcon,
+  Headphones as ListenIcon,
   Inbox as ReviewIcon,
   LibraryBig as LibraryIcon,
   ListOrdered as QueueIcon,
@@ -129,6 +130,7 @@ const pages = computed<Item[]>(() => {
       count: `${p.stale ? `${p.stale} stale · ` : ""}${p.narrated}/${p.total}`,
       warn: !!p.stale || !!f.failedNarration,
     },
+    { key: "listen", to: `${base.value}/listen`, icon: ListenIcon, label: "Listen" },
     {
       key: "export",
       to: `${base.value}/export`,

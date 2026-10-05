@@ -21,6 +21,7 @@ export const BOOK_PAGES = [
   "search",
   "scripting",
   "narration",
+  "listen",
   "export",
 ] as const;
 export type BookPage = (typeof BOOK_PAGES)[number];

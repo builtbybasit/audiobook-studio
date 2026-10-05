@@ -330,6 +330,18 @@ function clipProgress(id: string): number | null {
   return e.end > e.start ? (p.pos - e.start) / (e.end - e.start) : 0;
 }
 
+/**
+ * The playhead as of this instant, for a view that follows words rather than lines. `p.pos` moves
+ * on the tick, ten times a second, and VueUse's `currentTime` on the element's `timeupdate`, a few
+ * times a second; a word is shorter than either. So while a file plays this reads the element's own
+ * clock. Anywhere else — a timed clip, a gap, paused — there is no finer clock than `p.pos`.
+ */
+function now(): number {
+  const e = entryAt(p.pos);
+  if (!p.playing || !e || p.pos >= e.end || !e.clip.url || !el || el.paused) return p.pos;
+  return Math.min(e.start + el.currentTime, e.end);
+}
+
 function setRate(r: number): void {
   p.rate = r;
   media.rate.value = r;
@@ -356,6 +368,7 @@ const api = {
   setRate,
   cycleRate,
   clipProgress,
+  now,
   /** the queue's clips, for a view that wants to draw them */
   layout: () => layout,
 };

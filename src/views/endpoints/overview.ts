@@ -13,16 +13,8 @@ import { keyInPlace } from "@/services/endpointSettings";
 import { probeCost, seriesFrom, RANGES } from "@/services/endpoints";
 import type { EndpointDescriptor } from "@/services/endpoints";
 import { useEndpointHistory, useEndpointLive, useLibrarySpend } from "@/queries";
-import {
-  billingOf,
-  endpointErrors,
-  healthOf,
-  speechPricing,
-  unifyEndpoint,
-  unifyProfile,
-} from "@/lib/endpoints";
+import { billingOf, endpointErrors, healthOf, rateCardOf, unifiedOf } from "@/lib/endpoints";
 import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
-import { pricingOf } from "@/lib/pricing";
 import { scriptTelemetry } from "@/lib/scriptActivity";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useEndpointActivity } from "@/views/endpoints/live";
@@ -39,10 +31,7 @@ export function useEndpointOverview() {
   useEndpointLive();
 
   // ---------- the unified list ----------
-  const all = computed<UnifiedEndpoint[]>(() => [
-    ...endpointsStore.profiles.map(unifyProfile),
-    ...endpointsStore.endpoints.map(unifyEndpoint),
-  ]);
+  const all = computed<UnifiedEndpoint[]>(() => unifiedOf(endpointsStore));
   const list = computed(() => {
     const q = ui.search.trim().toLowerCase();
     return all.value.filter((u) => {
@@ -54,13 +43,17 @@ export function useEndpointOverview() {
 
   // ---------- history ----------
   // One pull of the widest range per endpoint; every shorter range is bucketed from it locally.
-  const describe = (u: UnifiedEndpoint): EndpointDescriptor => ({
-    key: u.key,
-    id: u.id,
-    kind: u.kind,
-    pricing: u.profile ? pricingOf(u.profile) : u.endpoint ? speechPricing(u.endpoint) : undefined,
-    billing: u.endpoint ? billingOf(u.endpoint) : undefined,
-  });
+  const describe = (u: UnifiedEndpoint): EndpointDescriptor => {
+    const { base, config } = rateCardOf(u);
+    return {
+      key: u.key,
+      id: u.id,
+      kind: u.kind,
+      pricing: { base, config },
+      // only a speech probe is priced on its billing model; the others have their own
+      billing: u.endpoint ? billingOf(u.endpoint) : undefined,
+    };
+  };
 
   const history = useEndpointHistory(() => all.value.map(describe));
   const histories = history.histories;
@@ -89,7 +82,7 @@ export function useEndpointOverview() {
   function healthFor(u: UnifiedEndpoint): Health {
     const rows = histories.value[u.key] ?? [];
     return healthOf(u, {
-      hasKey: keyInPlace(u.profile ?? u.endpoint),
+      hasKey: keyInPlace(u.entry),
       errors: endpointErrors(u),
       now: now.value,
       totals: loading.value ? null : seriesFor(u).totals,

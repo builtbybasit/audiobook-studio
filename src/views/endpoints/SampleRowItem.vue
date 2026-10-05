@@ -11,15 +11,21 @@
 // and pauses it once the playhead passes its end, which the player notices on its own tick — a
 // tenth of a second late at most. Apply swaps the row's file for the cut, a WAV, and marks the row
 // trimmed, so a transcript typed for the whole file asks to be checked.
+//
+// Where a transcriber is switched on, the transcript can be heard rather than typed: the row's file
+// as it stands — trimmed or not — goes to the first one on, and what it heard fills the field.
 import { computed, defineAsyncComponent, ref, shallowRef, watch } from "vue";
 import {
+  Captions as TranscribeIcon,
+  LoaderCircle as BusyIcon,
   Pause as PauseIcon,
   Play as PlayIcon,
   Scissors as TrimIcon,
   X as RemoveIcon,
 } from "@lucide/vue";
-import { UiHint, UiNumber } from "@/ui";
+import { UiHint, UiNumber, UiTooltip } from "@/ui";
 import { usePlayer, type Queue } from "@/composables/usePlayer";
+import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 import { sizeLabel } from "@/lib/audioFormat";
 import { clockDuration } from "@/lib/time";
@@ -39,6 +45,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ change: [row: SampleRow]; remove: [] }>();
 const player = usePlayer();
+const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
 const name = computed(() => props.row.file.name);
 
@@ -142,6 +149,25 @@ function apply() {
   cancel();
   emit("change", { ...props.row, file, trimmed: true });
 }
+/** the file is with a transcriber */
+const hearing = ref(false);
+async function transcribe() {
+  const file = props.row.file;
+  hearing.value = true;
+  try {
+    const text = await endpointsStore.transcribe(file);
+    // a failure has been said; a file replaced meanwhile — trimmed again — is not what was heard
+    if (text == null || props.row.file !== file) return;
+    // heard from the file as it is now, so a trim before it no longer asks for a check
+    emit("change", {
+      ...props.row,
+      transcript: text.trim().slice(0, MAX_TRANSCRIPT_CHARS),
+      trimmed: false,
+    });
+  } finally {
+    hearing.value = false;
+  }
+}
 function said(e: Event) {
   emit("change", { ...props.row, transcript: (e.target as HTMLInputElement).value });
 }
@@ -240,18 +266,34 @@ const colors = computed(() =>
         <button type="button" class="btn-primary btn-xs" @click="apply">Apply</button>
       </span>
     </div>
-    <input
-      v-if="asks"
-      :value="row.transcript"
-      class="input mt-1 w-full py-0.5"
-      :maxlength="MAX_TRANSCRIPT_CHARS"
-      :required="must"
-      :placeholder="
-        must ? 'What is said in this sample (required)' : 'What is said in this sample (optional)'
-      "
-      :aria-label="`Transcript of ${name}`"
-      @input="said"
-    />
+    <div v-if="asks" class="mt-1 flex items-center gap-1">
+      <input
+        :value="row.transcript"
+        class="input min-w-0 flex-1 py-0.5"
+        :maxlength="MAX_TRANSCRIPT_CHARS"
+        :required="must"
+        :placeholder="
+          must ? 'What is said in this sample (required)' : 'What is said in this sample (optional)'
+        "
+        :aria-label="`Transcript of ${name}`"
+        @input="said"
+      />
+      <UiTooltip
+        v-if="endpointsStore.canTranscribe"
+        text="Transcribe with a speech-to-text endpoint"
+      >
+        <button
+          type="button"
+          class="btn-ghost btn-xs shrink-0"
+          :disabled="hearing"
+          :aria-label="`Transcribe ${name}`"
+          @click="transcribe"
+        >
+          <BusyIcon v-if="hearing" class="icon-sm animate-spin" />
+          <TranscribeIcon v-else class="icon-sm" />
+        </button>
+      </UiTooltip>
+    </div>
     <p
       v-if="asks && row.trimmed && row.transcript.trim()"
       class="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400"

@@ -66,19 +66,25 @@ export const probeUnits = (billing: TtsBilling): BillableUnits =>
 /** What one probe would cost at the rates in force at `at`. `null` = this endpoint's rate is not
  *  known, which is never the same as free. */
 export function probeCost(ep: EndpointDescriptor, at: number = Date.now()): number | null {
-  if (!ep.pricing) return null;
-  if (ep.kind === "scripting")
-    return priceRequest(
-      ep.pricing.base,
-      ep.pricing.config,
-      normalizeUsage({ ...PROBE.scripting, cachedInput: 0, cacheWrite: 0 }, "internal"),
-      { at, rule: PRICING_RULE },
-    ).total;
-  if (!ep.billing) return null;
-  return priceSpeechRequest(ep.billing, ep.pricing.config, probeUnits(ep.billing), {
-    at,
-    rule: PRICING_RULE,
-  }).amount;
+  switch (ep.kind) {
+    case "scripting":
+      if (!ep.pricing) return null;
+      return priceRequest(
+        ep.pricing.base,
+        ep.pricing.config,
+        normalizeUsage({ ...PROBE.scripting, cachedInput: 0, cacheWrite: 0 }, "internal"),
+        { at, rule: PRICING_RULE },
+      ).total;
+    case "tts":
+      if (!ep.pricing || !ep.billing) return null;
+      return priceSpeechRequest(ep.billing, ep.pricing.config, probeUnits(ep.billing), {
+        at,
+        rule: PRICING_RULE,
+      }).amount;
+    // a transcription endpoint is tested by listing its models, which sends no audio and is free
+    case "transcription":
+      return 0;
+  }
 }
 
 // ---------- ranges & bucketing ----------
@@ -123,15 +129,22 @@ const p95 = (xs: number[]): number => {
 
 /**
  * What a request produced, in the unit its kind's throughput is judged by — tokens for scripting,
- * audio minutes for speech. `null` when the provider did not say, which is never the same as none.
+ * audio minutes rendered for speech, audio minutes heard for transcription. `null` when the
+ * provider did not say, which is never the same as none.
  */
-const producedBy = (r: RequestRecord, kind: EndpointKind): number | null => {
+function producedBy(r: RequestRecord, kind: EndpointKind): number | null {
   const u = r.usage;
-  if (kind !== "scripting") return u.audioSeconds == null ? null : u.audioSeconds / 60;
-  return u.inputTokens == null && u.outputTokens == null
-    ? null
-    : (u.inputTokens ?? 0) + (u.outputTokens ?? 0);
-};
+  switch (kind) {
+    case "scripting":
+      return u.inputTokens == null && u.outputTokens == null
+        ? null
+        : (u.inputTokens ?? 0) + (u.outputTokens ?? 0);
+    // `audioSeconds` is what came back for speech and what was sent for a transcription
+    case "tts":
+    case "transcription":
+      return u.audioSeconds == null ? null : u.audioSeconds / 60;
+  }
+}
 
 /** Work per minute over the requests that reported it; unknown when requests finished and none did. */
 const rate = (work: number, reported: number, unreported: number, minutes: number) =>

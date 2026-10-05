@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // How many requests go out at once, how long they are given, and how the text is cut up before it
-// is sent. Three separate numbers are shown for concurrency because they answer different
+// is sent — the last only for the kinds that send text: a transcriber is sent one recording a
+// request, and has the first two alone. Three separate numbers are shown for concurrency because they answer different
 // questions: what you configured, what is in flight, and what is actually allowed right now (zero
 // while paused, cooling down, or missing a key).
 //
@@ -36,6 +37,7 @@ import type { LiveActivity } from "@/views/endpoints/live";
 import type {
   AudioFormat,
   BatchLimits,
+  EndpointKind,
   ReasoningEffort,
   SampleRate,
   ScriptEndpointTelemetry,
@@ -55,8 +57,25 @@ const props = defineProps<{
 
 const endpointsStore = useEndpointsStore();
 
-const ep = computed(() => (props.u.profile ?? props.u.endpoint)!);
+const ep = computed(() => props.u.entry);
+/** what cuts its text into requests — a profile or a speech endpoint; null for a transcriber */
+const cut = computed(() => props.u.profile ?? props.u.endpoint);
 const ops = computed(() => opsOf(props.u));
+
+// What differs by kind, said once per kind.
+const CONCURRENCY_HINT: Record<EndpointKind, string> = {
+  scripting:
+    "Chunks of a chapter run in parallel up to this limit; chapters stay in order. Type any number and the slider grows to fit it.",
+  tts: "Lines of a chapter run in parallel up to this limit. Type any number and the slider grows to fit it.",
+  transcription:
+    "Recordings are sent in parallel up to this limit. Type any number and the slider grows to fit it.",
+};
+const WHEN_IT_APPLIES: Record<EndpointKind, string> = {
+  scripting:
+    "Saved as you go. Everything here applies to the next run; a run already queued keeps the settings it started with.",
+  tts: "Saved as you go. Concurrency, timeouts, retries and cutting apply to the next line; format and sample rate to the next job.",
+  transcription: "Saved as you go. Everything here applies to the next recording sent.",
+};
 const text = ref(props.sample);
 watch(
   () => props.sample,
@@ -67,7 +86,7 @@ watch(
 const dirty = ref(false);
 
 const parts = computed(() =>
-  splitText(text.value, ep.value.maxChars, ep.value.splitAt as SplitMode, true),
+  cut.value ? splitText(text.value, cut.value.maxChars, cut.value.splitAt as SplitMode, true) : [],
 );
 const preserved = computed(() => parts.value.map((p) => p.text).join("") === text.value);
 const at = ref(0);
@@ -297,14 +316,7 @@ const limitNote = computed(() => {
         </p>
         <p class="mt-1.5 text-[11px] text-zinc-500">
           Shared across every book.
-          <UiHint
-            label="concurrency"
-            :text="
-              u.kind === 'scripting'
-                ? 'Chunks of a chapter run in parallel up to this limit; chapters stay in order. Type any number and the slider grows to fit it.'
-                : 'Lines of a chapter run in parallel up to this limit. Type any number and the slider grows to fit it.'
-            "
-          />
+          <UiHint label="concurrency" :text="CONCURRENCY_HINT[u.kind]" />
         </p>
       </section>
 
@@ -409,7 +421,7 @@ const limitNote = computed(() => {
       </section>
     </div>
 
-    <div class="space-y-3">
+    <div v-if="cut" class="space-y-3">
       <!-- how a simulated endpoint answers -->
       <section v-if="simulated" class="card p-3">
         <h3 class="label mb-2">
@@ -459,7 +471,7 @@ const limitNote = computed(() => {
       <section class="card p-3">
         <h3 class="label mb-2">Input limits</h3>
         <NumberSlider
-          v-model="ep.maxChars"
+          v-model="cut.maxChars"
           label="Maximum characters per request"
           :initial-max="u.kind === 'scripting' ? 12000 : 4096"
           unit="chars"
@@ -481,7 +493,7 @@ const limitNote = computed(() => {
             <span class="block text-[11px] text-zinc-500"
               >Falls back to a finer boundary when none fits.</span
             ></span
-          ><UiSelect v-model="ep.splitAt" :options="SPLIT_MODES" class="w-44 shrink-0"
+          ><UiSelect v-model="cut.splitAt" :options="SPLIT_MODES" class="w-44 shrink-0"
         /></label>
         <div v-if="u.profile" class="mt-3">
           <NumberSlider
@@ -638,7 +650,7 @@ const limitNote = computed(() => {
             {{ part?.text.length.toLocaleString() }} chars<template v-if="part?.at">
               · cut at {{ AT_LABEL[part.at] }}</template
             ><span v-if="part?.fallback" class="text-amber-600 dark:text-amber-400">
-              (no {{ AT_LABEL[ep.splitAt as SplitMode] }} in range)</span
+              (no {{ AT_LABEL[cut.splitAt as SplitMode] }} in range)</span
             ></span
           >
           <button
@@ -677,15 +689,6 @@ const limitNote = computed(() => {
     </div>
 
     <!-- when it applies: a queued run keeps its snapshot; a line is dispatched on what is saved now -->
-    <p class="text-[11px] text-zinc-500 xl:col-span-2">
-      <template v-if="u.kind === 'scripting'"
-        >Saved as you go. Everything here applies to the next run; a run already queued keeps the
-        settings it started with.</template
-      >
-      <template v-else
-        >Saved as you go. Concurrency, timeouts, retries and cutting apply to the next line; format
-        and sample rate to the next job.</template
-      >
-    </p>
+    <p class="text-[11px] text-zinc-500 xl:col-span-2">{{ WHEN_IT_APPLIES[u.kind] }}</p>
   </div>
 </template>

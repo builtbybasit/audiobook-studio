@@ -7,7 +7,8 @@
 // box writes `ep.concurrency`, a toggle `ep.enabled`, an import assigns a dozen fields at once — so
 // rather than chase every one of those into a request, the store *writes behind*: it watches the
 // configuration as one document (the endpoints without their telemetry, the profiles, the
-// credential registry), and a short while after it last changed sends the whole of it. What the
+// transcribers, the credential registry), and a short while after it last changed sends the whole
+// of it. What the
 // server answers is what the store then holds.
 //
 // The scripting settings travel in it too (`script`, the scripting store's `scriptSettings`), and
@@ -24,7 +25,14 @@
 // than on them. They are left out of what the write-behind watches, so a poll never sends a save.
 import { nextTick, watch } from "vue";
 import { useQueryCache } from "@pinia/colada";
-import { ensureOps, isFishAudio, presetById, voiceRef } from "@/lib/endpoints";
+import {
+  ensureOps,
+  isFishAudio,
+  presetById,
+  transcriberErrors,
+  transcriptionPresetById,
+  voiceRef,
+} from "@/lib/endpoints";
 import { ensurePricing } from "@/lib/pricing";
 import { configErrors, expressionId } from "@/lib/expressions";
 import { newProfile, profileErrors } from "@/lib/scripting";
@@ -60,6 +68,7 @@ import type {
   ResolvedVoice,
   ScriptSettings,
   SettingsFile,
+  Transcriber,
   Voice,
   VoiceOption,
   VoiceRef,
@@ -75,6 +84,8 @@ import { useUiStore } from "@/stores/ui";
 interface EndpointsState {
   endpoints: Endpoint[];
   profiles: Profile[];
+  /** The speech-to-text endpoints: what hears a clone sample back as words. */
+  transcribers: Transcriber[];
   /** The library's default scripting prompt, as saved; null is the built-in one. */
   prompt: PromptTemplate | null;
   /** The named credentials the endpoints and profiles say they use; names only, never a key. */
@@ -105,17 +116,18 @@ function storedOf(ep: Endpoint): StoredEndpoint {
 }
 
 function configOf(
-  endpoints: Endpoint[],
-  profiles: Profile[],
-  prompt: PromptTemplate | null,
-  credentials: Credential[],
+  state: Pick<EndpointsState, "endpoints" | "profiles" | "transcribers" | "prompt" | "credentials">,
   script: ScriptSettings,
 ): EndpointConfig {
+  const { endpoints, profiles, transcribers, prompt, credentials } = state;
   return {
     endpoints: endpoints.map(storedOf),
     // `apiKey` is never on these objects, and is dropped anyway: a key that got onto one would
     // otherwise go out with every write-behind, and a stale `""` there would forget the key
     profiles: profiles.map(({ apiKey: _apiKey, ...p }) => p),
+    // always sent, though the server would keep what it holds without them: what the page shows is
+    // what the server should hold
+    transcribers: transcribers.map(({ apiKey: _apiKey, ...t }) => t),
     credentials: credentials.map((c) => ({ ...c })),
     // always sent, so what the server holds is what the page shows
     prompt,
@@ -127,14 +139,27 @@ function configOf(
   };
 }
 
+/** Where each kind's list is, in the store, a write's body and the server's answer alike. */
+const LIST: Record<EndpointKind, "profiles" | "endpoints" | "transcribers"> = {
+  scripting: "profiles",
+  tts: "endpoints",
+  transcription: "transcribers",
+};
+
+/** One kind's entries in any of the three, as the fields a key write touches. */
+const entriesOf = (
+  doc: Pick<EndpointConfig, "profiles" | "endpoints" | "transcribers">,
+  kind: EndpointKind,
+): { id: string; apiKey?: string; hasKey?: boolean }[] => doc[LIST[kind]];
+
 /**
- * An endpoint or profile with its operational settings and its pricing block filled in, for one
+ * An entry of any kind with its operational settings and its pricing block filled in, for one
  * saved before either existed. Every one the store takes on comes through here — read from the
  * server, added, or imported from a file — so the pages that edit them never find a field missing.
  * Filling in the defaults is idempotent and changes nothing a request would do differently: an
  * empty schedule and no promotions is exactly ordinary pricing.
  */
-function filled<T extends Endpoint | Profile>(ep: T, kind: EndpointKind): T {
+function filled<T extends Endpoint | Profile | Transcriber>(ep: T, kind: EndpointKind): T {
   ensureOps(ep, kind);
   ensurePricing(ep);
   return ep;
@@ -219,6 +244,18 @@ const samples = new Map<string, HeardSample>();
 const sampleKey = (ep: Endpoint, voiceId: string): string =>
   JSON.stringify([ep.id, ep.baseUrl, ep.model, encodingOf(ep), ep.sampleRate ?? null, voiceId]);
 
+/** A transcriber with nothing filled in: off, and priced as free until a rate is set. */
+const blankTranscriber = (): Transcriber => ({
+  id: "stt" + Date.now(),
+  name: "New endpoint",
+  baseUrl: "https://",
+  model: "whisper-1",
+  concurrency: 1,
+  enabled: false,
+  needsKey: true,
+  perMinute: 0,
+});
+
 function cancelTimer(): void {
   if (timer) clearTimeout(timer);
   timer = null;
@@ -230,6 +267,7 @@ export const useEndpointsStore = defineStore("endpoints", {
   state: (): EndpointsState => ({
     endpoints: [],
     profiles: [],
+    transcribers: [],
     prompt: null,
     credentials: [],
     loaded: false,
@@ -252,6 +290,10 @@ export const useEndpointsStore = defineStore("endpoints", {
     },
     enabledEndpoints(s): Endpoint[] {
       return s.endpoints.filter((e) => e.enabled);
+    },
+    /** Whether a recording can be heard back as words: some transcriber is switched on. */
+    canTranscribe(s): boolean {
+      return s.transcribers.some((t) => t.enabled);
     },
     resolveVoice(s): (ref: string | null | undefined) => ResolvedVoice | null {
       return (ref: VoiceRef | null | undefined): ResolvedVoice | null => {
@@ -290,13 +332,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       return endpointSettingsService();
     },
     _config(): EndpointConfig {
-      return configOf(
-        this.endpoints,
-        this.profiles,
-        this.prompt,
-        this.credentials,
-        useScriptingStore().scriptSettings,
-      );
+      return configOf(this, useScriptingStore().scriptSettings);
     },
     /**
      * Hold the configuration the server answered with, in place of this one.
@@ -316,6 +352,11 @@ export const useEndpointsStore = defineStore("endpoints", {
       this.profiles = answer.profiles.map((p) => {
         const cur = profiles.get(p.id);
         return filled(cur ? adopt(cur, p) : p, "scripting");
+      });
+      const transcribers = new Map(this.transcribers.map((t) => [t.id, t]));
+      this.transcribers = answer.transcribers.map((t) => {
+        const cur = transcribers.get(t.id);
+        return filled(cur ? adopt(cur, t) : t, "transcription");
       });
       this.credentials = answer.credentials;
       this.prompt = answer.prompt ?? null;
@@ -447,6 +488,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       const same: EndpointConfig = {
         endpoints: answer.endpoints.map(storedOf),
         profiles: answer.profiles,
+        transcribers: answer.transcribers,
         credentials: answer.credentials,
         prompt: answer.prompt ?? null,
         script: answer.script,
@@ -455,7 +497,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       else this._install(answer);
     },
     /**
-     * Give the server a key for one endpoint or profile (`""` forgets it). Resolves true once the
+     * Give the server a key for one entry of any kind (`""` forgets it). Resolves true once the
      * server has answered.
      *
      * The key rides on the whole-configuration write, on that one entry only, and never touches
@@ -466,7 +508,7 @@ export const useEndpointsStore = defineStore("endpoints", {
      */
     async saveKey(kind: EndpointKind, id: string, apiKey: string): Promise<boolean> {
       const body = this._config();
-      const entry = (kind === "tts" ? body.endpoints : body.profiles).find((e) => e.id === id);
+      const entry = entriesOf(body, kind).find((e) => e.id === id);
       if (!entry) return false;
       entry.apiKey = apiKey;
       cancelTimer();
@@ -486,9 +528,8 @@ export const useEndpointsStore = defineStore("endpoints", {
       else {
         // Typed past while the key was out: the rest of the answer is older than the page, but
         // whether a key is held is not something the page could have changed in the meantime.
-        const list: (Endpoint | Profile)[] = kind === "tts" ? this.endpoints : this.profiles;
-        const held = (kind === "tts" ? answer.endpoints : answer.profiles).find((e) => e.id === id);
-        const cur = list.find((e) => e.id === id);
+        const held = entriesOf(answer, kind).find((e) => e.id === id);
+        const cur = entriesOf(this, kind).find((e) => e.id === id);
         if (cur && held?.hasKey) cur.hasKey = true;
         else if (cur) delete cur.hasKey;
       }
@@ -608,7 +649,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       });
       return true;
     },
-    // ---------- settings (endpoints & profiles, keys excluded) ----------
+    // ---------- settings (every kind of endpoint, keys excluded) ----------
     exportSettings(): SettingsFile {
       const scriptingStore = useScriptingStore();
 
@@ -627,6 +668,7 @@ export const useEndpointsStore = defineStore("endpoints", {
           }) => portable(e),
         ),
         profiles: this.profiles.map(portable),
+        transcribers: this.transcribers.map(portable),
         prompt: this.prompt ? { ...this.prompt } : null,
         scriptSettings: { ...scriptingStore.scriptSettings },
       };
@@ -641,6 +683,9 @@ export const useEndpointsStore = defineStore("endpoints", {
           throw new Error(`Invalid expression support for ${ep.name}`);
       if (obj.profiles != null && !Array.isArray(obj.profiles))
         throw new Error("Invalid scripting endpoints");
+      // a file from before transcription endpoints says nothing of them, and leaves these be
+      if (obj.transcribers !== undefined && !Array.isArray(obj.transcribers))
+        throw new Error("Invalid speech-to-text endpoints");
       // a file from before the prompt could be edited says nothing of it, and leaves this one's be
       if (obj.prompt !== undefined && !promptOk(obj.prompt))
         throw new Error("Invalid default prompt");
@@ -654,6 +699,16 @@ export const useEndpointsStore = defineStore("endpoints", {
         if (profileErrors(profile).length)
           throw new Error("Invalid scripting endpoint: " + profile.name);
         return profile;
+      });
+      const transcribers = (obj.transcribers ?? []).map((imported) => {
+        const existing = this.transcribers.find((t) => t.id === imported?.id);
+        const transcriber = filled(
+          { ...blankTranscriber(), ...existing, ...portable(imported ?? {}) },
+          "transcription",
+        );
+        if (transcriberErrors(transcriber).length)
+          throw new Error("Invalid speech-to-text endpoint: " + transcriber.name);
+        return transcriber;
       });
       let n = 0;
       for (const e of obj.endpoints) {
@@ -674,6 +729,11 @@ export const useEndpointsStore = defineStore("endpoints", {
         if (cur) filled(Object.assign(cur, p), "scripting");
         else this.profiles.push(filled(p, "scripting"));
       }
+      for (const t of transcribers) {
+        const cur = this.transcribers.find((x) => x.id === t.id);
+        if (cur) Object.assign(cur, t);
+        else this.transcribers.push(t);
+      }
       if (obj.prompt !== undefined) this.prompt = keptPrompt(obj.prompt);
       if (obj.scriptSettings) {
         const { profile } = obj.scriptSettings;
@@ -681,11 +741,15 @@ export const useEndpointsStore = defineStore("endpoints", {
         if (this.profiles.some((p) => p.id === profile))
           scriptingStore.scriptSettings.profile = profile;
       }
-      uiStore.toast(`Imported ${n} narration and ${profiles.length} scripting endpoints`, {
-        kind: "success",
-        description: "API keys are never in the file — add them again on each endpoint.",
-        timeout: 7000,
-      });
+      const said = `Imported ${n} narration and ${profiles.length} scripting endpoints`;
+      uiStore.toast(
+        transcribers.length ? `${said}, and ${transcribers.length} speech to text` : said,
+        {
+          kind: "success",
+          description: "API keys are never in the file — add them again on each endpoint.",
+          timeout: 7000,
+        },
+      );
     },
     /** A new named credential for the Connection tab to pick. Returns its id. */
     addCredential(label: string): string {
@@ -719,6 +783,45 @@ export const useEndpointsStore = defineStore("endpoints", {
           if (chosen) scriptingStore.scriptSettings.profile = id;
         },
       });
+    },
+    // ---------- transcription ----------
+    /** `presetId` fills in what a provider pins down (base URL, model, rate); every field stays
+     *  editable afterwards. Without one this is a blank OpenAI-shaped endpoint. */
+    addTranscriber(presetId?: string): Transcriber {
+      const base = blankTranscriber();
+      const preset = presetId ? transcriptionPresetById(presetId) : undefined;
+      // a copy, so the preset's pricing never becomes an object two endpoints share
+      this.transcribers.push(
+        filled(Object.assign(base, preset ? clone(preset.apply) : undefined), "transcription"),
+      );
+      return this.transcribers[this.transcribers.length - 1];
+    },
+    removeTranscriber(id: string): void {
+      const uiStore = useUiStore();
+
+      const i = this.transcribers.findIndex((t) => t.id === id);
+      if (i < 0) return;
+      const [t] = this.transcribers.splice(i, 1);
+      uiStore.toast(`Removed endpoint ${t.name}`, {
+        undo: () => this.transcribers.splice(Math.min(i, this.transcribers.length), 0, t),
+      });
+    },
+    /**
+     * What is said in one recording, heard by the first transcriber switched on: the clone form's
+     * Transcribe button. What the write-behind holds is sent first, so a transcriber just switched
+     * on is one the server knows. Null when it could not be heard, which has been said.
+     */
+    async transcribe(file: File): Promise<string | null> {
+      try {
+        await this.flushWrites();
+        return (await this._service().transcribe(file)).text;
+      } catch (cause) {
+        toastFailure("transcribe the sample", cause);
+        return null;
+      } finally {
+        // answered or not, a request may have reached the provider, and it is a row on this page
+        void invalidate({ key: keys.endpointRequests });
+      }
     },
     // ---------- endpoints & their voices ----------
     /** `presetId` fills in what a provider pins down (base URL, model, billing, limits); every

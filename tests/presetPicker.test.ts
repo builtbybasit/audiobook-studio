@@ -11,7 +11,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { nextTick, ref } from "vue";
 
 import { usePresetPicker, type AnyPreset } from "@/composables/usePresetPicker";
-import { SCRIPTING_PRESETS, TTS_PRESETS, scriptingPresetById, unifyProfile } from "@/lib/endpoints";
+import {
+  SCRIPTING_PRESETS,
+  TRANSCRIPTION_PRESETS,
+  TTS_PRESETS,
+  scriptingPresetById,
+  unifyProfile,
+  unifyTranscriber,
+} from "@/lib/endpoints";
 import { clone } from "@/lib/utils";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
@@ -61,6 +68,11 @@ describe("the preset picker", () => {
     expect(options.value[0]).toMatchObject({ value: "", label: "Start from a preset…" });
     expect(options.value.slice(1).map((o) => o.value)).toEqual(TTS_PRESETS.map((p) => p.id));
     expect(options.value.slice(1).every((o) => "group" in o && o.group)).toBe(true);
+    expect(
+      picker("transcription")
+        .options.value.slice(1)
+        .map((o) => o.value),
+    ).toEqual(TRANSCRIPTION_PRESETS.map((p) => p.id));
   });
 
   test("hands over a copy of the preset's fields, shows its note, and says what to do next", () => {
@@ -158,6 +170,29 @@ describe("a preset on the Connection tab", () => {
     });
     expect(profile.pricing).not.toBe(apply.pricing);
     expect(draftDirty(unifyProfile(profile))).toBe(false);
+  });
+});
+
+describe("a preset on a transcriber's Connection tab", () => {
+  test("is staged like any other, and Save writes its rate on as a copy", () => {
+    const store = useEndpointsStore();
+    const t = store.addTranscriber();
+    const u = unifyTranscriber(t);
+    const it = pinia.run(() =>
+      usePresetPicker({
+        kind: () => u.kind,
+        endpoint: () => u.key,
+        fill: (fields, preset) => stagePreset(u, preset.label, fields),
+        next: "",
+      }),
+    );
+    it.choose("openai-whisper");
+    expect(t.perMinute).toBe(0);
+    expect(draftChanges(u)).toEqual(expect.arrayContaining(["baseUrl", "preset"]));
+    applyDraft(u);
+    expect(t).toMatchObject({ baseUrl: "https://api.openai.com/v1", perMinute: 0.006 });
+    const preset = TRANSCRIPTION_PRESETS.find((p) => p.id === "openai-whisper")!;
+    expect(t.pricing).not.toBe(preset.apply.pricing);
   });
 });
 

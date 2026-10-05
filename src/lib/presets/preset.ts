@@ -1,5 +1,5 @@
-// What a preset is, shared by both kinds' catalogues.
-import type { Endpoint, PricingConfig, Profile } from "@/types";
+// What a preset is, shared by every kind's catalogue.
+import type { Endpoint, PricingConfig, Profile, Transcriber } from "@/types";
 import { newPricing } from "@/lib/pricing";
 
 /** What a provider's "add this endpoint" form should be filled in with. Everything here is a
@@ -20,6 +20,10 @@ export type TtsPreset = Preset<Endpoint>;
 /** A chat model the scripting queue can send a chapter to: anything serving OpenAI's
  *  `/chat/completions`, which is the only request shape the scripting provider makes. */
 export type ScriptingPreset = Preset<Profile>;
+/** A speech-to-text server: anything answering OpenAI's `/audio/transcriptions`. */
+export type TranscriptionPreset = Preset<Transcriber>;
+/** A preset of any kind, as the picker offers them. */
+export type AnyPreset = TtsPreset | ScriptingPreset | TranscriptionPreset;
 
 /** A preset's rate card. Its windows and dates are read in UTC, and a card with none records UTC
  *  too, rather than the timezone of whichever machine happened to load the catalogue. */

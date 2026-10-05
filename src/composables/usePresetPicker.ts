@@ -1,6 +1,7 @@
 // "Start from a preset…": the picker, the note under it, and what choosing one does.
 //
-// Two pages offer it — an endpoint's Connection tab and the scripting page's endpoint editor — and
+// Two pages offer it — an endpoint's Connection tab, for every kind, and the scripting page's
+// endpoint editor — and
 // they differ only in where a preset's fields go: the Connection tab stages them in its draft, so
 // Save applies them and Discard drops them, and the scripting editor binds every field straight
 // onto the profile. Everything else is the same here: the options, grouped by provider; the note,
@@ -10,14 +11,14 @@
 import { useUiStore } from "@/stores/ui";
 
 import { computed, ref, toValue, watch, type MaybeRefOrGetter, type WatchSource } from "vue";
-import { presetsOf, type ScriptingPreset, type TtsPreset } from "@/lib/endpoints";
+import { presetsOf, type AnyPreset } from "@/lib/endpoints";
 import { clone } from "@/lib/utils";
 import type { EndpointKind } from "@/types";
 
-export type AnyPreset = TtsPreset | ScriptingPreset;
+export type { AnyPreset };
 
 export interface PresetPickerOptions {
-  /** which kind's presets to offer; a getter where one tab serves both kinds */
+  /** which kind's presets to offer; a getter where one tab serves every kind */
   kind: MaybeRefOrGetter<EndpointKind>;
   /** the endpoint being edited: when it changes, the choice and its note are forgotten */
   endpoint: WatchSource<unknown>;

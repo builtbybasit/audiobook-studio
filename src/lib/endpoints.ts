@@ -1,35 +1,47 @@
-// One vocabulary for both kinds of endpoint.
+// One vocabulary for every kind of endpoint.
 //
-// The app has always had two separate lists: `profiles` (chat models that turn prose into a script)
-// and `endpoints` (speech models that render a line). They are configured, paused, rate limited and
-// billed the same way, so the Endpoints page reads them through the one shape below. Ids are only
-// unique *within* a kind — there is an "openai" in both lists — so everything here is keyed by
+// The app keeps three separate lists: `profiles` (chat models that turn prose into a script),
+// `endpoints` (speech models that render a line) and `transcribers` (speech-to-text models that
+// hear a recording back as words). They are configured, paused, rate limited and billed the same
+// way, so the Endpoints page reads them through the one shape below. Ids are only unique *within*
+// a kind — there is an "openai" in more than one list — so everything here is keyed by
 // `<kind>:<id>`.
 //
-// Nothing in this file mutates the two lists; it adapts them. The only exception is `ensureOps`,
-// which fills in operational defaults for an endpoint saved before those fields existed.
+// What differs by kind is branched on `kind` with an exhaustive switch or a `Record<EndpointKind,
+// …>`, never on which of the three objects happens to be set: a fourth kind then fails to compile
+// everywhere it has to be thought about, rather than being quietly treated as speech.
+//
+// Nothing in this file mutates the lists; it adapts them. The only exception is `ensureOps`, which
+// fills in operational defaults for an endpoint saved before those fields existed.
 import type {
   Endpoint,
   EndpointKind,
   EndpointOps,
   MetricTotals,
+  PricingConfig,
   Profile,
+  RateComponent,
+  RateSet,
+  Transcriber,
   TtsBilling,
+  TtsBillingUnit,
   VoiceRef,
   WaitReason,
 } from "@/types";
 import { profileErrors } from "@/lib/scripting";
-import { OPS_DEFAULTS, encodingProblems } from "@/lib/endpointShapes";
+import { KIND_PATH, OPS_DEFAULTS, encodingProblems } from "@/lib/endpointShapes";
 import { isSimulated } from "@/lib/providers";
 import {
-  baseRates,
   billingProblems,
   effectiveRates,
   ensurePricing,
   pricingOneLiner,
+  pricingOf,
   pricingProblems,
+  speechComponents,
   speechPricingOf,
   speechRateKnown,
+  TOKEN_COMPONENTS,
 } from "@/lib/pricing";
 
 export {
@@ -41,7 +53,10 @@ export {
 } from "@/lib/endpointShapes";
 
 /** Fill in operational defaults in place. Idempotent — only absent fields are written. */
-export function ensureOps<T extends Profile | Endpoint>(ep: T, kind: EndpointKind): T {
+export function ensureOps<T extends Profile | Endpoint | Transcriber>(
+  ep: T,
+  kind: EndpointKind,
+): T {
   const defaults = OPS_DEFAULTS[kind] as unknown as Record<string, unknown>;
   const target = ep as unknown as Record<string, unknown>;
   for (const k of Object.keys(defaults)) if (target[k] === undefined) target[k] = defaults[k];
@@ -49,7 +64,7 @@ export function ensureOps<T extends Profile | Endpoint>(ep: T, kind: EndpointKin
 }
 
 export interface UnifiedEndpoint {
-  /** `<kind>:<id>` — unique across both lists */
+  /** `<kind>:<id>` — unique across every list */
   key: string;
   id: string;
   kind: EndpointKind;
@@ -60,50 +75,68 @@ export interface UnifiedEndpoint {
   needsKey: boolean;
   concurrency: number;
   backoffUntil: number;
-  /** exactly one of these is set; the tabs edit it directly */
+  /** the entry itself, whichever kind it is: what the fields every kind has are bound to */
+  entry: Profile | Endpoint | Transcriber;
+  /** exactly one of these is set — the one `kind` names — and the tabs edit it directly */
   profile: Profile | null;
   endpoint: Endpoint | null;
+  transcriber: Transcriber | null;
 }
 
-export function unifyProfile(p: Profile): UnifiedEndpoint {
-  return {
-    key: "scripting:" + p.id,
-    id: p.id,
-    kind: "scripting",
-    name: p.name,
-    model: p.model,
-    baseUrl: p.baseUrl,
-    enabled: p.enabled,
-    needsKey: p.needsKey,
-    concurrency: p.concurrency,
-    backoffUntil: 0,
-    profile: p,
-    endpoint: null,
-  };
-}
+/** The fields every kind shares, with none of the three kind-specific objects set yet. */
+const unified = (
+  kind: EndpointKind,
+  e: Profile | Endpoint | Transcriber,
+  backoffUntil: number,
+): UnifiedEndpoint => ({
+  key: `${kind}:${e.id}`,
+  id: e.id,
+  kind,
+  name: e.name,
+  model: e.model,
+  baseUrl: e.baseUrl,
+  enabled: e.enabled,
+  needsKey: e.needsKey,
+  concurrency: e.concurrency,
+  backoffUntil,
+  entry: e,
+  profile: null,
+  endpoint: null,
+  transcriber: null,
+});
 
-export function unifyEndpoint(e: Endpoint): UnifiedEndpoint {
-  return {
-    key: "tts:" + e.id,
-    id: e.id,
-    kind: "tts",
-    name: e.name,
-    model: e.model,
-    baseUrl: e.baseUrl,
-    enabled: e.enabled,
-    needsKey: e.needsKey,
-    concurrency: e.concurrency,
-    backoffUntil: e.backoffUntil,
-    profile: null,
-    endpoint: e,
-  };
-}
+export const unifyProfile = (p: Profile): UnifiedEndpoint => ({
+  ...unified("scripting", p, 0),
+  profile: p,
+});
+
+export const unifyEndpoint = (e: Endpoint): UnifiedEndpoint => ({
+  ...unified("tts", e, e.backoffUntil),
+  endpoint: e,
+});
+
+/** A transcriber has no cooldown the page is told of: nothing reports its rate limits back. */
+export const unifyTranscriber = (t: Transcriber): UnifiedEndpoint => ({
+  ...unified("transcription", t, 0),
+  transcriber: t,
+});
+
+/** Every endpoint of every kind, in the order the Endpoints page lists the kinds. */
+export const unifiedOf = (lists: {
+  profiles: Profile[];
+  endpoints: Endpoint[];
+  transcribers: Transcriber[];
+}): UnifiedEndpoint[] => [
+  ...lists.profiles.map(unifyProfile),
+  ...lists.endpoints.map(unifyEndpoint),
+  ...lists.transcribers.map(unifyTranscriber),
+];
 
 /** How a speaker names a voice: the speech endpoint it is on, then the voice's id there. */
 export const voiceRef = (epId: string, voiceId: string): VoiceRef => `${epId}/${voiceId}`;
 
 export const opsOf = (u: UnifiedEndpoint): EndpointOps =>
-  ({ ...OPS_DEFAULTS[u.kind], ...(u.profile ?? u.endpoint) }) as EndpointOps;
+  ({ ...OPS_DEFAULTS[u.kind], ...u.entry }) as EndpointOps;
 
 export const KIND_LABEL: Record<EndpointKind, string> = {
   scripting: "Scripting",
@@ -116,11 +149,15 @@ export const KIND_LABEL: Record<EndpointKind, string> = {
 // and the store have always imported it from.
 export {
   SCRIPTING_PRESETS,
+  TRANSCRIPTION_PRESETS,
   TTS_PRESETS,
   presetById,
   presetsOf,
   scriptingPresetById,
+  transcriptionPresetById,
+  type AnyPreset,
   type ScriptingPreset,
+  type TranscriptionPreset,
   type TtsPreset,
 } from "@/lib/presets";
 
@@ -136,20 +173,68 @@ export const billingOf = (e: Endpoint): TtsBilling => e.billing ?? { unit: "char
 /** The whole speech rate card — the rate, its unit, and the schedule and promotions on it. */
 export const speechPricing = (e: Endpoint) => speechPricingOf({ ...e, billing: billingOf(e) });
 
+/** A transcriber's rate as a speech billing model: so much per minute of audio *sent*. */
+export const transcriberBilling = (t: Transcriber): TtsBilling => ({
+  unit: "minute",
+  rate: t.perMinute,
+});
+
+/**
+ * A transcriber's whole rate card. It goes through the speech pricing — one rate per audio minute,
+ * under the same schedule and promotions — with the transcriber's own `pricing` object, so an edit
+ * to the schedule on the Pricing tab lands on the transcriber.
+ */
+export const transcriberPricing = (t: Transcriber) =>
+  speechPricingOf({ billing: transcriberBilling(t), pricing: t.pricing });
+
+/**
+ * Any endpoint's rate card: the base rates, the schedule and promotions on them, the components
+ * they price and — for the speech-priced kinds — the unit a rate is written in.
+ */
+export function rateCardOf(u: UnifiedEndpoint): {
+  base: RateSet;
+  config: PricingConfig;
+  components: RateComponent[];
+  unit?: TtsBillingUnit;
+} {
+  switch (u.kind) {
+    case "scripting":
+      return { ...pricingOf(u.profile!), components: TOKEN_COMPONENTS };
+    case "tts": {
+      const card = speechPricing(u.endpoint!);
+      return { ...card, components: speechComponents(card.unit) };
+    }
+    case "transcription": {
+      const card = transcriberPricing(u.transcriber!);
+      return { ...card, components: speechComponents(card.unit) };
+    }
+  }
+}
+
 // ---------- money ----------
 
 /** The one-line pricing shown on a card — at the rates in force now, not the base card. */
 export function pricingLabel(u: UnifiedEndpoint, now: number = Date.now()): string {
-  if (u.profile)
-    return pricingOneLiner(effectiveRates(baseRates(u.profile), ensurePricing(u.profile), now));
-  const { base, config, unit } = speechPricing(u.endpoint!);
-  return pricingOneLiner(effectiveRates(base, config, now), unit);
+  const { base, config, unit } = rateCardOf(u);
+  const line = pricingOneLiner(effectiveRates(base, config, now), unit);
+  // the speech wording is of audio that came back; a transcriber is charged for the audio it is sent
+  return u.kind === "transcription"
+    ? line.replace("per audio minute", "per audio minute sent")
+    : line;
 }
 
 /** True when we cannot price this endpoint's requests at all — including a two-rate endpoint with
  *  only one of its two rates filled in, which prices nothing rather than half of each request. */
-export const unpriced = (u: UnifiedEndpoint): boolean =>
-  u.endpoint ? !speechRateKnown(billingOf(u.endpoint)) : false;
+export function unpriced(u: UnifiedEndpoint): boolean {
+  switch (u.kind) {
+    case "tts":
+      return !speechRateKnown(billingOf(u.endpoint!));
+    // a profile always has its two numbers and a transcriber its one, zero being free
+    case "scripting":
+    case "transcription":
+      return false;
+  }
+}
 
 // ---------- readiness ----------
 
@@ -161,8 +246,8 @@ export const unpriced = (u: UnifiedEndpoint): boolean =>
  *
  * One definition for every place that asks "can this render": the Narration page's routing and
  * blockers, the cast's routing issues, the Endpoints page's wait reasons and the shell's count of
- * endpoints needing attention. A scripting profile is asked the same questions; it has no voices,
- * and no cooldown of its own.
+ * endpoints needing attention. A scripting profile and a transcriber are asked the same questions;
+ * neither has voices, nor a cooldown of its own.
  */
 export type Readiness =
   | { state: "ready" }
@@ -171,7 +256,7 @@ export type Readiness =
   | { state: "novoices" }
   | { state: "cooldown"; seconds: number };
 
-export function speechReadiness(e: Endpoint | Profile, now: number): Readiness {
+export function speechReadiness(e: Endpoint | Profile | Transcriber, now: number): Readiness {
   if (!e.enabled) return { state: "paused" };
   if (e.needsKey && !e.hasKey) return { state: "nokey" };
   const seconds = "backoffUntil" in e ? Math.ceil((e.backoffUntil - now) / 1000) : 0;
@@ -215,6 +300,13 @@ export interface HealthInput {
   tested: boolean;
 }
 
+/** What a missing key stops, by kind. */
+const NO_KEY: Record<EndpointKind, string> = {
+  scripting: "This endpoint requires a key. Runs can’t start on it until one is set.",
+  tts: "This endpoint requires a key. Lines routed here fail until one is set.",
+  transcription: "This endpoint requires a key. Recordings sent here fail until one is set.",
+};
+
 const TONE: Record<HealthState, HealthTone> = {
   paused: "muted",
   misconfigured: "warn",
@@ -243,14 +335,7 @@ export function healthOf(u: UnifiedEndpoint, input: HealthInput): Health {
       "No new requests are dispatched. Requests already in flight finish normally.",
     );
   if (input.errors.length) return mk("misconfigured", "Check settings", input.errors[0]);
-  if (u.needsKey && !input.hasKey)
-    return mk(
-      "nokey",
-      "Key needed",
-      u.kind === "scripting"
-        ? "This endpoint requires a key. Runs can’t start on it until one is set."
-        : "This endpoint requires a key. Lines routed here fail until one is set.",
-    );
+  if (u.needsKey && !input.hasKey) return mk("nokey", "Key needed", NO_KEY[u.kind]);
   const cooling = Math.ceil((u.backoffUntil - input.now) / 1000);
   if (cooling > 0)
     return mk(
@@ -375,24 +460,48 @@ export const metricValue = (n: number): string =>
           : n.toFixed(n < 0.1 ? 3 : 2);
 
 /** Unit of the throughput metric, which differs by kind. */
-export const throughputUnit = (kind: EndpointKind): string =>
-  kind === "scripting" ? "tokens/min" : "audio min/min";
+const THROUGHPUT_UNIT: Record<EndpointKind, string> = {
+  scripting: "tokens/min",
+  tts: "audio min/min",
+  transcription: "audio min/min",
+};
+export const throughputUnit = (kind: EndpointKind): string => THROUGHPUT_UNIT[kind];
 
-export const throughputLabel = (kind: EndpointKind): string =>
-  kind === "scripting" ? "Tokens per minute" : "Generated audio minutes per minute";
+const THROUGHPUT_LABEL: Record<EndpointKind, string> = {
+  scripting: "Tokens per minute",
+  tts: "Generated audio minutes per minute",
+  transcription: "Audio minutes heard per minute",
+};
+export const throughputLabel = (kind: EndpointKind): string => THROUGHPUT_LABEL[kind];
 
-/** Validation errors for either kind, reusing the scripting rules where they apply. */
+/** Validation errors for any kind, reusing the scripting rules where they apply. */
 export function endpointErrors(u: UnifiedEndpoint): string[] {
-  if (u.profile) return profileErrors(u.profile);
-  const e = u.endpoint!;
+  switch (u.kind) {
+    case "scripting":
+      return profileErrors(u.profile!);
+    case "tts":
+      return speechEndpointErrors(u.endpoint!);
+    case "transcription":
+      return transcriberErrors(u.transcriber!);
+  }
+}
+
+/**
+ * What every request-sending kind is checked for alike: a base URL a request can be appended to,
+ * a name, a model and a concurrency. `kind` says which path must not be on the base URL already.
+ */
+function connectionErrors(
+  e: Pick<Endpoint, "baseUrl" | "name" | "model" | "concurrency">,
+  kind: "tts" | "transcription",
+): string[] {
   const errors: string[] = [];
   // a simulated endpoint names no host — this server answers it — so it has no URL to check
   if (!isSimulated(e.baseUrl))
     try {
       const url = new URL(e.baseUrl);
       if (!["http:", "https:"].includes(url.protocol)) throw new Error();
-      if (/\/audio\/speech\/?$/.test(url.pathname))
-        errors.push("Use the base URL without /audio/speech.");
+      if (url.pathname.replace(/\/+$/, "").endsWith(KIND_PATH[kind]))
+        errors.push(`Use the base URL without ${KIND_PATH[kind]}.`);
     } catch {
       errors.push("Enter a valid HTTP or HTTPS base URL.");
     }
@@ -400,10 +509,15 @@ export function endpointErrors(u: UnifiedEndpoint): string[] {
   if (!e.model.trim()) errors.push("Enter a model ID.");
   if (!Number.isSafeInteger(e.concurrency) || e.concurrency < 1)
     errors.push("Concurrency must be a whole number of at least 1.");
+  return errors;
+}
+
+function speechEndpointErrors(e: Endpoint): string[] {
+  const errors = connectionErrors(e, "tts");
   if (!Number.isSafeInteger(e.maxChars) || e.maxChars < 0)
     errors.push("Maximum characters must be zero or a positive whole number.");
   if (!e.voices.length) errors.push("No voices yet — fetch or add one before this can render.");
-  // The rate card is validated on both kinds. A scripting profile gets this through
+  // The rate card is validated on every kind. A scripting profile gets this through
   // `profileErrors`; leaving it out here let an imported speech endpoint keep a malformed window, a
   // duplicate promotion id or an end date before its start, and stay enabled with it.
   errors.push(...pricingProblems(ensurePricing(e)));
@@ -411,6 +525,15 @@ export function endpointErrors(u: UnifiedEndpoint): string[] {
   // The server refuses a line whose format, bitrate and rate cannot be asked for together, so an
   // endpoint set up that way (imported, or saved before the base URL moved) is not ready either.
   errors.push(...encodingProblems(e).map((p) => p + "."));
+  return errors;
+}
+
+/** A transcriber's errors: its connection, its one rate, and the schedule and promotions on it. */
+export function transcriberErrors(t: Transcriber): string[] {
+  const errors = connectionErrors(t, "transcription");
+  if (!Number.isFinite(t.perMinute) || t.perMinute < 0)
+    errors.push("The rate per audio minute must be zero or more.");
+  errors.push(...pricingProblems(ensurePricing(t)));
   return errors;
 }
 

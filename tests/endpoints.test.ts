@@ -1,18 +1,27 @@
 import { expect, test } from "bun:test";
 import { newProfile } from "@/lib/scripting";
 import {
+  endpointErrors,
   ensureOps,
   fishModelsUrl,
   healthOf,
   isFishAudio,
+  opsOf,
   pricingLabel,
+  rateCardOf,
   sanitize,
   speechReadiness,
+  throughputLabel,
   ttsRequestPath,
+  unifiedOf,
   unifyEndpoint,
   unifyProfile,
+  unifyTranscriber,
+  unpriced,
   voicesFromFishModels,
 } from "@/lib/endpoints";
+import { OPS_DEFAULTS } from "@/lib/endpointShapes";
+import { tabsFor } from "@/views/endpoints/state";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import { probeCost, probeUnits, seriesFrom } from "@/services/endpoints";
 import { maybeMoney, money, perMillionChars, speechRates } from "@/lib/pricing";
@@ -22,6 +31,7 @@ import type {
   PricingConfig,
   RateSet,
   RequestRecord,
+  Transcriber,
   TtsBilling,
 } from "@/types";
 
@@ -456,4 +466,114 @@ test("a cache percentage divides by the input of the requests that reported one"
   // 40% of what was reported on, not 4% of everything that went out
   expect(totals.cacheReportedInputTokens).toBe(10_000);
   expect(Math.round((totals.cachedInputTokens / totals.cacheReportedInputTokens) * 100)).toBe(40);
+});
+
+// ---------- a transcription endpoint ----------
+
+function transcriber(over: Partial<Transcriber> = {}): Transcriber {
+  return {
+    id: "stt",
+    name: "Whisper",
+    baseUrl: "https://api.openai.com/v1",
+    model: "whisper-1",
+    enabled: true,
+    concurrency: 4,
+    needsKey: true,
+    perMinute: 0.006,
+    ...over,
+  };
+}
+
+test("a transcriber is its own kind, keyed apart from an endpoint with the same id", () => {
+  const t = transcriber({ id: "t1" });
+  const u = unifyTranscriber(t);
+  expect(u).toMatchObject({ key: "transcription:t1", kind: "transcription", entry: t });
+  expect([u.profile, u.endpoint, u.transcriber]).toEqual([null, null, t]);
+  const keys = unifiedOf({
+    profiles: [newProfile({ id: "t1" })],
+    endpoints: [ttsEndpoint()],
+    transcribers: [t],
+  }).map((x) => x.key);
+  expect(keys).toEqual(["scripting:t1", "tts:t1", "transcription:t1"]);
+  expect(opsOf(u).timeoutSec).toBe(OPS_DEFAULTS.transcription.timeoutSec);
+});
+
+test("a transcriber is priced per audio minute sent, through the speech rate card", () => {
+  const u = unifyTranscriber(transcriber());
+  const card = rateCardOf(u);
+  expect(card.unit).toBe("minute");
+  expect(card.components).toEqual(["speech"]);
+  expect(card.base.speech).toBe(0.006);
+  expect(pricingLabel(u, NOW)).toBe("$0.006 per audio minute sent");
+  expect(pricingLabel(unifyTranscriber(transcriber({ perMinute: 0 })), NOW)).toBe("no charge");
+  // its one rate is always a number, zero being free, so it is never unpriced
+  expect(unpriced(u)).toBe(false);
+});
+
+test("a transcriber's schedule moves its rate as a speech endpoint's does", () => {
+  const t = transcriber({
+    pricing: {
+      cachedInput: null,
+      cacheWrite: null,
+      timezone: "UTC",
+      windows: [],
+      promotions: [
+        { id: "p", label: "Half price", from: null, until: null, scope: ["speech"], percent: 50 },
+      ],
+    },
+  });
+  expect(pricingLabel(unifyTranscriber(t), NOW)).toBe("$0.003 per audio minute sent · Half price");
+});
+
+test("a transcriber is checked for its connection and its rate, not for voices", () => {
+  expect(endpointErrors(unifyTranscriber(transcriber()))).toEqual([]);
+  expect(
+    endpointErrors(
+      unifyTranscriber(
+        transcriber({ baseUrl: "https://api.openai.com/v1/audio/transcriptions", perMinute: -1 }),
+      ),
+    ),
+  ).toEqual([
+    "Use the base URL without /audio/transcriptions.",
+    "The rate per audio minute must be zero or more.",
+  ]);
+  expect(endpointErrors(unifyTranscriber(transcriber({ baseUrl: "simulated://local" })))).toEqual(
+    [],
+  );
+});
+
+test("a transcriber without its key is not ready, and says what that stops", () => {
+  const u = unifyTranscriber(transcriber());
+  expect(speechReadiness(u.entry, NOW)).toEqual({ state: "nokey" });
+  expect(speechReadiness({ ...u.entry, hasKey: true }, NOW)).toEqual({ state: "ready" });
+  expect(speechReadiness({ ...u.entry, enabled: false }, NOW)).toEqual({ state: "paused" });
+  expect(health(u, { hasKey: false })).toMatchObject({
+    state: "nokey",
+    detail: "This endpoint requires a key. Recordings sent here fail until one is set.",
+  });
+});
+
+test("a transcriber's throughput is the audio it heard, and testing it costs nothing", () => {
+  const heard = seriesFrom(
+    [record({ kind: "transcription", usage: { audioSeconds: 1200 } })],
+    "transcription",
+    "1h",
+    NOW,
+  );
+  expect(heard.totals.throughput).toBeCloseTo(20 / 60, 6);
+  expect(throughputLabel("transcription")).toBe("Audio minutes heard per minute");
+  // the test lists the server's models, which sends no audio
+  expect(probeCost({ key: "transcription:stt", id: "stt", kind: "transcription" })).toBe(0);
+});
+
+test("a transcriber's tabs are the ones every kind has, and no voices, expressions or prompt", () => {
+  expect(tabsFor("transcription").map((t) => t.id)).toEqual([
+    "overview",
+    "connection",
+    "requests",
+    "pricing",
+    "activity",
+  ]);
+  expect(tabsFor("tts").map((t) => t.id)).toContain("voices");
+  expect(tabsFor("scripting").map((t) => t.id)).toContain("prompt");
 });

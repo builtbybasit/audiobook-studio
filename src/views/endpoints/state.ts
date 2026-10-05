@@ -18,6 +18,7 @@ import type {
   PromptTemplate,
   RangeKey,
   RequestStatus,
+  Transcriber,
 } from "@/types";
 
 export type TabId =
@@ -41,15 +42,18 @@ export const TABS: { id: TabId; label: string }[] = [
   { id: "activity", label: "Activity" },
 ];
 
-/** Tabs that only make sense for a speech endpoint: a chat model has neither a voice catalogue nor
- *  expression tags. Kept here so the trigger list and the "is this tab still valid" check that
- *  guards a remembered tab can't drift apart. */
-const TTS_ONLY: TabId[] = ["voices", "expressions"];
-/** …and the one that only makes sense for a chat model: a speech endpoint is sent no prompt. */
-const SCRIPTING_ONLY: TabId[] = ["prompt"];
+/** The tabs each kind has. Only a speech endpoint has a voice catalogue and expression tags, and
+ *  only a chat model is sent a prompt; a transcriber has none of the three. Kept here so the
+ *  trigger list and the "is this tab still valid" check that guards a remembered tab can't drift
+ *  apart. */
+const KIND_TABS: Record<EndpointKind, TabId[]> = {
+  scripting: ["overview", "connection", "requests", "prompt", "pricing", "activity"],
+  tts: ["overview", "connection", "voices", "requests", "expressions", "pricing", "activity"],
+  transcription: ["overview", "connection", "requests", "pricing", "activity"],
+};
 
 export const tabsFor = (kind: EndpointKind): { id: TabId; label: string }[] =>
-  TABS.filter((t) => !(kind === "tts" ? SCRIPTING_ONLY : TTS_ONLY).includes(t.id));
+  TABS.filter((t) => KIND_TABS[kind].includes(t.id));
 
 /** Connection changes are staged, never live-applied: switching provider under a running book is
  *  exactly the kind of silent change this page is supposed to prevent. */
@@ -152,7 +156,7 @@ export function draftFor(u: UnifiedEndpoint): ConnectionDraft {
 export function stagePreset(
   u: UnifiedEndpoint,
   label: string,
-  fields: Partial<Profile> | Partial<Endpoint>,
+  fields: Partial<Profile> | Partial<Endpoint> | Partial<Transcriber>,
 ): void {
   const d = draftFor(u);
   const { name, model, baseUrl, needsKey, ...rest } = fields;
@@ -192,7 +196,7 @@ export const draftDirty = (u: UnifiedEndpoint): boolean => draftChanges(u).lengt
  */
 export function applyDraft(u: UnifiedEndpoint): string[] {
   const d = draftFor(u);
-  const target = (u.profile ?? u.endpoint) as unknown as Record<string, unknown>;
+  const target = u.entry as unknown as Record<string, unknown>;
   if (d.preset) Object.assign(target, d.preset.fields);
   target.name = d.name.trim();
   target.model = d.model.trim();

@@ -13,8 +13,11 @@ import {
   presetsOf,
   SCRIPTING_PRESETS,
   scriptingPresetById,
+  TRANSCRIPTION_PRESETS,
+  transcriptionPresetById,
   TTS_PRESETS,
   unifyEndpoint,
+  unifyTranscriber,
 } from "@/lib/endpoints";
 import { isSimulated } from "@/lib/providers";
 import { configErrors, expressionSupport } from "@/lib/expressions";
@@ -65,6 +68,7 @@ describe("scripting presets", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(presetsOf("scripting")).toBe(SCRIPTING_PRESETS);
     expect(presetsOf("tts")).toBe(TTS_PRESETS);
+    expect(presetsOf("transcription")).toBe(TRANSCRIPTION_PRESETS);
     expect(scriptingPresetById(ids[0])).toBe(SCRIPTING_PRESETS[0]);
     expect(scriptingPresetById("fish-pro")).toBeUndefined();
   });
@@ -219,8 +223,15 @@ describe("the Simulated presets", () => {
     expect(profile).toMatchObject({ needsKey: false, inPrice: 0, outPrice: 0 });
   });
 
+  test("make a transcriber that hears a recording with no key and no charge", () => {
+    const t = useEndpointsStore().addTranscriber("simulated");
+    expect(endpointErrors(unifyTranscriber(t))).toEqual([]);
+    expect(isSimulated(t.baseUrl)).toBe(true);
+    expect(t).toMatchObject({ needsKey: false, perMinute: 0 });
+  });
+
   test("are listed first, under their own heading", () => {
-    for (const presets of [TTS_PRESETS, SCRIPTING_PRESETS]) {
+    for (const presets of [TTS_PRESETS, SCRIPTING_PRESETS, TRANSCRIPTION_PRESETS]) {
       expect(presets[0]).toMatchObject({ id: "simulated", group: "Simulated" });
       expect(presets.filter((p) => p.group === "Simulated")).toHaveLength(1);
     }
@@ -241,5 +252,68 @@ describe("adding an endpoint from a preset", () => {
     ep.billing!.rate = 99;
     expect(TTS_PRESETS.find((p) => p.id === "fish-pro")!.apply).toEqual(before);
     expect(store.addEndpoint("fish-pro").billing).toEqual({ unit: "bytes", rate: 15 });
+  });
+});
+
+describe("speech-to-text presets", () => {
+  let pinia: TestPinia;
+  beforeEach(() => {
+    pinia = testPinia();
+  });
+  afterEach(() => pinia.stop());
+
+  test("each makes a transcriber the page accepts, but the blank one, which asks for a model", () => {
+    const ids = TRANSCRIPTION_PRESETS.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const { id } of TRANSCRIPTION_PRESETS) {
+      const t = useEndpointsStore().addTranscriber(id);
+      const expected = id === "compatible" ? ["Enter a model ID."] : [];
+      expect({ id, errors: endpointErrors(unifyTranscriber(t)) }).toEqual({ id, errors: expected });
+    }
+  });
+
+  test("a hosted provider needs a key and is priced, in UTC; a server of your own is neither", () => {
+    for (const { id, apply } of TRANSCRIPTION_PRESETS) {
+      const local = unhosted(apply.baseUrl);
+      expect({ id, needsKey: apply.needsKey, free: apply.perMinute === 0 }).toEqual({
+        id,
+        needsKey: !local,
+        free: local,
+      });
+      expect({ id, timezone: apply.pricing?.timezone }).toEqual({ id, timezone: "UTC" });
+    }
+  });
+
+  test("each is listed under a provider, and a provider's presets sit together", () => {
+    const groups = TRANSCRIPTION_PRESETS.map((p) => p.group);
+    expect(groups.every(Boolean)).toBe(true);
+    const runs = groups.filter((g, i) => g !== groups[i - 1]);
+    expect(new Set(runs).size).toBe(runs.length);
+  });
+
+  test("Phonon is the local server on :8001, beside OmniVoice's :8000; Whisper is OpenAI's", () => {
+    expect(transcriptionPresetById("fermion-phonon")!.apply).toMatchObject({
+      baseUrl: "http://127.0.0.1:8001/v1",
+      model: "phonon-2",
+      needsKey: false,
+      perMinute: 0,
+      concurrency: 2,
+    });
+    expect(transcriptionPresetById("fermion-phonon")!.note).toContain(
+      "fermion serve phonon-2 --port 8001",
+    );
+    expect(transcriptionPresetById("openai-whisper")!.apply).toMatchObject({
+      baseUrl: "https://api.openai.com/v1",
+      model: "whisper-1",
+      perMinute: 0.006,
+    });
+    expect(transcriptionPresetById("fish-pro")).toBeUndefined();
+  });
+
+  test("adding one hands over a copy, so editing its pricing leaves the preset as published", () => {
+    const store = useEndpointsStore();
+    const t = store.addTranscriber("openai-whisper");
+    t.pricing!.windows.push({ id: "w", days: [], from: 0, to: 60, label: "Night", percent: 50 });
+    expect(transcriptionPresetById("openai-whisper")!.apply.pricing!.windows).toEqual([]);
   });
 });

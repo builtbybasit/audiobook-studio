@@ -6,6 +6,9 @@
 // read by `useEndpointLive`), across every job and every chapter rather than the chapters this
 // browser has open, and its cooldown is the gate's too — so the wait reasons and the effective
 // limit say what the server is actually holding the lines for.
+//
+// A transcriber's requests are a click each — a clone sample sent to be heard — and nothing reports
+// them in flight, so it has none here: what it heard is in the ledger once it answers.
 import type { Job, RequestRecord, WaitReason } from "@/types";
 import { speechReadiness, type UnifiedEndpoint } from "@/lib/endpoints";
 
@@ -25,6 +28,15 @@ export interface LiveActivity {
 }
 
 const bookOf = (k: string): string => k.slice(0, k.lastIndexOf(":"));
+
+/** What a live row says of itself; the rest is the endpoint's. */
+type LiveRow = Omit<RequestRecord, "kind" | "endpointId" | "simulated">;
+const liveRow = (u: UnifiedEndpoint, r: LiveRow): RequestRecord => ({
+  ...r,
+  kind: u.kind,
+  endpointId: u.id,
+  simulated: false,
+});
 
 export function useEndpointActivity() {
   const scriptsStore = useScriptsStore();
@@ -51,7 +63,19 @@ export function useEndpointActivity() {
   }
 
   /** What holds this endpoint's work before any slot or budget does: `speechReadiness`. */
-  const readiness = (u: UnifiedEndpoint) => speechReadiness(u.profile ?? u.endpoint!, Date.now());
+  const readiness = (u: UnifiedEndpoint) => speechReadiness(u.entry, Date.now());
+
+  /** In flight and waiting on this endpoint, by kind. */
+  function counts(u: UnifiedEndpoint): { active: number; queued: number } {
+    switch (u.kind) {
+      case "scripting":
+        return scriptingCounts(u);
+      case "tts":
+        return ttsCounts(u);
+      case "transcription":
+        return { active: 0, queued: 0 };
+    }
+  }
 
   function waitReasonFor(u: UnifiedEndpoint, active: number, bookId: string | null): WaitReason {
     const { state } = readiness(u);
@@ -83,7 +107,7 @@ export function useEndpointActivity() {
   }
 
   function liveActivity(u: UnifiedEndpoint): LiveActivity {
-    const { active, queued } = u.kind === "scripting" ? scriptingCounts(u) : ttsCounts(u);
+    const { active, queued } = counts(u);
     const waiting = queued ? waitReasonFor(u, active, null) : null;
     // pausing, a missing key or a cooldown drops the ceiling that is actually in force to zero
     const { state } = readiness(u);
@@ -94,71 +118,90 @@ export function useEndpointActivity() {
 
   /** Unfinished jobs that would put requests through this endpoint — what a Cancel would hit. */
   function jobsUsing(u: UnifiedEndpoint): Job[] {
-    if (u.kind === "scripting")
-      return jobsStore.jobs.filter((j) => j.scriptRun?.profile.id === u.id && !j.finishedAt);
-    return jobsStore.jobs.filter((j) => {
-      if (j.kind !== "narration" || j.finishedAt || j.chapterId == null) return false;
-      return scriptsStore
-        .segmentsOf(j.bookId, j.chapterId)
-        .some(
-          (s) =>
-            s.audio.endpoint === u.id ||
-            castStore.effectiveVoice(j.bookId, s.speaker).endpoint?.id === u.id,
-        );
-    });
+    switch (u.kind) {
+      case "scripting":
+        return jobsStore.jobs.filter((j) => j.scriptRun?.profile.id === u.id && !j.finishedAt);
+      case "tts":
+        return jobsStore.jobs.filter((j) => {
+          if (j.kind !== "narration" || j.finishedAt || j.chapterId == null) return false;
+          return scriptsStore
+            .segmentsOf(j.bookId, j.chapterId)
+            .some(
+              (s) =>
+                s.audio.endpoint === u.id ||
+                castStore.effectiveVoice(j.bookId, s.speaker).endpoint?.id === u.id,
+            );
+        });
+      // no job sends to a transcriber yet: the clone form's button does, a click at a time
+      case "transcription":
+        return [];
+    }
   }
 
   /** In-flight and waiting requests, shaped like history rows so one list can show both. */
   function liveRequests(u: UnifiedEndpoint, now: number): RequestRecord[] {
-    const rows: RequestRecord[] = [];
-    const push = (r: Omit<RequestRecord, "kind" | "endpointId" | "simulated">) =>
-      rows.push({ ...r, kind: u.kind, endpointId: u.id, simulated: false });
-
-    if (u.kind === "scripting") {
-      for (const j of jobsStore.jobs.filter(
-        (x) => x.scriptRun?.profile.id === u.id && !x.finishedAt,
-      )) {
-        const run = j.scriptRun!;
-        const started = j.startedAt ?? j.queuedAt;
-        for (let i = 0; i < run.active; i++)
-          push({
-            id: `job-${j.id}-run-${i}`,
-            bookId: j.bookId,
-            chapterId: j.chapterId,
-            label: `Script chunk · ch ${j.chapterId}`,
-            status: "running",
-            attempts: 1,
-            queuedAt: j.queuedAt,
-            startedAt: started,
-            finishedAt: null,
-            queueMs: Math.max(0, started - j.queuedAt),
-            responseMs: Math.max(0, now - started),
-            usage: {},
-            cost: null,
-            costBasis: "estimated",
-          });
-        const waiting = Math.max(0, run.requests - run.completed - run.active);
-        for (let i = 0; i < waiting; i++)
-          push({
-            id: `job-${j.id}-wait-${i}`,
-            bookId: j.bookId,
-            chapterId: j.chapterId,
-            label: `Script chunk · ch ${j.chapterId}`,
-            status: "queued",
-            attempts: 0,
-            queuedAt: j.queuedAt,
-            startedAt: null,
-            finishedAt: null,
-            queueMs: Math.max(0, now - j.queuedAt),
-            responseMs: 0,
-            waiting: waitReasonFor(u, run.active, j.bookId),
-            usage: {},
-            cost: null,
-            costBasis: "estimated",
-          });
-      }
-      return rows;
+    switch (u.kind) {
+      case "scripting":
+        return scriptingRequests(u, now);
+      case "tts":
+        return speechRequests(u, now);
+      case "transcription":
+        return [];
     }
+  }
+
+  function scriptingRequests(u: UnifiedEndpoint, now: number): RequestRecord[] {
+    const rows: RequestRecord[] = [];
+    const push = (r: LiveRow) => rows.push(liveRow(u, r));
+
+    for (const j of jobsStore.jobs.filter(
+      (x) => x.scriptRun?.profile.id === u.id && !x.finishedAt,
+    )) {
+      const run = j.scriptRun!;
+      const started = j.startedAt ?? j.queuedAt;
+      for (let i = 0; i < run.active; i++)
+        push({
+          id: `job-${j.id}-run-${i}`,
+          bookId: j.bookId,
+          chapterId: j.chapterId,
+          label: `Script chunk · ch ${j.chapterId}`,
+          status: "running",
+          attempts: 1,
+          queuedAt: j.queuedAt,
+          startedAt: started,
+          finishedAt: null,
+          queueMs: Math.max(0, started - j.queuedAt),
+          responseMs: Math.max(0, now - started),
+          usage: {},
+          cost: null,
+          costBasis: "estimated",
+        });
+      const waiting = Math.max(0, run.requests - run.completed - run.active);
+      for (let i = 0; i < waiting; i++)
+        push({
+          id: `job-${j.id}-wait-${i}`,
+          bookId: j.bookId,
+          chapterId: j.chapterId,
+          label: `Script chunk · ch ${j.chapterId}`,
+          status: "queued",
+          attempts: 0,
+          queuedAt: j.queuedAt,
+          startedAt: null,
+          finishedAt: null,
+          queueMs: Math.max(0, now - j.queuedAt),
+          responseMs: 0,
+          waiting: waitReasonFor(u, run.active, j.bookId),
+          usage: {},
+          cost: null,
+          costBasis: "estimated",
+        });
+    }
+    return rows;
+  }
+
+  function speechRequests(u: UnifiedEndpoint, now: number): RequestRecord[] {
+    const rows: RequestRecord[] = [];
+    const push = (r: LiveRow) => rows.push(liveRow(u, r));
 
     const { active } = ttsCounts(u);
     for (const [k, segs] of Object.entries(scriptsStore.segments)) {

@@ -7,6 +7,7 @@ import { DOT, KIND_LABEL, TEXT, pricingLabel } from "@/lib/endpoints";
 import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
 import type { LiveActivity } from "@/views/endpoints/live";
 import { FORMAT_LABEL, encodingOf } from "@/lib/endpointShapes";
+import type { EndpointKind } from "@/types";
 
 const props = defineProps<{
   u: UnifiedEndpoint;
@@ -16,6 +17,8 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ select: []; toggle: [boolean] }>();
 const pricing = () => pricingLabel(props.u);
+/** the kind in a tag small enough for the corner of the card */
+const TAG: Record<EndpointKind, string> = { scripting: "script", tts: "TTS", transcription: "STT" };
 </script>
 
 <template>
@@ -40,7 +43,7 @@ const pricing = () => pricingLabel(props.u);
         }}</span>
         <span
           class="ml-auto shrink-0 rounded border border-zinc-200 px-1 text-[9px] uppercase tracking-wide text-zinc-500 dark:border-zinc-700"
-          >{{ u.kind === "scripting" ? "script" : "TTS" }}</span
+          >{{ TAG[u.kind] }}</span
         >
       </span>
       <span class="mt-0.5 block truncate font-mono text-[11px] text-zinc-500"

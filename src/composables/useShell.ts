@@ -9,7 +9,7 @@ import { useLibraryStore } from "@/stores/library";
 import { createSharedComposable } from "@vueuse/core";
 import { computed } from "vue";
 import { useRoute } from "vue-router";
-import { endpointErrors, speechReadiness, unifyEndpoint, unifyProfile } from "@/lib/endpoints";
+import { endpointErrors, speechReadiness, unifiedOf } from "@/lib/endpoints";
 import { bookFacts } from "@/views/library/bookFacts";
 import { reviewCount } from "@/views/review/inbox";
 
@@ -56,11 +56,8 @@ export const useShell = createSharedComposable(() => {
    *  is a choice and a cooldown passes on its own, so neither needs attention. */
   const endpointsNeedingAttention = computed(
     () =>
-      [
-        ...endpointsStore.profiles.map(unifyProfile),
-        ...endpointsStore.endpoints.map(unifyEndpoint),
-      ].filter((u) => {
-        const { state } = speechReadiness(u.profile ?? u.endpoint!, Date.now());
+      unifiedOf(endpointsStore).filter((u) => {
+        const { state } = speechReadiness(u.entry, Date.now());
         return state !== "paused" && (state === "nokey" || endpointErrors(u).length > 0);
       }).length,
   );

@@ -22,6 +22,7 @@ import { newPace, pacedEncoders, pacedProviders } from "~/demo/pace";
 import { demoReset } from "~/demo/reset";
 import { isFresh, seedDemo } from "~/demo/seed";
 import { audiobookFiles } from "~/exports/files";
+import { checkHandler } from "~/jobs/check";
 import { exportHandler } from "~/jobs/export";
 import { narrationHandler } from "~/jobs/narration";
 import { createRunner, type Runner } from "~/jobs/runner";
@@ -32,6 +33,7 @@ import { endpointScriptingProvider } from "~/providers/endpointScripting";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { createSpeechGate } from "~/providers/gate";
 import type { Providers } from "~/providers/target";
+import { endpointTranscriber } from "~/providers/transcription";
 import { voiceFiles as voiceFilesIn } from "~/voices/files";
 
 /** The base the real library is under, and the demo's. */
@@ -94,7 +96,7 @@ export interface Library {
 }
 
 /**
- * Open one library: its database migrated, its queue built with the three handlers, its API.
+ * Open one library: its database migrated, its queue built with the four handlers, its API.
  *
  * Migrations run here, before anything can ask the database a question, so a checkout that has
  * just pulled a schema change is usable without a separate step.
@@ -136,6 +138,7 @@ export function openLibrary(options: LibraryOptions): Library {
       scripting: scriptingHandler(providers.scripting),
       narration: narrationHandler(providers.speech, files, gate),
       export: exportHandler(exports, files),
+      check: checkHandler(providers.transcription ?? endpointTranscriber(), files),
     },
     { log },
   );

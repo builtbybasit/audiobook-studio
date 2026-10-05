@@ -11,6 +11,7 @@ import { X as CloseIcon, Copy as CopyIcon, ArrowUpRight as OpenIcon } from "@luc
 import { clockOf, duration } from "@/lib/endpoints";
 import { jobDiagnostics } from "@/lib/jobActivity";
 import type { Job } from "@/types";
+import { PAGE, stageLink } from "@/views/queue/stage";
 
 const props = defineProps<{ job: Job | null; now: number }>();
 const emit = defineEmits<{ close: [] }>();
@@ -75,21 +76,7 @@ const filtered = computed(() => {
     .reverse();
 });
 const issues = computed(() => events.value.filter((e) => e.level !== "info").length);
-const stage = computed(() => {
-  if (!props.job) return "/queue";
-  return {
-    path: `/book/${props.job.bookId}/${props.job.kind}`,
-    query:
-      props.job.chapterId == null
-        ? undefined
-        : {
-            ch: String(props.job.chapterId),
-            ...(props.job.kind === "narration" && props.job.status === "failed"
-              ? { filter: "failed" }
-              : {}),
-          },
-  };
-});
+const stage = computed(() => (props.job ? stageLink(props.job) : "/queue"));
 const stamp = (at: number | null) => (at === null ? "—" : new Date(at).toLocaleString());
 async function copy() {
   if (!props.job) return;
@@ -479,6 +466,27 @@ async function copy() {
                 Silence stitched between clips is not rendered and is never billed.
               </dd></template
             >
+            <!-- a check by ear: how much of the chapter it heard, and what it made of it -->
+            <template v-if="job.checkRun"
+              ><dt class="text-zinc-500">Endpoint</dt>
+              <dd class="break-all font-mono text-xs">{{ job.checkRun.endpoint }}</dd>
+              <dt class="text-zinc-500">Lines heard</dt>
+              <dd>{{ job.checkRun.checked }}/{{ job.checkRun.lines }}</dd>
+              <dt class="text-zinc-500">Heard wrong</dt>
+              <dd>
+                {{ job.checkRun.mismatched }}
+                <span class="text-xs text-zinc-500"
+                  >— flagged, unless a person had flagged the line already</span
+                >
+              </dd>
+              <dt class="text-zinc-500">Failed</dt>
+              <dd>
+                {{ job.checkRun.failed }}
+                <span v-if="job.checkRun.failed" class="text-xs text-zinc-500"
+                  >— those lines stay unchecked</span
+                >
+              </dd></template
+            >
           </dl>
           <p class="mt-5 text-xs leading-relaxed text-zinc-500">
             Event details describe this run at the time they were recorded. Endpoint settings and
@@ -491,7 +499,7 @@ async function copy() {
           <button class="btn-ghost btn-xs" @click="copy">
             <CopyIcon class="icon-sm" /> Copy diagnostics</button
           ><RouterLink :to="stage" class="btn-ghost btn-xs" @click="emit('close')"
-            >Open {{ job.kind
+            >Open {{ PAGE[job.kind]
             }}<template v-if="job.chapterId !== null"> · chapter {{ job.chapterId }}</template
             ><OpenIcon class="icon-sm" /></RouterLink
           ><button

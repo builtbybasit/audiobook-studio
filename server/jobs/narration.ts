@@ -71,6 +71,7 @@ import {
   rejectCandidate,
   writeClip,
 } from "~/db/script";
+import { checkAfterNarration } from "~/jobs/check";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
 import { batchLines, type BatchLine, type LineRun } from "~/narration/batch";
@@ -837,33 +838,42 @@ export function narrationHandler(
     },
 
     onSettled(ctx, status) {
-      // `done` wrote the chapter's status inside its own transaction. Anything else — a cancel, a
-      // failure, a recovery that gave up on a queued job — puts back what the run was holding: a
-      // line waiting to render in place goes back to having no clip, and a replacement that never
-      // landed is dropped, which leaves the clip it would have replaced exactly as it was. What
-      // was finished stays finished. Read off the job's row, whose chapter number has followed any
-      // renumbering by cascade, rather than the number the job started with.
-      if (status === "done") return;
-      const fresh = getJob(ctx.db, ctx.job.id);
-      if (!fresh || fresh.chapterId == null) return;
-      const { bookId, chapterId } = fresh;
-      ctx.db.transaction((tx) => {
-        if (!library.chapterExists(tx, bookId, chapterId)) return;
-        const back = putBack(tx, bookId, chapterId, readScript(tx, bookId, chapterId));
-        const segs = readScript(tx, bookId, chapterId);
-        // a run that was interrupted starts its progress again; one that ran to its end and
-        // failed on a line keeps the hundred its final write recorded
-        library.setChapterNarration(
-          tx,
-          bookId,
-          chapterId,
-          chapterNarration(segs, library.getBook(tx, bookId)),
-          back ? 0 : undefined,
-        );
-        if (back) bumpRevision(tx, bookId, chapterId);
-      });
+      if (status !== "done") putBackAfter(ctx);
+      // what landed is heard next, when the book asks for that; a run cancelled is a person
+      // stopping the work, and a check they did not ask for is not queued behind their back
+      if (status !== "cancelled") checkAfterNarration(ctx);
     },
   };
+}
+
+/**
+ * Put back what a run that did not finish was holding. `done` wrote the chapter's status inside its
+ * own transaction; anything else — a cancel, a failure, a recovery that gave up on a queued job —
+ * puts back what the run was holding: a line waiting to render in place goes back to having no
+ * clip, and a replacement that never landed is dropped, which leaves the clip it would have
+ * replaced exactly as it was. What was finished stays finished. Read off the job's row, whose
+ * chapter number has followed any renumbering by cascade, rather than the number the job started
+ * with.
+ */
+function putBackAfter(ctx: JobContext): void {
+  const fresh = getJob(ctx.db, ctx.job.id);
+  if (!fresh || fresh.chapterId == null) return;
+  const { bookId, chapterId } = fresh;
+  ctx.db.transaction((tx) => {
+    if (!library.chapterExists(tx, bookId, chapterId)) return;
+    const back = putBack(tx, bookId, chapterId, readScript(tx, bookId, chapterId));
+    const segs = readScript(tx, bookId, chapterId);
+    // a run that was interrupted starts its progress again; one that ran to its end and
+    // failed on a line keeps the hundred its final write recorded
+    library.setChapterNarration(
+      tx,
+      bookId,
+      chapterId,
+      chapterNarration(segs, library.getBook(tx, bookId)),
+      back ? 0 : undefined,
+    );
+    if (back) bumpRevision(tx, bookId, chapterId);
+  });
 }
 
 /**

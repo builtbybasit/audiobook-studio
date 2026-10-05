@@ -656,6 +656,8 @@ export interface BookSettings {
   prompt?: BookPrompt | null;
   /** read `note` lines aloud; `null` goes back to the default, which skips them */
   readNotes?: boolean | null;
+  /** check each chapter by ear once it is narrated; `null` goes back to only when asked */
+  checkByEar?: boolean | null;
   /** the voice for speakers with none of their own; `null` goes back to the Narrator's */
   characterVoice?: CharacterVoice | null;
 }
@@ -680,6 +682,7 @@ export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): v
   }
   if (s.prompt !== undefined) Object.assign(set, bookPromptValues(s.prompt));
   if (s.readNotes !== undefined) set.readNotes = s.readNotes;
+  if (s.checkByEar !== undefined) set.checkByEar = s.checkByEar;
   if (s.characterVoice !== undefined) set.characterVoice = s.characterVoice;
   if (!Object.keys(set).length) return;
   db.update(books).set(set).where(eq(books.id, bookId)).run();

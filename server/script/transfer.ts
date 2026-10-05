@@ -15,6 +15,7 @@ import type {
   ScriptManifest,
   VoiceHint,
 } from "@/types";
+import { wordsOf } from "@/lib/gaps";
 import {
   chapterFileName,
   SCRIPT_CHAPTER_FORMAT,
@@ -30,7 +31,6 @@ import { getBook, getChapterBody, listChapters } from "~/db/library";
 import { readScript } from "~/db/script";
 import { plainText } from "~/epub/markdown";
 import { notFound } from "~/lib/errors";
-import { wordsOf } from "~/providers/chatScripting";
 import { SAMPLES_MANIFEST, VOICE_SAMPLES_FORMAT } from "~/speakerSamples/folder";
 import { readSpeakerSamplesForExport } from "~/speakerSamples/store";
 import type { VoiceFiles } from "~/voices/files";

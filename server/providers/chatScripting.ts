@@ -25,6 +25,7 @@ import * as v from "valibot";
 import type { EndpointProbe, Gender, RenderedPrompt, SegmentType, TokenUsage } from "@/types";
 import { BUILT_IN_PROMPT, renderPrompt, sampleVars, type PromptCastMember } from "@/lib/prompt";
 import { NARRATOR } from "@/lib/cast";
+import { wordsOf } from "@/lib/gaps";
 import { normalizeUsage } from "@/lib/pricing";
 import { reasoningRequest } from "@/lib/reasoning";
 import { UNKNOWN_SPEAKER } from "~/providers/fake";
@@ -87,17 +88,6 @@ export interface Fidelity {
 
 /** The share of words that may differ either way before an answer is refused. */
 const TOLERANCE = 0.02;
-
-/** The words of a text as the check compares them: lower case, quotes and punctuation gone. */
-export function wordsOf(text: string): string[] {
-  return (
-    text
-      .normalize("NFKC")
-      .toLowerCase()
-      .replace(/[‘’ʼ`´]/g, "'")
-      .match(/[\p{L}\p{N}]+(?:'[\p{L}\p{N}]+)*/gu) ?? []
-  );
-}
 
 /**
  * Whether `lines` read out `input`: every word once, nothing invented. Compared as a count of

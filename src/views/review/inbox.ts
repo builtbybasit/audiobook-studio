@@ -139,7 +139,8 @@ const KINDS: Record<
     one: "flagged clip",
     many: "flagged clips",
     label: "Flagged clips",
-    blurb: "You marked these wrong while listening. Retake them, or clear the flag.",
+    blurb:
+      "Marked wrong while listening — by you, or by a check by ear that heard something else. Retake them, or clear the flag.",
     tone: "amber",
   },
   retake: {

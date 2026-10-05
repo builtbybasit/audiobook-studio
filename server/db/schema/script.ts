@@ -44,7 +44,7 @@ import type {
   VoiceRef,
 } from "@/types";
 import type { ReqError } from "@/types";
-import { chapters } from "~/db/schema/library";
+import { books, chapters } from "~/db/schema/library";
 
 /** One line of the script. */
 export const segments = sqliteTable(
@@ -298,4 +298,34 @@ export const previousScripts = sqliteTable(
       .onDelete("cascade")
       .onUpdate("cascade"),
   ],
+);
+
+/**
+ * What a transcription endpoint heard of one rendered clip: a check by ear's finding (`HeardLine`).
+ *
+ * Keyed by the clip's **file** rather than its row, because a clip row is dropped and written again
+ * every time the script is saved (`replaceScript`) while a render's file never changes: the file is
+ * the one name a clip keeps for life. A line rendered again has a new file and so no finding yet,
+ * which is exactly what makes the next check hear it. `text` is the line as it was checked, so a
+ * line edited since reads as unchecked rather than as passed.
+ */
+export const heard = sqliteTable(
+  "heard",
+  {
+    bookId: text("book_id")
+      .notNull()
+      .references(() => books.id, { onDelete: "cascade" }),
+    /** the clip's file name under the book's audio directory, as its url ends */
+    file: text("file").notNull(),
+    text: text("text").notNull(),
+    heard: text("heard").notNull(),
+    /** `[from, to, start, end]` per word heard; null when the endpoint gave no word times */
+    words: text("words", { mode: "json" }).$type<[number, number, number, number][]>(),
+    score: real("score").notNull(),
+    mismatch: integer("mismatch", { mode: "boolean" }).notNull(),
+    /** the transcription endpoint that heard it */
+    endpoint: text("endpoint").notNull(),
+    at: integer("at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.bookId, t.file] })],
 );

@@ -1,5 +1,6 @@
 // The gaps between words in a line: where a segment can be cut, and where an expression can be
-// placed. Pure over the text, so the strip, the editor and the tests agree on what a gap is.
+// placed. Pure over the text, so the strip, the editor and the tests agree on what a gap is. And
+// the words themselves as the app compares them (`wordsOf`), whoever is comparing.
 
 export interface WordToken {
   /** the word and the whitespace after it, exactly as in the source */
@@ -28,6 +29,22 @@ export function tokensOf(text: string): WordToken[] {
     strong = /[.!?…][”’"')\]]?\s*$/.test(m[0]);
   }
   return out;
+}
+
+/**
+ * The words of a text as they are compared: lower case, curly quotes folded, punctuation gone, an
+ * apostrophe inside a word kept. One rule for every comparison of words — a scripting answer
+ * against its prose (`fidelity`), a line against its site text, a clip heard back against its line
+ * (`alignHeard`) — so none of them disagrees with another about what a word is.
+ */
+export function wordsOf(text: string): string[] {
+  return (
+    text
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/[‘’ʼ`´]/g, "'")
+      .match(/[\p{L}\p{N}]+(?:'[\p{L}\p{N}]+)*/gu) ?? []
+  );
 }
 
 /**

@@ -10,8 +10,16 @@ import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
-import type { ChapterScript, EditedScript, Flagged, Judged, RetakesQueued } from "@/types";
+import type {
+  ChapterHeard,
+  ChapterScript,
+  EditedScript,
+  Flagged,
+  Judged,
+  RetakesQueued,
+} from "@/types";
 import type { Db } from "~/db/client";
+import { chapterHeard } from "~/jobs/check";
 import type { Runner } from "~/jobs/runner";
 import { IdParam } from "~/lib/http";
 import { SegmentSchema, VersionOriginSchema } from "~/lib/schemas";
@@ -65,6 +73,12 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
       return c.json(result satisfies EditedScript);
     },
   );
+
+  /** What a check by ear heard of the chapter's clips in the book, by line (`HeardLine`). */
+  app.get("/:id/chapters/:chapterId/heard", validate("param", ChapterParam), (c) => {
+    const { id, chapterId } = c.req.valid("param");
+    return c.json({ lines: chapterHeard(db, id, chapterId) satisfies ChapterHeard });
+  });
 
   app.get("/:id/chapters/:chapterId/history", validate("param", ChapterParam), (c) => {
     const { id, chapterId } = c.req.valid("param");

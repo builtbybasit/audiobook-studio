@@ -21,8 +21,9 @@ import {
   Plus as AddIcon,
   ArrowRight as NextIcon,
   Inbox as ReviewIcon,
+  Ear as CheckIcon,
 } from "@lucide/vue";
-import { UiNumber, UiSwitch } from "@/ui";
+import { UiHint, UiNumber, UiSwitch } from "@/ui";
 import AddEpubDialog from "@/components/AddEpubDialog.vue";
 import BookCover from "@/components/BookCover.vue";
 import BookPromptPanel from "@/views/scripting/BookPromptPanel.vue";
@@ -152,6 +153,8 @@ const fmt = (s: number) =>
   s >= 3600
     ? `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, "0")}m`
     : `${Math.floor(s / 60)}m`;
+/** what "Check narrated chapters" sends: the server leaves out what it has heard already */
+const narratedIds = computed(() => chapters.value.filter(isNarrated).map((c) => c.id));
 const runtime = computed(() => chapters.value.reduce((a, c) => a + c.duration, 0));
 
 // The banner answers "what next"; the strip under it answers "what else". The chain below can only
@@ -544,6 +547,35 @@ const next = computed(() =>
             }}
             Site text is never read.
           </p>
+        </div>
+        <!-- hearing the narration back: after each chapter narrates, or now for what is narrated -->
+        <div class="card p-4 text-xs text-zinc-500">
+          <div class="label mb-2">Checking</div>
+          <div class="flex items-center gap-1.5">
+            <UiSwitch
+              :model-value="!!book.checkByEar"
+              label="Check narration by ear"
+              @update:model-value="(on: boolean) => libraryStore.setCheckByEar(bookId, on)"
+            />
+            <UiHint
+              label="checking by ear"
+              text="Needs a transcription (speech-to-text) endpoint switched on. Each chapter is heard once it narrates, and a line heard saying something else is flagged for review. Costs one transcription request per line."
+            />
+          </div>
+          <p class="mt-1.5 text-[11px] leading-relaxed">
+            {{
+              book.checkByEar
+                ? "Each chapter is checked after it narrates."
+                : "Only when asked, on the Narration page or below."
+            }}
+          </p>
+          <button
+            class="btn-ghost btn-xs mt-2 w-full justify-center"
+            :disabled="!narratedIds.length"
+            @click="jobsStore.checkChapters(bookId, narratedIds)"
+          >
+            <CheckIcon class="icon-sm" /> Check narrated chapters
+          </button>
         </div>
         <div class="card p-4 text-xs text-zinc-500">
           <div class="label mb-1">Scripting profile</div>

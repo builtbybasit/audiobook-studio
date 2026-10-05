@@ -183,6 +183,11 @@ export interface Book {
   prompt?: BookPrompt;
   /** read translator's and author's notes (`note` lines) aloud; absent = skip them */
   readNotes?: boolean;
+  /**
+   * Check each chapter by ear after it is narrated: a `check` job hears its clips on the first
+   * transcription endpoint switched on. Absent = only when asked.
+   */
+  checkByEar?: boolean;
   /** the voice a speaker with none of their own is read in; absent = the Narrator's */
   characterVoice?: CharacterVoice;
 }

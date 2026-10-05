@@ -114,6 +114,18 @@ export interface RetakesQueued {
   chapters: Chapter[];
 }
 
+/**
+ * What asking for chapters to be checked by ear came to: one job a chapter, as one run, and the
+ * chapters left out and why — `unnarrated` has no clip to hear, `nothing` has only clips already
+ * heard, `busy` has a narration or a check already queued.
+ */
+export interface CheckQueued {
+  jobs: Job[];
+  skipped: { id: number; why: "excluded" | "busy" | "missing" | "unnarrated" | "nothing" }[];
+  runId: number;
+  chapters: Chapter[];
+}
+
 /** A verdict on a retake: the line as it now stands, and the chapter whose clip changed. */
 export interface Judged {
   segment: Segment;

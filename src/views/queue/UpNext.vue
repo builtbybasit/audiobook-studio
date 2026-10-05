@@ -9,6 +9,7 @@ import {
   ChevronRight as ChevronIcon,
   Download as ExportIcon,
   PencilLine as ScriptingIcon,
+  Ear as CheckIcon,
   X as CancelIcon,
 } from "@lucide/vue";
 
@@ -26,6 +27,7 @@ const icon: Record<JobKind, Component> = {
   scripting: ScriptingIcon,
   narration: NarrationIcon,
   export: ExportIcon,
+  check: CheckIcon,
 };
 // the book is named only when the queue holds more than one
 const manyBooks = computed(() => new Set(props.queued.map((j) => j.bookId)).size > 1);

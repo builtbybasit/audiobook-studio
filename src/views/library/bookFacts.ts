@@ -8,7 +8,7 @@ import { useLibraryStore } from "@/stores/library";
 import { computed, type ComputedRef, type MaybeRefOrGetter, toValue } from "vue";
 import { plural } from "@/lib/contents";
 import { nextStepOf, updateReason, type NextStep } from "@/views/library/shared";
-import type { BookProgress, ContentsSummary, ExportItem } from "@/types";
+import type { BookProgress, ContentsSummary, ExportItem, JobKind } from "@/types";
 
 export interface BookFacts {
   progress: BookProgress;
@@ -55,14 +55,15 @@ export function bookFacts(id: string): BookFacts {
   const behind = !!update?.needed;
   const building = all.some((e) => e.status === "building");
   const active = jobsStore.activeJobs.filter((j) => j.bookId === id);
-  const byKind = new Map<string, number>();
+  const byKind = new Map<JobKind, number>();
   for (const j of active) byKind.set(j.kind, (byKind.get(j.kind) ?? 0) + 1);
-  const verb: Record<string, string> = { scripting: "Scripting", narration: "Narrating" };
-  const activity = [...byKind]
-    .map(([k, n]) =>
-      k === "export" ? "Building the audiobook" : `${verb[k] ?? k} ${plural(n, "chapter")}`,
-    )
-    .join(" · ");
+  const doing: Record<JobKind, (n: number) => string> = {
+    scripting: (n) => `Scripting ${plural(n, "chapter")}`,
+    narration: (n) => `Narrating ${plural(n, "chapter")}`,
+    check: (n) => `Checking ${plural(n, "chapter")} by ear`,
+    export: () => "Building the audiobook",
+  };
+  const activity = [...byKind].map(([k, n]) => doing[k](n)).join(" · ");
   return {
     progress,
     contents,

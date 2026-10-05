@@ -6,12 +6,13 @@
 // that then invalidates it. A book's spending is read the same way (`useBookSpend`,
 // `useLibrarySpend`), and `spendOf` answers from whichever of those reads holds the book.
 import { useQueryCache } from "@pinia/colada";
+import { plural } from "@/lib/contents";
 import { usable } from "@/lib/exports";
 import { segmentFailed } from "@/lib/runPlan";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { jobsService } from "@/services/jobs";
-import type { BookSpend, EndpointLoad, Eta, Job, JobKind } from "@/types";
+import type { BookSpend, CheckQueued, EndpointLoad, Eta, Job, JobKind } from "@/types";
 import { defineStore } from "pinia";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useExportsStore } from "@/stores/exports";
@@ -20,6 +21,7 @@ import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { toastFailure } from "@/stores/toastFailure";
+import { useUiStore } from "@/stores/ui";
 const AVG_JOB: Record<JobKind, number> = { scripting: 25, narration: 60, export: 120, check: 15 };
 
 /** The queue before it has been read. */
@@ -174,11 +176,75 @@ export const useJobsStore = defineStore("jobs", {
       if (!failed.length) return 0;
       const ids = [...new Set(failed.map((j) => j.chapterId!))];
       const { kind, bookId } = failed[0]; // one press, one book, one stage
-      if (kind === "scripting") void scriptingStore.startRun(bookId, ids, { quiet: true });
-      else if (kind === "narration")
-        void narrationStore.startRun(bookId, ids, { scope: "failed", quiet: true });
-      else for (const j of failed) this.retryJob(j.id);
+      switch (kind) {
+        case "scripting":
+          void scriptingStore.startRun(bookId, ids, { quiet: true });
+          break;
+        case "narration":
+          void narrationStore.startRun(bookId, ids, { scope: "failed", quiet: true });
+          break;
+        case "check":
+          void this.checkChapters(bookId, ids, { quiet: true });
+          break;
+        case "export":
+          for (const j of failed) this.retryJob(j.id);
+      }
       return failed.length;
+    },
+    /**
+     * Hear these chapters' current clips, as one run: the server sends each to the first
+     * transcription endpoint switched on, and flags a line whose clip says something else. It
+     * leaves out a chapter with no clip to hear, one whose clips were all heard already, and one
+     * already being narrated or checked, and the toast says which. With no transcription endpoint
+     * switched on the server refuses the whole run, and its sentence is the toast. True when
+     * anything was queued.
+     */
+    async checkChapters(
+      bookId: string,
+      ids: number[],
+      { quiet = false }: { quiet?: boolean } = {},
+    ): Promise<boolean> {
+      const libraryStore = useLibraryStore();
+      const uiStore = useUiStore();
+
+      if (libraryStore._blocked(bookId, "check it by ear")) return false;
+      let queued: CheckQueued;
+      try {
+        queued = await jobsService().checkChapters(bookId, ids);
+      } catch (cause) {
+        toastFailure("queue the check", cause);
+        return false;
+      }
+      const { jobs, skipped, chapters } = queued;
+      libraryStore.chapters[bookId] = chapters;
+      await this._changed();
+      if (quiet) return jobs.length > 0;
+      const WHY: Record<(typeof skipped)[number]["why"], string> = {
+        unnarrated: "not narrated yet",
+        nothing: "already heard",
+        busy: "already being narrated or checked",
+        excluded: "skipped for the audiobook",
+        missing: "no longer in the book",
+      };
+      const notes = (Object.keys(WHY) as (keyof typeof WHY)[])
+        .map((why) => [why, skipped.filter((s) => s.why === why).length] as const)
+        .filter(([, n]) => n)
+        .map(([why, n]) => `${plural(n, "chapter")} ${WHY[why]}`);
+      if (!jobs.length) {
+        uiStore.toast("Nothing to check in this selection", {
+          kind: "warn",
+          description: notes.join("; ") || "The selection had no clips the server could hear.",
+        });
+        return false;
+      }
+      uiStore.toast(`Check by ear · ${plural(jobs.length, "chapter")}`, {
+        kind: "info",
+        description:
+          "Queued on the server. Progress is in the Queue, and a line heard saying something else is flagged." +
+          (notes.length ? ` Left out: ${notes.join("; ")}.` : ""),
+        timeout: 8000,
+      });
+      return true;
     },
     removeJob(id: number): void {
       const j = this.jobs.find((j) => j.id === id);
@@ -255,19 +321,26 @@ export const useJobsStore = defineStore("jobs", {
         return;
       }
       if (job.chapterId == null) return;
-      if (job.kind === "scripting")
-        void scriptingStore.startRun(job.bookId, [job.chapterId], { quiet: true });
-      if (job.kind === "narration") {
-        const c = libraryStore.chapter(job.bookId, job.chapterId);
-        if (!c) return;
-        // A retry renders what failed, never what already worked. A replacement that failed counts
-        // as a failure even though the chapter still reads as narrated — its own clip was never
-        // touched — so the failures are looked for on the clips, not on the chapter's status.
-        const failed = scriptsStore.segmentsOf(job.bookId, c.id).some(segmentFailed);
-        void narrationStore.startRun(job.bookId, [c.id], {
-          scope: failed ? "failed" : "fill",
-          quiet: true,
-        });
+      switch (job.kind) {
+        case "scripting":
+          void scriptingStore.startRun(job.bookId, [job.chapterId], { quiet: true });
+          return;
+        // a check hears what the chapter holds now, and the server leaves out what was heard already
+        case "check":
+          void this.checkChapters(job.bookId, [job.chapterId], { quiet: true });
+          return;
+        case "narration": {
+          const c = libraryStore.chapter(job.bookId, job.chapterId);
+          if (!c) return;
+          // A retry renders what failed, never what already worked. A replacement that failed
+          // counts as a failure even though the chapter still reads as narrated — its own clip was
+          // never touched — so the failures are looked for on the clips, not on the chapter's status.
+          const failed = scriptsStore.segmentsOf(job.bookId, c.id).some(segmentFailed);
+          void narrationStore.startRun(job.bookId, [c.id], {
+            scope: failed ? "failed" : "fill",
+            quiet: true,
+          });
+        }
       }
     },
     /** Did a later run of the same stage finish this chapter's work? Then this failure is old news. */
@@ -326,13 +399,21 @@ export const useJobsStore = defineStore("jobs", {
         seen.add(key);
         const c = j.chapterId == null ? undefined : libraryStore.chapter(j.bookId, j.chapterId);
         if (!c || this._supersededBy(j)) continue;
-        if (j.kind === "scripting" && !["queued", "running"].includes(c.scripting)) out.push(j);
-        if (
-          j.kind === "narration" &&
-          scriptsStore.segmentsOf(j.bookId, c.id).some(segmentFailed) &&
-          !["queued", "running"].includes(c.narration)
-        )
-          out.push(j);
+        const busy = (stage: "scripting" | "narration") => ["queued", "running"].includes(c[stage]);
+        const still: Record<JobKind, () => boolean> = {
+          scripting: () => !busy("scripting"),
+          narration: () =>
+            scriptsStore.segmentsOf(j.bookId, c.id).some(segmentFailed) && !busy("narration"),
+          // a chapter carries no check status of its own, so the queue says whether one is on it
+          check: () =>
+            !busy("narration") &&
+            !this.activeJobs.some(
+              (x) => x.kind === "check" && x.bookId === j.bookId && x.chapterId === j.chapterId,
+            ),
+          // filtered out above: a build is retried from its own row, by the settings it carried
+          export: () => false,
+        };
+        if (still[j.kind]()) out.push(j);
       }
       // scanned newest-first to pick the right job per chapter; handed back in queue order, so a
       // retry of several chapters submits them the way they were originally run

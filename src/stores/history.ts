@@ -22,6 +22,7 @@ import type {
   ChapterHistory,
   HistoryHead,
   Job,
+  JobKind,
   RestorePlan,
   ScriptComparison,
   ScriptVersion,
@@ -35,6 +36,17 @@ import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
+
+/**
+ * The runs that write into a chapter's script: a scripting run writes its lines, a narration its
+ * clips, and a check by ear its flags. An export only reads the clips.
+ */
+const LANDS_ON_SCRIPT: Record<JobKind, boolean> = {
+  scripting: true,
+  narration: true,
+  check: true,
+  export: false,
+};
 
 const emptyHead = (): HistoryHead => ({ at: 0, origin: { kind: "scripted" } });
 const emptyHistory = (): ChapterHistory => ({ versions: [], head: emptyHead(), nextId: 1 });
@@ -96,10 +108,7 @@ export const useHistoryStore = defineStore("history", {
       return (bookId, chId) =>
         jobsStore.jobs.filter(
           (j) =>
-            j.bookId === bookId &&
-            j.chapterId === chId &&
-            !j.finishedAt &&
-            (j.kind === "scripting" || j.kind === "narration"),
+            j.bookId === bookId && j.chapterId === chId && !j.finishedAt && LANDS_ON_SCRIPT[j.kind],
         );
     },
   },

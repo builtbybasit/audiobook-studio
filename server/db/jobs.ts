@@ -33,7 +33,7 @@ export interface EnqueueInput {
   /** the bulk run this job is part of, when several were asked for in one press */
   bulk?: Job["bulk"];
   /** the live detail the Queue page opens up, and what a handler needs to run it */
-  run?: Pick<Job, "scriptRun" | "narrationRun" | "exportRun">;
+  run?: Pick<Job, "scriptRun" | "narrationRun" | "exportRun" | "checkRun">;
   /**
    * Run in the same transaction, only when the job is created.
    *
@@ -289,6 +289,14 @@ export function setRun(db: Db | Tx, id: number, run: NonNullable<Job["exportRun"
 export function setScriptRun(db: Db | Tx, id: number, run: NonNullable<Job["scriptRun"]>): void {
   db.update(jobs)
     .set({ run: { scriptRun: run }, reserved: run.reserved })
+    .where(eq(jobs.id, id))
+    .run();
+}
+
+/** Replace a check by ear's counts, which the Queue reads off the row as it reads a build's. */
+export function setCheckRun(db: Db | Tx, id: number, run: NonNullable<Job["checkRun"]>): void {
+  db.update(jobs)
+    .set({ run: { checkRun: run } })
     .where(eq(jobs.id, id))
     .run();
 }

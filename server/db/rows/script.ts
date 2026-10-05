@@ -5,9 +5,16 @@
 // again. A `Take` is a strict subset of a `SegmentAudio` — no status, no split detail, no error —
 // so reading one back has to stop at the fields a take actually has, or a round-tripped take comes
 // back carrying `status: "none"` and compares unequal to the one that went in.
-import type { ChapterHistory, Segment, SegmentAudio, ScriptVersion, Take } from "@/types";
+import type {
+  ChapterHistory,
+  HeardLine,
+  Segment,
+  SegmentAudio,
+  ScriptVersion,
+  Take,
+} from "@/types";
 import type { ClipRole } from "~/db/schema";
-import type { clips, scriptHeads, scriptVersions, segments } from "~/db/schema";
+import type { clips, heard, scriptHeads, scriptVersions, segments } from "~/db/schema";
 
 type SegmentRow = typeof segments.$inferSelect;
 type ClipRow = typeof clips.$inferSelect;
@@ -233,3 +240,13 @@ export function scriptHeadValues(
     nextId: h.nextId,
   };
 }
+
+/** A check by ear's finding, without the endpoint that heard it, which only the ledger needs. */
+export const toHeardLine = (row: typeof heard.$inferSelect): HeardLine => ({
+  text: row.text,
+  heard: row.heard,
+  words: row.words ?? null,
+  score: row.score,
+  mismatch: row.mismatch,
+  at: row.at,
+});

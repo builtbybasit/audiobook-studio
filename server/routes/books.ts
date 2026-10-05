@@ -10,6 +10,7 @@ import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
 import type {
+  CheckQueued,
   ImportedBook,
   NarrationQueued,
   PromptTrialRequest,
@@ -21,6 +22,7 @@ import { coverFiles, MAX_COVER_BYTES } from "~/covers/files";
 import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
 import { env } from "~/env";
+import { enqueueCheck } from "~/jobs/check";
 import { enqueueNarration } from "~/jobs/narration";
 import type { Runner } from "~/jobs/runner";
 import { enqueueScripting } from "~/jobs/scripting";
@@ -89,6 +91,7 @@ const Settings = v.pipe(
     pacing: v.optional(v.nullable(v.strictObject({ line: Seconds, turn: Seconds }))),
     prompt: v.optional(v.nullable(BookPromptSchema)),
     readNotes: v.optional(v.nullable(v.boolean())),
+    checkByEar: v.optional(v.nullable(v.boolean())),
     characterVoice: v.optional(
       v.nullable(
         v.strictObject({
@@ -260,7 +263,7 @@ export function bookRoutes(
   );
 
   // ---------- a book's settings, and its volumes ----------
-  /** The budget, the script budget, the pacing, the prompt and whether notes are read; answers with the book and its re-settled chapters. */
+  /** The budget, the script budget, the pacing, the prompt, whether notes are read and whether chapters are checked by ear; answers with the book and its re-settled chapters. */
   app.patch("/:id", validate("param", BookParam), validate("json", Settings), (c) => {
     const settings = c.req.valid("json");
     if (settings.prompt) refusePrompt("The book's prompt", bookPromptProblems(settings.prompt));
@@ -379,6 +382,20 @@ export function bookRoutes(
       return c.json(result satisfies NarrationQueued, 202);
     },
   );
+
+  // ---------- checking by ear ----------
+  /**
+   * Hear these chapters' clips back on the first transcription endpoint switched on: one job each,
+   * as one run, and the chapters left out and why. Refused whole (400) when none is switched on.
+   */
+  app.post("/:id/chapters/check", validate("param", BookParam), validate("json", Ids), (c) => {
+    const result = enqueueCheck(db, runner, c.req.valid("param").id, c.req.valid("json").ids);
+    c.var.logger.info(
+      { run: result.runId, jobs: result.jobs.length, skipped: result.skipped.length },
+      "check queued",
+    );
+    return c.json(result satisfies CheckQueued, 202);
+  });
 
   // ---------- removal ----------
   app.delete("/:id", validate("param", BookParam), async (c) => {

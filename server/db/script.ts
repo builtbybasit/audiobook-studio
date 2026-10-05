@@ -7,13 +7,28 @@
 // the number has not moved. See `writeScript`.
 import { and, asc, count, eq, inArray, ne, sql } from "drizzle-orm";
 
-import type { ChapterLines, RevisedLines, Segment, SegmentAudio, SegmentFlag, Take } from "@/types";
+import type {
+  ChapterLines,
+  HeardLine,
+  RevisedLines,
+  Segment,
+  SegmentAudio,
+  SegmentFlag,
+  Take,
+} from "@/types";
 import { snapshotTake } from "@/lib/takes";
 import { chapterAt } from "~/db/library";
 import { insertRows, prepared } from "~/db/prepared";
 import type { Db, Tx } from "~/db/client";
-import { chapters, clips, segments } from "~/db/schema";
-import { clipValues, segmentClipValues, segmentValues, toSegment, toSegmentAudio } from "~/db/rows";
+import { chapters, clips, heard, segments } from "~/db/schema";
+import {
+  clipValues,
+  segmentClipValues,
+  segmentValues,
+  toHeardLine,
+  toSegment,
+  toSegmentAudio,
+} from "~/db/rows";
 import { AppError } from "~/lib/errors";
 
 /** SQLite takes its parameters one variable at a time, and a chapter is hundreds of lines. */
@@ -365,6 +380,38 @@ export function setFlag(
 }
 
 /**
+ * One line as a check by ear writes against it: its words, its flag and the url of the clip the
+ * book plays for it; undefined when the line is not in the script.
+ */
+export function lineNow(
+  db: Db | Tx,
+  bookId: string,
+  chapterId: number,
+  segmentId: number,
+): { text: string; flag: SegmentFlag | null; url: string | null } | undefined {
+  return db
+    .select({ text: segments.text, flag: segments.flag, url: clips.url })
+    .from(segments)
+    .leftJoin(
+      clips,
+      and(
+        eq(clips.bookId, segments.bookId),
+        eq(clips.chapterId, segments.chapterId),
+        eq(clips.segmentId, segments.id),
+        eq(clips.role, "current"),
+      ),
+    )
+    .where(
+      and(
+        eq(segments.bookId, bookId),
+        eq(segments.chapterId, chapterId),
+        eq(segments.id, segmentId),
+      ),
+    )
+    .get();
+}
+
+/**
  * Move a chapter's script revision on by one, and say where it is now.
  *
  * The revision counts every write of a chapter's script rows, whoever made it — a scripting run,
@@ -514,4 +561,41 @@ export function clipsByEndpoint(db: Db | Tx): Map<string, { done: number; failed
   return new Map(
     rows.map((r) => [r.endpoint!, { done: Number(r.done), failed: Number(r.failed) }]),
   );
+}
+
+// ---------- what a check by ear heard ----------
+//
+// Kept by the clip's file, which a render never changes, rather than by its row, which every save
+// of the script writes again (`heard` in the schema).
+
+/** What was heard of these files of a book, by file; a file never heard is not in it. */
+export function readHeard(
+  db: Db | Tx,
+  bookId: string,
+  files: readonly string[],
+): Map<string, HeardLine> {
+  const out = new Map<string, HeardLine>();
+  for (const part of chunked(files))
+    for (const row of db
+      .select()
+      .from(heard)
+      .where(and(eq(heard.bookId, bookId), inArray(heard.file, part)))
+      .all())
+      out.set(row.file, toHeardLine(row));
+  return out;
+}
+
+/** Keep what `endpoint` heard of one file, over whatever an earlier check heard of it. */
+export function writeHeard(
+  db: Db | Tx,
+  bookId: string,
+  file: string,
+  line: HeardLine,
+  endpoint: string,
+): void {
+  const values = { ...line, endpoint };
+  db.insert(heard)
+    .values({ bookId, file, ...values })
+    .onConflictDoUpdate({ target: [heard.bookId, heard.file], set: values })
+    .run();
 }

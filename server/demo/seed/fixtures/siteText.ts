@@ -7,7 +7,7 @@
 // (`world/text.ts`), so the two agree word for word the way a real chapter and its script must: a
 // line marked as site text is still a line of the script, which is what lets fidelity hold.
 import type { Segment, SegmentType, SiteCheck } from "@/types";
-import { wordsOf } from "~/providers/chatScripting";
+import { wordsOf } from "@/lib/gaps";
 import { storyWhy } from "~/script/siteCheck";
 
 /** A paragraph of story a model took for boilerplate, for the detector to question. */

@@ -24,6 +24,40 @@ The Narration page draws nothing from the stores until what it reads has been re
 
 [tests/segments.test.ts](../tests/segments.test.ts) covers splits, joins and deletions and the audio they invalidate; [tests/server/narration.test.ts](../tests/server/narration.test.ts) covers a retake and its verdict, and [tests/server/scriptEdit.test.ts](../tests/server/scriptEdit.test.ts) and [tests/jobsBackend.test.ts](../tests/jobsBackend.test.ts) a flag raised while the script's revision moves under it.
 
+## Checking by ear
+
+A clip can render without error and still say the wrong thing: a dropped sentence, a word read
+twice, a line from somewhere else. A **check by ear** hears each clip back on a transcription
+endpoint ([endpoints](endpoints.md#transcription-endpoints)) and compares what it heard with the
+line, word by word, without anyone listening.
+
+- **What runs.** A `check` job per chapter (`POST /api/books/:id/chapters/check`,
+  [server/jobs/check.ts](../server/jobs/check.ts)) on the first transcription endpoint switched on,
+  up to its concurrency at once, with the cast's names sent as hints. It hears every spoken line's
+  clip in the book that has not been heard as the line now reads, so a second check of an unchanged
+  chapter does nothing, and a line edited or rendered again since is heard again. With none
+  switched on, the request is refused. Each request is priced against the book by the minute of
+  audio sent, and a failed one is counted while the rest of the chapter is still heard.
+- **When.** When asked, and after every narration of a chapter whose book has **Check by ear**
+  on (`Book.checkByEar`); a check that cannot be queued then — the budget, a check already queued —
+  is said in the narration's log and never fails it.
+- **What is flagged.** The words are compared as the scripting check compares them (`wordsOf`), in
+  order ([src/lib/heard.ts](../src/lib/heard.ts)). Words missing plus words added, over the line's
+  words, is the score; a line is a mismatch past 0.2 with at least two words wrong, so one
+  stuttered or dropped word alone passes. A mismatch flags the line `heard`, quoting what was
+  heard; a later check that hears it right takes that flag down. A flag a person set is never
+  replaced or taken down, and a check never touches a clip. A number heard spelt out ("42" against
+  "forty-two") and a word the dictionary respells still count as misses.
+- **What is stored.** What was heard, kept by the clip's file in `heard`
+  ([backend](backend.md#what-was-heard-is-kept-by-file)), and served for the chapter's clips in the
+  book (`GET …/chapters/:n/heard`): the line as checked, what was heard, the score, and the offsets
+  in the line and times in the clip of each word heard, which the Listen page lights as it plays.
+  Word times are the endpoint's own, never estimated: a server that gives none (`gpt-4o-transcribe`)
+  gives a score and no marks.
+
+[tests/heard.test.ts](../tests/heard.test.ts) covers the comparison and
+[tests/server/checkByEar.test.ts](../tests/server/checkByEar.test.ts) the job.
+
 ## Pronunciation and pacing
 
 Both change how the book _sounds_ without changing a word of it, and both sit beside the voices they affect: Narration → **Pronunciation** ([LexiconPanel.vue](../src/views/narration/LexiconPanel.vue)).

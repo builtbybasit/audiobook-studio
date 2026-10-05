@@ -120,7 +120,7 @@ of the wire.
 | --------- | ------------------------------------------------------------------------------------- |
 | Library   | `books`, `volumes`, `chapters`, `chapter_texts`                                       |
 | Cast      | `characters`, `lexicon_entries`, `speaker_samples`, `speaker_sample_files`            |
-| Script    | `segments`, `clips`, `script_versions`, `script_heads`, `previous_scripts`            |
+| Script    | `segments`, `clips`, `script_versions`, `script_heads`, `previous_scripts`, `heard`   |
 | Endpoints | `endpoints`, `voices`, `rate_windows`, `promotions`, `expression_tags`, `credentials` |
 | Voices    | `cloned_voices`, `voice_samples`                                                      |
 | Queue     | `jobs`, `job_events`                                                                  |
@@ -159,6 +159,18 @@ to two rows rather than a restructure, and the rule that a line may never be lef
 clip nor its retake becomes a constraint the database enforces: a partial unique index allows at
 most one `current` and one `candidate` per line, and leaves `take` unconstrained because takes are
 a list.
+
+### What was heard is kept by file
+
+`heard` holds what a check by ear heard of a clip ([audio](audio.md#checking-by-ear)): the text
+it was checked against, what was heard, each heard word's offsets in that text and its time in the
+clip (JSON, null when the endpoint gave no times), the score and whether it was a mismatch. It is
+keyed by `(book_id, file)` — the clip's file name under the book's audio directory — and not by
+`clips.id`, because every save of a script deletes a chapter's clip rows and inserts them again
+(`replaceScript`) while a render's file never changes. A line rendered again has a new file and so
+no finding; a line edited since has a finding whose `text` no longer matches, and both are heard
+again by the next check. Rows go with their book; one whose file is no longer any line's clip is
+simply never read. Added by migration `0023_heard`, with `books.check_by_ear`.
 
 ### Absent is not null
 
@@ -611,8 +623,10 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `POST`   | `/api/books/:id/chapters/script`                  | Queue a scripting job per chapter, as one run (202)                                                          |
 | `POST`   | `/api/books/:id/script-trial`                     | One chunk sent with a draft prompt; nothing written                                                          |
 | `POST`   | `/api/books/:id/chapters/narrate`                 | Queue a narration job per chapter, at a scope (202)                                                          |
+| `POST`   | `/api/books/:id/chapters/check`                   | Queue a check by ear per chapter, as one run (202); 400 with no transcription endpoint on                    |
 | `GET`    | `/api/books/:id/chapters/:n/script`               | A chapter's script, and its revision                                                                         |
 | `PUT`    | `/api/books/:id/chapters/:n/script`               | Replace the script, naming the revision that was read                                                        |
+| `GET`    | `/api/books/:id/chapters/:n/heard`                | What a check by ear heard of the chapter's clips in the book, by line                                        |
 | `GET`    | `/api/books/:id/chapters/:n/history`              | The chapter's versions and how the script came to be                                                         |
 | `POST`   | `/api/books/:id/chapters/:n/history/checkpoints`  | Name the script as it stands and keep a copy (201)                                                           |
 | `DELETE` | `/api/books/:id/chapters/:n/history/versions/:v`  | Forget one version; what an Undo of a checkpoint sends                                                       |

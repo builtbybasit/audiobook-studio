@@ -5,7 +5,7 @@
 import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
 import { usePlayer, type Queue } from "@/composables/usePlayer";
 
-const { p, play, playQueue, cue, pause, stop, seek, seekTo, skip, next, prev, setRate } =
+const { p, play, playQueue, cue, pause, stop, seek, seekTo, skip, next, prev, setRate, now } =
   usePlayer();
 
 let clock = 0;
@@ -194,4 +194,14 @@ test("pausing keeps the playhead where it is", () => {
   advance(5); // the clock moves on; the player does not
   expect(p.playing).toBe(false);
   expect(p.pos).toBe(at);
+});
+
+test("now is the playhead, when no file is playing to read a finer clock from", () => {
+  // the read-along asks this every frame; with only timed clips there is nothing finer than p.pos
+  playQueue(chapter());
+  advance(1.5);
+  expect(now()).toBe(p.pos);
+  pause();
+  seekTo(4.25);
+  expect(now()).toBe(4.25);
 });

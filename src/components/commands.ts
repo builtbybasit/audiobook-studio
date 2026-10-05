@@ -118,6 +118,13 @@ export function paletteCommands(router: Router, mod: string): Command[] {
       run: go(`/book/${b}/narration`),
     });
     out.push({
+      id: "nav-listen",
+      group: "Go to",
+      label: "Listen",
+      hint: "read along",
+      run: go(`/book/${b}/listen`),
+    });
+    out.push({
       id: "nav-export",
       group: "Go to",
       label: "Export",
@@ -342,6 +349,16 @@ export function paletteCommands(router: Router, mod: string): Command[] {
       keywords: `chapter ${c.id} ${libraryStore.volumeOf(b!, c.id)?.name ?? ""}`,
       run: go({ path: `/book/${b}/${stage}`, query: { ch: c.id } }),
     });
+    // a chapter with audio can also be read along with
+    if (isNarrated(c))
+      out.push({
+        id: "listen-" + c.id,
+        group: "Listen",
+        label: `${String(c.id).padStart(2, "0")} · ${c.title}`,
+        hint: "read along",
+        keywords: `listen chapter ${c.id}`,
+        run: go({ path: `/book/${b}/listen`, query: { ch: c.id } }),
+      });
   }
   // speakers of the open book
   if (b)

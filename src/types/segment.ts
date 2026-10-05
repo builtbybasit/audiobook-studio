@@ -40,8 +40,12 @@ export interface Cut {
   fallback: boolean;
 }
 
-/** What a listener complained about after hearing a clip. */
-export type FlagKind = "pronunciation" | "delivery" | "pause" | "other";
+/**
+ * What a listener complained about after hearing a clip. `heard` is the one the app raises itself:
+ * a check by ear (`HeardLine`) heard the clip say something other than the line. It never replaces
+ * a flag a person set, and a check that hears the line right takes it down again.
+ */
+export type FlagKind = "pronunciation" | "delivery" | "pause" | "other" | "heard";
 
 export interface SegmentFlag {
   kind: FlagKind;
@@ -181,3 +185,32 @@ export interface Segment {
 
 /** Keyed `${bookId}:${chapterId}`. */
 export type SegmentMap = Record<string, Segment[]>;
+
+/**
+ * What a transcription endpoint heard of one line's current clip: the `check` job's finding, kept
+ * by the clip's audio file, which never changes once rendered (`GET …/chapters/:ch/heard`).
+ */
+export interface HeardLine {
+  /**
+   * The line's text as it was checked. A line edited since is no longer this, and its word marks
+   * no longer point at its words: compare before using them.
+   */
+  text: string;
+  /** what the endpoint heard, as it wrote it */
+  heard: string;
+  /**
+   * Each word of `text` the endpoint was heard to say, in order: `[from, to, start, end]` — UTF-16
+   * offsets into `text` (`to` exclusive) and seconds into the clip. A word it did not hear has no
+   * mark. Null when the endpoint gave no word times; never estimated.
+   */
+  words: [number, number, number, number][] | null;
+  /** words missing plus words added, over the line's words; 0 is a clip that says the line */
+  score: number;
+  /** the score is past what the check lets by, and the line was flagged (unless a person had) */
+  mismatch: boolean;
+  /** when it was checked, epoch ms */
+  at: number;
+}
+
+/** A chapter's checked lines, by segment id; a line not checked yet is not in it. */
+export type ChapterHeard = Record<number, HeardLine>;

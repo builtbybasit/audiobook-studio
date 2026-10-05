@@ -20,7 +20,7 @@ import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { toastFailure } from "@/stores/toastFailure";
-const AVG_JOB: Record<JobKind, number> = { scripting: 25, narration: 60, export: 120 };
+const AVG_JOB: Record<JobKind, number> = { scripting: 25, narration: 60, export: 120, check: 15 };
 
 /** The queue before it has been read. */
 const NO_JOBS: readonly Job[] = [];

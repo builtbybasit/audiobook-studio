@@ -23,6 +23,7 @@ export const router = createRouter({
       component: () => import("@/views/ScriptImportView.vue"),
     },
     { path: "/book/:bookId/narration", component: () => import("@/views/NarrationView.vue") },
+    { path: "/book/:bookId/listen", component: () => import("@/views/ListenView.vue") },
     { path: "/book/:bookId/export", component: () => import("@/views/ExportView.vue") },
   ],
 });

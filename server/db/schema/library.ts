@@ -50,6 +50,8 @@ export const books = sqliteTable("books", {
   promptUser: text("prompt_user"),
   /** read the translator's and author's notes (`note` lines) aloud; null = skip them, the default */
   readNotes: integer("read_notes", { mode: "boolean" }),
+  /** check each chapter by ear once it is narrated (`Book.checkByEar`); null = only when asked */
+  checkByEar: integer("check_by_ear", { mode: "boolean" }),
   /** the voice a speaker with none of their own is read in (`CharacterVoice`); null = the Narrator's */
   characterVoice: text("character_voice", { mode: "json" }).$type<CharacterVoice>(),
 });

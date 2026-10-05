@@ -10,6 +10,7 @@ import { audioFiles, type AudioFiles } from "~/audio/files";
 import { connect, openDb, type Db } from "~/db/client";
 import { migrate } from "~/db/migrate";
 import { audiobookFiles } from "~/exports/files";
+import { checkHandler } from "~/jobs/check";
 import { exportHandler } from "~/jobs/export";
 import { narrationHandler } from "~/jobs/narration";
 import { createRunner, type JobHandlers, type Runner } from "~/jobs/runner";
@@ -172,6 +173,7 @@ export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): R
       scripting: scriptingHandler(options.scripting ?? fakeScriptingProvider()),
       narration: narrationHandler(options.speech ?? fakeSpeechProvider(), files, options.gate),
       export: exportHandler(testExports(options), files),
+      check: checkHandler(options.transcription ?? noTranscription, files),
       ...options.handlers,
     },
     { log, pollMs: 60_000 },

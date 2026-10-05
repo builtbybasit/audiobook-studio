@@ -26,9 +26,12 @@ export const FLAG_LABEL: Record<FlagKind, string> = {
   other: "something else",
   heard: "heard saying something else",
 };
-/** One flag as a sentence: "bad delivery — flat, the line should land as a threat". */
+/**
+ * One flag as a sentence: "bad delivery — flat, the line should land as a threat". A check by ear's
+ * note already says what it is (`Heard: “…”`), so it stands alone.
+ */
 export const flagText = (f: SegmentFlag): string =>
-  FLAG_LABEL[f.kind] + (f.note ? ` \u2014 ${f.note}` : "");
+  f.kind === "heard" && f.note ? f.note : FLAG_LABEL[f.kind] + (f.note ? ` \u2014 ${f.note}` : "");
 /** The batch's one-line title, e.g. "Change speaker to Ji Ning". */
 export function bulkLabel(a: BulkAction): string {
   if (a.kind === "speaker") return `Change speaker to ${a.speaker}`;

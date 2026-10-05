@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
+import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 
@@ -39,6 +40,7 @@ import FlagPopover from "@/views/narration/FlagPopover.vue";
 import RenderDetails, { hasDetails } from "@/views/narration/RenderDetails.vue";
 import TakeCompare from "@/views/narration/TakeCompare.vue";
 import {
+  Ear as CheckIcon,
   Flag as FlagIcon,
   Pause as PauseIcon,
   Play as PlayIcon,
@@ -56,6 +58,7 @@ const { reviewable, bookReviewable, reviewPosition, decideTake, focusReview } = 
   segments,
 );
 const castStore = useCastStore();
+const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
 const router = useRouter();
@@ -109,6 +112,22 @@ const changed = computed(() => changedLines.value.length);
 const unrendered = computed(
   () => changedLines.value.filter((s) => s.audio.status === "none").length,
 );
+/**
+ * Why "Check by ear" cannot be pressed, or "" when it can: it hears the clips the chapter has, so it
+ * needs one, and a check or a narration already on the chapter would hear clips about to change.
+ */
+const cannotCheck = computed(() => {
+  if (!segments.value.some((s) => spoken(s) && s.audio.duration)) return "no clip to hear yet";
+  const busy = jobsStore.activeJobs.find(
+    (j) =>
+      j.bookId === props.bookId &&
+      j.chapterId === props.chapterId &&
+      (j.kind === "check" || j.kind === "narration"),
+  );
+  return busy
+    ? `${busy.kind === "check" ? "a check" : "narration"} is already on this chapter`
+    : "";
+});
 /** lines of this chapter that are not read aloud, which the header counts so none of them vanish */
 const unread = computed(() => segments.value.filter((s) => !spoken(s)).length);
 
@@ -266,6 +285,17 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
           Retry failed ({{ counts.failed }})
         </button>
         <button
+          class="btn-ghost btn-xs"
+          :disabled="!!cannotCheck"
+          :title="
+            cannotCheck ||
+            'hear each clip on a transcription endpoint and flag the lines that say something else'
+          "
+          @click="jobsStore.checkChapters(bookId, [chapterId])"
+        >
+          <CheckIcon class="icon-sm" /> Check by ear
+        </button>
+        <button
           v-if="chapter.narration !== 'running'"
           class="btn-ghost btn-xs"
           title="render every line again — each clip in the book keeps playing until its replacement lands, and the clip it displaces joins that line’s take list"
@@ -369,8 +399,18 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                   ><span
                     v-if="s.flag"
                     class="rounded bg-amber-400/20 px-1 font-semibold text-amber-700 dark:text-amber-300"
-                    ><FlagIcon class="icon-sm" /> {{ FLAG_LABEL[s.flag.kind]
-                    }}<span v-if="s.flag.note" class="font-normal"> — {{ s.flag.note }}</span></span
+                    :title="FLAG_LABEL[s.flag.kind]"
+                    ><FlagIcon class="icon-sm" />
+                    <!-- a heard flag's note is what was heard, which says more than its kind -->
+                    <template v-if="s.flag.kind === 'heard' && s.flag.note">{{
+                      s.flag.note
+                    }}</template
+                    ><template v-else
+                      >{{ FLAG_LABEL[s.flag.kind]
+                      }}<span v-if="s.flag.note" class="font-normal">
+                        — {{ s.flag.note }}</span
+                      ></template
+                    ></span
                   ><span v-if="s.fallback" class="text-amber-600">unverified chunk</span
                   ><span v-if="s.audio.error" class="truncate text-red-500"
                     >{{ s.audio.error.code ? `HTTP ${s.audio.error.code} · ` : ""

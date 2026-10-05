@@ -5,8 +5,8 @@
 // is that two runs which each fit the remaining cap must not both start and overshoot together, so
 // the figure a gate reads has to be a cheap aggregate over rows, not a JSON parse per job.
 //
-// The rest of the run detail is three mutually exclusive shapes — a scripting run, a narration run,
-// a build — and it is read whole, by the one page that opens a job up. That is a document, so it is
+// The rest of the run detail is four mutually exclusive shapes — a scripting run, a narration run,
+// a build, a check by ear — and it is read whole, by the one page that opens a job up. That is a document, so it is
 // stored as one.
 import {
   foreignKey,
@@ -77,7 +77,7 @@ export const jobs = sqliteTable(
 
     /** the live detail the Queue page opens up, and everything a retry needs to run it again */
     run: text("run", { mode: "json" }).$type<
-      Pick<Job, "scriptRun" | "narrationRun" | "exportRun">
+      Pick<Job, "scriptRun" | "narrationRun" | "exportRun" | "checkRun">
     >(),
 
     /** events the job reported beyond the ones it keeps */

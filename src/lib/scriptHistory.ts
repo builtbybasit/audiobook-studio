@@ -255,7 +255,7 @@ const SAME_LINE = 0.35;
 
 /** Index pairs of a common subsequence of two key arrays.
  *
- * `diffArrays` reports the alignment as runs of added, removed and common tokens; what both callers
+ * `diffArrays` reports the alignment as runs of added, removed and common tokens; what its callers
  * want is the *positions* those common runs sit at, because the key is never the thing being
  * aligned — it is the segment, or the untrimmed word, that the key was derived from. So the runs are
  * counted back into index pairs and their values discarded.
@@ -263,7 +263,7 @@ const SAME_LINE = 0.35;
  * Myers costs what the edit distance costs rather than what the two lengths multiply to, and it
  * allocates nothing of the order of the old dynamic-programming table, so the million-cell guard
  * that table needed — and the greedy alignment it fell back to — went with it. */
-function alignPairs(a: string[], b: string[]): [number, number][] {
+export function alignPairs(a: string[], b: string[]): [number, number][] {
   const out: [number, number][] = [];
   let i = 0;
   let j = 0;

@@ -13,6 +13,7 @@ import { useNow } from "@vueuse/core";
 import StatusDot from "@/components/StatusDot.vue";
 import JobDetails from "@/views/queue/JobDetails.vue";
 import UpNext from "@/views/queue/UpNext.vue";
+import { KIND_LABEL, stageLink } from "@/views/queue/stage";
 import type { Job, JobKind } from "@/types";
 import type { Component } from "vue";
 import {
@@ -100,16 +101,6 @@ const segStatsOf = computed(() => {
   const by: Record<number, ReturnType<typeof segStats>> = {};
   for (const j of running.value) by[j.id] = segStats(j);
   return by;
-});
-const stageLink = (j: Job) => ({
-  path: `/book/${j.bookId}/${j.kind === "export" ? "export" : j.kind}`,
-  query:
-    j.chapterId == null
-      ? undefined
-      : {
-          ch: String(j.chapterId),
-          ...(j.kind === "narration" && j.status === "failed" ? { filter: "failed" } : {}),
-        },
 });
 // The estimate counts down, so it is re-read as the clock advances. The tick is used in the
 // expression rather than parked in a spare const: a `const _tick = now.value` nobody reads is the
@@ -224,11 +215,11 @@ async function toggleNotify() {
                 <div class="min-w-0 flex-1">
                   <div class="flex items-center gap-2 text-sm">
                     <button
-                      class="font-semibold capitalize hover:text-violet-500 hover:underline"
+                      class="font-semibold hover:text-violet-500 hover:underline"
                       :aria-label="`View activity for ${j.label}`"
                       @click="selectedId = j.id"
                     >
-                      {{ j.kind }}</button
+                      {{ KIND_LABEL[j.kind] }}</button
                     ><span class="truncate text-zinc-500"
                       >· {{ book(j)?.title
                       }}<span v-if="chapter(j)">
@@ -288,6 +279,21 @@ async function toggleNotify() {
                   failed</span
                 >
                 <span>of {{ segStatsOf[j.id].total }} segments</span>
+              </div>
+              <div v-else-if="j.checkRun" class="mt-2 flex gap-3 pl-11 text-xs text-zinc-500">
+                <span
+                  ><b class="text-emerald-500">{{ j.checkRun.checked }}</b
+                  >/{{ j.checkRun.lines }} lines heard</span
+                >
+                <span
+                  ><b :class="j.checkRun.mismatched ? 'text-amber-600' : ''">{{
+                    j.checkRun.mismatched
+                  }}</b>
+                  heard wrong</span
+                >
+                <span v-if="j.checkRun.failed"
+                  ><b class="text-red-500">{{ j.checkRun.failed }}</b> failed</span
+                >
               </div>
             </div>
           </div>

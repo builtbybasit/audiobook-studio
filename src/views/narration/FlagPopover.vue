@@ -8,7 +8,7 @@ import { useNarrationStore } from "@/stores/narration";
 //
 // Opening is the ledger's to decide — `f` on a focused row opens it as the button does — so `open`
 // is a model; the form is filled from the line's flag each time it opens.
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { BookA as DictionaryIcon, Flag as FlagIcon } from "@lucide/vue";
 import { UiToggleGroup } from "@/ui";
@@ -22,6 +22,7 @@ const emit = defineEmits<{ pronounce: [word: string] }>();
 const open = defineModel<boolean>("open", { required: true });
 const narrationStore = useNarrationStore();
 
+// what a person can say is wrong; `heard` is only ever raised by a check by ear
 const KINDS: FlagKind[] = ["pronunciation", "delivery", "pause", "other"];
 const kind = ref<FlagKind>("delivery");
 const note = ref("");
@@ -50,14 +51,18 @@ watch(
   { immediate: true },
 );
 
+/** the check by ear's flag is open, and no kind of a person's own has been picked over it */
+const heard = computed(() => kind.value === "heard");
 function save(alsoRetake: boolean) {
-  void narrationStore.flagSegment(
-    props.bookId,
-    props.chapterId,
-    props.segment.id,
-    kind.value,
-    note.value,
-  );
+  // a heard flag stays the check's until a person says what is wrong in their own words
+  if (!heard.value)
+    void narrationStore.flagSegment(
+      props.bookId,
+      props.chapterId,
+      props.segment.id,
+      kind.value,
+      note.value,
+    );
   open.value = false;
   if (alsoRetake) narrationStore.retakeSegment(props.bookId, props.chapterId, props.segment.id);
 }
@@ -89,6 +94,11 @@ function clear() {
     <PopoverPortal>
       <PopoverContent :side-offset="6" align="end" class="ui-popup w-80 p-3 text-xs">
         <div class="label mb-2">What is wrong with #{{ segment.id }}?</div>
+        <p v-if="segment.flag?.kind === 'heard'" class="mb-2 text-[11px] text-zinc-500">
+          A check by ear flagged it<template v-if="segment.flag.note"
+            >: {{ segment.flag.note }}</template
+          >. Pick a kind to flag it yourself.
+        </p>
         <UiToggleGroup
           :model-value="kind"
           block
@@ -135,8 +145,12 @@ function clear() {
           <button v-if="segment.flag" class="btn-ghost btn-xs mr-auto" @click="clear()">
             Clear flag
           </button>
-          <button class="btn-ghost btn-xs ml-auto" @click="save(false)">Flag only</button>
-          <button class="btn-primary btn-xs" @click="save(true)">Flag &amp; retake</button>
+          <button v-if="!heard" class="btn-ghost btn-xs ml-auto" @click="save(false)">
+            Flag only
+          </button>
+          <button class="btn-primary btn-xs" :class="heard && 'ml-auto'" @click="save(true)">
+            {{ heard ? "Retake" : "Flag & retake" }}
+          </button>
         </div>
       </PopoverContent>
     </PopoverPortal>

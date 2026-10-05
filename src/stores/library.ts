@@ -511,6 +511,21 @@ export const useLibraryStore = defineStore("library", {
         this._patchChapter(bookId, id, { narration, duration, ...(lines ? { lines } : {}) });
     },
     /**
+     * Whether each chapter is checked by ear once it is narrated. It changes no line and no clip,
+     * only what the server queues after a narration finishes, so nothing else is read back.
+     */
+    async setCheckByEar(bookId: string, on: boolean): Promise<void> {
+      const b = this.bookById(bookId);
+      if (!b || !!b.checkByEar === on) return;
+      if (on) b.checkByEar = true;
+      else delete b.checkByEar;
+      await this._writeSettings(
+        bookId,
+        { checkByEar: on },
+        on ? "check this book by ear" : "stop checking this book by ear",
+      );
+    },
+    /**
      * The book's Character voice — what a speaker with no voice of their own is read in — or null
      * to go back to the Narrator's. It changes no line and no clip: a clip made in the voice it
      * replaced shows as made in another voice, as one does when a speaker's own voice changes.

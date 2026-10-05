@@ -18,10 +18,10 @@
 //   * A line marked as site text with nothing to give it away that runs past a paragraph's length
 //     is suggested back as narration: boilerplate is short, and a long one is more likely story.
 import type { Book, Segment, SiteCheck } from "@/types";
+import { wordsOf } from "@/lib/gaps";
 import { isSiteText, siteTextSignals, unreadShare } from "@/lib/siteText";
 import type { Tx } from "~/db/client";
 import { linesElsewhere } from "~/db/script";
-import { wordsOf } from "~/providers/chatScripting";
 
 /** How many of the book's other chapters a line has to be in to read as the site's. */
 export const REPEATED_IN = 3;

@@ -8,12 +8,13 @@
 // A job that moved is a chapter that moved. The server does not push events, so the poll is where
 // a change is noticed: a job whose status or progress changed has its book read again, a
 // scripting job that finished has its chapter's script, history and the book's cast invalidated —
-// the run wrote all three on the server — and an export job has its book's audiobooks read again,
-// because the row it is writing is one of them; and every move has the book's spending read again,
-// since a request was priced or a reservation let go. While narration is queued or running, and
-// once more when the last of it ends, what the speech endpoints are doing is read again too
-// (`@/queries/endpointLive`): a line held in a cooldown moves no job, so this is not left to a job
-// moving. Nothing here decides what a chapter holds; it only says what to ask for again.
+// the run wrote all three on the server — an export job has its book's audiobooks read again,
+// because the row it is writing is one of them, and a check by ear has what it heard of its
+// chapter and the chapter's script read again, since it flags the lines it heard wrong; and every
+// move has the book's spending read again, since a request was priced or a reservation let go.
+// While narration is queued or running, and once more when the last of it ends, what the speech
+// endpoints are doing is read again too (`@/queries/endpointLive`): a line held in a cooldown
+// moves no job, so this is not left to a job moving. Nothing here decides what a chapter holds; it only says what to ask for again.
 import { computed, toValue, watch, type MaybeRefOrGetter } from "vue";
 import { defineQuery, useQuery } from "@pinia/colada";
 
@@ -66,23 +67,38 @@ const useJobsQuery = defineQuery(() => {
       const moved = !was || was.status !== j.status || was.progress !== j.progress;
       if (!moved || !libraryStore.bookById(j.bookId)) continue;
       books.add(j.bookId);
-      if (j.kind === "scripting" && j.status === "done" && was?.status !== "done") {
-        if (j.chapterId != null) {
-          useScriptsStore()._noteRescript(j.bookId, j.chapterId);
-          void invalidate({ key: keys.chapterScript(j.bookId, j.chapterId) }, "all");
-          void invalidate({ key: keys.chapterHistory(j.bookId, j.chapterId) }, "all");
-        }
-        void invalidate({ key: keys.cast(j.bookId) }, "all");
+      switch (j.kind) {
+        case "scripting":
+          if (j.status === "done" && was?.status !== "done") {
+            if (j.chapterId != null) {
+              useScriptsStore()._noteRescript(j.bookId, j.chapterId);
+              void invalidate({ key: keys.chapterScript(j.bookId, j.chapterId) }, "all");
+              void invalidate({ key: keys.chapterHistory(j.bookId, j.chapterId) }, "all");
+            }
+            void invalidate({ key: keys.cast(j.bookId) }, "all");
+          }
+          break;
+        // a narration job writes clips as they land, and every clip is on a line of the script: the
+        // chapter is read again on each move, so the Narration page shows them landing rather than
+        // waiting for the run to finish
+        case "narration":
+          if (j.chapterId != null)
+            void invalidate({ key: keys.chapterScript(j.bookId, j.chapterId) }, "all");
+          break;
+        // a check writes what it heard of each line as it hears it, and raises or takes down the
+        // line's flag with it: both are read again on each move, so a flag shows up as it is raised
+        case "check":
+          if (j.chapterId != null) {
+            void invalidate({ key: keys.chapterHeard(j.bookId, j.chapterId) }, "all");
+            void invalidate({ key: keys.chapterScript(j.bookId, j.chapterId) }, "all");
+          }
+          break;
+        // an export job is writing the export row it was started with — its progress, then the files
+        // and the size it finished with, or the failure, or nothing at all, since a cancelled build
+        // takes its row with it. Every move of one is therefore a change to the Audiobooks tab.
+        case "export":
+          void invalidate({ key: keys.exports(j.bookId) }, "all");
       }
-      // a narration job writes clips as they land, and every clip is on a line of the script: the
-      // chapter is read again on each move, so the Narration page shows them landing rather than
-      // waiting for the run to finish
-      if (j.kind === "narration" && j.chapterId != null)
-        void invalidate({ key: keys.chapterScript(j.bookId, j.chapterId) }, "all");
-      // an export job is writing the export row it was started with — its progress, then the files
-      // and the size it finished with, or the failure, or nothing at all, since a cancelled build
-      // takes its row with it. Every move of one is therefore a change to the Audiobooks tab.
-      if (j.kind === "export") void invalidate({ key: keys.exports(j.bookId) }, "all");
     }
     // a job that moved sent a request, finished or let go of what it held: the book's spending is
     // read again, the way its chapters are

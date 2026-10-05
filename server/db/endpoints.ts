@@ -1,7 +1,7 @@
-// Every read and write the endpoints make: speech endpoints, scripting profiles and the credential
-// registry they point at.
+// Every read and write the endpoints make: speech endpoints, scripting profiles, transcription
+// endpoints and the credential registry they point at.
 //
-// The three are configured together on one page and saved together, so they are written together:
+// They are configured together on one page and saved together, so they are written together:
 // `replaceEndpoints` clears what is there and lays the whole configuration down again in the
 // caller's transaction. Nothing else in the schema points at an endpoint by key — a character holds
 // `<endpointId>/<voiceId>` as text, and the requests ledger keeps the id it was made under — so
@@ -11,7 +11,15 @@
 // the scripting settings (`script`: which profile runs go to), which the Scripting page picks.
 import { asc, eq, sql } from "drizzle-orm";
 
-import type { Credential, Endpoint, Profile, PromptTemplate, ScriptSettings } from "@/types";
+import type {
+  Credential,
+  Endpoint,
+  EndpointKind,
+  Profile,
+  PromptTemplate,
+  ScriptSettings,
+  Transcriber,
+} from "@/types";
 import type { StoredEndpoint } from "@/lib/endpointTelemetry";
 import type { Db, Tx } from "~/db/client";
 import * as rows from "~/db/rows";
@@ -34,6 +42,11 @@ import {
 export interface EndpointConfig {
   endpoints: StoredEndpoint[];
   profiles: Profile[];
+  /**
+   * Always there in a read; in a write, left out keeps the ones stored, so a page from before
+   * there were any cannot remove them by saving.
+   */
+  transcribers?: Transcriber[];
   credentials: Credential[];
   /**
    * The library's default scripting prompt; null is the built-in one. Always there in a read; in a
@@ -95,6 +108,18 @@ export function writeProfile(
   writeCard(db, rows.profileKey(p.id), p.pricing?.windows ?? [], p.pricing?.promotions ?? []);
 }
 
+export function writeTranscriber(
+  db: Db | Tx,
+  t: Transcriber,
+  position: number,
+  apiKey: string | null = null,
+): void {
+  db.insert(endpoints)
+    .values(rows.transcriberValues(t, position, apiKey))
+    .run();
+  writeCard(db, rows.transcriberKey(t.id), t.pricing?.windows ?? [], t.pricing?.promotions ?? []);
+}
+
 /** The rate card's rows. Shared, because a speech rate goes on discount exactly as a token rate does. */
 function writeCard(
   db: Db | Tx,
@@ -151,6 +176,22 @@ export function readProfiles(db: Db | Tx): Profile[] {
     .map((row) => rows.toProfile(row, partsOf(db, row.id)));
 }
 
+export function readTranscribers(db: Db | Tx): Transcriber[] {
+  return db
+    .select()
+    .from(endpoints)
+    .where(eq(endpoints.kind, "transcription"))
+    .orderBy(asc(endpoints.position))
+    .all()
+    .map((row) => rows.toTranscriber(row, partsOf(db, row.id)));
+}
+
+/** The transcription endpoint by that id, or else the first one switched on; undefined for none. */
+export function readTranscriber(db: Db | Tx, id?: string): Transcriber | undefined {
+  const all = readTranscribers(db);
+  return id ? all.find((t) => t.id === id) : all.find((t) => t.enabled);
+}
+
 /** In the order they were saved in: a save inserts them in the page's order, and rowid keeps it. */
 export function readCredentials(db: Db | Tx): Credential[] {
   return db
@@ -170,6 +211,7 @@ export function readEndpointConfig(db: Db | Tx): EndpointConfig {
   return {
     endpoints: readEndpoints(db),
     profiles,
+    transcribers: readTranscribers(db),
     credentials: readCredentials(db),
     prompt: readLibraryPrompt(db),
     script,
@@ -179,15 +221,27 @@ export function readEndpointConfig(db: Db | Tx): EndpointConfig {
 /**
  * The key a real provider is called with, read at the moment of the request — never copied onto a
  * job, so a key changed or forgotten on the Endpoints page is the one the next request uses.
- * `kind` keeps a speech endpoint and a scripting profile that share an id apart.
+ * `kind` keeps endpoints of different kinds that share an id apart.
  */
-export function readEndpointKey(db: Db | Tx, kind: "tts" | "scripting", id: string): string | null {
+export function readEndpointKey(db: Db | Tx, kind: EndpointKind, id: string): string | null {
   const row = db
     .select({ apiKey: endpoints.apiKey })
     .from(endpoints)
-    .where(eq(endpoints.id, kind === "scripting" ? rows.profileKey(id) : id))
+    .where(eq(endpoints.id, rowId(kind, id)))
     .get();
   return row?.apiKey || null;
+}
+
+/** The row an endpoint of `kind` is kept under; see `PROFILE_KEY`. */
+function rowId(kind: EndpointKind, id: string): string {
+  switch (kind) {
+    case "tts":
+      return id;
+    case "scripting":
+      return rows.profileKey(id);
+    case "transcription":
+      return rows.transcriberKey(id);
+  }
 }
 
 /**
@@ -209,6 +263,8 @@ export function replaceEndpoints(tx: Tx, config: EndpointConfig): void {
       .all()
       .map((r) => [r.id, r.apiKey]),
   );
+  // a save from a page that never had transcription endpoints keeps the ones stored
+  const transcribers = config.transcribers ?? readTranscribers(tx);
   // the children cascade with their endpoint, and an endpoint's credential is set null as it goes
   tx.delete(endpoints).run();
   tx.delete(credentials).run();
@@ -218,6 +274,9 @@ export function replaceEndpoints(tx: Tx, config: EndpointConfig): void {
   );
   config.profiles.forEach((p, i) =>
     writeProfile(tx, p, i, keyAfterSave(p.apiKey, kept.get(rows.profileKey(p.id)))),
+  );
+  transcribers.forEach((t, i) =>
+    writeTranscriber(tx, t, i, keyAfterSave(t.apiKey, kept.get(rows.transcriberKey(t.id)))),
   );
   if (config.prompt !== undefined) writeLibraryPrompt(tx, config.prompt);
   if (config.script !== undefined) writeScriptSettings(tx, config.script);

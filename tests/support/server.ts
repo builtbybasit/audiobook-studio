@@ -28,6 +28,7 @@ import type {
 } from "~/providers/scripting";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
 import type { VoiceCloner } from "~/providers/clone";
+import type { TranscriptionProvider } from "~/providers/transcription";
 import type { VoiceLister } from "~/providers/voices";
 import { voiceFiles } from "~/voices/files";
 import type { FetchLike } from "@/services/http";
@@ -76,6 +77,8 @@ export interface TestApiOptions {
   samples?: SpeechProvider;
   /** what makes a voice from recordings; like `samples`, one that fails the test by default */
   cloner?: VoiceCloner;
+  /** what hears a recording back as words; like `samples`, one that fails the test by default */
+  transcription?: TranscriptionProvider;
   /** where clips are written; a fresh temporary directory by default */
   audioDir?: string;
   /** where built audiobooks are written; a fresh temporary directory by default */
@@ -141,6 +144,13 @@ const noCloner: VoiceCloner = {
   clone: () => Promise.reject(noFake("cloner")),
 };
 
+/** Stands in for `transcription` when a test gives none. */
+const noTranscription: TranscriptionProvider = {
+  name: "No transcription provider (test)",
+  transcribe: () => Promise.reject(noFake("transcription provider")),
+  probe: () => Promise.reject(noFake("transcription provider")),
+};
+
 /** A database migrated once per file, copied for each test that asks — migrating is 25 ms a time. */
 let migrated: Uint8Array | undefined;
 
@@ -183,6 +193,7 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     ...(options.voices ? { voices: options.voices } : {}),
     samples: options.samples ?? noSamples,
     cloner: options.cloner ?? noCloner,
+    transcription: options.transcription ?? noTranscription,
   };
   const voiceDir = options.voiceDir ?? tempVoiceDir();
   const app = createApp(db, {

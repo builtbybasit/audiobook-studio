@@ -22,6 +22,7 @@ import type {
   ScriptManifest,
   ScriptSettings,
   Segment,
+  Transcriber,
   VersionOrigin,
 } from "@/types";
 import { REASONING_EFFORTS } from "@/lib/prompt";
@@ -445,6 +446,21 @@ export const ProfileSchema = v.object({
   reasoning: v.optional(v.nullable(v.picklist(REASONING_EFFORTS))),
   prompt: v.optional(v.nullable(ProfilePromptSchema)),
 }) satisfies v.GenericSchema<unknown, Profile>;
+
+export const TranscriberSchema = v.object({
+  id: Id,
+  name: v.string(),
+  baseUrl: v.string(),
+  model: v.string(),
+  enabled: v.boolean(),
+  concurrency: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  needsKey: v.boolean(),
+  apiKey: Common.apiKey,
+  hasKey: Common.hasKey,
+  perMinute: v.pipe(v.number(), v.minValue(0)),
+  pricing: v.optional(PricingSchema),
+  ...Ops,
+}) satisfies v.GenericSchema<unknown, Transcriber>;
 
 export const CredentialSchema = v.object({
   id: Id,

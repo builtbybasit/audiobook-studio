@@ -19,6 +19,13 @@ import { speechProviderOf, type FormatSupport, type SpeechProviderId } from "@/l
 
 export type { FormatSupport } from "@/lib/providers";
 
+/** Every kind, in the order the Endpoints page lists them. */
+export const ENDPOINT_KINDS = [
+  "scripting",
+  "tts",
+  "transcription",
+] as const satisfies readonly EndpointKind[];
+
 export const OPS_DEFAULTS: Record<EndpointKind, EndpointOps> = {
   scripting: {
     timeoutSec: 120,
@@ -36,12 +43,21 @@ export const OPS_DEFAULTS: Record<EndpointKind, EndpointOps> = {
     credentialId: null,
     quotaGroup: null,
   },
+  transcription: {
+    timeoutSec: 60,
+    maxRetries: 2,
+    cooldownSec: 8,
+    spendLimit: null,
+    credentialId: null,
+    quotaGroup: null,
+  },
 };
 
-/** What each kind appends to the base URL — worth showing, since the two differ. */
+/** What each kind appends to the base URL — worth showing, since they differ. */
 export const KIND_PATH: Record<EndpointKind, string> = {
   scripting: "/chat/completions",
   tts: "/audio/speech",
+  transcription: "/audio/transcriptions",
 };
 
 const speaks =

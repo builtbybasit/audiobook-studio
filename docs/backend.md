@@ -10,8 +10,9 @@ anything.
 
 The server sends work to what the Endpoints page holds, and nothing else: a chapter to the
 scripting profile its run was queued with, a line to the speech endpoint its speaker's voice
-belongs to. No setting switches the whole server onto fakes. A **simulated** endpoint is one kind
-of endpoint instead — **Simulated (free)** among the presets of either kind, picked by its base
+belongs to, a recording to be heard to the transcription endpoint named or the first one switched
+on. No setting switches the whole server onto fakes. A **simulated** endpoint is one kind
+of endpoint instead — **Simulated (free)** among the presets of each kind, picked by its base
 URL, `simulated://…` — which the server answers itself, without the network and without charge
 ([the providers](#the-providers-and-where-a-key-lives) says how). A fresh library has no endpoints
 at all, so nothing is sent anywhere until you add one. There are no credentials in the server's

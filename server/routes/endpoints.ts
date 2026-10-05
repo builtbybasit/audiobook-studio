@@ -13,6 +13,7 @@ import type {
   VoiceListPage,
 } from "@/types";
 import { tooMuchSaid } from "@/lib/voiceSamples";
+import { ENDPOINT_KINDS } from "@/lib/endpointShapes";
 import type { Db } from "~/db/client";
 import { clipsByEndpoint } from "~/db/script";
 import { CLONE_BODY_BYTES } from "~/env";
@@ -24,6 +25,7 @@ import {
   ProfileSchema,
   PromptTemplateSchema,
   ScriptSettingsSchema,
+  TranscriberSchema,
 } from "~/lib/schemas";
 import { serveFile } from "~/lib/serve";
 import type { SpeechGate } from "~/providers/gate";
@@ -36,6 +38,8 @@ import * as samples from "~/voices/ops";
 const Config = v.object({
   endpoints: v.array(EndpointSchema),
   profiles: v.array(ProfileSchema),
+  /** left out keeps the ones stored, for a page from before there were any */
+  transcribers: v.optional(v.array(TranscriberSchema)),
   credentials: v.array(CredentialSchema),
   /** the library's default scripting prompt: left out keeps it, null goes back to the built-in one */
   prompt: v.optional(v.nullable(PromptTemplateSchema)),
@@ -44,7 +48,7 @@ const Config = v.object({
 });
 
 const Probe = v.object({
-  kind: v.picklist(["tts", "scripting"]),
+  kind: v.picklist(ENDPOINT_KINDS),
   id: v.pipe(v.string(), v.nonEmpty()),
 });
 
@@ -133,6 +137,21 @@ export function endpointRoutes(
     const answer = await ops.testEndpoint(db, providers, kind, id, c.req.raw.signal);
     c.var.logger.info({ kind, id, ok: answer.ok, ms: answer.ms }, "endpoint tested");
     return c.json(answer satisfies EndpointProbe);
+  });
+
+  /**
+   * What is said in one recording, heard by a transcription endpoint: a multipart form of the
+   * `file` and, optionally, the endpoint's `id` — the first one switched on when it is left out.
+   * The clone form's Transcribe button. Answers `{ text }`.
+   */
+  app.post("/transcribe", samplesLimit, async (c) => {
+    const form = await formOf(c.req);
+    const file = form.get("file");
+    if (!(file instanceof File)) fail(400, "Send the recording as `file`");
+    const id = String(form.get("id") ?? "").trim() || undefined;
+    const heard = await ops.transcribeSample(db, providers, file, id, c.req.raw.signal);
+    c.var.logger.info({ id, chars: heard.text.length }, "sample transcribed");
+    return c.json(heard);
   });
 
   /** What a saved speech endpoint's server says about batches: the Requests tab's Batches. */

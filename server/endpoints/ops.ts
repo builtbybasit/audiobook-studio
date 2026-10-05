@@ -9,7 +9,14 @@
 // not in the registry being saved with it. The scripting prompts saved with them — the library's
 // default, and each profile's say over it — are held to the rules the editor shows (`@/lib/prompt`),
 // and the scripting settings may only choose a profile saved with them.
-import type { Credential, Endpoint, EndpointBatches, EndpointProbe, VoiceListPage } from "@/types";
+import type {
+  Credential,
+  Endpoint,
+  EndpointBatches,
+  EndpointKind,
+  EndpointProbe,
+  VoiceListPage,
+} from "@/types";
 import { profilePromptProblems, promptProblems, resolvePrompt } from "@/lib/prompt";
 import { isSimulated } from "@/lib/providers";
 import { billingOf } from "@/lib/endpoints";
@@ -21,6 +28,7 @@ import {
   readEndpoint,
   readProfiles,
   readEndpointConfig,
+  readTranscriber,
   replaceEndpoints,
   type EndpointConfig,
 } from "~/db/endpoints";
@@ -31,11 +39,13 @@ import { AppError, badRequest, notFound } from "~/lib/errors";
 import { refusePrompt } from "~/lib/schemas";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { ProviderError } from "~/providers/http";
-import { SAMPLE_MIME, type SampleFormat } from "~/providers/clone";
-import { scriptTarget, speechTarget, type Providers } from "~/providers/target";
+import { SAMPLE_HEAD_BYTES, SAMPLE_MIME, sniffSample, type SampleFormat } from "~/providers/clone";
+import { scriptTarget, speechTarget, transcriberTarget, type Providers } from "~/providers/target";
+import { endpointTranscriber } from "~/providers/transcription";
 import { endpointVoiceLister, type VoiceQuery } from "~/providers/voices";
 import { assertWithinBudget, holdToday } from "~/usage/budget";
-import { settleSpeech } from "~/usage/ledger";
+import { settleSpeech, settleTranscription } from "~/usage/ledger";
+import { parseBuffer } from "music-metadata";
 import type { VoiceFiles } from "~/voices/files";
 import { removeDropped } from "~/voices/ops";
 
@@ -55,10 +65,12 @@ function repeated(ids: readonly string[]): string | undefined {
 }
 
 function check(config: EndpointConfig): void {
-  const all = [...config.endpoints, ...config.profiles];
+  const transcribers = config.transcribers ?? [];
+  const all = [...config.endpoints, ...config.profiles, ...transcribers];
   for (const [kind, list] of [
     ["speech endpoints", config.endpoints],
     ["scripting profiles", config.profiles],
+    ["transcription endpoints", transcribers],
   ] as const) {
     const twice = repeated(list.map((e) => e.id));
     if (twice) throw badRequest(`Two ${kind} are called “${twice}”`);
@@ -86,7 +98,7 @@ function check(config: EndpointConfig): void {
       if (id) throw badRequest(`“${e.name || e.id}” has two of one ${what}`, `${what}: ${id}`);
     }
   }
-  for (const p of config.profiles) {
+  for (const p of [...config.profiles, ...transcribers]) {
     const owned: [string, string[]][] = [
       ["rate window", (p.pricing?.windows ?? []).map((w) => w.id)],
       ["promotion", (p.pricing?.promotions ?? []).map((x) => x.id)],
@@ -95,7 +107,8 @@ function check(config: EndpointConfig): void {
       const id = repeated(ids);
       if (id) throw badRequest(`“${p.name || p.id}” has two of one ${what}`, `${what}: ${id}`);
     }
-    if (p.prompt) refusePrompt(`“${p.name || p.id}”'s prompt`, profilePromptProblems(p.prompt));
+    if ("prompt" in p && p.prompt)
+      refusePrompt(`“${p.name || p.id}”'s prompt`, profilePromptProblems(p.prompt));
   }
   if (config.prompt) refusePrompt("The library's prompt", promptProblems(config.prompt));
   // the profile runs go to is one of the profiles saved with it, or none
@@ -146,7 +159,7 @@ export function saveEndpoints(
 export async function testEndpoint(
   db: Db,
   providers: Providers,
-  kind: "tts" | "scripting",
+  kind: EndpointKind,
   id: string,
   signal: AbortSignal,
 ): Promise<EndpointProbe> {
@@ -156,6 +169,17 @@ export async function testEndpoint(
     const probe = providers.speech.probe;
     if (!probe) return untestable(providers.speech.name);
     return probe.call(providers.speech, speechTarget(db, ep), signal);
+  }
+  if (kind === "transcription") {
+    const t = readTranscriber(db, id);
+    if (!t) throw notFound("There is no saved transcription endpoint by that id", `id: ${id}`);
+    const provider = providers.transcription ?? endpointTranscriber();
+    try {
+      return await provider.probe(transcriberTarget(db, t), signal);
+    } catch (e) {
+      if (e instanceof ProviderError) return { ok: false, message: e.message, ms: 0 };
+      throw e;
+    }
   }
   const profile = readProfiles(db).find((p) => p.id === id);
   if (!profile) throw notFound("There is no saved scripting profile by that id", `id: ${id}`);
@@ -414,5 +438,80 @@ async function ownRecording(
   } catch (e) {
     if (signal.aborted) throw e;
     return null;
+  }
+}
+
+// ---------- hearing a recording ----------
+
+/** What a recording sent to be transcribed is said to be, when its bytes say nothing clearer. */
+const NAMES: Record<SampleFormat, string> = {
+  wav: "sample.wav",
+  mp3: "sample.mp3",
+  m4a: "sample.m4a",
+  opus: "sample.ogg",
+  flac: "sample.flac",
+};
+
+/**
+ * What is said in a clone sample, heard by a transcription endpoint — the one named, or the first
+ * switched on. Priced into the ledger against it with no book, held to its daily limit, and tried
+ * once: a click that fails says so at once.
+ */
+export async function transcribeSample(
+  db: Db,
+  providers: Providers,
+  file: File,
+  id: string | undefined,
+  signal: AbortSignal,
+): Promise<{ text: string }> {
+  const t = readTranscriber(db, id);
+  if (!t)
+    throw id
+      ? notFound("There is no saved transcription endpoint by that id", `id: ${id}`)
+      : badRequest("No transcription endpoint is switched on. Add one on the Endpoints page.");
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const format = sniffSample(bytes.subarray(0, SAMPLE_HEAD_BYTES));
+  if (!format) throw badRequest("That file is not audio this app can read");
+  // what it is priced by: how long it plays, read from the file, and 0 s when it cannot be
+  const seconds = await parseBuffer(
+    bytes,
+    { mimeType: SAMPLE_MIME[format], size: bytes.byteLength },
+    { duration: true, skipCovers: true },
+  ).then(
+    (m) => m.format.duration ?? 0,
+    () => 0,
+  );
+  const cost = (seconds / 60) * t.perMinute;
+  assertWithinBudget(db, null, {
+    kind: "transcription",
+    cost,
+    requests: [{ endpoint: t.id, cost }],
+    request: "this transcript",
+  });
+  const out = holdToday(db, "transcription", t.id, cost);
+  const provider = providers.transcription ?? endpointTranscriber();
+  try {
+    const heard = await provider.transcribe(
+      {
+        audio: new Blob([bytes], { type: SAMPLE_MIME[format] }),
+        name: NAMES[format],
+        seconds,
+        words: false,
+        signal,
+        sent: (request) =>
+          settleTranscription(
+            db,
+            t,
+            { bookId: null, chapterUid: null, label: "Sample transcript", held: cost },
+            request,
+          ),
+      },
+      { ...transcriberTarget(db, t), maxRetries: 0 },
+    );
+    return { text: heard.text };
+  } catch (e) {
+    throw e instanceof ProviderError ? providerFailure(e) : e;
+  } finally {
+    out();
   }
 }

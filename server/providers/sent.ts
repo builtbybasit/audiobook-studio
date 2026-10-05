@@ -56,3 +56,14 @@ export interface SentSpeech extends SentRequest {
    */
   billed: boolean;
 }
+
+/**
+ * One transcription request: the audio it sent, which is what it is priced by. Billed when it was
+ * answered with a 2xx — a transcript this server then could not read was still made — and never
+ * for a refusal or no answer.
+ */
+export interface SentTranscription extends SentRequest {
+  /** seconds of audio sent */
+  audioSeconds: number;
+  billed: boolean;
+}

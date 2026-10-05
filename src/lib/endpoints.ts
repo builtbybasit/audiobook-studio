@@ -108,6 +108,7 @@ export const opsOf = (u: UnifiedEndpoint): EndpointOps =>
 export const KIND_LABEL: Record<EndpointKind, string> = {
   scripting: "Scripting",
   tts: "Text to speech",
+  transcription: "Speech to text",
 };
 
 // ---------- presets ----------

@@ -159,7 +159,34 @@ export interface EndpointLive {
   failed?: number;
 }
 
-export type EndpointKind = "scripting" | "tts";
+export type EndpointKind = "scripting" | "tts" | "transcription";
+
+/**
+ * A speech-to-text server: what turns audio back into words — a clone sample's transcript, and the
+ * check that a rendered line says what the script says. Any server that answers OpenAI's
+ * `POST /audio/transcriptions` will do; one that answers `verbose_json` with word timestamps also
+ * gives the Listen page the time of every word.
+ *
+ * The same table as the other two kinds and the same ops, with none of a speech endpoint's voices,
+ * formats or splitting: a request is one file, and is priced by the minute of audio sent.
+ */
+export interface Transcriber extends Partial<EndpointOps> {
+  id: string;
+  name: string;
+  baseUrl: string;
+  model: string;
+  enabled: boolean;
+  concurrency: number;
+  needsKey: boolean;
+  /** as on `Endpoint`: read only, the server holds a key */
+  hasKey?: boolean;
+  /** as on `Endpoint`: sent only, absent keeps the kept key and `""` forgets it */
+  apiKey?: string;
+  /** USD per minute of audio sent; 0 for a server that charges nothing */
+  perMinute: number;
+  /** the schedule and promotions on that rate, as on the other kinds */
+  pricing?: PricingConfig;
+}
 
 /**
  * A named credential: which provider account an endpoint uses, so several endpoints can say they
@@ -349,6 +376,8 @@ export interface SettingsFile {
   endpoints: Partial<Endpoint>[];
   /** an older file's `append` prompt on one is read in as that endpoint's notes (`upgradeProfilePrompt`) */
   profiles: Profile[];
+  /** absent in a file from before transcription endpoints, which leaves the ones here be */
+  transcribers?: Transcriber[];
   /** the library's default scripting prompt; null is the built-in one, absent (an older file) leaves it be */
   prompt?: PromptTemplate | null;
   scriptSettings: ScriptSettings;

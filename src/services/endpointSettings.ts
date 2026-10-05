@@ -1,5 +1,5 @@
-// Where the endpoints are configured: the speech endpoints, the scripting profiles, and the named
-// credentials they point at.
+// Where the endpoints are configured: the speech endpoints, the scripting profiles, the
+// transcription endpoints, and the named credentials they point at.
 //
 // The same arrangement as `@/services/library`: one HTTP implementation, answering at this tab's
 // API — your library's, or the demo's. This is not `@/services/usage`, which answers for the *past*
@@ -8,7 +8,7 @@
 //
 // The whole configuration travels as one document. The page binds its fields straight onto the
 // objects it edits, so there is no single action to hang a narrower request on — and the server
-// has to check the three lists against each other anyway (a credential an endpoint names must be
+// has to check the lists against each other anyway (a credential an endpoint names must be
 // in the same body), which a partial write could not let it do.
 import type {
   ClonedVoice,
@@ -22,6 +22,7 @@ import type {
   Profile,
   PromptTemplate,
   ScriptSettings,
+  Transcriber,
   VoiceListPage,
 } from "@/types";
 import type { StoredEndpoint } from "@/lib/endpointTelemetry";
@@ -36,6 +37,11 @@ export type { EndpointProbe, VoiceListPage } from "@/types";
 export interface EndpointConfig {
   endpoints: StoredEndpoint[];
   profiles: Profile[];
+  /**
+   * Always sent: the server keeps what it holds when this is left out, which is for a page from
+   * before there were any, and this page is not one.
+   */
+  transcribers: Transcriber[];
   credentials: Credential[];
   /**
    * The library's default scripting prompt; null is the built-in one. Optional in a write, where
@@ -117,6 +123,11 @@ export interface EndpointSettingsService {
   /** Take back a forget no save has made final yet; answers with the samples. */
   restoreSamples(id: string, voice: string): Promise<KeptVoiceSamples>;
   /**
+   * What is said in one recording, heard by the transcription endpoint `id` — or, without one, the
+   * first switched on. A real request, priced into the ledger by the minute of audio sent.
+   */
+  transcribe(file: File, id?: string): Promise<{ text: string }>;
+  /**
    * What the server's process has seen of each speech endpoint it has sent to: lines out and held,
    * rate limits, the end of a cooldown. Not configuration, but the telemetry the configuration
    * comes back without, which is why it is asked for here. An endpoint absent from the answer has
@@ -164,6 +175,13 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
     form.set("id", id);
     form.set("title", request.title.trim());
     return this.http.postFormData<ClonedVoice>("/endpoints/voices/clone", form);
+  }
+
+  transcribe(file: File, id?: string): Promise<{ text: string }> {
+    const form = new FormData();
+    form.set("file", file, file.name);
+    if (id) form.set("id", id);
+    return this.http.postFormData<{ text: string }>("/endpoints/transcribe", form);
   }
 
   keptSamples(id: string): Promise<KeptVoiceSamples[]> {

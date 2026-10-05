@@ -144,7 +144,13 @@ describe("a scripting endpoint's prompt and reasoning level", () => {
 
 /** Keeps what it is sent, and answers with it: `prompt` null when none was ever sent. */
 class FakeService implements Partial<EndpointSettingsService> {
-  held: EndpointConfig = { endpoints: [], profiles: [], credentials: [], prompt: null };
+  held: EndpointConfig = {
+    endpoints: [],
+    profiles: [],
+    transcribers: [],
+    credentials: [],
+    prompt: null,
+  };
   puts: EndpointConfig[] = [];
   answer(): EndpointSettings {
     return { ...clone(this.held), prompt: this.held.prompt ?? null } as EndpointSettings;

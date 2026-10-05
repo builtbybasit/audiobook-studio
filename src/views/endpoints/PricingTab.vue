@@ -24,18 +24,14 @@ import { useNow } from "@vueuse/core";
 
 import { UiHint, UiNumber, UiSwitch } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
-import { billingOf, opsOf, speechPricing } from "@/lib/endpoints";
+import { billingOf, opsOf, rateCardOf } from "@/lib/endpoints";
 import {
-  baseRates,
   COMPONENT_HINT,
   effectiveRates,
-  ensurePricing,
   money,
   perMillionChars,
   pricingWarnings,
-  speechComponents,
   speechRateKnown,
-  TOKEN_COMPONENTS,
 } from "@/lib/pricing";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import BillingModel from "@/views/endpoints/BillingModel.vue";
@@ -43,7 +39,7 @@ import EffectiveRates from "@/views/endpoints/EffectiveRates.vue";
 import RatePromotions from "@/views/endpoints/RatePromotions.vue";
 import RateSchedule from "@/views/endpoints/RateSchedule.vue";
 import { recentCacheRate } from "@/lib/scriptActivity";
-import type { MetricTotals, RequestRecord, TtsBilling } from "@/types";
+import type { EndpointKind, MetricTotals, RequestRecord, TtsBilling } from "@/types";
 
 const props = defineProps<{
   u: UnifiedEndpoint;
@@ -57,7 +53,7 @@ const props = defineProps<{
 
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
-const ep = computed(() => (props.u.profile ?? props.u.endpoint)!);
+const ep = computed(() => props.u.entry);
 const ops = computed(() => opsOf(props.u));
 const billing = computed(() => (props.u.endpoint ? billingOf(props.u.endpoint) : null));
 
@@ -67,24 +63,11 @@ const clock = useNow({ interval: 1000 });
 const now = computed(() => clock.value.getTime());
 
 // ---------- the rate card, whichever kind this endpoint is ----------
-// Both kinds go through the same schedule and the same promotions; what differs is which rates they
-// have and what unit those rates are written in, so that is all the page has to branch on.
-const card = computed(() =>
-  props.u.profile
-    ? {
-        base: baseRates(props.u.profile),
-        config: ensurePricing(props.u.profile),
-        components: TOKEN_COMPONENTS,
-        unit: undefined,
-      }
-    : {
-        ...speechPricing(props.u.endpoint!),
-        // only the components this endpoint's billing model actually prices: one rate for a
-        // per-character card, two for a token-billed one, and never a row for something it does
-        // not charge for
-        components: speechComponents(billingOf(props.u.endpoint!).unit),
-      },
-);
+// Every kind goes through the same schedule and the same promotions; what differs is which rates
+// they have and what unit those rates are written in, which `rateCardOf` answers — only the
+// components a card actually prices: one rate for a per-character or per-minute card, two for a
+// token-billed one, and never a row for something it does not charge for.
+const card = computed(() => rateCardOf(props.u));
 const config = computed(() => card.value.config);
 const base = computed(() => card.value.base);
 // the unit travels with the rates: without it every reason string falls back to the per-character
@@ -126,9 +109,43 @@ function setBilling(next: TtsBilling): void {
 
 /** only a speech endpoint can have an unknown rate; scripting always has two numbers */
 const unknownRate = computed(() => !!billing.value && !speechRateKnown(billing.value));
-const noRates = computed(
-  () => !!props.u.profile && !props.u.profile.inPrice && !props.u.profile.outPrice,
-);
+/** A card whose every rate is zero, which is treated as free: said, since it may be a mistake. */
+const FREE: Record<EndpointKind, (u: UnifiedEndpoint) => string | null> = {
+  scripting: (u) =>
+    !u.profile!.inPrice && !u.profile!.outPrice
+      ? "Both rates are zero, so this endpoint is treated as free"
+      : null,
+  // a speech card says this itself, beside its rate
+  tts: () => null,
+  transcription: (u) =>
+    !u.transcriber!.perMinute ? "The rate is zero, so this endpoint is treated as free" : null,
+};
+const free = computed(() => FREE[props.u.kind](props.u));
+
+// What each kind's estimate and reservation are; none of a transcriber's is estimated or reserved.
+const ESTIMATED: Record<EndpointKind, string> = {
+  scripting:
+    "Worked out from these rates before a run starts; it assumes no cache savings, so the real figure comes in at or under it, and it is never charged to anything.",
+  tts: "Worked out from these rates and the text before a run starts; it is never charged to anything.",
+  transcription:
+    "A recording is priced by how long it plays once it is sent; nothing is estimated before.",
+};
+const ESTIMATED_SAYS: Record<EndpointKind, string> = {
+  scripting: "From these rates, before a run starts.",
+  tts: "From these rates, before a run starts.",
+  transcription: "None — priced once sent.",
+};
+const RESERVED: Record<EndpointKind, string> = {
+  scripting:
+    "Held against a book’s cap while requests are in flight, at undiscounted rates with the whole output ceiling, and released as each request settles.",
+  tts: "A speech request’s cost is known from the text before it is sent, so the estimate is the reservation.",
+  transcription: "A recording is sent on a click, not by a run, so nothing is held against a book.",
+};
+const RESERVED_SAYS: Record<EndpointKind, string> = {
+  scripting: "· every book, every scripting endpoint",
+  tts: "· speech requests aren’t reserved",
+  transcription: "· transcriptions aren’t reserved",
+};
 
 const books = computed(() =>
   libraryStore.books
@@ -257,19 +274,32 @@ const limitUsed = computed(() =>
 
       <!-- tts: the billing model is part of the price -->
       <BillingModel
-        v-else
-        :endpoint="u.endpoint!"
+        v-else-if="u.endpoint"
+        :endpoint="u.endpoint"
         :billing="billing!"
         :now="now"
         @update="setBilling"
       />
 
+      <!-- transcription: one rate, per minute of the recording sent -->
+      <div v-else-if="u.transcriber" class="space-y-1 text-xs font-medium">
+        <span>Audio sent</span>
+        <UiNumber
+          v-model="u.transcriber.perMinute"
+          class="w-44"
+          prefix="$"
+          unit="/ audio min"
+          :min="0"
+          :step="0.001"
+          label="USD per audio minute"
+        />
+      </div>
+
       <p
-        v-if="noRates"
+        v-if="free"
         class="mt-2 rounded bg-zinc-100 px-2 py-1.5 text-[11px] leading-relaxed text-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-300"
       >
-        Both rates are zero, so this endpoint is treated as free — right for a model you host
-        yourself, wrong if the provider bills you.
+        {{ free }} — right for a model you host yourself, wrong if the provider bills you.
       </p>
       <!-- the one thing the billing panel cannot say, because it does not know what is below it -->
       <p
@@ -358,39 +388,21 @@ const limitUsed = computed(() =>
         <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
           <dt class="text-xs font-medium">
             Estimated
-            <UiHint
-              label="estimates"
-              :text="
-                u.kind === 'scripting'
-                  ? 'Worked out from these rates before a run starts; it assumes no cache savings, so the real figure comes in at or under it, and it is never charged to anything.'
-                  : 'Worked out from these rates and the text before a run starts; it is never charged to anything.'
-              "
-            />
+            <UiHint label="estimates" :text="ESTIMATED[u.kind]" />
           </dt>
-          <dd class="mt-1 text-[11px] text-zinc-500">From these rates, before a run starts.</dd>
+          <dd class="mt-1 text-[11px] text-zinc-500">{{ ESTIMATED_SAYS[u.kind] }}</dd>
         </div>
         <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
           <dt class="text-xs font-medium">
             Reserved
-            <UiHint
-              label="reservations"
-              :text="
-                u.kind === 'scripting'
-                  ? 'Held against a book’s cap while requests are in flight, at undiscounted rates with the whole output ceiling, and released as each request settles.'
-                  : 'A speech request’s cost is known from the text before it is sent, so the estimate is the reservation.'
-              "
-            />
+            <UiHint label="reservations" :text="RESERVED[u.kind]" />
           </dt>
           <!-- A reservation is held against a *book's* cap and records no endpoint, so there is no
                honest per-endpoint figure to show here. The number says what it is instead of
                implying it belongs to the endpoint whose tab it is on. -->
           <dd class="mt-1 font-mono text-sm">
             {{ u.kind === "scripting" ? moneyOrUnknown(reservedAll) : "—" }}
-            <span class="font-sans text-[11px] text-zinc-500">{{
-              u.kind === "scripting"
-                ? "· every book, every scripting endpoint"
-                : "· speech requests aren’t reserved"
-            }}</span>
+            <span class="font-sans text-[11px] text-zinc-500">{{ RESERVED_SAYS[u.kind] }}</span>
           </dd>
         </div>
         <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">

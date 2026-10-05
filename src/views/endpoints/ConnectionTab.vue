@@ -44,7 +44,7 @@ import {
   ui,
 } from "@/views/endpoints/state";
 import { usePresetPicker } from "@/composables/usePresetPicker";
-import type { ConnectionTest } from "@/types";
+import type { ConnectionTest, EndpointKind } from "@/types";
 
 const props = defineProps<{
   u: UnifiedEndpoint;
@@ -99,7 +99,41 @@ const sameQuota = computed(() =>
     : [],
 );
 
-const keyHeld = computed(() => keyInPlace(props.u.profile ?? props.u.endpoint));
+const keyHeld = computed(() => keyInPlace(props.u.entry));
+
+// What differs by kind, said once per kind.
+/** what a preset fills in besides the connection */
+const PRESET_FILLS: Record<EndpointKind, string> = {
+  scripting: "token prices",
+  tts: "billing",
+  transcription: "rate per audio minute",
+};
+/** why the kind cannot change in place */
+const TYPE_FIXED: Record<EndpointKind, string> = {
+  scripting: "Fixed: scripting endpoints are picked by a run, so the type can’t change in place.",
+  tts: "Fixed: speech endpoints are picked by a voice, so the type can’t change in place.",
+  transcription:
+    "Fixed: a speech-to-text endpoint hears recordings rather than making anything, so the type can’t change in place.",
+};
+const MODEL_PLACEHOLDER: Record<EndpointKind, string> = {
+  scripting: "gpt-4o-mini",
+  tts: "tts-1-hd",
+  transcription: "whisper-1",
+};
+/** what the connection test sends, as the cost line counts it */
+const PROBE_SAYS: Record<EndpointKind, string> = {
+  scripting: "~24 input and 8 output tokens",
+  tts: "12 characters of sample text",
+  transcription: "A model list, no audio",
+};
+/** what removing it leaves behind */
+const REMOVE_SAYS: Record<EndpointKind, string> = {
+  scripting:
+    "Past jobs keep the model and prices they ran with; a run needs another endpoint picked for it.",
+  tts: "Speakers whose voice lives here show as unrouted until repicked; rendered clips and recorded spend are kept.",
+  transcription:
+    "Recordings are heard by the next speech-to-text endpoint switched on; recorded spend is kept.",
+};
 
 function save() {
   if (providerChanged.value && props.busy && !confirming.value) {
@@ -157,13 +191,20 @@ watch([() => props.u.key, simulated], ([key, now], [was]) => {
 });
 /** Where a request actually goes. Fish Audio serves /tts, not the OpenAI-style /audio/speech, so
  *  this follows the draft and updates the moment a preset or a hand-typed base URL changes it. */
-const path = computed(() =>
-  simulated.value
-    ? ""
-    : props.u.kind === "tts"
-      ? ttsRequestPath(draft.value)
-      : KIND_PATH[props.u.kind],
-);
+const PATH: Record<EndpointKind, () => string> = {
+  scripting: () => KIND_PATH.scripting,
+  tts: () => ttsRequestPath(draft.value),
+  transcription: () => KIND_PATH.transcription,
+};
+const path = computed(() => (simulated.value ? "" : PATH[props.u.kind]()));
+/** Where the connection test goes: the request itself, but a transcriber is only asked its models —
+ *  sending it audio to test would be a priced request for nothing. */
+const PROBE_PATH: Record<EndpointKind, () => string> = {
+  scripting: () => path.value,
+  tts: () => path.value,
+  transcription: () => "/models",
+};
+const probePath = computed(() => PROBE_PATH[props.u.kind]());
 /** The staged changes as the banner lists them; a preset's prices and limits are one of them. */
 const changeList = computed(() =>
   changes.value
@@ -213,7 +254,7 @@ function newCredential() {
         Provider
         <UiHint
           label="presets"
-          :text="`A preset fills in the base URL, model and ${u.kind === 'scripting' ? 'token prices' : 'billing'}; every field stays editable.`"
+          :text="`A preset fills in the base URL, model and ${PRESET_FILLS[u.kind]}; every field stays editable.`"
         />
       </h3>
       <div class="flex flex-wrap items-center gap-2">
@@ -247,10 +288,7 @@ function newCredential() {
           >
           <div class="flex items-center justify-between gap-3 text-xs">
             <span class="font-medium"
-              >Endpoint type
-              <UiHint
-                label="endpoint type"
-                :text="`Fixed: ${u.kind === 'scripting' ? 'scripting' : 'speech'} endpoints are picked by ${u.kind === 'scripting' ? 'a run' : 'a voice'}, so the type can’t change in place.`"
+              >Endpoint type <UiHint label="endpoint type" :text="TYPE_FIXED[u.kind]"
             /></span>
             <span class="chip chip-on">{{ KIND_LABEL[u.kind] }}</span>
           </div>
@@ -260,7 +298,7 @@ function newCredential() {
               v-model="draft.model"
               class="input w-full font-mono"
               spellcheck="false"
-              :placeholder="u.kind === 'scripting' ? 'gpt-4o-mini' : 'tts-1-hd'"
+              :placeholder="MODEL_PLACEHOLDER[u.kind]"
           /></label>
         </div>
       </section>
@@ -382,18 +420,16 @@ function newCredential() {
           </p>
           <p v-else class="break-words text-[11px] text-zinc-500">
             One request to
-            <code class="font-mono">{{ (u.baseUrl || "…").replace(/\/$/, "") }}{{ path }}</code>
+            <code class="font-mono"
+              >{{ (u.baseUrl || "…").replace(/\/$/, "") }}{{ probePath }}</code
+            >
             <template v-if="u.endpoint">
               for <b>{{ encodingSummary(u.endpoint) }}</b></template
             >
             with the key saved on the server.
           </p>
           <p class="mt-1 text-[11px] text-zinc-500">
-            {{
-              u.kind === "scripting"
-                ? "~24 input and 8 output tokens"
-                : "12 characters of sample text"
-            }}
+            {{ PROBE_SAYS[u.kind] }}
             · would cost
             <b :class="probeCost == null && 'text-amber-600 dark:text-amber-400'">{{
               maybeMoney(probeCost)
@@ -455,14 +491,7 @@ function newCredential() {
           <template v-if="busy"
             >Cancel {{ plural(busy, "unfinished job") }} from the header first.</template
           >
-          <template v-else-if="u.kind === 'tts'"
-            >Speakers whose voice lives here show as unrouted until repicked; rendered clips and
-            recorded spend are kept.</template
-          >
-          <template v-else
-            >Past jobs keep the model and prices they ran with; a run needs another endpoint picked
-            for it.</template
-          >
+          <template v-else>{{ REMOVE_SAYS[u.kind] }}</template>
         </p>
       </UiTooltip>
       <button

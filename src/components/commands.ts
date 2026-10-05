@@ -272,6 +272,16 @@ export function paletteCommands(router: Router, mod: string): Command[] {
     },
   });
   out.push({
+    id: "act-stt-endpoint",
+    group: "Actions",
+    label: "Add speech-to-text endpoint",
+    keywords: "server transcription transcribe whisper stt api",
+    run: () => {
+      endpointsStore.addTranscriber();
+      router.push("/endpoints");
+    },
+  });
+  out.push({
     id: "act-dark",
     group: "Actions",
     label: uiStore.dark ? "Switch to light theme" : "Switch to dark theme",

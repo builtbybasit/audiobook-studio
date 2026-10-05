@@ -45,7 +45,7 @@ import {
 import { hhmm } from "@/lib/format";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import type { ActivityFilter } from "@/views/endpoints/state";
-import type { RequestRecord } from "@/types";
+import type { EndpointKind, RequestRecord, SpeechCharge } from "@/types";
 
 const props = defineProps<{
   u: UnifiedEndpoint;
@@ -114,15 +114,33 @@ const pricedAt = (ts: number) =>
     minute: "2-digit",
     second: "2-digit",
   });
-/** The usage column. Cached input is shown as a slice of the input it is part of, never beside it
- *  as if it were extra — `12k in (8k cached)` cannot be misread as 20k tokens. */
-const usageOf = (r: RequestRecord): string => {
-  const u = r.usage;
-  if (r.kind === "scripting") {
-    if (!u.inputTokens) return "—";
-    const cached = u.cachedInput != null ? ` (${compact(u.cachedInput)} cached)` : "";
-    return `${compact(u.inputTokens)} in${cached} / ${compact(u.outputTokens ?? 0)} out`;
+/** The usage column, in what each kind is measured by. */
+function usageOf(r: RequestRecord): string {
+  switch (r.kind) {
+    case "scripting":
+      return tokenUsage(r);
+    case "tts":
+      return speechUsage(r);
+    case "transcription":
+      return r.usage.audioSeconds ? `${audioLength(r.usage.audioSeconds)} sent` : "—";
   }
+}
+
+/** A recording's length: seconds while it is short, as a clone sample is, minutes after. */
+const audioLength = (seconds: number): string =>
+  seconds < 60 ? `${seconds.toFixed(1)}s` : `${(seconds / 60).toFixed(1)}m`;
+
+/** Cached input is shown as a slice of the input it is part of, never beside it as if it were
+ *  extra — `12k in (8k cached)` cannot be misread as 20k tokens. */
+function tokenUsage(r: RequestRecord): string {
+  const u = r.usage;
+  if (!u.inputTokens) return "—";
+  const cached = u.cachedInput != null ? ` (${compact(u.cachedInput)} cached)` : "";
+  return `${compact(u.inputTokens)} in${cached} / ${compact(u.outputTokens ?? 0)} out`;
+}
+
+function speechUsage(r: RequestRecord): string {
+  const u = r.usage;
   if (!u.chars) return "—";
   // The quantity this request was actually billed on leads, because that is the one the cost beside
   // it follows. A byte-billed endpoint showing a character count invites exactly the arithmetic the
@@ -140,7 +158,7 @@ const usageOf = (r: RequestRecord): string => {
         ? ` → ${(u.audioSeconds / 60).toFixed(1)}m`
         : "";
   return `${sent}${back}`;
-};
+}
 
 /** A settled scripting request whose provider said nothing about cache use. Marked, not explained,
  *  in the list — the list has to stay readable, and the explanation is one click away. */
@@ -212,74 +230,7 @@ function facts(r: RequestRecord): Fact[] {
     tone: r.attempts > 1 ? "warn" : undefined,
   });
 
-  const u = r.usage;
-  if (r.kind === "scripting") {
-    if (u.inputTokens || u.outputTokens) {
-      out.push({
-        label: "input tokens",
-        value: compact(u.inputTokens ?? 0),
-        mono: true,
-        hint: "the total, cached tokens included",
-      });
-      out.push({
-        label: "of which cached",
-        value: u.cachedInput == null ? "not reported" : compact(u.cachedInput),
-        mono: u.cachedInput != null,
-        hint:
-          u.cachedInput == null
-            ? "this provider did not say — not a reported zero"
-            : u.cachedInput === 0
-              ? "reported: none of it was cached"
-              : "charged at the cached rate; the rest at the ordinary one",
-        tone: u.cachedInput == null ? "warn" : undefined,
-      });
-      if (u.cacheWrite)
-        out.push({
-          label: "written to cache",
-          value: compact(u.cacheWrite),
-          mono: true,
-          hint: "also part of the input total",
-        });
-      out.push({ label: "output tokens", value: compact(u.outputTokens ?? 0), mono: true });
-    } else out.push({ label: "tokens", value: "not reported yet" });
-  } else if (u.chars) {
-    // Four different readings of one request, never conversions of one another. All of them are
-    // shown whichever the endpoint bills on, because "12,400 characters" and "$1.86" only make
-    // sense together once you can see that the endpoint charged the 31,000 bytes instead.
-    out.push({ label: "characters", value: compact(u.chars), mono: true });
-    if (u.bytes != null)
-      out.push({
-        label: "UTF-8 bytes",
-        value: compact(u.bytes),
-        mono: true,
-        hint:
-          u.bytes > u.chars
-            ? `${(u.bytes / u.chars).toFixed(2)}× the character count — this text is not all ASCII`
-            : "the same as the character count: this text is all ASCII",
-      });
-    if (u.textTokens != null)
-      out.push({
-        label: "text tokens",
-        value: compact(u.textTokens),
-        mono: true,
-        hint: "the submitted text, tokenised",
-      });
-    if (u.audioSeconds)
-      out.push({
-        label: "audio",
-        value: (u.audioSeconds / 60).toFixed(1) + " min",
-        mono: true,
-        hint: "generated audio only — silence stitched between clips is not rendered or billed",
-      });
-    if (u.audioTokens != null)
-      out.push({
-        label: "audio tokens",
-        value: compact(u.audioTokens),
-        mono: true,
-        hint: "the audio that came back, metered in tokens — not a conversion of the text",
-      });
-  } else out.push({ label: "characters", value: "not reported yet" });
-
+  out.push(...usageFacts(r));
   out.push({
     label: "cost",
     value: queued || r.status === "running" ? "pending" : maybeMoney(r.cost),
@@ -288,6 +239,103 @@ function facts(r: RequestRecord): Fact[] {
     wide: true,
     tone: r.cost == null && !queued && r.status !== "running" ? "warn" : undefined,
   });
+  return out;
+}
+
+/** What a request used, as facts, in what its kind is measured by. */
+function usageFacts(r: RequestRecord): Fact[] {
+  switch (r.kind) {
+    case "scripting":
+      return tokenFacts(r);
+    case "tts":
+      return speechFacts(r);
+    case "transcription":
+      return [
+        r.usage.audioSeconds
+          ? {
+              label: "audio sent",
+              value: audioLength(r.usage.audioSeconds),
+              mono: true,
+              hint: "the length of the recording, which is what the rate is per",
+            }
+          : { label: "audio sent", value: "not reported yet" },
+      ];
+  }
+}
+
+function tokenFacts(r: RequestRecord): Fact[] {
+  const out: Fact[] = [];
+  const u = r.usage;
+  if (u.inputTokens || u.outputTokens) {
+    out.push({
+      label: "input tokens",
+      value: compact(u.inputTokens ?? 0),
+      mono: true,
+      hint: "the total, cached tokens included",
+    });
+    out.push({
+      label: "of which cached",
+      value: u.cachedInput == null ? "not reported" : compact(u.cachedInput),
+      mono: u.cachedInput != null,
+      hint:
+        u.cachedInput == null
+          ? "this provider did not say — not a reported zero"
+          : u.cachedInput === 0
+            ? "reported: none of it was cached"
+            : "charged at the cached rate; the rest at the ordinary one",
+      tone: u.cachedInput == null ? "warn" : undefined,
+    });
+    if (u.cacheWrite)
+      out.push({
+        label: "written to cache",
+        value: compact(u.cacheWrite),
+        mono: true,
+        hint: "also part of the input total",
+      });
+    out.push({ label: "output tokens", value: compact(u.outputTokens ?? 0), mono: true });
+  } else out.push({ label: "tokens", value: "not reported yet" });
+  return out;
+}
+
+function speechFacts(r: RequestRecord): Fact[] {
+  const out: Fact[] = [];
+  const u = r.usage;
+  if (!u.chars) return [{ label: "characters", value: "not reported yet" }];
+  // Four different readings of one request, never conversions of one another. All of them are
+  // shown whichever the endpoint bills on, because "12,400 characters" and "$1.86" only make
+  // sense together once you can see that the endpoint charged the 31,000 bytes instead.
+  out.push({ label: "characters", value: compact(u.chars), mono: true });
+  if (u.bytes != null)
+    out.push({
+      label: "UTF-8 bytes",
+      value: compact(u.bytes),
+      mono: true,
+      hint:
+        u.bytes > u.chars
+          ? `${(u.bytes / u.chars).toFixed(2)}× the character count — this text is not all ASCII`
+          : "the same as the character count: this text is all ASCII",
+    });
+  if (u.textTokens != null)
+    out.push({
+      label: "text tokens",
+      value: compact(u.textTokens),
+      mono: true,
+      hint: "the submitted text, tokenised",
+    });
+  if (u.audioSeconds)
+    out.push({
+      label: "audio",
+      value: (u.audioSeconds / 60).toFixed(1) + " min",
+      mono: true,
+      hint: "generated audio only — silence stitched between clips is not rendered or billed",
+    });
+  if (u.audioTokens != null)
+    out.push({
+      label: "audio tokens",
+      value: compact(u.audioTokens),
+      mono: true,
+      hint: "the audio that came back, metered in tokens — not a conversion of the text",
+    });
   return out;
 }
 
@@ -312,7 +360,7 @@ const receipt = (r: RequestRecord) =>
     : r.speech
       ? {
           lines: speechChargeLines(r.speech),
-          sentence: speechSentence(r.speech),
+          sentence: SPEECH_SENTENCE[r.kind](r.speech),
           total: r.speech.amount,
           basis: r.speech.basis,
           at: r.speech.at,
@@ -322,6 +370,25 @@ const receipt = (r: RequestRecord) =>
           reported: null,
         }
       : null;
+
+/**
+ * A speech-priced receipt in a sentence. A transcription is priced in the same audio minutes as
+ * speech, but of the recording sent rather than of anything that came back, which the speech
+ * sentence would say instead.
+ */
+const SPEECH_SENTENCE: Record<EndpointKind, (charge: SpeechCharge) => string> = {
+  scripting: speechSentence,
+  tts: speechSentence,
+  transcription: (charge) =>
+    `${(charge.units.audioSeconds / 60).toFixed(2)} audio minutes sent. This endpoint bills per audio minute sent, and nothing else.`,
+};
+
+/** Where a request's chapter is opened from its row. */
+const CHAPTER_PAGE: Record<EndpointKind, string> = {
+  scripting: "scripting",
+  tts: "narration",
+  transcription: "narration",
+};
 
 /** How the tokens divide, as a sentence that cannot be read as double counting. */
 function tokenSentence(r: RequestRecord): string {
@@ -556,7 +623,7 @@ function clearAll() {
               <td class="max-w-[140px] py-1.5 text-zinc-500">
                 <RouterLink
                   v-if="r.bookId && r.chapterId"
-                  :to="`/book/${r.bookId}/${u.kind === 'scripting' ? 'scripting' : 'narration'}?ch=${r.chapterId}`"
+                  :to="`/book/${r.bookId}/${CHAPTER_PAGE[u.kind]}?ch=${r.chapterId}`"
                   class="block truncate hover:text-violet-500"
                   :title="`${bookTitle(r.bookId)} · chapter ${r.chapterId}`"
                   @click.stop

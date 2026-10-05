@@ -25,7 +25,7 @@ import {
 } from "@/lib/endpoints";
 import { money } from "@/lib/pricing";
 import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
-import type { MetricBucket, MetricSeries, RangeKey } from "@/types";
+import type { EndpointKind, MetricBucket, MetricSeries, RangeKey } from "@/types";
 
 const props = defineProps<{
   u: UnifiedEndpoint;
@@ -57,6 +57,13 @@ const t = computed(() => {
 });
 const pct = (n: number, of: number): string => (of ? Math.round((n / of) * 100) + "%" : "—");
 const rangeLabel = computed(() => RANGES.find((r) => r.value === props.range)!.label);
+
+/** What the first tile measures, and what a provider that reported no usage left out. */
+const PRODUCED: Record<EndpointKind, { label: string; unreported: string }> = {
+  scripting: { label: "Throughput", unreported: "token counts" },
+  tts: { label: "Audio produced", unreported: "audio length" },
+  transcription: { label: "Audio heard", unreported: "audio length" },
+};
 </script>
 
 <template>
@@ -105,7 +112,7 @@ const rangeLabel = computed(() => RANGES.find((r) => r.value === props.range)!.l
 
     <dl class="grid grid-cols-2 gap-2 lg:grid-cols-4">
       <div class="card p-3">
-        <dt class="label">{{ u.kind === "scripting" ? "Throughput" : "Audio produced" }}</dt>
+        <dt class="label">{{ PRODUCED[u.kind].label }}</dt>
         <dd class="mt-0.5 font-mono text-lg leading-tight">
           {{ t && t.throughput !== null ? metricValue(t.throughput) : "—" }}
           <span v-if="!t || t.throughput !== null" class="text-[11px] text-zinc-500">{{
@@ -117,14 +124,15 @@ const rangeLabel = computed(() => RANGES.find((r) => r.value === props.range)!.l
             >{{ plural(t.requests, "request") }} · usage not reported
             <UiHint
               label="usage not reported"
-              :text="`The provider sent no ${u.kind === 'scripting' ? 'token counts' : 'audio length'}, so the chart shows requests per minute.`"
+              :text="`The provider sent no ${PRODUCED[u.kind].unreported}, so the chart shows requests per minute.`"
           /></template>
           <template v-else-if="t && u.kind === 'scripting'"
             >{{ compact(t.inputTokens) }} in · {{ compact(t.outputTokens) }} out</template
           >
-          <template v-else-if="t"
+          <template v-else-if="t && u.kind === 'tts'"
             >{{ (t.audioSeconds / 60).toFixed(1) }} min from {{ compact(t.chars) }} chars</template
           >
+          <template v-else-if="t">{{ (t.audioSeconds / 60).toFixed(1) }} min sent</template>
           <template v-else>no requests in this range</template>
           <template v-if="t && t.throughput !== null && t.unreported">
             · {{ t.unreported }} without usage</template

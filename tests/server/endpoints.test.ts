@@ -22,6 +22,7 @@ import type {
   Profile,
   ScriptSettings,
   Segment,
+  Transcriber,
 } from "@/types";
 import { makeCredentials } from "~/demo/seed/fixtures/credentials";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
@@ -39,6 +40,7 @@ import { jsonBody, testApi, type TestApi } from "../support/server";
 interface Settings {
   endpoints: Endpoint[];
   profiles: Profile[];
+  transcribers: Transcriber[];
   credentials: Credential[];
   prompt: { system: string; user: string } | null;
   script: ScriptSettings;

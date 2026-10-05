@@ -5,10 +5,11 @@ import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 
-// Endpoints — app-wide, both kinds, one page.
+// Endpoints — app-wide, every kind, one page.
 //
-// The app talks to two sorts of OpenAI-compatible server: chat models that turn prose into a
-// script, and speech models that render a line. They used to be configured in two different places,
+// The app talks to three sorts of OpenAI-compatible server: chat models that turn prose into a
+// script, speech models that render a line, and speech-to-text models that hear a recording back as
+// words. The first two used to be configured in two different places,
 // each buried inside a book's stage, which made "what is running, what is broken, what am I
 // spending" unanswerable. This page is the answer: a compact overview, a searchable list of every
 // endpoint, and the selected one's detail behind the tabs the scripting editor already used. What
@@ -41,6 +42,7 @@ import PromptTab from "@/views/endpoints/PromptTab.vue";
 import LibraryPromptPanel from "@/views/endpoints/LibraryPromptPanel.vue";
 import { useEndpointOverview } from "@/views/endpoints/overview";
 import { DOT, KIND_LABEL, TEXT } from "@/lib/endpoints";
+import { ENDPOINT_KINDS } from "@/lib/endpointShapes";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import { plural } from "@/lib/contents";
 import { money } from "@/lib/pricing";
@@ -55,7 +57,7 @@ import {
   ui,
 } from "@/views/endpoints/state";
 import type { TabId } from "@/views/endpoints/state";
-import type { MetricBucket, SettingsFile } from "@/types";
+import type { EndpointKind, MetricBucket, SettingsFile } from "@/types";
 
 const endpointsStore = useEndpointsStore();
 const jobsStore = useJobsStore();
@@ -85,10 +87,15 @@ const {
   attention,
 } = useEndpointOverview();
 
+/** Each kind in a word or two, where the full label does not fit: the filter and the add buttons. */
+const KIND_SHORT: Record<EndpointKind, string> = {
+  scripting: "Scripting",
+  tts: "TTS",
+  transcription: "STT",
+};
 const KIND_FILTERS = [
   { value: "all", label: "All" },
-  { value: "scripting", label: "Scripting" },
-  { value: "tts", label: "TTS" },
+  ...ENDPOINT_KINDS.map((k) => ({ value: k, label: KIND_SHORT[k] })),
 ];
 
 // ---------- selection ----------
@@ -131,7 +138,7 @@ const noVoices = computed(
 
 // ---------- actions ----------
 function toggleEnabled(u: UnifiedEndpoint, value: boolean) {
-  const target = (u.profile ?? u.endpoint)!;
+  const target = u.entry;
   target.enabled = value;
   uiStore.toast(`${u.name} ${value ? "resumed" : "paused"}`, {
     kind: value ? "success" : "info",
@@ -175,17 +182,24 @@ async function runTest(u: UnifiedEndpoint) {
   }
 }
 
+const REMOVE: Record<EndpointKind, (id: string) => void> = {
+  scripting: (id) => endpointsStore.removeScriptProfile(id),
+  tts: (id) => endpointsStore.removeEndpoint(id),
+  transcription: (id) => endpointsStore.removeTranscriber(id),
+};
 function remove(u: UnifiedEndpoint) {
-  if (u.profile) endpointsStore.removeScriptProfile(u.id);
-  else endpointsStore.removeEndpoint(u.id);
+  REMOVE[u.kind](u.id);
   ui.selected = null;
 }
 
-function add(kind: "scripting" | "tts") {
-  const key =
-    kind === "scripting"
-      ? "scripting:" + endpointsStore.addScriptProfile()
-      : "tts:" + endpointsStore.addEndpoint().id;
+/** Add a blank endpoint of this kind, answering its id. */
+const ADD: Record<EndpointKind, () => string> = {
+  scripting: () => endpointsStore.addScriptProfile(),
+  tts: () => endpointsStore.addEndpoint().id,
+  transcription: () => endpointsStore.addTranscriber().id,
+};
+function add(kind: EndpointKind) {
+  const key = `${kind}:${ADD[kind]()}`;
   ui.selected = key;
   ui.tab[key] = "connection";
   ui.showLibraryPrompt = false;
@@ -276,11 +290,8 @@ function pickBucket(b: MetricBucket | null) {
         <h1 class="text-2xl font-semibold">Endpoints</h1>
       </div>
       <div class="flex flex-wrap gap-2">
-        <button class="btn-ghost btn-xs" @click="add('scripting')">
-          <AddIcon class="icon-sm" /> Scripting endpoint
-        </button>
-        <button class="btn-ghost btn-xs" @click="add('tts')">
-          <AddIcon class="icon-sm" /> TTS endpoint
+        <button v-for="k in ENDPOINT_KINDS" :key="k" class="btn-ghost btn-xs" @click="add(k)">
+          <AddIcon class="icon-sm" /> {{ KIND_SHORT[k] }} endpoint
         </button>
         <button
           class="btn-ghost btn-xs"
@@ -371,7 +382,7 @@ function pickBucket(b: MetricBucket | null) {
         </div>
         <!-- the default prompt: every scripting endpoint's, so it sits above them, not among them -->
         <button
-          v-if="ui.kind !== 'tts'"
+          v-if="ui.kind === 'all' || ui.kind === 'scripting'"
           type="button"
           class="flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
           :class="
@@ -418,13 +429,16 @@ function pickBucket(b: MetricBucket | null) {
             class="rounded-lg border border-dashed border-zinc-300 px-3 py-6 text-center text-xs text-zinc-500 dark:border-zinc-700"
           >
             No endpoint matches “{{ ui.search }}”{{
-              ui.kind === "all" ? "" : " in " + (ui.kind === "tts" ? "TTS" : "Scripting")
+              ui.kind === "all" ? "" : " in " + KIND_SHORT[ui.kind]
             }}.
           </p>
         </div>
         <p class="text-[11px] text-zinc-500">
-          {{ all.filter((u) => u.kind === "scripting").length }} scripting ·
-          {{ all.filter((u) => u.kind === "tts").length }} speech
+          {{
+            ENDPOINT_KINDS.map(
+              (k) => `${all.filter((u) => u.kind === k).length} ${KIND_LABEL[k].toLowerCase()}`,
+            ).join(" · ")
+          }}
         </p>
       </aside>
 
@@ -651,6 +665,9 @@ function pickBucket(b: MetricBucket | null) {
               Add a scripting endpoint
             </button>
             <button class="btn-ghost btn-xs" @click="add('tts')">Add a TTS endpoint</button>
+            <button class="btn-ghost btn-xs" @click="add('transcription')">
+              Add a speech-to-text endpoint
+            </button>
           </div>
         </div>
       </section>

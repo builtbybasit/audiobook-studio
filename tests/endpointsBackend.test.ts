@@ -1,7 +1,7 @@
 // The endpoints store with a server answering.
 //
-// The configuration — speech endpoints, scripting profiles, the credential registry — is the
-// server's, and the page edits it by binding fields straight onto the objects. So what these guard
+// The configuration — speech endpoints, scripting profiles, transcribers, the credential registry —
+// is the server's, and the page edits it by binding fields straight onto the objects. So what these guard
 // is the write-behind: that the store reads the server's configuration and holds it, that a server
 // nobody has configured is left with none rather than given the seeded one, that an edit
 // becomes one whole-document write a moment later with the browser's telemetry left out, that the
@@ -62,7 +62,7 @@ class FakeService implements EndpointSettingsService {
   probe: EndpointProbe | ApiError = { ok: true, message: "tts-1 answered", ms: 840 };
 
   answer(): EndpointSettings {
-    const held = this.held ?? { endpoints: [], profiles: [], credentials: [] };
+    const held = this.held ?? { endpoints: [], profiles: [], transcribers: [], credentials: [] };
     return {
       // the server's shape: telemetry empty, never what the browser sent
       endpoints: clone(held.endpoints).map((e) => ({
@@ -76,6 +76,10 @@ class FakeService implements EndpointSettingsService {
       profiles: clone(held.profiles).map((p) => ({
         ...p,
         ...(this.keys.has("scripting:" + p.id) ? { hasKey: true } : {}),
+      })),
+      transcribers: clone(held.transcribers).map((t) => ({
+        ...t,
+        ...(this.keys.has("transcription:" + t.id) ? { hasKey: true } : {}),
       })),
       credentials: clone(held.credentials),
     };
@@ -104,6 +108,7 @@ class FakeService implements EndpointSettingsService {
       take("tts", e);
     }
     for (const p of stored.profiles) take("scripting", p);
+    for (const t of stored.transcribers) take("transcription", t);
     this.held = stored;
     return this.answer();
   }
@@ -151,6 +156,14 @@ class FakeService implements EndpointSettingsService {
   async keptSamples(): Promise<KeptVoiceSamples[]> {
     return [];
   }
+  /** each recording sent to be heard, with how many writes had gone out by then */
+  heard: { name: string; puts: number }[] = [];
+  transcript: { text: string } | ApiError = { text: "The mist thinned at dawn." };
+  async transcribe(file: File): Promise<{ text: string }> {
+    this.heard.push({ name: file.name, puts: this.puts.length });
+    if (this.transcript instanceof ApiError) throw this.transcript;
+    return this.transcript;
+  }
   /** nothing sent, so nothing seen: the live telemetry is `jobsBackend.test.ts`'s, over the real gate */
   async live(): Promise<Record<string, EndpointLive>> {
     return {};
@@ -178,6 +191,7 @@ const keysSent = (body: EndpointConfig) =>
   [
     ...body.endpoints.map((e) => ["tts:" + e.id, e.apiKey] as const),
     ...body.profiles.map((p) => ["scripting:" + p.id, p.apiKey] as const),
+    ...body.transcribers.map((t) => ["transcription:" + t.id, t.apiKey] as const),
   ].filter(([, k]) => k !== undefined);
 
 const server = (): EndpointConfig => ({
@@ -201,6 +215,7 @@ const server = (): EndpointConfig => ({
     } as Omit<Endpoint, "history" | "failures" | "rateLimits" | "backoffUntil">,
   ],
   profiles: [],
+  transcribers: [],
   credentials: [{ id: "srv-cred", label: "Server key", note: "" }],
 });
 
@@ -812,5 +827,133 @@ describe("cloning a voice with a server answering", () => {
     await drain();
     expect(svc.forgot).toEqual([]);
     expect(back).toEqual([keptOf("v1")]);
+  });
+});
+
+describe("transcription endpoints with a server answering", () => {
+  const recording = () => new File([new Uint8Array(8)], "take.wav", { type: "audio/wav" });
+
+  test("are held from the server, always sent, and a new one goes out with the rest", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    expect(endpointsStore.transcribers).toEqual([]);
+    endpointsStore.endpoints[0].concurrency = 6;
+    await settle();
+    // sent even with none, so the server holds what the page shows rather than keeping its own
+    expect(svc.puts[0].transcribers).toEqual([]);
+
+    const t = endpointsStore.addTranscriber("fermion-phonon");
+    expect(t).toMatchObject({
+      baseUrl: "http://127.0.0.1:8001/v1",
+      model: "phonon-2",
+      needsKey: false,
+      perMinute: 0,
+    });
+    // its operational settings and pricing are filled in like any other kind's
+    expect(t.timeoutSec).toBeNumber();
+    expect(t.pricing?.windows).toEqual([]);
+    await settle();
+    expect(svc.puts.at(-1)!.transcribers.map((x) => x.id)).toEqual([t.id]);
+    expect(endpointsStore.canTranscribe).toBe(false);
+    t.enabled = true;
+    expect(endpointsStore.canTranscribe).toBe(true);
+    await settle();
+    // the answer keeps the object the page is editing
+    expect(endpointsStore.transcribers[0]).toBe(t);
+    expect(svc.held!.transcribers[0].enabled).toBe(true);
+  });
+
+  test("a key goes out once on its own entry, and only hasKey comes back", async () => {
+    svc.held = { ...server(), transcribers: [] };
+    await endpointsStore.load();
+    const t = endpointsStore.addTranscriber("openai-whisper");
+    // a transcriber may share an id with an endpoint of another kind: the key is still its own
+    t.id = "srv-tts";
+    expect(await endpointsStore.saveKey("transcription", "srv-tts", "sk-heard")).toBe(true);
+    expect(keysSent(svc.puts.at(-1)!)).toEqual([["transcription:srv-tts", "sk-heard"]]);
+    expect(svc.keys.has("tts:srv-tts")).toBe(false);
+    expect(t.hasKey).toBe(true);
+    expect(endpointsStore.endpoints[0].hasKey).toBeUndefined();
+    expect(JSON.stringify(endpointsStore.$state)).not.toContain("sk-heard");
+    await settle();
+    t.concurrency = 3;
+    await settle();
+    expect(keysSent(svc.puts.at(-1)!)).toEqual([]);
+    expect(svc.keys.get("transcription:srv-tts")).toBe("sk-heard");
+
+    await endpointsStore.saveKey("transcription", "srv-tts", "");
+    expect(svc.keys.has("transcription:srv-tts")).toBe(false);
+    expect(t).not.toHaveProperty("hasKey");
+  });
+
+  test("a settings file carries them without a key, and an older file leaves them be", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const t = endpointsStore.addTranscriber("openai-whisper");
+    await endpointsStore.saveKey("transcription", t.id, "sk-heard");
+    const file = endpointsStore.exportSettings();
+    expect(file.transcribers).toHaveLength(1);
+    expect(file.transcribers![0]).not.toHaveProperty("hasKey");
+    expect(JSON.stringify(file)).not.toContain("sk-heard");
+
+    // a file from before transcription endpoints says nothing of them
+    const { transcribers: _gone, ...older } = file;
+    endpointsStore.importSettings(older);
+    expect(endpointsStore.transcribers).toHaveLength(1);
+
+    endpointsStore.importSettings({
+      ...file,
+      transcribers: [{ ...file.transcribers![0], name: "Renamed", apiKey: "sk-in-a-file" }],
+    });
+    await settle();
+    expect(endpointsStore.transcribers[0]).toBe(t);
+    expect(t.name).toBe("Renamed");
+    expect(keysSent(svc.puts.at(-1)!)).toEqual([]);
+    expect(svc.keys.get("transcription:" + t.id)).toBe("sk-heard");
+    expect(() =>
+      endpointsStore.importSettings({ ...file, transcribers: [{ ...t, baseUrl: "nowhere" }] }),
+    ).toThrow("Invalid speech-to-text endpoint");
+  });
+
+  test("transcribing sends what is waiting, then answers what was heard", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    endpointsStore.addTranscriber("simulated").enabled = true;
+    await drain();
+    expect(await endpointsStore.transcribe(recording())).toBe("The mist thinned at dawn.");
+    // the transcriber just switched on was saved before the recording went
+    expect(svc.heard).toEqual([{ name: "take.wav", puts: 1 }]);
+  });
+
+  test("a refused transcription is said, and answers nothing", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    svc.transcript = new ApiError(
+      "No transcription endpoint is switched on. Add one on the Endpoints page.",
+      400,
+    );
+    expect(await endpointsStore.transcribe(recording())).toBeNull();
+    expect(toasts).toEqual([
+      {
+        msg: "No transcription endpoint is switched on. Add one on the Endpoints page.",
+        kind: "error",
+      },
+    ]);
+  });
+
+  test("the HTTP service posts the recording, and the id when given, to /endpoints/transcribe", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const http = new HttpEndpointSettingsService("/api", async (url, init) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ text: "Heard." }));
+    });
+    expect(await http.transcribe(recording(), "phonon")).toEqual({ text: "Heard." });
+    expect(calls[0].url).toBe("/api/endpoints/transcribe");
+    expect(calls[0].init?.method).toBe("POST");
+    const form = calls[0].init!.body as FormData;
+    expect((form.get("file") as File).name).toBe("take.wav");
+    expect(form.get("id")).toBe("phonon");
+    await http.transcribe(recording());
+    expect((calls[1].init!.body as FormData).has("id")).toBe(false);
   });
 });

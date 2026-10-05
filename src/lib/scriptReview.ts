@@ -24,6 +24,7 @@ export const FLAG_LABEL: Record<FlagKind, string> = {
   delivery: "bad delivery",
   pause: "awkward pause",
   other: "something else",
+  heard: "heard saying something else",
 };
 /** One flag as a sentence: "bad delivery — flat, the line should land as a threat". */
 export const flagText = (f: SegmentFlag): string =>

@@ -4,7 +4,7 @@ import type { ExportSettings } from "@/types/export";
 import type { NarrationScope } from "@/types/run";
 import type { Profile, ResolvedPrompt } from "@/types/scripting";
 
-export type JobKind = "scripting" | "narration" | "export";
+export type JobKind = "scripting" | "narration" | "export" | "check";
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
 export interface JobEvent {
@@ -122,6 +122,19 @@ export interface Job {
     /** chapters carried over from the previous version */
     reuse: number;
     done: number;
+  };
+  /** Live detail of a check by ear: one chapter's current clips heard by a transcription endpoint. */
+  checkRun?: {
+    /** the transcription endpoint's id, as the run was queued with */
+    endpoint: string;
+    /** lines with a clip to hear */
+    lines: number;
+    /** heard so far, this run */
+    checked: number;
+    /** of those, heard saying something other than their line */
+    mismatched: number;
+    /** requests that failed; the lines stay unchecked */
+    failed: number;
   };
 }
 

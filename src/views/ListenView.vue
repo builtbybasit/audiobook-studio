@@ -1,0 +1,241 @@
+<script setup lang="ts">
+import { useCastStore } from "@/stores/cast";
+import { useLibraryStore } from "@/stores/library";
+
+// Listen: a chapter read along with its audio. The line under the playhead is lit, and on a line a
+// check by ear has heard, so is the word being said — from the times the transcriber put on its
+// words, never from an estimate. Only the chapter's own spoken text is on the page: no cast notes,
+// nothing from later chapters.
+//
+// It plays the same chapter queue the reader and the ledger do (`useChapterQueue`), so a chapter
+// started on one of those keeps playing here, and the mini player takes you back to this page.
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { useDocumentVisibility } from "@vueuse/core";
+import { Pause as PauseIcon, Play as PlayIcon } from "@lucide/vue";
+import ReaderSettings from "@/components/ReaderSettings.vue";
+import ListenLine from "@/views/listen/ListenLine.vue";
+import { UiCombobox, UiHint } from "@/ui";
+import { useBookId } from "@/composables/useBookId";
+import { useOpenedChapter } from "@/composables/useOpenedChapter";
+import { usePlayer } from "@/composables/usePlayer";
+import { chapterQueue, chapterQueueId, segmentStart } from "@/composables/useChapterQueue";
+import { useCast, useChapterScript } from "@/queries";
+import { useChapterHeard } from "@/queries/chapterHeard";
+import { useReader } from "@/stores/reader";
+import { isNarrated, isScripted } from "@/lib/scriptReview";
+import { heardLines, isSpoken } from "@/lib/siteText";
+import { markAt, marksFor, type WordMark } from "@/lib/listen";
+import type { Segment } from "@/types";
+
+const castStore = useCastStore();
+const libraryStore = useLibraryStore();
+const reader = useReader();
+const route = useRoute();
+const router = useRouter();
+const bookId = useBookId();
+useCast(bookId);
+const { opened, open } = useOpenedChapter(
+  bookId,
+  (chapters) => chapters.find(isNarrated)?.id ?? chapters.find(isScripted)?.id,
+);
+const { segments, loaded, status, refetch } = useChapterScript(bookId, opened);
+// The word marks. Until the server answers — or when it cannot, or the chapter was never checked —
+// there are none, and every line lights up whole: no error is worth showing for that.
+const { lines: heard } = useChapterHeard(bookId, opened);
+
+const book = computed(() => libraryStore.bookById(bookId));
+const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
+const chapterOptions = computed(() =>
+  libraryStore.chaptersOf(bookId).map((c) => ({
+    value: c.id,
+    label: `${String(c.id).padStart(2, "0")} · ${c.title}`,
+    hint: isNarrated(c) ? "" : "no audio",
+  })),
+);
+/** what is read aloud; site text is not, and is not shown */
+const rows = computed(() => segments.value.filter((s) => isSpoken(s, book.value)));
+const narrated = computed(() => heardLines(segments.value, book.value).length);
+const marks = computed(() => {
+  const out = new Map<number, WordMark[]>();
+  for (const s of rows.value) {
+    const m = marksFor(s, heard.value[s.id]);
+    if (m) out.set(s.id, m);
+  }
+  return out;
+});
+const colorOf = (name: string): string =>
+  castStore.charactersOf(bookId).find((c) => c.name === name)?.color ?? "#71717a";
+
+// ---- the player ----
+const { p, playQueue, seekTo, layout, now } = usePlayer();
+const queueId = computed(() => chapterQueueId(bookId, opened.value));
+const isThis = computed(() => p.id === queueId.value);
+/** the line under the playhead, while this chapter is the one loaded */
+const current = computed(() =>
+  isThis.value && p.clipId?.startsWith("seg") ? Number(p.clipId.slice(3)) : null,
+);
+const buildQueue = () =>
+  chapterQueue(bookId, opened.value, {
+    href: (id) => `/book/${bookId}/listen?ch=${id}`,
+    // the page follows playback into the next chapter, as the ledger does
+    onChapter: (id) => void router.replace({ query: { ...route.query, ch: String(id) } }),
+  });
+function playChapter() {
+  const q = buildQueue();
+  if (q) playQueue(q);
+}
+/** Listen from `offset` seconds into a line: moved to while this chapter plays, else started there. */
+function listenFrom(s: Segment, offset: number) {
+  const at = segmentStart(bookId, opened.value, s.id);
+  if (at == null) return;
+  if (isThis.value && p.playing) return seekTo(at + offset);
+  const q = buildQueue();
+  if (q) playQueue(q, at + offset);
+}
+
+// ---- the word being said ----
+// One index, set from an animation frame while a line with marks plays: the tick moves the
+// playhead ten times a second, and a word is often shorter than that. It only changes when the word
+// does, so a frame that lands on the same word renders nothing.
+const word = ref(-1);
+let lineMarks: WordMark[] | null = null;
+let lineStart = 0;
+const update = () => {
+  word.value = lineMarks ? markAt(lineMarks, now() - lineStart) : -1;
+};
+watch(
+  [current, marks],
+  ([id]) => {
+    lineMarks = id == null ? null : (marks.value.get(id) ?? null);
+    lineStart = layout().find((e) => e.clip.id === p.clipId)?.start ?? 0;
+    update();
+  },
+  { immediate: true },
+);
+const visible = useDocumentVisibility();
+/** the frame loop runs only while it has something to follow, and someone to show it to */
+const following = computed(
+  () =>
+    p.playing &&
+    current.value != null &&
+    marks.value.has(current.value) &&
+    visible.value === "visible",
+);
+let raf = 0;
+function frame() {
+  update();
+  raf = requestAnimationFrame(frame);
+}
+watch(
+  following,
+  (on) => {
+    cancelAnimationFrame(raf);
+    if (on) raf = requestAnimationFrame(frame);
+  },
+  { immediate: true },
+);
+// paused, a click still moves the playhead, and the word with it
+watch(
+  () => p.pos,
+  () => {
+    if (!following.value) update();
+  },
+);
+onBeforeUnmount(() => cancelAnimationFrame(raf));
+
+// Reading along: the page keeps the line being read in view, but only while it plays and only when
+// the line changes, so scrolling back to re-read something is never fought over.
+const scrollTo = (id: number | null) =>
+  id != null &&
+  document.getElementById(`seg-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+watch(current, (id) => p.playing && scrollTo(id));
+// …and arriving on a chapter that is already playing finds its place once the script is in
+watch(loaded, (v) => v && p.playing && scrollTo(current.value), { flush: "post", immediate: true });
+</script>
+
+<template>
+  <div class="p-4">
+    <div class="card mx-auto max-w-5xl">
+      <header
+        class="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-t-xl border-b border-zinc-200 bg-white/95 px-4 py-2.5 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/95"
+      >
+        <button
+          class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-violet-600 text-white disabled:opacity-40"
+          :disabled="!narrated"
+          :aria-label="isThis && p.playing ? 'Pause' : 'Play this chapter'"
+          :title="isThis && p.playing ? 'pause (space)' : 'play this chapter'"
+          @click="playChapter"
+        >
+          <component :is="isThis && p.playing ? PauseIcon : PlayIcon" class="icon icon-fill" />
+        </button>
+        <UiCombobox
+          :model-value="opened"
+          :options="chapterOptions"
+          placeholder="Chapter…"
+          @update:model-value="(id) => id != null && open(Number(id))"
+        />
+        <span class="ml-auto flex items-center gap-2">
+          <UiHint
+            label="the highlighting"
+            text="The line being read is lit. On a line a check by ear has heard, so is each word as it is said; a line not checked, or edited since, lights up whole."
+          />
+          <ReaderSettings />
+        </span>
+      </header>
+
+      <div class="px-4 py-6 sm:px-8">
+        <div
+          class="mx-auto"
+          :class="[reader.widthClass, reader.fontClass]"
+          :style="{ fontSize: reader.size + 'px', lineHeight: reader.lineHeight }"
+        >
+          <h2 v-if="chapter" class="mb-5 font-serif text-2xl">{{ chapter.title }}</h2>
+          <p
+            v-if="chapter && !isScripted(chapter)"
+            class="py-10 text-center font-sans text-sm text-zinc-500"
+          >
+            No script for this chapter yet.
+          </p>
+          <p
+            v-else-if="status === 'error'"
+            class="py-10 text-center font-sans text-sm text-zinc-500"
+            role="status"
+          >
+            The script could not be read.
+            <button class="text-violet-600 hover:underline dark:text-violet-400" @click="refetch()">
+              Try again
+            </button>
+          </p>
+          <p
+            v-else-if="!loaded"
+            class="py-10 text-center font-sans text-sm text-zinc-500"
+            role="status"
+          >
+            Reading the script…
+          </p>
+          <p v-else-if="!narrated" class="py-10 text-center font-sans text-sm text-zinc-500">
+            No narrated lines yet.
+            <RouterLink
+              :to="{ path: `/book/${bookId}/narration`, query: { ch: opened } }"
+              class="text-violet-600 hover:underline dark:text-violet-400"
+              >Narrate this chapter</RouterLink
+            >
+          </p>
+          <template v-else>
+            <ListenLine
+              v-for="s in rows"
+              :key="s.id"
+              :segment="s"
+              :marks="marks.get(s.id) ?? null"
+              :on="current === s.id"
+              :word="current === s.id ? word : -1"
+              :color="colorOf(s.speaker)"
+              @seek="(at) => listenFrom(s, at)"
+            />
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

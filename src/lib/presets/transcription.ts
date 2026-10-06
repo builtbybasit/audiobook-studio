@@ -30,13 +30,13 @@ export const TRANSCRIPTION_PRESETS: TranscriptionPreset[] = [
     id: "fermion-phonon",
     group: "On your machine",
     label: "Fermion Phonon (local)",
-    hint: "phonon-2 on :8001, English only",
+    hint: "phonon-2 on :8010, English only",
     note:
-      "Started with `fermion serve phonon-2 --port 8001`; port 8000 is OmniVoice's. Phonon " +
+      "Started with `fermion serve phonon-2 --port 8010`; port 8000 is OmniVoice's. Phonon " +
       "hears English only. Nothing is billed.",
     apply: {
       name: "Fermion Phonon (local)",
-      baseUrl: "http://127.0.0.1:8001/v1",
+      baseUrl: "http://127.0.0.1:8010/v1",
       model: "phonon-2",
       needsKey: false,
       perMinute: 0,
@@ -53,7 +53,7 @@ export const TRANSCRIPTION_PRESETS: TranscriptionPreset[] = [
     note: "Fill in the server's address and the model it serves. Nothing is billed.",
     apply: {
       name: "Speech to text (local)",
-      baseUrl: "http://127.0.0.1:8001/v1",
+      baseUrl: "http://127.0.0.1:8010/v1",
       model: "",
       needsKey: false,
       perMinute: 0,

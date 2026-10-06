@@ -425,7 +425,7 @@ without their times. `prompt` carries names the audio is likely to hold: Whisper
 context, Phonon as words to favour.
 
 **Fermion Phonon, locally.** `pip install fermion-research`, then `fermion serve phonon-2 --port
-8001` (its default, 8000, is the OmniVoice server's), and the **Fermion Phonon (local)** preset.
+8010` (its default, 8000, is the OmniVoice server's), and the **Fermion Phonon (local)** preset.
 English only, free, and far faster than real time. `/v1/models` lists it by its full name; the
 Test button says so and the requests still go through, since the server takes `phonon-2` as an
 alias.

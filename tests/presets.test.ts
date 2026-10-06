@@ -291,16 +291,16 @@ describe("speech-to-text presets", () => {
     expect(new Set(runs).size).toBe(runs.length);
   });
 
-  test("Phonon is the local server on :8001, beside OmniVoice's :8000; Whisper is OpenAI's", () => {
+  test("Phonon is the local server on :8010, beside OmniVoice's :8000; Whisper is OpenAI's", () => {
     expect(transcriptionPresetById("fermion-phonon")!.apply).toMatchObject({
-      baseUrl: "http://127.0.0.1:8001/v1",
+      baseUrl: "http://127.0.0.1:8010/v1",
       model: "phonon-2",
       needsKey: false,
       perMinute: 0,
       concurrency: 2,
     });
     expect(transcriptionPresetById("fermion-phonon")!.note).toContain(
-      "fermion serve phonon-2 --port 8001",
+      "fermion serve phonon-2 --port 8010",
     );
     expect(transcriptionPresetById("openai-whisper")!.apply).toMatchObject({
       baseUrl: "https://api.openai.com/v1",

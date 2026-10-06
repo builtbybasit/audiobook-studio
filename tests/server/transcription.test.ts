@@ -20,7 +20,7 @@ import { jsonBody, testApi, type TestApi } from "../support/server";
 const target = (over: Partial<ProviderTarget> = {}): ProviderTarget => ({
   id: "phonon",
   name: "Phonon",
-  baseUrl: "http://127.0.0.1:8001/v1",
+  baseUrl: "http://127.0.0.1:8010/v1",
   model: "phonon-2",
   apiKey: null,
   needsKey: false,
@@ -33,7 +33,7 @@ const target = (over: Partial<ProviderTarget> = {}): ProviderTarget => ({
 const transcriber = (over: Partial<Transcriber> = {}): Transcriber => ({
   id: "phonon",
   name: "Phonon",
-  baseUrl: "http://127.0.0.1:8001/v1",
+  baseUrl: "http://127.0.0.1:8010/v1",
   model: "phonon-2",
   enabled: true,
   concurrency: 2,
@@ -79,7 +79,7 @@ describe("the transcription wire", () => {
     const f = answering(() => Response.json({ text: "We are short again." }));
     const heard = await f.provider.transcribe(input(), target());
     expect(heard).toEqual({ text: "We are short again." });
-    expect(f.sent[0].url).toBe("http://127.0.0.1:8001/v1/audio/transcriptions");
+    expect(f.sent[0].url).toBe("http://127.0.0.1:8010/v1/audio/transcriptions");
     const form = f.sent[0].init.body as FormData;
     expect([...form.keys()].sort()).toEqual(["file", "language", "model", "response_format"]);
     expect(form.get("response_format")).toBe("json");
@@ -206,7 +206,7 @@ describe("the transcription wire", () => {
     const yes = await listed.provider.probe(target(), new AbortController().signal);
     expect(yes.ok).toBe(true);
     expect(yes.message).toContain("lists “phonon-2”");
-    expect(listed.sent[0].url).toBe("http://127.0.0.1:8001/v1/models");
+    expect(listed.sent[0].url).toBe("http://127.0.0.1:8010/v1/models");
 
     const aliased = answering(() => Response.json({ data: [{ id: "FermionResearch/phonon-2" }] }));
     const alias = await aliased.provider.probe(target(), new AbortController().signal);

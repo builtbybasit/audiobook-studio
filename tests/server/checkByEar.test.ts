@@ -32,7 +32,7 @@ import { jsonBody, narrateChapters, testApi, type TestApi } from "../support/ser
 const transcriber = (over: Partial<Transcriber> = {}): Transcriber => ({
   id: "phonon",
   name: "Phonon",
-  baseUrl: "http://127.0.0.1:8001/v1",
+  baseUrl: "http://127.0.0.1:8010/v1",
   model: "phonon-2",
   enabled: true,
   concurrency: 2,

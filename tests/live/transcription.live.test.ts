@@ -1,6 +1,6 @@
 // The transcription wire against a real server, opt-in: `LIVE=1 bun test tests/live` with
-// `TRANSCRIPTION_URL` in `.env` — Fermion's Phonon is `http://127.0.0.1:8001/v1` after
-// `fermion serve phonon-2 --port 8001` — and `TRANSCRIPTION_MODEL` (default `phonon-2`),
+// `TRANSCRIPTION_URL` in `.env` — Fermion's Phonon is `http://127.0.0.1:8010/v1` after
+// `fermion serve phonon-2 --port 8010` — and `TRANSCRIPTION_MODEL` (default `phonon-2`),
 // `TRANSCRIPTION_TOKEN` for a server that wants a key. The sentence is spoken by macOS `say`, so
 // on another machine set `LIVE_SPEECH_WAV` to a WAV of someone saying it.
 import { mkdtempSync } from "node:fs";

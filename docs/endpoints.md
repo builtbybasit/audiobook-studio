@@ -414,7 +414,9 @@ What uses it:
   tried once.
 - **Checking by ear.** A `check` job sends each narrated line's clip to the first one switched on,
   with the cast's names as hints, and flags a line whose clip says something else
-  ([audio](audio.md#checking-by-ear)); priced against the book, by the minute of audio.
+  ([audio](audio.md#checking-by-ear)); priced against the book, by the minute of audio. A server
+  that drops the connection for a request with hints and answers it without them (Fermion 0.2.9,
+  whose hotwords fail to load) is sent none from then on, until the app restarts.
 
 **Word times.** Asked for `verbose_json` with `timestamp_granularities[]=word`, a server says when
 each word starts and ends. `whisper-1`, Fermion's Phonon and faster-whisper servers do;

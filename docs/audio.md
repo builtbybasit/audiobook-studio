@@ -33,7 +33,8 @@ line, word by word, without anyone listening.
 
 - **What runs.** A `check` job per chapter (`POST /api/books/:id/chapters/check`,
   [server/jobs/check.ts](../server/jobs/check.ts)) on the first transcription endpoint switched on,
-  up to its concurrency at once, with the cast's names sent as hints. It hears every spoken line's
+  up to its concurrency at once, with the cast's names sent as hints — left out, and said in the
+  job's log, for a server that gives no answer to a request that has them. It hears every spoken line's
   clip in the book that has not been heard as the line now reads, so a second check of an unchanged
   chapter does nothing, and a line edited or rendered again since is heard again. With none
   switched on, the request is refused. Each request is priced against the book by the minute of
@@ -41,13 +42,17 @@ line, word by word, without anyone listening.
 - **When.** When asked, and after every narration of a chapter whose book has **Check by ear**
   on (`Book.checkByEar`); a check that cannot be queued then — the budget, a check already queued —
   is said in the narration's log and never fails it.
-- **What is flagged.** The words are compared as the scripting check compares them (`wordsOf`), in
-  order ([src/lib/heard.ts](../src/lib/heard.ts)). Words missing plus words added, over the line's
-  words, is the score; a line is a mismatch past 0.2 with at least two words wrong, so one
-  stuttered or dropped word alone passes. A mismatch flags the line `heard`, quoting what was
-  heard; a later check that hears it right takes that flag down. A flag a person set is never
-  replaced or taken down, and a check never touches a clip. A number heard spelt out ("42" against
-  "forty-two") and a word the dictionary respells still count as misses.
+- **What is flagged.** The line and what was heard are compared in their spoken form
+  ([src/lib/heard.ts](../src/lib/heard.ts)): numbers as their words ("42" and "forty-two", "IV"
+  and "four", "2nd" and "second" alike), Mr/Mrs/Dr in full, and case, punctuation, apostrophes and
+  a doubled letter left out ("Umm" and "Um" alike). The score is the share of the line's letters
+  heard wrong, each stretch that differs costing its longer side — "gray" heard "grey" is one
+  letter, "TV" heard "T V" none, a word read out letter by letter many. A line is a mismatch past
+  0.15 with at least four letters wrong, so a dropped "the" in a long line, or an "Ah" heard "Uh",
+  passes. A mismatch flags the line `heard`, quoting what was heard; a later check that hears it
+  right takes that flag down. A flag a person set is never replaced or taken down, and a check
+  never touches a clip. A word the dictionary respells, and a year heard as words ("nineteen
+  ninety" against "1990"), still differ.
 - **What is stored.** What was heard, kept by the clip's file in `heard`
   ([backend](backend.md#what-was-heard-is-kept-by-file)), and served for the chapter's clips in the
   book (`GET …/chapters/:n/heard`): the line as checked, what was heard, the score, and the offsets

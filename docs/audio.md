@@ -58,6 +58,28 @@ line, word by word, without anyone listening.
 [tests/heard.test.ts](../tests/heard.test.ts) covers the comparison and
 [tests/server/checkByEar.test.ts](../tests/server/checkByEar.test.ts) the job.
 
+## The thought effect
+
+A character's thoughts are narrated in the same voice as what they say aloud, so a `thought` line
+is given a sound of its own as its clip lands: a little rumble and air taken off, the presence
+softened, gentle 2:1 compression and a short room around it
+([server/audio/thoughtEffect.ts](../server/audio/thoughtEffect.ts)).
+
+- **On by default**, per book: **Thought effect** on the book page's Reading card
+  (`Book.plainThoughts` switches it off).
+- **Kept in the file.** It is put on once, as the clip arrives, so the player, the Listen page, a
+  check by ear and a build all hear the same clip. A clip that has it says so
+  (`SegmentAudio.effect: "thought"`) and is always a WAV at the rate the voice came back at. Lines
+  narrated before the switch changed keep the sound they were made with; a retake makes them again.
+- **Never in the way.** The endpoint's slot is given back as soon as a line's audio is in, so the
+  effect runs while the next line is already out, and generation is no slower. One that fails keeps
+  the clip the voice made and says so in the run's log; the line never fails over it.
+- **Needs ffmpeg** (`FFMPEG_BIN`), found at boot whatever the export encoder is. Without one the
+  boot log says so and thoughts are narrated plain. ffmpeg has no Freeverb, so the room is three
+  quiet early reflections (`aecho`).
+
+[tests/server/thoughtEffect.test.ts](../tests/server/thoughtEffect.test.ts) covers it.
+
 ## Pronunciation and pacing
 
 Both change how the book _sounds_ without changing a word of it, and both sit beside the voices they affect: Narration → **Pronunciation** ([LexiconPanel.vue](../src/views/narration/LexiconPanel.vue)).

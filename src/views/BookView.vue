@@ -547,6 +547,24 @@ const next = computed(() =>
             }}
             Site text is never read.
           </p>
+          <div class="mt-3 flex items-center gap-1.5">
+            <UiSwitch
+              :model-value="!book.plainThoughts"
+              label="Thought effect"
+              @update:model-value="(on: boolean) => libraryStore.setThoughtEffect(bookId, on)"
+            />
+            <UiHint
+              label="the thought effect"
+              text="A soft, close, slightly roomy sound that sets a character's thoughts apart from what is said aloud. It is put on each thought line as its clip arrives, so lines narrated before a change keep the sound they were made with — retake them to change it. Needs ffmpeg on the server."
+            />
+          </div>
+          <p class="mt-1.5 text-[11px] leading-relaxed">
+            {{
+              book.plainThoughts
+                ? "Thought lines are left as the voice made them."
+                : "Thought lines get a soft, inner-voice sound as they narrate."
+            }}
+          </p>
         </div>
         <!-- hearing the narration back: after each chapter narrates, or now for what is narrated -->
         <div class="card p-4 text-xs text-zinc-500">

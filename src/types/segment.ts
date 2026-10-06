@@ -15,6 +15,9 @@ import type { ExpressionAnnotation } from "@/types/expression";
  */
 export type SegmentType = "dialogue" | "narration" | "thought" | "watermark" | "note";
 
+/** A sound a clip was given as it landed; the only one is a thought line's. */
+export type ClipEffect = "thought";
+
 /**
  * A second opinion on whether a line is site text, from the detector beside the model rather than
  * the model itself: a line typed as story that looks like site text, or one marked as site text that
@@ -81,6 +84,8 @@ export interface Take {
   expressions?: string[];
   /** the rate the file actually came back at, in Hz, read from the file rather than the request */
   sampleRate?: number;
+  /** a sound put on the clip as it landed: `thought` for a thought line's (`Book.plainThoughts`) */
+  effect?: ClipEffect;
   /** the user listened to it and chose the other take */
   rejected?: boolean;
   /** where the rendered audio can be fetched; absent in the prototype, which has no files */
@@ -135,6 +140,8 @@ export interface SegmentAudio {
   expressions?: string[];
   /** the rate the file actually came back at, in Hz, read from the file rather than the request */
   sampleRate?: number;
+  /** a sound put on the clip as it landed: `thought` for a thought line's (`Book.plainThoughts`) */
+  effect?: ClipEffect;
 
   // retakes
   /** take number of this clip; absent until the segment has been retaken at least once */

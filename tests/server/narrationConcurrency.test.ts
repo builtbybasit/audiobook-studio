@@ -109,7 +109,7 @@ describe("narrating at an endpoint's concurrency", () => {
     expect(api.gate.live().a).toMatchObject({ active: 0, waiting: 0 });
   });
 
-  test("at a concurrency of one, a line goes out only after the one before it has landed", async () => {
+  test("at a concurrency of one, a line goes out only after the one before it was answered", async () => {
     const count = counting();
     const api = testApi({ speech: count.provider });
     const id = await book(api, [speech("a")]);

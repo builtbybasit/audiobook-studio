@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { ThoughtEffect } from "~/audio/thoughtEffect";
 import { createApp } from "~/app";
 import { audioFiles, type AudioFiles } from "~/audio/files";
 import { connect, openDb, type Db } from "~/db/client";
@@ -92,6 +93,8 @@ export interface TestApiOptions {
   handlers?: JobHandlers;
   /** the speech gate; one of this API's own by default, shared by its runner and its routes */
   gate?: SpeechGate;
+  /** what a thought line is given as it lands; none by default, so no test runs ffmpeg unasked */
+  thoughtEffect?: ThoughtEffect;
 }
 
 /** A directory of its own for one test's clips, so no two suites can read each other's files. */
@@ -171,7 +174,12 @@ export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): R
     db,
     {
       scripting: scriptingHandler(options.scripting ?? fakeScriptingProvider()),
-      narration: narrationHandler(options.speech ?? fakeSpeechProvider(), files, options.gate),
+      narration: narrationHandler(
+        options.speech ?? fakeSpeechProvider(),
+        files,
+        options.gate,
+        options.thoughtEffect,
+      ),
       export: exportHandler(testExports(options), files),
       check: checkHandler(options.transcription ?? noTranscription, files),
       ...options.handlers,

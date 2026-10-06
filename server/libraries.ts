@@ -12,6 +12,7 @@
 import type { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 
+import type { ThoughtEffect } from "~/audio/thoughtEffect";
 import { createApp } from "~/app";
 import { demoClips } from "~/audio/demoClips";
 import { audioFiles, type AudioFiles } from "~/audio/files";
@@ -52,6 +53,11 @@ export interface LibraryOptions {
   voiceDir: string;
   /** what its builds write audiobooks with — one choice for the whole process, checked at boot */
   encoders: EncoderChoice;
+  /**
+   * What a `thought` line is given as its clip lands — ffmpeg's, when the server found one at boot.
+   * Absent = thought lines are kept as the voice made them.
+   */
+  thoughtEffect?: ThoughtEffect;
   /** the logger its own is a child of */
   log?: Logger;
   /**
@@ -136,7 +142,7 @@ export function openLibrary(options: LibraryOptions): Library {
     db,
     {
       scripting: scriptingHandler(providers.scripting),
-      narration: narrationHandler(providers.speech, files, gate),
+      narration: narrationHandler(providers.speech, files, gate, options.thoughtEffect),
       export: exportHandler(exports, files),
       check: checkHandler(providers.transcription ?? endpointTranscriber(), files),
     },

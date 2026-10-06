@@ -52,6 +52,8 @@ export const books = sqliteTable("books", {
   readNotes: integer("read_notes", { mode: "boolean" }),
   /** check each chapter by ear once it is narrated (`Book.checkByEar`); null = only when asked */
   checkByEar: integer("check_by_ear", { mode: "boolean" }),
+  /** thought lines without the thought effect (`Book.plainThoughts`); null = the effect is on */
+  plainThoughts: integer("plain_thoughts", { mode: "boolean" }),
   /** the voice a speaker with none of their own is read in (`CharacterVoice`); null = the Narrator's */
   characterVoice: text("character_voice", { mode: "json" }).$type<CharacterVoice>(),
 });

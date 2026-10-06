@@ -9,8 +9,15 @@ export interface ExpressionTag {
   kind: "sound" | "delivery";
 }
 
+/** The brackets a model's tags are written in: `(laughs)`, `[laughs]`, `<laugh>`. */
+export type TagBracket = "round" | "square" | "angle";
+
 export interface ExpressionConfig {
   status: "unknown" | "unsupported" | "supported";
+  /** what a tag may be written in; none for a model that takes no tags */
+  brackets: TagBracket[];
+  /** any words in those brackets, typed on the line, rather than only the listed tags */
+  open: boolean;
   /** Capabilities belong to this exact model and base URL, not every model at this endpoint. */
   model: string;
   baseUrl: string;

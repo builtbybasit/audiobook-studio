@@ -1,6 +1,6 @@
 // Google's Gemini API (https://ai.google.dev/gemini-api/docs/speech-generation): speech is a
 // `generateContent` call on the model, answered as JSON.
-import { ANGLE, type SpeechProviderShape } from "@/lib/providers/types";
+import type { SpeechProviderShape } from "@/lib/providers/types";
 
 /**
  * A model id as the API's path takes it. Google names its models `models/gemini-…` in its own
@@ -36,12 +36,14 @@ export const gemini: SpeechProviderShape = {
   ],
   // The 3.8 guide: "Use angle-bracket inline tags only for point-in-time vocal events" — `<laugh>`,
   // `<sigh>`, `<short pause>` — "and put delivery styles in speech_metadata.style", which is where
-  // the line's direction already goes. So a 3.8 model takes sounds inline and nothing else.
+  // the line's direction already goes. So a 3.8 model takes sounds inline and nothing else — in
+  // whatever words suit the sound, not a fixed list; the preset starts with Google's examples.
   tags: (model) =>
     isLegacyGeminiSpeech(model)
       ? null
       : {
-          forms: [ANGLE],
+          brackets: ["angle"],
+          open: true,
           kinds: ["sound"],
           example: "<laugh>",
           hint: "Gemini 3.8 takes vocal sounds and pauses in angle brackets; delivery goes in the line's direction.",

@@ -7,7 +7,7 @@
 // actually built and read is the server's business, one module per provider under
 // `server/providers/speech/`; this is the part both sides share, so it holds no state and imports
 // nothing that needs a browser or a server.
-import type { AudioFormat, ExpressionTag, SampleRate } from "@/types";
+import type { AudioFormat, ExpressionTag, SampleRate, TagBracket } from "@/types";
 
 /** Every provider there is a description of. `compatible` is anything else, taken as OpenAI's. */
 export type SpeechProviderId =
@@ -40,14 +40,15 @@ export interface FormatSupport {
 }
 
 /**
- * How a model takes expression tags written into the text it is sent: the shapes a tag may have,
- * which kinds of expression it takes inline at all, and an example the Expressions tab shows. A
- * model that takes none has no syntax (`null`), and a tag configured for it is refused rather than
- * spoken aloud as words.
+ * How a model's docs say it takes expression tags written into the text it is sent: the brackets
+ * and whether any words go in them, which the Expressions tab starts from and the person may
+ * change, the kinds of expression it takes inline at all, and an example. A model whose docs name
+ * none has no syntax (`null`), and its tab starts with no brackets.
  */
 export interface TagSyntax {
-  /** a tag must match one of these whole */
-  forms: readonly RegExp[];
+  brackets: readonly TagBracket[];
+  /** the docs say any words go in the brackets, not only a fixed set */
+  open: boolean;
   /** the kinds this model takes inline; a delivery it takes elsewhere is not one of them */
   kinds: readonly ExpressionTag["kind"][];
   /** a tag as the provider's docs spell one, e.g. `[laughs]` */
@@ -165,11 +166,15 @@ export interface CloneFee {
   said: string;
 }
 
-// ---------- tag shapes several providers share ----------
+// ---------- the brackets a tag is written in ----------
 
-/** `[laughs]`: square brackets around a word or a few, nothing nested. */
-export const SQUARE = /^\[(?=[^\]]*\S)[^\]\r\n[]{1,80}\]$/;
-/** `(laughs)`: parentheses around a word or a few. */
-export const ROUND = /^\((?=[^)]*\S)[^()\r\n]{1,80}\)$/;
-/** `<laugh>`: angle brackets around a word or a few, no attributes or slashes. */
-export const ANGLE = /^<[a-z][a-z -]{0,79}>$/i;
+/**
+ * Each bracket and the whole tag it makes: something said inside, up to 80 characters, on one line
+ * and nothing nested. `<…>` also holds the markup some providers document — `<#0.5#>`,
+ * `<break time="1s"/>` — since a tag is whatever the model's docs spell.
+ */
+export const BRACKETS: Record<TagBracket, { open: string; close: string; form: RegExp }> = {
+  round: { open: "(", close: ")", form: /^\((?=[^)]*[^\s)])[^()\r\n]{1,80}\)$/ },
+  square: { open: "[", close: "]", form: /^\[(?=[^\]]*[^\s\]])[^\]\r\n[]{1,80}\]$/ },
+  angle: { open: "<", close: ">", form: /^<(?=[^>]*[^\s>])[^<>\r\n]{1,80}>$/ },
+};

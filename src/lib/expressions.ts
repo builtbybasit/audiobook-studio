@@ -5,20 +5,54 @@ import type {
   ExpressionTag,
   LexEntry,
   Segment,
+  TagBracket,
 } from "@/types";
-import { tagSyntaxOf, type TagSyntax } from "@/lib/providers";
+import { BRACKETS, tagSyntaxOf, type TagSyntax } from "@/lib/providers";
 import { speak, unmarked } from "@/lib/speech";
 import { splitText } from "@/lib/split";
 
 export const expressionId = (label: string) =>
   label.trim().toLocaleLowerCase().replace(/\s+/g, " ");
 /**
- * Whether `token` is one whole tag in the syntax the endpoint's provider takes — square brackets
- * for one, angle brackets or parentheses for another (`lib/providers/`). Nothing is a tag for a
- * model that takes none: a bracketed word sent to it would be read out as a word.
+ * Whether `token` is one whole tag in one of `brackets`, the ones the Expressions tab is set to.
+ * Nothing is a tag for a model set to none: a bracketed word sent to it would be read out as words.
  */
-export const validToken = (token: string, syntax: TagSyntax | null) =>
-  !!syntax && syntax.forms.some((form) => form.test(token));
+export const validToken = (token: string, brackets: readonly TagBracket[]) =>
+  brackets.some((b) => BRACKETS[b].form.test(token));
+/** A tag from what was typed for it: put in the first of `brackets` unless typed in brackets. */
+export function tagToken(typed: string, brackets: readonly TagBracket[]): string {
+  const t = typed.trim();
+  if (!t || !brackets.length || /^[([<]/.test(t)) return t;
+  const { open, close } = BRACKETS[brackets[0]];
+  return `${open}${t}${close}`;
+}
+/** What a tag says, its name: `[laughing nervously]` → `laughing nervously`. */
+export const tagWords = (token: string) => token.trim().slice(1, -1).trim();
+/** A tag made from words typed for it, named by them. */
+export function typedTag(typed: string, brackets: readonly TagBracket[]): ExpressionTag {
+  const token = tagToken(typed, brackets);
+  const label = tagWords(token);
+  return { id: expressionId(label), label, token, kind: "sound" };
+}
+/** Where a model's tab starts: the brackets its provider's docs show, and whether any words go in. */
+export function expressionDefaults(e: Pick<Endpoint, "baseUrl" | "model">): ExpressionConfig {
+  const syntax = tagSyntaxOf(e);
+  return {
+    status: "unknown",
+    model: e.model,
+    baseUrl: e.baseUrl,
+    brackets: [...(syntax?.brackets ?? [])],
+    open: syntax?.open ?? false,
+    tags: [],
+  };
+}
+/** A config saved before brackets were asked for takes the ones its provider's docs show. */
+export function withBrackets(
+  c: Omit<ExpressionConfig, "brackets" | "open"> & Partial<ExpressionConfig>,
+): ExpressionConfig {
+  const d = expressionDefaults(c);
+  return { ...c, brackets: c.brackets ?? d.brackets, open: c.open ?? d.open };
+}
 const KIND_WORDS: Record<ExpressionTag["kind"], string> = {
   sound: "vocal sounds",
   delivery: "delivery instructions",
@@ -36,6 +70,9 @@ export function configErrors(c: ExpressionConfig): string[] {
   if (
     !c ||
     !["unknown", "unsupported", "supported"].includes(c.status) ||
+    !Array.isArray(c.brackets) ||
+    c.brackets.some((b) => !Object.hasOwn(BRACKETS, b)) ||
+    typeof c.open !== "boolean" ||
     !Array.isArray(c.tags) ||
     c.tags.some(
       (t) =>
@@ -48,14 +85,17 @@ export function configErrors(c: ExpressionConfig): string[] {
   )
     return ["Invalid expression configuration."];
   if (c.status !== "supported") return [];
-  // the syntax is the provider's, read from the base URL and model the config was saved for
+  if (!c.brackets.length) return ["Choose the brackets this model's tags are written in."];
+  // the kinds are the provider's, read from the base URL and model the config was saved for
   const syntax = tagSyntaxOf({ baseUrl: String(c.baseUrl ?? ""), model: String(c.model ?? "") });
-  if (!syntax)
-    return ["This model takes no expression tags. Set it to “No expression tags” instead."];
+  const example =
+    syntax && validToken(syntax.example, c.brackets)
+      ? syntax.example
+      : tagToken("laughs", c.brackets);
   const errors: string[] = [];
-  if (!c.tags.length) errors.push("Add at least one supported expression.");
-  if (c.tags.some((t) => !t.label.trim() || !t.id || !validToken(t.token, syntax)))
-    errors.push(`Each expression needs a name and one complete tag, such as ${syntax.example}.`);
+  if (!c.open && !c.tags.length) errors.push("Add at least one tag, or let any words in.");
+  if (c.tags.some((t) => !t.label.trim() || !t.id || !validToken(t.token, c.brackets)))
+    errors.push(`Write each tag whole in the chosen brackets, such as ${example}.`);
   const wrongKind = c.tags.map((t) => kindProblem(t.kind, syntax)).find(Boolean);
   if (wrongKind) errors.push(wrongKind);
   if (
@@ -64,7 +104,7 @@ export function configErrors(c: ExpressionConfig): string[] {
   )
     errors.push("Expression names must be unique.");
   if (new Set(c.tags.map((t) => t.token)).size !== c.tags.length)
-    errors.push("Use each tag syntax only once.");
+    errors.push("Use each tag only once.");
   return errors;
 }
 
@@ -107,7 +147,11 @@ export function expressionPlan(
   let last = 0;
   for (const a of annotations) {
     if (a.omitted) continue;
-    const definition = ep?.expressions?.tags.find((t) => t.id === a.id && t.kind === a.kind);
+    const config = ep?.expressions;
+    const definition = config?.tags.find((t) => t.id === a.id && t.kind === a.kind);
+    // a listed tag is sent as the list now spells it; on an open model, words typed on the line
+    // are sent as they were typed
+    const token = definition?.token ?? (config?.open ? a.token : "");
     const status = expressionSupport(ep);
     const syntax = ep ? tagSyntaxOf(ep) : null;
     let reason = a.needsReview
@@ -125,16 +169,16 @@ export function expressionPlan(
               ? "Expression support has not been confirmed for this model."
               : status === "unsupported"
                 ? "This model is configured without expression support."
-                : !syntax
-                  ? "This model takes no expression tags."
-                  : !definition || !validToken(definition.token, syntax)
-                    ? "This expression is not in this model's supported list."
-                    : kindProblem(definition.kind, syntax);
+                : !token
+                  ? "This expression is not in this model's supported list."
+                  : !validToken(token, config!.brackets)
+                    ? "This tag is not in the brackets this model takes."
+                    : kindProblem(a.kind, syntax);
     if (!reason && spoken.hits.some((h) => a.at > h.from && a.at < h.to))
       reason = "Move outside this pronunciation replacement.";
-    if (!reason && ep?.maxChars && definition!.token.length > ep.maxChars)
+    if (!reason && ep?.maxChars && token.length > ep.maxChars)
       reason = "This tag exceeds the endpoint's character limit.";
-    signature.push([a.at, a.id, a.kind, definition?.token ?? a.token, reason]);
+    signature.push([a.at, a.id, a.kind, token || a.token, reason]);
     if (reason) {
       issues.push({ annotationId: a.annotationId, label: a.label, reason });
       continue;
@@ -148,11 +192,11 @@ export function expressionPlan(
     text += voiced.text.slice(last, at);
     if (text.length && !/\s$/.test(text)) text += " ";
     const from = text.length;
-    text += definition!.token;
+    text += token;
     ranges.push({ from, to: text.length });
     if (at < voiced.text.length && !/^\s/.test(voiced.text.slice(at))) text += " ";
     last = at;
-    tags.push(definition!.token);
+    tags.push(token);
   }
   text += voiced.text.slice(last);
   return {

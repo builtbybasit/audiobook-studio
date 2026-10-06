@@ -1,9 +1,6 @@
 // ElevenLabs (https://elevenlabs.io/docs/api-reference/text-to-speech/convert): the voice in the
 // path, the model in the body, keyed by `xi-api-key`.
-import { SQUARE, type SpeechProviderShape } from "@/lib/providers/types";
-
-/** `<break time="1.5s" />`, the one tag ElevenLabs' models before v3 take. */
-const BREAK = /^<break time="\d{1,2}(\.\d{1,2})?s"\s*\/>$/;
+import type { SpeechProviderShape } from "@/lib/providers/types";
 
 /** v3 and its conversational sibling: the models that take audio tags. */
 const isV3 = (model: string): boolean => /^eleven_v3/i.test(model.trim());
@@ -44,13 +41,15 @@ export const elevenlabs: SpeechProviderShape = {
   tags: (model) =>
     isV3(model)
       ? {
-          forms: [SQUARE],
+          brackets: ["square"],
+          open: true,
           kinds: ["sound", "delivery"],
           example: "[whispers]",
           hint: "Eleven v3 takes audio tags in square brackets.",
         }
       : {
-          forms: [BREAK],
+          brackets: ["angle"],
+          open: false,
           kinds: ["sound"],
           example: '<break time="1.5s" />',
           hint: "ElevenLabs' models before v3 take only pauses, as a break tag of up to 3 seconds.",

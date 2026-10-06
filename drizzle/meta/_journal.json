@@ -176,6 +176,13 @@
       "when": 1791266901615,
       "tag": "0024_thought_effect",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1791301792518,
+      "tag": "0025_expression_brackets",
+      "breakpoints": true
     }
   ]
 }

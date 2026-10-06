@@ -6,7 +6,7 @@
 // claims — Kokoro-FastAPI, an Orpheus or Piper bridge, vLLM-Omni — taken to speak OpenAI's shape,
 // because that is what they copy. What tags such a server's model takes is its own business, so
 // the person writes them in any of the usual shapes, copied from that model's docs.
-import { ANGLE, ROUND, SQUARE, type SpeechProviderShape } from "@/lib/providers/types";
+import type { SpeechProviderShape } from "@/lib/providers/types";
 
 /**
  * `response_format` (https://platform.openai.com/docs/api-reference/audio/createSpeech): it also
@@ -48,7 +48,8 @@ export const compatible: SpeechProviderShape = {
   requestPath: () => "/audio/speech",
   formats: FORMATS,
   tags: () => ({
-    forms: [SQUARE, ANGLE, ROUND],
+    brackets: ["square", "angle", "round"],
+    open: false,
     kinds: ["sound", "delivery"],
     example: "[laughter]",
     hint: "Copy the exact syntax from your model's documentation: Orpheus takes <laugh>, others [laughter].",

@@ -372,6 +372,8 @@ export const EndpointSchema = v.object({
       status: v.picklist(["unknown", "unsupported", "supported"]),
       model: v.string(),
       baseUrl: v.string(),
+      brackets: v.array(v.picklist(["round", "square", "angle"])),
+      open: v.boolean(),
       tags: v.array(
         v.object({
           id: Id,

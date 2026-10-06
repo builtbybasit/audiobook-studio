@@ -5,6 +5,7 @@ import {
   expressionParts,
   expressionPlan,
   expressionSupport,
+  validToken,
 } from "@/lib/expressions";
 import { narrationPlan, narrationTargets, SCOPE_LABEL, segmentFailed } from "@/lib/runPlan";
 import { isSpoken } from "@/lib/siteText";
@@ -527,7 +528,11 @@ export const useNarrationStore = defineStore("narration", {
       const s = scriptsStore.segmentsOf(bookId, chId).find((s) => s.id === segId);
       if (!s) return;
       const ep = castStore.effectiveVoice(bookId, s.speaker).endpoint;
-      const definition = ep?.expressions?.tags.find((t) => t.id === tag.id);
+      const config = ep?.expressions;
+      // a listed tag, or on a model that takes any words in its brackets, the one typed
+      const definition =
+        config?.tags.find((t) => t.id === tag.id) ??
+        (config?.open && validToken(tag.token, config.brackets) ? tag : undefined);
       if (
         expressionSupport(ep) !== "supported" ||
         !definition ||

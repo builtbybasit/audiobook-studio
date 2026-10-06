@@ -17,6 +17,7 @@ import {
   expressionPlan,
   expressionParts,
   expressionSupport,
+  typedTag,
 } from "@/lib/expressions";
 import { libraryService } from "@/services/library";
 import type { Endpoint, ExpressionTag } from "@/types";
@@ -109,6 +110,8 @@ function configure() {
     status: "supported",
     model: e.model,
     baseUrl: e.baseUrl,
+    brackets: ["square"],
+    open: false,
     tags: [laugh],
   });
 }
@@ -243,12 +246,26 @@ test("invalid tag definitions cannot be saved or imported", () => {
 });
 
 test("tags are checked against the model they are saved for, not the one the draft was opened on", () => {
-  // drafted while the endpoint pointed at a server that takes brackets, saved after it was moved
-  // to OpenAI, which documents no tags: the tags would be refused on every line, so the save is
+  // drafted while the endpoint pointed at a server that takes a delivery inline, saved after it
+  // was moved to Gemini 3.8, which takes only sounds there: the tag would be refused on every
+  // line, so the save is
   const e = endpoint();
-  const draft = { status: "supported" as const, model: e.model, baseUrl: e.baseUrl, tags: [laugh] };
-  e.baseUrl = "https://api.openai.com/v1";
-  e.model = "gpt-4o-mini-tts";
+  const softly: ExpressionTag = {
+    id: "softly",
+    label: "softly",
+    token: "<softly>",
+    kind: "delivery",
+  };
+  const draft = {
+    status: "supported" as const,
+    model: e.model,
+    baseUrl: e.baseUrl,
+    brackets: ["angle" as const],
+    open: false,
+    tags: [softly],
+  };
+  e.baseUrl = "https://generativelanguage.googleapis.com/v1beta";
+  e.model = "gemini-3.8-flash-tts";
   expect(endpointsStore.saveExpressionConfig(e.id, draft)).toBe(false);
   expect(e.expressions).toBeUndefined();
 });
@@ -259,4 +276,26 @@ test("a deleted tag does not fall back to sending the old syntax", () => {
   const plan = narrationStore.expressionRender(BOOK, segment());
   expect(plan.issues).toHaveLength(1);
   expect(plan.tags).toHaveLength(0);
+});
+
+test("a model that takes any words takes a tag typed on the line, sent as it was typed", () => {
+  configure();
+  endpoint().expressions!.open = true;
+  narrationStore.addExpression(BOOK, 1, 1, typedTag("laughing nervously", ["square"]), 0);
+  const plan = narrationStore.expressionRender(BOOK, segment());
+  expect(plan.issues).toEqual([]);
+  expect(plan.text).toStartWith("[laughing nervously] J");
+});
+
+test("a fixed list takes no tag typed on the line, and a tag left on a line it was closed under asks for review", () => {
+  configure();
+  narrationStore.addExpression(BOOK, 1, 1, typedTag("laughing nervously", ["square"]), 0);
+  expect(segment().expressions).toBeUndefined();
+  endpoint().expressions!.open = true;
+  narrationStore.addExpression(BOOK, 1, 1, typedTag("laughing nervously", ["square"]), 0);
+  endpoint().expressions!.open = false;
+  const plan = narrationStore.expressionRender(BOOK, segment());
+  expect(plan.issues.map((i) => i.reason)).toEqual([
+    "This expression is not in this model's supported list.",
+  ]);
 });

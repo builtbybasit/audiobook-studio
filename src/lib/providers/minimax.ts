@@ -2,11 +2,6 @@
 // answered with JSON carrying the audio as hex.
 import type { SpeechProviderShape } from "@/lib/providers/types";
 
-/** `(laughs)`, `(clear-throat)`: the interjections its reference lists, lower case and hyphens. */
-const INTERJECTION = /^\([a-z][a-z-]{1,30}\)$/;
-/** `<#0.5#>`: a pause of 0.01 to 99.99 seconds. */
-const PAUSE = /^<#\d{1,2}(\.\d{1,2})?#>$/;
-
 const RATES = [16000, 22050, 24000, 32000, 44100] as const;
 
 export const minimax: SpeechProviderShape = {
@@ -42,13 +37,15 @@ export const minimax: SpeechProviderShape = {
   tags: (model) =>
     /^speech-2\.8-/i.test(model.trim())
       ? {
-          forms: [INTERJECTION, PAUSE],
+          brackets: ["round", "angle"],
+          open: false,
           kinds: ["sound"],
           example: "(laughs)",
           hint: "MiniMax's 2.8 models take the interjections its reference lists, such as (sighs), and pauses as <#0.5#>.",
         }
       : {
-          forms: [PAUSE],
+          brackets: ["angle"],
+          open: false,
           kinds: ["sound"],
           example: "<#0.5#>",
           hint: "MiniMax's models before 2.8 take only pauses, in seconds, as <#0.5#>.",

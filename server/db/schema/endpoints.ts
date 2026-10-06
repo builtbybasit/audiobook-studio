@@ -29,6 +29,7 @@ import type {
   RateSet,
   SampleRate,
   SplitMode,
+  TagBracket,
   TtsBillingUnit,
 } from "@/types";
 
@@ -158,6 +159,10 @@ export const endpoints = sqliteTable(
     expressionStatus: text("expression_status").$type<"unknown" | "unsupported" | "supported">(),
     expressionModel: text("expression_model"),
     expressionBaseUrl: text("expression_base_url"),
+    /** the brackets its tags are written in; null from before they were asked for */
+    expressionBrackets: text("expression_brackets", { mode: "json" }).$type<TagBracket[]>(),
+    /** any words in those brackets, not only the listed tags */
+    expressionOpen: integer("expression_open", { mode: "boolean" }),
   },
   (t) => [index("endpoints_kind").on(t.kind, t.position)],
 );

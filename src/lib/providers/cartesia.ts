@@ -2,17 +2,6 @@
 // with a `Cartesia-Version` header.
 import type { SpeechProviderShape } from "@/lib/providers/types";
 
-/**
- * Its SSML guide's self-closing tags — a pause, and the emotion, speed and volume a stretch of the
- * transcript is spoken with — and `[laughter]`, which that guide's title still names.
- */
-const SSML = [
-  /^<break time="\d+(\.\d+)?m?s"\s*\/>$/,
-  /^<emotion value="[a-z_]+"\s*\/>$/,
-  /^<(speed|volume) ratio="\d(\.\d+)?"\s*\/>$/,
-  /^\[laughter\]$/,
-];
-
 export const cartesia: SpeechProviderShape = {
   id: "cartesia",
   label: "Cartesia",
@@ -40,8 +29,11 @@ export const cartesia: SpeechProviderShape = {
       defaultBitrate: 128,
     },
   ],
+  // its SSML guide's self-closing tags — a pause, and the emotion, speed and volume a stretch of the
+  // transcript is spoken with — and `[laughter]`, which that guide's title still names
   tags: () => ({
-    forms: SSML,
+    brackets: ["angle", "square"],
+    open: false,
     kinds: ["sound", "delivery"],
     example: '<break time="1s"/>',
     hint: 'Sonic takes SSML-like tags: <break time="1s"/>, <emotion value="calm"/>, <speed ratio="0.8"/>, and [laughter].',

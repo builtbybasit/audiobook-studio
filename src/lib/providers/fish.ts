@@ -1,6 +1,6 @@
 // Fish Audio (https://docs.fish.audio): `POST /v1/tts` on the API's host, the model in a `model`
 // header and the voice as `reference_id`, so the path everyone else uses does not apply.
-import { ROUND, SQUARE, type SpeechProviderShape } from "@/lib/providers/types";
+import type { SpeechProviderShape } from "@/lib/providers/types";
 
 /**
  * The models Fish's text-to-speech reference names. It also says what happens to any other: "If
@@ -66,13 +66,15 @@ export const fish: SpeechProviderShape = {
   tags: (model) =>
     model.trim().toLowerCase() === "s1"
       ? {
-          forms: [ROUND],
+          brackets: ["round"],
+          open: false,
           kinds: ["sound", "delivery"],
           example: "(laughing)",
           hint: "Fish's S1 takes its emotions and sounds in parentheses.",
         }
       : {
-          forms: [SQUARE],
+          brackets: ["square"],
+          open: true,
           kinds: ["sound", "delivery"],
           example: "[laughing nervously]",
           hint: "Fish's S2 models take cues in square brackets, in words of your choosing.",

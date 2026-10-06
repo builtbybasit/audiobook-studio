@@ -161,6 +161,19 @@ describe("a line annotated for a model", () => {
     ]);
   });
 
+  test("prose loses only the brackets its voice reads as tags, confirmed or, until then, documented", () => {
+    const line = { text: "Archer (Common) [Level 2]" };
+    const fish = at("fish", "s2.1-pro");
+    const openai = at("openai", "gpt-4o-mini-tts");
+    const unconfirmed = (e: { baseUrl: string; model: string }) =>
+      ({ id: "ep", name: "Ep", maxChars: 0, ...e }) as Endpoint;
+    expect(expressionPlan(line, unconfirmed(fish)).text).toBe("Archer (Common) Level 2");
+    expect(expressionPlan(line, unconfirmed(openai)).text).toBe(line.text);
+    expect(expressionPlan(line, endpoint(fish, config(fish, ["round"]))).text).toBe(
+      "Archer Common [Level 2]",
+    );
+  });
+
   test("a delivery on a model that takes only sounds inline asks for review", () => {
     const whisper = tag("<whispering>", "delivery");
     const plan = expressionPlan(

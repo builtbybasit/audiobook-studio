@@ -10,7 +10,7 @@ import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-import { speak, marks, silenceOf, DEFAULT_PACING, pauseAfter } from "@/lib/speech";
+import { speak, marks, silenceOf, DEFAULT_PACING, pauseAfter, unmarked } from "@/lib/speech";
 import type { LexEntry, Segment, ToastOptions } from "@/types";
 import { demoServer } from "./support/demoServer";
 import { openDemoBook } from "./support/demoBook";
@@ -51,6 +51,36 @@ describe("the dictionary", () => {
     const out = marks("Ji Ning bowed.", [entry("Ji Ning", "Jee Ning")]);
     expect(out).toEqual([{ text: "Ji Ning", say: "Jee Ning" }, { text: " bowed." }]);
     expect(out.map((m) => m.text).join("")).toBe("Ji Ning bowed.");
+  });
+});
+
+describe("marks never said", () => {
+  // lines from a real chapter, each heard back wrong when sent with its marks
+  test.each([
+    ["[This is the last step, right?]", "This is the last step, right?"],
+    ["*Sip*", "Sip"],
+    ["'Let me die faster.'", "Let me die faster."],
+    ["‘Let me die faster.’", "Let me die faster."],
+    ["He took a *long* sip.", "He took a long sip."],
+  ])("%p is sent as %p", (text, sent) => {
+    expect(unmarked(text).text).toBe(sent);
+  });
+
+  test("an apostrophe in a word, or a quote that does not close the line, is said", () => {
+    for (const text of ["I'm... Cough! F-fine.", "'Cause I said so.", "The dogs' bowls."])
+      expect(unmarked(text).text).toBe(text);
+  });
+
+  test("a line of marks alone is kept as it is", () => {
+    expect(unmarked("***").text).toBe("***");
+    expect(unmarked("[ ]").text).toBe("[ ]");
+  });
+
+  test("an offset in the line finds the same place in what is sent", () => {
+    const u = unmarked("[Ji Ning laughed.]");
+    expect(u.text.slice(u.at(9))).toBe("laughed.");
+    expect(u.at(0)).toBe(0);
+    expect(u.at(18)).toBe(u.text.length);
   });
 });
 

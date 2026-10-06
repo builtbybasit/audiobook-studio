@@ -7,7 +7,7 @@ import type {
   Segment,
 } from "@/types";
 import { tagSyntaxOf, type TagSyntax } from "@/lib/providers";
-import { speak } from "@/lib/speech";
+import { speak, unmarked } from "@/lib/speech";
 import { splitText } from "@/lib/split";
 
 export const expressionId = (label: string) =>
@@ -83,13 +83,19 @@ export interface ExpressionPlan {
   ranges: { from: number; to: number }[];
 }
 
-/** Annotated ranges alone become controls; existing bracketed prose is never interpreted. */
+/**
+ * Annotated ranges alone become controls; existing bracketed prose is never interpreted, and its
+ * brackets are not sent (`unmarked`), so no voice can take it for a tag either.
+ */
 export function expressionPlan(
   s: Pick<Segment, "text" | "expressions">,
   ep: Endpoint | null | undefined,
   lexicon: LexEntry[] = [],
 ): ExpressionPlan {
   const spoken = speak(s.text, lexicon);
+  // the prose the voice is given: what the dictionary made of it, less the marks never said — taken
+  // out before the tags go in, which may be written in brackets themselves
+  const voiced = unmarked(spoken.text);
   const annotations = [...(s.expressions ?? [])].sort(
     (a, b) => a.at - b.at || a.annotationId - b.annotationId,
   );
@@ -133,21 +139,22 @@ export function expressionPlan(
       issues.push({ annotationId: a.annotationId, label: a.label, reason });
       continue;
     }
-    const at =
+    const at = voiced.at(
       a.at +
-      spoken.hits
-        .filter((h) => h.to <= a.at)
-        .reduce((n, h) => n + h.say.length - (h.to - h.from), 0);
-    text += spoken.text.slice(last, at);
+        spoken.hits
+          .filter((h) => h.to <= a.at)
+          .reduce((n, h) => n + h.say.length - (h.to - h.from), 0),
+    );
+    text += voiced.text.slice(last, at);
     if (text.length && !/\s$/.test(text)) text += " ";
     const from = text.length;
     text += definition!.token;
     ranges.push({ from, to: text.length });
-    if (at < spoken.text.length && !/^\s/.test(spoken.text.slice(at))) text += " ";
+    if (at < voiced.text.length && !/^\s/.test(voiced.text.slice(at))) text += " ";
     last = at;
     tags.push(definition!.token);
   }
-  text += spoken.text.slice(last);
+  text += voiced.text.slice(last);
   return {
     text,
     pronounced: spoken.text,

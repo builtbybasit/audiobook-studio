@@ -2,7 +2,7 @@
 // neither one touches the book: the per-book pronunciation dictionary rewrites names and invented
 // words on their way to the endpoint, and the pacing rules decide how much silence is stitched in
 // after each clip. The script the reader shows is always the original prose.
-import type { Book, LexEntry, Pacing, SampleRate, Segment } from "@/types";
+import type { Book, LexEntry, Pacing, SampleRate, Segment, TagBracket } from "@/types";
 import { heardLines } from "@/lib/siteText";
 
 /** One dictionary substitution, with offsets into the *original* text. */
@@ -81,29 +81,72 @@ export function speak(text: string, list: LexEntry[]): Spoken {
 }
 
 /**
- * Marks that are written and never said, taken out of the text a voice is sent: square brackets
- * (a system's voice in a novel, and the syntax Fish and others read as their own tags), asterisks
- * (`*Sip*`), and single quotes around a whole line (a thought). A voice given them reads them
- * out — "F A S T E R punct apostrophe" — or takes the line for markup and says nothing like it.
- * `at` maps an offset in `text` as given to the same place in what is left. A line that would be
- * left with no letter or digit is kept as it is.
+ * What a voice may be sent, and nothing else: Latin letters (the books are English) and digits, the
+ * punctuation that shapes how a line is read, the few symbols a voice says — `+5`, `10%`, `$3`,
+ * `94/100` — and brackets, less those the voice reads as its own tags (`sayable`).
  */
-export function unmarked(text: string): { text: string; at: (i: number) => number } {
-  const drop: number[] = [];
+const SAYABLE =
+  /[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F0-9\s.,!?;:'"‘’“”\-–—…+%$£€#&/°()[\]{}<>]/;
+const BRACKET_CHARS: Record<TagBracket, string> = { round: "()", square: "[]", angle: "<>" };
+/** each closing bracket's opener */
+const CLOSES: Record<string, string> = { ")": "(", "]": "[", "}": "{", ">": "<" };
+/**
+ * An HTML tag, whole: a table or list the book kept as markup, a stat sheet in a LitRPG. Only HTML's
+ * own elements, so `<Rare>` in a line is prose.
+ */
+const HTML_TAG =
+  /<\/?(a|b|i|u|s|p|br|hr|em|strong|small|big|sub|sup|span|font|div|ul|ol|li|table|thead|tbody|tfoot|tr|td|th|h[1-6]|blockquote|code|pre|img)\b[^<>]*>/iy;
+/** a tag that ends a line of a table or list, read as the end of a sentence */
+const BLOCK = /^(br|p|div|li|ul|ol|table|tr|td|th|h[1-6])$/i;
+/** A footnote reference, `[1]`: a number nobody reads out. */
+const FOOTNOTE = /\[\d{1,3}\]/y;
+
+/**
+ * A line as a voice is sent it, before any expression tag goes in: only what `SAYABLE` allows, less
+ * the `brackets` the voice reads as tags, so prose is never taken for one; HTML tags and footnote
+ * references out; and single quotes around a whole line (a thought) out. A voice given the rest
+ * reads it out — "F A S T E R punct apostrophe", "div class" — or takes it for its own markup and
+ * says nothing like the line. `at` maps an offset in `text` as given to the same place in what is
+ * left. A line that would be left with no letter or digit is kept as it is.
+ */
+export function sayable(
+  text: string,
+  brackets: readonly TagBracket[] = [],
+): { text: string; at: (i: number) => number } {
+  const tagChars = brackets.map((b) => BRACKET_CHARS[b]).join("");
   const open = text.search(/\S/);
   const close = text.trimEnd().length - 1;
   const quoted = open < close && /['‘]/.test(text[open]) && /['’]/.test(text[close]);
-  for (let i = 0; i < text.length; i++)
-    if (/[[\]*]/.test(text[i]) || (quoted && (i === open || i === close))) drop.push(i);
   let out = "";
-  let last = 0;
-  for (const i of drop) {
-    out += text.slice(last, i);
-    last = i + 1;
+  /** where each offset of `text` lands in `out` */
+  const map: number[] = [];
+  for (let i = 0; i < text.length;) {
+    HTML_TAG.lastIndex = FOOTNOTE.lastIndex = i;
+    const cut = HTML_TAG.exec(text) ?? FOOTNOTE.exec(text);
+    if (cut) {
+      for (let j = 0; j < cut[0].length; j++) map[i + j] = out.length;
+      if (cut[1] && BLOCK.test(cut[1]) && out.trim()) {
+        if (WORDY.test(out.trimEnd().at(-1)!)) out = out.trimEnd() + ".";
+        if (!/\s$/.test(out)) out += " ";
+      }
+      i += cut[0].length;
+      continue;
+    }
+    map[i] = out.length;
+    const c = text[i];
+    if (SAYABLE.test(c) && !tagChars.includes(c) && !(quoted && (i === open || i === close))) {
+      // a bracket with nothing said in it — a kaomoji's, once its face is gone — is not sent either
+      const opened = CLOSES[c] ? out.lastIndexOf(CLOSES[c]) : -1;
+      if (opened >= 0 && !WORDY.test(out.slice(opened))) out = out.slice(0, opened).trimEnd();
+      else out += c;
+    }
+    i++;
   }
-  out += text.slice(last);
-  if (!drop.length || !WORDY.test(out)) return { text, at: (i) => i };
-  return { text: out, at: (i) => i - drop.filter((d) => d < i).length };
+  map[text.length] = out.length;
+  const said = out.trim();
+  if (said === text || !WORDY.test(said)) return { text, at: (i) => i };
+  const lead = out.length - out.trimStart().length;
+  return { text: said, at: (i) => Math.min(Math.max(map[i] - lead, 0), said.length) };
 }
 
 /** The original text cut into runs, so the reader can underline what is said differently. */

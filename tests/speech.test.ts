@@ -10,7 +10,7 @@ import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-import { speak, marks, silenceOf, DEFAULT_PACING, pauseAfter, unmarked } from "@/lib/speech";
+import { speak, marks, silenceOf, DEFAULT_PACING, pauseAfter, sayable } from "@/lib/speech";
 import type { LexEntry, Segment, ToastOptions } from "@/types";
 import { demoServer } from "./support/demoServer";
 import { openDemoBook } from "./support/demoBook";
@@ -54,33 +54,72 @@ describe("the dictionary", () => {
   });
 });
 
-describe("marks never said", () => {
-  // lines from a real chapter, each heard back wrong when sent with its marks
+describe("only what can be said is sent", () => {
+  // lines from real chapters, each heard back wrong when sent as written
   test.each([
-    ["[This is the last step, right?]", "This is the last step, right?"],
-    ["*Sip*", "Sip"],
-    ["'Let me die faster.'", "Let me die faster."],
-    ["‘Let me die faster.’", "Let me die faster."],
-    ["He took a *long* sip.", "He took a long sip."],
-  ])("%p is sent as %p", (text, sent) => {
-    expect(unmarked(text).text).toBe(sent);
+    ["[This is the last step, right?]", ["square"], "This is the last step, right?"],
+    ["*Sip*", [], "Sip"],
+    ["'Let me die faster.'", [], "Let me die faster."],
+    ["‘Let me die faster.’", [], "Let me die faster."],
+    ["He took a *long* sip.", [], "He took a long sip."],
+    ["**But you did. You pressed it, Michael. **", [], "But you did. You pressed it, Michael."],
+    [
+      "Rocks are generally not a comfy place to sleep, but you do you (￣▽￣)ノ",
+      [],
+      "Rocks are generally not a comfy place to sleep, but you do you",
+    ],
+    ["I need to make some popcorn ♡(>ᴗ•)", [], "I need to make some popcorn"],
+    ["Chapter 1: Prologue [1]", [], "Chapter 1: Prologue"],
+    [
+      "<p><strong>Character</strong>: Michael Valentine Wade<br><strong>Level 1<br>Health</strong>: 94/100</p>",
+      [],
+      "Character: Michael Valentine Wade. Level 1. Health: 94/100.",
+    ],
+    [
+      "<ul><li>Chronic Sciatica</li><li>Astigmatism</li></ul></td></tr></tbody></table></div>",
+      ["angle"],
+      "Chronic Sciatica. Astigmatism.",
+    ],
+  ] as const)("%p, to a voice taking %p as tags, is sent as %p", (text, brackets, sent) => {
+    expect(sayable(text, brackets).text).toBe(sent);
   });
 
-  test("an apostrophe in a word, or a quote that does not close the line, is said", () => {
-    for (const text of ["I'm... Cough! F-fine.", "'Cause I said so.", "The dogs' bowls."])
-      expect(unmarked(text).text).toBe(text);
+  test("a bracket is taken out only for a voice that reads it as a tag", () => {
+    const line = "Skyviper Archer (Common) [Level 2] <Rare>";
+    expect(sayable(line).text).toBe(line);
+    expect(sayable(line, ["round"]).text).toBe("Skyviper Archer Common [Level 2] <Rare>");
+    expect(sayable(line, ["square"]).text).toBe("Skyviper Archer (Common) Level 2 <Rare>");
+    expect(sayable(line, ["round", "angle"]).text).toBe("Skyviper Archer Common [Level 2] Rare");
   });
 
-  test("a line of marks alone is kept as it is", () => {
-    expect(unmarked("***").text).toBe("***");
-    expect(unmarked("[ ]").text).toBe("[ ]");
+  test("words, punctuation and the symbols a voice says are sent as written", () => {
+    for (const text of [
+      "I'm... Cough! F-fine.",
+      "'Cause I said so.",
+      "The dogs' bowls.",
+      "Don’t — “wait”, she said; it’s 9:45.",
+      "Luck: 12 (2+10)",
+      "Strength +5, damage -10%, $3 or £2 & 94/100 at 30°.",
+      "Café naïve, Zoë.",
+    ])
+      expect(sayable(text, ["square"]).text).toBe(text);
+  });
+
+  test("a line with nothing to say is kept as it is", () => {
+    expect(sayable("***").text).toBe("***");
+    expect(sayable("[ ]", ["square"]).text).toBe("[ ]");
+    expect(sayable("(;￣Д￣)").text).toBe("(;￣Д￣)");
   });
 
   test("an offset in the line finds the same place in what is sent", () => {
-    const u = unmarked("[Ji Ning laughed.]");
+    const u = sayable("[Ji Ning laughed.]", ["square"]);
     expect(u.text.slice(u.at(9))).toBe("laughed.");
     expect(u.at(0)).toBe(0);
     expect(u.at(18)).toBe(u.text.length);
+    const html = "<p><strong>Level</strong> 1</p>";
+    const h = sayable(html);
+    expect(h.text.slice(h.at(html.indexOf(" 1")))).toBe(" 1.");
+    expect(h.at(html.length)).toBe(h.text.length);
   });
 });
 

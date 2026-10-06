@@ -8,7 +8,7 @@ import type {
   TagBracket,
 } from "@/types";
 import { BRACKETS, tagSyntaxOf, type TagSyntax } from "@/lib/providers";
-import { speak, unmarked } from "@/lib/speech";
+import { sayable, speak } from "@/lib/speech";
 import { splitText } from "@/lib/split";
 
 export const expressionId = (label: string) =>
@@ -46,6 +46,16 @@ export function expressionDefaults(e: Pick<Endpoint, "baseUrl" | "model">): Expr
     tags: [],
   };
 }
+/**
+ * The brackets `ep`'s model reads as its own tags: those confirmed on its Expressions tab, or until
+ * then those its provider's docs show — the model reads them either way.
+ */
+export const tagBracketsOf = (ep: Endpoint | null | undefined): readonly TagBracket[] =>
+  !ep
+    ? []
+    : expressionSupport(ep) === "unknown"
+      ? expressionDefaults(ep).brackets
+      : ep.expressions!.brackets;
 /** A config saved before brackets were asked for takes the ones its provider's docs show. */
 export function withBrackets(
   c: Omit<ExpressionConfig, "brackets" | "open"> & Partial<ExpressionConfig>,
@@ -124,8 +134,8 @@ export interface ExpressionPlan {
 }
 
 /**
- * Annotated ranges alone become controls; existing bracketed prose is never interpreted, and its
- * brackets are not sent (`unmarked`), so no voice can take it for a tag either.
+ * Annotated ranges alone become controls; existing bracketed prose is never interpreted, and only
+ * what a voice can say of it is sent (`sayable`), so no voice can take it for a tag either.
  */
 export function expressionPlan(
   s: Pick<Segment, "text" | "expressions">,
@@ -133,9 +143,9 @@ export function expressionPlan(
   lexicon: LexEntry[] = [],
 ): ExpressionPlan {
   const spoken = speak(s.text, lexicon);
-  // the prose the voice is given: what the dictionary made of it, less the marks never said — taken
-  // out before the tags go in, which may be written in brackets themselves
-  const voiced = unmarked(spoken.text);
+  // the prose the voice is given: what the dictionary made of it, kept to what can be said — before
+  // the tags go in, whose brackets the whitelist would take out
+  const voiced = sayable(spoken.text, tagBracketsOf(ep));
   const annotations = [...(s.expressions ?? [])].sort(
     (a, b) => a.at - b.at || a.annotationId - b.annotationId,
   );

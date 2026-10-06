@@ -257,7 +257,7 @@ describe("checking a chapter by ear", () => {
     expect((await heardOf(api, id))[first.id]).toMatchObject({
       text: edited.text,
       heard: first.text,
-      mismatch: false,
+      mismatch: true,
     });
   });
 

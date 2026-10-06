@@ -5,7 +5,10 @@
 // `verbose_json` with `timestamp_granularities[]=word` when the caller wants the time of each word,
 // which a server that has none answers without (`gpt-4o-transcribe` answers only `json`), and the
 // caller then has the words without their times. `prompt` carries names the audio is likely to
-// hold, which Whisper reads as context and Phonon as words to favour.
+// hold, which Whisper reads as context and Phonon as words to favour. A server that drops the
+// connection for a request with a prompt (Fermion 0.2.9, whose hotwords fail to load) and answers
+// the same request without one is sent none from then on, until restart, and each transcript
+// heard so says it was `unhinted`.
 //
 // Every request that reached the wire is reported through `sent`, as speech is (`sent.ts`), so the
 // ledger prices it by the minute of audio sent. A simulated endpoint answers here with a fixed
@@ -50,6 +53,8 @@ export interface Transcript {
   text: string;
   /** absent when the server gave no times, or was not asked for them */
   words?: HeardWord[];
+  /** heard without the hints, because the server gives no answer to a request that has them */
+  unhinted?: true;
 }
 
 export interface TranscriptionProvider {
@@ -84,6 +89,68 @@ const wordsOf = (body: { words?: unknown }): HeardWord[] | undefined =>
         .map((w) => ({ word: w.word.trim(), start: w.start, end: w.end }))
     : undefined;
 
+/** Servers that answer a request only without its prompt, by endpoint and address, until restart. */
+const promptHurts = new Set<string>();
+
+/** One request to the server, with `prompt` when it is not empty. */
+async function send(
+  input: TranscriptionInput,
+  target: ProviderTarget,
+  prompt: string,
+  inject: Pick<CallOptions, "fetch" | "backoffMs">,
+): Promise<Transcript> {
+  const { signal } = input;
+  const form = new FormData();
+  form.set("file", input.audio, input.name);
+  if (target.model.trim()) form.set("model", target.model.trim());
+  form.set("language", "en");
+  form.set("response_format", input.words ? "verbose_json" : "json");
+  if (input.words) form.set("timestamp_granularities[]", "word");
+  if (prompt) form.set("prompt", prompt);
+
+  const stats: CallStats = { attempts: 0, rateLimited: false };
+  const startedAt = Date.now();
+  const report = (rest: Pick<SentTranscription, "status" | "error" | "billed">): void =>
+    input.sent?.({
+      startedAt,
+      finishedAt: Date.now(),
+      attempts: Math.max(1, stats.attempts),
+      rateLimited: stats.rateLimited,
+      simulated: false,
+      audioSeconds: input.seconds,
+      ...rest,
+    });
+
+  let body: { text?: unknown; words?: unknown };
+  try {
+    const res = await call(
+      target,
+      `${target.baseUrl}/audio/transcriptions`,
+      { method: "POST", headers: authHeaders(target), body: form },
+      { signal, stats, ...inject },
+    );
+    body = (await res.json().catch(() => null)) ?? {};
+  } catch (e) {
+    if (signal.aborted) throw e;
+    const error = e instanceof ProviderError ? e : new ProviderError(String(e), 0, true);
+    // a refusal is not billed; a request no answer came back for is not knowable, and is not either
+    report({
+      status: "failed",
+      error: { code: error.status, message: error.message },
+      billed: false,
+    });
+    throw error;
+  }
+  if (typeof body.text !== "string") {
+    const error = new ProviderError(`${target.name} answered without a transcript`, 200, false);
+    report({ status: "failed", error: { code: 200, message: error.message }, billed: true });
+    throw error;
+  }
+  report({ status: "done", billed: true });
+  const words = input.words ? wordsOf(body) : undefined;
+  return { text: body.text.trim(), ...(words?.length ? { words } : {}) };
+}
+
 export function endpointTranscriber(
   inject: Pick<CallOptions, "fetch" | "backoffMs"> = {},
 ): TranscriptionProvider {
@@ -97,56 +164,23 @@ export function endpointTranscriber(
         return { text: SIMULATED_TRANSCRIPT };
       }
       requireKey(target);
-      const form = new FormData();
-      form.set("file", input.audio, input.name);
-      if (target.model.trim()) form.set("model", target.model.trim());
-      form.set("language", "en");
-      form.set("response_format", input.words ? "verbose_json" : "json");
-      if (input.words) form.set("timestamp_granularities[]", "word");
+      const server = `${target.id} ${target.baseUrl}`;
       const prompt = promptOf(input.hints ?? []);
-      if (prompt) form.set("prompt", prompt);
-
-      const stats: CallStats = { attempts: 0, rateLimited: false };
-      const startedAt = Date.now();
-      const report = (rest: Pick<SentTranscription, "status" | "error" | "billed">): void =>
-        input.sent?.({
-          startedAt,
-          finishedAt: Date.now(),
-          attempts: Math.max(1, stats.attempts),
-          rateLimited: stats.rateLimited,
-          simulated: false,
-          audioSeconds: input.seconds,
-          ...rest,
-        });
-
-      let body: { text?: unknown; words?: unknown };
+      if (!prompt) return send(input, target, "", inject);
+      if (promptHurts.has(server))
+        return { ...(await send(input, target, "", inject)), unhinted: true };
       try {
-        const res = await call(
-          target,
-          `${target.baseUrl}/audio/transcriptions`,
-          { method: "POST", headers: authHeaders(target), body: form },
-          { signal, stats, ...inject },
-        );
-        body = (await res.json().catch(() => null)) ?? {};
+        return await send(input, target, prompt, inject);
       } catch (e) {
-        if (signal.aborted) throw e;
-        const error = e instanceof ProviderError ? e : new ProviderError(String(e), 0, true);
-        // a refusal is not billed; a request no answer came back for is not knowable, and is not either
-        report({
-          status: "failed",
-          error: { code: error.status, message: error.message },
-          billed: false,
+        if (signal.aborted || !(e instanceof ProviderError) || e.status !== 0) throw e;
+        // no answer at all: the prompt may be what it cannot take (Fermion 0.2.9 drops the
+        // connection for one) — and when the same request without it is answered, it was
+        const heard = await send(input, target, "", inject).catch(() => {
+          throw e;
         });
-        throw error;
+        promptHurts.add(server);
+        return { ...heard, unhinted: true };
       }
-      if (typeof body.text !== "string") {
-        const error = new ProviderError(`${target.name} answered without a transcript`, 200, false);
-        report({ status: "failed", error: { code: 200, message: error.message }, billed: true });
-        throw error;
-      }
-      report({ status: "done", billed: true });
-      const words = input.words ? wordsOf(body) : undefined;
-      return { text: body.text.trim(), ...(words?.length ? { words } : {}) };
     },
 
     async probe(target, signal) {

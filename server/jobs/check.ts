@@ -135,6 +135,7 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
         .filter((n) => n !== NARRATOR);
       const label = `Check · ${chapter.title || `ch ${chapter.id}`}`;
       let refused: string | null = null;
+      let unhinted = false;
 
       /** Keep what was heard, and raise or take down the line's `heard` flag to match it. */
       const record = (c: Clip, line: HeardLine): void =>
@@ -200,6 +201,13 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
             },
             transcriberTarget(db, t),
           );
+          if (heard.unhinted && !unhinted) {
+            unhinted = true;
+            ctx.note(
+              `${t.name} gives no answer when sent the cast's names; heard without them`,
+              "warning",
+            );
+          }
           const line: HeardLine = {
             text: c.s.text,
             heard: heard.text,

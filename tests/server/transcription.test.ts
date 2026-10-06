@@ -108,6 +108,43 @@ describe("the transcription wire", () => {
     expect(new Headers(f.sent[0].init.headers).get("authorization")).toBe("Bearer sk-1");
   });
 
+  test("a server that drops a request with a prompt is heard without one, from then on", async () => {
+    // Fermion 0.2.9: hotwords fail to load, and any request with a prompt gets no answer at all
+    const f = answering((n) => {
+      if ((f.sent[n - 1].init.body as FormData).has("prompt")) throw new TypeError("socket closed");
+      return Response.json({ text: "We are short again." });
+    });
+    const at = target({ id: "drops-prompt" });
+    const hinted = input({ hints: ["Mara"] });
+    expect(await f.provider.transcribe(hinted, at)).toEqual({
+      text: "We are short again.",
+      unhinted: true,
+    });
+    // the prompt tried, and retried, before it was left out
+    const prompted = () => f.sent.map((s) => (s.init.body as FormData).has("prompt"));
+    expect(prompted()).toEqual([true, true, false]);
+
+    expect(await f.provider.transcribe(hinted, at)).toMatchObject({ unhinted: true });
+    expect(prompted()).toEqual([true, true, false, false]);
+    // nothing to leave out is not unhinted, and another endpoint is still sent its prompt
+    expect(await f.provider.transcribe(input(), at)).toEqual({ text: "We are short again." });
+    await f.provider.transcribe(hinted, target({ id: "other" }));
+    expect(prompted().slice(5)).toEqual([true, true, false]);
+  });
+
+  test("a server that is down is not taken to refuse the prompt", async () => {
+    const f = answering(() => {
+      throw new TypeError("connection refused");
+    });
+    const at = target({ id: "down" });
+    const hinted = input({ hints: ["Mara"] });
+    await expect(f.provider.transcribe(hinted, at)).rejects.toThrow("Phonon could not be reached");
+    const prompted = () => f.sent.map((s) => (s.init.body as FormData).has("prompt"));
+    expect(prompted()).toEqual([true, true, false, false]);
+    await f.provider.transcribe(hinted, at).catch(() => {});
+    expect(prompted()[4]).toBe(true);
+  });
+
   test("a server with no word times still gives the words", async () => {
     const f = answering(() => Response.json({ text: "We are short again.", duration: 1.4 }));
     expect(await f.provider.transcribe(input({ words: true }), target())).toEqual({

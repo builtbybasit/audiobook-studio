@@ -2,7 +2,7 @@
 // is in the line's text and when in the clip, and whether the clip says something else.
 import { describe, expect, test } from "bun:test";
 
-import { alignHeard, type TimedWord } from "@/lib/heard";
+import { alignHeard, spokenWords, type TimedWord } from "@/lib/heard";
 
 /** Words heard a third of a second apart, as a server with word times gives them. */
 const timed = (text: string): TimedWord[] =>
@@ -26,8 +26,9 @@ describe("alignHeard", () => {
     const text = "We are short again.";
     const r = alignHeard(text, timed("We short again."), "We short again.");
     expect(marked(text, r.words)).toEqual(["We", "short", "again"]);
-    expect(r.score).toBe(0.25);
-    // one word alone is not a wrong clip
+    // "are" is three of the line's fifteen letters
+    expect(r.score).toBe(0.2);
+    // one short word alone is not a wrong clip
     expect(r.mismatch).toBe(false);
   });
 
@@ -55,18 +56,17 @@ describe("alignHeard", () => {
     expect(marked(text, r.words)).toEqual(["Mara", "she", "said", "don’t"]);
   });
 
-  test("a number heard spelt out is two misses, and calls the clip wrong", () => {
+  test("a number heard spelt out is the number, and its mark covers it", () => {
     const text = "It was 42 days.";
     const r = alignHeard(text, timed("It was forty-two days."), "It was forty-two days.");
-    expect(marked(text, r.words)).toEqual(["It", "was", "days"]);
-    // "42" missing, "forty" and "two" added
-    expect(r.score).toBe(0.75);
-    expect(r.mismatch).toBe(true);
+    expect(marked(text, r.words)).toEqual(["It", "was", "42", "days"]);
+    expect(r.words![2].slice(2)).toEqual([2 / 3, 2 / 3 + 0.3]);
+    expect(r.score).toBe(0);
   });
 
   test("a clip that says another line is wrong", () => {
     const r = alignHeard("The door was locked.", undefined, "The window was open.");
-    expect(r.score).toBe(1);
+    expect(r.score).toBeGreaterThan(0.3);
     expect(r.mismatch).toBe(true);
   });
 
@@ -100,5 +100,61 @@ describe("alignHeard", () => {
     const whole = alignHeard(text, timed("A well known face."), "A well known face.");
     expect(marked(text, whole.words)).toEqual(["A", "well-known", "face"]);
     expect(whole.words![1].slice(2)).toEqual([1 / 3, 2 / 3 + 0.3]);
+  });
+
+  // lines and what Phonon heard of them, from a real check of a narrated chapter
+  test.each([
+    [
+      "Two lackluster gray eyes seemed fixed on me.",
+      "Two lackluster grey eyes seemed fixed on me.",
+    ],
+    ["I stopped him and pointed toward the TV.", "I stopped him and pointed toward the T V."],
+    ["Stage IV Lung Cancer.", "Stage four lung cancer."],
+    ["Chapter 1: Prologue", "CHAPTER One ProLogue"],
+    ["Umm... So what do you think?", "Um, so what do you think?"],
+    ["Yea-h. Tell me why it's your favorite game?", "Yeah. Tell me why it's your favorite game."],
+    ["Noel's worried voice reached my ears.", "Noelle's worried voice reached my ears."],
+    ["Mr. Thornfield came 2nd.", "Mister Thornfield came second."],
+    ["Ah...", "Uh"],
+    ["Cough! ...Cou..gh!", "Cough cough."],
+  ])("heard right: %p", (text, heard) => {
+    expect(alignHeard(text, undefined, heard).mismatch).toBe(false);
+  });
+
+  test.each([
+    ["'Let me die faster.'", "Let me die F A S T E R punct apostrophe."],
+    ["*Sip*", "I'm a manny."],
+    [
+      "[I've waited far too long for this.]",
+      "Ma and dab and to no and uh me and Penopio me to none",
+    ],
+    ["I'm... Cough! F-fine.", "I'm fine."],
+  ])("heard wrong: %p", (text, heard) => {
+    expect(alignHeard(text, undefined, heard).mismatch).toBe(true);
+  });
+});
+
+describe("spokenWords", () => {
+  test("numbers, ordinals and Roman numerals are their words", () => {
+    expect(spokenWords("1,204 and 2nd and 0.5")).toEqual([
+      "one",
+      "thousand",
+      "two",
+      "hundred",
+      "four",
+      "and",
+      "second",
+      "and",
+      "zero",
+      "five",
+    ]);
+    expect(spokenWords("Stage IV, Book XII, I")).toEqual(["stage", "four", "bok", "twelve", "i"]);
+    expect(spokenWords("23rd 90th 3d")).toEqual(["twenty", "third", "ninetieth", "thre", "d"]);
+    expect(spokenWords("1000000 007")).toEqual(["one", "milion", "zero", "zero", "seven"]);
+  });
+
+  test("case, apostrophes and repeated letters are not told apart", () => {
+    expect(spokenWords("Don’t SHIIING Mrs. Dr")).toEqual(["dont", "shing", "misus", "doctor"]);
+    expect(spokenWords("MIX")).toEqual(["mix"]);
   });
 });

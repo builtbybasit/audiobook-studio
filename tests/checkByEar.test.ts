@@ -40,7 +40,12 @@ const line = (id: number, over: Partial<Segment> = {}): Segment =>
   }) as Segment;
 
 let pinia: TestPinia;
-let toasts: { msg: string; kind?: string; description?: string }[];
+let toasts: {
+  msg: string;
+  kind?: string;
+  description?: string;
+  action?: { label: string; run: () => void };
+}[];
 
 beforeEach(() => {
   // the ui store reaches for `matchMedia` as it is built, and Bun has no window
@@ -49,7 +54,12 @@ beforeEach(() => {
   pinia = testPinia();
   toasts = [];
   useUiStore().toast = (msg, opts = {}) => (
-    toasts.push({ msg, kind: opts.kind, description: opts.description }),
+    toasts.push({
+      msg,
+      kind: opts.kind,
+      description: opts.description,
+      ...(opts.action ? { action: opts.action } : {}),
+    }),
     ""
   );
   useLibraryStore()._put({ id: BOOK, title: "Heard", author: "", volumes: [] } as unknown as Book, [
@@ -101,6 +111,39 @@ describe("asking for a check", () => {
     expect(toasts[0].description).toContain(
       "Left out: 1 chapter not narrated yet; 1 chapter already heard.",
     );
+  });
+
+  test("chapters already heard can be heard again from the toast, and only they", async () => {
+    const asked: [number[], boolean][] = [];
+    let answer: CheckQueued = {
+      jobs: [],
+      skipped: [
+        { id: 1, why: "nothing" },
+        { id: 2, why: "busy" },
+      ],
+      runId: 9,
+      chapters: [chapter(1), chapter(2)],
+    };
+    setJobsService({
+      list: async () => [],
+      checkChapters: async (_book: string, ids: number[], again = false) => (
+        asked.push([ids, again]),
+        answer
+      ),
+    } as unknown as JobsService);
+    expect(await useJobsStore().checkChapters(BOOK, [1, 2])).toBe(false);
+    expect(toasts[0]).toMatchObject({ msg: "Nothing to check in this selection" });
+    expect(toasts[0].action?.label).toBe("Check again");
+
+    answer = { ...answer, jobs: [checkJob(1, 1)], skipped: [] };
+    toasts[0].action!.run();
+    await flush();
+    expect(asked).toEqual([
+      [[1, 2], false],
+      [[1], true],
+    ]);
+    expect(toasts[1]).toMatchObject({ msg: "Check by ear · 1 chapter" });
+    expect(toasts[1].action).toBeUndefined();
   });
 
   test("a selection with nothing to hear queues nothing and warns", async () => {

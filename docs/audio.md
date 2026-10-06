@@ -36,7 +36,9 @@ line, word by word, without anyone listening.
   up to its concurrency at once, with the cast's names sent as hints — left out, and said in the
   job's log, for a server that gives no answer to a request that has them. It hears every spoken line's
   clip in the book that has not been heard as the line now reads, so a second check of an unchanged
-  chapter does nothing, and a line edited or rendered again since is heard again. With none
+  chapter does nothing, and a line edited or rendered again since is heard again. **Check again**,
+  on the toast that says a chapter was already heard, hears every clip of it once more (`again`),
+  so a chapter heard before the comparison changed is heard by the new one. With none
   switched on, the request is refused. Each request is priced against the book by the minute of
   audio sent, and a failed one is counted while the rest of the chapter is still heard.
 - **When.** When asked, and after every narration of a chapter whose book has **Check by ear**
@@ -51,8 +53,10 @@ line, word by word, without anyone listening.
   0.15 with at least four letters wrong, so a dropped "the" in a long line, or an "Ah" heard "Uh",
   passes. A mismatch flags the line `heard`, quoting what was heard; a later check that hears it
   right takes that flag down. A flag a person set is never replaced or taken down, and a check
-  never touches a clip. A word the dictionary respells, and a year heard as words ("nineteen
-  ninety" against "1990"), still differ.
+  never touches a clip. A line whose clip was sent through the pronunciation dictionary is also
+  set against what was heard as it was sent — "Siobhan" sent as "Shiv-awn" may be written either
+  way — and the closer of the two stands; a clip sent before the dictionary last changed is
+  compared as written. A year heard as words ("nineteen ninety" against "1990") still differs.
 - **What is stored.** What was heard, kept by the clip's file in `heard`
   ([backend](backend.md#what-was-heard-is-kept-by-file)), and served for the chapter's clips in the
   book (`GET …/chapters/:n/heard`): the line as checked, what was heard, the score, and the offsets

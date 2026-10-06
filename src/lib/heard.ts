@@ -26,11 +26,11 @@ import { diffChars } from "diff";
 
 import type { HeardLine } from "@/types";
 import { tokensOf } from "@/lib/gaps";
+import type { LexHit } from "@/lib/speech";
 import { alignPairs } from "@/lib/scriptHistory";
 
-// ponytail: a word the dictionary respells is still compared as the line writes it, and a year
-// heard "nineteen ninety" against "1990" still differs. The upgrade path is checking against the
-// text the endpoint was sent, and years read in pairs.
+// ponytail: a year heard "nineteen ninety" against "1990" still differs; years read in pairs are
+// the upgrade if it shows up in real checks.
 /** The share of a line's letters that may be wrong before the clip is called wrong… */
 export const MISMATCH_SCORE = 0.15;
 /** …and how many there must be at least: a short line with one sound off is not a wrong clip. */
@@ -206,31 +206,71 @@ function misheard(
   return out;
 }
 
+/** The line's words in their spoken form, each pointing at the stretch of the line it is said for. */
+interface Written {
+  script: string[];
+  tokenOf: number[];
+  spans: [from: number, to: number][];
+}
+
+/**
+ * The line's words, each pointing at the token it came from, trimmed to its letters and digits: a
+ * token may hold several words ("forty-two", "42"), and is marked only when every one was heard. A
+ * dictionary hit stands as the words it is sent as, over the whole term as written ("Ji Ning").
+ */
+function writtenOf(text: string, hits: readonly LexHit[]): Written {
+  const out: Written = { script: [], tokenOf: [], spans: [] };
+  const add = (from: number, to: number, ws: readonly string[]) => {
+    out.spans.push([from, to]);
+    for (const w of ws) {
+      out.script.push(w);
+      out.tokenOf.push(out.spans.length - 1);
+    }
+  };
+  let at = 0;
+  const plain = (until: number) => {
+    for (const t of tokensOf(text.slice(at, until))) {
+      const ws = spokenWords(t.text);
+      if (!ws.length) continue;
+      const last = LAST_LETTER.exec(t.text)!;
+      add(at + t.at + t.text.search(LETTER), at + t.at + last.index + last[0].length, ws);
+    }
+  };
+  for (const h of hits) {
+    plain(h.from);
+    const ws = spokenWords(h.say);
+    if (ws.length) add(h.from, h.to, ws);
+    at = h.to;
+  }
+  plain(text.length);
+  return out;
+}
+
 /**
  * Set what was heard against the line: `words` when the endpoint gave each word's time, else the
  * words of `heardText`, which then count for the score alone.
+ *
+ * `hits` are the dictionary's substitutions in the line as its clip was sent (`speak`): the voice
+ * was given "El-oh-wen" for "Elowen", and a transcriber may write either. So the line is set
+ * against what was heard both as written and as sent, and whichever is heard the closer stands.
  */
 export function alignHeard(
   text: string,
   words: readonly TimedWord[] | undefined,
   heardText: string,
+  hits: readonly LexHit[] = [],
 ): HeardMatch {
-  // The line's words, each pointing at the token it came from, trimmed to its letters and digits:
-  // a token may hold several words ("forty-two", "42"), and is marked only when every one was heard.
-  const script: string[] = [];
-  const tokenOf: number[] = [];
-  const spans: [from: number, to: number][] = [];
-  for (const t of tokensOf(text)) {
-    const ws = spokenWords(t.text);
-    if (!ws.length) continue;
-    const last = LAST_LETTER.exec(t.text)!;
-    spans.push([t.at + t.text.search(LETTER), t.at + last.index + last[0].length]);
-    for (const w of ws) {
-      script.push(w);
-      tokenOf.push(spans.length - 1);
-    }
-  }
+  const asWritten = matchOf(writtenOf(text, []), words, heardText);
+  if (!hits.length) return asWritten;
+  const asSent = matchOf(writtenOf(text, hits), words, heardText);
+  return asSent.score < asWritten.score ? asSent : asWritten;
+}
 
+function matchOf(
+  { script, tokenOf, spans }: Written,
+  words: readonly TimedWord[] | undefined,
+  heardText: string,
+): HeardMatch {
   const timed = words?.length ? words : undefined;
   const heard: string[] = [];
   const timeOf: TimedWord[] = [];

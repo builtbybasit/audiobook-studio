@@ -196,13 +196,14 @@ export const useJobsStore = defineStore("jobs", {
      * transcription endpoint switched on, and flags a line whose clip says something else. It
      * leaves out a chapter with no clip to hear, one whose clips were all heard already, and one
      * already being narrated or checked, and the toast says which. With no transcription endpoint
-     * switched on the server refuses the whole run, and its sentence is the toast. True when
-     * anything was queued.
+     * switched on the server refuses the whole run, and its sentence is the toast. Chapters left
+     * out as already heard can be heard again from the toast (`again`: every clip, those already
+     * heard too). True when anything was queued.
      */
     async checkChapters(
       bookId: string,
       ids: number[],
-      { quiet = false }: { quiet?: boolean } = {},
+      { quiet = false, again = false }: { quiet?: boolean; again?: boolean } = {},
     ): Promise<boolean> {
       const libraryStore = useLibraryStore();
       const uiStore = useUiStore();
@@ -210,7 +211,7 @@ export const useJobsStore = defineStore("jobs", {
       if (libraryStore._blocked(bookId, "check it by ear")) return false;
       let queued: CheckQueued;
       try {
-        queued = await jobsService().checkChapters(bookId, ids);
+        queued = await jobsService().checkChapters(bookId, ids, again);
       } catch (cause) {
         toastFailure("queue the check", cause);
         return false;
@@ -230,10 +231,18 @@ export const useJobsStore = defineStore("jobs", {
         .map((why) => [why, skipped.filter((s) => s.why === why).length] as const)
         .filter(([, n]) => n)
         .map(([why, n]) => `${plural(n, "chapter")} ${WHY[why]}`);
+      const heard = skipped.filter((s) => s.why === "nothing").map((s) => s.id);
+      const action = heard.length
+        ? {
+            label: "Check again",
+            run: () => void this.checkChapters(bookId, heard, { again: true }),
+          }
+        : null;
       if (!jobs.length) {
         uiStore.toast("Nothing to check in this selection", {
           kind: "warn",
           description: notes.join("; ") || "The selection had no clips the server could hear.",
+          action,
         });
         return false;
       }
@@ -243,6 +252,7 @@ export const useJobsStore = defineStore("jobs", {
           "Queued on the server. Progress is in the Queue, and a line heard saying something else is flagged." +
           (notes.length ? ` Left out: ${notes.join("; ")}.` : ""),
         timeout: 8000,
+        action,
       });
       return true;
     },

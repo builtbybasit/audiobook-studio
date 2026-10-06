@@ -89,6 +89,7 @@ function playChapter() {
 function listenFrom(s: Segment, offset: number) {
   const at = segmentStart(bookId, opened.value, s.id);
   if (at == null) return;
+  held = { id: s.id, at: offset, until: performance.now() + HOLD_MS };
   if (isThis.value && p.playing) return seekTo(at + offset);
   const q = buildQueue();
   if (q) playQueue(q, at + offset);
@@ -101,8 +102,17 @@ function listenFrom(s: Segment, offset: number) {
 const word = ref(-1);
 let lineMarks: WordMark[] | null = null;
 let lineStart = 0;
+// A click puts the playhead on the word's start, but until its clip has loaded and plays, the
+// element can sit a hair short of it — on the word before, for as long as the load takes. So the
+// spot clicked holds until the playhead reaches it, the line changes, or `HOLD_MS` goes by.
+const HOLD_MS = 1500;
+let held: { id: number; at: number; until: number } | null = null;
 const update = () => {
-  word.value = lineMarks ? markAt(lineMarks, now() - lineStart) : -1;
+  let t = now() - lineStart;
+  if (held && current.value === held.id && t < held.at && performance.now() < held.until)
+    t = held.at;
+  else held = null;
+  word.value = lineMarks ? markAt(lineMarks, t) : -1;
 };
 watch(
   [current, marks],

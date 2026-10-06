@@ -135,6 +135,8 @@ export interface Job {
     mismatched: number;
     /** requests that failed; the lines stay unchecked */
     failed: number;
+    /** hears every clip, those already heard as their line reads too ("Check again") */
+    again?: true;
   };
 }
 

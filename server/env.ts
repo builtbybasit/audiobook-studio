@@ -108,7 +108,7 @@ const Env = v.object({
    * when there is none rather than failing every build later.
    */
   EXPORT_ENCODER: v.optional(v.picklist(["wav", "ffmpeg"]), "wav"),
-  /** the ffmpeg to run, for a machine that keeps it somewhere off `PATH` */
+  /** the ffmpeg to run — for builds and the thought effect — for a machine that keeps it off `PATH` */
   FFMPEG_BIN: v.optional(v.string(), "ffmpeg"),
   /**
    * Where built audiobooks are kept: one directory per book, one file per output file. Apart from

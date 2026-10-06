@@ -7,6 +7,7 @@
 // about it.
 import { join } from "node:path";
 
+import { ffmpegThoughtEffect } from "~/audio/thoughtEffect";
 import { CLONE_BODY_BYTES, env, importBodyBytes, scriptBodyBytes } from "~/env";
 import { DEMO_BASE, openLibrary, REAL_BASE, serveLibraries } from "~/libraries";
 import { log } from "~/log";
@@ -29,6 +30,14 @@ if (env.EXPORT_ENCODER === "ffmpeg") {
 }
 const encoders = env.EXPORT_ENCODER === "ffmpeg" ? ffmpegEncoders(env.FFMPEG_BIN) : wavEncoders();
 
+// The thought effect is ffmpeg's too, but nothing depends on it: without one, thought lines are
+// narrated as the voice made them and the boot log says why.
+const thoughtEffect = (await ffmpegAvailable(env.FFMPEG_BIN))
+  ? ffmpegThoughtEffect(env.FFMPEG_BIN)
+  : undefined;
+if (!thoughtEffect)
+  boot.warn(`${env.FFMPEG_BIN} is not runnable: thought lines are narrated without their effect`);
+
 const real = openLibrary({
   name: "real",
   databaseUrl: env.DATABASE_URL,
@@ -37,6 +46,7 @@ const real = openLibrary({
   exportDir: env.EXPORT_DIR,
   voiceDir: env.VOICE_DIR,
   encoders,
+  thoughtEffect,
 });
 const demo = openLibrary({
   name: "demo",
@@ -46,6 +56,7 @@ const demo = openLibrary({
   exportDir: join(env.DEMO_DIR, "exports"),
   voiceDir: join(env.DEMO_DIR, "voices"),
   encoders,
+  thoughtEffect,
   demo: true,
 });
 const libraries = [real, demo];

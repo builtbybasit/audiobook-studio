@@ -57,6 +57,7 @@ import { speechInstructions } from "@/lib/speech";
 import { requeue } from "@/lib/takes";
 import type { AudioFiles } from "~/audio/files";
 import { probeClip } from "~/audio/probe";
+import type { ThoughtEffect } from "~/audio/thoughtEffect";
 import { readLexicon } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
@@ -274,6 +275,8 @@ function lineRun(o: {
   gate: SpeechGate;
   chapter: { uid: string };
   deliveryOf: (speaker: string) => Delivery;
+  /** what a `thought` line is given as it lands; absent when the book or the server has none */
+  thoughtEffect?: ThoughtEffect;
   targets: readonly Target[];
   lines: number;
   stop: AbortSignal;
@@ -285,7 +288,8 @@ function lineRun(o: {
   close(): void;
   tally: Tally;
 } {
-  const { ctx, provider, files, gate, chapter, deliveryOf, targets, lines, stop } = o;
+  const { ctx, provider, files, gate, chapter, deliveryOf, thoughtEffect, targets, lines, stop } =
+    o;
   const { job, db } = ctx;
 
   /** One write against the chapter wherever it is now, moving the revision with it. */
@@ -542,6 +546,30 @@ function lineRun(o: {
     }
   };
 
+  /**
+   * A thought line's audio with the thought effect on it, as a WAV, or null — said in the log — when
+   * it could not be applied: the line keeps the clip the voice made rather than failing over a sound.
+   */
+  const withEffect = async (
+    s: Segment,
+    rendered: RenderedClip,
+  ): Promise<{ bytes: Uint8Array; format: "wav"; duration: number } | null> => {
+    try {
+      const bytes = await thoughtEffect!(rendered.bytes, rendered.format, stop);
+      // the room it adds rings on a little past the last word, so the length is read again
+      const { duration } = await probeClip(bytes, "wav");
+      return { bytes, format: "wav", duration };
+    } catch (e) {
+      if (stop.aborted) throw e;
+      const why = e instanceof Error ? e.message : String(e);
+      ctx.note(`Line ${s.id}: the thought effect was not applied: ${why}`, "warning", {
+        line: s.id,
+        error: why,
+      });
+      return null;
+    }
+  };
+
   /** Write what came back — a clip, or the failure — where the line's slot is, and say so. */
   const land = async (line: Line, outcome: Outcome): Promise<void> => {
     const { t, who, plan, generating, startedAt, release } = line;
@@ -559,18 +587,21 @@ function lineRun(o: {
         const why = (e as Error).message;
         throw new Error(`The audio that came back could not be read: ${why}`, { cause: e });
       }
+      const kept = s.type === "thought" && thoughtEffect ? await withEffect(s, rendered) : null;
+      const audio = kept ?? rendered;
       // by the book, which is where the file stays whatever the chapter's number becomes
-      const { url } = await files.write(job.bookId, rendered.bytes, rendered.format);
+      const { url } = await files.write(job.bookId, audio.bytes, audio.format);
       clip = {
         ...generating,
         status: "done",
         ms: rendered.ms,
-        duration: rendered.duration,
+        duration: audio.duration,
         url,
         at: Date.now(),
         model: rendered.model,
         ...(rendered.voice != null ? { voice: rendered.voice } : {}),
         sampleRate,
+        ...(kept ? { effect: "thought" as const } : {}),
       };
     } catch (e) {
       if (stop.aborted) throw e;
@@ -667,20 +698,28 @@ function lineRun(o: {
     progress();
   };
 
-  /** One line, on its own: a slot, then its request — or its parts, one after another. */
+  /**
+   * One line, on its own: a slot, then its request — or its parts, one after another. The slot is
+   * the endpoint's, so it is given back as soon as the answer is in: what is done with the audio
+   * here — the thought effect, the file, the row — is no reason to keep the next line waiting.
+   */
   const renderLine = async (t: Target): Promise<void> => {
+    const answered = await sendLine(t);
+    if (answered) await land(...answered);
+  };
+  const sendLine = async (t: Target): Promise<[Line, Outcome] | null> => {
     const leave = await acquire(deliveryOf(t.s.speaker).endpoint);
     try {
-      if (halted() || budgetStops(t)) return;
+      if (halted() || budgetStops(t)) return null;
       const line = commit(t);
-      if (!line) return;
+      if (!line) return null;
       const blocked = unsendable(line);
-      await land(
+      return [
         line,
         blocked
           ? { error: blocked }
           : await outcomeOf(() => speakInParts(provider, line.input, line.cuts)),
-      );
+      ];
     } finally {
       leave();
     }
@@ -711,6 +750,7 @@ export function narrationHandler(
   provider: SpeechProvider,
   files: AudioFiles,
   gate: SpeechGate = createSpeechGate(),
+  thoughtEffect?: ThoughtEffect,
 ): JobHandler {
   return {
     async run(ctx: JobContext): Promise<void> {
@@ -724,6 +764,8 @@ export function narrationHandler(
       // cast is the book's and a rename mid-run is the rename's problem — it marks the clips it
       // moved stale.
       const deliveryOf = bookDelivery(db, job.bookId);
+      // read once, like the cast: a switch flipped mid-run applies from the next run
+      const plainThoughts = !!library.getBook(db, job.bookId)?.plainThoughts;
 
       const { targets, lines } = planRun(db, chapter.uid, scope);
       if (!targets.length) {
@@ -761,6 +803,7 @@ export function narrationHandler(
         gate,
         chapter,
         deliveryOf,
+        thoughtEffect: plainThoughts ? undefined : thoughtEffect,
         targets,
         lines,
         stop: stop.signal,

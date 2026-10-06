@@ -170,7 +170,8 @@ keyed by `(book_id, file)` — the clip's file name under the book's audio direc
 (`replaceScript`) while a render's file never changes. A line rendered again has a new file and so
 no finding; a line edited since has a finding whose `text` no longer matches, and both are heard
 again by the next check. Rows go with their book; one whose file is no longer any line's clip is
-simply never read. Added by migration `0023_heard`, with `books.check_by_ear`.
+simply never read. Added by migration `0023_heard`, with `books.check_by_ear`. Migration
+`0024_thought_effect` adds `books.plain_thoughts` and `clips.effect` ([the thought effect](audio.md#the-thought-effect)).
 
 ### Absent is not null
 

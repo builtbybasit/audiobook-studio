@@ -92,6 +92,7 @@ const Settings = v.pipe(
     prompt: v.optional(v.nullable(BookPromptSchema)),
     readNotes: v.optional(v.nullable(v.boolean())),
     checkByEar: v.optional(v.nullable(v.boolean())),
+    plainThoughts: v.optional(v.nullable(v.boolean())),
     characterVoice: v.optional(
       v.nullable(
         v.strictObject({

@@ -188,6 +188,11 @@ export interface Book {
    * transcription endpoint switched on. Absent = only when asked.
    */
   checkByEar?: boolean;
+  /**
+   * Narrate `thought` lines as the voice made them, without the thought effect a clip is otherwise
+   * given as it lands. Absent = the effect is on.
+   */
+  plainThoughts?: true;
   /** the voice a speaker with none of their own is read in; absent = the Narrator's */
   characterVoice?: CharacterVoice;
 }

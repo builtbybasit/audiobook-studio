@@ -526,6 +526,21 @@ export const useLibraryStore = defineStore("library", {
       );
     },
     /**
+     * Whether thought lines get the thought effect as they land. Like checking by ear it changes no
+     * clip already made — only what the next narration does — so nothing is read back.
+     */
+    async setThoughtEffect(bookId: string, on: boolean): Promise<void> {
+      const b = this.bookById(bookId);
+      if (!b || !b.plainThoughts === on) return;
+      if (on) delete b.plainThoughts;
+      else b.plainThoughts = true;
+      await this._writeSettings(
+        bookId,
+        { plainThoughts: !on },
+        on ? "give this book's thoughts their effect" : "narrate this book's thoughts plain",
+      );
+    },
+    /**
      * The book's Character voice — what a speaker with no voice of their own is read in — or null
      * to go back to the Narrator's. It changes no line and no clip: a clip made in the voice it
      * replaced shows as made in another voice, as one does when a speaker's own voice changes.

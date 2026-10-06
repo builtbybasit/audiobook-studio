@@ -537,7 +537,8 @@ describe("a line longer than its endpoint's maxChars", () => {
   test("is sent in the parts the splitter cuts, and comes back as one clip that says so", async () => {
     const provider = recording();
     const api = testApi({ speech: provider });
-    const endpoint = speech({ maxChars: 60, splitAt: "sentence" });
+    // one request at a time, so the order they went out in is the reading order and not a race
+    const endpoint = speech({ maxChars: 60, splitAt: "sentence", concurrency: 1 });
     await save(api, { endpoints: [endpoint] });
     const id = await voiced(api);
     const before = (await scriptOf(api, id)).segments;

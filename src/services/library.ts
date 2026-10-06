@@ -67,6 +67,8 @@ export interface BookSettings {
   readNotes?: boolean;
   /** check each chapter by ear once it is narrated (`Book.checkByEar`) */
   checkByEar?: boolean;
+  /** thought lines without the thought effect (`Book.plainThoughts`) */
+  plainThoughts?: boolean;
   /** the voice for speakers with none of their own (`Book.characterVoice`); `null` = the Narrator's */
   characterVoice?: CharacterVoice | null;
 }

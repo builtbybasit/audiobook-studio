@@ -21,6 +21,7 @@ import type {
   Voice,
 } from "@/types";
 import type { StoredEndpoint } from "@/lib/endpointTelemetry";
+import { withBrackets } from "@/lib/expressions";
 import type { endpoints, expressionTags, promotions, rateWindows, voices } from "~/db/schema";
 
 type EndpointRow = typeof endpoints.$inferSelect;
@@ -104,12 +105,14 @@ function toBilling(row: EndpointRow): TtsBilling | undefined {
 
 function toExpressions(row: EndpointRow, parts: EndpointParts): ExpressionConfig | undefined {
   if (!row.expressionStatus) return undefined;
-  return {
+  return withBrackets({
     status: row.expressionStatus,
     model: row.expressionModel ?? "",
     baseUrl: row.expressionBaseUrl ?? "",
+    brackets: row.expressionBrackets ?? undefined,
+    open: row.expressionOpen ?? undefined,
     tags: byPosition(parts.tags).map(toExpressionTag),
-  };
+  });
 }
 
 /**
@@ -320,6 +323,8 @@ export function endpointValues(
     expressionStatus: e.expressions?.status ?? null,
     expressionModel: e.expressions?.model ?? null,
     expressionBaseUrl: e.expressions?.baseUrl ?? null,
+    expressionBrackets: e.expressions?.brackets ?? null,
+    expressionOpen: e.expressions?.open ?? null,
     sampleRate: e.sampleRate ?? null,
     audioFormat: e.encoding?.format ?? null,
     audioBitrate: e.encoding?.bitrate ?? null,

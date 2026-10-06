@@ -83,6 +83,8 @@ const laughing = (over: Partial<Endpoint> = {}): Endpoint =>
       status: "supported",
       model: "studio-tts",
       baseUrl: "http://localhost:8880/v1",
+      brackets: ["square"],
+      open: false,
       tags: [{ ...LAUGHS }],
     },
     ...over,

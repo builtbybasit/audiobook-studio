@@ -25,6 +25,7 @@ export {
   SIMULATED_VOICES,
 } from "@/lib/providers/simulated";
 
+export { BRACKETS } from "@/lib/providers/types";
 export type {
   CloneFee,
   CloneSupport,

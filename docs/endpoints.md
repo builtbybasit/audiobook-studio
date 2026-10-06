@@ -217,8 +217,9 @@ narrows the next batch.
 
 ### Expressions
 
-Speech endpoints only: which expression tags this model takes and in what syntax, configured
-explicitly; see [model-specific expressions](audio.md#model-specific-expressions).
+Speech endpoints only: the brackets this model's tags are written in, whether it takes any words in
+them or only a fixed list, and the tags themselves as chips; see
+[model-specific expressions](audio.md#model-specific-expressions).
 
 ### Pricing & budgets
 

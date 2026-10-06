@@ -9,7 +9,7 @@
 // endpoint's `latency` and `failRate`, so a run on one moves, and fails, the way a run on a real
 // endpoint can.
 import type { Voice } from "@/types";
-import { SQUARE, type SpeechProviderShape } from "@/lib/providers/types";
+import type { SpeechProviderShape } from "@/lib/providers/types";
 
 /** The base URL the Simulated presets fill in. Any `simulated:` URL is one. */
 export const SIMULATED_BASE_URL = "simulated://local";
@@ -50,7 +50,8 @@ export const simulated: SpeechProviderShape = {
     },
   ],
   tags: () => ({
-    forms: [SQUARE],
+    brackets: ["square"],
+    open: true,
     kinds: ["sound", "delivery"],
     example: "[laughs]",
     hint: "A simulated endpoint takes any tag in square brackets, and speaks none of them.",

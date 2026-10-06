@@ -285,6 +285,8 @@ function gemini38Tts(
         status: "supported",
         model,
         baseUrl: GEMINI_BASE_URL,
+        brackets: ["angle"],
+        open: true,
         tags: GEMINI_VOCAL_TAGS.map((t) => ({ ...t })),
       },
     },

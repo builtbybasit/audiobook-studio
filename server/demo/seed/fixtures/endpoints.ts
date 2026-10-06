@@ -144,6 +144,8 @@ export function makeEndpoints(now: number = Date.now()): Endpoint[] {
         status: "supported",
         model: "s2.1-pro",
         baseUrl: "https://api.fish.audio/v1",
+        brackets: ["square"],
+        open: true,
         tags: EXPRESSION_TAGS.map((t) => ({ ...t })),
       },
       voices: FISH_VOICES.map((v) => ({ ...v })),

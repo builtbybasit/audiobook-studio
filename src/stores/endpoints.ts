@@ -34,7 +34,7 @@ import {
   voiceRef,
 } from "@/lib/endpoints";
 import { ensurePricing } from "@/lib/pricing";
-import { configErrors, expressionId } from "@/lib/expressions";
+import { configErrors, expressionId, withBrackets } from "@/lib/expressions";
 import { newProfile, profileErrors } from "@/lib/scripting";
 import { BUILT_IN_PROMPT, profilePromptProblems, promptProblems } from "@/lib/prompt";
 import { GENDER } from "@/lib/scriptReview";
@@ -678,9 +678,12 @@ export const useEndpointsStore = defineStore("endpoints", {
       const uiStore = useUiStore();
 
       if (!obj || !Array.isArray(obj.endpoints)) throw new Error("not a settings file");
-      for (const ep of obj.endpoints)
+      for (const ep of obj.endpoints) {
+        // a file from before brackets were asked for takes the ones the provider's docs show
+        if (ep.expressions?.tags) ep.expressions = withBrackets(ep.expressions);
         if (ep.expressions && configErrors(ep.expressions).length)
           throw new Error(`Invalid expression support for ${ep.name}`);
+      }
       if (obj.profiles != null && !Array.isArray(obj.profiles))
         throw new Error("Invalid scripting endpoints");
       // a file from before transcription endpoints says nothing of them, and leaves these be

@@ -22,7 +22,7 @@ import {
 } from "@lucide/vue";
 import { UiCombobox, UiDialog } from "@/ui";
 
-import { expressionSupport } from "@/lib/expressions";
+import { expressionSupport, typedTag, validToken } from "@/lib/expressions";
 import { gapLabel } from "@/lib/gaps";
 import ExpressionsTab from "@/views/endpoints/ExpressionsTab.vue";
 import WordStrip from "@/components/WordStrip.vue";
@@ -47,6 +47,15 @@ const support = computed(() => expressionSupport(endpoint.value));
 const tags = computed(() =>
   support.value === "supported" ? (endpoint.value?.expressions?.tags ?? []) : [],
 );
+// a model set to take any words in its brackets takes a tag typed here, not only a listed one
+const open = computed(() => support.value === "supported" && !!endpoint.value?.expressions?.open);
+/** The tag a picker's value names: a listed one by id, or on an open model the words typed. */
+function tagFor(value: string) {
+  const listed = tags.value.find((t) => t.id === value);
+  if (listed || !open.value || !value.trim()) return listed;
+  const tag = typedTag(value, endpoint.value!.expressions!.brackets);
+  return validToken(tag.token, endpoint.value!.expressions!.brackets) ? tag : undefined;
+}
 const options = computed(() =>
   tags.value.map((t) => ({
     value: t.id,
@@ -104,7 +113,7 @@ function onPick(at: number, el: HTMLElement) {
   );
 }
 function insert() {
-  const tag = tags.value.find((t) => t.id === selected.value);
+  const tag = tagFor(selected.value);
   if (!tag || pickAt.value == null) return;
   narrationStore.addExpression(props.bookId, props.chapterId, props.segment.id, tag, pickAt.value);
   cancel();
@@ -134,7 +143,7 @@ function startMove() {
   nextTick(() => strip.value?.querySelector<HTMLElement>(".word-strip")?.focus());
 }
 function replace(value: string) {
-  const tag = tags.value.find((t) => t.id === value);
+  const tag = tagFor(value);
   if (tag && editing.value != null) change(editing.value, tag);
 }
 function remove() {
@@ -259,18 +268,15 @@ const tokenOf = (a: ExpressionAnnotation) =>
             <UiCombobox
               v-model="selected"
               :options="options"
-              placeholder="Search this model’s expressions…"
+              :custom="open"
+              :placeholder="open ? 'Search, or type any tag…' : 'Search this model’s expressions…'"
               block
               size="xs"
               @keydown.enter="insert"
             />
             <div class="mt-2 flex items-center justify-end gap-1">
               <button class="btn-ghost btn-xs" @click="cancel">Cancel</button>
-              <button
-                class="btn-primary btn-xs"
-                :disabled="!tags.some((t) => t.id === selected)"
-                @click="insert"
-              >
+              <button class="btn-primary btn-xs" :disabled="!tagFor(selected)" @click="insert">
                 <AddIcon class="icon-sm" /> Insert
               </button>
             </div>
@@ -315,6 +321,7 @@ const tokenOf = (a: ExpressionAnnotation) =>
                 >Replace with<UiCombobox
                   :model-value="current.id"
                   :options="options"
+                  :custom="open"
                   block
                   size="xs"
                   class="mt-1"

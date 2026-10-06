@@ -1,30 +1,32 @@
-<script setup lang="ts">
-// Single-select segmented control. options: [{ value, label, class? }]
+<script setup lang="ts" generic="T extends string | number | null | (string | number)[]">
+// Segmented control. options: [{ value, label, class? }]. Single-select, or with `multiple` a set
+// of values (an array, which may be empty).
 import { ToggleGroupItem, ToggleGroupRoot } from "reka-ui";
 import type { UiOption } from "@/ui/types";
-withDefaults(
+const props = withDefaults(
   defineProps<{
-    modelValue?: string | number | null;
+    modelValue?: T;
     options?: UiOption[];
     size?: "xs" | "sm";
     block?: boolean;
+    multiple?: boolean;
   }>(),
   { modelValue: undefined, options: () => [], size: "xs" },
 );
-const emit = defineEmits<{ "update:modelValue": [string | number | null] }>();
+const emit = defineEmits<{ "update:modelValue": [T] }>();
+function update(v: unknown) {
+  if (props.multiple) emit("update:modelValue", (v ?? []) as T);
+  else if (v != null && v !== "") emit("update:modelValue", v as T);
+}
 </script>
 <template>
   <ToggleGroupRoot
     :model-value="modelValue"
-    type="single"
+    :type="multiple ? 'multiple' : 'single'"
     class="inline-flex overflow-hidden rounded-md border border-zinc-300 dark:border-zinc-700"
     :class="block && 'grid w-full'"
     :style="block ? { gridTemplateColumns: `repeat(${options.length}, minmax(0,1fr))` } : {}"
-    @update:model-value="
-      (v: unknown) => {
-        if (v != null && v !== '') emit('update:modelValue', v as string | number);
-      }
-    "
+    @update:model-value="update"
   >
     <ToggleGroupItem
       v-for="o in options"

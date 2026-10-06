@@ -100,8 +100,14 @@ const saveTranscribers = (api: TestApi, ...transcribers: Transcriber[]) =>
     method: "PUT",
   });
 
-/** A book with two scripted chapters, the first narrated, and a transcription endpoint on. */
-async function narrated(e = ears(), { transcribers = [transcriber()] } = {}) {
+/**
+ * A book with two scripted chapters, the first narrated — through `lexicon` when one is given — and
+ * a transcription endpoint on.
+ */
+async function narrated(
+  e = ears(),
+  { transcribers = [transcriber()], lexicon = [] as { term: string; say: string }[] } = {},
+) {
   const api = testApi({ transcription: e.provider });
   await saveTranscribers(api, ...transcribers);
   const { body } = await api.import<ImportedBook>(
@@ -117,17 +123,22 @@ async function narrated(e = ears(), { transcribers = [transcriber()] } = {}) {
   await api.request(`/api/books/${id}/confirm`, { method: "POST" });
   await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1, 2] }));
   await api.runner.idle();
+  if (lexicon.length)
+    await api.request(`/api/books/${id}/lexicon`, {
+      ...jsonBody({ entries: lexicon.map((x, i) => ({ id: i + 1, ...x, enabled: true })) }),
+      method: "PUT",
+    });
   await narrateChapters(api, id, [1]);
   e.book.api = api;
   e.book.id = id;
   return { api, id, e };
 }
 
-const check = (api: TestApi, id: string, ids: number[]) =>
-  api.request<CheckQueued>(`/api/books/${id}/chapters/check`, jsonBody({ ids }));
+const check = (api: TestApi, id: string, ids: number[], again?: boolean) =>
+  api.request<CheckQueued>(`/api/books/${id}/chapters/check`, jsonBody({ ids, again }));
 
-async function checked(api: TestApi, id: string, ids = [1]) {
-  const queued = await check(api, id, ids);
+async function checked(api: TestApi, id: string, ids = [1], again?: boolean) {
+  const queued = await check(api, id, ids, again);
   await api.runner.idle();
   return queued;
 }
@@ -259,6 +270,37 @@ describe("checking a chapter by ear", () => {
       heard: first.text,
       mismatch: true,
     });
+  });
+
+  test("checked again, every clip is heard, those already heard too", async () => {
+    const { api, id, e } = await narrated();
+    await checked(api, id);
+    const asked = e.asked.length;
+    expect((await checked(api, id)).body.skipped).toEqual([{ id: 1, why: "nothing" }]);
+
+    // heard as something else this time: the finding is replaced, and the line flagged
+    const first = (await scriptOf(api, id)).segments[0];
+    e.say = (s) => ({ text: s.id === first.id ? "Something else entirely" : s.text });
+    const again = await checked(api, id, [1], true);
+    expect(again.body.jobs[0].checkRun).toMatchObject({ again: true, lines: asked });
+    expect(e.asked).toHaveLength(2 * asked);
+    expect((await heardOf(api, id))[first.id]).toMatchObject({ mismatch: true });
+    expect((await scriptOf(api, id)).segments[0].flag?.kind).toBe("heard");
+  });
+
+  test("a name the dictionary respells is heard right as it was sent", async () => {
+    const { api, id, e } = await narrated(ears(), {
+      lexicon: [{ term: "Mara", say: "Shiv-awn" }],
+    });
+    const first = (await scriptOf(api, id)).segments.find((s) => s.text.includes("Mara"))!;
+    expect(first.audio.pronounced).toContain("Shiv-awn");
+    const sent = first.text.replace("Mara", "Shiv awn");
+    e.say = (s) => (s.id === first.id ? { text: sent, words: timed(sent) } : { text: s.text });
+    await checked(api, id);
+    const heard = (await heardOf(api, id))[first.id];
+    expect(heard).toMatchObject({ heard: sent, mismatch: false });
+    const marks = heard.words!.map(([from, to]) => first.text.slice(from, to));
+    expect(marks).toContain("Mara");
   });
 
   test("a request that fails is counted and the rest of the chapter is still heard", async () => {

@@ -50,6 +50,12 @@ const Ids = v.object({
  * `splitAt` cut each chapter into the requests the Endpoints page previews. Absent, a chapter goes
  * whole.
  */
+const CheckIds = v.object({
+  ...Ids.entries,
+  /** every clip, those already heard as their line reads too */
+  again: v.optional(v.boolean()),
+});
+
 const ScriptIds = v.object({
   ...Ids.entries,
   profile: v.optional(v.pipe(v.string(), v.maxLength(200))),
@@ -387,10 +393,12 @@ export function bookRoutes(
   // ---------- checking by ear ----------
   /**
    * Hear these chapters' clips back on the first transcription endpoint switched on: one job each,
-   * as one run, and the chapters left out and why. Refused whole (400) when none is switched on.
+   * as one run, and the chapters left out and why — with `again`, the clips already heard too.
+   * Refused whole (400) when none is switched on.
    */
-  app.post("/:id/chapters/check", validate("param", BookParam), validate("json", Ids), (c) => {
-    const result = enqueueCheck(db, runner, c.req.valid("param").id, c.req.valid("json").ids);
+  app.post("/:id/chapters/check", validate("param", BookParam), validate("json", CheckIds), (c) => {
+    const { ids, again } = c.req.valid("json");
+    const result = enqueueCheck(db, runner, c.req.valid("param").id, ids, { again });
     c.var.logger.info(
       { run: result.runId, jobs: result.jobs.length, skipped: result.skipped.length },
       "check queued",

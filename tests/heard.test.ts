@@ -143,6 +143,25 @@ describe("alignHeard", () => {
     expect(marked(three, alike.words)).toEqual(["Then", "Elowen", "Thornfield", "Vance", "left"]);
   });
 
+  test("a word the dictionary respells is right heard as written or as sent", () => {
+    const text = "Then Siobhan left.";
+    const hits = [{ term: "Siobhan", say: "Shiv-awn", from: 5, to: 12 }];
+    const sent = alignHeard(text, timed("Then Shiv awn left."), "", hits);
+    expect(sent.mismatch).toBe(false);
+    expect(marked(text, sent.words)).toEqual(["Then", "Siobhan", "left"]);
+    expect(alignHeard(text, timed("Then Siobhan left."), "", hits).score).toBe(0);
+    // without the dictionary, the respelling is heard wrong
+    expect(alignHeard(text, timed("Then Shiv awn left."), "").mismatch).toBe(true);
+  });
+
+  test("a term of two words is marked as one, over both", () => {
+    const text = "Ask Ji Ning now.";
+    const hits = [{ term: "Ji Ning", say: "Jee Ning", from: 4, to: 11 }];
+    const r = alignHeard(text, timed("Ask Jee Ning now."), "", hits);
+    expect(marked(text, r.words)).toEqual(["Ask", "Ji Ning", "now"]);
+    expect(r.words![1].slice(2)).toEqual([1 / 3, 2 / 3 + 0.3]);
+  });
+
   // lines and what Phonon heard of them, from a real check of a narrated chapter
   test.each([
     [

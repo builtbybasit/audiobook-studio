@@ -7,7 +7,9 @@
 // rendered again, has no finding that matches it and is heard at the next check; one that has is
 // left alone. Nothing a check does touches a clip.
 //
-// A clip heard saying something else (`alignHeard`) flags its line `heard`, with what was heard in
+// A line is set against what was heard both as written and as its clip was sent through the
+// pronunciation dictionary (`sentHits`), and the closer stands. A clip heard saying something else
+// (`alignHeard`) flags its line `heard`, with what was heard in
 // the note; one heard right takes a `heard` flag down. A flag a person set is theirs: a check never
 // replaces it and never takes it down. A flag is part of the script a client writes back whole, so
 // a write that changes one moves the chapter's revision, as a landed clip does in narration, and
@@ -25,6 +27,7 @@ import type {
   CheckQueued,
   HeardLine,
   Job,
+  LexEntry,
   Segment,
   SegmentFlag,
   Transcriber,
@@ -33,8 +36,9 @@ import { NARRATOR } from "@/lib/cast";
 import { AUDIO_MIME } from "@/lib/endpointShapes";
 import { alignHeard } from "@/lib/heard";
 import { isSpoken } from "@/lib/siteText";
+import { speak, type LexHit } from "@/lib/speech";
 import { formatOfFile, type AudioFiles } from "~/audio/files";
-import { readSpeakers } from "~/db/cast";
+import { readLexicon, readSpeakers } from "~/db/cast";
 import type { Db } from "~/db/client";
 import { readTranscriber } from "~/db/endpoints";
 import { activeJob, enqueueJob, getJob, nextRunId, setCheckRun } from "~/db/jobs";
@@ -87,6 +91,16 @@ function unheard(db: Db, bookId: string, clips: readonly Clip[]): Clip[] {
   return clips.filter((c) => found.get(c.file)?.text !== c.s.text);
 }
 
+/**
+ * The dictionary's substitutions in the line as its clip was sent — the dictionary as it stands,
+ * when it still makes what the clip records it was sent (`pronounced`), else none: a clip sent
+ * before the dictionary last changed is compared with the line as written.
+ */
+function sentHits(s: Segment, lexicon: LexEntry[]): LexHit[] {
+  const sent = speak(s.text, lexicon);
+  return s.audio.pronounced == null || s.audio.pronounced === sent.text ? sent.hits : [];
+}
+
 /** What hearing these clips costs at `t`'s rate per minute of audio. */
 const costOf = (t: Transcriber, seconds: number): number => (seconds / 60) * t.perMinute;
 
@@ -110,17 +124,16 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
         throw new Error(`The transcription endpoint “${id ?? ""}” is no longer switched on`);
 
       const book = library.getBook(db, job.bookId);
-      const todo = unheard(
-        db,
-        job.bookId,
-        clipsOf(readScript(db, job.bookId, job.chapterId), book),
-      );
+      const again = job.checkRun?.again === true;
+      const clips = clipsOf(readScript(db, job.bookId, job.chapterId), book);
+      const todo = again ? clips : unheard(db, job.bookId, clips);
       const run: NonNullable<Job["checkRun"]> = {
         endpoint: t.id,
         lines: todo.length,
         checked: 0,
         mismatched: 0,
         failed: 0,
+        ...(again ? { again } : {}),
       };
       setCheckRun(db, job.id, run);
       if (!todo.length) {
@@ -133,6 +146,7 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
       const hints = readSpeakers(db, job.bookId)
         .map((c) => c.name)
         .filter((n) => n !== NARRATOR);
+      const lexicon = readLexicon(db, job.bookId);
       const label = `Check · ${chapter.title || `ch ${chapter.id}`}`;
       let refused: string | null = null;
       let unhinted = false;
@@ -211,7 +225,7 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
           const line: HeardLine = {
             text: c.s.text,
             heard: heard.text,
-            ...alignHeard(c.s.text, heard.words, heard.text),
+            ...alignHeard(c.s.text, heard.words, heard.text, sentHits(c.s, lexicon)),
             at: Date.now(),
           };
           record(c, line);
@@ -266,7 +280,8 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
  *
  * Chapters that are missing, skipped for the audiobook, being narrated or checked already, with no
  * clip to hear (`unnarrated`) or with every clip already heard as its line reads (`nothing`) are
- * left out and said so, as narration leaves chapters out. The run is priced by the minute of audio
+ * left out and said so, as narration leaves chapters out — `again` hears every clip, those already
+ * heard too, so a chapter heard before the comparison changed is heard by it. The run is priced by the minute of audio
  * it will send and checked against the book's budget whole, and the endpoint's daily limit against
  * its first line, before anything is queued.
  */
@@ -275,6 +290,7 @@ export function enqueueCheck(
   runner: Pick<Runner, "enqueue">,
   bookId: string,
   ids: readonly number[],
+  { again = false }: { again?: boolean } = {},
 ): CheckQueued {
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
@@ -304,7 +320,7 @@ export function enqueueCheck(
       skipped.push({ id, why: "unnarrated" });
       continue;
     }
-    const todo = unheard(db, bookId, clips);
+    const todo = again ? clips : unheard(db, bookId, clips);
     if (!todo.length) {
       skipped.push({ id, why: "nothing" });
       continue;
@@ -332,7 +348,14 @@ export function enqueueCheck(
         label: `Check · ch ${id}`,
         bulk: { id: runId, op: "Check", index: i + 1, total: targets.length },
         run: {
-          checkRun: { endpoint: t.id, lines: clips.length, checked: 0, mismatched: 0, failed: 0 },
+          checkRun: {
+            endpoint: t.id,
+            lines: clips.length,
+            checked: 0,
+            mismatched: 0,
+            failed: 0,
+            ...(again ? { again: true as const } : {}),
+          },
         },
       }).job,
   );

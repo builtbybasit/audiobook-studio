@@ -45,7 +45,8 @@ export const useUiStore = defineStore("ui", {
     },
     // ---------- toasts & undo ----------
     // Thin wrapper over Toastflow so the rest of the app never imports it. `undo` makes the toast
-    // undoable (↻, Undo button, 10 s, ⌘Z); `action` adds a second button; `timeout: 0` sticks.
+    // undoable (↻, Undo button, 10 s, ⌘Z); `action` adds a second button, and 10 s to press it;
+    // `timeout: 0` sticks.
     toast(msg: string, opts: ToastOptions = {}): string {
       const { kind = "info", undo = null, action = null, timeout, description = "" } = opts;
       const type = (
@@ -80,7 +81,7 @@ export const useUiStore = defineStore("ui", {
         title: msg,
         description,
         theme: entry ? "undo" : undefined,
-        duration: timeout ?? (entry ? 10000 : type === "error" ? 9000 : 6000),
+        duration: timeout ?? (entry || action ? 10000 : type === "error" ? 9000 : 6000),
         buttons: buttons.length ? { alignment: "bottom-left", buttons } : undefined,
       });
       if (entry) {

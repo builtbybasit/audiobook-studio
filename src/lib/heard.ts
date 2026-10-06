@@ -14,10 +14,12 @@
 // long line, or an "Ah" heard "Uh", passes.
 //
 // The words are set side by side the same way (`alignPairs`), and a heard word carries its time to
-// the script word it matched. The mark is put on the line's own text — the word, not the comma
-// after it — so the Listen page can light each word as it is said. A word that was not matched has
-// no mark, and a server that gave no times gives no marks at all: a time is never estimated, from
-// the line's length or anything else.
+// the script word it matched — and, for a few words heard as something like them between two that
+// matched ("gray" heard "grey", "TV" heard "T V"), the time of what was heard in their place, word
+// by word as their letters line up. The mark is put on the line's own text — the word, not the
+// comma after it — so the Listen page can light each word as it is said. A word heard as nothing,
+// or as something unlike it, has no mark, and a server that gave no times gives no marks at all: a
+// time is never estimated, from the line's length or anything else.
 //
 // Pure, so the server that writes the finding and a test that reads it agree on it.
 import { diffChars } from "diff";
@@ -33,6 +35,14 @@ import { alignPairs } from "@/lib/scriptHistory";
 export const MISMATCH_SCORE = 0.15;
 /** …and how many there must be at least: a short line with one sound off is not a wrong clip. */
 export const MISMATCH_LETTERS = 4;
+
+/** Written words heard as something else take its time when at least this share of letters agree… */
+export const MISHEARD_ALIKE = 0.5;
+/** …and they are no more than this many in a row: past that, it is another sentence. */
+export const MISHEARD_WORDS = 3;
+
+/** When a word was said, in seconds from the start of the clip. */
+type Span = Pick<TimedWord, "start" | "end">;
 
 /** One word as the endpoint heard it, in seconds from the start of the clip. */
 export interface TimedWord {
@@ -137,6 +147,65 @@ function lettersWrong(a: string, b: string): number {
   return wrong + Math.max(removed, added);
 }
 
+/** Each letter of `words`, as the index of the word it is in. */
+const lettersOf = (words: readonly string[]): number[] =>
+  words.flatMap((w, k) => Array.from({ length: w.length }, () => k));
+
+/**
+ * Written words heard as something else, each given the time of the heard words its own letters
+ * line up with — "TV" heard "T V" the time from "T" to "V" — or nothing for every one when the two
+ * sound too little alike to be the same words (`MISHEARD_ALIKE`). A written word none of whose
+ * letters line up with any heard has no time.
+ */
+function misheard(
+  written: readonly string[],
+  said: readonly string[],
+  times: readonly Span[],
+): (Span | undefined)[] {
+  const a = lettersOf(written);
+  const b = lettersOf(said);
+  // [written word, heard word] for each letter that lines up: a letter in common with its own, and
+  // a stretch where they differ letter by letter, in proportion
+  const pairs: [number, number][] = [];
+  let ia = 0;
+  let ib = 0;
+  let alike = 0;
+  let removed = 0;
+  let added = 0;
+  const differ = () => {
+    if (added)
+      for (let k = 0; k < removed; k++)
+        pairs.push([a[ia - removed + k], b[ib - added + Math.floor((k * added) / removed)]]);
+    removed = added = 0;
+  };
+  for (const run of diffChars(written.join(""), said.join(""))) {
+    const n = run.value.length;
+    if (run.added) {
+      added += n;
+      ib += n;
+    } else if (run.removed) {
+      removed += n;
+      ia += n;
+    } else {
+      differ();
+      for (let k = 0; k < n; k++) pairs.push([a[ia + k], b[ib + k]]);
+      ia += n;
+      ib += n;
+      alike += n;
+    }
+  }
+  differ();
+  if (alike < MISHEARD_ALIKE * Math.max(a.length, b.length)) return [];
+
+  const out: (Span | undefined)[] = [];
+  for (const [w, h] of pairs) {
+    const t = times[h];
+    const was = out[w];
+    out[w] = was ? { start: Math.min(was.start, t.start), end: Math.max(was.end, t.end) } : t;
+  }
+  return out;
+}
+
 /**
  * Set what was heard against the line: `words` when the endpoint gave each word's time, else the
  * words of `heardText`, which then count for the score alone.
@@ -179,18 +248,47 @@ export function alignHeard(
   const mismatch = score > MISMATCH_SCORE && wrong >= MISMATCH_LETTERS;
   if (!timed) return { words: null, score, mismatch };
 
-  const heardAt = new Map(alignPairs(script, heard));
+  // Each script word the time of the heard word it matched — and a stretch of a few between two
+  // that matched, heard as something like it ("gray" heard "grey"), the time of what was heard in
+  // its place (`misheard`): the server's own time still, never estimated. A word heard as nothing,
+  // or heard as something unlike it, has none.
+  const pairs = alignPairs(script, heard);
+  const timeAt = new Map<number, Span>(pairs.map(([i, j]) => [i, timeOf[j]]));
+  const ends = [[-1, -1], ...pairs, [script.length, heard.length]];
+  for (let k = 1; k < ends.length; k++) {
+    const [i0, j0] = ends[k - 1];
+    const [i1, j1] = ends[k];
+    if (i1 - i0 - 1 < 1 || i1 - i0 - 1 > MISHEARD_WORDS || j1 - j0 - 1 < 1) continue;
+    misheard(script.slice(i0 + 1, i1), heard.slice(j0 + 1, j1), timeOf.slice(j0 + 1, j1)).forEach(
+      (t, x) => t && timeAt.set(i0 + 1 + x, t),
+    );
+  }
+
+  // A token is marked when every word of it has a time. One that starts no later than the mark just
+  // before it — both heard in one word, "forty two" heard "42" — joins that mark, so each word heard
+  // lights one stretch of the line.
   const marks: [number, number, number, number][] = [];
+  let joins = false;
   let i = 0;
   spans.forEach(([from, to], token) => {
-    const at: TimedWord[] = [];
+    const at: Span[] = [];
     let all = true;
     for (; i < script.length && tokenOf[i] === token; i++) {
-      const j = heardAt.get(i);
-      if (j == null) all = false;
-      else at.push(timeOf[j]);
+      const t = timeAt.get(i);
+      if (t == null) all = false;
+      else at.push(t);
     }
-    if (all) marks.push([from, to, at[0].start, at[at.length - 1].end]);
+    const start = all ? Math.min(...at.map((t) => t.start)) : 0;
+    const end = all ? Math.max(...at.map((t) => t.end)) : 0;
+    const before = marks.at(-1);
+    if (!all) joins = false;
+    else if (joins && before && start <= before[2]) {
+      before[1] = to;
+      before[3] = Math.max(before[3], end);
+    } else {
+      marks.push([from, to, start, end]);
+      joins = true;
+    }
   });
   return { words: marks, score, mismatch };
 }

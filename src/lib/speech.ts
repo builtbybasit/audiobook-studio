@@ -80,6 +80,32 @@ export function speak(text: string, list: LexEntry[]): Spoken {
   return { text: out + text.slice(last), hits };
 }
 
+/**
+ * Marks that are written and never said, taken out of the text a voice is sent: square brackets
+ * (a system's voice in a novel, and the syntax Fish and others read as their own tags), asterisks
+ * (`*Sip*`), and single quotes around a whole line (a thought). A voice given them reads them
+ * out — "F A S T E R punct apostrophe" — or takes the line for markup and says nothing like it.
+ * `at` maps an offset in `text` as given to the same place in what is left. A line that would be
+ * left with no letter or digit is kept as it is.
+ */
+export function unmarked(text: string): { text: string; at: (i: number) => number } {
+  const drop: number[] = [];
+  const open = text.search(/\S/);
+  const close = text.trimEnd().length - 1;
+  const quoted = open < close && /['‘]/.test(text[open]) && /['’]/.test(text[close]);
+  for (let i = 0; i < text.length; i++)
+    if (/[[\]*]/.test(text[i]) || (quoted && (i === open || i === close))) drop.push(i);
+  let out = "";
+  let last = 0;
+  for (const i of drop) {
+    out += text.slice(last, i);
+    last = i + 1;
+  }
+  out += text.slice(last);
+  if (!drop.length || !WORDY.test(out)) return { text, at: (i) => i };
+  return { text: out, at: (i) => i - drop.filter((d) => d < i).length };
+}
+
 /** The original text cut into runs, so the reader can underline what is said differently. */
 export function marks(text: string, list: LexEntry[]): Mark[] {
   const hits = hitsIn(text, list);

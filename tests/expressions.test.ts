@@ -117,12 +117,26 @@ function insert(at = 0) {
   narrationStore.addExpression(BOOK, 1, 1, laugh, at);
 }
 
-test("ordinary bracketed prose is unchanged, even on an unconfigured model", () => {
+test("ordinary bracketed prose is never a tag: its words are sent, its brackets are not", () => {
   const s = { text: "[laughter] is printed in this book. [Footnote 2]" };
   const plan = expressionPlan(s, endpoint());
-  expect(plan.text).toBe(s.text);
+  // a voice that reads brackets as its own tags would laugh here, not say "laughter"
+  expect(plan.text).toBe("laughter is printed in this book. Footnote 2");
+  expect(plan.pronounced).toBe(s.text);
   expect(plan.issues).toHaveLength(0);
   expect(plan.tags).toHaveLength(0);
+});
+
+test("a tag placed in a bracketed line keeps its brackets, and the line loses its own", () => {
+  insert(8);
+  const s = {
+    text: "[Ji Ning laughed.]",
+    expressions: segment().expressions!.map((a) => ({ ...a, at: 9 })),
+  };
+  const plan = expressionPlan(s, endpoint());
+  expect(plan.text).toBe("Ji Ning [laughter] laughed.");
+  expect(plan.tags).toEqual(["[laughter]"]);
+  expect(plan.text.slice(plan.ranges[0].from, plan.ranges[0].to)).toBe("[laughter]");
 });
 
 test("pronunciation runs on prose, expression tags stay exact and anchors follow replacements", () => {

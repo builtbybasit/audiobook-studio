@@ -58,7 +58,11 @@ line, word by word, without anyone listening.
   book (`GET …/chapters/:n/heard`): the line as checked, what was heard, the score, and the offsets
   in the line and times in the clip of each word heard, which the Listen page lights as it plays.
   Word times are the endpoint's own, never estimated: a server that gives none (`gpt-4o-transcribe`)
-  gives a score and no marks.
+  gives a score and no marks. Up to three words in a row heard as something like them ("gray"
+  heard "grey", "TV" heard "T V") take the time of what was heard in their place, each word the
+  heard words its letters line up with, when at least half their letters agree; a word heard as
+  nothing, or as something unlike it, has no mark. On a real chapter that left 4 of 1,547 words
+  unlit, where matching words alone left 24.
 
 [tests/heard.test.ts](../tests/heard.test.ts) covers the comparison and
 [tests/server/checkByEar.test.ts](../tests/server/checkByEar.test.ts) the job.

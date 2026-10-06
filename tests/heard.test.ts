@@ -102,6 +102,47 @@ describe("alignHeard", () => {
     expect(whole.words![1].slice(2)).toEqual([1 / 3, 2 / 3 + 0.3]);
   });
 
+  test("a word heard as something like it takes the time of what was heard", () => {
+    const text = "Two gray eyes stared.";
+    const r = alignHeard(text, timed("Two grey eyes stared."), "");
+    expect(marked(text, r.words)).toEqual(["Two", "gray", "eyes", "stared"]);
+    expect(r.words![1].slice(2)).toEqual([1 / 3, 1 / 3 + 0.3]);
+  });
+
+  test("a word heard letter by letter is lit from its first letter to its last", () => {
+    const text = "Inside the TV screen.";
+    const r = alignHeard(text, timed("Inside the T V screen."), "");
+    expect(marked(text, r.words)).toEqual(["Inside", "the", "TV", "screen"]);
+    expect(r.words![2].slice(2)).toEqual([2 / 3, 1 + 0.3]);
+  });
+
+  test("two words heard as one are lit as one", () => {
+    const text = "She was forty two today.";
+    const r = alignHeard(text, timed("She was 42 today."), "");
+    expect(marked(text, r.words)).toEqual(["She", "was", "forty two", "today"]);
+  });
+
+  test("a word heard as nothing, or as something unlike it, stays dark", () => {
+    const text = "Don't worry about it.";
+    expect(marked(text, alignHeard(text, timed("Worry about it."), "").words)).toEqual([
+      "worry",
+      "about",
+      "it",
+    ]);
+    const lost = "This is the last step, right?";
+    const r = alignHeard(lost, timed("This is fancy and gonin right?"), "");
+    expect(marked(lost, r.words)).toEqual(["This", "is", "right"]);
+  });
+
+  test("a longer stretch heard alike is another sentence, and stays dark", () => {
+    const text = "Then Elowen Thornfield Merrin Vance left.";
+    const r = alignHeard(text, timed("Then Elloin Thornfeld Marin Vans left."), "");
+    expect(marked(text, r.words)).toEqual(["Then", "left"]);
+    const three = "Then Elowen Thornfield Vance left.";
+    const alike = alignHeard(three, timed("Then Elloin Thornfeld Vans left."), "");
+    expect(marked(three, alike.words)).toEqual(["Then", "Elowen", "Thornfield", "Vance", "left"]);
+  });
+
   // lines and what Phonon heard of them, from a real check of a narrated chapter
   test.each([
     [

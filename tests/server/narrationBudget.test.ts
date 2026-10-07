@@ -11,8 +11,10 @@ import { describe, expect, test } from "bun:test";
 import type { Endpoint, Job, Segment } from "@/types";
 import { expressionParts, expressionPlan } from "@/lib/expressions";
 import { narrationCost } from "~/narration/cost";
+import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
-import { bookSpend, endpointRequests } from "~/usage/ledger";
+import { heldToday } from "~/usage/budget";
+import { bookSpend, CANCELLED, endpointRequests } from "~/usage/ledger";
 import { story } from "../support/epub";
 import {
   gatedSpeechProvider,
@@ -133,6 +135,70 @@ describe("what a narration run spends", () => {
       failed: false,
     });
     expect((await linesOf(api, id)).find((s) => s.id === split.id)?.audio.status).toBe("failed");
+  });
+});
+
+describe("a line sent to a real provider", () => {
+  /**
+   * A speech server that answers nothing until the request is closed, as one mid-way through a
+   * line is; `started` once the first request has gone out.
+   */
+  function silentServer() {
+    let onStart!: () => void;
+    const started = new Promise<void>((r) => (onStart = r));
+    let requests = 0;
+    const fetch = ((_url: string, init: RequestInit) =>
+      new Promise<Response>((_, reject) => {
+        requests++;
+        onStart();
+        init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+      })) as unknown as typeof globalThis.fetch;
+    return { fetch, started, requests: () => requests };
+  }
+
+  test("cancelled once it was out is one row at a cost nobody knows, counted at what it held; the line still queued leaves none", async () => {
+    const server = silentServer();
+    const api = testApi({
+      speech: endpointSpeechProvider({ fetch: server.fetch, backoffMs: () => 0 }),
+    });
+    // one at a time, so the next line is still waiting for its slot when the run is cancelled
+    const id = await voiced(api, speech({ concurrency: 1, batch: false }));
+    expect((await linesOf(api, id)).length).toBeGreaterThan(1);
+    const { body } = await narrate(api, id);
+    const [queued] = (body as Queued).jobs;
+    await server.started;
+    await api.request(`/api/jobs/${queued.id}/cancel`, { method: "POST" });
+    await api.runner.idle();
+
+    expect(server.requests()).toBe(1);
+    const rows = ledger(api);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "cancelled", cost: null, costBasis: "unknown" });
+    expect(rows[0].simulated).toBe(false);
+    expect(rows[0].speech?.unknowns).toEqual([CANCELLED]);
+    // never $0: the budgets count the line's worst case in its place, which the job gave back
+    const spend = bookSpend(api.db, id);
+    expect(spend.unpriced).toBe(1);
+    expect(spend.spent).toBeGreaterThan(0);
+    expect(spend.reserved).toBe(0);
+    expect((await jobById(api, queued.id)).narrationRun?.reserved).toBe(0);
+    expect(heldToday(api.db, "tts", "studio")).toBe(0);
+  });
+
+  test("refused, and not billed by its provider, is a row that costs nothing", async () => {
+    const fetch = (async () =>
+      new Response("no such voice", { status: 400 })) as unknown as typeof globalThis.fetch;
+    const api = testApi({ speech: endpointSpeechProvider({ fetch, backoffMs: () => 0 }) });
+    const id = await voiced(api, speech({ batch: false }));
+    await narrate(api, id);
+    await api.runner.idle();
+
+    const rows = ledger(api);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows)
+      expect(r).toMatchObject({ status: "failed", cost: 0, costBasis: "calculated" });
+    expect(bookSpend(api.db, id)).toMatchObject({ spent: 0, reserved: 0, unpriced: 0 });
+    expect(heldToday(api.db, "tts", "studio")).toBe(0);
   });
 });
 

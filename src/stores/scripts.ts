@@ -6,6 +6,7 @@
 // wrote) is refused by the server, the way a stale job result is, and the server's script is read
 // back over the local one with a toast saying so. History is the server's too: a write answers
 // with the history it added to, and the history store installs it.
+import { toRaw } from "vue";
 import { bulkInvalidates, bulkOutcome, scriptFingerprint, segmentFingerprint } from "@/lib/bulk";
 import { remapExpressions } from "@/lib/expressions";
 import { scriptSignature } from "@/lib/scriptHistory";
@@ -49,6 +50,8 @@ interface PendingWrite {
   dirty: boolean;
   /** one-line writes (a flag) waiting for their turn, in the order they were asked for */
   lines: (() => Promise<void>)[];
+  /** `_save`s answered by the next write, which sends what they asked for: true once it lands */
+  answers: ((landed: boolean) => void)[];
   /** what the next write says produced the script; an ordinary edit when unset */
   origin?: VersionOrigin;
   /** a read of the server's script arrived while this chapter was being written, and was put off */
@@ -57,7 +60,11 @@ interface PendingWrite {
   reading?: boolean;
 }
 
-/** Writes in flight, per store instance, kept out of the reactive state. */
+/**
+ * Writes in flight, per store instance, kept out of the reactive state. Keyed by the raw store:
+ * in development Pinia's devtools hand each action a fresh proxy of the store as `this`, so a
+ * map keyed by `this` itself would start over on every call.
+ */
 const pending = new WeakMap<object, Map<string, PendingWrite>>();
 
 interface ScriptsState {
@@ -697,7 +704,7 @@ export const useScriptsStore = defineStore("scripts", {
      */
     _install(bookId: string, chId: number, script: ChapterScript): void {
       const k = key(bookId, chId);
-      const p = pending.get(this)?.get(k);
+      const p = pending.get(toRaw(this))?.get(k);
       if (p && !p.reading && (p.inFlight || p.dirty)) {
         p.deferred = true;
         return;
@@ -796,8 +803,13 @@ export const useScriptsStore = defineStore("scripts", {
       this._rescripted = move(this._rescripted);
       // a write owed for one of this book's chapters was for a number that has moved; every
       // other book's writes are still owed
-      const mine = pending.get(this);
-      if (mine) for (const k of mine.keys()) if (k.startsWith(prefix)) mine.delete(k);
+      const mine = pending.get(toRaw(this));
+      if (mine)
+        for (const [k, p] of mine)
+          if (k.startsWith(prefix)) {
+            for (const answer of p.answers.splice(0)) answer(false);
+            mine.delete(k);
+          }
     },
     /** A book that is gone takes every chapter's script with it, and any write still owed. */
     _dropBook(bookId: string): void {
@@ -821,6 +833,19 @@ export const useScriptsStore = defineStore("scripts", {
       this._kick(bookId, chId, p);
     },
     /**
+     * `_commit`, answered: true once the write that sends the script as it now stands has landed,
+     * false when it was refused — the script then reverted to the server's and the toast said so —
+     * or never went out. For a caller that reports or undoes only what persisted, such as an import.
+     * Inside `silence()` nothing is written, so nothing landed.
+     */
+    _save(bookId: string, chId: number, origin?: VersionOrigin): Promise<boolean> {
+      if (this._silent) return Promise.resolve(false);
+      return new Promise((resolve) => {
+        this._pending(bookId, chId).answers.push(resolve);
+        this._commit(bookId, chId, origin);
+      });
+    },
+    /**
      * Write one line's own field — a flag — in this chapter's turn, and resolve (or reject) as
      * `write` does. The server moves the chapter's revision on for it, so it cannot overtake an edit
      * already on its way or waiting to go, which names the revision it read: that goes first. An
@@ -834,10 +859,10 @@ export const useScriptsStore = defineStore("scripts", {
       });
     },
     _pending(bookId: string, chId: number): PendingWrite {
-      let mine = pending.get(this);
-      if (!mine) pending.set(this, (mine = new Map()));
+      let mine = pending.get(toRaw(this));
+      if (!mine) pending.set(toRaw(this), (mine = new Map()));
       const k = key(bookId, chId);
-      const p = mine.get(k) ?? { inFlight: false, dirty: false, lines: [] };
+      const p = mine.get(k) ?? { inFlight: false, dirty: false, lines: [], answers: [] };
       mine.set(k, p);
       return p;
     },
@@ -884,9 +909,14 @@ export const useScriptsStore = defineStore("scripts", {
           p.dirty = false;
           const origin = p.origin;
           p.origin = undefined;
+          // every save asked for so far is answered by this write, which sends what they saved
+          const answers = p.answers.splice(0);
           const segments = clone(this.segments[k] ?? []);
           // the reader refuses to delete the last line; a chapter with none is not an edit
-          if (!segments.length) continue;
+          if (!segments.length) {
+            for (const answer of answers) answer(false);
+            continue;
+          }
           try {
             const { revision, history } = await svc.editScript(bookId, chId, {
               segments,
@@ -896,10 +926,12 @@ export const useScriptsStore = defineStore("scripts", {
             // never backwards: a rename's answer for this chapter may have landed in between
             this._revision[k] = Math.max(this._revision[k] ?? 0, revision);
             historyStore._install(bookId, chId, history);
+            for (const answer of answers) answer(true);
           } catch (cause) {
             // The server's script wins: what is here is read again over the edit, and the toast
             // says so. Anything still dirty is dropped with it — it was an edit of a script that
-            // is no longer there.
+            // is no longer there — and a save waiting on it is refused too.
+            for (const answer of [...answers, ...p.answers.splice(0)]) answer(false);
             p.dirty = false;
             p.deferred = true;
             refused = true;
@@ -928,7 +960,7 @@ export const useScriptsStore = defineStore("scripts", {
      * so far has been answered, and a read put off meanwhile has been made.
      */
     async _settled(bookId: string, chId: number): Promise<void> {
-      const p = pending.get(this)?.get(key(bookId, chId));
+      const p = pending.get(toRaw(this))?.get(key(bookId, chId));
       while (p?.inFlight) await p.running;
     },
     /** Run `fn` without its per-line edits each writing their chapter — a batch is one write. */

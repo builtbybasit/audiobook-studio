@@ -195,8 +195,14 @@ const picks = computed<VoicePick[]>(() =>
   }),
 );
 
-function apply() {
-  transferStore.apply(bookId, toApply.value, picks.value);
+const applying = ref(false);
+async function apply() {
+  applying.value = true;
+  try {
+    await transferStore.apply(bookId, toApply.value, picks.value);
+  } finally {
+    applying.value = false;
+  }
 }
 
 /** The line a private voice's row gives the recordings the file carries for it. */
@@ -318,6 +324,14 @@ const SKIPPED = {
               Each chapter's history keeps the script it replaced, labelled “Imported from
               {{ plan.name }}”. Undo in the toast takes the whole import back.
             </p>
+            <ul
+              v-if="report.refused.length"
+              class="mt-2 space-y-0.5 text-xs text-red-600 dark:text-red-400"
+            >
+              <li v-for="r in report.refused" :key="r.chapterId">
+                {{ r.title }} — the server refused it, so it reads as it did
+              </li>
+            </ul>
             <ul v-if="report.skipped.length" class="mt-2 space-y-0.5 text-xs text-zinc-500">
               <li v-for="s in report.skipped" :key="s.chapterId">
                 {{ s.title }} — {{ SKIPPED[s.why] }}
@@ -627,7 +641,7 @@ const SKIPPED = {
             <span v-if="picks.length" class="text-xs text-zinc-500">
               and {{ plural(picks.length, "voice") }}
             </span>
-            <button class="btn-primary" :disabled="!toApply.length" @click="apply">
+            <button class="btn-primary" :disabled="!toApply.length || applying" @click="apply">
               Apply {{ plural(toApply.length, "chapter") }}
             </button>
           </div>

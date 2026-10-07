@@ -1,17 +1,10 @@
 import type { ExpressionPlan } from "@/lib/expressions";
 // Narration, expression preflight and retakes. Accepted audio stays on the script segments.
-import {
-  annotationFrom,
-  expressionParts,
-  expressionPlan,
-  expressionSupport,
-  validToken,
-} from "@/lib/expressions";
+import { annotationFrom, expressionSupport, validToken } from "@/lib/expressions";
+import { compareReading, prepareReading, type Reading } from "@/lib/reading";
 import { narrationPlan, narrationTargets, SCOPE_LABEL, segmentFailed } from "@/lib/runPlan";
 import { isSpoken } from "@/lib/siteText";
-import { partsFor } from "@/lib/split";
 import type {
-  Endpoint,
   EndpointEstimate,
   ExpressionAnnotation,
   ExpressionTag,
@@ -40,7 +33,6 @@ import {
   speechRates,
 } from "@/lib/pricing";
 import { effectiveRates } from "@/lib/pricing";
-import { sampleRateLabel, speechInstructions } from "@/lib/speech";
 import { plural } from "@/lib/contents";
 import { key } from "@/lib/scriptReview";
 import { jobsService } from "@/services/jobs";
@@ -48,7 +40,7 @@ import { libraryService } from "@/services/library";
 import { fetchCast } from "@/queries/cast";
 import { fetchScript } from "@/queries/chapterScript";
 import { fetchSpend } from "@/queries/spend";
-import type { BillableUnits, SpeechEstimate } from "@/types";
+import type { SpeechEstimate } from "@/types";
 import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 
@@ -67,15 +59,33 @@ function stepRevision(bookId: string, chId: number, revision: number): void {
 
 export const useNarrationStore = defineStore("narration", {
   getters: {
-    expressionRender(): (bookId: string, segment: Segment) => ExpressionPlan {
+    /**
+     * Exactly what a line is sent as now (`@/lib/reading`): read in its speaker's voice as the cast
+     * and the endpoints stand, with the book's dictionary. The server takes the same reading as the
+     * line goes out, so the estimate, the editor's preview and the drift rule below say what the
+     * server sends — on the endpoint the voice names even when that endpoint no longer lists the
+     * voice, because that is where the server sends it (`endpoints.endpointOf`).
+     */
+    reading(): (bookId: string, s: Segment) => Reading {
       const castStore = useCastStore();
+      const endpointsStore = useEndpointsStore();
 
-      return (bookId: string, segment: Segment) =>
-        expressionPlan(
-          segment,
-          castStore.effectiveVoice(bookId, segment.speaker).endpoint,
+      return (bookId, s) => {
+        const voice = castStore.effectiveVoice(bookId, s.speaker);
+        return prepareReading(
+          s,
+          {
+            endpoint: endpointsStore.endpointOf(voice.ref),
+            voiceRef: voice.ref,
+            style: castStore.byName[bookId]?.get(s.speaker)?.style,
+          },
           castStore.lexiconOf(bookId),
         );
+      };
+    },
+    /** The words of a line's reading: what the editor previews and the issues it shows. */
+    expressionRender(): (bookId: string, segment: Segment) => ExpressionPlan {
+      return (bookId, segment) => this.reading(bookId, segment).plan;
     },
     expressionIssues(): (
       bookId: string,
@@ -107,44 +117,13 @@ export const useNarrationStore = defineStore("narration", {
         );
     },
     /** Everything a clip was rendered with that the script no longer says — empty means "still current".
-     *  One definition, so the ledger's amber line, a rejected retake and a finished render agree. */
+     *  One definition, so the ledger's amber line, a rejected retake and a finished render agree —
+     *  and the server's, `compareReading`, so a clip that lands is judged the same way. */
     clipDrift(): (bookId: string, s: Segment, a?: SegmentAudio) => string[] {
-      const castStore = useCastStore();
       const endpointsStore = useEndpointsStore();
 
-      return (bookId, s, a = s.audio) => {
-        if (!a.at) return [];
-        const out: string[] = [];
-        if (a.text != null && a.text !== s.text)
-          out.push(
-            a.text.length === s.text.length
-              ? "text: edited"
-              : `text: ${a.text.length} → ${s.text.length} chars`,
-          );
-        const sent = a.pronounced ?? a.said ?? a.text;
-        // the words themselves are unchanged but the dictionary now sends different ones
-        if (a.text === s.text && sent != null && castStore.spoken(bookId, s.text).text !== sent)
-          out.push("pronunciation: the dictionary changed after this clip");
-        if ((a.expressionSignature ?? "") !== this.expressionRender(bookId, s).signature)
-          out.push("expressions: tags, position, or model support changed after this clip");
-        if ((a.direction || "") !== (s.direction || ""))
-          out.push(`direction: “${a.direction || "—"}” → “${s.direction || "—"}”`);
-        if (a.type && a.type !== s.type) out.push(`type: ${a.type} → ${s.type}`);
-        const now = castStore.effectiveVoice(bookId, s.speaker);
-        if (a.voiceRef && now.ref !== a.voiceRef)
-          out.push(
-            `voice: ${endpointsStore.voiceLabel(a.voiceRef)} → ${endpointsStore.voiceLabel(now.ref) || "unset"}`,
-          );
-        // An endpoint left on the model's own rate asks for nothing, so no clip it made is at the
-        // wrong one; only a rate the endpoint now names can be one a clip was not rendered at.
-        const rate = now.endpoint?.sampleRate;
-        if (a.sampleRate && rate && a.sampleRate !== rate)
-          out.push(`sample rate: ${sampleRateLabel(a.sampleRate)} → ${sampleRateLabel(rate)}`);
-        const who = castStore.charactersOf(bookId).find((c) => c.name === s.speaker);
-        if ((a.style ?? "") !== (who?.style ?? ""))
-          out.push(`style: “${a.style || "—"}” → “${who?.style || "—"}”`);
-        return out;
-      };
+      return (bookId, s, a = s.audio) =>
+        a.at ? compareReading(a, s, this.reading(bookId, s), endpointsStore.voiceLabel) : [];
     },
     /**
      * The lines of one chapter the script has moved past: stale clips, plus — once the chapter has
@@ -187,7 +166,7 @@ export const useNarrationStore = defineStore("narration", {
      *
      * It takes the estimate rather than working one out: the page already has it, and the strip
      * re-renders on every progress tick while a run is in flight, so a second pass here would cost
-     * two `expressionRender` calls per line, several times a second, for a number already in hand.
+     * a reading of every line, several times a second, for a number already in hand.
      */
     blockers(): (bookId: string, est: NarrationEstimate) => string[] {
       const castStore = useCastStore();
@@ -231,38 +210,7 @@ export const useNarrationStore = defineStore("narration", {
     },
     /** How many endpoint requests one line becomes, after expressions and the endpoint's limit. */
     requestsFor(): (bookId: string, seg: Segment) => number {
-      const castStore = useCastStore();
-
-      return (bookId, seg) => {
-        const ep = castStore.effectiveVoice(bookId, seg.speaker).endpoint;
-        if (!ep) return 0;
-        const render = this.expressionRender(bookId, seg);
-        return render.issues.length
-          ? partsFor(render.text, ep)
-          : expressionParts(render, ep).length;
-      };
-    },
-    /**
-     * What one line would submit to one endpoint, counted every way a provider can bill it.
-     *
-     * The same measurement the server takes when the request actually goes out, so an estimate
-     * and the charge that follows it count the same thing: the line **after** the pronunciation
-     * dictionary and the expression tags, plus the voice instructions sent beside it — never the
-     * source text, and never the endpoint's split limit, which is about payload size rather than
-     * price. The audio side is this app's own reading-speed estimate, because nothing has been
-     * rendered yet; stitched silence is not generated audio and is not in it.
-     */
-    _plannedUnits(): (bookId: string, seg: Segment, ep: Endpoint) => BillableUnits {
-      const castStore = useCastStore();
-
-      return (bookId, seg, ep) => {
-        const who = castStore.charactersOf(bookId).find((x) => x.name === seg.speaker);
-        return plannedSpeechUnits(
-          this.expressionRender(bookId, seg),
-          ep,
-          speechInstructions({ style: who?.style, direction: seg.direction }),
-        );
-      };
+      return (bookId, seg) => this.reading(bookId, seg).requests;
     },
     /**
      * What a run leaves unread, said in words: "3 lines of site text and 2 notes are not read".
@@ -335,6 +283,10 @@ export const useNarrationStore = defineStore("narration", {
      * limit becomes several requests — so cost and load are per endpoint, and each card is priced in
      * whatever unit it bills in. Lines with no route are counted in `unrouted` and priced by nobody.
      *
+     * Each line is measured on its reading (`plannedSpeechUnits`), the measurement the server takes
+     * when the request actually goes out, so an estimate and the charge that follows it count the
+     * same thing: the words after the dictionary and the tags, with the instructions beside them.
+     *
      * One grouping and one call into the pricing engine per endpoint, which the estimate reads every
      * column of — the undiscounted figure the cap is checked against included, so the panel cannot
      * quote a figure the cap does not honour.
@@ -344,13 +296,12 @@ export const useNarrationStore = defineStore("narration", {
       segs: Segment[],
       at: number,
     ) => { rows: { row: EndpointEstimate; priced: SpeechEstimate }[]; unrouted: number } {
-      const castStore = useCastStore();
-
       return (bookId, segs, at) => {
         const per: Record<string, EndpointEstimate> = {};
         let unrouted = 0;
         for (const seg of segs) {
-          const ep = castStore.effectiveVoice(bookId, seg.speaker).endpoint;
+          const reading = this.reading(bookId, seg);
+          const ep = reading.reader.endpoint;
           if (!ep) {
             unrouted++;
             continue;
@@ -368,9 +319,9 @@ export const useNarrationStore = defineStore("narration", {
             withoutPromotions: 0,
             why: [],
           });
-          e.units = addUnits(e.units, this._plannedUnits(bookId, seg, ep));
+          e.units = addUnits(e.units, plannedSpeechUnits(reading, ep));
           e.segments++;
-          const parts = this.requestsFor(bookId, seg);
+          const parts = reading.requests;
           e.requests += parts;
           e.chars = e.units.chars;
           if (parts > 1) e.split++;

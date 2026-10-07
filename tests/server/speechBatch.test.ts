@@ -391,7 +391,7 @@ describe("a batch", () => {
     expect(s.state.cancelled).toBe(1);
   });
 
-  test("cancelled mid-stream closes the request and reports nothing more", async () => {
+  test("cancelled mid-stream closes the request and reports the items still open as cancelled", async () => {
     const s = server({ itemDelayMs: 30 });
     const job = new AbortController();
     const r = await send(s, TEXTS, {
@@ -400,7 +400,13 @@ describe("a batch", () => {
     });
     expect((r.thrown as Error).message).toBe("cancelled by the reader");
     expect(r.answered.map((a) => a.index)).toEqual([0]);
-    expect(r.reports.map((rows) => rows.length)).toEqual([1, 0, 0, 0]);
+    expect(r.reports.map((rows) => rows.map((row) => row.status))).toEqual([
+      ["done"],
+      ["cancelled"],
+      ["cancelled"],
+      ["cancelled"],
+    ]);
+    expect(r.reports.slice(1).every(([row]) => row.billed === null)).toBe(true);
     expect(s.state.cancelled).toBe(1);
   });
 

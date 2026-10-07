@@ -22,7 +22,8 @@
 // ledger's cost on that endpoint since local midnight, across every book; its "held" is what the
 // requests out at it right now hold — not what queued jobs hold, which would have a run that was
 // let queue stop itself at its first request. Only this process sends, so what is out is kept in
-// memory (`holdToday`), and after a restart nothing is.
+// memory (`holdToday`, which each request's `dispatch` holds and gives back), and after a restart
+// nothing is.
 import type { EndpointKind } from "@/types";
 import { money } from "@/lib/pricing";
 import type { Db } from "~/db/client";
@@ -151,7 +152,8 @@ export function holdToday(
   };
 }
 
-function endpointOf(db: Db, kind: EndpointKind, id: string) {
+/** An endpoint of `kind` as it is stored now, or undefined once it has been removed. */
+export function endpointOf(db: Db, kind: EndpointKind, id: string) {
   switch (kind) {
     case "tts":
       return readEndpoint(db, id);

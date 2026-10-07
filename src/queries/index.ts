@@ -19,5 +19,9 @@ export { fetchCast, useCast } from "@/queries/cast";
 export { useBookExports } from "@/queries/exports";
 export { useBookJobs, POLL_MS } from "@/queries/jobs";
 export { useBookSpend, useLibrarySpend, spendMoved } from "@/queries/spend";
-export { useEndpointHistory } from "@/queries/endpointHistory";
+export {
+  useEndpointHistory,
+  useEndpointRequests,
+  useEndpointSummaries,
+} from "@/queries/endpointHistory";
 export { useEndpointLive } from "@/queries/endpointLive";

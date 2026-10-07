@@ -13,8 +13,9 @@
 // usage the answer reported is kept for the row, because `read` hands it over (`counted`) before it
 // decodes anything. A request that never got a 2xx — a refusal after the retries, no answer at all,
 // a refusal inside a 200 that the provider's `check` found — was not, unless the provider's docs say
-// it bills those (`billsFailures`). A cancel reports nothing: what the provider did with a request
-// it was mid-way through is not knowable.
+// it bills those (`billsFailures`). A cancel after the first attempt went out is reported
+// `cancelled`, billed or not nobody can say — what the provider did with a request it was mid-way
+// through is not knowable — and one before it went out reports nothing.
 import type { AudioFormat, SpeechUsage } from "@/types";
 import { audioAnswer, type AnsweredAudio } from "~/providers/answer";
 import { call, ProviderError, type CallOptions, type CallStats } from "~/providers/http";
@@ -88,7 +89,10 @@ export async function sendSpeech(
       ...rest,
     });
   const failed = (e: unknown, billed: boolean): never => {
-    if (signal.aborted) throw e;
+    if (signal.aborted) {
+      if (stats.attempts) report({ status: "cancelled", audioSeconds: 0, billed: null });
+      throw e;
+    }
     report({
       status: "failed",
       audioSeconds: 0,

@@ -343,7 +343,7 @@ function pickBucket(b: MetricBucket | null) {
           :class="spendToday.unknown ? 'text-amber-600 dark:text-amber-400' : 'text-zinc-500'"
         >
           <template v-if="spendToday.unknown"
-            >{{ plural(spendToday.unknown, "request") }} with an unknown rate — the real figure is
+            >{{ plural(spendToday.unknown, "request") }} not priced — the real figure may be
             higher</template
           >
           <template v-else>recorded from usage, all endpoints</template>

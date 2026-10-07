@@ -18,6 +18,7 @@ import { voiceFiles } from "~/voices/files";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { SpeechInput, SpeechProvider } from "~/providers/speech";
 import { readWavHeader } from "~/providers/wavEncoder";
+import { heldToday } from "~/usage/budget";
 import { saved } from "../support/cloning";
 import { jsonBody, testApi, type TestApi } from "../support/server";
 
@@ -52,8 +53,8 @@ function recording(): { provider: SpeechProvider; asked: SpeechInput[] } {
   };
 }
 
-const sample = (api: TestApi, id: string, voice: string) =>
-  api.fetch("/api/endpoints/sample", jsonBody({ id, voice }));
+const sample = (api: TestApi, id: string, voice: string, signal?: AbortSignal) =>
+  api.fetch("/api/endpoints/sample", { ...jsonBody({ id, voice }), signal });
 
 const ledger = async (api: TestApi, id = "studio") =>
   (
@@ -109,6 +110,36 @@ describe("a voice sample", () => {
     expect(row.usage.chars).toBe(VOICE_SAMPLE.length);
     // the fake's rows are marked, so nobody reads them as a bill
     expect(row.simulated).toBe(true);
+  });
+
+  test("cancelled once it was out is a row at a cost nobody knows, and holds nothing after", async () => {
+    // a server that answers nothing until the request is closed
+    let onStart!: () => void;
+    const started = new Promise<void>((r) => (onStart = r));
+    const fetch = ((_url: string, init: RequestInit) =>
+      new Promise<Response>((_, reject) => {
+        onStart();
+        init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+      })) as unknown as typeof globalThis.fetch;
+    const api = testApi({ samples: endpointSpeechProvider({ fetch, backoffMs: () => 0 }) });
+    await saved(api, speech());
+    const page = new AbortController();
+    const asked = sample(api, "studio", "ash", page.signal).catch(() => null);
+    await started;
+    // the held worst case is out at the endpoint while it waits
+    expect(heldToday(api.db, "tts", "studio")).toBeGreaterThan(0);
+    page.abort(new Error("the page went away"));
+    await asked;
+
+    const [row, ...rest] = await ledger(api);
+    expect(rest).toEqual([]);
+    expect(row).toMatchObject({
+      label: "Voice sample · Ash",
+      status: "cancelled",
+      cost: null,
+      costBasis: "unknown",
+    });
+    expect(heldToday(api.db, "tts", "studio")).toBe(0);
   });
 
   test("of an endpoint that is not saved is not found", async () => {

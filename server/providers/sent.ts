@@ -11,8 +11,10 @@
 // 200 was not, unless that provider's docs say it bills failures (`billsFailures` in
 // `lib/providers/`). A request refused before anything was sent (no key, no voice, an unsupported
 // format) reports nothing, because it cost nothing and never happened as far as the provider is
-// concerned. A cancel mid-request reports nothing either: what the provider did with it is not
-// knowable.
+// concerned, and so does a request cancelled before it left — still waiting for a slot. One
+// cancelled after it went out is reported `cancelled`: the provider may have started on it and
+// billed it, and what it made of it is not knowable, so the ledger keeps it at a cost nobody knows
+// (`billed` null) rather than leaving it out as free.
 import type { SpeechUsage, TokenUsage } from "@/types";
 
 interface SentRequest {
@@ -22,7 +24,7 @@ interface SentRequest {
   /** from `CallStats`: 1 on a first-try answer */
   attempts: number;
   rateLimited: boolean;
-  status: "done" | "failed";
+  status: "done" | "failed" | "cancelled";
   /**
    * for a failed request: what went wrong, the status it answered with (0 for none), and what the
    * answer said where it was refused for its content, so the endpoint's Activity can show it whole
@@ -52,9 +54,10 @@ export interface SentSpeech extends SentRequest {
   /**
    * Whether the provider charges for this request: always for one that succeeded or was answered
    * with a 2xx, never for a refusal or no answer unless the provider bills those (see the header).
-   * The ledger keeps a row either way, and prices one that was not billed at nothing.
+   * The ledger keeps a row either way, and prices one that was not billed at nothing. Null for a
+   * request cancelled after it went out, which nobody here can know.
    */
-  billed: boolean;
+  billed: boolean | null;
 }
 
 /**
@@ -65,5 +68,6 @@ export interface SentSpeech extends SentRequest {
 export interface SentTranscription extends SentRequest {
   /** seconds of audio sent */
   audioSeconds: number;
-  billed: boolean;
+  /** as `SentSpeech.billed`: null for a request cancelled after it went out */
+  billed: boolean | null;
 }

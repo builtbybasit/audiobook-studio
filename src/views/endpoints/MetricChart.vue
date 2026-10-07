@@ -3,8 +3,9 @@
 // shadcn-vue's chart shell: `ChartContainer` holds the config the legend and the tooltip are
 // both read from, so a metric's label and colour are written once, here, in PARTS.
 //
-// Clicking a bar filters the Activity list to exactly the requests that made it — the chart and the
-// list are folded from one array of records, so "what caused this spike" is always answerable.
+// Clicking a bar filters the Activity list to exactly the requests that made it — the server sums a
+// bucket and filters the list by the same rule for a row's time, so "what caused this spike" is
+// always answerable.
 // SVG bars can't hold focus, so the plot is also a keyboard control: focus it and ←/→ walk the
 // buckets, Enter picks one, Esc clears. The readout under the chart is the live region that
 // announces whichever bucket the pointer or the keyboard is on.

@@ -407,7 +407,7 @@ describe("refused before any request", () => {
     expect(r.got).toEqual([]);
   });
 
-  test("a cancel throws the job's own reason", async () => {
+  test("a cancel throws the job's own reason, reported cancelled once the request went out", async () => {
     const ctl = new AbortController();
     const reason = new Error("cancelled by you");
     const fetch = ((_: string, init: RequestInit) =>
@@ -419,7 +419,23 @@ describe("refused before any request", () => {
     await expect(
       provider(fetch).speak(line(fish, { signal: ctl.signal, sent: r.sent })),
     ).rejects.toBe(reason);
-    // what the provider did with a request it was mid-way through is not knowable
+    // what the provider did with a request it was mid-way through is not knowable: billed or not,
+    // nobody here can say
+    expect(r.got).toEqual([
+      expect.objectContaining({ status: "cancelled", billed: null, audioSeconds: 0 }),
+    ]);
+  });
+
+  test("a cancel before the request went out reports nothing", async () => {
+    const ctl = new AbortController();
+    ctl.abort(new Error("cancelled by you"));
+    const fetch = (() => {
+      throw new Error("nothing should be sent");
+    }) as unknown as typeof globalThis.fetch;
+    const r = reports();
+    await expect(
+      provider(fetch).speak(line(fish, { signal: ctl.signal, sent: r.sent })),
+    ).rejects.toThrow("cancelled by you");
     expect(r.got).toEqual([]);
   });
 });

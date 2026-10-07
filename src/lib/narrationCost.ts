@@ -5,33 +5,25 @@
 // panel green-lit is refused, or a run the panel warned about goes through.
 import type { BillableUnits, Endpoint, SpeechEstimate } from "@/types";
 import { billingOf } from "@/lib/endpoints";
-import { expressionParts, type ExpressionPlan } from "@/lib/expressions";
 import { AUDIO_CHARS_PER_SECOND, measureSpeech } from "@/lib/pricing";
-import { partsFor } from "@/lib/split";
+import type { Reading } from "@/lib/reading";
 
 /**
  * What one line would submit to `ep`, counted every way a provider can bill it.
  *
- * The line **after** the pronunciation dictionary and the expression tags (`render`), plus the
- * voice instructions sent beside it — never the source text. It is as many requests as the
- * endpoint's limit cuts it into; the audio side is this app's reading-speed estimate, because
- * nothing has been rendered yet. A line whose tags the endpoint cannot say is still counted, cut
- * the plain way, so an estimate never reads cheaper for a line that needs attention.
+ * The line's reading (`@/lib/reading`): the words **after** the pronunciation dictionary and the
+ * expression tags, plus the voice instructions sent beside them — never the source text — in as
+ * many requests as the reading says it is billed as. The audio side is this app's reading-speed
+ * estimate, because nothing has been rendered yet.
  */
-export function plannedSpeechUnits(
-  render: ExpressionPlan,
-  ep: Endpoint,
-  instructions: string,
-): BillableUnits {
-  const parts = render.issues.length
-    ? partsFor(render.text, ep)
-    : expressionParts(render, ep).length;
+export function plannedSpeechUnits(reading: Reading, ep: Endpoint): BillableUnits {
+  const { plan, instructions, requests } = reading;
   return measureSpeech(
     {
-      text: render.text,
+      text: plan.text,
       instructions,
-      requests: parts,
-      audioSeconds: render.text.length / AUDIO_CHARS_PER_SECOND,
+      requests,
+      audioSeconds: plan.text.length / AUDIO_CHARS_PER_SECOND,
     },
     billingOf(ep),
   );

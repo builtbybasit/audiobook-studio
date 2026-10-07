@@ -13,6 +13,7 @@ import { UiDialog } from "@/ui";
 import { X as CloseIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
 
 import { hitsIn, marks, speak } from "@/lib/speech";
+import { pronunciationMoved } from "@/lib/reading";
 import type { LexEntry } from "@/types";
 
 const props = defineProps<{ bookId: string; open: boolean; term: string }>();
@@ -95,9 +96,9 @@ const staleClips = computed(() => {
   for (const k of Object.keys(scriptsStore.segments)) {
     if (!k.startsWith(prefix)) continue;
     for (const s of scriptsStore.segments[k]) {
-      const sent = s.audio.pronounced ?? s.audio.said ?? s.audio.text;
-      if (s.audio.status !== "done" || sent == null) continue;
-      if (speak(s.text, [...castStore.lexiconOf(props.bookId), draft.value]).text !== sent) n++;
+      if (s.audio.status !== "done") continue;
+      const now = speak(s.text, [...castStore.lexiconOf(props.bookId), draft.value]).text;
+      if (pronunciationMoved(s.audio, now)) n++;
     }
   }
   return n;

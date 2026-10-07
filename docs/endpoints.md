@@ -50,8 +50,10 @@ source.
   reported, the tile reads "—" and "usage not reported" and the chart plots requests per minute.
 - Outcomes separate first-attempt success from eventual success and count rate limits, retries and
   failures.
-- Clicking a bar filters the Activity tab to exactly the requests in that bucket; chart and list are
-  folded from one array of records.
+- The charts and totals are summed by the server over every request in the range, never over the
+  list the page holds: a narration run sends thousands. Clicking a bar filters the Activity tab to
+  exactly the requests in that bucket; the server buckets and filters by one rule for a row's time,
+  and the list is read a page at a time with every filter applied there.
 - SVG bars cannot hold focus, so the plot is a keyboard control: focus it, `←`/`→` walk the buckets,
   `Enter` picks one, `Esc` clears, and the readout under the chart is a live region that announces
   each one.
@@ -264,8 +266,11 @@ Cancel stops the jobs, and says first how many it will hit, that in-flight work 
 recorded cost, and that nothing already scripted or rendered is deleted. Removing an endpoint
 explains the same ground, and has Undo. Pausing is per endpoint: a sibling that shares the base
 URL and credential keeps running. Cancel drops queued requests and puts their chapters back as they
-were; nothing is refunded. A connection change saved while jobs are unfinished applies to jobs
-started after the save — nothing is re-sent or re-priced.
+were; nothing is refunded. A request that was already out when it was cancelled stays in Activity as
+**cancelled**, at a cost nobody knows — the provider may have billed it — counted at what it held,
+as a request whose usage was not reported is; one that was still waiting leaves nothing. A
+connection change saved while jobs are unfinished applies to jobs started after the save — nothing
+is re-sent or re-priced.
 
 An unused endpoint is never called "Healthy": it reads **Not tested** until something answers and
 **No recent activity** once it falls quiet.

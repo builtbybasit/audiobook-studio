@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import type { Endpoint } from "@/types";
 import { cloneModelsFor, cloningOf } from "@/lib/providers";
 import { cloneFees, requests } from "~/db/schema";
+import { endpointVoiceCloner, type VoiceCloner } from "~/providers/clone";
 import type { SentSpeech } from "~/providers/sent";
 import { settleSpeech } from "~/usage/ledger";
 import {
@@ -17,6 +18,7 @@ import {
   sampleFile,
   saved,
   cloneEndpoint,
+  cloneTarget,
 } from "../support/cloning";
 import { testApi, type TestApi } from "../support/server";
 
@@ -115,6 +117,62 @@ describe("what a clone costs", () => {
       },
     ]);
     expect(api.db.select().from(cloneFees).all()).toEqual([]);
+  });
+
+  test("a clone cancelled once its upload was out may have been charged: a row at a cost nobody knows where the voice is charged as it is made, and nothing otherwise", async () => {
+    // a cloner whose upload goes out, then waits until the request is closed
+    const uploading: VoiceCloner = {
+      clone: (_target, _request, signal, wentOut) =>
+        new Promise((_, reject) => {
+          wentOut?.();
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          setTimeout(() => page.abort(new Error("the page went away")), 0);
+        }),
+    };
+    let page = new AbortController();
+    const api = testApi({ cloner: uploading });
+    await saved(api, minimax, qwen);
+    for (const id of ["qwen", "minimax"]) {
+      page = new AbortController();
+      await api
+        .fetch("/api/endpoints/voices/clone", {
+          method: "POST",
+          body: cloneForm(cloneFields(id), [sampleFile()]),
+          signal: page.signal,
+        })
+        .catch(() => null);
+    }
+    expect(
+      api.db
+        .select({
+          endpointId: requests.endpointId,
+          status: requests.status,
+          cost: requests.cost,
+          held: requests.held,
+        })
+        .from(requests)
+        .all(),
+    ).toEqual([{ endpointId: "qwen", status: "cancelled", cost: null, held: 0.01 }]);
+    expect(api.db.select().from(cloneFees).all()).toEqual([]);
+  });
+
+  test("the cloner says a clone went out when its first request did, and not when it was cancelled first", async () => {
+    const fetch = (async () =>
+      new Response("busy", { status: 503 })) as unknown as typeof globalThis.fetch;
+    const samples = [{ name: "mara.wav", format: "wav" as const, blob: sampleFile() }];
+    const tried = async (signal: AbortSignal) => {
+      let wentOut = false;
+      await endpointVoiceCloner({ fetch })
+        .clone(cloneTarget({ ...qwen, apiKey: "sk" }), { title: "Mara", samples }, signal, () => {
+          wentOut = true;
+        })
+        .catch(() => null);
+      return wentOut;
+    };
+    expect(await tried(new AbortController().signal)).toBe(true);
+    const cancelled = new AbortController();
+    cancelled.abort(new Error("the page went away"));
+    expect(await tried(cancelled.signal)).toBe(false);
   });
 
   test("a clone that fails costs nothing and sets nothing aside", async () => {

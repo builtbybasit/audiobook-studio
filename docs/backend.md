@@ -684,7 +684,8 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `GET`    | `/api/endpoints/:id/voices/:voice/samples`        | One voice's kept samples; `…/:file` one sample                                                               |
 | `POST`   | `/api/endpoints/:id/voices/:voice/samples`        | Keep samples for a voice already saved; nothing sent                                                         |
 | `DELETE` | `/api/endpoints/:id/voices/:voice/samples`        | Forget them, keep the voice; `POST …/restore` takes it back                                                  |
-| `GET`    | `/api/endpoints/requests`                         | One endpoint's requests, newest first; `?kind&id&range`                                                      |
+| `GET`    | `/api/endpoints/summary`                          | One endpoint's charts and totals over every row; `?kind&id&range&today`                                      |
+| `GET`    | `/api/endpoints/requests`                         | One endpoint's requests, a page at a time; `?kind&id&range&from&to&status&bookId&search&before&limit`        |
 | `GET`    | `/api/endpoints/live`                             | Each speech endpoint's lines out and held, cooldown, clips done                                              |
 | `GET`    | `/api/jobs`                                       | Every job, oldest first; `?bookId=` narrows it                                                               |
 | `GET`    | `/api/jobs/:id`                                   | One job, with its activity                                                                                   |
@@ -953,8 +954,9 @@ origin and fingerprint.
 **A prompt trial** is `POST /api/books/:id/script-trial` ([server/script/trial.ts](../server/script/trial.ts)):
 one chunk sent with draft layers over the saved ones and `lenient` set, so lines that fail
 `fidelity` come back rather than being refused. It writes nothing but a ledger row, checks the
-book's budget first, answers a provider refusal as a result with `error` (200), and is cancelled
-with the request. **Thinking is counted**: ledger rows keep `reasoning_tokens` (null = not
+book's budget first, holds its worst case against the profile's daily limit while it is out, as a
+run's request does (`dispatch`), answers a provider refusal as a result with `error` (200), and is
+cancelled with the request. **Thinking is counted**: ledger rows keep `reasoning_tokens` (null = not
 reported) and `reasoning_effort`, and `scriptReasoning` turns an endpoint's latest 20 at its current
 level into the thinking-per-input-token share the estimates add to output.
 
@@ -1127,7 +1129,10 @@ request, which would otherwise close it while the provider works.
 and the row is appended then; BreezeBlue charges 100 credits then, which counts as unpriced. MiniMax
 charges $1.50 the first time a line is spoken in the voice, so the fee waits in `clone_fees` and the
 first billed request in that voice appends it and removes the row in one transaction. Fish,
-ElevenLabs and Cartesia charge nothing per voice.
+ElevenLabs and Cartesia charge nothing per voice. A clone cancelled once its upload was out may have
+made the voice all the same, so where the fee is charged as the voice is made it is a `cancelled`
+row at an unknown cost holding the fee (`settleCancelledClone`); one cancelled before anything went
+out, or on a provider that charges at first use, leaves nothing.
 
 **The samples are kept once the provider has answered**, never before, so a failed clone keeps
 nothing: the bytes as picked, named by their hash, under `VOICE_DIR` in one directory per voice
@@ -1149,11 +1154,17 @@ and how a script file carries the samples to another library.
 
 **Every request a provider sends is priced and appended to the ledger, answered or not.** A
 provider reports each one through its input's `sent` callback ([sent.ts](../server/providers/sent.ts))
-— when it went out and came back, its attempts and whether one was a 429, what it used — and the job
-settles it with the book, the chapter's uid and a label ([ledger.ts](../server/usage/ledger.ts)).
+— when it went out and came back, its attempts and whether one was a 429, what it used — and it is
+settled with the book, the chapter's uid and a label ([ledger.ts](../server/usage/ledger.ts)).
+Every caller — a narration line, a scripting chunk, a clip heard back, a prompt trial, a voice
+sample, a sample transcript — goes through one request lifecycle for that, `dispatch`
+([dispatch.ts](../server/usage/dispatch.ts)): it holds the request's worst case while it is out,
+hands the provider its `sent`, prices each report into the ledger and gives back the charge at
+once, and gives back the rest when the request is over however it ended.
 The price is the page's own engine, `src/lib/pricing/`, imported as it is: `priceRequest` for a
 scripting request, `measureSpeech` and `priceSpeechRequest` for a speech one, against the card
-stored when the request completed and at the rates in force then. The receipt is frozen on the row,
+stored when the request completed and at the rates in force then — or, for an endpoint removed
+while the request was out, the snapshot it was sent with. The receipt is frozen on the row,
 so a rate changed tomorrow re-prices nothing. What a receipt holds, and why, is in
 [pricing](pricing.md).
 
@@ -1168,7 +1179,10 @@ what came back proved unusable. A refusal after the retries, a request that neve
 and a refusal inside a 200 are not billed unless the provider's docs say it bills failures
 (`billsFailures`, false for every provider so far); such a request is still a row, at nothing, and
 its receipt says so. A request refused before it was sent never happened and has no row; nor does
-one cancelled mid-flight, since what the provider made of it is not knowable.
+one cancelled while it was still waiting for a slot. One cancelled once it was out is a row with
+status `cancelled` whose cost is unknown, kept like an answer with no usage — its `held` counted in
+place of the cost — since the provider may have started on it and billed it, and what it made of it
+is not knowable; on a card that charges nothing it is known to be free.
 
 **Simulated requests are metered too**, marked `simulated` and priced at the endpoint's card like
 any other — nothing on the Simulated preset's zero card, the seeded rates on the demo's endpoints —
@@ -1197,13 +1211,22 @@ job holds nothing once it has finished, however it ended: `finishJob` clears the
 run's own figure together, so the Queue does not show a cancelled or failed run still holding what
 its unsent lines had reserved. A narration job stopped by the budget puts the lines it had not sent
 back as they were, rather than failing them. `GET /api/books/:id/spend` answers the sums;
-`GET /api/endpoints/requests` answers one endpoint's rows for the Activity list and the charts, each with the number its chapter goes by now.
+`GET /api/endpoints/summary` answers one endpoint's charts and totals for a range, summed in SQL
+over every row in it (`endpointSummary`): the buckets, their percentiles ranked there too, what it
+was charged since the browser's midnight and when it last settled anything. A row whose cost is
+unknown is counted as unknown whatever its status, never as $0. `GET /api/endpoints/requests`
+answers its rows for the Activity list a page at a time (`requestPage`), newest first, each with the
+number its chapter goes by now; the filters — status, book, words, a clicked bucket's `from`/`to` —
+are applied there, and each page says how many match (`total`), how many the range holds (`of`) and
+the cursor of the next (`next`). Every read takes a row's time as `coalesce(finished_at,
+queued_at)`, the same rule as `recordAt` in the browser, and a bucket runs from its `from` up to
+(not including) its `to`, so a bucket's count and the list it filters to are the same rows.
 
 **An endpoint's daily limit is enforced by the same question, per request.** `spendLimit` is what
 one endpoint may be charged since local midnight on the server, across every book; null is no
 limit. Spent is the ledger's cost on that endpoint since midnight, and held is what its requests
-out right now hold at their worst case — kept in memory (`holdToday`), since only this process
-sends and nothing is out after a restart. What queued jobs reserve is not counted: a long run
+out right now hold at their worst case — kept in memory (`holdToday`, held by each `dispatch`),
+since only this process sends and nothing is out after a restart. What queued jobs reserve is not counted: a long run
 legitimately spans days, and counting its queued chapters would stop it at its first request.
 So a run is refused before anything is queued only when the limit cannot cover even the first
 request it sends that endpoint; otherwise each request asks, with its own worst case, before it goes
@@ -1225,29 +1248,38 @@ goes to the provider with its text, its speaker's voice — their own, else the 
 voice, else the Narrator's (`speakerVoice` in [src/lib/cast.ts](../src/lib/cast.ts)) — and its
 direction, and comes back as audio with a duration.
 
-**A line is sent what the dictionary makes of it.** `speak` in [src/lib/speech.ts](../src/lib/speech.ts)
-applies the book's dictionary as each line goes out, so a term added mid-run reaches every line not
-yet sent. The clip records what it was sent — `pronounced`, and `said` with the number of
-substitutions (`lex`) when that differs — because the drift rule compares `pronounced` against the
-dictionary as it now stands. `PUT …/lexicon` marks stale, in the same transaction, every rendered
+**A line is sent its reading.** What a line goes out as is `prepareReading` in
+[src/lib/reading.ts](../src/lib/reading.ts), the same function the browser estimates, previews and
+judges drift with: the words after the book's dictionary (`speak` in
+[src/lib/speech.ts](../src/lib/speech.ts)), kept to what a voice can say, with the expression tags
+written in, the voice instructions beside them and the parts the endpoint's limit cuts them into.
+That module also writes down which settings a run takes once, when it starts — the line, the cast,
+the plain-thoughts switch, which endpoints batch — and which as each line goes out — the endpoint's
+saved configuration and the dictionary, so a term added mid-run reaches every line not yet sent. The
+clip records its reading (`readingRecord`) — `pronounced`, and `said` with the number of
+substitutions (`lex`) when that differs — because the drift rule, `compareReading`, compares
+`pronounced` against the dictionary as it now stands (`pronunciationMoved`, the one rule for every
+question about the dictionary). A voice its endpoint no longer lists is still sent to that endpoint,
+and the browser reads the line there too. `PUT …/lexicon` marks stale, in the same transaction, every rendered
 clip the new list would send different words for, and answers with those lines and their chapters'
 revisions (`stale`); a clip that was out when the list changed is checked as it lands. An Undo sends
 the old list with the lines the change reported (`restore`), and only those whose clip matches again
 go back to `done` — a clip stale by a rename would match too, and is not the dictionary's to clear.
 
 **A line carries its tags, at its endpoint's rate.** The handler reads the speaker's endpoint from
-the stored configuration as each line goes out and hands it to `expressionPlan` in
+the stored configuration as each line goes out, and the reading hands it to `expressionPlan` in
 [src/lib/expressions.ts](../src/lib/expressions.ts): the words after the dictionary, with each tag
 written in as that endpoint spells it. The clip records the plan (`expressionSignature` and the tags
 sent) so the drift rule compares like with like. A line whose tags the endpoint cannot say is failed
 before any request, with the reason; the others are sent. The endpoint's `sampleRate` (16–48 kHz;
 none means the model's own) goes with the request, and the clip records the rate the file came back
 at, read from the file, so a provider that ignored the request cannot make the record lie. A clip
-that lands after the dictionary or the endpoint was saved under it lands `stale` if the book would
-now send other words, other tags or another rate.
+that lands after the dictionary or the endpoint was saved under it lands `stale` when
+`compareReading` — the browser's drift rule — finds the reading it went out with no longer matches:
+other words from the dictionary, other tags, or another rate.
 
 **A line longer than its endpoint takes goes out in parts** ([parts.ts](../server/narration/parts.ts)),
-cut by `expressionParts` at the
+cut where its reading says (`cutReading`) at the
 endpoint's `splitAt`, falling down to a clause, a word, a hard cut, with every tag protected so a
 laugh is never sent as half a token. Each part is its own request, in order, holding the line's one
 slot, and the audio comes back as one file with nothing between the parts, because the cuts fall
@@ -1274,12 +1306,20 @@ process's own, never stored; `GET /api/endpoints/live` answers it, with the clip
 rendered that the library plays beside it (`done`, `failed`) — counted from the stored clips, across
 every book, so unlike the rest they survive a restart.
 
+**Every line goes through the same steps, in the same order** (`lineRun` in
+[server/jobs/narration.ts](../server/jobs/narration.ts)): a slot on its endpoint; `admit` — the
+budget asked, then its money held and its clip marked `generating` with its reading, and a line that
+cannot be sent at all landed failed there and then; `speak`, or a batch's `speakBatch`; and `land`,
+which writes what came back and gives back what the line still held. A batch borrows those calls
+(`LineRun`) and decides only what goes together; it orders none of them itself.
+
 **An endpoint that takes batches is sent batches** ([batch.ts](../server/narration/batch.ts)). A
 speech server that answers the
 [batch speech API](speech-batch-api.md) says so at `GET …/audio/speech/capabilities`, asked once per
 endpoint as a run starts and remembered for a few minutes. Its lines then go in batches: each batch
 takes one of the endpoint's slots at the gate and is filled, in the chapter's order, up to the items
-and characters the server said it takes; a line longer than an item goes as its parts. The answer is
+and characters the server said it takes; a line longer than an item goes as its parts, and one
+with a tag longer than an item fails on its own, since a tag is never cut, while the run goes on. The answer is
 a stream of JSON lines in whatever order the server finishes, and each line lands on its own — its
 own clip, its own ledger row per item, its own failure. A line goes into a later batch, up to the
 endpoint's retries, only when nothing has retried it yet: its item came back failed and worth
@@ -1475,7 +1515,8 @@ server's script still names them would move their lines and refuse the write.
 
 **Money spent is the server's figure.** The jobs store's `spent`, `reserved`, `scriptSpent` and
 `scriptReserved` answer from `GET /api/books/:id/spend` (`useBookSpend`, `useLibrarySpend`); the
-Endpoints page's Activity list and charts read `GET /api/endpoints/requests` (`useEndpointHistory`).
+Endpoints page's charts and totals read `GET /api/endpoints/summary` (`useEndpointSummaries`) and
+its Activity list pages through `GET /api/endpoints/requests` (`useEndpointRequests`).
 Estimates are the page's, worked out with the same `src/lib` functions the server prices with, and
 the server is the authority: it refuses before queuing and stops a running job before a request
 that no longer fits.

@@ -16,7 +16,8 @@
 //
 // Every request that reaches the wire is reported through `input.sent` with the usage the answer
 // carried, whether its script was accepted or refused: a model that was cut off or dropped a
-// sentence was still billed for it. See `sent.ts`.
+// sentence was still billed for it. One cancelled once it was out is reported too, as `cancelled`,
+// with the usage its answer carried if it had already come back. See `sent.ts`.
 //
 // The profile's reasoning level is added as its host spells it (`@/lib/reasoning`), and
 // `temperature` is left out where that host refuses or ignores it beside a reasoning level.
@@ -387,17 +388,30 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     const stats: CallStats = { attempts: 0, rateLimited: false };
     const startedAt = Date.now();
     /** The one report for this request: what it used, and how it ended. */
-    const report = (usage: TokenUsage | null, error?: ProviderError, body?: string): void =>
+    const report = (
+      usage: TokenUsage | null,
+      error?: ProviderError,
+      body?: string,
+      status: SentScript["status"] = error ? "failed" : "done",
+    ): void =>
       sent?.({
         startedAt,
         finishedAt: Date.now(),
         attempts: Math.max(1, stats.attempts),
         rateLimited: stats.rateLimited,
-        status: error ? "failed" : "done",
+        status,
         ...(error ? { error: { code: error.status, message: error.message, body } } : {}),
         simulated: false,
         usage,
       });
+    /**
+     * Stopped by the job: reported once the request went out, since the provider may have started
+     * on it and billed it, with whatever its answer said it used if that had come back.
+     */
+    const cancelled = (usage: TokenUsage | null = null): never => {
+      if (stats.attempts) report(usage, undefined, undefined, "cancelled");
+      throw signal.reason;
+    };
 
     let res: Response;
     try {
@@ -408,8 +422,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         { signal, fetch: options.fetch, backoffMs: options.backoffMs, stats },
       );
     } catch (e) {
-      // a cancel is not a request that ended: what the provider made of it is not knowable
-      if (signal.aborted) throw signal.reason;
+      if (signal.aborted) return cancelled();
       if (e instanceof ProviderError) report(null, e);
       throw e;
     }
@@ -419,10 +432,9 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     try {
       raw = await res.json();
     } catch {
-      if (signal.aborted) throw signal.reason;
       raw = undefined;
     }
-    if (signal.aborted) throw signal.reason;
+    if (signal.aborted) return cancelled(usageOf(raw));
     const usage = usageOf(raw);
     const reasoningTokens = reasoningTokensOf(raw);
     try {

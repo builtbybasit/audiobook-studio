@@ -7,7 +7,8 @@
 // first so nothing here passes by assuming the order they were sent in.
 import { describe, expect, test } from "bun:test";
 
-import type { Endpoint, Job, Segment } from "@/types";
+import type { Endpoint, ExpressionTag, Job, Segment } from "@/types";
+import { readScript, writeScript } from "~/db/script";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { fakeDuration, fakeSpeechProvider, type FakeSpeechOptions } from "~/providers/fakeSpeech";
 import { endpointRequests } from "~/usage/ledger";
@@ -134,6 +135,56 @@ describe("narrating through an endpoint that takes batches", () => {
       parts.reduce((n, t) => n + fakeDuration(t), 0),
       6,
     );
+  });
+
+  test("a tag longer than an item may be fails its own line, and the run goes on", async () => {
+    // a tag the endpoint takes whole, but longer than one item of its batches
+    const sigh: ExpressionTag = {
+      id: "sigh",
+      label: "sigh",
+      token: "(a very long and very weary sigh)",
+      kind: "sound",
+    };
+    const endpoint = speech({
+      expressions: {
+        status: "supported",
+        brackets: ["round"],
+        open: false,
+        model: "omnivoice",
+        baseUrl: "http://localhost:8880/v1",
+        tags: [sigh],
+      },
+    });
+    const batches: string[][] = [];
+    const api = testApi({
+      speech: fakeSpeechProvider({
+        batch: { maxItems: 4, maxInputChars: null, maxItemChars: 30 },
+        batches,
+      }),
+    });
+    const id = await book(api, endpoint, ["Mara sat down.", "Tobin stood up.", "Then it rained."]);
+    const segs = readScript(api.db, id, 1);
+    const tagged = segs.find((s) => s.text === "Tobin stood up.")!;
+    writeScript(
+      api.db,
+      id,
+      1,
+      segs.map((s) =>
+        s === tagged ? { ...s, expressions: [{ ...sigh, at: 0, annotationId: 1 }] } : s,
+      ),
+    );
+    const [queued] = await narrateChapters(api, id, [1]);
+    const job = (await api.request<{ job: Job }>(`/api/jobs/${queued.id}`)).body.job;
+    const lines = readScript(api.db, id, 1);
+    const failed = lines.find((s) => s.id === tagged.id)!;
+    expect(failed.audio.status).toBe("failed");
+    expect(failed.audio.error?.message).toContain("(a very long and very weary sigh)");
+    expect(failed.audio.error?.message).toContain("never cut");
+    // the rest of the chapter went out and landed: the line failed, not the run
+    expect(lines.filter((s) => s !== failed).every((s) => s.audio.status === "done")).toBe(true);
+    expect(batches.flat()).not.toContain(expect.stringContaining("Tobin"));
+    expect(job.status).toBe("failed");
+    expect(job.activity?.at(-1)?.detail?.error).toBe("1 line could not be rendered");
   });
 
   test("a line the server fumbled goes again in a later batch; one it could not render fails alone", async () => {

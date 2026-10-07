@@ -17,6 +17,7 @@ import { SIMULATED_BASE_URL, SIMULATED_SCRIPTING_MODEL } from "@/lib/providers";
 import { BUILT_IN_PROMPT } from "@/lib/prompt";
 import { characters } from "~/db/schema";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
+import { heldToday } from "~/usage/budget";
 import { endpointRequests } from "~/usage/ledger";
 import { epubFile, story } from "../support/epub";
 import { jsonBody, testApi } from "../support/server";
@@ -323,6 +324,18 @@ describe("a prompt trial", () => {
     expect(body.lines).toHaveLength(1);
     expect(body.fidelity.ok).toBe(false);
     expect(body.fidelity.missing).toBeGreaterThan(0);
+  });
+
+  test("holds its worst case against the profile's daily limit while it is out, and nothing after", async () => {
+    const { api, trial, answerWith } = await setup();
+    let during = 0;
+    answerWith((excerpt) => {
+      during = heldToday(api.db, "scripting", "gw");
+      return faithful(excerpt);
+    });
+    expect((await trial()).status).toBe(200);
+    expect(during).toBeGreaterThan(0);
+    expect(heldToday(api.db, "scripting", "gw")).toBe(0);
   });
 
   test("answers a refusal as a result, with no lines, and still prices what was billed", async () => {

@@ -8,8 +8,7 @@
 // rather than chase every one of those into a request, the store *writes behind*: it watches the
 // configuration as one document (the endpoints without their telemetry, the profiles, the
 // transcribers, the credential registry), and a short while after it last changed sends the whole
-// of it. What the
-// server answers is what the store then holds.
+// of it, one write at a time. What the server answers is what the store then holds.
 //
 // The scripting settings travel in it too (`script`, the scripting store's `scriptSettings`), and
 // are written behind like the rest. The library's default scripting prompt travels in the same
@@ -204,29 +203,36 @@ function adopt<T extends object>(cur: T, next: T): T {
 
 // The write-behind's bookkeeping. Not state: nothing renders it, and a reload starting it again
 // from nothing is correct.
+//
+// One writer sends the configuration, and only one whole-configuration write is ever out: the
+// server takes each write as the whole truth, and two out at once can land in either order, which
+// would leave it holding the older one while the page shows the newer. A change made while a write
+// is out goes in the next one, which takes the configuration as it stands when it is sent rather
+// than as it stood when it was asked for, so however many changes come in the meantime there is
+// one write behind the one out, never a queue of old copies.
 /** Local changes seen so far. A write's answer is installed only if none came after it. */
 let edits = 0;
-/** Writes sent and not yet answered. */
-let inFlight = 0;
+/** A write has been sent and its answer is not in yet: the server may be about to hold something
+ *  other than `held`. Down before an answer is installed, so the watch does not send it back. */
+let sending = false;
 /** The configuration as the server last described it, serialized: what is not a change. */
 let held = "";
 let timer: ReturnType<typeof setTimeout> | null = null;
+/** The write out, until it has landed or been refused and dealt with. */
+let out: Promise<SaveOutcome> | null = null;
+/** The write owed once `out` is done, for every change asked to be saved while it was out. */
+let next: Promise<SaveOutcome> | null = null;
+/** Keys to ride on the next write sent, by `<kind>:<id>`: each goes out once, then is dropped. */
+const keysWaiting = new Map<string, { kind: EndpointKind; id: string; apiKey: string }>();
 let stopWatch: (() => void) | null = null;
 /**
  * The store the watch is on, held weakly: a page has one, and a second Pinia's (a test's next tab)
  * takes it over.
  */
 let watching: WeakRef<object> | null = null;
-/** Writes sent and not yet answered, for `flushWrites` to wait on. */
-const writing = new Set<Promise<unknown>>();
 
-/** Count `write` among those out until it settles, however it settles. */
-function tracked<T>(write: Promise<T>): Promise<T> {
-  writing.add(write);
-  const done = () => void writing.delete(write);
-  write.then(done, done);
-  return write;
-}
+/** How a save went: on the server, or refused there (and the server's configuration read back). */
+export type SaveOutcome = "landed" | "refused";
 
 /** A voice heard, as an object url; `duration` is null when only the file knows it. */
 export interface HeardSample {
@@ -295,12 +301,22 @@ export const useEndpointsStore = defineStore("endpoints", {
     canTranscribe(s): boolean {
       return s.transcribers.some((t) => t.enabled);
     },
-    resolveVoice(s): (ref: string | null | undefined) => ResolvedVoice | null {
+    /**
+     * The endpoint a voice names, whether or not it still lists the voice: where a line in that
+     * voice is sent, as the server reads it (`deliveryFor`), so a line's reading is taken against
+     * the endpoint its request will actually go to. Null when the ref names none that is saved.
+     */
+    endpointOf(s): (ref: string | null | undefined) => Endpoint | null {
+      return (ref) => {
+        const i = ref?.indexOf("/") ?? -1;
+        return (i > 0 && s.endpoints.find((e) => e.id === ref!.slice(0, i))) || null;
+      };
+    },
+    /** The voice a ref names on its endpoint, or null when either is gone. */
+    resolveVoice(): (ref: string | null | undefined) => ResolvedVoice | null {
       return (ref: VoiceRef | null | undefined): ResolvedVoice | null => {
-        if (!ref) return null;
-        const i = ref.indexOf("/");
-        const ep = s.endpoints.find((e) => e.id === ref.slice(0, i));
-        const v = ep?.voices.find((v) => v.id === ref.slice(i + 1));
+        const ep = this.endpointOf(ref);
+        const v = ep?.voices.find((v) => v.id === ref!.slice(ref!.indexOf("/") + 1));
         return ep && v ? { endpoint: ep, voice: v } : null;
       };
     },
@@ -418,9 +434,9 @@ export const useEndpointsStore = defineStore("endpoints", {
           // Back to what the server holds, with nothing on its way that says otherwise: there is
           // nothing to send. With a write out, the server may be about to hold something else,
           // so this has to be said too.
-          if (now === held && !inFlight) return cancelTimer();
+          if (now === held && !sending) return cancelTimer();
           cancelTimer();
-          timer = setTimeout(() => void this._send(), WRITE_DELAY_MS);
+          timer = setTimeout(() => void this._save(), WRITE_DELAY_MS);
         },
       );
     },
@@ -430,59 +446,105 @@ export const useEndpointsStore = defineStore("endpoints", {
       stopWatch?.();
       stopWatch = null;
       watching = null;
-      writing.clear();
       cancelTimer();
       edits = 0;
-      inFlight = 0;
+      sending = false;
       held = "";
+      out = null;
+      next = null;
+      keysWaiting.clear();
       for (const { url } of samples.values()) URL.revokeObjectURL(url);
       samples.clear();
     },
     /**
      * Send what is waiting now rather than when the timer would have, and resolve once everything
      * edited so far is on the server: a write already out is waited for, and so is the one sent
-     * for what was typed while it was out. A no-op when nothing is waiting or out.
+     * for what was typed while it was out. With nothing waiting and nothing out, it has landed.
      *
      * A change made while a write was out sets the timer again, so this goes round until nothing
-     * is waiting and nothing is out.
+     * is waiting and nothing is out. What it says is how the last write it waited on went.
      */
-    async flushWrites(): Promise<void> {
+    async flushWrites(): Promise<SaveOutcome> {
+      let outcome: SaveOutcome = "landed";
       for (;;) {
         // the watch sees an edit only before the next render, so a caller that has just edited
         // needs nothing of its own
         await nextTick();
-        if (timer) await this._send();
-        else if (writing.size) await Promise.allSettled(writing);
-        else return;
+        const write = timer ? this._save() : (next ?? out);
+        if (!write) return outcome;
+        outcome = await write;
       }
     },
     /**
-     * Send the configuration as it stands, taking it off the timer.
+     * Save the configuration as it stands, taking it off the timer: sent now when nothing is out,
+     * or else once the write out is done, in the one write owed after it. Resolves with how the
+     * write that carried it went.
+     */
+    _save(): Promise<SaveOutcome> {
+      cancelTimer();
+      if (next) return next;
+      if (out) {
+        const after: Promise<SaveOutcome> = out.then(() => {
+          // a store that has let the watch go sends nothing more
+          if (next !== after) return "refused";
+          next = null;
+          return this._save();
+        });
+        return (next = after);
+      }
+      const write: Promise<SaveOutcome> = this._put().then((outcome) => {
+        if (out === write) out = null;
+        return outcome;
+      });
+      return (out = write);
+    },
+    /**
+     * Send the configuration as it stands, with any keys waiting on their own entries. Only ever
+     * called by `_save`, so it is the only write out.
      *
      * Only the answer to the latest change is installed: an earlier write answering after the
      * person has typed past it would put back what they typed over. A refused write is said, and
      * the server's configuration is read back so the page shows what is actually in force.
      */
-    async _send(): Promise<void> {
-      cancelTimer();
+    async _put(): Promise<SaveOutcome> {
       const n = edits;
       const body = this._config();
+      // what the server is expected to answer with: the keys go out, but never come back
       const sent = JSON.stringify(body);
-      // The count comes down before anything is installed: the watch sees an installed answer
-      // after this returns, and while a write is counted as out it would send that answer back.
-      inFlight++;
+      const carried = [...keysWaiting.values()];
+      keysWaiting.clear();
+      for (const k of carried) {
+        const entry = entriesOf(body, k.kind).find((e) => e.id === k.id);
+        if (entry) entry.apiKey = k.apiKey;
+      }
+      // Down before anything is installed: the watch sees an installed answer after this returns,
+      // and while a write is counted as out it would send that answer back.
+      sending = true;
       let answer: EndpointSettings;
       try {
-        answer = await tracked(this._service().putSettings(body));
+        answer = await this._service().putSettings(body);
       } catch (cause) {
-        inFlight--;
-        if (edits !== n) return;
-        toastFailure("save the endpoints", cause);
+        sending = false;
+        // A key not kept is always said, since the field that sent it is waiting to hear. The
+        // rest is said only while nothing was typed past it: a later write is on its way.
+        for (const k of carried) toastFailure(k.apiKey ? "save the key" : "remove the key", cause);
+        if (edits !== n) return "refused";
+        if (!carried.length) toastFailure("save the endpoints", cause);
         await this.load(true);
-        return;
+        return "refused";
       }
-      inFlight--;
-      if (edits !== n) return;
+      sending = false;
+      if (edits !== n) {
+        // Typed past while it was out: the rest of the answer is older than the page, but whether a
+        // key is held is not something the page could have changed in the meantime.
+        for (const k of carried) {
+          const kept = entriesOf(answer, k.kind).find((e) => e.id === k.id);
+          const cur = entriesOf(this, k.kind).find((e) => e.id === k.id);
+          if (cur && kept?.hasKey) cur.hasKey = true;
+          else if (cur) delete cur.hasKey;
+        }
+        return "landed";
+      }
       // The usual case: the server holds exactly what was sent, so there is nothing to put back on
       // the objects the page is editing.
       const same: EndpointConfig = {
@@ -495,45 +557,22 @@ export const useEndpointsStore = defineStore("endpoints", {
       };
       if (JSON.stringify(same) === sent) held = sent;
       else this._install(answer);
+      return "landed";
     },
     /**
-     * Give the server a key for one entry of any kind (`""` forgets it). Resolves true once the
-     * server has answered.
+     * Give the server a key for one entry of any kind (`""` forgets it). Resolves true once it is
+     * on the server, false when there is no such entry or the server refused it.
      *
-     * The key rides on the whole-configuration write, on that one entry only, and never touches
+     * The key rides on one whole-configuration write, on that one entry only, and never touches
      * the objects the page edits: the write-behind sends those again and again, and an `apiKey`
-     * left on one would go out with every write after it. So this writes now rather than behind —
-     * with whatever else is waiting, which it therefore takes off the timer — and what comes back
-     * is `hasKey`, which is all the page is ever told.
+     * left on one would go out with every write after it. So it waits beside them for the next
+     * write — sent now, with whatever else is waiting, unless one is already out — and what comes
+     * back is `hasKey`, which is all the page is ever told.
      */
     async saveKey(kind: EndpointKind, id: string, apiKey: string): Promise<boolean> {
-      const body = this._config();
-      const entry = entriesOf(body, kind).find((e) => e.id === id);
-      if (!entry) return false;
-      entry.apiKey = apiKey;
-      cancelTimer();
-      const n = edits;
-      inFlight++;
-      let answer: EndpointSettings;
-      try {
-        answer = await tracked(this._service().putSettings(body));
-      } catch (cause) {
-        inFlight--;
-        toastFailure(apiKey ? "save the key" : "remove the key", cause);
-        if (edits === n) await this.load(true);
-        return false;
-      }
-      inFlight--;
-      if (edits === n) this._install(answer);
-      else {
-        // Typed past while the key was out: the rest of the answer is older than the page, but
-        // whether a key is held is not something the page could have changed in the meantime.
-        const held = entriesOf(answer, kind).find((e) => e.id === id);
-        const cur = entriesOf(this, kind).find((e) => e.id === id);
-        if (cur && held?.hasKey) cur.hasKey = true;
-        else if (cur) delete cur.hasKey;
-      }
-      return true;
+      if (!entriesOf(this, kind).some((e) => e.id === id)) return false;
+      keysWaiting.set(`${kind}:${id}`, { kind, id, apiKey });
+      return (await this._save()) === "landed";
     },
     /**
      * Whether the saved speech endpoint's server takes batches, for the Requests tab: its limits,

@@ -19,8 +19,13 @@ import { useUiStore } from "@/stores/ui";
 // The list itself stays a list — a row only wears a small "cache not reported" mark, and the
 // explanation is one click away rather than in the column.
 //
+// What has settled is the server's ledger, read a page at a time with every filter applied there,
+// so the count beside the filters and the pages after the first agree with the rows on screen
+// however many a run sent. What is in flight is the page's own, filtered here the same way.
+//
 // Error bodies are redacted before they are shown or copied.
-import { computed, ref } from "vue";
+import { computed, ref, toRef } from "vue";
+import { refDebounced } from "@vueuse/core";
 
 import { UiSelect, UiToggleGroup } from "@/ui";
 import StatusDot from "@/components/StatusDot.vue";
@@ -33,7 +38,7 @@ import {
 } from "@lucide/vue";
 import { WAIT_DETAIL, WAIT_LABEL, compact, duration, clockOf, sanitize } from "@/lib/endpoints";
 import {
-  COST_BASIS_DETAIL,
+  costDetail,
   COST_BASIS_LABEL,
   maybeMoney,
   money,
@@ -45,11 +50,14 @@ import {
 import { hhmm } from "@/lib/format";
 import { useBooks } from "@/queries";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
-import type { ActivityFilter } from "@/views/endpoints/state";
+import { useEndpointRequests } from "@/queries";
+import { recordAt } from "@/services/endpoints";
+import { ui, type ActivityFilter } from "@/views/endpoints/state";
 import type { EndpointKind, RequestRecord, SpeechCharge } from "@/types";
 
 const props = defineProps<{
   u: UnifiedEndpoint;
+  /** the requests in flight now, which the ledger does not hold yet */
   rows: RequestRecord[];
   loading: boolean;
   filter: ActivityFilter;
@@ -59,7 +67,15 @@ const props = defineProps<{
 const libraryStore = useLibraryStore();
 const uiStore = useUiStore();
 const expanded = ref(new Set<string>());
-const limit = ref(50);
+// the words go to the server once typing pauses, not a read per keystroke
+const search = refDebounced(
+  toRef(() => props.filter.search),
+  250,
+);
+const settled = useEndpointRequests(
+  () => props.u,
+  () => ({ ...props.filter, search: search.value, range: ui.range }),
+);
 
 const STATUS_OPTS = [
   { value: "all", label: "All" },
@@ -67,21 +83,23 @@ const STATUS_OPTS = [
   { value: "queued", label: "Waiting" },
   { value: "done", label: "Done" },
   { value: "failed", label: "Failed" },
+  { value: "cancelled", label: "Cancelled" },
 ];
 const bookOpts = computed(() => [
   { value: "__all__", label: "Every book" },
   ...libraryStore.books.map((b) => ({ value: b.id, label: b.title })),
 ]);
 
-const shown = computed(() => {
+/** The requests in flight that the filters keep, by the same rules the server applies. */
+const live = computed(() => {
   const f = props.filter;
   const q = f.search.trim().toLowerCase();
   return props.rows.filter((r) => {
     if (f.status !== "all" && r.status !== f.status) return false;
     if (f.bookId && r.bookId !== f.bookId) return false;
     if (f.window) {
-      const t = r.finishedAt ?? r.startedAt ?? r.queuedAt;
-      if (t < f.window.from || t > f.window.to) return false;
+      const t = recordAt(r);
+      if (t < f.window.from || t >= f.window.to) return false;
     }
     if (q) {
       const hay = `${r.label} ${r.error?.message ?? ""} ${r.error?.code ?? ""} ${chapterRef(r) ?? ""}`;
@@ -90,7 +108,12 @@ const shown = computed(() => {
     return true;
   });
 });
-const visible = computed(() => shown.value.slice(0, limit.value));
+const visible = computed(() => [...live.value, ...settled.rows.value]);
+/** how many match, and how many the range holds — over every page, not the ones read so far */
+const matching = computed(() => live.value.length + settled.total.value);
+const inRange = computed(() => props.rows.length + (settled.data.value?.pages[0]?.of ?? 0));
+const left = computed(() => settled.total.value - settled.rows.value.length);
+const reading = computed(() => props.loading || settled.status.value === "pending");
 const filtered = computed(
   () =>
     props.filter.status !== "all" ||
@@ -243,7 +266,7 @@ function facts(r: RequestRecord): Fact[] {
     label: "cost",
     value: queued || r.status === "running" ? "pending" : maybeMoney(r.cost),
     mono: true,
-    hint: COST_BASIS_DETAIL[r.costBasis],
+    hint: costDetail(r),
     wide: true,
     tone: r.cost == null && !queued && r.status !== "running" ? "warn" : undefined,
   });
@@ -519,18 +542,18 @@ function clearAll() {
           <ClearIcon class="icon-sm" /></button
       ></span>
       <span class="ml-auto text-[11px] text-zinc-500">
-        {{ shown.length }} of {{ rows.length }} · {{ rangeLabel }}
+        {{ matching }} of {{ inRange }} · {{ rangeLabel }}
         <button v-if="filtered" class="ml-2 text-violet-500 hover:underline" @click="clearAll">
           clear filters
         </button>
       </span>
     </div>
 
-    <div v-if="loading" class="card grid h-32 place-items-center text-xs text-zinc-500">
+    <div v-if="reading" class="card grid h-32 place-items-center text-xs text-zinc-500">
       Loading requests…
     </div>
     <div
-      v-else-if="!rows.length"
+      v-else-if="!inRange"
       class="card grid place-items-center p-8 text-center text-sm text-zinc-500"
     >
       <p>
@@ -541,7 +564,7 @@ function clearAll() {
       </p>
     </div>
     <div
-      v-else-if="!shown.length"
+      v-else-if="!visible.length"
       class="card grid place-items-center p-8 text-center text-sm text-zinc-500"
     >
       <p>
@@ -843,11 +866,15 @@ function clearAll() {
         </tbody>
       </table>
       <div
-        v-if="shown.length > visible.length"
+        v-if="settled.hasNextPage.value && left > 0"
         class="border-t border-zinc-100 px-3 py-2 text-center dark:border-zinc-800"
       >
-        <button class="btn-ghost btn-xs" @click="limit += 100">
-          Show more ({{ shown.length - visible.length }} left)
+        <button
+          class="btn-ghost btn-xs"
+          :disabled="settled.isLoading.value"
+          @click="settled.loadNextPage()"
+        >
+          Show more ({{ left }} left)
         </button>
       </div>
     </div>

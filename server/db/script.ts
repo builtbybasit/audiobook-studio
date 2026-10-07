@@ -599,3 +599,40 @@ export function writeHeard(
     .onConflictDoUpdate({ target: [heard.bookId, heard.file], set: values })
     .run();
 }
+
+// ---------- the whole book ----------
+
+/**
+ * Take every script in the book away, and leave each chapter as an import left it: not scripted,
+ * not narrated, no recap for the next run to carry forward. Returns the file names of every clip
+ * the scripts held — the book's current clips, candidates and takes — for the caller to remove
+ * from disk once the rows are gone.
+ *
+ * The revisions move on, so a write that read a script before this cannot land on the empty
+ * chapter. What a check by ear heard goes too: it is keyed by clip file, and every file goes.
+ * Nothing else of the book is touched — its text, its cast, its history, its audiobooks.
+ */
+export function dropBookScripts(tx: Tx, bookId: string): string[] {
+  const files = tx
+    .select({ url: clips.url })
+    .from(clips)
+    .where(eq(clips.bookId, bookId))
+    .all()
+    .flatMap((c) => (c.url ? [c.url.split("/").at(-1)!] : []));
+  // clips cascade from their segment
+  tx.delete(segments).where(eq(segments.bookId, bookId)).run();
+  tx.delete(heard).where(eq(heard.bookId, bookId)).run();
+  tx.update(chapters)
+    .set({
+      scripting: "none",
+      scriptingProgress: 0,
+      narration: "none",
+      narrationProgress: 0,
+      duration: 0,
+      recap: null,
+      scriptRevision: sql`${chapters.scriptRevision} + 1`,
+    })
+    .where(eq(chapters.bookId, bookId))
+    .run();
+  return files;
+}

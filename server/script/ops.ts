@@ -20,23 +20,33 @@ import type {
   ScriptVersion,
   Segment,
   SegmentFlag,
+  StartedOver,
   VersionOrigin,
 } from "@/types";
+import { NARRATOR } from "@/lib/cast";
+import { plural } from "@/lib/contents";
 import { scriptSignature } from "@/lib/scriptHistory";
 import { isSpoken } from "@/lib/siteText";
 
+import type { AudioFiles } from "~/audio/files";
+import * as cast from "~/db/cast";
 import type { Db } from "~/db/client";
 import * as history from "~/db/history";
+import * as queue from "~/db/jobs";
 import * as library from "~/db/library";
 import {
   ScriptConflict,
   bumpRevision,
+  dropBookScripts,
   readScript,
   replaceScript,
   scriptRevision,
   setFlag,
 } from "~/db/script";
+import { discardSpeakerSamples } from "~/db/speakerSamples";
+import { inBackground } from "~/lib/background";
 import { badRequest, conflict, notFound } from "~/lib/errors";
+import { bookWithChapters, requireBook } from "~/library/ops";
 import { narrationInProgress, settleChapter } from "~/narration/chapter";
 
 function requireRevision(db: Db, bookId: string, chapterId: number): number {
@@ -235,4 +245,70 @@ export function dropVersion(
       throw notFound(`This chapter has no v${versionId}`);
     return history.readHistory(tx, bookId, chapterId);
   });
+}
+
+// ---------- starting the whole book over ----------
+
+/**
+ * What the history says replaced a script that was started over. A chapter with no script shows
+ * no history, so this is never read as a label; the next run scripts the chapter afresh after it.
+ */
+const STARTED_OVER: VersionOrigin = { kind: "bulk", label: "Started over", lines: 0 };
+
+/**
+ * Take every script in the book away so it can be scripted afresh: each chapter reads as the
+ * import left it, its clips are removed from disk, and with `cast` every speaker but the Narrator
+ * leaves the cast. The text, the volumes, the contents decisions, the dictionary, the prompts, the
+ * settings and the audiobooks already built all stay.
+ *
+ * Each script is kept in its chapter's history first, so a chapter scripted again that came out
+ * worse can be restored — as text: the audio is not kept with a version, and its files are gone.
+ *
+ * Refused while any job of the book is queued or running: a run would write into a chapter this is
+ * emptying, and a build reads the clips this removes.
+ */
+export function startOver(
+  db: Db,
+  bookId: string,
+  { cast: clearCast = false }: { cast?: boolean } = {},
+  files?: AudioFiles,
+): StartedOver {
+  const book = requireBook(db, bookId);
+  const live = queue
+    .listJobs(db, { bookId })
+    .filter((j) => j.status === "queued" || j.status === "running").length;
+  if (live)
+    throw conflict(
+      `${plural(live, "job")} of “${book.title}” ${live === 1 ? "is" : "are"} still queued or running`,
+      "Let them finish, or cancel them from the Queue, before starting over.",
+    );
+  const done = db.transaction((tx) => {
+    let scripts = 0;
+    for (const ch of library.listChapters(tx, bookId)) {
+      const current = readScript(tx, bookId, ch.id);
+      if (!current.length) continue;
+      history.capture(tx, bookId, ch.id, STARTED_OVER, current, []);
+      scripts++;
+    }
+    const gone = dropBookScripts(tx, bookId);
+    let speakers = 0;
+    if (clearCast) {
+      // the Narrator holds what the others leave behind, so they are there to hold it
+      cast.ensureSpeakers(tx, bookId, [NARRATOR]);
+      for (const c of cast.readCast(tx, bookId)) {
+        if (c.name === NARRATOR) continue;
+        discardSpeakerSamples(tx, bookId, c.name, NARRATOR);
+        cast.deleteCharacterRow(tx, bookId, c.name);
+        speakers++;
+      }
+    }
+    return { scripts, gone, speakers };
+  });
+  inBackground(files?.remove(bookId, done.gone), "could not remove a book's clips", {
+    book: bookId,
+  });
+  return {
+    ...bookWithChapters(db, bookId),
+    cleared: { scripts: done.scripts, clips: done.gone.length, speakers: done.speakers },
+  };
 }

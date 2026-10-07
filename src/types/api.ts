@@ -20,6 +20,18 @@ export interface ImportedBook {
   chapters: Chapter[];
 }
 
+/** A book started over: the book as it now stands, and how much went. */
+export interface StartedOver extends ImportedBook {
+  cleared: {
+    /** chapters that had a script; each is kept in its chapter's history */
+    scripts: number;
+    /** clip files removed: current clips, candidates and takes */
+    clips: number;
+    /** speakers taken off the cast; 0 unless the cast was asked to go too */
+    speakers: number;
+  };
+}
+
 // ---------- scripts ----------
 
 /** A chapter's script as the server holds it, and the revision a later write has to name. */

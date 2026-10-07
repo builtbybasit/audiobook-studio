@@ -141,6 +141,11 @@ the rule is exercised rather than asserted.
   without saying what it used is recorded `unknown` with no cost — unless every rate on the card is
   zero, when $0 is known. The row keeps the worst case it held while out (`held`), and every budget
   counts that figure in its place, so a provider that never reports usage cannot spend past a cap.
+- **A request cancelled once it was out is unknown too.** The provider may have started on it and
+  billed it, and nobody here can say, so it is a row with status `cancelled` at an unknown cost,
+  kept and counted exactly as an answer with no usage is — a speech or transcription receipt keeps
+  what it would have cost had it gone through, each line saying why it may not stand. One cancelled
+  while it was still waiting for a slot never left, and has no row.
 
 ### Estimates, and what they are allowed to assume
 
@@ -207,7 +212,8 @@ against each other.
 ### The ledger: what was spent is what was requested
 
 Every request that settles — a scripting chunk, a rendered clip, a retake, a prompt trial, a voice
-sample, a clone fee, one that failed, one the provider refused — is appended to the server's
+sample, a clone fee, one that failed, one the provider refused, one cancelled once it was out — is
+appended to the server's
 `requests` table ([server/usage/ledger.ts](../server/usage/ledger.ts)) with the receipt it was
 priced from, and nothing afterwards moves it, re-prices it or takes it out. Spending is read from
 there.

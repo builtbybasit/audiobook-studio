@@ -8,16 +8,21 @@ import { computed } from "vue";
 
 import { money } from "@/lib/pricing";
 import { isSimulated } from "@/lib/providers";
-import { scriptTelemetry, scriptUsageTotals } from "@/lib/scriptActivity";
+import { scriptTelemetry } from "@/lib/scriptActivity";
+import { useScriptTotals } from "@/queries/scriptActivity";
 import type { Profile, RequestRecord } from "@/types";
 const props = defineProps<{
   profile: Profile;
-  /** the profile's settled requests in the server's ledger, newest first */
+  /** the profile's latest settled requests in the server's ledger, newest first */
   rows: RequestRecord[];
   /** whether the ledger has been read: until then the figures from it are not zero, just unknown */
   loaded: boolean;
   now: number;
 }>();
+// the latest rows say how the profile is doing now — latency, the last error, a cooldown — and the
+// server's sum over the last seven days says how much it did, however many requests that was
+const scriptTotals = useScriptTotals();
+const week = computed(() => scriptTotals.totalsOf(props.profile.id));
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const uiStore = useUiStore();
@@ -45,20 +50,22 @@ const queued = computed(() =>
     0,
   ),
 );
-const usage = computed(() => scriptUsageTotals(props.rows));
 const history = computed(() => stats.value.history.filter((x) => x.ok));
 const latency = computed(() =>
   history.value.length ? history.value.reduce((n, x) => n + x.ms, 0) / history.value.length : null,
 );
-const success = computed(() =>
-  stats.value.completed + stats.value.failures
-    ? Math.round((stats.value.completed / (stats.value.completed + stats.value.failures)) * 100) +
-      "%"
-    : "—",
-);
+const success = computed(() => {
+  const t = week.value;
+  return t && t.eventualOk + t.failures
+    ? Math.round((t.eventualOk / (t.eventualOk + t.failures)) * 100) + "%"
+    : "—";
+});
 const number = (n: number) => n.toLocaleString();
 /** a figure read off the ledger, or an ellipsis while it is still being read */
 const fromLedger = (text: string) => (props.loaded ? text : "…");
+/** a figure of the last seven days, or an ellipsis while they are still being summed */
+const fromWeek = (text: (t: NonNullable<typeof week.value>) => string) =>
+  week.value ? text(week.value) : "…";
 async function copyError() {
   if (!error.value) return;
   try {
@@ -99,23 +106,27 @@ async function copyError() {
       </div>
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Success / 429s</dt>
-        <dd class="mt-0.5 font-mono">{{ fromLedger(`${success} / ${stats.rateLimits}`) }}</dd>
-        <dd v-if="loaded" class="text-[10px] text-zinc-500">
-          {{ number(stats.completed) }} completed
+        <dd class="mt-0.5 font-mono">{{ fromWeek((t) => `${success} / ${t.rateLimits}`) }}</dd>
+        <dd v-if="week" class="text-[10px] text-zinc-500">
+          {{ number(week.eventualOk) }} completed
         </dd>
       </div>
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Input tokens</dt>
-        <dd class="mt-0.5 font-mono">{{ fromLedger(number(usage.input)) }}</dd>
+        <dd class="mt-0.5 font-mono">{{ fromWeek((t) => number(t.inputTokens)) }}</dd>
       </div>
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Output tokens</dt>
-        <dd class="mt-0.5 font-mono">{{ fromLedger(number(usage.output)) }}</dd>
+        <dd class="mt-0.5 font-mono">{{ fromWeek((t) => number(t.outputTokens)) }}</dd>
       </div>
       <div>
         <dt class="text-[10px] text-zinc-500 dark:text-zinc-400">Spend</dt>
-        <dd class="mt-0.5 font-mono">{{ fromLedger(money(usage.cost)) }}</dd>
-        <dd class="text-[10px] text-zinc-500">all books · 7 days</dd>
+        <dd class="mt-0.5 font-mono">{{ fromWeek((t) => money(t.cost)) }}</dd>
+        <dd class="text-[10px] text-zinc-500">
+          all books · 7 days<template v-if="week?.unknownCost">
+            · {{ number(week.unknownCost) }} unpriced</template
+          >
+        </dd>
       </div>
     </dl>
     <details

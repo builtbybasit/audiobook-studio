@@ -7,8 +7,22 @@
 // header of `~/db/schema/usage.ts`.
 //
 // Reading is here too, because a total that does not come from the same rows the Activity list
-// shows is a second opinion about what was spent.
-import { and, desc, eq, gte, isNotNull, isNull, sql, sum } from "drizzle-orm";
+// shows is a second opinion about what was spent. The Endpoints page's totals and charts are summed
+// here over every row in their range, never over a page of them: a narration run sends thousands.
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  isNotNull,
+  isNull,
+  lt,
+  sql,
+  sum,
+  type AnyColumn,
+  type SQL,
+} from "drizzle-orm";
 
 import type { CloneFee } from "@/lib/providers";
 import { REASONING_SAMPLE, recentReasoning } from "@/lib/scriptActivity";
@@ -16,10 +30,14 @@ import type {
   BookSpend,
   Endpoint,
   EndpointKind,
+  MetricBucket,
+  MetricTotals,
   Profile,
+  RangeKey,
   ReasoningEffort,
   ReqError,
   RequestRecord,
+  RequestStatus,
   RequestUsage,
   ScriptEndpointTelemetry,
   SpeechCharge,
@@ -27,6 +45,7 @@ import type {
   TtsBilling,
 } from "@/types";
 import { billingOf } from "@/lib/endpoints";
+import { RANGES, recordAt, type EndpointSummary, type RequestPage } from "@/services/endpoints";
 import {
   baseRates,
   measureSpeech,
@@ -63,11 +82,25 @@ export interface RequestFor {
   reasoning?: ReasoningEffort | null;
   /**
    * What the request held against the budgets while it was out, at its undiscounted worst case:
-   * kept on a row whose cost is unknown, which the budgets count in its place. $0 here means the
-   * card charges nothing for it, so a request that reported nothing is known to be free.
+   * kept on a row whose cost is unknown, which the budgets count in its place.
    */
   held?: number;
+  /**
+   * The card charges nothing for this request — its worst case was $0 — so one whose cost cannot
+   * be worked out (no usage reported, or cancelled once it was out) is known to be free rather
+   * than unknown. Absent, a `held` of $0 says so.
+   */
+  free?: boolean;
 }
+
+/**
+ * What a request costs whose charge nobody here can work out — answered without saying what it
+ * used, or cancelled once it was out: unknown, never $0, which would have the budgets count a paid
+ * request as free and its row keeps what it held for them to count instead; unless the card
+ * charges nothing for it at all.
+ */
+const unknownCost = (work: RequestFor): number | null =>
+  (work.free ?? work.held === 0) ? 0 : null;
 
 const errorOf = (sent: Sent): ReqError | undefined =>
   sent.error
@@ -112,11 +145,10 @@ function timing(sent: Sent, work: RequestFor) {
  * Price one scripting request against `profile`'s card and append it. A request that reported no
  * usage costs nothing when it was refused — no chat completion is billed for an error. One that
  * was answered — done, or a 2xx this server could not use — was billed for something nobody here
- * knows: its cost is unknown, never $0, which would have the budgets count a paid request as free,
- * and its row keeps what it held for them to count instead; unless the most it could have cost
- * (`work.held`) is nothing, when it is known to be free. A
- * provider that says what the request cost — OpenRouter does, at whichever of its providers served
- * it — is taken at its word; the figure worked out from the card is kept on the receipt beside it.
+ * knows, and so may one cancelled once it was out: either costs what nobody knows (`unknownCost`).
+ * A provider that says what the request cost — OpenRouter does, at whichever of its providers
+ * served it — is taken at its word; the figure worked out from the card is kept on the receipt
+ * beside it.
  */
 export function settleScript(
   db: Db | Tx,
@@ -144,8 +176,8 @@ export function settleScript(
     : {};
   const error = errorOf(sent);
   const code = sent.error?.code ?? 0;
-  const answered = sent.status === "done" || (code >= 200 && code < 300);
-  const cost = priced ? priced.total : answered && work.held !== 0 ? null : 0;
+  const mayHaveBilled = sent.status !== "failed" || (code >= 200 && code < 300);
+  const cost = priced ? priced.total : mayHaveBilled ? unknownCost(work) : 0;
   return append(
     db,
     {
@@ -176,7 +208,8 @@ export function settleScript(
  * everything it sent counted, and costs nothing — each line of its receipt says why. One that was
  * billed but failed is charged for what it sent on an endpoint that bills what is sent —
  * characters, bytes, requests — and for the audio it reported on one that bills audio, which is
- * nothing when it reported none.
+ * nothing when it reported none. One cancelled once it was out costs what nobody knows
+ * (`uncertain`).
  */
 export function settleSpeech(
   db: Db | Tx,
@@ -194,7 +227,7 @@ export function settleSpeech(
     rule: PRICING_RULE,
     reported: sent.reported,
   });
-  const charge = sent.billed ? priced : unbilled(priced);
+  const charge = chargeOf(priced, sent, work);
   const error = errorOf(sent);
   if (sent.billed && sent.status === "done" && work.voiceRef)
     settleFirstUse(db, endpoint, work.voiceRef, sent.finishedAt);
@@ -231,7 +264,8 @@ export function settleSpeech(
 
 /**
  * Price one transcription request by the minute of audio it sent, against `transcriber`'s card,
- * and append it. One that was not billed (`sent.billed`) is a row that costs nothing, as speech is.
+ * and append it. One that was not billed (`sent.billed`) is a row that costs nothing, and one
+ * cancelled once it was out a row whose cost nobody knows, as speech is.
  */
 export function settleTranscription(
   db: Db | Tx,
@@ -245,7 +279,7 @@ export function settleTranscription(
     at: sent.finishedAt,
     rule: PRICING_RULE,
   });
-  const charge = sent.billed ? priced : unbilled(priced);
+  const charge = chargeOf(priced, sent, work);
   const error = errorOf(sent);
   return append(
     db,
@@ -272,14 +306,21 @@ export function settleTranscription(
 
 // ---------- what a cloned voice costs ----------
 
-/** The ledger row a clone's fee is: the endpoint's, not a book's, like a voice sample on its tab. */
+/**
+ * The ledger row a clone's fee is: the endpoint's, not a book's, like a voice sample on its tab.
+ * A clone cancelled once it was out is a row at a cost nobody knows, holding the fee for the
+ * budgets to count in its place.
+ */
 function appendFee(
   db: Db | Tx,
   endpoint: Pick<Endpoint, "id">,
   fee: Pick<CloneFee, "usd" | "said">,
   label: string,
   at: number,
+  status: "done" | "cancelled" = "done",
 ): RequestRecord {
+  // credits the plan prices are a charge this ledger cannot put a figure on, and says so
+  const cost = status === "cancelled" ? null : fee.usd;
   return append(
     db,
     {
@@ -287,7 +328,7 @@ function appendFee(
       kind: "tts",
       bookId: null,
       label: `${label} · ${fee.said}`,
-      status: "done",
+      status,
       attempts: 1,
       queuedAt: at,
       startedAt: at,
@@ -295,12 +336,12 @@ function appendFee(
       queueMs: 0,
       responseMs: 0,
       usage: {},
-      // credits the plan prices are a charge this ledger cannot put a figure on, and says so
-      cost: fee.usd,
-      costBasis: fee.usd == null ? "unknown" : "calculated",
+      cost,
+      costBasis: cost == null ? "unknown" : "calculated",
       simulated: false,
     },
     null,
+    fee.usd ?? undefined,
   );
 }
 
@@ -334,6 +375,22 @@ export function settleClone(
     .run();
 }
 
+/**
+ * A clone cancelled once its upload was out: the provider may have made the voice, and charged for
+ * it as it did, which nobody here can know — a row at an unknown cost where the provider charges
+ * as a voice is made. One that charges at first use charges nothing for a voice never spoken in,
+ * and nobody here has the id of one it may have made, so there is nothing to record.
+ */
+export function settleCancelledClone(
+  db: Db,
+  endpoint: Pick<Endpoint, "id">,
+  title: string,
+  fee: CloneFee | null,
+  at = Date.now(),
+): void {
+  if (fee?.when === "made") appendFee(db, endpoint, fee, `Voice made · ${title}`, at, "cancelled");
+}
+
 /** A fee waiting on the first line spoken in this voice, charged now and once. */
 function settleFirstUse(db: Db | Tx, endpoint: Endpoint, voiceRef: string, at: number): void {
   const prefix = `${endpoint.id}/`;
@@ -351,6 +408,20 @@ function settleFirstUse(db: Db | Tx, endpoint: Endpoint, voiceRef: string, at: n
 export const NOT_BILLED =
   "not billed: the provider charges nothing for a request it refused or never answered";
 
+/** What a receipt says of a request cancelled once it was out. */
+export const CANCELLED =
+  "cancelled once it was out: whether the provider charged for it, and how much, is not known";
+
+/** The charge for one speech or transcription request, as it ended; see `settleSpeech`. */
+function chargeOf(
+  priced: SpeechCharge,
+  sent: SentSpeech | SentTranscription,
+  work: RequestFor,
+): SpeechCharge {
+  if (sent.status === "cancelled") return unknownCost(work) === 0 ? priced : uncertain(priced);
+  return sent.billed ? priced : unbilled(priced);
+}
+
 /**
  * A charge the provider will not make: the same lines and quantities, each at nothing and saying
  * why, so the row still shows what was sent and what it would have cost had it gone through.
@@ -362,6 +433,21 @@ function unbilled(charge: SpeechCharge): SpeechCharge {
     amount: 0,
     basis: "calculated",
     unknowns: [],
+  };
+}
+
+/**
+ * A charge nobody here can know: the lines as they would have been had the request gone through,
+ * each saying why it may not stand, and no total — the row keeps what it held, which the budgets
+ * count in its place.
+ */
+function uncertain(charge: SpeechCharge): SpeechCharge {
+  return {
+    ...charge,
+    lines: charge.lines.map((l) => ({ ...l, note: CANCELLED })),
+    amount: null,
+    basis: "unknown",
+    unknowns: [CANCELLED],
   };
 }
 
@@ -430,6 +516,17 @@ export function bookSpend(db: Db | Tx, bookId: string, exceptJob?: number): Book
 }
 
 /**
+ * When a row happened, as every read here takes it: when it settled, or when it was queued if it
+ * has not — the same rule as `recordAt` in the browser, so a total, a bucket, a filter and a limit
+ * all put one row at one instant.
+ */
+const rowAt = sql<number>`coalesce(${requests.finishedAt}, ${requests.queuedAt})`;
+
+/** One endpoint's rows. */
+const rowsOf = (kind: EndpointKind, endpointId: string) =>
+  and(eq(requests.kind, kind), eq(requests.endpointId, endpointId));
+
+/**
  * What one endpoint has been charged since `since`, across every book: what its daily limit is held
  * to. A request whose cost is unknown is counted at what it held while it was out (`held`).
  */
@@ -443,44 +540,234 @@ export function endpointSpend(
     db
       .select({ cost: sum(sql`coalesce(${requests.cost}, ${requests.held})`).mapWith(Number) })
       .from(requests)
-      .where(
-        and(
-          eq(requests.kind, kind),
-          eq(requests.endpointId, endpointId),
-          // as the Endpoints page reads a row's time
-          gte(sql`coalesce(${requests.finishedAt}, ${requests.queuedAt})`, since),
-        ),
-      )
+      .where(and(rowsOf(kind, endpointId), gte(rowAt, since)))
       .get()?.cost ?? 0
   );
 }
 
+/** Which of an endpoint's rows a page reads. */
+export interface RequestWhere {
+  /** the start of the range: every row since */
+  since: number;
+  /** a chart bucket inside the range: rows from `from` up to (not including) `to` */
+  window?: { from: number; to: number };
+  status?: RequestStatus;
+  bookId?: string;
+  /** matched, ignoring case, against the label, the error's message and code, and the chapter */
+  search?: string;
+}
+
+/** The cursor a page hands on: the time and id of its last row, which no later append can move. */
+const cursorOf = (r: RequestRecord) => `${recordAt(r)}:${r.id}`;
+
 /**
- * One endpoint's requests since `since`, newest first, each with the number its chapter goes by
- * today — null once the chapter is gone, when the frozen label is what still names the work.
+ * One page of an endpoint's requests matching `where`, newest first, each with the number its
+ * chapter goes by today — null once the chapter is gone, when the frozen label is what still names
+ * the work — and how many match over every page. `before` is the cursor the previous page handed
+ * on; it is keyed on the row rather than on a position, so rows settling while someone reads the
+ * pages land on the first and never shift the rest. Without a `limit`, every matching row.
  */
-export function endpointRequests(
+export function requestPage(
+  db: Db | Tx,
+  kind: EndpointKind,
+  endpointId: string,
+  where: RequestWhere,
+  page: { before?: string; limit?: number } = {},
+): RequestPage {
+  const q = where.search?.trim().toLowerCase();
+  const inRange = and(rowsOf(kind, endpointId), gte(rowAt, where.since));
+  const matching = and(
+    inRange,
+    where.window ? gte(rowAt, where.window.from) : undefined,
+    where.window ? lt(rowAt, where.window.to) : undefined,
+    where.status ? eq(requests.status, where.status) : undefined,
+    where.bookId ? eq(requests.bookId, where.bookId) : undefined,
+    q
+      ? sql`instr(lower(${requests.label} || ' ' || coalesce(json_extract(${requests.error}, '$.message'), '') || ' ' || coalesce(json_extract(${requests.error}, '$.code'), '') || ' ' || coalesce(${chapters.id}, '')), ${q}) > 0`
+      : undefined,
+  );
+  const cut = page.before?.indexOf(":") ?? -1;
+  const after = page.before
+    ? sql`(${rowAt}, ${requests.id}) < (${Number(page.before.slice(0, cut))}, ${page.before.slice(cut + 1)})`
+    : undefined;
+  const rows = db
+    .select({ row: requests, chapterId: chapters.id })
+    .from(requests)
+    .leftJoin(chapters, eq(chapters.uid, requests.chapterUid))
+    .where(and(matching, after))
+    .orderBy(desc(rowAt), desc(requests.id))
+    .limit(page.limit ?? -1)
+    .all()
+    .map(({ row, chapterId }) => toRequestRecord(row, chapterId ?? null));
+  const counted = (where: SQL | undefined) =>
+    db
+      .select({ n: count() })
+      .from(requests)
+      .leftJoin(chapters, eq(chapters.uid, requests.chapterUid))
+      .where(where)
+      .get()?.n ?? 0;
+  const last = rows.at(-1);
+  return {
+    requests: rows,
+    next: page.limit != null && rows.length === page.limit && last ? cursorOf(last) : null,
+    total: counted(matching),
+    of: counted(inRange),
+  };
+}
+
+/** Every one of an endpoint's requests since `since`, newest first. */
+export const endpointRequests = (
   db: Db | Tx,
   kind: EndpointKind,
   endpointId: string,
   since: number,
-  limit = 2000,
-): RequestRecord[] {
-  return db
-    .select({ row: requests, chapterId: chapters.id })
+): RequestRecord[] => requestPage(db, kind, endpointId, { since }).requests;
+
+/**
+ * One endpoint's past for the Endpoints page, summed here over every row in `range` up to `now`:
+ * the buckets its charts draw, the totals beside them, what it has been charged since `dayStart`
+ * and when it last settled anything.
+ *
+ * A request whose cost is unknown — whatever its status — is counted as unknown, never added in as
+ * $0. Latency is read off the requests that came back, done or failed; one cancelled says nothing
+ * about how long the provider takes. A finished request whose provider reported no usage is counted
+ * apart rather than as producing nothing; one that failed without usage produced nothing, and that
+ * is a known zero.
+ */
+export function endpointSummary(
+  db: Db | Tx,
+  kind: EndpointKind,
+  endpointId: string,
+  range: RangeKey,
+  now: number,
+  dayStart: number,
+): EndpointSummary {
+  const spec = RANGES.find((r) => r.value === range)!;
+  const from = now - spec.ms;
+  const width = spec.ms / spec.buckets;
+  // a bucket is from its `from` up to (not including) its `to`, as the Activity list filters by one
+  const inRange = and(rowsOf(kind, endpointId), gte(rowAt, from), lt(rowAt, now));
+  const bucketOf = sql<number>`cast((${rowAt} - ${from}) / ${width} as integer)`;
+  const done = sql`${requests.status} = 'done'`;
+  const settled = sql`${requests.status} in ('done', 'failed')`;
+  // what a request produced, in the unit its kind's throughput is judged by — tokens for scripting,
+  // audio minutes rendered for speech, audio minutes heard for transcription; null when the
+  // provider did not say, which is never the same as none
+  const made =
+    kind === "scripting"
+      ? sql`case when ${requests.inputTokens} is null and ${requests.outputTokens} is null then null else coalesce(${requests.inputTokens}, 0) + coalesce(${requests.outputTokens}, 0) end`
+      : sql`${requests.audioSeconds} / 60.0`;
+  const total = (x: SQL | AnyColumn) => sql<number>`total(${x})`.mapWith(Number);
+  const counted = (cond: SQL) => total(sql`case when ${cond} then 1 else 0 end`);
+  const sums = {
+    requests: count(),
+    failures: counted(sql`${requests.status} = 'failed'`),
+    rateLimits: counted(sql`${requests.rateLimited}`),
+    retries: counted(sql`${requests.attempts} > 1`),
+    eventualOk: counted(done),
+    firstAttemptOk: counted(sql`${done} and ${requests.attempts} = 1`),
+    cost: total(requests.cost),
+    unknownCost: counted(sql`${requests.cost} is null`),
+    settled: counted(settled),
+    queueMs: total(sql`case when ${settled} then ${requests.queueMs} end`),
+    responseMs: total(sql`case when ${settled} then ${requests.responseMs} end`),
+    work: total(made),
+    reported: counted(sql`${made} is not null`),
+    unreported: counted(sql`${made} is null and ${done}`),
+    providerReported: counted(sql`${requests.costBasis} = 'provider-reported'`),
+    estimatedCost: counted(sql`${requests.costBasis} = 'estimated'`),
+    inputTokens: total(requests.inputTokens),
+    outputTokens: total(requests.outputTokens),
+    // a provider that said nothing about cache use is left out of both counts rather than counted
+    // as a miss — "nothing cached" and "nobody said" are different facts
+    cachedInputTokens: total(requests.cachedInput),
+    cacheReportedInputTokens: total(
+      sql`case when ${requests.cachedInput} is not null then coalesce(${requests.inputTokens}, 0) end`,
+    ),
+    cacheReported: counted(sql`${requests.cachedInput} is not null`),
+    chars: total(requests.chars),
+    audioSeconds: total(requests.audioSeconds),
+  };
+  const all = db.select(sums).from(requests).where(inRange).get()!;
+  const byBucket = new Map(
+    db
+      .select({ bucket: bucketOf, ...sums })
+      .from(requests)
+      .where(inRange)
+      .groupBy(bucketOf)
+      .all()
+      .map((s) => [s.bucket, s]),
+  );
+
+  // the 95th percentile of the response times, each bucket's and the range's, ranked in SQL over
+  // every request that came back: the value 95% of the way up them, which on a handful is the most
+  const p95 = (partition?: SQL) => {
+    const over = partition ? sql`partition by ${partition}` : sql``;
+    const ranked = db
+      .select({
+        bucket: sql<number>`${bucketOf}`.as("bucket"),
+        ms: requests.responseMs,
+        rank: sql<number>`row_number() over (${over} order by ${requests.responseMs})`.as("rank"),
+        of: sql<number>`count(*) over (${over})`.as("of"),
+      })
+      .from(requests)
+      .where(and(inRange, settled))
+      .as("ranked");
+    return db
+      .select({ bucket: ranked.bucket, ms: ranked.ms })
+      .from(ranked)
+      .where(sql`${ranked.rank} = min(${ranked.of}, cast(${ranked.of} * 0.95 as integer) + 1)`)
+      .all();
+  };
+  const p95Of = new Map(p95(bucketOf).map((r) => [r.bucket, r.ms]));
+
+  /** work per minute over the requests that reported it; unknown when some finished and none did */
+  const rate = (s: typeof all | undefined, minutes: number) =>
+    s?.unreported && !s.reported ? null : (s?.work ?? 0) / minutes;
+  const mean = (ms: number, s: typeof all | undefined) => (s?.settled ? ms / s.settled : 0);
+  const buckets: MetricBucket[] = Array.from({ length: spec.buckets }, (_, i) => {
+    const s = byBucket.get(i);
+    return {
+      from: from + i * width,
+      to: from + (i + 1) * width,
+      requests: s?.requests ?? 0,
+      failures: s?.failures ?? 0,
+      rateLimits: s?.rateLimits ?? 0,
+      retries: s?.retries ?? 0,
+      firstAttemptOk: s?.firstAttemptOk ?? 0,
+      eventualOk: s?.eventualOk ?? 0,
+      queueMs: mean(s?.queueMs ?? 0, s),
+      responseMs: mean(s?.responseMs ?? 0, s),
+      p95Ms: p95Of.get(i) ?? 0,
+      throughput: rate(s, width / 60_000),
+      unreported: s?.unreported ?? 0,
+      cost: s?.cost ?? 0,
+      unknownCost: s?.unknownCost ?? 0,
+    };
+  });
+  const { settled: _settled, work: _work, reported: _reported, ...counts } = all;
+  const totals: MetricTotals = {
+    ...counts,
+    queueMs: mean(all.queueMs, all),
+    responseMs: mean(all.responseMs, all),
+    p95Ms: p95()[0]?.ms ?? 0,
+    throughput: rate(all, spec.ms / 60_000),
+  };
+
+  const day = db
+    .select({
+      lastSeen: sql<number | null>`max(${rowAt})`,
+      cost: total(sql`case when ${rowAt} >= ${dayStart} then ${requests.cost} end`),
+      unknown: counted(sql`${rowAt} >= ${dayStart} and ${requests.cost} is null`),
+    })
     .from(requests)
-    .leftJoin(chapters, eq(chapters.uid, requests.chapterUid))
-    .where(
-      and(
-        eq(requests.kind, kind),
-        eq(requests.endpointId, endpointId),
-        gte(requests.finishedAt, since),
-      ),
-    )
-    .orderBy(desc(requests.finishedAt))
-    .limit(limit)
-    .all()
-    .map(({ row, chapterId }) => toRequestRecord(row, chapterId ?? null));
+    .where(rowsOf(kind, endpointId))
+    .get()!;
+  return {
+    series: { kind, range, from, to: now, buckets, totals },
+    today: { cost: day.cost, unknown: day.unknown },
+    lastSeen: day.lastSeen,
+  };
 }
 
 /**

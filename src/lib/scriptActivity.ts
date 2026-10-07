@@ -96,22 +96,6 @@ export function recentReasoning(
   return { perInputToken: thinking / input, requests: sample.length };
 }
 
-/** What a profile's requests used and cost, all books together. */
-export function scriptUsageTotals(rows: readonly RequestRecord[]): {
-  input: number;
-  output: number;
-  cost: number;
-} {
-  return rows.reduce(
-    (n, r) => ({
-      input: n.input + (r.usage.inputTokens ?? 0),
-      output: n.output + (r.usage.outputTokens ?? 0),
-      cost: n.cost + (r.cost ?? 0),
-    }),
-    { input: 0, output: 0, cost: 0 },
-  );
-}
-
 /**
  * How much of the input a profile's recent requests actually had cached, from the receipts they
  * were priced on. The rule — only requests that reported cache detail count — is

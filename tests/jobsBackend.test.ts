@@ -58,8 +58,8 @@ import { openaiProfile } from "./support/profiles";
 import { unifyEndpoint } from "@/lib/endpoints";
 import { useEndpointActivity } from "@/views/endpoints/live";
 import { useNarrationData } from "@/views/narration/useNarrationData";
-import { useScriptActivity } from "@/queries/scriptActivity";
-import { scriptTelemetry, scriptUsageTotals } from "@/lib/scriptActivity";
+import { useScriptActivity, useScriptTotals } from "@/queries/scriptActivity";
+import { scriptTelemetry } from "@/lib/scriptActivity";
 import {
   gatedProvider,
   gatedSpeechProvider,
@@ -1409,10 +1409,11 @@ describe("spending with a server answering", () => {
     // and the Scripting page's activity figures for the profile are the same ledger rows
     useEndpointsStore().profiles = [openaiProfile()];
     const activity = pinia.run(() => useScriptActivity());
+    const totals = pinia.run(() => useScriptTotals());
     await settle();
     const rows = activity.rowsOf("openai");
     expect(rows.length).toBeGreaterThan(0);
-    expect(scriptUsageTotals(rows).cost).toBeCloseTo(spend.scriptSpent, 12);
+    expect(totals.totalsOf("openai")!.cost).toBeCloseTo(spend.scriptSpent, 12);
     expect(scriptTelemetry(rows, useEndpointsStore().profiles[0]).completed).toBe(rows.length);
   });
 

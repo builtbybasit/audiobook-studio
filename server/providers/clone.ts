@@ -50,7 +50,16 @@ export interface CloneRequest {
 
 /** The port the route clones through; a test hands over one that answers from memory. */
 export interface VoiceCloner {
-  clone(target: ProviderTarget, request: CloneRequest, signal: AbortSignal): Promise<MadeVoice>;
+  /**
+   * `wentOut` is told when the first request has gone to the provider: a clone cancelled after
+   * that may have made the voice, and charged for it, and one cancelled before cannot have.
+   */
+  clone(
+    target: ProviderTarget,
+    request: CloneRequest,
+    signal: AbortSignal,
+    wentOut?: () => void,
+  ): Promise<MadeVoice>;
 }
 
 // ---------- what a sample is ----------
@@ -120,7 +129,7 @@ export interface VoiceClonerOptions extends Omit<CallOptions, "signal"> {
 export function endpointVoiceCloner(options: VoiceClonerOptions = {}): VoiceCloner {
   const { timeoutSec = CLONE_TIMEOUT_SEC, ...callOptions } = options;
   return {
-    async clone(target, request, signal) {
+    async clone(target, request, signal, wentOut) {
       const shape = speechProviderOf(target);
       // a provider described without cloning is never asked for its wire: a simulated one has none
       const clone = shape.cloning && wireOf(target).wire.clone;
@@ -131,8 +140,16 @@ export function endpointVoiceCloner(options: VoiceClonerOptions = {}): VoiceClon
           false,
         );
       requireKey(target);
-      // once, and with a clock sized for the upload: see the top of this file
-      return clone({ ...target, maxRetries: 0, timeoutSec }, request, signal, callOptions);
+      // once, and with a clock sized for the upload: see the top of this file; every request goes
+      // out through the one `fetch`, which is where it is seen leaving
+      const send = callOptions.fetch ?? fetch;
+      return clone({ ...target, maxRetries: 0, timeoutSec }, request, signal, {
+        ...callOptions,
+        fetch: ((url: string, init: RequestInit) => {
+          wentOut?.();
+          return send(url, init);
+        }) as typeof fetch,
+      });
     },
   };
 }

@@ -408,7 +408,7 @@ describe("a refusal", () => {
     expect(sent).toHaveLength(0);
   });
 
-  test("a cancel mid-request rejects with the job's reason", async () => {
+  test("a cancel mid-request rejects with the job's reason, reported cancelled", async () => {
     const controller = new AbortController();
     const reason = new DOMException("cancelled", "AbortError");
     const fetch = ((_url: string, init: RequestInit) =>
@@ -419,8 +419,11 @@ describe("a refusal", () => {
     const provider = chatScriptingProvider({ fetch, backoffMs: () => 0 });
     const report = reported({ signal: controller.signal });
     await expect(provider.script(report.input)).rejects.toBe(reason);
-    // what the provider made of a request dropped halfway is not knowable, so nothing is claimed
-    expect(report.sent).toEqual([]);
+    // what the provider made of a request dropped halfway is not knowable, so it is reported as
+    // cancelled with no usage, for the ledger to keep at a cost nobody knows
+    expect(report.sent).toEqual([
+      expect.objectContaining({ status: "cancelled", usage: null, attempts: 1 }),
+    ]);
   });
 });
 

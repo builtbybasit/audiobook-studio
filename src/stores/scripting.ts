@@ -272,7 +272,9 @@ export const useScriptingStore = defineStore("scripting", {
 
       if (libraryStore._blocked(bookId, "script")) return false;
       try {
-        await endpointsStore.flushWrites();
+        // a run starts on the settings the server holds: one it just refused (and said so) would
+        // be scripted with what it kept instead
+        if ((await endpointsStore.flushWrites()) === "refused") return false;
         const { jobs, skipped, chapters } = await jobsService().scriptChapters(
           bookId,
           ids,

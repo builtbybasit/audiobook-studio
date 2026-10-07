@@ -176,7 +176,8 @@ const PRODUCED: Record<EndpointKind, { label: string; unreported: string }> = {
           :class="t && t.unknownCost ? 'text-amber-600 dark:text-amber-400' : 'text-zinc-500'"
         >
           <template v-if="t && t.unknownCost"
-            >{{ plural(t.unknownCost, "request") }} not priced — the real total is higher</template
+            >{{ plural(t.unknownCost, "request") }} not priced — the real total may be
+            higher</template
           >
           <template v-else-if="t">{{ t.requests }} requests, all priced</template>
           <template v-else>no requests in this range</template>

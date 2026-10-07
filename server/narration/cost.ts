@@ -21,10 +21,9 @@ import type {
 } from "@/types";
 import { NARRATOR, speakerVoice } from "@/lib/cast";
 import { billingOf } from "@/lib/endpoints";
-import { expressionPlan, type ExpressionPlan } from "@/lib/expressions";
 import { plannedSpeechUnits, worstCaseOf } from "@/lib/narrationCost";
 import { addUnits, estimateSpeech, noUnits, readPricing } from "@/lib/pricing";
-import { speechInstructions } from "@/lib/speech";
+import { prepareReading, type ReadLine, type Reader, type Reading } from "@/lib/reading";
 import { readCast, readLexicon } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
@@ -61,18 +60,29 @@ export function deliveryFor(
   };
 }
 
+/** The reader a delivery names, with its endpoint as it is stored now. */
+const readerOf = (db: Db | Tx, who: Delivery): Reader => ({
+  endpoint: who.endpoint ? readEndpoint(db, who.endpoint) : undefined,
+  voiceRef: who.voiceRef,
+  style: who.style,
+});
+
 /**
- * What the budget holds for one line sent to `ep` as `plan`, at `at`: its undiscounted price on
- * the endpoint's card. Nothing for a line with no endpoint, which never reaches the wire.
+ * A line's reading (`@/lib/reading`) as the server takes it: read by `who`, against the endpoint
+ * and the book's dictionary as they are stored now.
  */
-export function lineWorstCase(
-  ep: Endpoint | undefined,
-  plan: ExpressionPlan,
-  instructions: string,
-  at: number,
-): number {
+export function lineReading(db: Db | Tx, bookId: string, s: ReadLine, who: Delivery): Reading {
+  return prepareReading(s, readerOf(db, who), readLexicon(db, bookId));
+}
+
+/**
+ * What the budget holds for one line read as `reading`, at `at`: its undiscounted price on the
+ * endpoint's card. Nothing for a line with no endpoint, which never reaches the wire.
+ */
+export function lineWorstCase(reading: Reading, at: number): number {
+  const ep = reading.reader.endpoint;
   if (!ep) return 0;
-  const units = plannedSpeechUnits(plan, ep, instructions);
+  const units = plannedSpeechUnits(reading, ep);
   return worstCaseOf(estimateSpeech(billingOf(ep), readPricing(ep), units, at));
 }
 
@@ -92,15 +102,15 @@ export interface NarrationCost {
   firsts: { endpoint: string; cost: number }[];
 }
 
-/**
- * What rendering `segs` of `bookId` would cost, grouped per endpoint as the browser's estimate
- * groups it, so the figure the gate holds is the figure the estimate panel shows.
- */
 /** `deliveryFor` over a book as it stands: its cast and its Character voice, read now. */
 export function bookDelivery(db: Db | Tx, bookId: string): (speaker: string) => Delivery {
   return deliveryFor(readCast(db, bookId), getBook(db, bookId)?.characterVoice);
 }
 
+/**
+ * What rendering `segs` of `bookId` would cost, grouped per endpoint as the browser's estimate
+ * groups it, so the figure the gate holds is the figure the estimate panel shows.
+ */
 export function narrationCost(
   db: Db | Tx,
   bookId: string,
@@ -118,11 +128,13 @@ export function narrationCost(
     if (!endpoints.has(who.endpoint)) endpoints.set(who.endpoint, readEndpoint(db, who.endpoint));
     const ep = endpoints.get(who.endpoint);
     if (!ep) continue;
-    const plan = expressionPlan(s, ep, lexicon);
-    const instructions = speechInstructions({ style: who.style, direction: s.direction });
-    const units = plannedSpeechUnits(plan, ep, instructions);
-    if (!per.has(ep.id))
-      firsts.push({ endpoint: ep.id, cost: lineWorstCase(ep, plan, instructions, at) });
+    const reading = prepareReading(
+      s,
+      { endpoint: ep, voiceRef: who.voiceRef, style: who.style },
+      lexicon,
+    );
+    const units = plannedSpeechUnits(reading, ep);
+    if (!per.has(ep.id)) firsts.push({ endpoint: ep.id, cost: lineWorstCase(reading, at) });
     const group = per.get(ep.id) ?? { ep, units: noUnits() };
     group.units = addUnits(group.units, units);
     per.set(ep.id, group);

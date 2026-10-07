@@ -16,7 +16,9 @@ import { readScript, writeScript } from "~/db/script";
 import { jobs } from "~/db/schema";
 import { fakeScriptingProvider, sleep } from "~/providers/fake";
 import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
-import { endpointRequests } from "~/usage/ledger";
+import { chatScriptingProvider } from "~/providers/chatScripting";
+import { heldToday } from "~/usage/budget";
+import { bookSpend, endpointRequests } from "~/usage/ledger";
 import { epubFile, story } from "../support/epub";
 import {
   collectingLogger,
@@ -916,6 +918,55 @@ describe("a scripting run's spending", () => {
     // the fake says nothing about its cache, and each request is counted as having said nothing
     expect(job.scriptRun!.cacheUnreported).toBe(rows.length);
     expect(job.scriptRun!.reserved).toBe(0);
+  });
+
+  test("a request cancelled once it was out is one row at a cost nobody knows, counted at what it held; the chunk never sent leaves none", async () => {
+    // the profile's own model, reached through a gateway that answers nothing until the request
+    // is closed, with a key handed over so the request goes out
+    let onStart!: () => void;
+    const started = new Promise<void>((r) => (onStart = r));
+    let requests = 0;
+    const fetch = ((_url: string, init: RequestInit) =>
+      new Promise<Response>((_, reject) => {
+        requests++;
+        onStart();
+        init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+      })) as unknown as typeof globalThis.fetch;
+    const chat = chatScriptingProvider({ fetch, backoffMs: () => 0 });
+    const keyed: ScriptingProvider = {
+      name: chat.name,
+      script: (input) =>
+        chat.script({ ...input, target: input.target && { ...input.target, apiKey: "sk-test" } }),
+    };
+    const { api, id } = await shelved(testApi({ scripting: keyed }), ["One"]);
+    // one request at a time, so the chapter's later chunks are still to send when it is cancelled
+    await saveProfile(api, small({ concurrency: 1 }));
+    const { body } = await script(api, id, [1], "openai");
+    const { reserved } = body.jobs[0].scriptRun!;
+    await started;
+    await api.request(`/api/jobs/${body.jobs[0].id}/cancel`, { method: "POST" });
+    await api.runner.idle();
+
+    const job = await jobById(api, body.jobs[0].id);
+    expect(job.status).toBe("cancelled");
+    expect(job.scriptRun!.requests).toBeGreaterThan(1);
+    expect(requests).toBe(1);
+    const rows = ledger(api);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      status: "cancelled",
+      cost: null,
+      costBasis: "unknown",
+      simulated: false,
+    });
+    // never $0: the budgets count what the request held in its place, and nothing else is held
+    const spend = bookSpend(api.db, id);
+    expect(spend.unpriced).toBe(1);
+    expect(spend.spent).toBeGreaterThan(0);
+    expect(spend.spent).toBeLessThan(reserved);
+    expect(spend.reserved).toBe(0);
+    expect(job.scriptRun!.reserved).toBe(0);
+    expect(heldToday(api.db, "scripting", "openai")).toBe(0);
   });
 
   test.each([

@@ -12,9 +12,12 @@ import { libraryService, type Cast } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 
 async function readCast(bookId: string, signal: AbortSignal): Promise<Cast> {
+  const castStore = useCastStore();
+  // where the book's writes were as it was asked for: one answered under it may not be in it
+  const readAt = castStore._readAt(bookId);
   const cast = await libraryService().cast(bookId);
   // a read overtaken by a later one leaves the store to the later one
-  if (!signal.aborted) useCastStore()._install(bookId, cast);
+  if (!signal.aborted) castStore._install(bookId, cast, readAt);
   return cast;
 }
 

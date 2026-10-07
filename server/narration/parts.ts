@@ -1,7 +1,7 @@
 // A line too long for its endpoint, sent as parts and kept as one clip.
 //
 // The narration job sends a line whole when it fits the endpoint's `maxChars`, and otherwise as
-// the parts `expressionParts` cut it into — one request after another, or each part an item of a
+// the parts its reading is cut into (`cutReading`) — one request after another, or each part an item of a
 // batch (`batch.ts`) — and joins what comes back into one file. What a failed part, a part in the
 // wrong format and an Opus line in parts come to is stated here, once, for both ways of sending.
 import { FORMAT_LABEL } from "@/lib/endpointShapes";
@@ -35,7 +35,7 @@ export function failureCode(e: unknown): number {
 
 /**
  * A line sent the way its endpoint will take it: whole, or — longer than its `maxChars` — as the
- * parts `expressionParts` cut it into, one request after another, the audio joined into one file.
+ * parts its reading is cut into (`cutReading`), one request after another, the audio joined into one file.
  *
  * Nothing goes between the parts. The cuts fall where the reading already pauses — a sentence's
  * end, then a clause's — and each request's audio carries its own breath at either end, so adding

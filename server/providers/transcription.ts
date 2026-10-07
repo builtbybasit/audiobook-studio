@@ -11,7 +11,7 @@
 // heard so says it was `unhinted`.
 //
 // Every request that reached the wire is reported through `sent`, as speech is (`sent.ts`), so the
-// ledger prices it by the minute of audio sent. A simulated endpoint answers here with a fixed
+// ledger prices it by the minute of audio sent — a cancelled one too, at a cost nobody knows. A simulated endpoint answers here with a fixed
 // sentence and no times, after its latency, and nothing is sent.
 import type { EndpointProbe } from "@/types";
 import { sleep } from "~/providers/fake";
@@ -130,8 +130,14 @@ async function send(
       { signal, stats, ...inject },
     );
     body = (await res.json().catch(() => null)) ?? {};
+    // an answer cut short by a cancel is the cancel's, not a server that sent no transcript
+    if (signal.aborted) throw signal.reason;
   } catch (e) {
-    if (signal.aborted) throw e;
+    if (signal.aborted) {
+      // out at the server, which may have heard it and billed it: nobody here can say
+      if (stats.attempts) report({ status: "cancelled", billed: null });
+      throw e;
+    }
     const error = e instanceof ProviderError ? e : new ProviderError(String(e), 0, true);
     // a refusal is not billed; a request no answer came back for is not knowable, and is not either
     report({

@@ -23,8 +23,8 @@
 // the server counted for it, even when its audio then proves unusable — cut short, not the format
 // asked for; one answered `failed` is not, unless the provider bills failures; so is every item of
 // a batch refused whole after the retries, and every item a stream that was cut off never reached,
-// with the reason. A cancel reports nothing more: what the server made of the items it was still
-// rendering is not knowable. A cut is thrown as a `BatchCut`, whose lines the job may send again,
+// with the reason. A cancel reports every item still open as `cancelled`, billed or not nobody can
+// say: what the server made of the items it was still rendering is not knowable. A cut is thrown as a `BatchCut`, whose lines the job may send again,
 // and a refusal as the `ProviderError` `call` gave up with, whose lines it does not.
 import type { AudioFormat, SpeechUsage } from "@/types";
 import { normalizeSpeechUsage } from "@/lib/pricing";
@@ -179,6 +179,13 @@ export async function sendBatch(
       });
     throw e;
   };
+  /** Cancelled once the batch went out: every item still open is reported, at a cost nobody knows. */
+  const cancelOpen = (): never => {
+    if (stats.attempts)
+      for (const i of open)
+        report(i, { status: "cancelled", audioSeconds: 0, billed: null, reported: null });
+    throw signal.reason;
+  };
 
   // The stream's own clock: aborted when nothing has arrived for `timeoutSec`, which closes the
   // request as a cancel would, and is told apart from one by which of the two fired.
@@ -197,7 +204,7 @@ export async function sendBatch(
       { signal: live, stats, rateLimited: batch.rateLimited, headersOnly: true, ...inject },
     );
   } catch (e) {
-    if (signal.aborted) throw e;
+    if (signal.aborted) return cancelOpen();
     return failOpen(e, billsFailures);
   }
 
@@ -357,7 +364,7 @@ export async function sendBatch(
     close();
   }
 
-  if (signal.aborted) throw signal.reason;
+  if (signal.aborted) return cancelOpen();
   if (stream.refused) return failOpen(stream.refused, billsFailures);
   // every item answered: whatever became of the rest of the stream, nothing was lost with it
   if (!open.size) return;

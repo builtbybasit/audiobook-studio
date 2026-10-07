@@ -27,38 +27,32 @@
 // `chapterNarration` — rather than remembered: `queued` when the job is, `running` while it runs,
 // and afterwards whatever the lines say, which is `failed` for a chapter with a gap in it.
 //
-// What a line is sent as is the demo's rule too, `expressionPlan`: the words after the book's
-// dictionary, with the expression tags placed on the line written in as the speaker's endpoint
-// spells them. The endpoint is read from the stored configuration as each line goes out, and a
-// line whose tags that endpoint cannot say is failed before any request, with the reason, exactly
-// as the demo blocks it. The endpoint's sample rate and format go with the request, and the clip
+// What a line is sent as is the browser's rule too, its reading (`@/lib/reading`): the words after
+// the book's dictionary, kept to what a voice can say, with the expression tags placed on the line
+// written in as the speaker's endpoint spells them, the instructions beside them, and the parts
+// its endpoint's limit cuts them into. Which of that is read when the run starts and which as each
+// line goes out is written down there, once. A line whose tags its endpoint cannot say is failed
+// before any request, with the reason, exactly as the browser blocks it. The endpoint's sample rate and format go with the request, and the clip
 // records the rate the file actually came back at, read from the file (`probeClip`), and is kept
 // under the extension of the format it actually came back in — which for the fake is always WAV.
 // The format is not part of what a clip is compared against later: changing an endpoint from WAV
 // to MP3 applies to the lines rendered after it, and leaves the ones already in the book alone.
 //
 // The handler plans the run (`planRun`), sends its lines and settles the chapter. What every line
-// goes through — a slot, the budget, the audit trail, the landing — is `lineRun`; what sending a
-// line in parts adds is `server/narration/parts.ts`, and what sending lines in batches adds is
-// `server/narration/batch.ts`.
-import type {
-  Endpoint,
-  Job,
-  NarrationQueued,
-  NarrationScope,
-  Segment,
-  SegmentAudio,
-} from "@/types";
+// goes through, in order — a slot, the budget, its reading and the audit trail, the request, the
+// landing, the money given back — is `lineRun`; what sending a line in parts adds is
+// `server/narration/parts.ts`, and what sending lines in batches adds is
+// `server/narration/batch.ts`, which takes its lines through `lineRun` without ordering those
+// steps itself.
+import type { Job, NarrationQueued, NarrationScope, Segment, SegmentAudio } from "@/types";
 import { encodingOf } from "@/lib/endpointShapes";
 import { chapterNarration, narrationTargets, SCOPE_LABEL } from "@/lib/runPlan";
 import { isSpoken } from "@/lib/siteText";
-import { expressionParts, expressionPlan, type ExpressionPlan } from "@/lib/expressions";
-import { speechInstructions } from "@/lib/speech";
+import { compareReading, cutReading, readingRecord, type Reading } from "@/lib/reading";
 import { requeue } from "@/lib/takes";
 import type { AudioFiles } from "~/audio/files";
 import { probeClip } from "~/audio/probe";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
-import { readLexicon } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
 import { activeJob, getJob, nextRunId, setReserved } from "~/db/jobs";
@@ -87,6 +81,7 @@ import {
 } from "~/narration/chapter";
 import {
   bookDelivery,
+  lineReading,
   lineWorstCase,
   narrationCost,
   type Delivery,
@@ -105,11 +100,16 @@ import {
   type GateWait,
   type SpeechGate,
 } from "~/providers/gate";
-import type { SentSpeech } from "~/providers/sent";
-import type { BatchLimits, RenderedClip, SpeechProvider } from "~/providers/speech";
+import type {
+  BatchLimits,
+  BatchOutcome,
+  RenderedClip,
+  SpeechInput,
+  SpeechProvider,
+} from "~/providers/speech";
 import { speechTarget } from "~/providers/target";
-import { assertWithinBudget, budgetProblem, holdToday, type EndpointRequest } from "~/usage/budget";
-import { settleSpeech } from "~/usage/ledger";
+import { assertWithinBudget, budgetProblem, type EndpointRequest } from "~/usage/budget";
+import { dispatch } from "~/usage/dispatch";
 
 /** The way back from a label the Queue page shows to the scope it names; `SCOPE_LABEL` is one-to-one. */
 const SCOPE_OF_LABEL = new Map<string, RunScope>(
@@ -234,25 +234,23 @@ function planRun(db: Db, uid: string, scope: RunScope): { targets: Target[]; lin
 }
 
 /**
- * A line on its way out: what it is sent as, read as it goes — the dictionary and the endpoint as
- * they stand now, not when the run began, so a term added or a tag defined mid-run applies to every
- * line not yet sent, as it does in the demo — and its queued clip turned `generating`.
+ * A line on its way out: its reading, taken as it goes — the dictionary and the endpoint as they
+ * stand now, not when the run began (`@/lib/reading` has the rule) — and its queued clip turned
+ * `generating`.
  */
 interface Line extends BatchLine<Target> {
   who: Delivery;
-  plan: ExpressionPlan;
+  reading: Reading;
   generating: SegmentAudio;
   startedAt: number;
   /** hands back whatever of the line's reservation its requests did not use */
   release(): void;
 }
 
-/** A line's delivery, what it is sent as, and the worst case it holds while it is out. */
+/** A line's delivery, its reading, and the worst case it holds while it is out. */
 interface Priced {
   who: Delivery;
-  instructions: string;
-  ep: Endpoint | undefined;
-  plan: ExpressionPlan;
+  reading: Reading;
   worst: number;
 }
 
@@ -264,9 +262,11 @@ interface Tally {
 }
 
 /**
- * Everything a line goes through, whichever way it is sent: a slot on its endpoint, the budget,
- * the reservation it holds, the audit trail written as it goes out, and what came back written
- * where its slot is. The run holds one of these for its lines; a batch borrows it (`LineRun`).
+ * Everything a line goes through, whichever way it is sent, in its order: a slot on its endpoint,
+ * the budget, the reservation it holds and the audit trail written as it goes out (`admit`), the
+ * request (`speak`, or a batch's `speakBatch`), and what came back written where its slot is, its
+ * hold given back (`land`). The run holds one of these for its lines; a batch borrows it
+ * (`LineRun`), and `close` gives back whatever is still held once every line has settled.
  */
 function lineRun(o: {
   ctx: JobContext;
@@ -284,7 +284,7 @@ function lineRun(o: {
   renderLine(t: Target): Promise<void>;
   /** why the budget stopped the run, or null */
   refused(): string | null;
-  /** give back what lines still out hold against their endpoints' daily limits: the run is over */
+  /** give back what the lines still out hold: the run is over */
   close(): void;
   tally: Tally;
 } {
@@ -360,16 +360,13 @@ function lineRun(o: {
     let p = pricing.get(t);
     if (!p) {
       const who = deliveryOf(t.s.speaker);
-      const instructions = speechInstructions({ style: who.style, direction: t.s.direction });
-      const ep = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;
-      const plan = expressionPlan(t.s, ep, readLexicon(db, job.bookId));
-      const worst = lineWorstCase(ep, plan, instructions, Date.now());
-      pricing.set(t, (p = { who, instructions, ep, plan, worst }));
+      const reading = lineReading(db, job.bookId, t.s, who);
+      pricing.set(t, (p = { who, reading, worst: lineWorstCase(reading, Date.now()) }));
     }
     return p;
   };
-  /** what lines out hold against their endpoints' daily limits, given back as each settles */
-  const out = new Set<(n?: number) => void>();
+  /** what the lines out hold, given back as each settles */
+  const out = new Set<() => void>();
 
   /**
    * The budget, asked before a line goes out: the book's with what the job still holds and its own
@@ -379,7 +376,8 @@ function lineRun(o: {
    * (`onSettled`), and the clips landed stay.
    */
   const budgetStops = (t: Target): boolean => {
-    const { ep, worst } = priceOf(t);
+    const { reading, worst } = priceOf(t);
+    const ep = reading.reader.endpoint;
     const problem = budgetProblem(db, job.bookId, {
       kind: "narration",
       cost: held,
@@ -409,50 +407,40 @@ function lineRun(o: {
    */
   const commit = (t: Target, maxChars?: number | null): Line | null => {
     const { s, slot } = t;
-    const { who, instructions, ep, plan, worst } = priceOf(t);
+    const { who, reading, worst } = priceOf(t);
+    const { plan, instructions } = reading;
+    const ep = reading.reader.endpoint;
     pricing.delete(t);
-    // What this line gives back to the cap and to its endpoint's daily limit: each request's
-    // charge as it is written to the ledger, so what a line has spent is never also still held
-    // while another line asks the budget, and whatever is left once the line has settled, whether
-    // it rendered, failed or was never sent — from then on its cost is in the ledger, or it was
-    // never going to be.
-    let left = worst;
-    const today = ep ? holdToday(db, "tts", ep.id, left) : undefined;
-    if (today) out.add(today);
-    const give = (amount: number): void => {
-      const back = Math.min(left, Math.max(0, amount));
-      if (!back) return;
-      left -= back;
-      today?.(back);
-      held = Math.max(0, held - back);
-      setReserved(db, job.id, held);
-    };
-    // Every request that reached the wire — each part of a split line is its own, and so is
-    // each item of a batch — is priced into the ledger as it settles, against the endpoint as
-    // it is stored at that moment. A request whose endpoint has been removed since has no rate
-    // card to be priced on and is left out, as is one whose book has gone.
-    const work = {
-      bookId: job.bookId,
-      label: `${slot === "candidate" ? (t.queued.auto ? "Replacement" : "Retake") : "Line"} ${s.id} · ${s.speaker}`,
-      queuedAt: job.queuedAt,
-      ...(who.voiceRef ? { voiceRef: who.voiceRef } : {}),
-    };
-    const settle = (sent: SentSpeech): void => {
-      const priced = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;
-      if (!priced || !library.getBook(db, job.bookId)) return;
-      // a chapter removed mid-request is still where the money went, and the row stays in every total
-      const chapterUid = library.locateChapter(db, chapter.uid) ? chapter.uid : null;
-      // a charge nobody knows is counted at what the line still holds, which it then gives back
-      const { cost } = settleSpeech(db, priced, { ...work, chapterUid, held: left }, sent);
-      give(cost ?? left);
-    };
+    // The line's money (`~/usage/dispatch`): its worst case held against its endpoint's daily
+    // limit and, through what the job holds, the book's cap; every request that reached the wire —
+    // each part of a split line is its own, and so is each item of a batch — priced into the
+    // ledger as it settles, its charge given back at once; and the rest given back once the line
+    // has settled, whether it rendered, failed or was never sent. A line with no endpoint goes
+    // nowhere, and holds and reports nothing.
+    const money =
+      ep &&
+      dispatch(db, {
+        kind: "tts",
+        endpoint: ep,
+        work: {
+          bookId: job.bookId,
+          chapterUid: chapter.uid,
+          label: `${slot === "candidate" ? (t.queued.auto ? "Replacement" : "Retake") : "Line"} ${s.id} · ${s.speaker}`,
+          queuedAt: job.queuedAt,
+          ...(who.voiceRef ? { voiceRef: who.voiceRef } : {}),
+        },
+        hold: worst,
+        gaveBack: (back) => {
+          held = Math.max(0, held - back);
+          setReserved(db, job.id, held);
+        },
+      });
+    if (money) out.add(money.release);
     // Where the line is cut to fit the endpoint's `maxChars` — or a batch's shorter limit —
     // decided before it goes out so the clip can say so while it renders. A line with an issue
-    // is not sent at all, and the one issue `splitText` would throw on — a tag longer than the
-    // limit — is one of them.
-    const limit =
-      ep && maxChars ? { ...ep, maxChars: Math.min(ep.maxChars || maxChars, maxChars) } : ep;
-    const cuts = limit && !plan.issues.length ? expressionParts(plan, limit) : null;
+    // is not sent at all, nor one with a tag longer than a batch's item limit: there are no cuts
+    // for either, and `unsendable` says why.
+    const cuts = maxChars ? cutReading(plan, ep, maxChars) : reading.cuts;
     const startedAt = Date.now();
     // The audit trail, written when the request goes out: exactly what this clip is being
     // rendered with, so a later edit to the line, the cast or the voice reads as drift.
@@ -465,28 +453,18 @@ function lineRun(o: {
       ...(who.voiceRef ? { voiceRef: who.voiceRef } : {}),
       ...(who.voice ? { voice: who.voice } : {}),
       model: provider.name,
-      direction: s.direction,
-      style: who.style,
-      ...(instructions ? { instructions } : {}),
-      type: s.type,
-      text: s.text,
-      // what the dictionary made of it, recorded whether or not it changed anything: the
-      // browser's drift rule compares this against the dictionary as it now stands
-      pronounced: plan.pronounced,
-      ...(plan.signature ? { expressionSignature: plan.signature } : {}),
-      ...(plan.tags.length ? { expressions: plan.tags } : {}),
-      ...(plan.text !== s.text ? { said: plan.text, lex: plan.hits.length } : {}),
+      ...readingRecord(s, reading),
       // Recorded as the demo records them: how many requests and at which boundary always,
       // where each cut fell only when there was more than one part. Set every time rather than
       // carried from the clip this one replaces, whose endpoint may have had another limit.
       parts: cuts?.length,
-      splitAt: cuts ? limit!.splitAt : undefined,
+      splitAt: cuts ? ep!.splitAt : undefined,
       cuts:
         cuts && cuts.length > 1
           ? cuts.map((c) => ({ from: c.from, to: c.to, at: c.at, fallback: c.fallback }))
           : undefined,
     };
-    const release = (): void => give(left);
+    const release = (): void => money?.release();
     try {
       write((tx, at) => writeClip(tx, at.bookId, at.id, s.id, slot, generating));
     } catch (e) {
@@ -497,7 +475,7 @@ function lineRun(o: {
     return {
       t,
       who,
-      plan,
+      reading,
       cuts,
       input: {
         text: plan.text,
@@ -511,7 +489,7 @@ function lineRun(o: {
         // the endpoint as saved now and its key read now, for the provider alone
         target: ep ? speechTarget(db, ep) : null,
         signal: stop,
-        sent: settle,
+        ...(money ? { sent: money.sent } : {}),
         ...(who.endpoint
           ? { rateLimited: (ms: number) => gate.rateLimited(who.endpoint!, ms) }
           : {}),
@@ -526,18 +504,45 @@ function lineRun(o: {
   /**
    * Why a committed line cannot be sent at all, or null: a tag the endpoint cannot say is the
    * demo's "blocked before dispatch" — the line is not sent, rather than sent without the tag
-   * and marked stale on arrival — and an Opus line in parts could not be kept (`speakInParts`).
+   * and marked stale on arrival; a tag longer than an item of the endpoint's batches may be has
+   * nowhere to go, since a tag is never cut (`cutReading`); and an Opus line in parts could not be
+   * kept (`speakInParts`). Each is that line's failure, and the run goes on.
    */
-  const unsendable = (line: Line): Error | null =>
-    line.plan.issues.length
-      ? new Error(`Expression needs attention: ${line.plan.issues[0].reason}`)
-      : line.cuts && line.cuts.length > 1 && line.input.encoding.format === "opus"
-        ? opusInParts(line.cuts.length)
-        : null;
+  const unsendable = (line: Line): Error | null => {
+    const { plan, reader } = line.reading;
+    if (plan.issues.length)
+      return new Error(`Expression needs attention: ${plan.issues[0].reason}`);
+    if (reader.endpoint && !line.cuts) {
+      const tag = plan.tags.reduce((a, b) => (b.length > a.length ? b : a), "");
+      return new Error(
+        `The tag ${tag} is longer than one item of this endpoint's batches may be, and a tag is never cut; shorten the tag or switch this endpoint's batches off`,
+      );
+    }
+    return line.cuts && line.cuts.length > 1 && line.input.encoding.format === "opus"
+      ? opusInParts(line.cuts.length)
+      : null;
+  };
 
-  const outcomeOf = async (send: () => Promise<RenderedClip>): Promise<Outcome> => {
+  /**
+   * Let a line go out, cut to `maxChars` when that is shorter than its endpoint's limit: the
+   * budget asked, then the line committed. Null when it does not go — the run has halted, here or
+   * before (`halted` says so), the line was removed, or it cannot be sent at all, which has been
+   * landed as the failure it is.
+   */
+  const admit = async (t: Target, maxChars?: number | null): Promise<Line | null> => {
+    if (halted() || budgetStops(t)) return null;
+    const line = commit(t, maxChars);
+    if (!line) return null;
+    const blocked = unsendable(line);
+    if (!blocked) return line;
+    await land(line, { error: blocked });
+    return null;
+  };
+
+  /** One line on its own — whole, or its parts one after another — and how that ended. */
+  const speak = async (line: Line): Promise<Outcome> => {
     try {
-      const rendered = await send();
+      const rendered = await speakInParts(provider, line.input, line.cuts);
       if (stop.aborted) throw stop.reason;
       return { rendered };
     } catch (e) {
@@ -545,6 +550,20 @@ function lineRun(o: {
       return { error: e };
     }
   };
+
+  /** Items for one endpoint as one batch; each is `answered` as it comes back. */
+  const speakBatch = (
+    id: string,
+    items: SpeechInput[],
+    answered: (index: number, outcome: BatchOutcome) => void,
+  ): Promise<void> =>
+    provider.speakBatch!({
+      target: items[0].target!,
+      items,
+      signal: stop,
+      answered,
+      rateLimited: (ms) => gate.rateLimited(id, ms),
+    });
 
   /**
    * A thought line's audio with the thought effect on it, as a WAV, or null — said in the log — when
@@ -572,7 +591,7 @@ function lineRun(o: {
 
   /** Write what came back — a clip, or the failure — where the line's slot is, and say so. */
   const land = async (line: Line, outcome: Outcome): Promise<void> => {
-    const { t, who, plan, generating, startedAt, release } = line;
+    const { t, who, generating, startedAt, release } = line;
     const { s, slot } = t;
     let clip: SegmentAudio;
     try {
@@ -634,7 +653,10 @@ function lineRun(o: {
         // landed, so one that lands after it is checked here, in the same transaction as the
         // write — the words it was sent may no longer be the words the book would send. An
         // endpoint saved meanwhile is the same question about its tags and its rate.
-        if (clip.status === "done" && movedOn(tx, at.bookId, s, who.endpoint, plan, clip))
+        if (
+          clip.status === "done" &&
+          compareReading(clip, s, lineReading(tx, at.bookId, s, who)).length
+        )
           clip = { ...clip, status: "stale" };
         writeClip(tx, at.bookId, at.id, s.id, slot, clip);
         if (replacement && clip.status !== "failed") acceptCandidate(tx, at.bookId, at.id, s.id);
@@ -710,36 +732,25 @@ function lineRun(o: {
   const sendLine = async (t: Target): Promise<[Line, Outcome] | null> => {
     const leave = await acquire(deliveryOf(t.s.speaker).endpoint);
     try {
-      if (halted() || budgetStops(t)) return null;
-      const line = commit(t);
-      if (!line) return null;
-      const blocked = unsendable(line);
-      return [
-        line,
-        blocked
-          ? { error: blocked }
-          : await outcomeOf(() => speakInParts(provider, line.input, line.cuts)),
-      ];
+      const line = await admit(t);
+      return line && [line, await speak(line)];
     } finally {
       leave();
     }
   };
 
   return {
-    provider,
-    gate,
     stop,
     acquire,
     halted,
-    budgetStops,
-    commit,
-    unsendable,
-    outcomeOf,
+    admit,
+    speak,
+    speakBatch,
     land,
     renderLine,
     refused: () => refused,
     close: () => {
-      for (const give of out) give();
+      for (const release of out) release();
       out.clear();
     },
     tally,
@@ -1017,28 +1028,4 @@ export function enqueueNarration(
   });
   // the chapters as they now stand, with the queued ones marked
   return { jobs, skipped, runId, chapters: library.listChapters(db, bookId) };
-}
-
-/**
- * Whether a clip that has just landed was rendered from a request the book would no longer send:
- * other words after the dictionary, other tags, or — when the endpoint now names a rate — another
- * rate than the file came back at. The browser's drift rule asks the same of a clip already in the
- * book; this asks it of one in flight while the dictionary or the endpoint was saved. The format
- * is not asked about: a clip in WAV is as good a clip after the endpoint moves to MP3.
- */
-function movedOn(
-  tx: Tx,
-  bookId: string,
-  s: Segment,
-  endpointId: string | null,
-  sent: ExpressionPlan,
-  clip: SegmentAudio,
-): boolean {
-  const ep = endpointId ? readEndpoint(tx, endpointId) : undefined;
-  const now = expressionPlan(s, ep, readLexicon(tx, bookId));
-  return (
-    now.text !== sent.text ||
-    now.signature !== sent.signature ||
-    (!!ep?.sampleRate && clip.sampleRate !== ep.sampleRate)
-  );
 }

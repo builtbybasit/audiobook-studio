@@ -2,11 +2,12 @@
 //
 // The narration job hands this the lines going to an endpoint that said it takes batches, and the
 // few calls every line goes through whichever way it is sent (`LineRun`): a slot on the endpoint,
-// the budget, committing a line and landing what came back. What is decided here is only what a
-// batch adds — which lines go together, which part of which line an item is, and which lines go
-// again when a batch did not answer them.
+// letting a line go out, sending, and landing what came back. The order inside each — the budget
+// before the line is committed, a line that cannot be sent landed as failed, the hold given back
+// as it lands — is the run's. What is decided here is only what a batch adds — which lines go
+// together, which part of which line an item is, and which lines go again when a batch did not
+// answer them.
 import type { SplitPart } from "@/lib/split";
-import type { SpeechGate } from "~/providers/gate";
 import { ProviderError } from "~/providers/http";
 import {
   BatchCut,
@@ -14,9 +15,8 @@ import {
   type BatchOutcome,
   type RenderedClip,
   type SpeechInput,
-  type SpeechProvider,
 } from "~/providers/speech";
-import { joinParts, PartFailed, speakInParts, type Outcome } from "~/narration/parts";
+import { joinParts, PartFailed, type Outcome } from "~/narration/parts";
 
 /** A line committed to going out, as far as a batch needs to know it; `T` is the run's own line. */
 export interface BatchLine<T> {
@@ -31,23 +31,27 @@ export interface BatchLine<T> {
 
 /** What the run lends its batches: the calls a line goes through however it is sent. */
 export interface LineRun<T, L extends BatchLine<T>> {
-  provider: SpeechProvider;
-  gate: SpeechGate;
   /** the run's stop: a cancel, or the first thing to go wrong beyond one line */
   stop: AbortSignal;
   /** a slot on the endpoint, waited for; the function it gives back leaves it */
   acquire(endpoint: string | null): Promise<() => void>;
   /** whether nothing more should go out: the run was stopped, or the budget no longer covers it */
   halted(): boolean;
-  /** whether the budget no longer covers this line; says so, and halts the run, when it does not */
-  budgetStops(t: T): boolean;
-  /** commit a line to going out, cut to `maxChars` when that is shorter; null when it has gone */
-  commit(t: T, maxChars?: number | null): L | null;
-  /** why a committed line cannot be sent at all, or null */
-  unsendable(line: L): Error | null;
-  /** how a send ended; a stop is thrown instead */
-  outcomeOf(send: () => Promise<RenderedClip>): Promise<Outcome>;
-  /** write what came back where the line's slot is */
+  /**
+   * Let a line go out, cut to `maxChars` when that is shorter than its endpoint's: the budget
+   * asked, the line committed. Null when it does not go — the run has halted (`halted` says so),
+   * the line has gone, or it cannot be sent at all and has been landed as failed.
+   */
+  admit(t: T, maxChars?: number | null): Promise<L | null>;
+  /** send one line on its own, whole or in parts; a stop is thrown instead of an outcome */
+  speak(line: L): Promise<Outcome>;
+  /** send items to the endpoint as one batch, each `answered` as it comes back */
+  speakBatch(
+    endpoint: string,
+    items: SpeechInput[],
+    answered: (index: number, outcome: BatchOutcome) => void,
+  ): Promise<void>;
+  /** write what came back where the line's slot is, and give back what it held */
   land(line: L, outcome: Outcome): Promise<void>;
 }
 
@@ -76,38 +80,30 @@ export async function batchLines<T, L extends BatchLine<T>>(
   const maxItems = limits.maxItems ?? Infinity;
   const maxChars = limits.maxInputChars ?? Infinity;
 
-  /** Take the next batch's lines, committing each; lines that cannot go are landed now. */
+  /** Take the next batch's lines, letting each go out; lines that cannot go are landed now. */
   const fill = async (): Promise<L[]> => {
     const batch: L[] = [];
     let items = 0;
     let chars = 0;
     while (pending.length && !run.halted()) {
       const next = pending[0];
-      let line: L | null;
-      if (next.line) line = next.line;
-      else {
-        if (run.budgetStops(next.t)) break;
-        line = run.commit(next.t, limits.maxItemChars);
+      const line = next.line ?? (await run.admit(next.t, limits.maxItemChars));
+      if (!line) {
+        if (run.halted()) break;
+        pending.shift();
+        continue;
       }
       // a line only goes into a batch it fits beside the others; the first always goes
-      const parts = line?.cuts?.length ?? 1;
-      const size = line?.input.text.length ?? 0;
-      if (line && batch.length && (items + parts > maxItems || chars + size > maxChars)) {
+      const parts = line.cuts?.length ?? 1;
+      const size = line.input.text.length;
+      if (batch.length && (items + parts > maxItems || chars + size > maxChars)) {
         pending[0] = { t: next.t, line };
         break;
       }
       pending.shift();
-      if (!line) continue;
-      const blocked = run.unsendable(line);
-      if (blocked) await run.land(line, { error: blocked });
       // more parts than a batch may carry: sent the way a line always was, one part at a time
-      else if (parts > maxItems) {
-        const alone = line;
-        await run.land(
-          alone,
-          await run.outcomeOf(() => speakInParts(run.provider, alone.input, alone.cuts)),
-        );
-      } else {
+      if (parts > maxItems) await run.land(line, await run.speak(line));
+      else {
         batch.push(line);
         items += parts;
         chars += size;
@@ -169,13 +165,7 @@ export async function batchLines<T, L extends BatchLine<T>>(
       landing.push(run.land(line, joined));
     };
     try {
-      await run.provider.speakBatch!({
-        target: batch[0].input.target!,
-        items,
-        signal: run.stop,
-        answered,
-        rateLimited: (ms) => run.gate.rateLimited(id, ms),
-      });
+      await run.speakBatch(id, items, answered);
     } catch (e) {
       if (run.stop.aborted) throw e;
       for (const line of batch) if (!settled.has(line)) failLine(line, e, e instanceof BatchCut);

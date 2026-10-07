@@ -43,8 +43,8 @@ import { SAMPLE_HEAD_BYTES, SAMPLE_MIME, sniffSample, type SampleFormat } from "
 import { scriptTarget, speechTarget, transcriberTarget, type Providers } from "~/providers/target";
 import { endpointTranscriber } from "~/providers/transcription";
 import { endpointVoiceLister, type VoiceQuery } from "~/providers/voices";
-import { assertWithinBudget, holdToday } from "~/usage/budget";
-import { settleSpeech, settleTranscription } from "~/usage/ledger";
+import { assertWithinBudget } from "~/usage/budget";
+import { dispatch } from "~/usage/dispatch";
 import { parseBuffer } from "music-metadata";
 import type { VoiceFiles } from "~/voices/files";
 import { removeDropped } from "~/voices/ops";
@@ -365,7 +365,18 @@ export async function sampleVoice(
     requests: [{ endpoint: ep.id, cost }],
     request: "this voice sample",
   });
-  const out = holdToday(db, "tts", ep.id, cost);
+  // held to the endpoint's daily limit while it is out, and priced into the ledger as it settles
+  const money = dispatch(db, {
+    kind: "tts",
+    endpoint: ep,
+    work: {
+      bookId: null,
+      chapterUid: null,
+      label: `Voice sample · ${speaker}`,
+      voiceRef: `${ep.id}/${voiceId}`,
+    },
+    hold: cost,
+  });
   let clip;
   try {
     clip = await provider.speak({
@@ -379,24 +390,12 @@ export async function sampleVoice(
       encoding: encodingOf(ep),
       target: { ...speechTarget(db, ep), maxRetries: 0 },
       signal,
-      sent: (request) =>
-        settleSpeech(
-          db,
-          ep,
-          {
-            bookId: null,
-            chapterUid: null,
-            label: `Voice sample · ${speaker}`,
-            voiceRef: `${ep.id}/${voiceId}`,
-            held: cost,
-          },
-          request,
-        ),
+      sent: money.sent,
     });
   } catch (e) {
     throw e instanceof ProviderError ? providerFailure(e) : e;
   } finally {
-    out();
+    money.release();
   }
   // Paid for, so kept — before answering, so the next press finds it. A sample that could not be
   // kept still plays, and the log says so.
@@ -488,7 +487,12 @@ export async function transcribeSample(
     requests: [{ endpoint: t.id, cost }],
     request: "this transcript",
   });
-  const out = holdToday(db, "transcription", t.id, cost);
+  const money = dispatch(db, {
+    kind: "transcription",
+    endpoint: t,
+    work: { bookId: null, chapterUid: null, label: "Sample transcript" },
+    hold: cost,
+  });
   const provider = providers.transcription ?? endpointTranscriber();
   try {
     const heard = await provider.transcribe(
@@ -498,13 +502,7 @@ export async function transcribeSample(
         seconds,
         words: false,
         signal,
-        sent: (request) =>
-          settleTranscription(
-            db,
-            t,
-            { bookId: null, chapterUid: null, label: "Sample transcript", held: cost },
-            request,
-          ),
+        sent: money.sent,
       },
       { ...transcriberTarget(db, t), maxRetries: 0 },
     );
@@ -512,6 +510,6 @@ export async function transcribeSample(
   } catch (e) {
     throw e instanceof ProviderError ? providerFailure(e) : e;
   } finally {
-    out();
+    money.release();
   }
 }

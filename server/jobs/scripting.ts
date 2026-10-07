@@ -45,8 +45,9 @@ import { scriptTarget } from "~/providers/target";
 import { beforeOf, chunksOf } from "~/script/chunks";
 import { checkSiteText, siteTextTally } from "~/script/siteCheck";
 import { UNREAD_SHARE_WARNING } from "@/lib/siteText";
-import { assertWithinBudget, budgetProblem, holdToday } from "~/usage/budget";
-import { scriptReasoning, settleScript } from "~/usage/ledger";
+import { assertWithinBudget, budgetProblem } from "~/usage/budget";
+import { dispatch, type Dispatch } from "~/usage/dispatch";
+import { scriptReasoning } from "~/usage/ledger";
 
 /** The status a chapter reads as when no job is running on it: asked of its script, not remembered. */
 function settledScriptingStatus(
@@ -203,43 +204,31 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       };
       counted();
       /**
-       * Give back what chunk `i` held, once its request has ended, however it ended: by then what
-       * it cost is in the ledger, which the budget counts instead.
+       * Chunk `i`'s money (`~/usage/dispatch`): its worst case held while its request is out, what
+       * it reports priced into the ledger against the profile as it is stored then — or the run's
+       * own copy if the profile has since been removed — and what it held given back, from the
+       * run's reservation too, once the request has ended however it ended. A run with no profile
+       * is the fake's, which has no rates and no endpoint to put the row against, and holds nothing.
        */
-      const release = (i: number): void => {
-        if (!run || !holds[i]) return;
-        run.reserved = Math.max(0, run.reserved - holds[i]);
-        holds[i] = 0;
-      };
-      /**
-       * Price one request the provider reported into the ledger, against the profile as it is
-       * stored now — the rates in force when the request completed, not those the run was queued
-       * with — or the run's own copy if the profile has since been removed. A run with no profile
-       * is the fake's, which has no rates and no endpoint to put the row against.
-       */
-      const settle = (i: number, sent: SentScript): void => {
+      const dispatched = (i: number) =>
+        run &&
+        dispatch(db, {
+          kind: "scripting",
+          endpoint: run.profile,
+          work: {
+            bookId: job.bookId,
+            chapterUid: chapter.uid,
+            label: `Script chunk ${i + 1}`,
+            queuedAt: job.queuedAt,
+            reasoning: run.profile.reasoning ?? null,
+          },
+          hold: holds[i],
+          gaveBack: (back) => void (run.reserved = Math.max(0, run.reserved - back)),
+        });
+      /** One request the provider reported, settled and counted on the run. */
+      const settle = (money: Dispatch<"scripting">, sent: SentScript): void => {
         if (!run) return;
-        const profile = readProfiles(db).find((p) => p.id === run.profile.id) ?? run.profile;
-        const at = library.locateChapter(db, chapter.uid);
-        try {
-          const record = settleScript(
-            db,
-            profile,
-            {
-              bookId: job.bookId,
-              chapterUid: at ? chapter.uid : null,
-              label: `Script chunk ${i + 1}`,
-              queuedAt: job.queuedAt,
-              reasoning: run.profile.reasoning ?? null,
-              held: holds[i],
-            },
-            sent,
-          );
-          run.cost += record.cost ?? 0;
-        } catch (e) {
-          // the book went while the request was out; the job fails on its own when it next looks
-          ctx.log.error({ err: e }, "a scripting request could not be written to the ledger");
-        }
+        run.cost += money.sent(sent)?.cost ?? 0;
         if (sent.usage) {
           run.inputTokens += sent.usage.inputTokens;
           run.outputTokens += sent.usage.outputTokens;
@@ -282,8 +271,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           const i = next++;
           if (run) run.active++;
           counted();
-          // what it holds against the profile's daily limit while it is out
-          const out = run && holdToday(db, "scripting", run.profile.id, holds[i]);
+          const money = dispatched(i);
           try {
             answers[i] = await provider.script({
               title: chapter.title,
@@ -292,7 +280,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
               target,
               cast,
               prompt: renderPrompt(template, varsFor(i)),
-              sent: (request) => settle(i, request),
+              ...(money ? { sent: (request: SentScript) => settle(money, request) } : {}),
               progress: (done, total) => {
                 share[i] = total ? done / total : 1;
                 report();
@@ -306,8 +294,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             );
           } finally {
             if (run) run.active--;
-            release(i);
-            out?.();
+            money?.release();
           }
           share[i] = 1;
           if (run) run.completed++;

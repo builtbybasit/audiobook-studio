@@ -3,12 +3,14 @@
 // `src/queries/scriptActivity.ts`).
 import { describe, expect, test } from "bun:test";
 
-import { recentCacheRate, scriptTelemetry, scriptUsageTotals } from "@/lib/scriptActivity";
+import { recentCacheRate, scriptTelemetry } from "@/lib/scriptActivity";
 import { newProfile, scriptingHealth, unusedTelemetry } from "@/lib/scripting";
-import { useScriptActivity } from "@/queries/scriptActivity";
+import { useScriptActivity, useScriptTotals } from "@/queries/scriptActivity";
 import { keyInPlace } from "@/services/endpointSettings";
 import { useEndpointsStore } from "@/stores/endpoints";
 import type { PricedRequest, RequestRecord, TokenUsage } from "@/types";
+import { append } from "~/usage/ledger";
+import { backendServer, pointServicesAt } from "./support/backendServer";
 import { demoServer } from "./support/demoServer";
 import { flush, testPinia } from "./support/pinia";
 
@@ -148,15 +150,6 @@ describe("a profile's telemetry from its ledger rows", () => {
 });
 
 describe("a profile's usage from its ledger rows", () => {
-  test("totals the tokens and the cost of every row, a failure's included", () => {
-    const rows = [
-      row(1000, { usage: { inputTokens: 100, outputTokens: 40 }, cost: 0.25 }),
-      row(2000, { usage: { inputTokens: 50, outputTokens: 10 }, cost: 0.5, status: "failed" }),
-      rateLimited(3000),
-    ];
-    expect(scriptUsageTotals(rows)).toEqual({ input: 150, output: 50, cost: 0.75 });
-  });
-
   test("reads the cache rate off recent receipts that reported one, and none when none did", () => {
     expect(recentCacheRate([row(1000), row(2000, { priced: receipt(100, null) })])).toBeNull();
     const rows = newestFirst([
@@ -211,5 +204,43 @@ describe("over the demo library", () => {
     // and the profiles it left alone are still unused
     for (const id of ids.filter((id) => id !== p.id)) expect(health(id).label).toBe("Not used yet");
     pinia.stop();
+  });
+});
+
+describe("the last seven days", () => {
+  test("count every request the profile settled in them, not the latest rows read", async () => {
+    const api = backendServer();
+    const now = Date.now();
+    // more than the latest rows the Scripting page reads, as a run of a long book sends
+    api.db.transaction((tx) => {
+      for (let i = 0; i < 2001; i++) {
+        const {
+          id: _id,
+          chapterId: _chapter,
+          ...r
+        } = row(now - 60_000 - i * 1000, {
+          bookId: null,
+          cost: 1,
+          usage: { inputTokens: 10, outputTokens: 2 },
+        });
+        append(tx, r, null);
+      }
+    });
+    const pinia = testPinia();
+    useEndpointsStore().profiles = [profile];
+    const activity = pinia.run(() => useScriptActivity());
+    const week = pinia.run(() => useScriptTotals());
+    await flush();
+    await flush();
+    expect(activity.rowsOf(profile.id)).toHaveLength(2000);
+    expect(week.totalsOf(profile.id)).toMatchObject({
+      requests: 2001,
+      eventualOk: 2001,
+      inputTokens: 20_010,
+      outputTokens: 4002,
+      cost: 2001,
+    });
+    pinia.stop();
+    pointServicesAt(null);
   });
 });

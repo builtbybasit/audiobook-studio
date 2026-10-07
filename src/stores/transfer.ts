@@ -4,7 +4,8 @@
 // words, the ones it refused, and how the file's cast, dictionary and voices differ from the
 // book's — and writes nothing. Everything written is written here, through the paths a restore
 // already takes: `planRestore` carries every rendered clip across line by line, the chapter's
-// history keeps the script the import replaced, and one Undo takes the whole import back.
+// history keeps the script the import replaced, and one Undo takes back what the import wrote —
+// what the server took of it, since a refused write has already been read back over.
 //
 // **Nothing the book already has is overwritten by default.** Speakers and dictionary terms the
 // book lacks are added; the ones it has keep its own details, and each difference is offered as
@@ -15,7 +16,7 @@ import { chapterNarration } from "@/lib/runPlan";
 import { newSpeaker } from "@/lib/cast";
 import { clone } from "@/lib/utils";
 import { fetchScript } from "@/queries/chapterScript";
-import { libraryService, type ChapterLines } from "@/services/library";
+import { libraryService } from "@/services/library";
 import type {
   Character,
   ImportChapter,
@@ -49,11 +50,18 @@ export interface VoicePick {
 
 export type SkipReason = "identical" | "busy" | "missing";
 
+/** How an applied import went: all it wrote landed, the server refused some of it, or all of it. */
+export type ImportOutcome = "committed" | "partial" | "refused";
+
 /** What an applied import did, for the page to read back once it has happened. */
 export interface ImportReport {
+  outcome: ImportOutcome;
+  /** chapters whose imported script the server took */
   applied: { chapterId: number; title: string }[];
+  /** chapters whose write the server refused, so they read as they did before the import */
+  refused: { chapterId: number; title: string }[];
   skipped: { chapterId: number; title: string; why: SkipReason }[];
-  /** speakers added to the cast, from the file or found in the lines */
+  /** speakers added to the cast, from the file or found in the lines, that the server took */
   speakers: string[];
   /** speakers the file named that no applied line uses, so they were not added */
   unused: string[];
@@ -208,22 +216,31 @@ export const useTransferStore = defineStore("transfer", {
      * Write the chosen chapters, add what the book lacks, and give the chosen speakers their
      * voices — all behind one Undo. Chapters are written the way a restore writes one: the clips
      * that still belong to a line are carried across and re-judged, and the chapter's history
-     * keeps the script it replaced under an `imported` origin.
+     * keeps the script it replaced under an `imported` origin (`history._rewrite`).
+     *
+     * Resolves once every write has been answered, with the report of what the server took: a
+     * chapter whose write was refused is listed as refused rather than imported, the outcome says
+     * whether that was some of the import or all of it, and the Undo leaves it alone.
      */
-    apply(bookId: string, chapterIds: number[], voices: VoicePick[] = []): ImportReport | null {
+    async apply(
+      bookId: string,
+      chapterIds: number[],
+      voices: VoicePick[] = [],
+    ): Promise<ImportReport | null> {
       const castStore = useCastStore();
       const endpointsStore = useEndpointsStore();
       const historyStore = useHistoryStore();
       const libraryStore = useLibraryStore();
       const samplesStore = useSpeakerSamplesStore();
-      const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
       const plan = this.plans[bookId];
       if (!plan) return null;
       const chosen = new Set(chapterIds);
       const report: ImportReport = {
+        outcome: "committed",
         applied: [],
+        refused: [],
         skipped: [],
         speakers: [],
         unused: [],
@@ -254,12 +271,15 @@ export const useTransferStore = defineStore("transfer", {
       // counted from what is written, so a chapter skipped as identical or busy is not claimed
       const origin: VersionOrigin = { kind: "imported", file: plan.name, chapters: writes.length };
 
-      // ---- the cast: the file's speakers the applied lines use, with the file's details
+      // ---- the cast: the file's speakers the applied lines use, with the file's details. Every
+      // change below is written in the step that makes it (`_addSpeaker`, `_patchSpeaker`), and
+      // `pushed` keeps each speaker's last write, which sends them as they then stand. The cast is
       // read afresh where it is used: a book whose cast was never read gets its list as the
       // first speaker is added
       const cast = () => castStore.charactersOf(bookId);
       const castBefore = clone(cast());
       const used = new Set(writes.flatMap((w) => w.restore.segments.map((s) => s.speaker)));
+      const pushed = new Map<string, Promise<boolean>>();
       const added: string[] = [];
       for (const speaker of plan.cast.add) {
         if (cast().some((c) => c.name === speaker.name)) continue;
@@ -276,7 +296,7 @@ export const useTransferStore = defineStore("transfer", {
           ...(speaker.color ? { color: speaker.color } : {}),
           ...(speaker.major != null ? { major: speaker.major } : {}),
         };
-        castStore._addSpeaker(bookId, c);
+        pushed.set(c.name, castStore._addSpeaker(bookId, c));
         added.push(c.name);
       }
       // aliases are only more ways to recognise someone, so a union loses nothing
@@ -287,72 +307,44 @@ export const useTransferStore = defineStore("transfer", {
           (a) => a !== name && !c?.aliases.includes(a) && !cast().some((x) => x.name === a),
         );
         if (!c || !fresh.length) continue;
-        castStore._patchSpeaker(bookId, name, { aliases: [...c.aliases, ...fresh] });
+        pushed.set(
+          name,
+          castStore._patchSpeaker(bookId, name, { aliases: [...c.aliases, ...fresh] }),
+        );
         aliased.push(name);
       }
 
-      // ---- the chapters
+      // ---- the chapters, each written the way a restore writes one
       // taken before any script changes: an Undo of the dictionary puts back every clip's status
       // by line, and those are the lines the book had before the import
       const revertLex = castStore._lexSnapshot(bookId);
-      const undoChapters: (() => void)[] = [];
-      const absorbed: string[] = [];
-      for (const { chapter, restore } of writes) {
-        const chId = chapter.chapterId;
-        const c = libraryStore.chapter(bookId, chId)!;
-        const was = {
-          narration: c.narration,
-          narrationProgress: c.narrationProgress,
-          duration: c.duration,
-          scripting: c.scripting,
-        };
-        const beforeScript = clone(scriptsStore.segmentsOf(bookId, chId));
-        scriptsStore._replace(bookId, chId, restore.segments);
-        libraryStore._patchChapter(bookId, chId, {
-          ...(restore.scripting ? { scripting: restore.scripting } : {}),
-          narration: restore.narration,
-          ...(restore.narration === "none" ? { narrationProgress: 0 } : {}),
-        });
-        // a speaker a line names that neither the book nor the file's cast has — a lone chapter
-        // file carries no cast — comes in unreviewed, where the Cast page can merge it
-        absorbed.push(...castStore._absorbCast(bookId, chId));
-        castStore._retime(bookId, chId);
-        scriptsStore._commit(bookId, chId, origin);
-        report.applied.push({ chapterId: chId, title: chapter.title });
-        undoChapters.push(() => {
-          scriptsStore._replace(bookId, chId, beforeScript);
-          libraryStore._patchChapter(bookId, chId, was);
-          castStore._retime(bookId, chId);
-          scriptsStore._commit(bookId, chId);
-        });
-      }
-      report.speakers = [...added, ...absorbed];
-      const pushed = [...new Set([...added, ...absorbed, ...aliased])].map((name) =>
-        castStore._push(bookId, name),
-      );
+      const rewrites = writes.map(({ chapter, restore }) => ({
+        chapter,
+        write: historyStore._rewrite(bookId, chapter.chapterId, restore, origin),
+      }));
+      // a speaker a line names that neither the book nor the file's cast has — a lone chapter
+      // file carries no cast — comes in unreviewed, where the Cast page can merge it; it is
+      // written once its chapter's write lands, and not at all when only a refused one named it
+      for (const { write } of rewrites)
+        write.absorbed.forEach((name, i) => pushed.set(name, write.pushed[i]));
+      const speakers = [...added, ...rewrites.flatMap((r) => r.write.absorbed)];
 
       // ---- the dictionary: terms the book lacks
-      for (const t of plan.lexicon.add) {
-        if (castStore.lexiconOf(bookId).some((e) => e.term === t.term)) continue;
-        castStore._addTerm(bookId, {
+      const { added: terms, pushed: lexPushed } = castStore._addTerms(
+        bookId,
+        plan.lexicon.add.map((t) => ({
           term: t.term,
           say: t.say,
           enabled: t.enabled,
           ...(t.ipa ? { ipa: t.ipa } : {}),
           ...(t.note ? { note: t.note } : {}),
           ...(t.matchCase ? { matchCase: true } : {}),
-        });
-        report.terms++;
-      }
-      let lexPushed: Promise<ChapterLines[] | null> = Promise.resolve(null);
-      if (report.terms) {
-        castStore._lexRestale(bookId);
-        lexPushed = castStore._pushLexicon(bookId);
-      }
+        })),
+      );
 
       // ---- the voices the person ticked
       const addedVoices: { endpointId: string; voiceId: string }[] = [];
-      const voicesBefore: { name: string; voice: VoiceRef | null }[] = [];
+      const voiced: { name: string; voice: VoiceRef | null; pushed: Promise<boolean> }[] = [];
       for (const pick of voices) {
         const c = cast().find((x) => x.name === pick.speaker);
         if (!c) continue;
@@ -363,10 +355,11 @@ export const useTransferStore = defineStore("transfer", {
             addedVoices.push({ endpointId: ep.id, voiceId: pick.add.voice.id });
         }
         if (c.voice === pick.ref) continue;
-        voicesBefore.push({ name: c.name, voice: c.voice });
-        castStore._patchSpeaker(bookId, c.name, { voice: pick.ref });
-        report.voices++;
-        void castStore._push(bookId, c.name);
+        voiced.push({
+          name: c.name,
+          voice: c.voice,
+          pushed: castStore._patchSpeaker(bookId, c.name, { voice: pick.ref }),
+        });
       }
 
       // ---- the voice samples the file carries for a private voice this install cannot reach: they
@@ -385,71 +378,107 @@ export const useTransferStore = defineStore("transfer", {
       // after the speakers are on the server: a sample waits with a speaker the server must know
       const storing =
         file && report.samples.length
-          ? Promise.all(pushed).then(() => samplesStore._store(bookId, file, report.samples))
+          ? Promise.all(pushed.values()).then(() =>
+              samplesStore._store(bookId, file, report.samples),
+            )
           : Promise.resolve({ stored: [], replaced: [] });
+
+      // ---- what landed. Only that is reported, and only that is what the Undo takes back: a
+      // write the server refused has already been read back over and said, so the book reads
+      // there as it did and there is nothing of it to undo.
+      const [chaptersLanded, castLanded, staled, voicesLanded] = await Promise.all([
+        Promise.all(rewrites.map((r) => r.write.landed)),
+        Promise.all(pushed.values()),
+        lexPushed,
+        Promise.all(voiced.map((v) => v.pushed)),
+      ]);
+      const landed = rewrites.filter((_, i) => chaptersLanded[i]);
+      report.applied = landed.map(({ chapter }) => ({
+        chapterId: chapter.chapterId,
+        title: chapter.title,
+      }));
+      report.refused = rewrites
+        .filter((_, i) => !chaptersLanded[i])
+        .map(({ chapter }) => ({ chapterId: chapter.chapterId, title: chapter.title }));
+      const onServer = new Set([...pushed.keys()].filter((_, i) => castLanded[i]));
+      report.speakers = speakers.filter((name) => onServer.has(name));
+      const aliasedNow = aliased.filter((name) => onServer.has(name));
+      report.terms = staled ? terms : 0;
+      const voicedNow = voiced.filter((_, i) => voicesLanded[i]);
+      report.voices = voicedNow.length;
+      const outcomes = [
+        ...chaptersLanded,
+        ...castLanded,
+        ...voicesLanded,
+        ...(terms ? [staled != null] : []),
+      ];
+      report.outcome = outcomes.every(Boolean)
+        ? "committed"
+        : outcomes.some(Boolean)
+          ? "partial"
+          : "refused";
 
       this.reports[bookId] = report;
       if (
         !report.applied.length &&
+        !report.speakers.length &&
         !report.terms &&
         !report.voices &&
-        !aliased.length &&
+        !aliasedNow.length &&
         !report.samples.length
       ) {
-        uiStore.toast("Nothing to import", {
-          kind: "info",
-          description: report.skipped.length
-            ? `${n(report.skipped.length, "chapter")} already read as the file does, or could not be written now.`
-            : "No chapter was ticked.",
-        });
+        if (report.outcome === "refused")
+          uiStore.toast(`Nothing from ${plan.name} was saved`, {
+            kind: "error",
+            description: "The server refused every change, so the book reads as it did.",
+          });
+        else
+          uiStore.toast("Nothing to import", {
+            kind: "info",
+            description: report.skipped.length
+              ? `${n(report.skipped.length, "chapter")} already read as the file does, or could not be written now.`
+              : "No chapter was ticked.",
+          });
         return report;
       }
 
       const facts = [
         n(report.applied.length, "chapter"),
+        report.refused.length && n(report.refused.length, "chapter") + " refused",
         report.speakers.length && n(report.speakers.length, "speaker") + " added",
         report.terms && n(report.terms, "dictionary term") + " added",
         report.voices && n(report.voices, "voice") + " set",
         report.samples.length && "voice samples kept for " + n(report.samples.length, "speaker"),
       ].filter(Boolean);
       uiStore.toast(`Imported ${plan.name}`, {
-        kind: "success",
+        kind: report.outcome === "committed" ? "success" : "warn",
         description: `${facts.join(" · ")}. Each chapter's history keeps the script it replaced.`,
         timeout: 12000,
         undo: () => {
-          for (const undo of undoChapters) undo();
           // the voices and the aliases go back as they were; so do the endpoints' voice lists
-          for (const { name, voice } of voicesBefore)
-            castStore._patchSpeaker(bookId, name, { voice });
+          for (const { name, voice } of voicedNow)
+            void castStore._patchSpeaker(bookId, name, { voice });
           for (const { endpointId, voiceId } of addedVoices)
             endpointsStore._dropVoice(endpointId, voiceId);
-          for (const name of aliased) {
+          for (const name of aliasedNow) {
             const b = castBefore.find((x) => x.name === name);
-            if (b) castStore._patchSpeaker(bookId, name, { aliases: [...b.aliases] });
+            if (b) void castStore._patchSpeaker(bookId, name, { aliases: [...b.aliases] });
           }
-          const pushBack = () => {
-            for (const { name } of voicesBefore) void castStore._push(bookId, name);
-            for (const name of aliased) void castStore._push(bookId, name);
-          };
-          const lexBack = (): Promise<void> | void => {
-            if (!report.terms) return;
-            return lexPushed.then(async (staled) => {
-              revertLex();
-              await castStore._pushLexicon(bookId, staled ?? undefined);
-            });
-          };
           delete this.reports[bookId];
           // before any speaker goes: a row whose speaker is removed first cascades away under it
           const samplesBack = storing.then((done) => samplesStore._unstore(bookId, done));
-          const speakers = report.speakers;
-          // The scripts go first: a speaker taken off while the server's script still names them
-          // would hand their lines to the Narrator. Once the writes land, the removal moves nothing.
-          pushBack();
-          return Promise.all([
-            ...report.applied.map((a) => scriptsStore._settled(bookId, a.chapterId)),
-            lexBack(),
-            samplesBack,
-          ]).then(() => castStore._dropSpeakers(bookId, speakers));
+          // The scripts go first, and the dictionary after them: its answer moves the revision of
+          // each chapter whose clips it puts back, which a chapter's write still out would then
+          // name wrongly. A speaker taken off while the server's script still names them would hand
+          // their lines to the Narrator; once the writes land, the removal moves nothing.
+          const scriptsBack = Promise.all(landed.map((r) => r.write.undo())).then(async () => {
+            if (!report.terms) return;
+            revertLex();
+            await castStore._pushLexicon(bookId, staled ?? undefined);
+          });
+          return Promise.all([scriptsBack, samplesBack])
+            .then(() => castStore._castSettled(bookId))
+            .then(() => castStore._dropSpeakers(bookId, report.speakers));
         },
       });
       return report;
@@ -472,9 +501,8 @@ export const useTransferStore = defineStore("transfer", {
           was.style === d.file.style
         )
           continue;
-        castStore._patchSpeaker(bookId, c.name, d.file);
+        void castStore._patchSpeaker(bookId, c.name, d.file);
         changed.push({ name: c.name, was });
-        void castStore._push(bookId, c.name);
       }
       if (!changed.length) return 0;
       uiStore.toast(
@@ -484,8 +512,7 @@ export const useTransferStore = defineStore("transfer", {
         {
           description: "Gender, description and style. Voices and aliases are unchanged.",
           undo: () => {
-            for (const { name, was } of changed)
-              if (castStore._patchSpeaker(bookId, name, was)) void castStore._push(bookId, name);
+            for (const { name, was } of changed) void castStore._patchSpeaker(bookId, name, was);
           },
         },
       );

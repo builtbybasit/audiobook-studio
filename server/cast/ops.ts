@@ -17,6 +17,7 @@ import type {
   SegmentAudio,
 } from "@/types";
 import { NARRATOR } from "@/lib/cast";
+import { pronunciationMoved } from "@/lib/reading";
 import { speak } from "@/lib/speech";
 import type { Db } from "~/db/client";
 import * as cast from "~/db/cast";
@@ -168,12 +169,11 @@ export function putLexicon(
       const undo = named.get(chapterId);
       for (const s of readScript(tx, bookId, chapterId)) {
         const a = s.audio;
-        const sent = a.pronounced ?? a.said ?? a.text;
-        if (sent == null) continue;
-        const now = speak(s.text, lexicon).text;
+        const moved = pronunciationMoved(a, speak(s.text, lexicon).text);
+        if (moved == null) continue;
         let status: SegmentAudio["status"] | null = null;
-        if (a.status === "done" && now !== sent) status = "stale";
-        else if (a.status === "stale" && undo?.has(s.id) && a.text === s.text && now === sent)
+        if (a.status === "done" && moved) status = "stale";
+        else if (a.status === "stale" && undo?.has(s.id) && a.text === s.text && !moved)
           status = "done";
         if (!status) continue;
         writeClip(tx, bookId, chapterId, s.id, "current", { ...a, status });

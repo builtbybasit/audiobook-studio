@@ -11,6 +11,11 @@
 // nothing — so the voice can travel with a book's script.
 // The voice already exists on the account by then, so a failure to keep them is not a failure to
 // clone: the answer says `samplesKept: false`, and the page says so.
+//
+// What a voice costs is settled once the provider has answered (`settleClone`). A clone cancelled
+// once its upload was out may have made the voice all the same, and been charged for it, so where
+// the provider charges as a voice is made it is a ledger row at a cost nobody knows
+// (`settleCancelledClone`); one cancelled before anything went out cost nothing.
 import type { ClonedVoice, KeptVoiceSamples } from "@/types";
 import { cloneModelsFor, cloningOf, speechProviderOf, type CloneSupport } from "@/lib/providers";
 import {
@@ -38,7 +43,7 @@ import {
 import { ProviderError } from "~/providers/http";
 import { speechTarget, type Providers } from "~/providers/target";
 import { assertWithinBudget } from "~/usage/budget";
-import { settleClone } from "~/usage/ledger";
+import { settleCancelledClone, settleClone } from "~/usage/ledger";
 import type { VoiceFiles } from "~/voices/files";
 import { keepSampleFiles, keptOf } from "~/voices/ops";
 
@@ -134,9 +139,17 @@ export async function cloneVoice(
   const samples = await readSamples(form.files, form.transcripts, ep.cloning);
   const cloner = providers.cloner ?? endpointVoiceCloner();
   let voice;
+  let wentOut = false;
   try {
-    voice = await cloner.clone(speechTarget(db, ep), { title: form.title, samples }, signal);
+    voice = await cloner.clone(
+      speechTarget(db, ep),
+      { title: form.title, samples },
+      signal,
+      () => void (wentOut = true),
+    );
   } catch (e) {
+    // cancelled once the upload was out: the voice may have been made, and charged for
+    if (signal.aborted && wentOut) settleCancelledClone(db, ep, form.title, ep.cloning.fee);
     throw e instanceof ProviderError ? providerFailure(e) : e;
   }
   const { warning, ...made } = voice;

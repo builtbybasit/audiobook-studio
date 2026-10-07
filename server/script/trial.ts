@@ -42,7 +42,7 @@ import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
 import { beforeOf, chunksOf } from "~/script/chunks";
 import { assertWithinBudget } from "~/usage/budget";
-import { settleScript } from "~/usage/ledger";
+import { dispatch } from "~/usage/dispatch";
 
 /** A draft when the page sent one — `null` included, which is a choice — else what is saved. */
 const draftOr = <T>(draft: T | null | undefined, saved: T | null | undefined): T | null =>
@@ -123,27 +123,25 @@ export async function tryPrompt(
     requests: [{ endpoint: profile.id, cost: reserve }],
   });
 
+  // Held to the profile's daily limit while it is out, as a run's request is, and priced into the
+  // ledger as it settles; a book removed meanwhile has no row, and the answer still goes back to
+  // the page that asked.
+  const money = dispatch(db, {
+    kind: "scripting",
+    endpoint: profile,
+    work: {
+      bookId,
+      chapterUid: uid,
+      label: `Prompt trial · part ${part}/${chunks.length}`,
+    },
+    hold: reserve,
+  });
   let sent: SentScript | null = null;
   let cost: number | null = null;
   const settle = (report: SentScript): void => {
     sent = report;
-    // the book is gone if this throws; the answer still goes back to the page that asked
-    try {
-      const record = settleScript(
-        db,
-        profile,
-        {
-          bookId,
-          chapterUid: uid,
-          label: `Prompt trial · part ${part}/${chunks.length}`,
-          held: reserve,
-        },
-        report,
-      );
-      cost = report.usage ? record.cost : null;
-    } catch {
-      cost = null;
-    }
+    const record = money.sent(report);
+    cost = report.usage && record ? record.cost : null;
   };
 
   const started = performance.now();
@@ -164,6 +162,8 @@ export async function tryPrompt(
     if (signal.aborted) throw signal.reason;
     if (!(e instanceof ProviderError)) throw e;
     error = e.message;
+  } finally {
+    money.release();
   }
   const ms = Math.round(performance.now() - started);
   const usage = (sent as SentScript | null)?.usage ?? null;

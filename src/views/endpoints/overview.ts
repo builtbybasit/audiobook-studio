@@ -4,15 +4,19 @@
 //
 // Where the numbers come from:
 //   · what is running now  — the queue in the store (`live.ts`)
-//   · everything historical — `useEndpointHistory`: the rows of the server's ledger, each a
-//     request a job really sent (a simulated endpoint's marked simulated)
+//   · everything historical — the server's ledger, each row a request a job really sent (a
+//     simulated endpoint's marked simulated): the charts, totals and "spent today" summed there
+//     over every row (`useEndpointSummaries`), and a scripting profile's latest rows for the figures
+//     read off its latest requests (`useScriptActivity`). The Activity list pages through the rest
+//     itself (`useEndpointRequests`).
 //   · a book's spending — the jobs store, which holds the server's figures
 import { computed, watch } from "vue";
 import { useNow } from "@vueuse/core";
 import { keyInPlace } from "@/services/endpointSettings";
-import { probeCost, seriesFrom, RANGES } from "@/services/endpoints";
+import { probeCost, RANGES } from "@/services/endpoints";
 import type { EndpointDescriptor } from "@/services/endpoints";
-import { useEndpointHistory, useEndpointLive, useLibrarySpend } from "@/queries";
+import { useEndpointLive, useEndpointSummaries, useLibrarySpend } from "@/queries";
+import { useScriptActivity } from "@/queries/scriptActivity";
 import { billingOf, endpointErrors, healthOf, rateCardOf, unifiedOf } from "@/lib/endpoints";
 import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
 import { scriptTelemetry } from "@/lib/scriptActivity";
@@ -42,7 +46,6 @@ export function useEndpointOverview() {
   });
 
   // ---------- history ----------
-  // One pull of the widest range per endpoint; every shorter range is bucketed from it locally.
   const describe = (u: UnifiedEndpoint): EndpointDescriptor => {
     const { base, config } = rateCardOf(u);
     return {
@@ -55,23 +58,33 @@ export function useEndpointOverview() {
     };
   };
 
-  const history = useEndpointHistory(() => all.value.map(describe));
-  const histories = history.histories;
+  const startOfToday = computed(() => {
+    const d = new Date(now.value);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  });
+  const history = useEndpointSummaries(
+    () => all.value.map(describe),
+    () => ui.range,
+    startOfToday,
+  );
+  const summaries = history.summaries;
   const loading = computed(() => history.status.value === "pending");
+  const scriptActivity = useScriptActivity();
   // the budget table and the wait reasons set each book's spending against its cap
   useLibrarySpend();
 
   const rangeLabel = computed(() => RANGES.find((r) => r.value === ui.range)!.label);
 
   /**
-   * Every settled request against this endpoint: the rows of the server's append-only ledger, which
-   * keeps a request once it has settled whatever later happens to what it produced.
+   * A scripting profile's latest settled requests, newest first: what its observed cache rate and
+   * its reasoning share are read off. Nothing for the other kinds, which read no such figure.
    */
-  const settledFor = (u: UnifiedEndpoint): RequestRecord[] => histories.value[u.key] ?? [];
+  const settledFor = (u: UnifiedEndpoint): RequestRecord[] =>
+    u.profile ? scriptActivity.rowsOf(u.profile.id) : [];
 
-  /** Buckets for one endpoint over one range, folded from its records. */
-  const seriesFor = (u: UnifiedEndpoint, range = ui.range) =>
-    seriesFrom(settledFor(u), u.kind, range, now.value);
+  /** One endpoint's buckets and totals over the selected range, as the server summed them. */
+  const seriesFor = (u: UnifiedEndpoint) => summaries.value[u.key]?.series ?? null;
 
   const liveFor = (u: UnifiedEndpoint) => liveActivity(u);
 
@@ -80,13 +93,12 @@ export function useEndpointOverview() {
     u.profile ? scriptTelemetry(settledFor(u), u.profile).reasoning : undefined;
 
   function healthFor(u: UnifiedEndpoint): Health {
-    const rows = histories.value[u.key] ?? [];
     return healthOf(u, {
       hasKey: keyInPlace(u.entry),
       errors: endpointErrors(u),
       now: now.value,
-      totals: loading.value ? null : seriesFor(u).totals,
-      lastSeen: rows.length ? (rows[0].finishedAt ?? rows[0].queuedAt) : null,
+      totals: seriesFor(u)?.totals ?? null,
+      lastSeen: summaries.value[u.key]?.lastSeen ?? null,
       tested: !!ui.tests[u.key]?.ok,
     });
   }
@@ -122,42 +134,24 @@ export function useEndpointOverview() {
   );
   const busyJobs = computed(() => (selected.value ? jobsUsing(selected.value) : []));
 
-  /** In flight now, then what has settled — newest first. */
-  const activityRows = computed(() => {
-    const u = selected.value;
-    if (!u) return [];
-    const from = now.value - RANGES.find((r) => r.value === ui.range)!.ms;
-    const settled = settledFor(u).filter((r) => (r.finishedAt ?? r.queuedAt) >= from);
-    return [...liveRequests(u, now.value), ...settled];
-  });
+  /** What is in flight now; the Activity list reads what has settled a page at a time. */
+  const activityRows = computed(() =>
+    selected.value ? liveRequests(selected.value, now.value) : [],
+  );
 
   // ---------- the strip ----------
-  const startOfToday = computed(() => {
-    const d = new Date(now.value);
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
-  });
-  /** What one endpoint has been charged since midnight. */
-  const spendSince = (rows: RequestRecord[]) => {
-    let cost = 0;
-    let unknown = 0;
-    for (const r of rows) {
-      if ((r.finishedAt ?? r.queuedAt) < startOfToday.value) continue;
-      if (r.cost == null) unknown++;
-      else cost += r.cost;
-    }
-    return { cost, unknown };
-  };
+  /** What one endpoint has been charged since midnight, and how many requests at a cost unknown. */
+  const spendTodayFor = (u: UnifiedEndpoint) =>
+    summaries.value[u.key]?.today ?? { cost: 0, unknown: 0 };
   const spendToday = computed(() =>
     all.value.reduce(
       (acc, u) => {
-        const one = spendSince(settledFor(u));
+        const one = spendTodayFor(u);
         return { cost: acc.cost + one.cost, unknown: acc.unknown + one.unknown };
       },
       { cost: 0, unknown: 0 },
     ),
   );
-  const spendTodayFor = (u: UnifiedEndpoint) => spendSince(settledFor(u));
   const totals = computed(() => {
     let active = 0;
     let queued = 0;

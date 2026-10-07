@@ -23,14 +23,13 @@ import {
 import { OPS_DEFAULTS } from "@/lib/endpointShapes";
 import { tabsFor } from "@/views/endpoints/state";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
-import { probeCost, probeUnits, seriesFrom } from "@/services/endpoints";
+import { probeCost, probeUnits } from "@/services/endpoints";
 import { maybeMoney, money, perMillionChars, speechRates } from "@/lib/pricing";
 import type {
   Endpoint,
   MetricTotals,
   PricingConfig,
   RateSet,
-  RequestRecord,
   Transcriber,
   TtsBilling,
 } from "@/types";
@@ -201,125 +200,6 @@ test("first-attempt and eventual success are judged separately", () => {
   ).toBe("failing");
 });
 
-// ---------- metrics ----------
-
-function record(over: Partial<RequestRecord> = {}): RequestRecord {
-  return {
-    id: Math.random().toString(36),
-    endpointId: "p",
-    kind: "scripting",
-    bookId: "cliche",
-    chapterId: 1,
-    label: "chunk",
-    status: "done",
-    attempts: 1,
-    queuedAt: NOW - 60_000,
-    startedAt: NOW - 55_000,
-    finishedAt: NOW - 50_000,
-    queueMs: 5000,
-    responseMs: 5000,
-    usage: { inputTokens: 1000, outputTokens: 500 },
-    cost: 0.001,
-    costBasis: "calculated",
-    simulated: true,
-    ...over,
-  };
-}
-
-test("queue wait and provider response stay separate in the buckets", () => {
-  const s = seriesFrom(
-    [record({ queueMs: 2000, responseMs: 8000 }), record({ queueMs: 4000, responseMs: 6000 })],
-    "scripting",
-    "1h",
-    NOW,
-  );
-  expect(s.totals.requests).toBe(2);
-  expect(s.totals.queueMs).toBe(3000);
-  expect(s.totals.responseMs).toBe(7000);
-});
-
-test("unknown costs are counted, not silently added as zero", () => {
-  const s = seriesFrom(
-    [record({ cost: 0.25 }), record({ cost: null, costBasis: "unknown" })],
-    "scripting",
-    "1h",
-    NOW,
-  );
-  expect(s.totals.cost).toBe(0.25);
-  expect(s.totals.unknownCost).toBe(1);
-});
-
-test("throughput is tokens a minute for scripting and audio minutes a minute for speech", () => {
-  const tokens = seriesFrom(
-    [record({ usage: { inputTokens: 600, outputTokens: 0 } })],
-    "scripting",
-    "1h",
-    NOW,
-  );
-  expect(tokens.totals.throughput).toBeCloseTo(10, 6); // 600 tokens over 60 minutes
-
-  const audio = seriesFrom(
-    [record({ kind: "tts", usage: { chars: 100, audioSeconds: 600 } })],
-    "tts",
-    "1h",
-    NOW,
-  );
-  expect(audio.totals.throughput).toBeCloseTo(10 / 60, 6); // 10 audio minutes over 60
-});
-
-test("throughput is unknown, not zero, when no finished request reported usage", () => {
-  const noUsage = { usage: {}, cost: null, costBasis: "unknown" as const };
-  const s = seriesFrom([record(noUsage), record(noUsage)], "scripting", "1h", NOW);
-  expect(s.totals.throughput).toBeNull();
-  expect(s.totals.unreported).toBe(2);
-  expect(s.totals.unknownCost).toBe(2);
-  const hit = s.buckets.filter((b) => b.requests);
-  expect(hit.map((b) => b.throughput)).toEqual([null]);
-  // the rest of the range ran nothing, which is a measured zero
-  expect(s.buckets.filter((b) => !b.requests).every((b) => b.throughput === 0)).toBe(true);
-
-  // a speech endpoint that never learned how much audio came back is the same
-  const tts = seriesFrom([record({ kind: "tts", usage: { chars: 40 } })], "tts", "1h", NOW);
-  expect(tts.totals.throughput).toBeNull();
-});
-
-test("a mix measures throughput over the requests that reported and counts the rest", () => {
-  const s = seriesFrom(
-    [
-      record({ usage: { inputTokens: 600, outputTokens: 0 } }),
-      record({ usage: {} }),
-      // failed without usage: it produced nothing, which is known
-      record({ usage: {}, status: "failed" }),
-    ],
-    "scripting",
-    "1h",
-    NOW,
-  );
-  expect(s.totals.throughput).toBeCloseTo(10, 6);
-  expect(s.totals.unreported).toBe(1);
-});
-
-test("an empty range has zero throughput and nothing unreported", () => {
-  const s = seriesFrom([], "scripting", "1h", NOW);
-  expect(s.totals.requests).toBe(0);
-  expect(s.totals.throughput).toBe(0);
-  expect(s.totals.unreported).toBe(0);
-});
-
-test("records outside the range do not reach the buckets", () => {
-  const old = record({ finishedAt: NOW - 5 * 3600e3, queuedAt: NOW - 5 * 3600e3 });
-  expect(seriesFrom([old], "scripting", "1h", NOW).totals.requests).toBe(0);
-  expect(seriesFrom([old], "scripting", "6h", NOW).totals.requests).toBe(1);
-});
-
-test("a clicked bucket selects exactly the records that made it", () => {
-  const rows = [record(), record({ finishedAt: NOW - 40 * 60_000 })];
-  const s = seriesFrom(rows, "scripting", "1h", NOW);
-  const spike = s.buckets.find((b) => b.requests > 0)!;
-  const inside = rows.filter((r) => r.finishedAt! >= spike.from && r.finishedAt! <= spike.to);
-  expect(inside.length).toBe(spike.requests);
-});
-
 // ---------- redaction ----------
 
 test("anything key-shaped is redacted before an error body is shown or copied", () => {
@@ -452,22 +332,6 @@ test("a scripting probe follows the schedule too", () => {
   expect(discounted).toBeCloseTo(full / 2, 15);
 });
 
-test("a cache percentage divides by the input of the requests that reported one", () => {
-  const rows: RequestRecord[] = [
-    // reported: 4,000 of 10,000 cached
-    record({ usage: { inputTokens: 10_000, outputTokens: 0, cachedInput: 4000 } }),
-    // said nothing at all: its 90,000 input tokens are not evidence of a miss
-    record({ usage: { inputTokens: 90_000, outputTokens: 0 } }),
-  ];
-  const totals = seriesFrom(rows, "scripting", "1h", NOW).totals;
-  expect(totals.inputTokens).toBe(100_000);
-  expect(totals.cacheReported).toBe(1);
-  expect(totals.cachedInputTokens).toBe(4000);
-  // 40% of what was reported on, not 4% of everything that went out
-  expect(totals.cacheReportedInputTokens).toBe(10_000);
-  expect(Math.round((totals.cachedInputTokens / totals.cacheReportedInputTokens) * 100)).toBe(40);
-});
-
 // ---------- a transcription endpoint ----------
 
 function transcriber(over: Partial<Transcriber> = {}): Transcriber {
@@ -554,13 +418,7 @@ test("a transcriber without its key is not ready, and says what that stops", () 
 });
 
 test("a transcriber's throughput is the audio it heard, and testing it costs nothing", () => {
-  const heard = seriesFrom(
-    [record({ kind: "transcription", usage: { audioSeconds: 1200 } })],
-    "transcription",
-    "1h",
-    NOW,
-  );
-  expect(heard.totals.throughput).toBeCloseTo(20 / 60, 6);
+  // the figure itself is summed by the server (tests/server/usage.test.ts)
   expect(throughputLabel("transcription")).toBe("Audio minutes heard per minute");
   // the test lists the server's models, which sends no audio
   expect(probeCost({ key: "transcription:stt", id: "stt", kind: "transcription" })).toBe(0);

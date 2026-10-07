@@ -394,7 +394,7 @@ describe("importing a script file", () => {
   test("the script read back into the book it came from changes nothing", async () => {
     await open(1, 2);
     readIn([fileChapter(1), fileChapter(2)]);
-    const report = transferStore.apply("cliche", [1, 2])!;
+    const report = (await transferStore.apply("cliche", [1, 2]))!;
     expect(report.applied).toEqual([]);
     expect(report.skipped.map((s) => s.why)).toEqual(["identical", "identical"]);
     expect(undos).toHaveLength(0);
@@ -413,7 +413,7 @@ describe("importing a script file", () => {
     expect(preview.stale).toBe(1);
     expect(preview.dropped).toBe(0);
 
-    transferStore.apply("cliche", [1, 2]);
+    await transferStore.apply("cliche", [1, 2]);
     expect(segments()[at].text.startsWith("Truly")).toBe(true);
     expect(segments()[at].audio.status).toBe("stale");
     expect(segments().filter((s) => s.audio.status === "done")).toHaveLength(segments().length - 1);
@@ -427,9 +427,65 @@ describe("importing a script file", () => {
     readIn([fileChapter(1, (lines) => (dialogue(lines)[0].speaker = "Elder Mo"))]);
     useQueryCache().setQueryData(keys.jobs, [inFlight(1)]);
     const before = JSON.stringify(segments());
-    const report = transferStore.apply("cliche", [1])!;
+    const report = (await transferStore.apply("cliche", [1]))!;
     expect(report.skipped).toMatchObject([{ chapterId: 1, why: "busy" }]);
     expect(JSON.stringify(segments())).toBe(before);
+  });
+
+  test("a chapter whose write is refused is not imported, and Undo leaves it as the server has it", async () => {
+    await open(1, 2);
+    readIn([
+      fileChapter(1, (lines) => (dialogue(lines)[0].direction = "quietly")),
+      fileChapter(2, (lines) => (dialogue(lines)[0].direction = "loudly")),
+    ]);
+    // another tab writes chapter 2 meanwhile, so the import's write of it names a stale revision
+    const server = await libraryService().chapterScript("cliche", 2);
+    const elsewhere = server.segments.map((s) => ({ ...s }));
+    elsewhere[0].direction = "written in another tab";
+    await libraryService().editScript("cliche", 2, {
+      segments: elsewhere,
+      ifRevision: server.revision,
+    });
+
+    const report = (await transferStore.apply("cliche", [1, 2]))!;
+    expect(report.outcome).toBe("partial");
+    expect(report.applied.map((a) => a.chapterId)).toEqual([1]);
+    expect(report.refused.map((r) => r.chapterId)).toEqual([2]);
+    await settled(2);
+    expect(segments(2)[0].direction).toBe("written in another tab");
+
+    await undoLast();
+    await settled(1, 2);
+    expect(dialogue(segments(1))[0].direction).not.toBe("quietly");
+    // the refused chapter was never the import's: the other tab's edit stands, here and there
+    const after = await libraryService().chapterScript("cliche", 2);
+    expect(after.segments[0].direction).toBe("written in another tab");
+    expect(segments(2)[0].direction).toBe("written in another tab");
+  });
+
+  test("a speaker only a refused chapter named is never written to the cast", async () => {
+    await open(1, 2);
+    readIn([
+      fileChapter(1, (lines) => (dialogue(lines)[0].speaker = "Ferryman")),
+      fileChapter(2, (lines) => (dialogue(lines)[0].speaker = "Stranger")),
+    ]);
+    // another tab writes chapter 2 meanwhile, so the import's write of it is refused
+    const server = await libraryService().chapterScript("cliche", 2);
+    await libraryService().editScript("cliche", 2, {
+      segments: server.segments.map((s, i) => (i ? s : { ...s, direction: "elsewhere" })),
+      ifRevision: server.revision,
+    });
+
+    const report = (await transferStore.apply("cliche", [1, 2]))!;
+    expect(report.refused.map((r) => r.chapterId)).toEqual([2]);
+    await castStore._castSettled("cliche");
+    // the landed chapter's speaker is the server's; the refused one's was taken off again
+    expect(report.speakers).toEqual(["Ferryman"]);
+    expect(speaker("Ferryman")).toBeDefined();
+    expect(speaker("Stranger")).toBeUndefined();
+    const onServer = (await libraryService().cast("cliche")).characters.map((c) => c.name);
+    expect(onServer).toContain("Ferryman");
+    expect(onServer).not.toContain("Stranger");
   });
 
   test("one Undo takes back the scripts, the speakers, the dictionary and the voices", async () => {
@@ -468,7 +524,7 @@ describe("importing a script file", () => {
     const fishVoices = fish.voices.length;
     const ref = `${kept.id}/${kept.voices[0].id}`;
 
-    const report = transferStore.apply(
+    const report = (await transferStore.apply(
       "cliche",
       [1],
       [
@@ -479,7 +535,7 @@ describe("importing a script file", () => {
           add: { endpointId: "fish", voice: { id: "public-ferry", label: "Ferry", gender: "m" } },
         },
       ],
-    )!;
+    ))!;
     expect(speaker("Stranger")).toMatchObject({
       description: "A traveller",
       style: "hushed",
@@ -525,7 +581,7 @@ describe("importing a script file", () => {
       },
     });
     const before = described();
-    transferStore.apply("cliche", [1]);
+    await transferStore.apply("cliche", [1]);
     expect(described()).toEqual(before);
     expect(castStore.lexiconOf("cliche")[0].say).not.toBe("Jih Ning");
 
@@ -634,7 +690,7 @@ describe("voice samples a script file carries", () => {
     samplesStore.waiting.cliche = [...held];
     replacing = [9];
 
-    transferStore.apply("cliche", [1]);
+    await transferStore.apply("cliche", [1]);
     await settled(1);
     await settle();
     expect(samplesStore.waitingOf("cliche").map((x) => x.id)).toEqual([1]);
@@ -655,7 +711,7 @@ describe("voice samples a script file carries", () => {
     const speaker = planWithSamples((sp) => [row(sp, { kind: "private" })]);
     lost = [1];
 
-    transferStore.apply("cliche", [1]);
+    await transferStore.apply("cliche", [1]);
     await undoLast();
     expect(calls).toEqual([`store ${speaker}`, "discard 1"]);
     expect(errors).toEqual([]);
@@ -671,7 +727,7 @@ describe("voice samples a script file carries", () => {
       row("Nobody Here", { kind: "unchecked", reason: "timed out" }),
     ]);
 
-    const report = transferStore.apply("cliche", [1])!;
+    const report = (await transferStore.apply("cliche", [1]))!;
     expect(report.samples).toEqual([speaker]);
     await settled(1);
     await settle();

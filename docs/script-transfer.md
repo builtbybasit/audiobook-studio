@@ -233,10 +233,12 @@ many chapters matched and were refused.
 - **Apply N chapters** names the work, with the number of voices beside it. It is disabled at zero
   chapters, so voices are applied only with at least one chapter.
 
-After applying, the page becomes the report: how many chapters were imported and which were skipped
-(identical, a run started meanwhile, or no longer in the book), the speakers added and the ones not
-added, terms added, voices set, the voice samples now waiting, what was refused or ignored, and the
-cast and dictionary differences the book kept. **Another file** puts the plan aside.
+Applying waits for every write to be answered, and then the page becomes the report: how many
+chapters were imported, which the server refused (another tab or a run wrote the chapter meanwhile,
+so it was read back and reads as it did) and which were skipped (identical, a run started
+meanwhile, or no longer in the book), the speakers added and the ones not added, terms added,
+voices set, the voice samples now waiting, what the file's reading refused or ignored, and the cast
+and dictionary differences the book kept. **Another file** puts the plan aside.
 
 ### Writing the script
 
@@ -262,7 +264,8 @@ the reader leaves it.
 **Add what's missing, keep what's there.** A speaker the book lacks is added with the file's
 details, but only when an applied line uses them; the rest are reported as not added. A speaker a
 line names that neither the book nor the file has (a lone chapter file carries no cast) comes in the
-way a restore brings one, unreviewed, for the Cast page to merge. A speaker the book has keeps its
+way a restore brings one, unreviewed, for the Cast page to merge — written once its chapter's write
+lands, and never when only a refused chapter named them. A speaker the book has keeps its
 own details; only **aliases are unioned**, which adds matches and loses nothing. Dictionary terms
 the book lacks are appended; a term it has keeps the book's pronunciation.
 
@@ -299,11 +302,14 @@ called private: the row says it could not check the host and why, and offers the
 
 ### One Undo for the whole import
 
-The toast's Undo writes each chapter's previous script back, puts back the voices and aliases it
-changed, takes any public voice it added off its endpoint, restores the dictionary, sets aside the
-voice samples it kept (bringing back any it replaced), and then removes the speakers it added unless
-a line still uses them. The scripts go first, so a speaker removed while the server's script still
-names them does not hand their lines to the Narrator.
+The toast's Undo takes back only what the server took: a chapter, speaker, term or voice whose
+write was refused was already read back and is left alone. It writes each imported chapter's
+previous script back, puts back the voices and aliases it changed, takes any public voice it added
+off its endpoint, restores the dictionary, sets aside the voice samples it kept (bringing back any
+it replaced), and then removes the speakers it added unless a line still uses them. The scripts go
+first, so a speaker removed while the server's script still names them does not hand their lines to
+the Narrator, and the dictionary follows them, since its answer moves the revision of the chapters
+whose clips it puts back.
 
 ## Voice samples
 

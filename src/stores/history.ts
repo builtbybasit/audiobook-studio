@@ -55,6 +55,27 @@ const nameOf = (bookId: string, chId: number) =>
 const emptyHead = (): HistoryHead => ({ at: 0, origin: { kind: "scripted" } });
 const emptyHistory = (): ChapterHistory => ({ versions: [], head: emptyHead(), nextId: 1 });
 
+/** A chapter's script written over by a restore or an import: what came of it, and its undo. */
+export interface Rewrite {
+  /** speakers a line names that the cast lacked, added to it unreviewed */
+  absorbed: string[];
+  /**
+   * each of `absorbed` written to the cast once the chapter's write is answered: true once the
+   * server has them, false when it refused them or the chapter's write was refused and no line
+   * here names them any more, so they were taken off again unwritten
+   */
+  pushed: Promise<boolean>[];
+  /** whether the write landed; a refused one has already been read back over and said */
+  landed: Promise<boolean>;
+  /**
+   * Put back the script and the chapter's status as they were, written as an edit, and resolve
+   * once nothing more is being written for the chapter with whether that landed. A rewrite that
+   * did not land changed nothing on the server, so there is nothing to put back and it resolves
+   * false without touching the chapter.
+   */
+  undo: () => Promise<boolean>;
+}
+
 interface HistoryState {
   /** keyed `${bookId}:${chapterId}` */
   chapters: Record<string, ChapterHistory>;
@@ -173,8 +194,6 @@ export const useHistoryStore = defineStore("history", {
      */
     restore(bookId: string, chId: number, versionId: number): boolean {
       const castStore = useCastStore();
-      const libraryStore = useLibraryStore();
-      const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
       const h = this.chapters[key(bookId, chId)];
@@ -198,6 +217,42 @@ export const useHistoryStore = defineStore("history", {
         });
         return false;
       }
+      const origin: VersionOrigin = { kind: "restored", from: version.id, fromAt: version.at };
+      const write = this._rewrite(bookId, chId, plan, origin);
+      const facts = restoreConsequences(plan);
+      uiStore.toast(`Restored ${nameOf(bookId, chId)} to v${version.id}`, {
+        kind: "success",
+        description: `${originLabel(version.origin)} · ${facts.join(" · ")}. Everything after it is still in the history.`,
+        timeout: 12000,
+        // Only the speakers this restore added, and only while nothing else has started using
+        // them. The two writes must not race: a speaker removed while the server's script still
+        // names them hands their lines to the Narrator and moves the revision, and the write that
+        // was to take their lines away is refused. The script goes first; the removal then moves
+        // nothing. Nor may it overtake their own write, which would leave nobody to remove.
+        undo: () =>
+          Promise.all([write.undo(), ...write.pushed]).then(() =>
+            castStore._dropSpeakers(bookId, write.absorbed),
+          ),
+      });
+      return true;
+    },
+    /**
+     * Write `plan` over this chapter's script under `origin`, the way a restore and an import both
+     * do: the script replaced, the chapter's narration (and scripting) status set as the plan
+     * says, any speaker a line names that the cast lacks added unreviewed, the chapter re-timed,
+     * and the script saved. The server preserves what it replaced in the history. The speakers it
+     * added are written to the cast in the same step, each waiting for the chapter's write: one
+     * only this chapter named, whose write was refused, is never the server's (`cast._push`).
+     *
+     * The undo puts back exactly what this changed and nothing else — the chapter's script and its
+     * own status. Work done elsewhere in the book while the toast was up is not a rewrite's to take
+     * back, and nor are the speakers it absorbed, which the caller drops once the script is back.
+     */
+    _rewrite(bookId: string, chId: number, plan: RestorePlan, origin: VersionOrigin): Rewrite {
+      const castStore = useCastStore();
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+
       const chapter = libraryStore.chapter(bookId, chId);
       const was = chapter
         ? {
@@ -207,46 +262,35 @@ export const useHistoryStore = defineStore("history", {
             scripting: chapter.scripting,
           }
         : null;
-      // Undo puts back exactly what the restore changed and nothing else: this chapter's script,
-      // the chapter's own status, and any speaker the restore had to add to the cast. Work done elsewhere in the book while the toast was up is not a restore's to
-      // take back.
       const beforeScript = clone(scriptsStore.segmentsOf(bookId, chId));
-      const origin: VersionOrigin = { kind: "restored", from: version.id, fromAt: version.at };
       scriptsStore._replace(bookId, chId, plan.segments);
+      // An imported script is the chapter's script whatever its scripting status was; a restore
+      // only moves a scripted chapter between done and fallback, and leaves a failed one failed.
+      const scripted =
+        origin.kind === "imported" || was?.scripting === "done" || was?.scripting === "fallback";
       if (was)
         libraryStore._patchChapter(bookId, chId, {
-          ...((was.scripting === "done" || was.scripting === "fallback") && plan.scripting
-            ? { scripting: plan.scripting }
-            : {}),
+          ...(scripted && plan.scripting ? { scripting: plan.scripting } : {}),
           narration: plan.narration,
           ...(plan.narration === "none" ? { narrationProgress: 0 } : {}),
         });
-      // a speaker the book's cast lost comes back unreviewed, where the Cast page can merge it
       const absorbed = castStore._absorbCast(bookId, chId);
-      for (const name of absorbed) void castStore._push(bookId, name);
       castStore._retime(bookId, chId);
-      scriptsStore._commit(bookId, chId, origin);
-      const facts = restoreConsequences(plan);
-      uiStore.toast(`Restored ${nameOf(bookId, chId)} to v${version.id}`, {
-        kind: "success",
-        description: `${originLabel(version.origin)} · ${facts.join(" · ")}. Everything after it is still in the history.`,
-        timeout: 12000,
-        undo: () => {
+      const landed = scriptsStore._save(bookId, chId, origin);
+      return {
+        absorbed,
+        pushed: absorbed.map((name) => castStore._push(bookId, name, landed)),
+        landed,
+        undo: async () => {
+          if (!(await landed)) return false;
           scriptsStore._replace(bookId, chId, beforeScript);
           if (was) libraryStore._patchChapter(bookId, chId, was);
           castStore._retime(bookId, chId);
-          // Only the speakers this restore added, and only while nothing else has started using
-          // them. The two writes must not race: a speaker removed while the server's script still
-          // names them hands their lines to the Narrator and moves the revision, and the write that
-          // was to take their lines away is refused. The script goes first; the removal then moves
-          // nothing.
-          scriptsStore._commit(bookId, chId);
-          return scriptsStore
-            ._settled(bookId, chId)
-            .then(() => castStore._dropSpeakers(bookId, absorbed));
+          const back = await scriptsStore._save(bookId, chId);
+          await scriptsStore._settled(bookId, chId);
+          return back;
         },
-      });
-      return true;
+      };
     },
     // ---------- the book this history belongs to ----------
     /**

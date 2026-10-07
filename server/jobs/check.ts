@@ -56,8 +56,8 @@ import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { badRequest, conflict, notFound } from "~/lib/errors";
 import { transcriberTarget } from "~/providers/target";
 import type { TranscriptionProvider } from "~/providers/transcription";
-import { assertWithinBudget, budgetProblem, holdToday } from "~/usage/budget";
-import { settleTranscription } from "~/usage/ledger";
+import { assertWithinBudget, budgetProblem } from "~/usage/budget";
+import { dispatch } from "~/usage/dispatch";
 
 /** How much of what was heard a flag's note quotes. */
 const NOTE_CHARS = 140;
@@ -188,7 +188,14 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
           });
           return;
         }
-        const out = holdToday(db, "transcription", t.id, cost);
+        // its money (`~/usage/dispatch`): held to the endpoint's limit while it is out, priced
+        // into the ledger as it settles, and given back once it has
+        const money = dispatch(db, {
+          kind: "transcription",
+          endpoint: t,
+          work: { bookId: job.bookId, chapterUid: uid, label, queuedAt: job.queuedAt },
+          hold: cost,
+        });
         try {
           // `ready`: a demo clip nobody has played yet is made now
           const path = await files.ready(job.bookId, c.file);
@@ -204,14 +211,7 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
               words: true,
               hints,
               signal,
-              sent: (request) => {
-                const priced = readTranscriber(db, t.id);
-                if (!priced || !library.getBook(db, job.bookId)) return;
-                // a chapter removed mid-request is still where the money went, and the row stays in every total
-                const chapterUid = library.locateChapter(db, uid) ? uid : null;
-                const work = { bookId: job.bookId, chapterUid, label, queuedAt: job.queuedAt };
-                settleTranscription(db, priced, { ...work, held: cost }, request);
-              },
+              sent: money.sent,
             },
             transcriberTarget(db, t),
           );
@@ -246,7 +246,7 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
             error: e instanceof Error ? e.message : String(e),
           });
         } finally {
-          out();
+          money.release();
         }
         setCheckRun(db, job.id, run);
         ctx.progress(((run.checked + run.failed) / todo.length) * 100);

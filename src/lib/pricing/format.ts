@@ -12,6 +12,7 @@ import type {
   PricingSnapshot,
   PromotionScope,
   RateComponent,
+  RequestRecord,
   SpeechCharge,
   SpeechChargeLine,
   TtsBillingUnit,
@@ -196,6 +197,23 @@ export const COST_BASIS_DETAIL: Record<CostBasis, string> = {
     "worked out from the rates, but part of the usage was missing or inconsistent — treat it as an upper bound",
   unknown: "no rate is set for this endpoint, so nothing can be worked out",
 };
+
+/**
+ * The one line under a request's cost: what its basis means, except where the cost is unknown for
+ * a reason the basis cannot say — a request cancelled once it was out, which the provider may have
+ * charged for, and one whose provider reported nothing to price it by. Neither is a missing rate,
+ * and both are counted by the budgets at what they held. Told apart by status, and by whether the
+ * row has a receipt, since a scripting request that reported no usage has none.
+ */
+export function costDetail(
+  r: Pick<RequestRecord, "costBasis" | "status" | "priced" | "speech">,
+): string {
+  if (r.costBasis !== "unknown") return COST_BASIS_DETAIL[r.costBasis];
+  if (r.status === "cancelled")
+    return "cancelled after it was sent, so whether the provider charged is not known";
+  if (r.priced || r.speech) return COST_BASIS_DETAIL.unknown;
+  return "the provider did not report what it used, so nothing can be worked out";
+}
 
 // ---------- one display shape for both kinds ----------
 

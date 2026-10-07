@@ -42,6 +42,12 @@ const send = <T = BookResult>(api: TestApi, path: string, method: string, body: 
 const patch = <T = BookResult>(api: TestApi, id: string, body: unknown) =>
   send<T>(api, `/api/books/${id}`, "PATCH", body);
 
+const cut = <T = BookResult>(
+  api: TestApi,
+  id: string,
+  volumes: { chapter: number; name: string }[],
+) => send<T>(api, `/api/books/${id}/volumes`, "PUT", { volumes });
+
 const reorder = <T = BookResult>(api: TestApi, id: string, order: number[]) =>
   send<T>(api, `/api/books/${id}/volumes/order`, "PUT", { order });
 
@@ -231,5 +237,127 @@ describe("a volume's place in the book", () => {
     const { status, body } = await reorder<Failure>(api, id, [3, 2, 1]);
     expect(status).toBe(409);
     expect(body.error.message).toContain("still in review");
+  });
+});
+
+describe("cutting a book into volumes", () => {
+  /** One volume of five chapters, confirmed. */
+  async function oneVolume(api: TestApi = testApi()) {
+    const { body } = await api.import<{ book: Book }>(
+      await chapters("One", "Two", "Three", "Four", "Five"),
+    );
+    const id = body.book.id;
+    await api.request(`/api/books/${id}/confirm`, { method: "POST" });
+    return { api, id };
+  }
+  const shape = (b: BookResult) => ({
+    volumes: b.book.volumes.map((v) => [v.id, v.name, v.from, v.to, v.file]),
+    chapters: b.chapters.map((c) => [c.id, c.title, c.volumeId, c.volumeIndex]),
+  });
+
+  test("a cut makes a new volume from the chapter named on, keeping every number", async () => {
+    const { api, id } = await oneVolume();
+    const file = (await read(api, id)).book.volumes[0].file;
+    await scriptChapters(api, id, [3]);
+    const script = readScript(api.db, id, 3);
+    const { status, body } = await cut(api, id, [
+      { chapter: 1, name: "Volume 1" },
+      { chapter: 3, name: "Volume 2" },
+    ]);
+    expect(status).toBe(200);
+    expect(shape(body)).toEqual({
+      volumes: [
+        [1, "Volume 1", 1, 2, file],
+        [2, "Volume 2", 3, 5, file],
+      ],
+      chapters: [
+        [1, "One", 1, 1],
+        [2, "Two", 1, 2],
+        [3, "Three", 2, 1],
+        [4, "Four", 2, 2],
+        [5, "Five", 2, 3],
+      ],
+    });
+    expect(await read(api, id)).toEqual(body);
+    expect(readScript(api.db, id, 3)).toEqual(script);
+  });
+
+  test("a boundary moved keeps both volumes' rows, and a volume left empty goes", async () => {
+    const { api, id } = await twoVolumes();
+    const [first, second] = (await read(api, id)).book.volumes;
+    const moved = await cut(api, id, [
+      { chapter: 1, name: first.name },
+      { chapter: 2, name: second.name },
+    ]);
+    expect(moved.body.book.volumes.map((v) => [v.id, v.from, v.to, v.file])).toEqual([
+      [1, 1, 1, first.file],
+      [2, 2, 5, second.file],
+    ]);
+    const joined = await cut(api, id, [{ chapter: 1, name: "All of it" }]);
+    expect(joined.body.book.volumes.map((v) => [v.id, v.name, v.from, v.to])).toEqual([
+      [1, "All of it", 1, 5],
+    ]);
+    expect(joined.body.chapters.map((c) => [c.volumeId, c.volumeIndex])).toEqual([
+      [1, 1],
+      [1, 2],
+      [1, 3],
+      [1, 4],
+      [1, 5],
+    ]);
+    expect(await read(api, id)).toEqual(joined.body);
+  });
+
+  test("a book still in its review can be cut, and the cut volume waits in the review too", async () => {
+    const api = testApi();
+    const { body } = await api.import<{ book: Book }>(await chapters("One", "Two", "Three"));
+    const id = body.book.id;
+    const { status, body: after } = await cut(api, id, [
+      { chapter: 1, name: "A" },
+      { chapter: 2, name: "B" },
+    ]);
+    expect(status).toBe(200);
+    expect(after.book.importing).toBe(true);
+    expect(after.book.volumes.map((v) => !!v.importing)).toEqual([true, true]);
+    await api.request(`/api/books/${id}/confirm`, { method: "POST" });
+    expect((await read(api, id)).book.volumes.map((v) => !!v.importing)).toEqual([false, false]);
+  });
+
+  test("a list that does not start at the first chapter, names a missing one, runs backwards or leaves a name blank is refused", async () => {
+    const { api, id } = await oneVolume();
+    const before = await read(api, id);
+    for (const volumes of [
+      [],
+      [{ chapter: 2, name: "A" }],
+      [
+        { chapter: 1, name: "A" },
+        { chapter: 9, name: "B" },
+      ],
+      [
+        { chapter: 1, name: "A" },
+        { chapter: 4, name: "B" },
+        { chapter: 3, name: "C" },
+      ],
+      [
+        { chapter: 1, name: "A" },
+        { chapter: 3, name: "  " },
+      ],
+    ]) {
+      const { status } = await cut<Failure>(api, id, volumes);
+      expect(status).toBe(400);
+    }
+    expect(await read(api, id)).toEqual(before);
+  });
+
+  test("is refused while an audiobook is being built, and while a volume of a shelved book is in review", async () => {
+    const { api, id } = await twoVolumes();
+    await api.import(await chapters("Six"), { bookId: id, name: "Vol. 3" });
+    const review = await cut<Failure>(api, id, [{ chapter: 1, name: "A" }]);
+    expect(review.status).toBe(409);
+    expect(review.body.error.message).toContain("still in review");
+    await api.request(`/api/books/${id}/confirm`, { method: "POST" });
+    queue.enqueueJob(api.db, { kind: "export", bookId: id, chapterId: null, label: "Build" });
+    const build = await cut<Failure>(api, id, [{ chapter: 1, name: "A" }]);
+    expect(build.status).toBe(409);
+    expect(build.body.error.message).toContain("is being built");
   });
 });

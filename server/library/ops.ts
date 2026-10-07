@@ -6,7 +6,7 @@
 // another for a new volume — so there is one statement of each, and none of them knows what a
 // status code is. A rule that does not hold is thrown as an `AppError`, which `app.onError` turns
 // into the API's one error shape.
-import type { Book, Chapter, ImportedBook } from "@/types";
+import type { Book, Chapter, ImportedBook, VolumeStart } from "@/types";
 import { chapterSeconds, pacingOrDefault } from "@/lib/speech";
 import type { AudioFiles } from "~/audio/files";
 import { MAX_COVER_BYTES, sniffCover, type CoverFiles } from "~/covers/files";
@@ -477,6 +477,44 @@ export function renameVolume(db: Db, bookId: string, volumeId: number, name: str
  * each chapter landed by number. And refused while a volume is still in review, which is added at
  * the end and has no place in the order until it is.
  */
+/**
+ * Cut the book into these volumes (`library.setVolumes`): a list of where each begins, in reading
+ * order, starting at chapter 1, every chapter named once, every name non-empty. Refused mid-build,
+ * because a build files each chapter under its volume; and while one volume of a shelved book is
+ * still in review, since the review adds or discards that volume whole.
+ */
+export function setVolumes(db: Db, bookId: string, starts: readonly VolumeStart[]): ImportedBook {
+  const book = requireBook(db, bookId);
+  const ids = new Set(library.listChapters(db, bookId).map((c) => c.id));
+  const first = Math.min(...ids);
+  if (
+    !starts.length ||
+    starts[0].chapter !== first ||
+    starts.some((s, i) => !ids.has(s.chapter) || (i > 0 && s.chapter <= starts[i - 1].chapter))
+  )
+    throw badRequest(
+      "Name where each volume begins, in reading order, the first at the book's first chapter",
+      `chapters: ${first}–${Math.max(...ids)}`,
+    );
+  if (starts.some((s) => !s.name.trim())) throw badRequest("Every volume needs a name");
+  if (!book.importing && book.volumes.some((x) => x.importing))
+    throw conflict(
+      `A volume of “${book.title}” is still in review`,
+      "Add it to the book or cancel it before cutting volumes.",
+    );
+  if (queue.activeJob(db, "export", bookId, null))
+    throw conflict(
+      `An audiobook of “${book.title}” is being built`,
+      "Let the build finish, or cancel it from the Queue, before cutting volumes.",
+    );
+  library.setVolumes(
+    db,
+    bookId,
+    starts.map((s) => ({ chapter: s.chapter, name: s.name.trim() })),
+  );
+  return bookWithChapters(db, bookId);
+}
+
 export function reorderVolumes(db: Db, bookId: string, order: readonly number[]): ImportedBook {
   const book = requireBook(db, bookId);
   const ids = book.volumes.map((x) => x.id);

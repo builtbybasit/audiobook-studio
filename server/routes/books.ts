@@ -117,6 +117,17 @@ const Settings = v.pipe(
 const VolumeName = v.object({
   name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),
 });
+const VolumeStarts = v.object({
+  volumes: v.pipe(
+    v.array(
+      v.object({
+        chapter: v.pipe(v.number(), v.integer(), v.minValue(1)),
+        name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),
+      }),
+    ),
+    v.minLength(1),
+  ),
+});
 const VolumeOrder = v.object({
   order: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
 });
@@ -276,6 +287,17 @@ export function bookRoutes(
     if (settings.prompt) refusePrompt("The book's prompt", bookPromptProblems(settings.prompt));
     return c.json(ops.updateBook(db, c.req.valid("param").id, settings) satisfies ImportedBook);
   });
+
+  /** Cut the book into volumes: where each begins and what it is called; see `ops.setVolumes`. */
+  app.put("/:id/volumes", validate("param", BookParam), validate("json", VolumeStarts), (c) =>
+    c.json(
+      ops.setVolumes(
+        db,
+        c.req.valid("param").id,
+        c.req.valid("json").volumes,
+      ) satisfies ImportedBook,
+    ),
+  );
 
   /** Read the volumes in this order; the chapters are numbered to follow it. */
   app.put("/:id/volumes/order", validate("param", BookParam), validate("json", VolumeOrder), (c) =>

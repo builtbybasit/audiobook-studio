@@ -143,6 +143,18 @@ export interface Volume {
 }
 
 /**
+ * Where a volume begins, and what it is called: the whole of a book's volumes is a list of these in
+ * reading order, the first one at the book's first chapter. Writing the list is how a book is cut
+ * into volumes, joined back, or has a boundary moved — the server rewrites which volume each
+ * chapter belongs to and keeps every volume row that still begins where it did.
+ */
+export interface VolumeStart {
+  /** the chapter the volume begins at, by its number */
+  chapter: number;
+  name: string;
+}
+
+/**
  * How a book's chapters stand, counted.
  *
  * A book listed by the server carries these so the shelf can say "12 chapters" and how far along

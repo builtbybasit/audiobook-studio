@@ -41,6 +41,7 @@ import type {
   PromptTrialRequest,
   PromptTrialResult,
   Volume,
+  VolumeStart,
 } from "@/types";
 import { defineStore } from "pinia";
 import { useCastStore } from "@/stores/cast";
@@ -177,6 +178,11 @@ export const useLibraryStore = defineStore("library", {
     /** Chapters with the same kind of note, so one decision can cover them all. */
     noticeGroupsOf(s): (id: string) => NoticeGroup[] {
       return (id: string): NoticeGroup[] => noticeGroups(s.chapters[id] ?? []);
+    },
+    /** Where each volume begins, in reading order, with its name: the list `setVolumes` takes. */
+    volumeStartsOf(): (id: string) => VolumeStart[] {
+      return (id: string): VolumeStart[] =>
+        this.volumesOf(id).map((v) => ({ chapter: v.from, name: v.name }));
     },
     /** The volume still waiting in the contents review, when the book itself is already in the library. */
     importingVolume(s): (id: string) => Volume | undefined {
@@ -752,6 +758,38 @@ export const useLibraryStore = defineStore("library", {
         toastFailure("rename this volume", cause);
         await this.loadBook(bookId);
       }
+    },
+    /**
+     * Cut the book into these volumes: where each begins and its name, in reading order. The whole
+     * list goes to the server, so a split, a join, a moved boundary and a rename are one write and
+     * one undo — the toast's Undo writes the list as it was. Chapter numbers do not move.
+     */
+    async setVolumes(
+      bookId: string,
+      starts: VolumeStart[],
+      { quiet = false, scope = "" } = {},
+    ): Promise<boolean> {
+      const uiStore = useUiStore();
+      const before = this.volumeStartsOf(bookId);
+      if (
+        !before.length ||
+        (before.length === starts.length &&
+          before.every((b, i) => b.chapter === starts[i].chapter && b.name === starts[i].name))
+      )
+        return false;
+      let answer: ImportedBook;
+      try {
+        answer = await this._service().setVolumes(bookId, starts);
+      } catch (cause) {
+        toastFailure("cut the volumes", cause);
+        return false;
+      }
+      this._put(answer.book, answer.chapters);
+      if (!quiet)
+        uiStore.toast(scope || `${starts.length} volumes`, {
+          undo: () => void this.setVolumes(bookId, before, { quiet: true }),
+        });
+      return true;
     },
     // Remove a volume (wrong EPUB added): its chapters, segments, jobs and exports go; the remaining
     // chapters are renumbered so numbering stays continuous. Removing the last volume removes the novel.

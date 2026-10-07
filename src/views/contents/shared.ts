@@ -58,3 +58,10 @@ export function passes(
 
 export const words = (n: number): string =>
   n >= 1000 ? `${(n / 1000).toFixed(1)}k words` : `${n} words`;
+
+/** The context menus of the Volumes tab, on reka-ui's ContextMenu, at the page's small size. */
+export const MENU =
+  "z-50 min-w-48 rounded-lg border border-zinc-200 bg-white p-1 text-xs shadow-xl dark:border-zinc-700 dark:bg-zinc-900";
+export const MENU_ITEM =
+  "flex cursor-default items-center gap-2 rounded px-2 py-1 outline-none data-[highlighted]:bg-violet-500/10 data-[highlighted]:text-violet-700 data-[disabled]:opacity-40 dark:data-[highlighted]:text-violet-300";
+export const MENU_SEP = "my-1 h-px bg-zinc-100 dark:bg-zinc-800";

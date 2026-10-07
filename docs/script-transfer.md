@@ -111,10 +111,12 @@ its place:
 - `{sigh}` is the tag whose shared `id` is `sigh`, never a provider's token: each provider writes
   tags its own way, and the file must not care which one rendered it. `annotationId`, `label`,
   `token` and `kind` are not written.
-- `{sigh!}` is an omitted tag, `{sigh?}` one awaiting review and `{sigh!?}` both: the suffixes
+- `{sigh!}` is an omitted tag, `{sigh?}` one awaiting review and `{sigh!?}` both; `{sigh~}` is one
+  the scripting model wrote, which comes back as its plain words and is left out quietly where a
+  voice cannot take it, rather than awaiting review. The suffixes go in the order `~!?`, the one
   `exprSignature` uses.
 - A literal `{` in the book is written `{{`. A lone `}` needs no escape, because only `{` opens a
-  marker. Inside a marker a backslash escapes `{ } ! ? \`, since a tag id is whatever was typed when
+  marker. Inside a marker a backslash escapes `{ } ! ? ~ \`, since a tag id is whatever was typed when
   the tag was configured: `{huh\?}` is the tag `huh?`, where `{huh?}` is the tag `huh` awaiting
   review.
 - A marker that starts a word, at the start of the line or after whitespace, is written with one

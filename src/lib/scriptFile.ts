@@ -3,14 +3,15 @@
 // **Expression tags travel inside the words.** A line's annotations are UTF-16 offsets into its
 // text, and an offset is silently wrong after the first hand edit — which is exactly what a file
 // someone opens in an editor is for. So in the file a tag is a marker at its place: `{sigh}`, with
-// `{sigh!}` for one that is omitted and `{sigh?}` for one awaiting review, the suffixes
-// `exprSignature` already keys on. The name is the tag's shared `id`, never a provider's token:
+// `{sigh!}` for one that is omitted, `{sigh?}` for one awaiting review and `{sigh~}` for one the
+// scripting model wrote, the suffixes `exprSignature` already keys on. The name is the tag's shared `id`, never a provider's token:
 // each provider spells tags its own way, and the file must not care which one rendered it.
 //
 // Pure, and in `src/lib` rather than on the server, so the browser can read a chapter file with
 // the same scanner the server imports it with.
 import type { ExpressionAnnotation, ExpressionTag, ScriptFileLine, Segment } from "@/types";
 import { NARRATOR } from "@/lib/cast";
+import { scriptedAnnotation } from "@/lib/expressions";
 import { isSiteText } from "@/lib/siteText";
 
 export const SCRIPT_FORMAT = "audiobook-studio/script";
@@ -23,6 +24,7 @@ export interface Mark {
   at: number;
   omitted?: boolean;
   needsReview?: boolean;
+  scripted?: boolean;
 }
 
 /** A line whose markers cannot be read; `at` is where in the marked text it went wrong. */
@@ -41,11 +43,11 @@ export class MarkerError extends Error {
  * of are escaped inside it with a backslash: `{huh\?}` is the tag `huh?`, where `{huh?}` is the
  * tag `huh` awaiting review.
  */
-const escapeId = (id: string): string => id.replace(/[\\{}!?]/g, "\\$&");
+const escapeId = (id: string): string => id.replace(/[\\{}!?~]/g, "\\$&");
 
 /** The suffixes a marker may carry, in the order `exprSignature` writes them. */
-const suffix = (a: { omitted?: boolean; needsReview?: boolean }): string =>
-  `${a.omitted ? "!" : ""}${a.needsReview ? "?" : ""}`;
+const suffix = (a: { scripted?: boolean; omitted?: boolean; needsReview?: boolean }): string =>
+  `${a.scripted ? "~" : ""}${a.omitted ? "!" : ""}${a.needsReview ? "?" : ""}`;
 
 /**
  * A marker that starts a word — at the start of the line, or after whitespace — is written with one
@@ -115,7 +117,7 @@ export function readMarkers(marked: string): { text: string; marks: Mark[] } {
       throw new MarkerError("A tag marker is not closed — write a literal { as {{", i);
     const close = j;
     const mark: Mark = { id: "", at: text.length };
-    // `!?` in the order the signature writes them; either alone is fine too
+    // `~!?` in the order the signature writes them; any one alone is fine too
     const last = (c: string): boolean => body.at(-1)?.c === c && !body.at(-1)!.escaped;
     if (last("?")) {
       mark.needsReview = true;
@@ -123,6 +125,10 @@ export function readMarkers(marked: string): { text: string; marks: Mark[] } {
     }
     if (last("!")) {
       mark.omitted = true;
+      body.pop();
+    }
+    if (last("~")) {
+      mark.scripted = true;
       body.pop();
     }
     mark.id = body
@@ -162,7 +168,9 @@ export function toFileLine(s: Segment): ScriptFileLine {
  *
  * A tag the endpoint does not offer is still kept — dropping it would lose a decision someone made
  * — but it arrives needing review, the way a change of model already leaves one, with its id for a
- * label until someone looks. Throws `MarkerError` for a line whose markers do not parse. A line of
+ * label until someone looks. A tag the scripting model wrote (`{sigh~}`) comes back as one, its plain
+ * words matched to a voice only when the line is sent, and left out quietly where the voice cannot
+ * take it, as it was before it left. Throws `MarkerError` for a line whose markers do not parse. A line of
  * site text or a note is the Narrator's whoever the file names, as it is when a model or a person
  * marks one, so a hand-edited file cannot bring a speaker into the cast that reads nothing.
  */
@@ -184,6 +192,13 @@ export function fromFileLine(
   if (marks.length)
     s.expressions = marks.map((m) => {
       const tag = tags.find((t) => t.id === m.id);
+      // one the scripting model wrote stays its plain words, matched to a voice only when sent
+      if (m.scripted) {
+        const a = scriptedAnnotation({ label: tag?.label ?? m.id, at: m.at }, nextAnnotationId());
+        if (m.omitted) a.omitted = true;
+        if (m.needsReview) a.needsReview = true;
+        return a;
+      }
       const a: ExpressionAnnotation = tag
         ? { ...tag, annotationId: nextAnnotationId(), at: m.at }
         : {

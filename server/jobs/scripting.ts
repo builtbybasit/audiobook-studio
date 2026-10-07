@@ -25,12 +25,13 @@
 // the prose before it and where the chapter before left off. What the model says beside its lines
 // — the speakers' gender, other names and description, and a recap — is kept with the script.
 import type { Book, Job, Profile, PromptTemplate, ScriptingQueued, Segment } from "@/types";
+import { expressionNames, scriptedAnnotation } from "@/lib/expressions";
 import { BUILT_IN_PROMPT, renderPrompt, resolvePrompt, type PromptVars } from "@/lib/prompt";
 import { tokenEstimate } from "@/lib/scripting";
 import { ensureSpeakers, learnCast, readSpeakers } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { capture } from "~/db/history";
-import { readProfiles } from "~/db/endpoints";
+import { readEndpoints, readProfiles } from "~/db/endpoints";
 import { activeJob, getJob, nextRunId, setScriptRun } from "~/db/jobs";
 import * as library from "~/db/library";
 import { readLibraryPrompt } from "~/db/settings";
@@ -138,6 +139,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       const template = queued?.prompt ?? BUILT_IN_PROMPT;
       const book = library.getBook(db, job.bookId);
       const recap = library.previousRecap(db, job.bookId, number);
+      const expressions = expressionNames(readEndpoints(db));
       const varsFor = (i: number): PromptVars => ({
         book: {
           title: book?.title ?? "",
@@ -156,6 +158,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           model: queued?.profile.model ?? "",
           notes: queued?.profile.prompt?.notes ?? "",
         },
+        expressions,
       });
       library.setChapterScripting(db, job.bookId, job.chapterId, "running", 0);
       ctx.note("Scripting started", "info", {
@@ -328,7 +331,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       if (refused != null) throw new Error(refused);
 
       // Stitched in reading order and numbered afresh: a line belongs to the chunk it came back
-      // in, and the ids are the chapter's, 1 to n.
+      // in, and the ids are the chapter's, 1 to n, as are the ids of the tags the model wrote.
+      let annotation = 0;
       const lines: Segment[] = answers
         .flatMap((a) => a.lines)
         .map((l, i) => ({
@@ -337,6 +341,9 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           speaker: l.speaker,
           text: l.text,
           direction: l.direction ?? "",
+          ...(l.tags?.length
+            ? { expressions: l.tags.map((t) => scriptedAnnotation(t, ++annotation)) }
+            : {}),
           audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
         }));
       // where the chapter leaves off is where its last chunk that said so left off

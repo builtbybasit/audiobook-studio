@@ -8,6 +8,7 @@ import type {
   TagBracket,
 } from "@/types";
 import { BRACKETS, tagSyntaxOf, type TagSyntax } from "@/lib/providers";
+import type { ScriptedTag } from "@/lib/prompt";
 import { sayable, speak } from "@/lib/speech";
 import { splitText } from "@/lib/split";
 
@@ -34,6 +35,42 @@ export function typedTag(typed: string, brackets: readonly TagBracket[]): Expres
   const label = tagWords(token);
   return { id: expressionId(label), label, token, kind: "sound" };
 }
+/** A tag the scripting model wrote, as a line keeps it: its words, sent in whichever bracket the voice takes. */
+export const scriptedAnnotation = (t: ScriptedTag, annotationId: number): ExpressionAnnotation => ({
+  id: expressionId(t.label),
+  label: t.label,
+  token: "",
+  kind: "sound",
+  annotationId,
+  at: t.at,
+  scripted: true,
+});
+/**
+ * What `a` is sent as to a model configured with `c`: the listed tag of its name, or on a model
+ * taking any words what was typed — a scripted tag's words in the model's first bracket. A scripted
+ * tag is matched by name alone, and takes the listed tag's kind. Empty when neither.
+ */
+export function tokenFor(
+  a: ExpressionAnnotation,
+  c: ExpressionConfig | undefined,
+): { token: string; kind: ExpressionTag["kind"] } {
+  const listed = c?.tags.find((t) => t.id === a.id && (a.scripted || t.kind === a.kind));
+  if (listed) return { token: listed.token, kind: listed.kind };
+  const typed = a.scripted ? tagToken(a.label, c?.brackets ?? []) : a.token;
+  return { token: c?.open ? typed : "", kind: a.kind };
+}
+/**
+ * The tag names the speech endpoints list on their confirmed Expressions tabs, each once: what
+ * `{{expressions}}` tells a scripting model, so the words it writes are ones a voice has.
+ */
+export const expressionNames = (endpoints: readonly Endpoint[]): string[] => [
+  ...new Map(
+    endpoints
+      .filter((e) => expressionSupport(e) === "supported")
+      .flatMap((e) => e.expressions!.tags)
+      .map((t) => [t.id, t.label]),
+  ).values(),
+];
 /** Where a model's tab starts: the brackets its provider's docs show, and whether any words go in. */
 export function expressionDefaults(e: Pick<Endpoint, "baseUrl" | "model">): ExpressionConfig {
   const syntax = tagSyntaxOf(e);
@@ -130,6 +167,8 @@ export interface ExpressionPlan {
   tags: string[];
   signature: string;
   issues: ExpressionIssue[];
+  /** scripted tags this voice cannot take, left out without holding the line, and why */
+  skipped: ExpressionIssue[];
   ranges: { from: number; to: number }[];
 }
 
@@ -150,6 +189,7 @@ export function expressionPlan(
     (a, b) => a.at - b.at || a.annotationId - b.annotationId,
   );
   const issues: ExpressionIssue[] = [];
+  const skipped: ExpressionIssue[] = [];
   const tags: string[] = [];
   const ranges: ExpressionPlan["ranges"] = [];
   const signature: unknown[] = [];
@@ -158,10 +198,9 @@ export function expressionPlan(
   for (const a of annotations) {
     if (a.omitted) continue;
     const config = ep?.expressions;
-    const definition = config?.tags.find((t) => t.id === a.id && t.kind === a.kind);
     // a listed tag is sent as the list now spells it; on an open model, words typed on the line
     // are sent as they were typed
-    const token = definition?.token ?? (config?.open ? a.token : "");
+    const { token, kind } = tokenFor(a, config);
     const status = expressionSupport(ep);
     const syntax = ep ? tagSyntaxOf(ep) : null;
     let reason = a.needsReview
@@ -183,14 +222,18 @@ export function expressionPlan(
                   ? "This expression is not in this model's supported list."
                   : !validToken(token, config!.brackets)
                     ? "This tag is not in the brackets this model takes."
-                    : kindProblem(a.kind, syntax);
+                    : kindProblem(kind, syntax);
     if (!reason && spoken.hits.some((h) => a.at > h.from && a.at < h.to))
       reason = "Move outside this pronunciation replacement.";
     if (!reason && ep?.maxChars && token.length > ep.maxChars)
       reason = "This tag exceeds the endpoint's character limit.";
     signature.push([a.at, a.id, a.kind, token || a.token, reason]);
     if (reason) {
-      issues.push({ annotationId: a.annotationId, label: a.label, reason });
+      (a.scripted ? skipped : issues).push({
+        annotationId: a.annotationId,
+        label: a.label,
+        reason,
+      });
       continue;
     }
     const at = voiced.at(
@@ -216,6 +259,7 @@ export function expressionPlan(
     tags,
     ranges,
     issues,
+    skipped,
     signature: signature.length ? JSON.stringify(signature) : "",
   };
 }

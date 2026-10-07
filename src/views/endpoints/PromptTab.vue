@@ -27,6 +27,7 @@ import {
   sampleVars,
   unplacedNotes,
 } from "@/lib/prompt";
+import { expressionNames } from "@/lib/expressions";
 import { isSimulated } from "@/lib/providers";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import { useEndpointsStore } from "@/stores/endpoints";
@@ -77,6 +78,7 @@ const preview = computed(() => {
   return renderPrompt(resolved.value, {
     ...vars,
     endpoint: { ...vars.endpoint, notes: draft.value.notes },
+    expressions: expressionNames(endpointsStore.endpoints),
   });
 });
 

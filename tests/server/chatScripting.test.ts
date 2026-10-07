@@ -151,6 +151,49 @@ describe("a request", () => {
     expect(sent[0].error).toBeUndefined();
   });
 
+  test("reads the expression tags a model wrote out of the text, so the word check sees only the prose", async () => {
+    const { sent, provider } = gateway(() =>
+      completion(
+        fenced([
+          { type: "narration", speaker: "Narrator", text: "The door opened." },
+          { type: "dialogue", speaker: "Mara", text: "“[[sigh]] Come in,”" },
+          { type: "narration", speaker: "Narrator", text: "said Mara [[laughs]] softly." },
+        ]),
+      ),
+    );
+    const { lines } = await provider.script(input());
+    expect(lines.slice(1)).toEqual([
+      { type: "dialogue", speaker: "Mara", text: "Come in,", tags: [{ label: "sigh", at: 0 }] },
+      {
+        type: "narration",
+        speaker: "Narrator",
+        text: "said Mara softly.",
+        tags: [{ label: "laughs", at: 10 }],
+      },
+    ]);
+    expect((sent[0].body.messages as { content: string }[])[0].content).toContain("as [[sigh]]");
+  });
+
+  test("tells an excerpt that has [[ in it another marker, and leaves its [[ ]] as prose", async () => {
+    const text = "The screen read [[Level Up]]. “Come in,” said Mara.";
+    const { sent, provider } = gateway(() =>
+      completion(
+        fenced([
+          { type: "narration", speaker: "Narrator", text: "The screen read [[Level Up]]." },
+          { type: "dialogue", speaker: "Mara", text: "<<sigh>> Come in," },
+          { type: "narration", speaker: "Narrator", text: "said Mara." },
+        ]),
+      ),
+    );
+    const { lines } = await provider.script(input({ text }));
+    expect(lines.map((l) => [l.text, l.tags])).toEqual([
+      ["The screen read [[Level Up]].", undefined],
+      ["Come in,", [{ label: "sigh", at: 0 }]],
+      ["said Mara.", undefined],
+    ]);
+    expect((sent[0].body.messages as { content: string }[])[0].content).toContain("as <<sigh>>");
+  });
+
   test("carries the cost a gateway reports beside the tokens, as OpenRouter does", async () => {
     const { provider } = gateway(() =>
       Response.json({

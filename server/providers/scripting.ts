@@ -17,7 +17,7 @@ import type {
   RenderedPrompt,
   SegmentType,
 } from "@/types";
-import type { PromptCastMember } from "@/lib/prompt";
+import type { PromptCastMember, ScriptedTag } from "@/lib/prompt";
 import type { SentScript } from "~/providers/sent";
 import type { ProviderTarget } from "~/providers/target";
 
@@ -69,6 +69,8 @@ export interface ScriptedLine {
   speaker: string;
   text: string;
   direction?: string;
+  /** expression tags the model wrote into the line, read out of its text */
+  tags?: ScriptedTag[];
 }
 
 /**

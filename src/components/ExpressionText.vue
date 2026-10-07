@@ -23,6 +23,7 @@ const pieces = computed(() => {
   return out;
 });
 const issue = (id: number) => plan.value.issues.find((i) => i.annotationId === id);
+const skipped = (id: number) => plan.value.skipped.find((i) => i.annotationId === id);
 </script>
 <template>
   <template v-for="(piece, i) in pieces" :key="i"
@@ -34,12 +35,17 @@ const issue = (id: number) => plan.value.issues.find((i) => i.annotationId === i
           ? 'border-zinc-200 text-zinc-400 line-through dark:border-zinc-700'
           : issue(piece.annotation.annotationId)
             ? 'border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300'
-            : 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300'
+            : skipped(piece.annotation.annotationId)
+              ? 'border-dashed border-zinc-300 text-zinc-400 dark:border-zinc-600'
+              : 'border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300'
       "
       :title="
         piece.annotation.omitted
           ? 'Omitted from narration'
-          : (issue(piece.annotation.annotationId)?.reason ?? piece.annotation.token)
+          : (issue(piece.annotation.annotationId)?.reason ??
+            (skipped(piece.annotation.annotationId)
+              ? `Left out: ${skipped(piece.annotation.annotationId)!.reason}`
+              : piece.annotation.token || piece.annotation.label))
       "
       >{{ piece.annotation.label }}<span v-if="issue(piece.annotation.annotationId)"> · review</span
       ><span v-if="piece.annotation.omitted" class="sr-only"> · omitted</span></span

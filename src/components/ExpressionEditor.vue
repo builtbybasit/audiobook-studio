@@ -22,7 +22,7 @@ import {
 } from "@lucide/vue";
 import { UiCombobox, UiDialog } from "@/ui";
 
-import { expressionSupport, typedTag, validToken } from "@/lib/expressions";
+import { expressionSupport, tokenFor, typedTag, validToken } from "@/lib/expressions";
 import { gapLabel } from "@/lib/gaps";
 import ExpressionsTab from "@/views/endpoints/ExpressionsTab.vue";
 import WordStrip from "@/components/WordStrip.vue";
@@ -67,6 +67,7 @@ const options = computed(() =>
 const plan = computed(() => narrationStore.expressionRender(props.bookId, props.segment));
 const issue = (id: number) => plan.value.issues.find((i) => i.annotationId === id);
 const issueReason = (id: number) => issue(id)?.reason;
+const skippedReason = (id: number) => plan.value.skipped.find((i) => i.annotationId === id)?.reason;
 const count = computed(() => props.segment.expressions?.length ?? 0);
 const change = (id: number, patch: Partial<ExpressionAnnotation> | null) =>
   narrationStore.updateExpression(props.bookId, props.chapterId, props.segment.id, id, patch);
@@ -159,8 +160,7 @@ watch(expanded, (v) => {
     editing.value = null;
   }
 });
-const tokenOf = (a: ExpressionAnnotation) =>
-  endpoint.value?.expressions?.tags.find((t) => t.id === a.id)?.token ?? a.token;
+const tokenOf = (a: ExpressionAnnotation) => tokenFor(a, endpoint.value?.expressions).token;
 </script>
 
 <template>
@@ -233,6 +233,7 @@ const tokenOf = (a: ExpressionAnnotation) =>
             :gaps="placing"
             :expressions="segment.expressions"
             :issue-of="issueReason"
+            :skipped-of="skippedReason"
             :moving-id="moving"
             :quote="segment.type === 'dialogue' ? 'dialogue' : ''"
             verb="place"
@@ -306,6 +307,10 @@ const tokenOf = (a: ExpressionAnnotation) =>
               ><span class="text-zinc-400">· {{ gapLabel(segment.text, current.at) }}</span
               ><button class="btn-ghost btn-xs ml-auto" @click="editing = null">Done</button>
             </div>
+            <p v-if="skippedReason(current.annotationId)" class="text-zinc-500">
+              Written by the scripting model; left out for this voice:
+              {{ skippedReason(current.annotationId) }}
+            </p>
             <p v-if="issue(current.annotationId)" class="text-amber-700 dark:text-amber-300">
               {{ issue(current.annotationId)!.reason }}
               <button

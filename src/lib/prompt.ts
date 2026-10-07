@@ -21,6 +21,12 @@
 // that forgot to ask for either would fail every chunk. It is added after the system prompt, always,
 // and the page shows it read-only under the editor.
 //
+// **Expression tags** are the model's to add only when a prompt asks for them, and the output
+// format says how: plain words in a marker the excerpt does not already have (`[[sigh]]`), read out
+// of the line when the answer comes back (`readScriptedTags`), so the line's text stays the prose
+// and the word-for-word check never sees them. Which brackets a voice wants is decided when the
+// line is sent, by the voice it is sent to.
+//
 // **Tags** are `{{name}}`, filled in one pass: nothing a tag puts in is read for tags again, so a
 // novel that happens to contain `{{` is sent as it is. A line whose tags all came out empty is left
 // out, which is how `Notes on this book: {{book.notes}}` disappears from a book with no notes
@@ -43,16 +49,101 @@ export const REASONING_EFFORTS: readonly ReasoningEffort[] = ["off", "low", "med
 // The built-in prompt
 
 /**
- * What every answer must look like. Not editable: the parser and the word-for-word check depend on
- * it. Appended to the system prompt of every request.
+ * How the model marks an expression tag in a line's text: `[[sigh]]`, or for an excerpt that has
+ * either half of that in it already, the first pair it has neither half of — so a marker read back
+ * is always the model's, never the book's. Almost every excerpt gets the first, which keeps the
+ * system prompt the same from one request to the next, as a provider's cache wants.
  */
-export const OUTPUT_FORMAT = `Output format (always required):
+export const SCRIPT_MARKERS = [
+  ["[[", "]]"],
+  ["<<", ">>"],
+  ["{|", "|}"],
+] as const;
+export type ScriptMarker = (typeof SCRIPT_MARKERS)[number];
+
+/** The marker an excerpt's tags are written in; null for one that has all three in it. */
+export const scriptMarkerFor = (excerpt: string): ScriptMarker | null =>
+  SCRIPT_MARKERS.find(([open, close]) => !excerpt.includes(open) && !excerpt.includes(close)) ??
+  null;
+
+/** An expression tag the model wrote: its words, and where in the line's text it goes. */
+export interface ScriptedTag {
+  label: string;
+  at: number;
+}
+
+/** What a tag's words may be: a few words, a sound or a delivery, nothing that is markup. */
+const TAG_WORDS = /^[\p{L}\p{N}'’ ,-]{1,60}$/u;
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+/** punctuation that closes onto the word before it, so a tag before it goes before the space */
+const CLOSING = /[,.;:!?…)\]’”"]/u;
+
+/**
+ * A line's text with the model's markers taken out, and where each one was. A tag goes between
+ * words, never inside one: a marker in the middle of a word is moved to the word's start. A marker
+ * that is not a few plain words is left in the text as it was written, where the word-for-word check
+ * finds words that are not the excerpt's and refuses the answer.
+ */
+export function readScriptedTags(
+  marked: string,
+  marker: ScriptMarker | null,
+): { text: string; tags: ScriptedTag[] } {
+  if (!marker) return { text: marked, tags: [] };
+  const [open, close] = marker;
+  let text = "";
+  const tags: ScriptedTag[] = [];
+  let i = 0;
+  for (;;) {
+    const from = marked.indexOf(open, i);
+    const to = from < 0 ? -1 : marked.indexOf(close, from + open.length);
+    if (to < 0) break;
+    const label = marked
+      .slice(from + open.length, to)
+      .replace(/\s+/g, " ")
+      .trim();
+    text += marked.slice(i, from);
+    i = to + close.length;
+    if (!TAG_WORDS.test(label)) {
+      text += marked.slice(from, i);
+      continue;
+    }
+    const next = marked[i] ?? "";
+    let at = text.length;
+    if (WORD_CHAR.test(text.at(-1) ?? "") && WORD_CHAR.test(next))
+      at = text.search(/[\p{L}\p{N}'’-]*$/u);
+    else if (/\s$/.test(text) && CLOSING.test(next)) at = (text = text.trimEnd()).length;
+    else if ((!text || /\s$/.test(text)) && /\s/.test(next)) i++;
+    tags.push({ label, at });
+  }
+  text += marked.slice(i);
+  const lead = text.length - text.trimStart().length;
+  text = text.trim();
+  return {
+    text,
+    tags: tags.map((t) => ({ ...t, at: Math.min(Math.max(t.at - lead, 0), text.length) })),
+  };
+}
+
+/**
+ * What every answer must look like, with its tags in `marker`. Not editable: the parser and the
+ * word-for-word check depend on it. Appended to the system prompt of every request.
+ */
+export const outputFormat = (marker: ScriptMarker | null): string =>
+  FORMAT.replace(
+    "{{marker}}\n",
+    marker
+      ? `- Expression tags, only when your instructions ask for them: a sound the voice should make — a sigh, a laugh — goes in the line's "text" where it is heard, as ${marker[0]}sigh${marker[1]}: plain words between ${marker[0]} and ${marker[1]}, whatever brackets the instructions show. A tag is not a word of the excerpt and never takes the place of one.\n`
+      : "",
+  );
+
+const FORMAT = `Output format (always required):
 The script is a list of consecutive lines that together read out the excerpt from start to finish: every word of the excerpt exactly once, in the original order. Add nothing, drop nothing, summarise nothing, correct nothing, and keep the punctuation of the prose — an answer that leaves words out or adds any is refused.
 Each line has:
 - "type": "narration" for the narrator's prose, "dialogue" for words a character says aloud, "thought" for words a character thinks, "watermark" for text that is not the story but the website's (see below), "note" for a translator's or author's note.
 - "speaker": "${NARRATOR}" for narration, watermark and note lines; for dialogue and thought, the name of the character speaking or thinking.
 - "text": the words of the line, copied verbatim from the excerpt.
 - "direction" (optional): how the line is delivered, in a few words for the voice (see the rules).
+{{marker}}
 
 Text that is not the story still goes in the script, word for word, on lines of its own — it is marked, never left out:
 - "watermark": a website's boilerplate or anti-scraping text, such as "Read the latest chapters at example.com", "This chapter was stolen from …", a web address, or a request to support or vote. Such text is often dropped between paragraphs or into the middle of a sentence; give it its own line even there, so the sentence becomes a narration line, a watermark line and a narration line.
@@ -66,6 +157,9 @@ Besides the lines, the answer has:
 Answer with JSON only, in this shape:
 {"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","aliases":["the lamplighter"],"description":"A young lamplighter, quick and wary."}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."}`;
 
+/** The output format as almost every request is sent it, for the page to show under the editor. */
+export const OUTPUT_FORMAT = outputFormat(SCRIPT_MARKERS[0]);
+
 /** The prompt a library starts with, and what Reset puts back. */
 export const BUILT_IN_PROMPT: PromptTemplate = {
   system: `You turn an excerpt from a chapter of an English novel into an audiobook script.
@@ -76,7 +170,7 @@ Rules:
 3. Attribution tags such as "said Mara" or "he asked, frowning" are narration, read by the ${NARRATOR}; they are never part of the dialogue line.
 4. Work out who is speaking from the tags, the conversation's back-and-forth, and where the text before the excerpt left off. A character goes by one name all through the book: resolve pronouns, titles and nicknames ("the girl", "the Captain") to it, using the known cast's other names. When a speaker is one of the known cast, use exactly that name; otherwise use the name the text gives them (e.g. "Old Tobiah"). Use "Unknown" only when nothing says who speaks.
 5. Consecutive sentences of narration may share one line; start a new line at every change of speaker or type, and at paragraph breaks.
-6. A direction is all the voice engine is told besides the words, and it knows nothing of the story — no names, no plot — so describe the sound: tone, pace, volume, breath. Not "mocking his plan" but "lazy, open contempt"; not "shaking her head" but "flat, tired refusal". Base it on the prose (speech tags, punctuation, what the narrator says of the speaker); keep the same wording while a character's mood holds; leave it out for plain delivery. Never put cues such as [sighs] in "text".
+6. A direction is all the voice engine is told besides the words, and it knows nothing of the story — no names, no plot — so describe the sound: tone, pace, volume, breath. Not "mocking his plan" but "lazy, open contempt"; not "shaking her head" but "flat, tired refusal". Base it on the prose (speech tags, punctuation, what the narrator says of the speaker); keep the same wording while a character's mood holds; leave it out for plain delivery.
 
 Notes on this book: {{book.notes}}
 Notes for this model: {{endpoint.notes}}`,
@@ -148,6 +242,12 @@ export const PROMPT_TAGS: readonly PromptTag[] = [
     scope: "endpoint",
   },
   { name: "model", about: "The model ID the request goes to", scope: "endpoint" },
+  {
+    name: "expressions",
+    about:
+      "The expression tags your voices list on their Expressions tabs, comma-separated, for a prompt that asks for tags; empty leaves its line out",
+    scope: "endpoint",
+  },
 ];
 
 const TAG_NAMES = new Set(PROMPT_TAGS.map((t) => t.name));
@@ -184,6 +284,8 @@ export interface PromptVars {
   recap?: string;
   /** `notes` absent is none, as for an endpoint with nothing typed */
   endpoint: { name: string; model: string; notes?: string };
+  /** the tag names the speech endpoints list (`expressionNames`); absent is none */
+  expressions?: readonly string[];
 }
 
 const GENDER: Record<Gender, string> = { m: "male", f: "female", n: "non-binary", "?": "" };
@@ -246,6 +348,8 @@ function valueOf(name: string, vars: PromptVars): string | undefined {
       return vars.endpoint.model;
     case "endpoint.notes":
       return (vars.endpoint.notes ?? "").trim();
+    case "expressions":
+      return (vars.expressions ?? []).join(", ");
     default:
       return undefined;
   }
@@ -277,7 +381,7 @@ export function fill(text: string, vars: PromptVars): string {
 export function renderPrompt(template: PromptTemplate, vars: PromptVars): RenderedPrompt {
   const system = fill(template.system, vars);
   return {
-    system: system ? `${system}\n\n${OUTPUT_FORMAT}` : OUTPUT_FORMAT,
+    system: [system, outputFormat(scriptMarkerFor(vars.excerpt))].filter(Boolean).join("\n\n"),
     user: fill(template.user, vars),
   };
 }

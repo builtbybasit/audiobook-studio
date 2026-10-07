@@ -25,6 +25,7 @@ import {
   resolvePrompt,
 } from "@/lib/prompt";
 import { droppedNotes, withNotesLine, type NotesOwner } from "@/lib/promptNotes";
+import { expressionNames } from "@/lib/expressions";
 import { scriptParts } from "@/lib/scripting";
 import PromptEditor from "@/components/PromptEditor.vue";
 import PromptTrial from "@/components/PromptTrial.vue";
@@ -160,6 +161,7 @@ const preview = computed<RenderedPrompt | null>(() => {
       model: profile.value?.model ?? "",
       notes: profile.value?.prompt?.notes ?? "",
     },
+    expressions: expressionNames(endpointsStore.endpoints),
   });
 });
 const previewOf = computed(

@@ -52,13 +52,24 @@ describe("markers", () => {
       [at(SIGH, 0, { omitted: true, needsReview: true })],
       "{sigh!?} Go.",
     ],
+    ["a tag the scripting model wrote", "Go.", [at(SIGH, 0, { scripted: true })], "{sigh~} Go."],
+    [
+      "a scripted tag, omitted and awaiting review",
+      "Go.",
+      [at(SIGH, 0, { scripted: true, omitted: true, needsReview: true })],
+      "{sigh~!?} Go.",
+    ],
     ["a literal brace in the book", "[Skill {rank}] gained.", [], "[Skill {{rank}] gained."],
     ["a brace beside a tag", "{x}", [at(SIGH, 1)], "{{{sigh}x}"],
     [
       "a tag id made of marker characters",
       "Go.",
-      [at({ ...SIGH, id: "huh?" }, 0), at({ ...SIGH, id: "a}b{c!\\" }, 0, { omitted: true })],
-      "{huh\\?} {a\\}b\\{c\\!\\\\!} Go.",
+      [
+        at({ ...SIGH, id: "huh?" }, 0),
+        at({ ...SIGH, id: "a}b{c!\\" }, 0, { omitted: true }),
+        at({ ...SIGH, id: "so~" }, 0),
+      ],
+      "{huh\\?} {a\\}b\\{c\\!\\\\!} {so\\~} Go.",
     ],
   ])("%s", (_, text, expressions, marked) => {
     expect(writeMarkers(text, expressions)).toBe(marked);
@@ -70,6 +81,7 @@ describe("markers", () => {
         at: a.at,
         ...(a.omitted ? { omitted: true } : {}),
         ...(a.needsReview ? { needsReview: true } : {}),
+        ...(a.scripted ? { scripted: true } : {}),
       })),
     );
   });
@@ -137,6 +149,40 @@ describe("lines", () => {
       ["Whisper", "[whispering]", 102],
     ]);
     expect(back.every((s) => s.audio.status === "none")).toBe(true);
+  });
+
+  test("a tag the scripting model wrote comes back as one, its words matched to a voice only when sent", () => {
+    const s = fromFileLine(
+      { speaker: "Mara", type: "dialogue", text: "{growl~} Out.{sigh~!}" },
+      1,
+      TAGS,
+      (() => {
+        let n = 0;
+        return () => ++n;
+      })(),
+    );
+    expect(s.text).toBe("Out.");
+    expect(s.expressions).toEqual([
+      {
+        id: "growl",
+        label: "growl",
+        token: "",
+        kind: "sound",
+        annotationId: 1,
+        at: 0,
+        scripted: true,
+      },
+      {
+        id: "sigh",
+        label: "Sigh",
+        token: "",
+        kind: "sound",
+        annotationId: 2,
+        at: 4,
+        scripted: true,
+        omitted: true,
+      },
+    ]);
   });
 
   test("a tag the speaking endpoint does not offer is kept, awaiting review", () => {

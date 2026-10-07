@@ -37,10 +37,16 @@ const norm = (t: string): string => t.replace(/\s+/g, " ").trim();
 /** Whitespace-free, for comparing a line against two halves of itself. */
 const tight = (t: string): string => t.replace(/\s+/g, "");
 
-/** The expression annotations of a line, as they would be rendered: tag, position, omitted. */
+/**
+ * The expression annotations of a line, as they would be rendered: tag, position, written by the
+ * scripting model, omitted, awaiting review.
+ */
 const exprSignature = (s: Segment): string =>
   (s.expressions ?? [])
-    .map((a) => `${a.id}@${a.at}${a.omitted ? "!" : ""}${a.needsReview ? "?" : ""}`)
+    .map(
+      (a) =>
+        `${a.id}@${a.at}${a.scripted ? "~" : ""}${a.omitted ? "!" : ""}${a.needsReview ? "?" : ""}`,
+    )
     .join(",");
 
 /**

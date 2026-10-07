@@ -84,12 +84,14 @@ describe("only what can be said is sent", () => {
     expect(sayable(text, brackets).text).toBe(sent);
   });
 
-  test("a bracket is taken out only for a voice that reads it as a tag", () => {
-    const line = "Skyviper Archer (Common) [Level 2] <Rare>";
-    expect(sayable(line).text).toBe(line);
-    expect(sayable(line, ["round"]).text).toBe("Skyviper Archer Common [Level 2] <Rare>");
-    expect(sayable(line, ["square"]).text).toBe("Skyviper Archer (Common) Level 2 <Rare>");
-    expect(sayable(line, ["round", "angle"]).text).toBe("Skyviper Archer Common [Level 2] Rare");
+  test("square and curly brackets are never sent; round and angle only to a voice not taking them as tags", () => {
+    const line = "Skyviper Archer (Common) [Level 2] {Bound} <Rare>";
+    expect(sayable(line).text).toBe("Skyviper Archer (Common) Level 2 Bound <Rare>");
+    expect(sayable(line, ["square"]).text).toBe("Skyviper Archer (Common) Level 2 Bound <Rare>");
+    expect(sayable(line, ["round"]).text).toBe("Skyviper Archer Common Level 2 Bound <Rare>");
+    expect(sayable(line, ["round", "angle"]).text).toBe(
+      "Skyviper Archer Common Level 2 Bound Rare",
+    );
   });
 
   test("words, punctuation and the symbols a voice says are sent as written", () => {
@@ -98,7 +100,7 @@ describe("only what can be said is sent", () => {
       "'Cause I said so.",
       "The dogs' bowls.",
       "Don’t — “wait”, she said; it’s 9:45.",
-      "Luck: 12 (2+10)",
+      "Luck: 12 (2+10) <Rare>",
       "Strength +5, damage -10%, $3 or £2 & 94/100 at 30°.",
       "Café naïve, Zoë.",
     ])

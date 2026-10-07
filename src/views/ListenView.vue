@@ -37,6 +37,9 @@ import VariantC from "@/views/listen/prototype/VariantC.vue";
 import VariantD from "@/views/listen/prototype/VariantD.vue";
 import VariantE from "@/views/listen/prototype/VariantE.vue";
 import VariantF from "@/views/listen/prototype/VariantF.vue";
+import VariantG from "@/views/listen/prototype/VariantG.vue";
+import VariantH from "@/views/listen/prototype/VariantH.vue";
+import VariantI from "@/views/listen/prototype/VariantI.vue";
 import { protoLoop, protoStopAtEnd, type ListenCtx } from "@/views/listen/prototype/ctx";
 
 const castStore = useCastStore();
@@ -200,6 +203,9 @@ const VARIANTS = [
   { key: "D", name: "Deck: A with a three-row player" },
   { key: "E", name: "Capsule: A with a floating player" },
   { key: "F", name: "Headbar: A with the player on top" },
+  { key: "G", name: "Pill: E slimmer, grows upward" },
+  { key: "H", name: "Orb: E as a corner button" },
+  { key: "I", name: "Strip: E across the window's foot" },
 ];
 // PROTOTYPE stub: repeat one line — when the playhead leaves the repeated line, it goes back to
 // its start. Off when the chapter changes.
@@ -259,6 +265,9 @@ const ctx = computed((): ListenCtx => ({
   <VariantD v-else-if="variant === 'D'" :ctx="ctx" />
   <VariantE v-else-if="variant === 'E'" :ctx="ctx" />
   <VariantF v-else-if="variant === 'F'" :ctx="ctx" />
+  <VariantG v-else-if="variant === 'G'" :ctx="ctx" />
+  <VariantH v-else-if="variant === 'H'" :ctx="ctx" />
+  <VariantI v-else-if="variant === 'I'" :ctx="ctx" />
   <div v-else class="p-4">
     <div class="card mx-auto max-w-5xl">
       <header

@@ -114,7 +114,7 @@ function backToLine() {
 
     <!-- the capsule -->
     <div
-      class="pointer-events-none fixed inset-x-0 bottom-6 z-30 flex justify-center px-4 lg:pl-60"
+      class="pointer-events-none fixed inset-x-0 bottom-6 z-30 flex justify-center px-4 lg:pl-14"
     >
       <div
         class="group pointer-events-auto card w-full max-w-xl overflow-hidden shadow-2xl transition-all"
@@ -192,7 +192,7 @@ function backToLine() {
         </div>
         <!-- grown -->
         <div
-          class="grid grid-rows-[0fr] transition-[grid-template-rows] group-hover:grid-rows-[1fr] group-focus-within:grid-rows-[1fr] [.is-pinned&]:grid-rows-[1fr]"
+          class="grid grid-rows-[0fr] transition-[grid-template-rows] group-hover:grid-rows-[1fr] group-focus-within:grid-rows-[1fr] [.is-pinned_&]:grid-rows-[1fr]"
         >
           <div class="min-h-0 overflow-hidden">
             <div class="border-t border-zinc-200 px-3 pb-3 pt-2 dark:border-zinc-800">
@@ -288,7 +288,7 @@ function backToLine() {
     </div>
     <div
       v-if="!ctx.follow && ctx.isThis && ctx.p.playing"
-      class="fixed inset-x-0 bottom-24 z-30 flex justify-center lg:pl-60"
+      class="fixed inset-x-0 bottom-24 z-30 flex justify-center lg:pl-14"
     >
       <button
         class="rounded-full bg-zinc-900 px-3 py-1 text-xs text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900"

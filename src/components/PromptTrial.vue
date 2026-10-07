@@ -18,6 +18,7 @@ import { useScriptActivity } from "@/queries/scriptActivity";
 import { keyInPlace } from "@/services/endpointSettings";
 import { ApiError } from "@/services/http";
 import { isSimulated } from "@/lib/providers/simulated";
+import { piecesOf } from "@/lib/expressions";
 import { resolvePrompt, speakerLine } from "@/lib/prompt";
 import {
   fidelitySummary,
@@ -425,8 +426,14 @@ const colorOf = (name: string): string =>
               line.type === 'watermark' && 'text-zinc-400 line-through decoration-zinc-400/70',
               line.type === 'note' && 'italic text-zinc-500',
             ]"
-            >{{ line.text
-            }}<span v-if="line.direction" class="ml-1 italic text-zinc-500"
+            ><template v-for="(piece, p) in piecesOf(line.text, line.tags ?? [])" :key="p"
+              ><span
+                v-if="'tag' in piece"
+                class="expression-chip"
+                title="An expression tag the model wrote"
+                >{{ piece.tag.label }}</span
+              ><template v-else>{{ piece.text }}</template></template
+            ><span v-if="line.direction" class="ml-1 italic text-zinc-500"
               >— {{ line.direction }}</span
             ></span
           >

@@ -24,6 +24,7 @@ import type {
   VersionOrigin,
 } from "@/types";
 import { describeOrigin } from "@/lib/prompt";
+import { markSuffix } from "@/lib/scriptFile";
 import { chapterNarration } from "@/lib/runPlan";
 import { isSpoken } from "@/lib/siteText";
 import { clone } from "@/lib/utils";
@@ -43,10 +44,7 @@ const tight = (t: string): string => t.replace(/\s+/g, "");
  */
 const exprSignature = (s: Segment): string =>
   (s.expressions ?? [])
-    .map(
-      (a) =>
-        `${a.id}@${a.at}${a.scripted ? "~" : ""}${a.omitted ? "!" : ""}${a.needsReview ? "?" : ""}`,
-    )
+    .map((a) => `${a.id}@${a.at}${markSuffix(a)}`)
     .join(",");
 
 /**

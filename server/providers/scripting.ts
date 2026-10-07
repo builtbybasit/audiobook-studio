@@ -15,9 +15,10 @@ import type {
   PromptTemplate,
   ReasoningEffort,
   RenderedPrompt,
+  ScriptedTag,
   SegmentType,
 } from "@/types";
-import type { PromptCastMember, ScriptedTag } from "@/lib/prompt";
+import type { PromptCastMember } from "@/lib/prompt";
 import type { SentScript } from "~/providers/sent";
 import type { ProviderTarget } from "~/providers/target";
 

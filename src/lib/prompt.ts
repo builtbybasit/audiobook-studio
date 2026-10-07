@@ -33,6 +33,7 @@
 // without the template needing a conditional.
 import type {
   BookPrompt,
+  ScriptedTag,
   Gender,
   ProfilePrompt,
   PromptOrigin,
@@ -66,30 +67,38 @@ export const scriptMarkerFor = (excerpt: string): ScriptMarker | null =>
   SCRIPT_MARKERS.find(([open, close]) => !excerpt.includes(open) && !excerpt.includes(close)) ??
   null;
 
-/** An expression tag the model wrote: its words, and where in the line's text it goes. */
-export interface ScriptedTag {
-  label: string;
-  at: number;
-}
-
 /** What a tag's words may be: a few words, a sound or a delivery, nothing that is markup. */
 const TAG_WORDS = /^[\p{L}\p{N}'’ ,-]{1,60}$/u;
-const WORD_CHAR = /[\p{L}\p{N}]/u;
+/** what a word is made of, an apostrophe or a hyphen inside it included (`don't`, `well-known`) */
+const WORD_CHAR = /[\p{L}\p{N}'’-]/u;
 /** punctuation that closes onto the word before it, so a tag before it goes before the space */
 const CLOSING = /[,.;:!?…)\]’”"]/u;
 
+/** `tags` once `lead` characters are cut from the front of their line, now `length` long. */
+export const shiftTags = (tags: ScriptedTag[], lead: number, length: number): ScriptedTag[] =>
+  tags.map((t) => ({ ...t, at: Math.min(Math.max(t.at - lead, 0), length) }));
+
 /**
  * A line's text with the model's markers taken out, and where each one was. A tag goes between
- * words, never inside one: a marker in the middle of a word is moved to the word's start. A marker
- * that is not a few plain words is left in the text as it was written, where the word-for-word check
- * finds words that are not the excerpt's and refuses the answer.
+ * words, never inside one. A marker with no space on either side is told apart by the `excerpt`:
+ * when the two sides glued together are in it, the marker was cut into one word and moves to the
+ * word's start (`wo[[sigh]]rd`); when they are not, it stood for the space between two words,
+ * which is put back (`you,[[laughs]]didn't`). With no excerpt, it is read as one word. A marker
+ * that is not a few plain words is left in the text as written, for `answerOf` to refuse.
  */
 export function readScriptedTags(
   marked: string,
   marker: ScriptMarker | null,
+  excerpt?: string,
 ): { text: string; tags: ScriptedTag[] } {
   if (!marker) return { text: marked, tags: [] };
   const [open, close] = marker;
+  /** where the prose resumes after the marker ending at `i`, past any marker straight after it */
+  const prose = (i: number): number => {
+    while (marked.startsWith(open, i) && marked.indexOf(close, i) >= 0)
+      i = marked.indexOf(close, i) + close.length;
+    return i;
+  };
   let text = "";
   const tags: ScriptedTag[] = [];
   let i = 0;
@@ -108,42 +117,47 @@ export function readScriptedTags(
       continue;
     }
     const next = marked[i] ?? "";
+    const left = text.match(/\S*$/)![0];
+    const right = marked.slice(prose(i)).match(/^\S*/)![0];
     let at = text.length;
-    if (WORD_CHAR.test(text.at(-1) ?? "") && WORD_CHAR.test(next))
-      at = text.search(/[\p{L}\p{N}'’-]*$/u);
-    else if (/\s$/.test(text) && CLOSING.test(next)) at = (text = text.trimEnd()).length;
+    if (left && right) {
+      if (excerpt !== undefined && !excerpt.includes(left + right)) at = (text += " ").length;
+      else if (WORD_CHAR.test(left.at(-1)!) && WORD_CHAR.test(right[0]))
+        at = text.search(/[\p{L}\p{N}'’-]*$/u);
+    } else if (/\s$/.test(text) && CLOSING.test(next)) at = (text = text.trimEnd()).length;
     else if ((!text || /\s$/.test(text)) && /\s/.test(next)) i++;
     tags.push({ label, at });
   }
   text += marked.slice(i);
   const lead = text.length - text.trimStart().length;
   text = text.trim();
-  return {
-    text,
-    tags: tags.map((t) => ({ ...t, at: Math.min(Math.max(t.at - lead, 0), text.length) })),
-  };
+  return { text, tags: shiftTags(tags, lead, text.length) };
 }
 
 /**
  * What every answer must look like, with its tags in `marker`. Not editable: the parser and the
- * word-for-word check depend on it. Appended to the system prompt of every request.
+ * word-for-word check depend on it. Appended to the system prompt of every request. A cue written
+ * any other way is forbidden either way: nothing could tell it from the prose.
  */
 export const outputFormat = (marker: ScriptMarker | null): string =>
-  FORMAT.replace(
-    "{{marker}}\n",
+  FORMAT_TEMPLATE.replace(
+    TAGS_SLOT,
     marker
-      ? `- Expression tags, only when your instructions ask for them: a sound the voice should make — a sigh, a laugh — goes in the line's "text" where it is heard, as ${marker[0]}sigh${marker[1]}: plain words between ${marker[0]} and ${marker[1]}, whatever brackets the instructions show. A tag is not a word of the excerpt and never takes the place of one.\n`
-      : "",
+      ? `- Expression tags, only when your instructions ask for them: a sound the voice should make — a sigh, a laugh — goes in the line's "text" where it is heard, as ${marker[0]}sigh${marker[1]}: plain words between ${marker[0]} and ${marker[1]}, whatever brackets the instructions show. A tag is not a word of the excerpt and never takes the place of one. Never write a cue any other way, such as [sighs] or (laughs).\n`
+      : `- Never put a cue such as [sighs] in "text".\n`,
   );
 
-const FORMAT = `Output format (always required):
+/** Where `outputFormat` puts what it says of expression tags; not a prompt tag. */
+const TAGS_SLOT = "%EXPRESSION_TAGS%\n";
+
+const FORMAT_TEMPLATE = `Output format (always required):
 The script is a list of consecutive lines that together read out the excerpt from start to finish: every word of the excerpt exactly once, in the original order. Add nothing, drop nothing, summarise nothing, correct nothing, and keep the punctuation of the prose — an answer that leaves words out or adds any is refused.
 Each line has:
 - "type": "narration" for the narrator's prose, "dialogue" for words a character says aloud, "thought" for words a character thinks, "watermark" for text that is not the story but the website's (see below), "note" for a translator's or author's note.
 - "speaker": "${NARRATOR}" for narration, watermark and note lines; for dialogue and thought, the name of the character speaking or thinking.
 - "text": the words of the line, copied verbatim from the excerpt.
 - "direction" (optional): how the line is delivered, in a few words for the voice (see the rules).
-{{marker}}
+%EXPRESSION_TAGS%
 
 Text that is not the story still goes in the script, word for word, on lines of its own — it is marked, never left out:
 - "watermark": a website's boilerplate or anti-scraping text, such as "Read the latest chapters at example.com", "This chapter was stolen from …", a web address, or a request to support or vote. Such text is often dropped between paragraphs or into the middle of a sentence; give it its own line even there, so the sentence becomes a narration line, a watermark line and a narration line.

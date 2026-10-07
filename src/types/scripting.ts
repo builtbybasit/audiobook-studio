@@ -3,6 +3,7 @@
 // page shows before and after a run.
 import type { Gender, SplitMode } from "@/types/common";
 import type { PricingConfig, RateEstimate } from "@/types/pricing";
+import type { ScriptedTag } from "@/types/expression";
 import type { Segment, SegmentType } from "@/types/segment";
 
 /** What a profile's settled requests say it has been through (`scriptTelemetry`). */
@@ -210,6 +211,8 @@ export interface PromptTrialResult {
     speaker: string;
     text: string;
     direction?: string;
+    /** expression tags the model wrote into the line, as a run would keep them */
+    tags?: ScriptedTag[];
   }[];
   /** the word-for-word check a run would hold them to */
   fidelity: { words: number; missing: number; added: number; examples: string[]; ok: boolean };

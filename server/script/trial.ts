@@ -176,6 +176,7 @@ export async function tryPrompt(
       speaker: l.speaker,
       text: l.text,
       ...(l.direction ? { direction: l.direction } : {}),
+      ...(l.tags?.length ? { tags: l.tags } : {}),
     })),
     fidelity: fidelity(excerpt, lines),
     cast: answer.cast ?? [],

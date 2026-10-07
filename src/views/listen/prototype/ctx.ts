@@ -41,6 +41,7 @@ export interface ListenCtx {
   next: () => void;
   prev: () => void;
   cycleRate: () => void;
+  setRate: (r: number) => void;
   /** reading along follows the playhead; off once the person scrolls away */
   follow: boolean;
   setFollow: (v: boolean) => void;
@@ -54,6 +55,28 @@ export interface ProtoFlag {
 export const protoFlags = reactive(new Map<number, ProtoFlag>());
 /** stub: stop when the chapter ends instead of running on into the next */
 export const protoStopAtEnd = ref(false);
+/** stub: the line being repeated, or null — checking one delivery over and over */
+export const protoLoop = ref<number | null>(null);
+/** the clock shows time gone, or time left */
+export const protoTimeMode = ref<"elapsed" | "remaining">("elapsed");
+
+/** the clock as the person set it: elapsed, or remaining as a minus figure */
+export function clock(ctx: ListenCtx): string {
+  const pos = ctx.isThis ? ctx.p.pos : 0;
+  return protoTimeMode.value === "elapsed" ? fmt(pos) : `−${fmt(Math.max(0, ctx.total - pos))}`;
+}
+export const isMarked = (ctx: ListenCtx, s: Segment): boolean =>
+  protoFlags.has(s.id) || !!s.flag || !!ctx.heard[s.id]?.mismatch;
+/** the next marked line after (or before) the one playing, wrapping round */
+export function nextMarked(ctx: ListenCtx, d: 1 | -1): Segment | undefined {
+  const rows = ctx.rows;
+  const i = rows.findIndex((s) => s.id === ctx.current);
+  for (let n = 1; n <= rows.length; n++) {
+    const s = rows[(i + d * n + rows.length * n) % rows.length];
+    if (isMarked(ctx, s)) return s;
+  }
+  return undefined;
+}
 
 export const fmt = (s: number): string =>
   `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -89,7 +112,8 @@ export function speakersOf(ctx: ListenCtx): { name: string; n: number; color: st
 
 /**
  * Keys every variant answers: j/k next and previous line, , and . ten seconds back and forward,
- * f flags the line playing. Space is the app's already. ← → are the variant switcher's.
+ * f flags the line playing, r repeats it, [ and ] go to the previous and next marked line.
+ * Space is the app's already. ← → are the variant switcher's.
  */
 export function useProtoKeys(get: () => ListenCtx, flag: () => void): void {
   function onKey(e: KeyboardEvent) {
@@ -108,7 +132,12 @@ export function useProtoKeys(get: () => ListenCtx, flag: () => void): void {
     } else if (k === ".") {
       if (ctx.isThis) ctx.skip(10);
     } else if (k === "f") flag();
-    else return;
+    else if (k === "r") {
+      protoLoop.value = protoLoop.value == null ? (ctx.current ?? null) : null;
+    } else if (k === "[" || k === "]") {
+      const s = nextMarked(ctx, k === "]" ? 1 : -1);
+      if (s) ctx.listenFrom(s, 0);
+    } else return;
     e.preventDefault();
   }
   onMounted(() => window.addEventListener("keydown", onKey));

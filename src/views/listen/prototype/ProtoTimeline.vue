@@ -2,10 +2,19 @@
 // PROTOTYPE — throwaway. The stitched chapter as a scrubber: one block per clip coloured by speaker,
 // the silence between drawn grey, a tick where a line is flagged or was heard wrong, and the
 // playhead. A click listens from there.
-import { computed } from "vue";
-import { protoFlags, type ListenCtx } from "@/views/listen/prototype/ctx";
+import { computed, ref } from "vue";
+import { fmt, protoFlags, type ListenCtx } from "@/views/listen/prototype/ctx";
 
-const props = defineProps<{ ctx: ListenCtx; height?: string }>();
+const props = defineProps<{ ctx: ListenCtx; height?: string; preview?: boolean }>();
+/** under the pointer: where it would play from, and who is speaking there */
+const hover = ref<{ x: number; at: number; speaker: string } | null>(null);
+function move(e: MouseEvent) {
+  if (!props.preview) return;
+  const w = (e.currentTarget as HTMLElement).clientWidth;
+  const at = (e.offsetX / w) * props.ctx.total;
+  const clip = props.ctx.timeline.find((x) => at < x.end + x.gap);
+  hover.value = { x: (e.offsetX / w) * 100, at, speaker: clip?.s.speaker ?? "" };
+}
 const pos = computed(() => (props.ctx.isThis ? props.ctx.p.pos : 0));
 const pct = (t: number) => (props.ctx.total ? (t / props.ctx.total) * 100 : 0) + "%";
 function scrub(e: MouseEvent) {
@@ -17,12 +26,14 @@ function scrub(e: MouseEvent) {
 
 <template>
   <div
-    class="relative cursor-pointer overflow-hidden rounded"
+    class="relative cursor-pointer"
     :class="height ?? 'h-5'"
-    title="click to listen from here"
+    :title="preview ? undefined : 'click to listen from here'"
     @click="scrub"
+    @mousemove="move"
+    @mouseleave="hover = null"
   >
-    <div class="absolute inset-0 flex gap-px">
+    <div class="absolute inset-0 flex gap-px overflow-hidden rounded">
       <template v-for="x in ctx.timeline" :key="x.s.id">
         <div
           class="relative h-full"
@@ -56,5 +67,17 @@ function scrub(e: MouseEvent) {
       class="pointer-events-none absolute inset-y-0 w-0.5 bg-black dark:bg-white"
       :style="{ left: pct(pos) }"
     ></div>
+    <div
+      v-if="hover"
+      class="pointer-events-none absolute inset-y-0 w-px bg-violet-700 dark:bg-violet-300"
+      :style="{ left: hover.x + '%' }"
+    ></div>
+    <div
+      v-if="hover"
+      class="pointer-events-none absolute -top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded bg-zinc-900 px-1.5 py-0.5 font-mono text-[10px] text-white dark:bg-zinc-100 dark:text-zinc-900"
+      :style="{ left: hover.x + '%', transform: 'translate(-50%, -110%)' }"
+    >
+      {{ fmt(hover.at) }}<span v-if="hover.speaker" class="font-sans"> · {{ hover.speaker }}</span>
+    </div>
   </div>
 </template>

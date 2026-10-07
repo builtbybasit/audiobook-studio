@@ -34,7 +34,10 @@ import PrototypeSwitcher from "@/components/PrototypeSwitcher.vue";
 import VariantA from "@/views/listen/prototype/VariantA.vue";
 import VariantB from "@/views/listen/prototype/VariantB.vue";
 import VariantC from "@/views/listen/prototype/VariantC.vue";
-import { protoStopAtEnd, type ListenCtx } from "@/views/listen/prototype/ctx";
+import VariantD from "@/views/listen/prototype/VariantD.vue";
+import VariantE from "@/views/listen/prototype/VariantE.vue";
+import VariantF from "@/views/listen/prototype/VariantF.vue";
+import { protoLoop, protoStopAtEnd, type ListenCtx } from "@/views/listen/prototype/ctx";
 
 const castStore = useCastStore();
 const libraryStore = useLibraryStore();
@@ -76,7 +79,7 @@ const colorOf = (name: string): string =>
   castStore.charactersOf(bookId).find((c) => c.name === name)?.color ?? "#71717a";
 
 // ---- the player ----
-const { p, playQueue, seekTo, layout, now, skip, next, prev, cycleRate } = usePlayer();
+const { p, playQueue, seekTo, layout, now, skip, next, prev, cycleRate, setRate } = usePlayer();
 const queueId = computed(() => chapterQueueId(bookId, opened.value));
 const isThis = computed(() => p.id === queueId.value);
 /** the line under the playhead, while this chapter is the one loaded */
@@ -194,7 +197,19 @@ const VARIANTS = [
   { key: "A", name: "Dock: column + pinned transport" },
   { key: "B", name: "Stage: one line, no scrolling" },
   { key: "C", name: "Desk: column + chapter rail" },
+  { key: "D", name: "Deck: A with a three-row player" },
+  { key: "E", name: "Capsule: A with a floating player" },
+  { key: "F", name: "Headbar: A with the player on top" },
 ];
+// PROTOTYPE stub: repeat one line — when the playhead leaves the repeated line, it goes back to
+// its start. Off when the chapter changes.
+watch(current, (id, was) => {
+  const loop = protoLoop.value;
+  if (loop == null || id === loop || was !== loop) return;
+  const at = segmentStart(bookId, opened.value, loop);
+  if (at != null) seekTo(at);
+});
+watch(opened, () => (protoLoop.value = null));
 const variant = computed(() => String(route.query.variant ?? "0"));
 const timeline = computed(() =>
   chapterTimeline(segments.value, castStore.pacingOf(bookId), book.value),
@@ -231,6 +246,7 @@ const ctx = computed((): ListenCtx => ({
   next,
   prev,
   cycleRate,
+  setRate,
   follow: follow.value,
   setFollow: (v) => (follow.value = v),
 }));
@@ -240,6 +256,9 @@ const ctx = computed((): ListenCtx => ({
   <VariantA v-if="variant === 'A'" :ctx="ctx" />
   <VariantB v-else-if="variant === 'B'" :ctx="ctx" />
   <VariantC v-else-if="variant === 'C'" :ctx="ctx" />
+  <VariantD v-else-if="variant === 'D'" :ctx="ctx" />
+  <VariantE v-else-if="variant === 'E'" :ctx="ctx" />
+  <VariantF v-else-if="variant === 'F'" :ctx="ctx" />
   <div v-else class="p-4">
     <div class="card mx-auto max-w-5xl">
       <header

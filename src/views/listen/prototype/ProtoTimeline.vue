@@ -8,17 +8,24 @@ import { fmt, protoFlags, type ListenCtx } from "@/views/listen/prototype/ctx";
 const props = defineProps<{ ctx: ListenCtx; height?: string; preview?: boolean }>();
 /** under the pointer: where it would play from, and who is speaking there */
 const hover = ref<{ x: number; at: number; speaker: string } | null>(null);
+// Where along the bar the pointer is, 0…1. Measured from the bar's own edge: `offsetX` is relative
+// to the element under the pointer, which here is one of the thin clip blocks, so it would say the
+// pointer was a pixel or two in whichever block was hit.
+function frac(e: MouseEvent): number {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+}
 function move(e: MouseEvent) {
   if (!props.preview) return;
-  const w = (e.currentTarget as HTMLElement).clientWidth;
-  const at = (e.offsetX / w) * props.ctx.total;
+  const f = frac(e);
+  const at = f * props.ctx.total;
   const clip = props.ctx.timeline.find((x) => at < x.end + x.gap);
-  hover.value = { x: (e.offsetX / w) * 100, at, speaker: clip?.s.speaker ?? "" };
+  hover.value = { x: f * 100, at, speaker: clip?.s.speaker ?? "" };
 }
 const pos = computed(() => (props.ctx.isThis ? props.ctx.p.pos : 0));
 const pct = (t: number) => (props.ctx.total ? (t / props.ctx.total) * 100 : 0) + "%";
 function scrub(e: MouseEvent) {
-  const at = (e.offsetX / (e.currentTarget as HTMLElement).clientWidth) * props.ctx.total;
+  const at = frac(e) * props.ctx.total;
   if (props.ctx.isThis) props.ctx.seekTo(at);
   else props.ctx.playChapter(at);
 }

@@ -39,8 +39,8 @@ onUnmounted(() => window.removeEventListener("keydown", onKey));
         ◀
       </button>
       <span
-        ><b>{{ variants[i].key }}</b>&nbsp;
-        <span class="text-zinc-400">{{ i + 1 }}/{{ variants.length }}</span></span
+        ><b>{{ variants[i].key }}</b
+        >&nbsp; <span class="text-zinc-400">{{ i + 1 }}/{{ variants.length }}</span></span
       >
       <button class="rounded px-1.5 hover:bg-white/15" title="next variant (→)" @click="go(1)">
         ▶

@@ -54,6 +54,8 @@ export type NoticeKind =
   | "translator"
   | "mixed"
   | "title"
+  | "empty"
+  | "front"
   | "unreadable";
 
 /**
@@ -62,7 +64,7 @@ export type NoticeKind =
  * Nothing in the demo reads a file, so nothing in it can fail to. Writing a fixture body for one
  * would be inventing a failure the demo cannot actually produce.
  */
-export type DemoNoticeKind = Exclude<NoticeKind, "unreadable">;
+export type DemoNoticeKind = Exclude<NoticeKind, "unreadable" | "empty" | "front">;
 
 /**
  * A suggestion attached to a chapter when the EPUB was read: this looks like a notice rather than
@@ -70,7 +72,7 @@ export type DemoNoticeKind = Exclude<NoticeKind, "unreadable">;
  * chapter the user looked at and kept records that in `Chapter.kept`.
  */
 export interface ChapterNote {
-  /** skip: the whole chapter reads as a notice; review: story and a note together, or a title that only looks like one */
+  /** skip: the whole chapter reads as a notice, or is a cover or an empty page; review: story and a note together, or a title that only looks like one */
   verdict: "skip" | "review";
   kind: NoticeKind;
   /** the one line shown beside the title, e.g. “Possible hiatus announcement” */

@@ -32,11 +32,18 @@ export function chapterParts(
 ): ContentPart[] {
   const note = chapter?.note;
   const variant = note?.variant ?? chId;
-  // `unreadable` is the import saying it could not read the file. Nothing in the demo reads one, so
-  // there is no notice body to show and the chapter reads as the story it stands in for.
+  // `unreadable` is the import saying it could not read the file, and `empty` and `front` are pages
+  // with nothing to narrate. Nothing in the demo reads a file, so none has a notice body to show
+  // and the chapter reads as the story it stands in for.
   // The seeded world's prose is plain, and plain prose is valid Markdown that parses to itself —
   // so the review draws both through one path rather than branching on where the text came from.
-  if (!note || note.kind === "title" || note.kind === "unreadable")
+  if (
+    !note ||
+    note.kind === "title" ||
+    note.kind === "unreadable" ||
+    note.kind === "empty" ||
+    note.kind === "front"
+  )
     return [{ text: storyOf(bookId, chId, prose) }];
   if (note.kind === "mixed") {
     const noteText = noticeBody("mixed", variant);

@@ -90,6 +90,14 @@ const KINDS: { kind: NoticeKind; test: RegExp; saw: string }[] = [
 const NOTICE_TITLE =
   /^\s*(?:author'?s? note|a? ?note (?:from|to) (?:the )?(?:author|readers?)|not a chapter|announcement|notice|update|hiatus|afterword|translator'?s? notes?|schedule|please vote|vote reminder|support|thank you|sorry|apolog\w*)\b/i;
 
+/**
+ * Titles of the pages a book carries before and after its story: the cover, the title page, the
+ * copyright, the table of contents, a dedication. A reader's EPUB has them as spine items like
+ * any chapter, and an audiobook has no use for a page that says "Cover".
+ */
+const FRONT_TITLE =
+  /^\s*(?:cover|title ?page|copyright|colou?phon|contents|table of contents|toc|dedication|epigraph|acknowledg(?:e)?ments|about the author|also by\b)[\s.:!]*$/i;
+
 /** Phrases that address the reader rather than narrate to them. */
 const ADDRESS =
   /\bthank you for reading\b|\bthanks for reading\b|\bsorry for the\b|\bnext chapter\b|\bthis chapter\b|\bthe comments\b|\bdear readers?\b|\bhi everyone\b|\bsee you next\b|\benjoy(?: the chapter)?!|\benjoy the chapter\b|\bplease read\b|\bmy (?:patreon|discord)\b/i;
@@ -164,6 +172,8 @@ const REASON: Record<NoticeKind, string> = {
   translator: "Translator’s notes",
   mixed: "Author note and story together",
   title: "Title looks like a notice, text reads as story",
+  empty: "Nothing to read on this page",
+  front: "Cover or front matter, not story",
 };
 
 /** Text reduced to what it says, so two postings of the same notice compare equal. */
@@ -226,9 +236,22 @@ export function detectNotices(chapters: readonly ParsedChapter[]): (ChapterNote 
         `the book lists it as “${title}”`,
       ]);
 
-    // Nothing to read, and nothing went wrong reading it: an empty page in the file. Not a notice —
-    // saying "notice" about it would hide a blank chapter behind a suggestion to skip.
-    if (!s.words) return null;
+    // The cover, the title page, the copyright page: a spine item with nothing to narrate. Judged
+    // on the title, so a cover that carries the book's name and author is still a cover, and
+    // only while short — a chapter someone titled "Contents" is story if there is a chapter's
+    // worth of it.
+    const front = FRONT_TITLE.test(straight(title)) && s.words < SHORT_WORDS && !s.hasDialogue;
+    if (front)
+      return note("front", [
+        `the title is “${title.trim()}”`,
+        s.words ? `${s.words} words` : "no text at all",
+      ]);
+
+    // Nothing to read, and nothing went wrong reading it: an empty page in the file. Suggested
+    // for skipping with the reason in plain sight, so a blank chapter is never narrated as a
+    // silence and never hidden behind the word "notice" either.
+    if (!s.words)
+      return note("empty", ["no text at all", `the book lists it as “${title.trim()}”`]);
 
     // ---- a short chapter that is all notice ----
     const shortNotice =

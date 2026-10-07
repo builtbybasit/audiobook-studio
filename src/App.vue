@@ -183,7 +183,7 @@ const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
         <BookTabs />
         <CommandPalette ref="palette" />
         <ShortcutsDialog v-model:open="shortcuts" />
-        <main class="min-h-0 flex-1 overflow-auto">
+        <main class="relative min-h-0 flex-1 overflow-auto">
           <!-- Stage views read `:bookId` once, at setup. Going from one book's stage straight to the
                same stage of another (the command palette, the Export demo) reuses the instance and
                would leave them pointed at the book you left, so the book id is the view's identity. -->

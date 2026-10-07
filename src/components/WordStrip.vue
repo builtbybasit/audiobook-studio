@@ -18,6 +18,8 @@ const props = withDefaults(
     gaps?: boolean;
     expressions?: ExpressionAnnotation[];
     issueOf?: (id: number) => string | undefined;
+    /** why a scripted tag is left out for this voice, if it is: drawn dimmed, never as an issue */
+    skippedOf?: (id: number) => string | undefined;
     /** the chip that is being moved: drawn hollow, since its place is what is being chosen */
     movingId?: number | null;
     quote?: "dialogue" | "thought" | "";
@@ -28,6 +30,7 @@ const props = withDefaults(
     gaps: true,
     expressions: () => [],
     issueOf: () => undefined,
+    skippedOf: () => undefined,
     movingId: null,
     quote: "",
     verb: "",
@@ -152,12 +155,19 @@ const label = (at: number) =>
               ? 'expression-chip-omitted'
               : issueOf(p.a.annotationId)
                 ? 'expression-chip-issue'
-                : '',
+                : skippedOf(p.a.annotationId)
+                  ? 'expression-chip-skipped'
+                  : '',
         ]"
         :title="
           p.a.omitted
             ? `${p.a.label} — omitted from narration`
-            : (issueOf(p.a.annotationId) ?? `${p.a.label} · ${p.a.token}`)
+            : (issueOf(p.a.annotationId) ??
+              (skippedOf(p.a.annotationId)
+                ? `${p.a.label} — left out: ${skippedOf(p.a.annotationId)}`
+                : p.a.token
+                  ? `${p.a.label} · ${p.a.token}`
+                  : p.a.label))
         "
         @click.stop="emit('chip', p.a.annotationId, $event.currentTarget as HTMLElement)"
       >

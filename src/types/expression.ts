@@ -30,4 +30,10 @@ export interface ExpressionAnnotation extends ExpressionTag {
   at: number;
   omitted?: boolean;
   needsReview?: boolean;
+  /**
+   * Written by the scripting model rather than placed by a person: plain words, put in the voice's
+   * own bracket when sent, and left out quietly — never holding the line — where the voice cannot
+   * take it.
+   */
+  scripted?: boolean;
 }

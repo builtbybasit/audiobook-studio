@@ -247,6 +247,10 @@ body {
 .expression-chip-omitted {
   @apply border-zinc-200 bg-transparent text-zinc-400 line-through dark:border-zinc-700;
 }
+/* a tag the scripting model wrote that this voice cannot take: left out, quietly */
+.expression-chip-skipped {
+  @apply border-dashed border-zinc-300 bg-transparent text-zinc-400 dark:border-zinc-600;
+}
 .expression-chip-moving {
   @apply border-dashed opacity-50;
 }

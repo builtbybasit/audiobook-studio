@@ -16,6 +16,7 @@ import {
   sampleVars,
   unplacedNotes,
 } from "@/lib/prompt";
+import { expressionNames } from "@/lib/expressions";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 import {
@@ -68,6 +69,7 @@ const preview = computed(() => {
   return renderPrompt(draft.value, {
     ...vars,
     endpoint: { ...vars.endpoint, notes: p?.prompt?.notes },
+    expressions: expressionNames(endpointsStore.endpoints),
   });
 });
 

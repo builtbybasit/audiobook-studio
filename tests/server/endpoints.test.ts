@@ -30,6 +30,8 @@ import { expressionParts, expressionPlan } from "@/lib/expressions";
 import { makeEndpoints } from "~/demo/seed/fixtures/endpoints";
 import { makeProfiles } from "~/demo/seed/fixtures/profiles";
 import { readEndpoint } from "~/db/endpoints";
+import { fakeScriptingProvider } from "~/providers/fake";
+import type { ScriptingProvider } from "~/providers/scripting";
 import { fakeSpeechProvider, SAMPLE_RATE } from "~/providers/fakeSpeech";
 import type { SpeechInput, SpeechProvider } from "~/providers/speech";
 import { readWavHeader } from "~/providers/wavEncoder";
@@ -474,6 +476,52 @@ describe("a line sent through its endpoint", () => {
     // a line without tags records none, and is sent as written
     expect(segments[1].audio.expressionSignature).toBeUndefined();
     expect(provider.sent[1].text).toBe(segments[1].text);
+  });
+
+  test("tags the scripting model wrote go out as the voice lists them, and one it does not list is left out without holding the line", async () => {
+    const inner = fakeScriptingProvider();
+    const tagging: ScriptingProvider = {
+      name: "Tagging (test)",
+      async script(input) {
+        const answer = await inner.script(input);
+        const [first, ...rest] = answer.lines;
+        const tags = [
+          { label: "laughs", at: 0 },
+          { label: "sigh", at: 0 },
+        ];
+        return { ...answer, lines: [{ ...first, tags }, ...rest] };
+      },
+    };
+    const provider = recording();
+    const api = testApi({ speech: provider, scripting: tagging });
+    await save(api, { endpoints: [laughing()] });
+    const id = await voiced(api);
+    const [line] = (await scriptOf(api, id)).segments;
+    expect(line.expressions).toEqual([
+      {
+        id: "laughs",
+        label: "laughs",
+        token: "",
+        kind: "sound",
+        annotationId: 1,
+        at: 0,
+        scripted: true,
+      },
+      {
+        id: "sigh",
+        label: "sigh",
+        token: "",
+        kind: "sound",
+        annotationId: 2,
+        at: 0,
+        scripted: true,
+      },
+    ]);
+    await narrate(api, id, [1]);
+
+    expect(provider.sent[0].text).toBe(`[laughs] ${line.text}`);
+    const { segments } = await scriptOf(api, id);
+    expect(segments.every((s) => s.audio.status === "done")).toBe(true);
   });
 
   test("a line whose tags its endpoint cannot say is held back with the reason, and the rest are sent", async () => {

@@ -101,6 +101,7 @@ export const SegmentSchema = v.looseObject({
         at: v.pipe(v.number(), v.integer(), v.minValue(0)),
         omitted: v.optional(v.boolean()),
         needsReview: v.optional(v.boolean()),
+        scripted: v.optional(v.boolean()),
       }),
     ),
   ),

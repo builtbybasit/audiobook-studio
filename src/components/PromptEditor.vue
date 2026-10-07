@@ -19,6 +19,10 @@ import {
   promptWarnings,
 } from "@/lib/prompt";
 import type { PromptTemplate, RenderedPrompt } from "@/types";
+import { UiHint } from "@/ui";
+
+/** written out here, where the template would read a literal one as its own */
+const EXPRESSIONS_TAG = "{{expressions}}";
 
 const props = withDefaults(
   defineProps<{
@@ -198,6 +202,15 @@ const FIELDS = [
       <p class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
         The output format can’t be edited: the app reads the answer as this JSON and checks it word
         for word against the text, so a prompt without it would fail every request.
+      </p>
+      <p class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
+        Expression tags are written only when the prompt asks for them.
+        <UiHint label="asking for expression tags"
+          >Add a line such as “Add a tag for a sigh, laugh or gasp the prose shows, at most one per
+          line, from: <code class="font-mono">{{ EXPRESSIONS_TAG }}</code
+          >”. The model writes plain words; each voice gets them in its own brackets, and a tag a
+          voice can’t take is left out.</UiHint
+        >
       </p>
       <pre
         class="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-white p-2 font-mono text-[11px] leading-relaxed text-zinc-600 dark:bg-zinc-950/50 dark:text-zinc-300"

@@ -23,7 +23,15 @@
 import * as v from "valibot";
 
 import type { EndpointProbe, Gender, RenderedPrompt, SegmentType, TokenUsage } from "@/types";
-import { BUILT_IN_PROMPT, renderPrompt, sampleVars, type PromptCastMember } from "@/lib/prompt";
+import {
+  BUILT_IN_PROMPT,
+  readScriptedTags,
+  renderPrompt,
+  sampleVars,
+  scriptMarkerFor,
+  type PromptCastMember,
+  type ScriptMarker,
+} from "@/lib/prompt";
 import { NARRATOR } from "@/lib/cast";
 import { wordsOf } from "@/lib/gaps";
 import { normalizeUsage } from "@/lib/pricing";
@@ -261,8 +269,9 @@ function typeOf(said: string, speaker: string): SegmentType {
 /** Types a character speaks, whose words a model may have left in their quotation marks. */
 const voiced = (type: SegmentType): boolean => type === "dialogue" || type === "thought";
 
-/** Quotation marks a model left around a spoken line. */
+/** Quotation marks a model left around a spoken line, and the space after the opening ones. */
 const WRAPPING_QUOTES = /^["“”]+|["“”]+$/gu;
+const OPENING_QUOTES = /^["“”]+\s*/u;
 
 /** A fenced or chatty answer's JSON object: the span from its first `{` to its last `}`. */
 function jsonIn(content: string): unknown {
@@ -273,8 +282,15 @@ function jsonIn(content: string): unknown {
   return JSON.parse(unfenced.slice(from, to + 1));
 }
 
-/** The script an answer's content holds, normalised; throws a readable `ProviderError` otherwise. */
-export function answerOf(content: string, who: string): ScriptAnswer {
+/**
+ * The script an answer's content holds, normalised, with the expression tags written in `marker`
+ * read out of each line's text; throws a readable `ProviderError` otherwise.
+ */
+export function answerOf(
+  content: string,
+  who: string,
+  marker: ScriptMarker | null = null,
+): ScriptAnswer {
   let parsed: v.InferOutput<typeof Answer>;
   try {
     const read = v.safeParse(Answer, jsonIn(content));
@@ -297,8 +313,12 @@ export function answerOf(content: string, who: string): ScriptAnswer {
   for (const l of parsed.lines) {
     const speaker = (l.speaker ?? "").trim();
     const type = typeOf(l.type, speaker);
-    let text = (l.text ?? "").replace(/\s+/g, " ").trim();
-    if (voiced(type)) text = text.replace(WRAPPING_QUOTES, "").trim();
+    let { text, tags } = readScriptedTags((l.text ?? "").replace(/\s+/g, " ").trim(), marker);
+    if (voiced(type)) {
+      const lead = text.match(OPENING_QUOTES)?.[0].length ?? 0;
+      text = text.replace(WRAPPING_QUOTES, "").trim();
+      tags = tags.map((t) => ({ ...t, at: Math.min(Math.max(t.at - lead, 0), text.length) }));
+    }
     // a line with no words — a stray dash, an ellipsis — has nothing to read out
     if (!wordsOf(text).length) continue;
     const direction = (l.direction ?? "").trim();
@@ -308,6 +328,7 @@ export function answerOf(content: string, who: string): ScriptAnswer {
       speaker: voiced(type) ? speaker || UNKNOWN_SPEAKER : NARRATOR,
       text,
       ...(direction ? { direction } : {}),
+      ...(tags.length ? { tags } : {}),
     });
   }
   const recap = typeof parsed.recap === "string" ? oneLine(parsed.recap) : "";
@@ -446,7 +467,8 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     const content = choice.message?.content ?? "";
     if (!content.trim())
       throw new ProviderError(`${target.name} answered with no script at all`, status, false);
-    const answer = answerOf(content, target.name);
+    // the excerpt names the marker, as it did for the prompt this answers
+    const answer = answerOf(content, target.name, scriptMarkerFor(text));
     const { lines } = answer;
     if (!lines.length)
       throw new ProviderError(`${target.name} answered with a script of no lines`, status, false);

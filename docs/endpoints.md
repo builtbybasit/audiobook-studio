@@ -338,7 +338,9 @@ characters; empty for a chapter's first request), `{{part}}` / `{{parts}}`, `{{c
 `{{chapter.number}}`, `{{previous.recap}}` (where the chapter before left off, as its model put
 it), `{{cast}}` (the known speakers' names, each with gender and other names), `{{cast.details}}`
 (one line per speaker, the description too), `{{book.title}}`, `{{book.author}}`,
-`{{book.notes}}`, `{{endpoint.name}}`, `{{endpoint.notes}}` and `{{model}}`. A line whose tags all come out empty is left out, so
+`{{book.notes}}`, `{{endpoint.name}}`, `{{endpoint.notes}}`, `{{model}}` and `{{expressions}}`
+(the tag names your speech endpoints list on their confirmed Expressions tabs, for a prompt that
+asks for [expression tags](audio.md#model-specific-expressions)). A line whose tags all come out empty is left out, so
 `Notes on this book: {{book.notes}}` vanishes for a book without notes. An unknown tag, a missing or
 repeated `{{excerpt}}` or a message over 20,000 characters stops the save. A tag that changes every
 chapter is allowed in the _system_ prompt with a warning: it stops the provider caching the system
@@ -348,7 +350,10 @@ prompt, and cached input is cheaper.
 and its lines held word for word against the prose, so the format and the verbatim rule are added
 after the system prompt of every request; the editor shows them read-only. `cast` and `recap` are
 what a run [remembers between requests](scripting.md#what-a-run-remembers), and a prompt trial
-shows both under the lines.
+shows both under the lines. The format also says how to write an expression tag — `[[sigh]]`, or
+`<<sigh>>` for an excerpt that already has `[[` or `]]` in it — but only when the instructions ask
+for tags; the built-in prompt does not, so a prompt that wants them says so, e.g. "Add a tag for
+a sigh, laugh or gasp the prose shows, at most one per line, from: {{expressions}}".
 
 A run snapshots the resolved prompt and the book's notes when it is queued, so editing a prompt
 mid-run changes only later runs. The estimate and the budget hold price the prompt's real length.

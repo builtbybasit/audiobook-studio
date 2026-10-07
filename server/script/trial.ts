@@ -26,10 +26,11 @@ import {
   resolvePrompt,
   type PromptVars,
 } from "@/lib/prompt";
+import { expressionNames } from "@/lib/expressions";
 import { tokenEstimate } from "@/lib/scripting";
 import { readSpeakers } from "~/db/cast";
 import type { Db } from "~/db/client";
-import { readProfiles } from "~/db/endpoints";
+import { readEndpoints, readProfiles } from "~/db/endpoints";
 import * as library from "~/db/library";
 import { readLibraryPrompt } from "~/db/settings";
 import { plainText } from "~/epub/markdown";
@@ -107,6 +108,7 @@ export async function tryPrompt(
     before: beforeOf(chunks, part - 1),
     recap: library.previousRecap(db, bookId, request.chapterId),
     endpoint: { name: profile.name, model: profile.model, notes: layers.profile?.notes ?? "" },
+    expressions: expressionNames(readEndpoints(db)),
   };
   const prompt = renderPrompt(template, vars);
 

@@ -174,6 +174,25 @@ describe("a request", () => {
     expect((sent[0].body.messages as { content: string }[])[0].content).toContain("as [[sigh]]");
   });
 
+  test.each([
+    ["half a marker", "“[[sigh] Come in,”"],
+    ["a marker that is not plain words", "“[[*sigh*]] Come in,”"],
+    ["a marker of no words", "“[[...]] Come in,”"],
+  ])("refuses an answer with %s, which could only be read out", async (_, said) => {
+    const { provider } = gateway(() =>
+      completion(
+        fenced([
+          { type: "narration", speaker: "Narrator", text: "The door opened." },
+          { type: "dialogue", speaker: "Mara", text: said },
+          { type: "narration", speaker: "Narrator", text: "said Mara softly." },
+        ]),
+      ),
+    );
+    await expect(provider.script(input())).rejects.toThrow(
+      "Gateway wrote an expression tag that could not be read",
+    );
+  });
+
   test("tells an excerpt that has [[ in it another marker, and leaves its [[ ]] as prose", async () => {
     const text = "The screen read [[Level Up]]. “Come in,” said Mara.";
     const { sent, provider } = gateway(() =>

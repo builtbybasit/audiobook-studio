@@ -30,6 +30,9 @@ describe("the marker", () => {
     expect(sent("Come in.")).toContain("as [[sigh]]: plain words between [[ and ]]");
     expect(sent("[[System]] Come in.")).toContain("as <<sigh>>: plain words between << and >>");
     expect(sent("[[ << {|")).not.toContain("Expression tags");
+    // a cue written any other way is still forbidden, marker or none
+    expect(sent("Come in.")).toContain("Never write a cue any other way, such as [sighs]");
+    expect(sent("[[ << {|")).toContain('Never put a cue such as [sighs] in "text".');
     expect(BUILT_IN_PROMPT.system).not.toContain("[sighs]");
   });
 
@@ -50,9 +53,22 @@ describe("a line's tags, read out of its text", () => {
     ["Come in. [[sigh]]", "Come in.", [8]],
     ["you,[[laughs]] didn't", "you, didn't", [4]],
     ["wo[[sigh]]rd", "word", [0]],
+    ["don'[[sigh]]t go", "don't go", [0]],
+    ["a well-[[sigh]]known one", "a well-known one", [2]],
     ["Fine. [[sigh]][[laughs]] Go.", "Fine. Go.", [6, 6]],
   ])("%p is %p with tags at %p", (marked, text, ats) => {
     const read = readScriptedTags(marked, SQUARE);
+    expect(read.text).toBe(text);
+    expect(read.tags.map((t) => t.at)).toEqual(ats);
+  });
+
+  test.each([
+    ["you,[[laughs]]didn't", "Not you, didn't you?", "you, didn't", [5]],
+    ["Hello[[sigh]]world.", "Hello world.", "Hello world.", [6]],
+    ["Hel[[sigh]]lo world.", "Hello world.", "Hello world.", [0]],
+    ["Go.[[sigh]][[laughs]]Now.", "Go. Now.", "Go. Now.", [4, 4]],
+  ])("with no space either side, %p against %p is %p, tags at %p", (marked, excerpt, text, ats) => {
+    const read = readScriptedTags(marked, SQUARE, excerpt);
     expect(read.text).toBe(text);
     expect(read.tags.map((t) => t.at)).toEqual(ats);
   });
@@ -122,6 +138,24 @@ describe("what a voice is sent", () => {
       expect(plan.issues).toEqual([]);
       expect(plan.skipped.map((s) => s.label)).toEqual(["sigh", "laughs"]);
     }
+  });
+
+  test("inside a dictionary entry of several words, it goes before the entry; placed by hand, it asks", () => {
+    const lexicon = [{ id: 1, term: "Lord Voldemort", say: "Lord Vol-de-more", enabled: true }];
+    const read = readScriptedTags("Lord Volde[[sigh]]mort smiled.", SQUARE);
+    const scripted = { text: read.text, expressions: [scriptedAnnotation(read.tags[0], 1)] };
+    const plan = expressionPlan(scripted, voice(["square"], true), lexicon);
+    expect(plan.text).toBe("[sigh] Lord Vol-de-more smiled.");
+    expect(plan.skipped).toEqual([]);
+    const placed = { ...scripted.expressions[0], scripted: undefined, token: "[sigh]" };
+    const held = expressionPlan(
+      { text: read.text, expressions: [placed] },
+      voice(["square"], true),
+      lexicon,
+    );
+    expect(held.issues.map((i) => i.reason)).toEqual([
+      "Move outside this pronunciation replacement.",
+    ]);
   });
 
   test("a tag placed by hand that the voice cannot take still asks for review", () => {

@@ -4,8 +4,9 @@
 // text, and an offset is silently wrong after the first hand edit — which is exactly what a file
 // someone opens in an editor is for. So in the file a tag is a marker at its place: `{sigh}`, with
 // `{sigh!}` for one that is omitted, `{sigh?}` for one awaiting review and `{sigh~}` for one the
-// scripting model wrote, the suffixes `exprSignature` already keys on. The name is the tag's shared `id`, never a provider's token:
-// each provider spells tags its own way, and the file must not care which one rendered it.
+// scripting model wrote (`markSuffix`, which the history's signature uses too). The name is the
+// tag's shared `id`, never a provider's token: each provider spells tags its own way, and the file
+// must not care which one rendered it.
 //
 // Pure, and in `src/lib` rather than on the server, so the browser can read a chapter file with
 // the same scanner the server imports it with.
@@ -45,8 +46,15 @@ export class MarkerError extends Error {
  */
 const escapeId = (id: string): string => id.replace(/[\\{}!?~]/g, "\\$&");
 
-/** The suffixes a marker may carry, in the order `exprSignature` writes them. */
-const suffix = (a: { scripted?: boolean; omitted?: boolean; needsReview?: boolean }): string =>
+/**
+ * The suffixes a marker carries, `~!?`: written by the scripting model, omitted, awaiting review.
+ * The history's signature of a line writes them the same way.
+ */
+export const markSuffix = (a: {
+  scripted?: boolean;
+  omitted?: boolean;
+  needsReview?: boolean;
+}): string =>
   `${a.scripted ? "~" : ""}${a.omitted ? "!" : ""}${a.needsReview ? "?" : ""}`;
 
 /**
@@ -73,7 +81,7 @@ export function writeMarkers(text: string, expressions?: readonly ExpressionAnno
   const escape = (s: string): string => s.replaceAll("{", "{{");
   for (const a of marks) {
     const at = Math.max(from, Math.min(a.at, text.length));
-    out += escape(text.slice(from, at)) + `{${escapeId(a.id)}${suffix(a)}}`;
+    out += escape(text.slice(from, at)) + `{${escapeId(a.id)}${markSuffix(a)}}`;
     if (startsWord(text.slice(0, at))) out += " ";
     from = at;
   }
@@ -168,11 +176,11 @@ export function toFileLine(s: Segment): ScriptFileLine {
  *
  * A tag the endpoint does not offer is still kept — dropping it would lose a decision someone made
  * — but it arrives needing review, the way a change of model already leaves one, with its id for a
- * label until someone looks. A tag the scripting model wrote (`{sigh~}`) comes back as one, its plain
+ * label until someone looks. A tag the scripting model wrote (`{sigh~}`) comes back as one: plain
  * words matched to a voice only when the line is sent, and left out quietly where the voice cannot
- * take it, as it was before it left. Throws `MarkerError` for a line whose markers do not parse. A line of
- * site text or a note is the Narrator's whoever the file names, as it is when a model or a person
- * marks one, so a hand-edited file cannot bring a speaker into the cast that reads nothing.
+ * take them, as before it left. Throws `MarkerError` for a line whose markers do not parse. A line
+ * of site text or a note is the Narrator's whoever the file names, as it is when a model or a
+ * person marks one, so a hand-edited file cannot bring a speaker into the cast that reads nothing.
  */
 export function fromFileLine(
   line: ScriptFileLine,

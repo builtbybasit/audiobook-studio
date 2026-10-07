@@ -6,6 +6,7 @@
 //
 // Keyboard: the strip takes focus as a whole; ← → walk the gaps, Enter picks, Escape cancels.
 import { computed, ref, watch } from "vue";
+import { chipLook } from "@/lib/expressions";
 import { gapLabel, gapsOf, tokensOf } from "@/lib/gaps";
 import type { ExpressionAnnotation } from "@/types";
 
@@ -46,7 +47,7 @@ const emit = defineEmits<{
 type Piece =
   | { kind: "gap"; at: number; strong: boolean; edge?: "start" | "end" }
   | { kind: "word"; text: string }
-  | { kind: "chip"; a: ExpressionAnnotation };
+  | { kind: "chip"; a: ExpressionAnnotation; look: ReturnType<typeof chipLook>; review: boolean };
 
 const gapList = computed(() => gapsOf(props.text, props.mode));
 /** Words, gaps and chips in reading order. A chip sits before the gap it is anchored at. */
@@ -57,7 +58,12 @@ const pieces = computed<Piece[]>(() => {
   );
   let c = 0;
   const flushChips = (upTo: number) => {
-    while (c < chips.length && chips[c].at <= upTo) out.push({ kind: "chip", a: chips[c++] });
+    for (; c < chips.length && chips[c].at <= upTo; c++) {
+      const a = chips[c];
+      const issue = props.issueOf(a.annotationId);
+      const look = chipLook(a, issue, props.skippedOf(a.annotationId));
+      out.push({ kind: "chip", a, look, review: !!issue });
+    }
   };
   const tokens = tokensOf(props.text);
   const gapAt = new Map(gapList.value.map((g) => [g.at, g]));
@@ -148,30 +154,11 @@ const label = (at: number) =>
         v-else-if="p.kind === 'chip'"
         type="button"
         class="expression-chip"
-        :class="[
-          p.a.annotationId === movingId
-            ? 'expression-chip-moving'
-            : p.a.omitted
-              ? 'expression-chip-omitted'
-              : issueOf(p.a.annotationId)
-                ? 'expression-chip-issue'
-                : skippedOf(p.a.annotationId)
-                  ? 'expression-chip-skipped'
-                  : '',
-        ]"
-        :title="
-          p.a.omitted
-            ? `${p.a.label} — omitted from narration`
-            : (issueOf(p.a.annotationId) ??
-              (skippedOf(p.a.annotationId)
-                ? `${p.a.label} — left out: ${skippedOf(p.a.annotationId)}`
-                : p.a.token
-                  ? `${p.a.label} · ${p.a.token}`
-                  : p.a.label))
-        "
+        :class="p.a.annotationId === movingId ? 'expression-chip-moving' : p.look.class"
+        :title="p.look.title"
         @click.stop="emit('chip', p.a.annotationId, $event.currentTarget as HTMLElement)"
       >
-        {{ p.a.label }}<span v-if="issueOf(p.a.annotationId)"> · review</span></button
+        {{ p.a.label }}<span v-if="p.review"> · review</span></button
       ><template v-else>{{ p.text }}</template></template
     ><template v-if="quote === 'dialogue'">’</template></span
   >

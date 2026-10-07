@@ -207,6 +207,27 @@ describe("a prompt trial", () => {
     ]);
   });
 
+  test("shows the expression tags the model wrote on the lines they were written in", async () => {
+    const tagged: Answer = (excerpt) =>
+      Response.json({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                lines: [{ type: "narration", text: `[[sigh]] ${excerpt}` }],
+              }),
+            },
+            finish_reason: "stop",
+          },
+        ],
+        usage: USAGE,
+      });
+    const { trial } = await setup({ answer: tagged });
+    const { body } = await trial();
+    expect(body.lines[0].tags).toEqual([{ label: "sigh", at: 0 }]);
+    expect(body.fidelity).toMatchObject({ ok: true, added: 0 });
+  });
+
   test("writes nothing to the script, its history or the cast", async () => {
     const { api, id, trial, answerWith } = await setup();
     answerWith(() =>

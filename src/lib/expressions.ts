@@ -4,11 +4,11 @@ import type {
   ExpressionConfig,
   ExpressionTag,
   LexEntry,
+  ScriptedTag,
   Segment,
   TagBracket,
 } from "@/types";
 import { BRACKETS, tagSyntaxOf, type TagSyntax } from "@/lib/providers";
-import type { ScriptedTag } from "@/lib/prompt";
 import { sayable, speak } from "@/lib/speech";
 import { splitText } from "@/lib/split";
 
@@ -35,7 +35,10 @@ export function typedTag(typed: string, brackets: readonly TagBracket[]): Expres
   const label = tagWords(token);
   return { id: expressionId(label), label, token, kind: "sound" };
 }
-/** A tag the scripting model wrote, as a line keeps it: its words, sent in whichever bracket the voice takes. */
+/**
+ * A tag the scripting model wrote, as a line keeps it: its words, sent in whichever bracket the
+ * voice takes.
+ */
 export const scriptedAnnotation = (t: ScriptedTag, annotationId: number): ExpressionAnnotation => ({
   id: expressionId(t.label),
   label: t.label,
@@ -58,6 +61,42 @@ export function tokenFor(
   if (listed) return { token: listed.token, kind: listed.kind };
   const typed = a.scripted ? tagToken(a.label, c?.brackets ?? []) : a.token;
   return { token: c?.open ? typed : "", kind: a.kind };
+}
+/**
+ * A line's text cut at its tags' places, for drawing each tag as a chip among the words. Tags at one
+ * place keep the order they are given in.
+ */
+export function piecesOf<T extends { at: number }>(
+  text: string,
+  tags: readonly T[],
+): ({ text: string } | { tag: T })[] {
+  const out: ({ text: string } | { tag: T })[] = [];
+  let at = 0;
+  for (const tag of [...tags].sort((a, b) => a.at - b.at)) {
+    const pos = Math.max(at, Math.min(tag.at, text.length));
+    if (pos > at) out.push({ text: text.slice(at, pos) });
+    out.push({ tag });
+    at = pos;
+  }
+  out.push({ text: text.slice(at) });
+  return out;
+}
+/**
+ * How a placed tag is drawn among the words: its chip's class beside `expression-chip`, and what
+ * hovering it says — omitted, asking for review (`issue`), left out for this voice (`skipped`, a
+ * scripted tag's), or sent.
+ */
+export function chipLook(
+  a: ExpressionAnnotation,
+  issue?: string,
+  skipped?: string,
+): { class: string; title: string } {
+  if (a.omitted)
+    return { class: "expression-chip-omitted", title: `${a.label} — omitted from narration` };
+  if (issue) return { class: "expression-chip-issue", title: issue };
+  if (skipped)
+    return { class: "expression-chip-skipped", title: `${a.label} — left out: ${skipped}` };
+  return { class: "", title: a.token ? `${a.label} · ${a.token}` : a.label };
 }
 /**
  * The tag names the speech endpoints list on their confirmed Expressions tabs, each once: what
@@ -223,8 +262,11 @@ export function expressionPlan(
                   : !validToken(token, config!.brackets)
                     ? "This tag is not in the brackets this model takes."
                     : kindProblem(kind, syntax);
-    if (!reason && spoken.hits.some((h) => a.at > h.from && a.at < h.to))
-      reason = "Move outside this pronunciation replacement.";
+    // inside a dictionary entry, a hand-placed tag asks to be moved; one the scripting model wrote
+    // goes before the entry, which is a word or a name said as one
+    const inside = spoken.hits.find((h) => a.at > h.from && a.at < h.to);
+    const place = inside && a.scripted ? inside.from : a.at;
+    if (!reason && inside && !a.scripted) reason = "Move outside this pronunciation replacement.";
     if (!reason && ep?.maxChars && token.length > ep.maxChars)
       reason = "This tag exceeds the endpoint's character limit.";
     signature.push([a.at, a.id, a.kind, token || a.token, reason]);
@@ -237,9 +279,9 @@ export function expressionPlan(
       continue;
     }
     const at = voiced.at(
-      a.at +
+      place +
         spoken.hits
-          .filter((h) => h.to <= a.at)
+          .filter((h) => h.to <= place)
           .reduce((n, h) => n + h.say.length - (h.to - h.from), 0),
     );
     text += voiced.text.slice(last, at);

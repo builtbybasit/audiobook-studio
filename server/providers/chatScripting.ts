@@ -29,8 +29,8 @@ import {
   renderPrompt,
   sampleVars,
   scriptMarkerFor,
+  shiftTags,
   type PromptCastMember,
-  type ScriptMarker,
 } from "@/lib/prompt";
 import { NARRATOR } from "@/lib/cast";
 import { wordsOf } from "@/lib/gaps";
@@ -283,14 +283,12 @@ function jsonIn(content: string): unknown {
 }
 
 /**
- * The script an answer's content holds, normalised, with the expression tags written in `marker`
- * read out of each line's text; throws a readable `ProviderError` otherwise.
+ * The script an answer's content holds, normalised, with the expression tags read out of each
+ * line's text in the marker `excerpt` was told; throws a readable `ProviderError` otherwise — for
+ * a marker left in a line too, which only the model can have written and nothing could read.
  */
-export function answerOf(
-  content: string,
-  who: string,
-  marker: ScriptMarker | null = null,
-): ScriptAnswer {
+export function answerOf(content: string, who: string, excerpt?: string): ScriptAnswer {
+  const marker = excerpt === undefined ? null : scriptMarkerFor(excerpt);
   let parsed: v.InferOutput<typeof Answer>;
   try {
     const read = v.safeParse(Answer, jsonIn(content));
@@ -313,11 +311,18 @@ export function answerOf(
   for (const l of parsed.lines) {
     const speaker = (l.speaker ?? "").trim();
     const type = typeOf(l.type, speaker);
-    let { text, tags } = readScriptedTags((l.text ?? "").replace(/\s+/g, " ").trim(), marker);
+    const said = (l.text ?? "").replace(/\s+/g, " ").trim();
+    let { text, tags } = readScriptedTags(said, marker, excerpt);
+    if (marker?.some((half) => text.includes(half)))
+      throw new ProviderError(
+        `${who} wrote an expression tag that could not be read (“${said.length > 80 ? said.slice(0, 80) + "…" : said}”). The script was not written; run it again or try another model`,
+        200,
+        false,
+      );
     if (voiced(type)) {
       const lead = text.match(OPENING_QUOTES)?.[0].length ?? 0;
       text = text.replace(WRAPPING_QUOTES, "").trim();
-      tags = tags.map((t) => ({ ...t, at: Math.min(Math.max(t.at - lead, 0), text.length) }));
+      tags = shiftTags(tags, lead, text.length);
     }
     // a line with no words — a stray dash, an ellipsis — has nothing to read out
     if (!wordsOf(text).length) continue;
@@ -468,7 +473,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     if (!content.trim())
       throw new ProviderError(`${target.name} answered with no script at all`, status, false);
     // the excerpt names the marker, as it did for the prompt this answers
-    const answer = answerOf(content, target.name, scriptMarkerFor(text));
+    const answer = answerOf(content, target.name, text);
     const { lines } = answer;
     if (!lines.length)
       throw new ProviderError(`${target.name} answered with a script of no lines`, status, false);

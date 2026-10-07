@@ -24,6 +24,12 @@ export interface ExpressionConfig {
   tags: ExpressionTag[];
 }
 
+/** An expression tag the scripting model wrote: its words, and where in the line's text it goes. */
+export interface ScriptedTag {
+  label: string;
+  at: number;
+}
+
 export interface ExpressionAnnotation extends ExpressionTag {
   annotationId: number;
   /** UTF-16 insertion position in the unchanged source text. */

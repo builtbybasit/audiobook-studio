@@ -445,6 +445,30 @@ describe("a book's settings with a server answering", () => {
     expect(libraryStore.volumesOf(id)[1].name).toBe("The Second Book");
   });
 
+  test("cutting the volumes installs the server's answer, and the list reads back after a reload", async () => {
+    const id = await twoVolumes();
+    expect(libraryStore.volumeStartsOf(id).map((s) => s.chapter)).toEqual([1, 3]);
+    expect(
+      await libraryStore.setVolumes(id, [
+        { chapter: 1, name: "First" },
+        { chapter: 4, name: "Second" },
+      ]),
+    ).toBe(true);
+    const cut = () => libraryStore.volumesOf(id).map((v) => [v.id, v.name, v.from, v.to]);
+    expect(cut()).toEqual([
+      [1, "First", 1, 3],
+      [2, "Second", 4, 5],
+    ]);
+    expect(libraryStore.chaptersOf(id).map((c) => c.volumeId)).toEqual([1, 1, 1, 2, 2]);
+    await reload(id);
+    expect(cut()).toEqual([
+      [1, "First", 1, 3],
+      [2, "Second", 4, 5],
+    ]);
+    // the same list again is not a write
+    expect(await libraryStore.setVolumes(id, libraryStore.volumeStartsOf(id))).toBe(false);
+  });
+
   test("moving a volume renumbers the chapters here exactly as the server does", async () => {
     const id = await twoVolumes();
     // what the local renumbering produced, before the server's answer is installed over it

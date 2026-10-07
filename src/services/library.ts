@@ -37,6 +37,7 @@ import type {
   SpeakerSamples,
   StoredSamples,
   VersionOrigin,
+  VolumeStart,
 } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { API_BASE } from "@/services/mode";
@@ -139,6 +140,12 @@ export interface LibraryService {
   changeCover(bookId: string, file: File): Promise<Book>;
   /** Give a volume a new name. */
   renameVolume(bookId: string, volumeId: number, name: string): Promise<Book>;
+  /**
+   * Cut the book into these volumes: where each begins and its name, in reading order, the first
+   * at chapter 1. Chapter numbers stay; which volume each belongs to is rewritten. Refused while
+   * an audiobook of the book is being built, or while a volume of a shelved book is in review.
+   */
+  setVolumes(bookId: string, volumes: VolumeStart[]): Promise<ImportedBook>;
   /**
    * Read the volumes in this order — every volume of the book, once each. The chapters are
    * renumbered to follow, and the server moves everything filed under a chapter number with them.
@@ -353,6 +360,10 @@ export class HttpLibraryService implements LibraryService {
     return (
       await this.http.patch<{ book: Book }>(`/books/${seg(bookId)}/volumes/${volumeId}`, { name })
     ).book;
+  }
+
+  setVolumes(bookId: string, volumes: VolumeStart[]): Promise<ImportedBook> {
+    return this.http.put<ImportedBook>(`/books/${seg(bookId)}/volumes`, { volumes });
   }
 
   reorderVolumes(bookId: string, order: number[]): Promise<ImportedBook> {

@@ -215,6 +215,16 @@ refused while an audiobook of the book is being built, because a build reads cli
 where each chapter landed by number. Nothing puts a removed book or volume back, so the page asks
 before removing rather than offering Undo.
 
+**A cut is neither.** `PUT /api/books/:id/volumes` takes the book's volumes as a list of where
+each begins and what it is called, in reading order, the first at chapter 1 — so a split, a join,
+a moved boundary and a rename are the same write (`setVolumes`). A volume that still begins where
+it did keeps its row, with the file it came from and its review state; a start with no volume
+there is a new row cut from the volume that chapter was in; a row left with no chapters goes. The
+reading order is unchanged, so no chapter number moves and nothing is re-keyed: only
+`volume_id`, `volume_index` and the ranges are written. It is refused mid-build, since a build
+files chapters under their volume, and while one volume of a shelved book is still in review; a
+book that is itself in review may be cut, and every piece waits in the review with it.
+
 **A reorder is the same renumbering without the removal.** `PUT /api/books/:id/volumes/order`
 writes each volume's `position` and runs the same renumbering and `rekeyActive`. Nothing is
 cancelled — a running job finds its chapter by uid at every write — and nothing leaves the disk.
@@ -629,6 +639,7 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `DELETE` | `/api/books/:id`                                  | Remove a book and everything it owns                                                                         |
 | `POST`   | `/api/books/:id/confirm`                          | The review is done; it joins the library                                                                     |
 | `POST`   | `/api/books/:id/discard`                          | Cancel: an unconfirmed book goes, or its new volume                                                          |
+| `PUT`    | `/api/books/:id/volumes`                          | Cut the book into volumes: where each begins and its name                                                   |
 | `PATCH`  | `/api/books/:id/volumes/:volumeId`                | Rename a volume                                                                                              |
 | `DELETE` | `/api/books/:id/volumes/:volumeId`                | Remove a volume; the last one removes the book; 409 mid-build                                                |
 | `PUT`    | `/api/books/:id/volumes/order`                    | Read the volumes in this order; chapters renumber to follow                                                  |

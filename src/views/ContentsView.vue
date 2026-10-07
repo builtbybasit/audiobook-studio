@@ -1,573 +1,298 @@
 <script setup lang="ts">
-import { useLibraryStore } from "@/stores/library";
-import { useScriptsStore } from "@/stores/scripts";
-import { useUiStore } from "@/stores/ui";
-import { useChapterText } from "@/queries";
-
-// Contents review: what goes in the audiobook. Reached twice — straight after an EPUB is read, when
-// confirming is what adds the book to the library, and any time later from the overview, when every
-// change applies at once. It is one page either way, so a chapter skipped on import is restored in
-// the same place, with the same words.
-//
-// Nothing here removes content. A skipped chapter keeps its text, its number and its place, and
-// leaves every stage and the audiobook; the suggestions the import attached are a reason beside a
-// title until the person acts on them. What the button says it adds is what goes in.
-import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
-import { useMediaQuery } from "@vueuse/core";
-import { numberSpan } from "@/lib/chapterNumber";
-import { importLabel, isUndecided, plural } from "@/lib/contents";
-import { chapterNumbers } from "@/lib/chapterNumber";
-import { useBookId } from "@/composables/useBookId";
-import {
-  enumParam,
-  idParam,
-  idSetParam,
-  textParam,
-  useQueryParam,
-} from "@/composables/useQueryParam";
-import { useRangeSelect } from "@/composables/useRangeSelect";
-import ContentsList, { type VolumeRow } from "@/views/contents/ContentsList.vue";
+// Contents review, in three tabs: "To decide" is an inbox of only the chapters the import flagged;
+// "All chapters" the whole list, searched and filtered, read on the right; "Volumes" where the
+// book is cut. The state and every action live in useContents.ts; this is the frame around them —
+// the header with the import's buttons, the tab row, the reader beside the first two tabs (a
+// bottom sheet on a phone).
+import { nextTick, onMounted, ref } from "vue";
+import { DialogTitle, TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
+import { plural } from "@/lib/contents";
+import { TABS, useContents } from "@/views/contents/useContents";
+import ContentsInbox from "@/views/contents/ContentsInbox.vue";
+import ContentsList from "@/views/contents/ContentsList.vue";
 import ContentsPreview from "@/views/contents/ContentsPreview.vue";
-import ContentsSuggestions from "@/views/contents/ContentsSuggestions.vue";
-import { FILTER_KEYS, FILTER_LABEL, passes, type ContentsFilter } from "@/views/contents/shared";
-import { UiSelect, UiSheet } from "@/ui";
-import { DialogTitle } from "reka-ui";
+import ContentsVolumes from "@/views/contents/ContentsVolumes.vue";
+import { FILTER_KEYS, FILTER_LABEL } from "@/views/contents/shared";
+import { UiSheet } from "@/ui";
 import { BookOpen as ReadIcon, Search as SearchIcon, X as ClearIcon } from "@lucide/vue";
-import type { Chapter, NoticeGroup, NoticeKind } from "@/types";
 
-const libraryStore = useLibraryStore();
-const scriptsStore = useScriptsStore();
-const uiStore = useUiStore();
-const router = useRouter();
-const bookId = useBookId();
-
-const book = computed(() => libraryStore.bookById(bookId));
-const chapters = computed(() => libraryStore.chaptersOf(bookId));
-/** reading numbers, which the search finds a chapter by and the rows and preview show */
-const numbers = computed(() => libraryStore.chapterNumbers[bookId]);
-const shows = (c: Chapter) =>
-  passes(c, numbers.value?.get(c.id), filter.value, kind.value, q.value);
-const volumes = computed(() => libraryStore.volumesOf(bookId));
-const multi = computed(() => volumes.value.length > 1);
-const summary = computed(() => libraryStore.contentsOf(bookId));
-const groups = computed(() => libraryStore.noticeGroupsOf(bookId));
-/** book: a new novel waiting to be added; volume: one more volume of a shelved book; null: shelved */
-const importing = computed<"book" | "volume" | null>(() =>
-  book.value?.importing ? "book" : libraryStore.importingVolume(bookId) ? "volume" : null,
-);
-const newVolume = computed(() => libraryStore.importingVolume(bookId));
-
-// ---- page state, kept in the URL so leaving and coming back finds the same view
-const q = useQueryParam("find", textParam());
-const filter = useQueryParam("filter", enumParam(FILTER_KEYS, "all"));
-const kind = useQueryParam<NoticeKind | null>("kind", {
-  parse: (text) => (text as NoticeKind) || null,
-  serialize: (value) => value ?? undefined,
-  default: null,
-});
-const collapsed = useQueryParam(
-  "closed",
-  // a new volume of a shelved book: the volumes already reviewed start folded away
-  idSetParam(
-    () =>
-      new Set(newVolume.value ? volumes.value.filter((v) => !v.importing).map((v) => v.id) : []),
-  ),
-);
-const wide = useMediaQuery("(min-width: 1024px)");
-const opened = useQueryParam("ch", idParam());
-// on a phone the groups would push the list off the screen, so they start folded there
-const suggestionsOpen = ref(wide.value);
+const p = useContents();
+const { bookId, libraryStore } = p;
 const search = ref<HTMLInputElement | null>(null);
 const list = ref<InstanceType<typeof ContentsList> | null>(null);
 const cancelling = ref(false);
 
-// the first thing worth reading is the first chapter still to decide — on a clean book, nothing
-if (opened.value == null && wide.value) opened.value = chapters.value.find(isUndecided)?.id ?? null;
 onMounted(async () => {
   await nextTick();
-  if (opened.value != null)
+  if (p.opened.value != null)
     document
-      .getElementById(`contents-${bookId}-${opened.value}`)
+      .getElementById(`contents-${bookId}-${p.opened.value}`)
       ?.scrollIntoView({ block: "center" });
 });
 
-// Reading a chapter here makes it the book's current chapter, so Scripting opens on the one you
-// were just reading. Contents keeps its own first pick — the chapter still to decide — because
-// that is the job this page is for.
-watch(
-  opened,
-  (id) => {
-    if (id != null) uiStore.openChapter(bookId, id);
-  },
-  { immediate: true },
-);
-
-// ---- the list
-const rows = computed<VolumeRow[]>(() =>
-  volumes.value
-    .map((v) => {
-      const all = chapters.value.filter((c) => c.volumeId === v.id);
-      return {
-        ...v,
-        all,
-        chapters: all.filter(shows),
-      };
-    })
-    .filter((v) => v.chapters.length),
-);
-const visible = computed(() => rows.value.flatMap((v) => v.chapters));
-const narrowed = computed(() => !!q.value || filter.value !== "all" || !!kind.value);
-const filterCounts = computed<Record<ContentsFilter, number>>(() => ({
-  all: summary.value.total,
-  included: summary.value.included,
-  suggested: summary.value.suggested,
-  review: summary.value.review,
-  skipped: summary.value.skipped,
-}));
-const kindLabel = computed(() => groups.value.find((g) => g.kind === kind.value)?.label ?? "");
-
-const textOf = (c: Chapter) => scriptsStore.rawText(bookId, c.id);
-const openedChapter = computed(() =>
-  opened.value == null ? undefined : libraryStore.chapter(bookId, opened.value),
-);
-// The opened chapter's prose, read from the server the first time it is opened.
-const { parts: openedParts, isLoading: textLoading } = useChapterText(
-  bookId,
-  () => openedChapter.value?.id,
-);
-const undecidedAfter = computed(
-  () => chapters.value.filter((c) => isUndecided(c) && c.id !== opened.value).length,
-);
-
-// ---- decisions. Every one goes through the store's two actions, so the row, the preview, the
-// strip and the volume header leave a chapter in exactly the same state.
-// a run over what is on screen, not over the whole book — the list you can see is the list
-const range = useRangeSelect(() => visible.value.map((x) => x.id));
-function toggle(c: Chapter, e?: MouseEvent | KeyboardEvent) {
-  const run = range.span(c.id, e);
-  // one row is its own undo; a run toasts, with Undo, naming the chapters it covered
-  const skip = !c.excluded;
-  // the toast names the run by the reading numbers its chapters have while kept: the ones they
-  // held before a skip, the ones they are given by an include
-  const ids = new Set(run);
-  const span = numberSpan(
-    run,
-    skip
-      ? numbers.value
-      : chapterNumbers(
-          chapters.value.map((x) => ({ id: x.id, excluded: x.excluded && !ids.has(x.id) })),
-        ),
-  );
-  libraryStore.skipChapters(
-    bookId,
-    run,
-    skip,
-    run.length === 1 ? { quiet: true } : span ? { scope: span } : {},
-  );
-}
-function toggleVolume(v: VolumeRow) {
-  const on = v.all.filter((c) => !c.excluded).length;
-  const skip = on === v.all.length;
-  const hidden = v.all.length - v.chapters.length;
-  libraryStore.skipChapters(
-    bookId,
-    v.all.map((c) => c.id),
-    skip,
-    {
-      scope: v.name + (narrowed.value && hidden ? ` (${hidden} of them hidden by the filter)` : ""),
-    },
-  );
-}
-function skipGroup(g: NoticeGroup) {
-  libraryStore.skipChapters(bookId, g.pending, true, { scope: g.label.toLowerCase() });
-}
-function keepGroup(g: NoticeGroup) {
-  libraryStore.keepChapters(bookId, g.pending);
-}
-function skipAllSuggested() {
-  const ids = chapters.value
-    .filter((c) => isUndecided(c) && c.note?.verdict === "skip")
-    .map((c) => c.id);
-  libraryStore.skipChapters(bookId, ids, true, { scope: "every suggested chapter" });
-}
-function review(k: NoticeKind | null) {
-  kind.value = k;
-  if (k) {
-    filter.value = "all";
-    const first =
-      chapters.value.find((c) => c.note?.kind === k && isUndecided(c)) ??
-      chapters.value.find((c) => c.note?.kind === k);
-    if (first && wide.value) opened.value = first.id;
-  }
-}
-function setFilter(f: ContentsFilter) {
-  filter.value = f;
-  kind.value = null;
-}
-function showEverything() {
-  filter.value = "all";
-  kind.value = null;
-  q.value = "";
-}
-
-// ---- reading. Opening never touches a tick; moving keeps the list where it is.
-function open(id: number) {
-  opened.value = id;
-}
-function step(delta: number) {
-  const ids = visible.value.map((c) => c.id);
-  const i = opened.value == null ? -1 : ids.indexOf(opened.value);
-  const next = ids[i < 0 ? 0 : Math.max(0, Math.min(ids.length - 1, i + delta))];
-  if (next != null) open(next);
-}
 async function nextUndecided() {
-  const all = chapters.value;
-  const from = opened.value == null ? -1 : all.findIndex((c) => c.id === opened.value);
-  const after = all.slice(from + 1).find(isUndecided) ?? all.find(isUndecided);
-  if (!after) return;
-  if (!shows(after)) showEverything();
-  open(after.id);
+  const c = p.nextUndecided();
+  if (!c) return;
   await nextTick();
-  await list.value?.focusRow(after.id, after.volumeId);
+  await list.value?.focusRow(c.id, c.volumeId);
 }
 async function closeSheet() {
-  const id = opened.value;
-  opened.value = null;
+  const id = p.opened.value;
+  p.opened.value = null;
   await nextTick();
   if (id != null) document.getElementById(`contents-${bookId}-${id}`)?.focus();
 }
-async function jump(id: string | number | null) {
-  const next = new Set(collapsed.value);
-  next.delete(Number(id));
-  collapsed.value = next;
-  await nextTick();
-  document
-    .getElementById(`cvol-${bookId}-${id}`)
-    ?.scrollIntoView({ block: "start", behavior: "smooth" });
-}
-
-// ---- the import itself
-const included = computed(() => {
-  if (!newVolume.value) return summary.value.included;
-  return chapters.value.filter((c) => c.volumeId === newVolume.value!.id && !c.excluded).length;
-});
-const newTotal = computed(() =>
-  newVolume.value
-    ? chapters.value.filter((c) => c.volumeId === newVolume.value!.id).length
-    : summary.value.total,
-);
-const actionLabel = computed(() =>
-  importLabel(importing.value === "volume" ? "volume" : "book", included.value),
-);
-async function confirm() {
-  if (!(await libraryStore.confirmImport(bookId))) return;
-  uiStore.currentBookId = bookId;
-  void router.push(`/book/${bookId}`);
-}
 async function discard() {
-  const what = await libraryStore.discardImport(bookId);
-  if (!what) return;
-  cancelling.value = false;
-  uiStore.toast(what === "book" ? "Import cancelled" : "Volume not added", {
-    kind: "info",
-    description: "Nothing was added to the library.",
-    timeout: 4000,
-  });
-  void router.push(what === "book" ? "/library" : `/book/${bookId}`);
+  if (await p.discard()) cancelling.value = false;
 }
 </script>
 
 <template>
-  <div v-if="book" class="flex h-full min-h-0 flex-col">
-    <!-- header: what this is, and the numbers that matter -->
+  <div v-if="p.book.value" class="flex h-full min-h-0 flex-col">
+    <!-- header: what book, what this review is for, and the button that adds it -->
     <div
-      class="shrink-0 border-b border-zinc-200 bg-white px-4 py-3 sm:px-6 dark:border-zinc-800 dark:bg-zinc-900"
+      class="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-200 bg-white px-4 py-2.5 sm:px-6 dark:border-zinc-800 dark:bg-zinc-900"
     >
-      <div class="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
-        <div class="min-w-0">
-          <div class="text-[11px] text-zinc-500">
-            {{
-              importing === "book"
-                ? "Review contents before adding"
-                : importing === "volume"
-                  ? "Review the new volume before adding"
-                  : "Contents"
-            }}
-          </div>
-          <h1 class="truncate font-serif text-xl leading-tight">{{ book.title }}</h1>
-          <div class="text-xs text-zinc-500">
-            {{ book.author }} · {{ plural(summary.total, "chapter")
-            }}<template v-if="multi"> in {{ volumes.length }} volumes</template
-            ><template v-if="importing === 'volume' && newVolume">
-              · {{ newVolume.name }} is new ({{ plural(newTotal, "chapter") }})</template
-            ><span v-if="book.volumes[0]?.file" class="hidden font-mono sm:inline">
-              · {{ (newVolume ?? book.volumes[0]).file }}</span
-            >
-          </div>
-        </div>
-        <div class="flex flex-wrap items-center gap-2 text-xs">
-          <p
-            v-if="!summary.noted"
-            class="rounded-md bg-emerald-500/10 px-3 py-1.5 text-emerald-700 dark:text-emerald-300"
-          >
-            No notices found. Every chapter is story and goes in the audiobook{{
-              importing ? " — nothing to review." : "."
-            }}
-          </p>
-          <template v-if="importing">
-            <template v-if="cancelling">
-              <span class="text-zinc-500">Discard this import? Nothing was added.</span>
-              <button class="btn-ghost btn-xs" @click="cancelling = false">Keep reviewing</button>
-              <button
-                class="rounded-md bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-500"
-                @click="discard"
-              >
-                Discard
-              </button>
-            </template>
-            <template v-else>
-              <button class="btn-ghost" @click="cancelling = true">
-                {{ importing === "book" ? "Cancel import" : "Don’t add this volume" }}
-              </button>
-              <button
-                class="btn-primary"
-                :disabled="!included"
-                :title="!included ? 'Include at least one chapter' : ''"
-                @click="confirm"
-              >
-                {{ actionLabel }}
-              </button>
-            </template>
-          </template>
-          <RouterLink v-else :to="`/book/${bookId}`" class="btn-ghost">Back to overview</RouterLink>
-        </div>
-      </div>
-    </div>
-
-    <ContentsSuggestions
-      :groups="groups"
-      :summary="summary"
-      :kind="kind"
-      v-model:open="suggestionsOpen"
-      @review="review"
-      @skip-group="skipGroup"
-      @keep-group="keepGroup"
-      @skip-all="skipAllSuggested"
-    />
-
-    <div class="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(340px,44%)]">
-      <!-- the list, with its own scroll -->
-      <div class="flex min-h-0 flex-col border-r border-zinc-200 dark:border-zinc-800">
-        <div
-          class="flex shrink-0 items-center gap-1 border-b border-zinc-200 px-2 py-1.5 dark:border-zinc-800"
-        >
-          <div class="input flex min-w-0 flex-1 items-center gap-1 py-0.5">
-            <SearchIcon class="icon-sm shrink-0 text-zinc-400" />
-            <input
-              ref="search"
-              v-model="q"
-              class="min-w-0 flex-1 bg-transparent py-0.5 text-xs focus:outline-none"
-              placeholder="Find a chapter… (title, number or reason)"
-              aria-label="Find a chapter"
-            />
-            <button
-              v-if="q"
-              class="text-zinc-400 hover:text-zinc-600"
-              aria-label="Clear the search"
-              @click="q = ''"
-            >
-              <ClearIcon class="icon-sm" />
-            </button>
-          </div>
-          <UiSelect
-            v-if="multi"
-            :model-value="undefined"
-            :options="volumes.map((v) => ({ value: v.id, label: v.name.split('·')[0].trim() }))"
-            placeholder="Jump…"
-            size="xs"
-            class="w-24 shrink-0"
-            @update:model-value="jump"
-          />
-        </div>
-        <div
-          class="flex shrink-0 flex-wrap items-center gap-1 border-b border-zinc-200 px-2 py-1.5 dark:border-zinc-800"
-          role="group"
-          aria-label="Filter chapters"
-        >
-          <button
-            v-for="f in FILTER_KEYS"
-            :key="f"
-            class="chip"
-            :class="[
-              filter === f && !kind && 'chip-on',
-              f === 'suggested' &&
-                filterCounts[f] &&
-                filter !== f &&
-                'border-amber-400 text-amber-600 dark:text-amber-400',
-              f === 'review' &&
-                filterCounts[f] &&
-                filter !== f &&
-                'border-violet-400 text-violet-600 dark:text-violet-400',
-            ]"
-            :aria-pressed="filter === f && !kind"
-            :disabled="f !== 'all' && !filterCounts[f]"
-            @click="setFilter(f)"
-          >
-            {{ FILTER_LABEL[f] }} <span class="font-mono opacity-60">{{ filterCounts[f] }}</span>
-          </button>
-          <button v-if="kind" class="chip chip-on" :aria-pressed="true" @click="kind = null">
-            {{ kindLabel }} <ClearIcon class="icon-sm" />
-          </button>
-        </div>
-
-        <ContentsList
-          ref="list"
-          :book-id="bookId"
-          :rows="rows"
-          :multi="multi"
-          :opened="opened"
-          :collapsed="collapsed"
-          :text-of="textOf"
-          :narrowed="narrowed"
-          @open="open"
-          @toggle="toggle"
-          @toggle-volume="toggleVolume"
-          @update:collapsed="(v) => (collapsed = v)"
-          @next-undecided="nextUndecided"
-          @search="search?.focus()"
-        />
-        <p v-if="!visible.length" class="px-3 py-8 text-center text-xs text-zinc-500">
-          <template v-if="q">No chapter matches “{{ q }}”.</template>
-          <template v-else-if="kind">No chapter with this note is left to show.</template>
-          <template v-else>Nothing is {{ FILTER_LABEL[filter].toLowerCase() }}.</template>
-          <button class="ml-1 underline" @click="showEverything">Show everything</button>
-        </p>
-
-        <div
-          class="shrink-0 border-t border-zinc-200 px-3 py-1.5 text-[11px] leading-relaxed text-zinc-500 dark:border-zinc-800"
-        >
-          <template v-if="narrowed"
-            >Showing {{ visible.length }} of {{ summary.total }} chapters ·
-            <button class="underline" @click="showEverything">show everything</button>. Batch
-            buttons act on the whole book; shift-click acts on what is shown.</template
-          >
-          <template v-else
-            >shift-click ticks a range · <kbd class="font-mono">space</kbd> ticks ·
-            <kbd class="font-mono">↵</kbd> reads · <kbd class="font-mono">n</kbd> next to decide ·
-            <kbd class="font-mono">/</kbd> searches</template
-          >
-        </div>
-      </div>
-
-      <!-- the chapter being read (wide screens) -->
-      <aside class="hidden min-h-0 lg:block" aria-label="Chapter">
-        <ContentsPreview
-          v-if="wide && openedChapter"
-          :key="openedChapter.id"
-          :chapter="openedChapter"
-          :volume="libraryStore.volumeOf(bookId, openedChapter.id)"
-          :multi="multi"
-          :number="numbers?.get(openedChapter.id)"
-          :kept="summary.included"
-          :parts="openedParts"
-          :undecided-left="undecidedAfter"
-          @skip="libraryStore.skipChapters(bookId, [openedChapter.id], true, { quiet: true })"
-          @include="libraryStore.skipChapters(bookId, [openedChapter.id], false, { quiet: true })"
-          @keep="libraryStore.keepChapters(bookId, [openedChapter.id], { quiet: true })"
-          @prev="step(-1)"
-          @next="step(1)"
-          @next-undecided="nextUndecided"
-        />
-        <div v-else class="grid h-full place-items-center p-8 text-center text-sm text-zinc-500">
-          <div>
-            <ReadIcon class="mx-auto mb-2 h-6 w-6 text-zinc-300 dark:text-zinc-600" />
-            Open a chapter to read it in full.<br />
-            <span class="text-xs"
-              >Reading never changes a tick, and the list stays where it is.</span
-            >
-          </div>
-        </div>
-      </aside>
-    </div>
-
-    <!-- what will happen -->
-    <div
-      class="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-t border-zinc-200 bg-white px-4 py-2.5 text-xs sm:px-6 dark:border-zinc-800 dark:bg-zinc-900"
-    >
-      <div class="min-w-0 flex-1" aria-live="polite">
-        <div>
-          <b>{{ summary.included }}</b> of {{ summary.total }} in the audiobook
-          <template v-if="summary.skipped">
-            ·
-            <button class="underline decoration-zinc-300" @click="setFilter('skipped')">
-              {{ summary.skipped }} skipped
-            </button></template
-          >
-          <template v-if="summary.suggested">
-            ·
-            <button
-              class="text-amber-600 underline decoration-amber-300 dark:text-amber-400"
-              @click="setFilter('suggested')"
-            >
-              {{ summary.suggested }} suggested, undecided
-            </button></template
-          >
-          <template v-if="summary.review">
-            ·
-            <button
-              class="text-violet-600 underline decoration-violet-300 dark:text-violet-400"
-              @click="setFilter('review')"
-            >
-              {{ summary.review }} need review
-            </button></template
+      <div class="min-w-0 flex-1">
+        <div class="flex items-baseline gap-2">
+          <h1 class="truncate font-serif text-lg leading-tight">{{ p.book.value.title }}</h1>
+          <span class="truncate text-xs text-zinc-500"
+            >{{ p.book.value.author }} · {{ plural(p.summary.value.total, "chapter") }}
+            <template v-if="p.multi.value"> · {{ p.volumes.value.length }} volumes</template></span
           >
         </div>
         <div class="text-[11px] text-zinc-500">
-          <template v-if="!summary.included"
-            >Nothing would be included — tick at least one chapter.</template
+          <template v-if="p.importing.value === 'book'"
+            >Reviewing before adding to the library</template
           >
-          <template v-else-if="summary.suggested && importing"
-            >Undecided suggestions are included as they are; you can skip them later from this
-            page.</template
+          <template v-else-if="p.importing.value === 'volume'"
+            >Reviewing {{ p.newVolume.value?.name }} before adding it</template
           >
-          <template v-else-if="importing"
-            >Skipped chapters stay in the book and can be restored from this page later.</template
-          >
-          <template v-else
-            >Changes apply now to scripting, narration and export. Skipped chapters can be restored
-            any time.</template
-          >
+          <template v-else>Contents · changes apply now</template>
         </div>
       </div>
+      <template v-if="p.importing.value">
+        <template v-if="cancelling">
+          <span class="text-xs text-zinc-500">Discard? Nothing was added.</span>
+          <button class="btn-ghost btn-xs" @click="cancelling = false">Keep reviewing</button>
+          <button
+            class="rounded-md bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-500"
+            @click="discard"
+          >
+            Discard
+          </button>
+        </template>
+        <template v-else>
+          <button class="btn-ghost btn-xs" @click="cancelling = true">
+            {{ p.importing.value === "book" ? "Cancel import" : "Don’t add this volume" }}
+          </button>
+          <button
+            class="btn-primary"
+            :disabled="!p.included.value"
+            :title="!p.included.value ? 'Include at least one chapter' : ''"
+            @click="p.confirm()"
+          >
+            {{ p.actionLabel.value }}
+          </button>
+        </template>
+      </template>
+      <RouterLink v-else :to="`/book/${bookId}`" class="btn-ghost btn-xs">Overview</RouterLink>
     </div>
+
+    <TabsRoot v-model="p.tab.value" class="flex min-h-0 flex-1 flex-col">
+      <TabsList
+        class="flex shrink-0 items-center gap-1 border-b border-zinc-200 bg-white px-4 sm:px-6 dark:border-zinc-800 dark:bg-zinc-900"
+      >
+        <TabsTrigger
+          v-for="t in TABS"
+          :key="t.value"
+          :value="t.value"
+          class="flex items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-3 py-2.5 text-sm text-zinc-500 transition-colors hover:text-zinc-800 data-[state=active]:border-violet-500 data-[state=active]:font-semibold data-[state=active]:text-zinc-900 dark:hover:text-zinc-200 dark:data-[state=active]:text-zinc-100"
+        >
+          {{ t.label }}
+          <span
+            class="rounded-full px-1.5 font-mono text-[10px]"
+            :class="
+              t.value === 'decide' && p.undecided.value.length
+                ? 'bg-amber-400/20 text-amber-700 dark:text-amber-300'
+                : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800'
+            "
+            >{{
+              t.value === "decide"
+                ? p.undecided.value.length
+                : t.value === "all"
+                  ? p.summary.value.total
+                  : p.volumes.value.length
+            }}</span
+          >
+        </TabsTrigger>
+        <span class="ml-auto text-xs text-zinc-500" aria-live="polite"
+          ><b>{{ p.summary.value.included }}</b> of {{ p.summary.value.total }} go in</span
+        >
+      </TabsList>
+
+      <TabsContent value="volumes" class="min-h-0 flex-1 overflow-auto">
+        <ContentsVolumes :page="p" />
+      </TabsContent>
+
+      <!-- the first two tabs share the reader on the right -->
+      <div
+        v-if="p.tab.value !== 'volumes'"
+        class="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(340px,44%)]"
+      >
+        <TabsContent
+          value="decide"
+          class="flex min-h-0 flex-col border-r border-zinc-200 dark:border-zinc-800"
+        >
+          <ContentsInbox :page="p" />
+        </TabsContent>
+
+        <TabsContent
+          value="all"
+          class="flex min-h-0 flex-col border-r border-zinc-200 dark:border-zinc-800"
+        >
+          <div
+            class="flex shrink-0 flex-wrap items-center gap-1 border-b border-zinc-200 px-2 py-1.5 dark:border-zinc-800"
+            role="group"
+            aria-label="Find and filter chapters"
+          >
+            <div class="input flex min-w-40 flex-1 items-center gap-1 py-0.5">
+              <SearchIcon class="icon-sm shrink-0 text-zinc-400" />
+              <input
+                ref="search"
+                v-model="p.q.value"
+                class="min-w-0 flex-1 bg-transparent py-0.5 text-xs focus:outline-none"
+                placeholder="Find a chapter… (title, number or reason)"
+                aria-label="Find a chapter"
+              />
+              <button
+                v-if="p.q.value"
+                class="text-zinc-400 hover:text-zinc-600"
+                aria-label="Clear the search"
+                @click="p.q.value = ''"
+              >
+                <ClearIcon class="icon-sm" />
+              </button>
+            </div>
+            <button
+              v-for="f in FILTER_KEYS"
+              :key="f"
+              class="chip"
+              :class="[
+                p.filter.value === f && !p.kind.value && 'chip-on',
+                f === 'suggested' &&
+                  p.filterCounts.value[f] &&
+                  p.filter.value !== f &&
+                  'border-amber-400 text-amber-600 dark:text-amber-400',
+                f === 'review' &&
+                  p.filterCounts.value[f] &&
+                  p.filter.value !== f &&
+                  'border-violet-400 text-violet-600 dark:text-violet-400',
+              ]"
+              :aria-pressed="p.filter.value === f && !p.kind.value"
+              :disabled="f !== 'all' && !p.filterCounts.value[f]"
+              @click="p.setFilter(f)"
+            >
+              {{ FILTER_LABEL[f] }}
+              <span class="font-mono opacity-60">{{ p.filterCounts.value[f] }}</span>
+            </button>
+            <button
+              v-if="p.kind.value"
+              class="chip chip-on"
+              :aria-pressed="true"
+              @click="p.kind.value = null"
+            >
+              {{ p.groups.value.find((g) => g.kind === p.kind.value)?.label ?? p.kind.value }}
+              <ClearIcon class="icon-sm" />
+            </button>
+          </div>
+
+          <ContentsList
+            ref="list"
+            :book-id="bookId"
+            :rows="p.rows.value"
+            :multi="p.multi.value"
+            :opened="p.opened.value"
+            :collapsed="p.collapsed.value"
+            :text-of="p.textOf"
+            :narrowed="p.narrowed.value"
+            @open="p.open"
+            @toggle="p.toggle"
+            @toggle-volume="p.toggleVolume"
+            @update:collapsed="(v) => (p.collapsed.value = v)"
+            @next-undecided="nextUndecided"
+            @search="search?.focus()"
+          />
+          <p v-if="!p.visible.value.length" class="px-3 py-8 text-center text-xs text-zinc-500">
+            <template v-if="p.q.value">No chapter matches “{{ p.q.value }}”.</template>
+            <template v-else-if="p.kind.value">No chapter with this note is left to show.</template>
+            <template v-else>Nothing is {{ FILTER_LABEL[p.filter.value].toLowerCase() }}.</template>
+            <button class="ml-1 underline" @click="p.showEverything()">Show everything</button>
+          </p>
+          <div
+            v-if="p.narrowed.value && p.visible.value.length"
+            class="shrink-0 border-t border-zinc-200 px-3 py-1.5 text-[11px] text-zinc-500 dark:border-zinc-800"
+          >
+            Showing {{ p.visible.value.length }} of {{ p.summary.value.total }} chapters ·
+            <button class="underline" @click="p.showEverything()">show everything</button>
+          </div>
+        </TabsContent>
+
+        <!-- the chapter being read (wide screens) -->
+        <aside class="hidden min-h-0 lg:block" aria-label="Chapter">
+          <ContentsPreview
+            v-if="p.wide.value && p.openedChapter.value"
+            :key="p.openedChapter.value.id"
+            :chapter="p.openedChapter.value"
+            :volume="libraryStore.volumeOf(bookId, p.openedChapter.value.id)"
+            :multi="p.multi.value"
+            :number="p.numbers.value?.get(p.openedChapter.value.id)"
+            :kept="p.summary.value.included"
+            :parts="p.openedParts.value"
+            :undecided-left="p.undecidedAfter.value"
+            @skip="p.skipOne(p.openedChapter.value.id)"
+            @include="p.includeOne(p.openedChapter.value.id)"
+            @keep="p.keepOne(p.openedChapter.value.id)"
+            @prev="p.step(-1)"
+            @next="p.step(1)"
+            @next-undecided="nextUndecided"
+          />
+          <div v-else class="grid h-full place-items-center p-8 text-center text-sm text-zinc-500">
+            <div>
+              <ReadIcon class="mx-auto mb-2 h-6 w-6 text-zinc-300 dark:text-zinc-600" />
+              Open a chapter to read it in full.
+            </div>
+          </div>
+        </aside>
+      </div>
+    </TabsRoot>
 
     <!-- narrow screens: the chapter opens as a sheet over the list -->
     <UiSheet
-      v-if="!wide"
+      v-if="!p.wide.value"
       side="bottom"
-      :open="!!openedChapter"
+      :open="!!p.openedChapter.value"
       class="h-[88dvh]"
       :aria-describedby="undefined"
       @update:open="(v) => !v && closeSheet()"
     >
-      <DialogTitle class="sr-only">{{ openedChapter?.title }}</DialogTitle>
+      <DialogTitle class="sr-only">{{ p.openedChapter.value?.title }}</DialogTitle>
       <ContentsPreview
-        v-if="openedChapter"
-        :key="openedChapter.id"
-        :chapter="openedChapter"
-        :volume="libraryStore.volumeOf(bookId, openedChapter.id)"
-        :multi="multi"
-        :number="numbers?.get(openedChapter.id)"
-        :kept="summary.included"
-        :parts="openedParts"
-        :undecided-left="undecidedAfter"
+        v-if="p.openedChapter.value"
+        :key="p.openedChapter.value.id"
+        :chapter="p.openedChapter.value"
+        :volume="libraryStore.volumeOf(bookId, p.openedChapter.value.id)"
+        :multi="p.multi.value"
+        :number="p.numbers.value?.get(p.openedChapter.value.id)"
+        :kept="p.summary.value.included"
+        :parts="p.openedParts.value"
+        :undecided-left="p.undecidedAfter.value"
         sheet
-        @skip="libraryStore.skipChapters(bookId, [openedChapter.id], true, { quiet: true })"
-        @include="libraryStore.skipChapters(bookId, [openedChapter.id], false, { quiet: true })"
-        @keep="libraryStore.keepChapters(bookId, [openedChapter.id], { quiet: true })"
-        @prev="step(-1)"
-        @next="step(1)"
+        @skip="p.skipOne(p.openedChapter.value.id)"
+        @include="p.includeOne(p.openedChapter.value.id)"
+        @keep="p.keepOne(p.openedChapter.value.id)"
+        @prev="p.step(-1)"
+        @next="p.step(1)"
         @next-undecided="nextUndecided"
         @close="closeSheet"
       />

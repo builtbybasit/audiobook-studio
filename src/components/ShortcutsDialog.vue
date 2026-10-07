@@ -72,6 +72,17 @@ const groups = [
     ],
   },
   {
+    title: "Contents · Volumes",
+    keys: [
+      ["↑ ↓", "move between volumes"],
+      ["↵ · space", "open the volume's chapters"],
+      ["F2", "rename the volume"],
+      ["⌦", "join with the volume before"],
+      ["← → on a handle", "move the boundary (shift: ten chapters)"],
+      ["double-click the bar", "cut a volume there"],
+    ],
+  },
+  {
     title: "Narration ledger",
     keys: [
       ["j / k", "move between segments"],

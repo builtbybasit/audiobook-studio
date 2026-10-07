@@ -17,6 +17,7 @@ import type {
   ScriptingStatus,
   SegmentType,
   Volume,
+  VolumeStart,
 } from "@/types";
 import { chapterNumbers } from "@/lib/chapterNumber";
 import { unspokenTypes } from "@/lib/siteText";
@@ -727,6 +728,79 @@ export function renameVolume(db: Db, bookId: string, volumeId: number, name: str
     .set({ name })
     .where(and(eq(volumes.bookId, bookId), eq(volumes.id, volumeId)))
     .run();
+}
+
+/**
+ * Cut a book into these volumes: each `start` is the chapter a volume begins at and the name it
+ * has, in reading order, the first at the book's first chapter (checked by the caller).
+ *
+ * Each start takes the first volume its chapters are in today that no earlier start has taken, so
+ * a boundary that moves keeps both rows — their ids, the files they came from, whether they are
+ * still in review — and takes the name given; a start whose chapters are all in volumes already
+ * taken is a new row, cut from the volume its first chapter was in, which it takes its file and
+ * review state from; a row left with no chapters goes. Chapter numbers do not move, since the
+ * reading order is the same: only `volume_id` and `volume_index` are rewritten, and the ranges
+ * put back.
+ */
+export function setVolumes(db: Db, bookId: string, starts: readonly VolumeStart[]): void {
+  db.transaction((tx) => {
+    const vols = tx.select().from(volumes).where(eq(volumes.bookId, bookId)).all();
+    const rows = tx
+      .select()
+      .from(chapters)
+      .where(eq(chapters.bookId, bookId))
+      .orderBy(asc(chapters.id))
+      .all();
+    const byId = new Map(vols.map((v) => [v.id, v]));
+    let nextId = Math.max(0, ...vols.map((v) => v.id));
+    const kept = new Set<number>();
+    starts.forEach((start, position) => {
+      const end = starts[position + 1]?.chapter ?? Infinity;
+      const mine = rows.filter((c) => c.id >= start.chapter && c.id < end);
+      if (!mine.length) return;
+      const parent = byId.get(mine[0].volumeId)!;
+      // the first volume these chapters are in today that no earlier start has taken: a boundary
+      // that moved keeps both rows, a split inside one volume makes a new row for its second half
+      let id = mine.map((c) => c.volumeId).find((v) => !kept.has(v));
+      if (id == null) {
+        id = ++nextId;
+        tx.insert(volumes)
+          .values(
+            volumeValues(
+              bookId,
+              {
+                id,
+                name: start.name,
+                file: parent.file,
+                from: 0,
+                to: 0,
+                importing: parent.importing,
+              },
+              position,
+            ),
+          )
+          .run();
+      } else
+        tx.update(volumes)
+          .set({ name: start.name, position })
+          .where(and(eq(volumes.bookId, bookId), eq(volumes.id, id)))
+          .run();
+      kept.add(id);
+      mine.forEach((c, i) =>
+        tx
+          .update(chapters)
+          .set({ volumeId: id, volumeIndex: i + 1 })
+          .where(and(eq(chapters.bookId, bookId), eq(chapters.id, c.id)))
+          .run(),
+      );
+    });
+    for (const v of vols)
+      if (!kept.has(v.id))
+        tx.delete(volumes)
+          .where(and(eq(volumes.bookId, bookId), eq(volumes.id, v.id)))
+          .run();
+    renumber(tx, bookId);
+  });
 }
 
 /**

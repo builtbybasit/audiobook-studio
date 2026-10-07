@@ -57,7 +57,10 @@ function playChapter(at?: number) {
   if (q) playQueue(q, at);
 }
 function scrub(e: MouseEvent) {
-  const at = (e.offsetX / (e.currentTarget as HTMLElement).clientWidth) * total.value;
+  // measured from the bar's own edge: `offsetX` is relative to the element under the pointer, one
+  // of the clip blocks here, so it would say the pointer was a pixel or two into whichever was hit
+  const bar = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  const at = ((e.clientX - bar.left) / bar.width) * total.value;
   if (isChapter.value) return seekTo(at);
   const q = buildQueue(props.chapterId);
   if (q) cue(q, at); // park the playhead without starting — scrubbing is not pressing play

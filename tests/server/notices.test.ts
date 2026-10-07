@@ -172,9 +172,31 @@ describe("notices in a web-novel EPUB", () => {
     expect(note?.evidence).toContain("the file could not be read");
   });
 
-  test("a chapter with no text is not called a notice", () => {
-    // an empty chapter is a parse problem; "notice" would hide it behind a suggestion to skip
-    expect(noteOn([chapter("Chapter 12", "")])).toBeNull();
+  test("a chapter with no text is suggested for skipping, and says it is empty", () => {
+    // a blank page would be narrated as silence; the reason says what it is, not "notice"
+    const note = noteOn([chapter("Chapter 12", "")]);
+    expect(note?.kind).toBe("empty");
+    expect(note?.verdict).toBe("skip");
+    expect(note?.evidence).toContain("no text at all");
+  });
+
+  test("a cover, a title page or a contents page is front matter, with or without words", () => {
+    for (const [title, text] of [
+      ["Cover", ""],
+      ["Title Page", "Shadow Slave\n\nby Guiltythree"],
+      ["Copyright", "Copyright 2024 Guiltythree. All rights reserved."],
+      ["Contents", "Chapter 1\nChapter 2\nChapter 3"],
+    ]) {
+      const note = noteOn([chapter(title, text)]);
+      expect(note?.kind).toBe("front");
+      expect(note?.verdict).toBe("skip");
+      expect(note?.evidence[0]).toBe(`the title is “${title}”`);
+    }
+  });
+
+  test("a story chapter titled like front matter is story", () => {
+    expect(noteOn([chapter("Contents", storyText())])).toBeNull();
+    expect(noteOn([chapter("Cover", `“Cover me,” she said.\n\nHe did.`)])).toBeNull();
   });
 
   test("speech in single quotes is dialogue, curly or straight", () => {

@@ -114,9 +114,11 @@ const noticeWords = computed(() =>
       >
         <div class="font-medium">
           {{
-            note.verdict === "skip"
-              ? "Looks like a notice, not story"
-              : "Worth a look before deciding"
+            note.kind === "empty" || note.kind === "front"
+              ? "Nothing to narrate here"
+              : note.verdict === "skip"
+                ? "Looks like a notice, not story"
+                : "Worth a look before deciding"
           }}
         </div>
         <ul class="mt-1 list-disc space-y-0.5 pl-4 text-zinc-600 dark:text-zinc-300">

@@ -21,7 +21,10 @@ const props = defineProps<{
   chapter: Chapter;
   volume: Volume | undefined;
   multi: boolean;
-  total: number;
+  /** the chapter's reading number; none while it is skipped */
+  number: number | undefined;
+  /** how many chapters the audiobook keeps, which the reading number counts among */
+  kept: number;
   parts: ContentPart[];
   /** how many chapters are still to decide after this one */
   undecidedLeft: number;
@@ -54,11 +57,10 @@ const noticeWords = computed(() =>
       <div class="flex items-start gap-2">
         <div class="min-w-0 flex-1">
           <div class="text-[11px] text-zinc-500">
-            <template v-if="multi && volume"
-              >{{ volume.name }} · chapter {{ chapter.volumeIndex }} of
-              {{ volume.to - volume.from + 1 }} ·
-            </template>
-            #{{ chapter.id }} of {{ total }} · {{ words(chapter.words) }}
+            <template v-if="multi && volume">{{ volume.name }} · </template>
+            <template v-if="number == null">skipped</template>
+            <template v-else>ch {{ number }} of {{ kept }}</template>
+            · {{ words(chapter.words) }}
           </div>
           <h2
             class="mt-0.5 font-serif text-lg leading-snug"

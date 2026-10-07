@@ -8,6 +8,7 @@
 import { useQueryCache } from "@pinia/colada";
 import { plural } from "@/lib/contents";
 import { usable } from "@/lib/exports";
+import { jobLabel } from "@/lib/queue";
 import { segmentFailed } from "@/lib/runPlan";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
@@ -83,6 +84,18 @@ export const useJobsStore = defineStore("jobs", {
         this.jobs
           .filter((j) => j.bulk?.id === runId)
           .sort((a, b) => (a.bulk!.index ?? 0) - (b.bulk!.index ?? 0));
+    },
+    /**
+     * A job's label as a page shows it: the server's, which names no chapter, with the chapter's
+     * reading number put in (`jobLabel`) once its book's chapters are read.
+     */
+    labelOf(): (j: Job) => string {
+      const libraryStore = useLibraryStore();
+      return (j) =>
+        jobLabel(
+          j.label,
+          j.chapterId == null ? undefined : libraryStore.chapterRef(j.bookId, j.chapterId),
+        );
     },
     recentJobs(): Job[] {
       return [...this.jobs].reverse().slice(0, 12);

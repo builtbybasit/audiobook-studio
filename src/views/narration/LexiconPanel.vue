@@ -318,7 +318,7 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
             :to="`/book/${bookId}/scripting?ch=${o.chId}&seg=${o.seg.id}`"
             :title="o.seg.text.slice(0, 70)"
           >
-            ch {{ o.chId }} · #{{ o.seg.id }} ·
+            {{ libraryStore.chapterRef(bookId, o.chId) }} · #{{ o.seg.id }} ·
             {{ o.seg.pause === 0 ? "no gap" : secs(o.seg.pause!) }}
           </RouterLink>
         </div>

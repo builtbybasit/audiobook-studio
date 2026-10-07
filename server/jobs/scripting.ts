@@ -123,7 +123,9 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       const { job, db, signal } = ctx;
       if (job.chapterId == null) throw new Error("A scripting job is for one chapter");
       const chapter = readChapter(db, job.bookId, job.chapterId);
-      const number = job.chapterId;
+      // The model is told the number a reader knows the chapter by, not the id, which counts the
+      // cover and contents pages; a skipped chapter has none, and is told its id rather than nothing.
+      const number = library.readingNumber(db, job.bookId, job.chapterId) ?? job.chapterId;
       // The profile as it was when the run was queued, not as it has been edited since: a run
       // keeps the chunking it was previewed and started with.
       const queued = job.scriptRun;
@@ -138,7 +140,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       // the built-in one, which is what it would have been sent then.
       const template = queued?.prompt ?? BUILT_IN_PROMPT;
       const book = library.getBook(db, job.bookId);
-      const recap = library.previousRecap(db, job.bookId, number);
+      const recap = library.previousRecap(db, job.bookId, job.chapterId);
       const expressions = expressionNames(readEndpoints(db));
       const varsFor = (i: number): PromptVars => ({
         book: {
@@ -226,7 +228,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             {
               bookId: job.bookId,
               chapterUid: at ? chapter.uid : null,
-              label: `Script chunk ${i + 1} · ch ${at?.id ?? job.chapterId}`,
+              label: `Script chunk ${i + 1}`,
               queuedAt: job.queuedAt,
               reasoning: run.profile.reasoning ?? null,
               held: holds[i],
@@ -544,7 +546,7 @@ export function enqueueScripting(
       kind: "scripting",
       bookId,
       chapterId: id,
-      label: `${replacing ? "Re-script" : "Script"} · ch ${id} · ${via}`,
+      label: `${replacing ? "Re-script" : "Script"} · ${via}`,
       bulk: {
         id: runId,
         op: replacing ? "Re-script" : "Script",

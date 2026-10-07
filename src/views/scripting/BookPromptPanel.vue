@@ -128,7 +128,11 @@ function addTag(owner: NotesOwner) {
 }
 
 // the chapter the preview is built on: the book's first; the trial below picks its own
-const chapter = computed(() => libraryStore.chaptersOf(props.bookId)[0]);
+// the preview reads as the first chapter the audiobook keeps, a skipped cover having no number
+const chapter = computed(() => {
+  const chapters = libraryStore.chaptersOf(props.bookId);
+  return chapters.find((c) => !c.excluded) ?? chapters[0];
+});
 const { text } = useChapterText(
   () => props.bookId,
   () => chapter.value?.id,
@@ -146,7 +150,7 @@ const preview = computed<RenderedPrompt | null>(() => {
   if (!b || !ch) return null;
   return renderPrompt(resolved.value, {
     book: { title: b.title, author: b.author, notes: draft.value.notes },
-    chapter: { title: ch.title, number: ch.id },
+    chapter: { title: ch.title, number: libraryStore.numberOf(props.bookId, ch.id) ?? ch.id },
     part: 1,
     parts: parts.value.length,
     cast: characters.value.map((c) => ({

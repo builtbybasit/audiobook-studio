@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
+import { numberSpan } from "@/lib/chapterNumber";
 import { plural } from "@/lib/contents";
 import { money } from "@/lib/pricing";
 import { useExportsStore } from "@/stores/exports";
@@ -147,6 +148,11 @@ const volStats = (v: Volume) => {
     n: chs.length,
     scripted: chs.filter(isScripted).length,
     narrated: chs.filter(isNarrated).length,
+    // the reading numbers of its first and last kept chapter; `from`/`to` are ids in the file
+    span: numberSpan(
+      chs.map((c) => c.id),
+      libraryStore.chapterNumbers[bookId],
+    ),
   };
 };
 const fmt = (s: number) =>
@@ -383,7 +389,10 @@ const next = computed(() =>
                 </button>
               </div>
               <div class="truncate font-mono text-[11px] text-zinc-400">
-                {{ v.file }} · ch {{ v.from }}–{{ v.to }}
+                {{ v.file
+                }}<template v-if="volStats(v).n">
+                  · {{ volStats(v).span ?? "all skipped" }}</template
+                >
               </div>
             </div>
             <div class="w-full text-xs text-zinc-500 sm:w-40">

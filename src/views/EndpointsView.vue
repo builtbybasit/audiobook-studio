@@ -269,7 +269,10 @@ const sample = computed(() => {
   const b = uiStore.currentBookId;
   const ch = b ? libraryStore.chaptersOf(b).find((c) => !c.excluded) : null;
   return b && ch
-    ? { text: scriptsStore.rawText(b, ch.id), label: `ch ${ch.id} · ${ch.title}` }
+    ? {
+        text: scriptsStore.rawText(b, ch.id),
+        label: `${libraryStore.chapterRef(b, ch.id)} · ${ch.title}`,
+      }
     : { text: SAMPLE, label: "sample text" };
 });
 
@@ -516,7 +519,7 @@ function pickBucket(b: MetricBucket | null) {
               Cancel {{ plural(busyJobs.length, "unfinished job") }} on {{ selected.name }}:
               {{
                 busyJobs
-                  .map((j) => j.label)
+                  .map((j) => jobsStore.labelOf(j))
                   .slice(0, 3)
                   .join(", ")
               }}{{ busyJobs.length > 3 ? `, +${busyJobs.length - 3} more` : "" }}.

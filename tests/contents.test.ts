@@ -14,6 +14,8 @@ import { IMPORT_SAMPLES } from "~/demo/seed/fixtures/imports";
 import { importedBook } from "~/demo/seed/world/imports";
 import { chapterParts } from "~/demo/seed/world/text";
 import { readinessOf } from "@/lib/exports";
+import { chapterNumbers } from "@/lib/chapterNumber";
+import { findsChapter, numberCell, numberSpan } from "@/lib/chapterNumber";
 import {
   excerptOf,
   importLabel,
@@ -22,6 +24,7 @@ import {
   stateOf,
   summarize,
 } from "@/lib/contents";
+import { passes } from "@/views/contents/shared";
 import { libraryService } from "@/services/library";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
@@ -321,5 +324,54 @@ describe("the review against the demo library", () => {
       // a story chapter of a seeded book still reads as its own prose
       expect(await svc.chapterText("cliche", 1, "plain")).toContain("Ji Ning");
     });
+  });
+});
+
+// Reading numbers on screen: a list shows, spans and searches by the number a chapter has among
+// the kept ones, so a skipped cover and contents page never push "Chapter 2" to "ch 4".
+describe("reading numbers in the lists", () => {
+  // the book's file: a cover and a contents page (skipped), then three chapters, one skipped
+  const book = [
+    chapter({ id: 1, title: "Cover", excluded: true }),
+    chapter({ id: 2, title: "Information", excluded: true }),
+    chapter({ id: 3, title: "Chapter 1" }),
+    chapter({ id: 4, title: "Chapter 2" }),
+    chapter({ id: 5, title: "Author's note", excluded: true }),
+    chapter({ id: 6, title: "Chapter 3" }),
+  ];
+  const numbers = chapterNumbers(book);
+
+  test("a row's number column pads the reading number and gives a skipped chapter a dash", () => {
+    expect(numberCell(numbers.get(4))).toBe("02");
+    expect(numberCell(numbers.get(6), 3)).toBe("003");
+    expect(numberCell(numbers.get(1))).toBe("–");
+  });
+
+  test("a typed number finds the chapter with that reading number, never the one with that id", () => {
+    const found = (q: string) =>
+      book.filter((c) => findsChapter(c.title, numbers.get(c.id), q)).map((c) => c.id);
+    expect(found("2")).toEqual([4]);
+    expect(found("02")).toEqual([4]);
+    expect(found("5")).toEqual([]);
+    expect(found("4")).toEqual([]);
+    expect(found("cover")).toEqual([1]);
+  });
+
+  test("the contents search finds by reading number too, and still by the note's reason", () => {
+    const noted = chapter({ id: 7, title: "Notice", note: { ...hiatus, reason: "on hiatus" } });
+    const all = [...book, noted];
+    const nums = chapterNumbers(all);
+    const found = (q: string) =>
+      all.filter((c) => passes(c, nums.get(c.id), "all", null, q)).map((c) => c.id);
+    expect(found("3")).toEqual([6]);
+    expect(found("4")).toEqual([7]);
+    expect(found("hiatus")).toEqual([7]);
+  });
+
+  test("a span names the first and last kept chapter it holds, by reading number", () => {
+    expect(numberSpan([1, 2, 3, 4, 5, 6], numbers)).toBe("ch 1–3");
+    expect(numberSpan([4, 5], numbers)).toBe("ch 2");
+    expect(numberSpan([1, 2], numbers)).toBeNull();
+    expect(numberSpan([3, 4], undefined)).toBeNull();
   });
 });

@@ -14,6 +14,7 @@
 //
 // Versions are independent copies of script content, never the audio: restoring one carries the
 // clips across rather than throwing them away.
+import { chapterName } from "@/lib/chapterNumber";
 import { key } from "@/lib/scriptReview";
 import { compareScripts, originLabel, planRestore, restoreConsequences } from "@/lib/scriptHistory";
 import { clone } from "@/lib/utils";
@@ -47,6 +48,9 @@ const LANDS_ON_SCRIPT: Record<JobKind, boolean> = {
   check: true,
   export: false,
 };
+
+const nameOf = (bookId: string, chId: number) =>
+  chapterName(useLibraryStore().numberOf(bookId, chId));
 
 const emptyHead = (): HistoryHead => ({ at: 0, origin: { kind: "scripted" } });
 const emptyHistory = (): ChapterHistory => ({ versions: [], head: emptyHead(), nextId: 1 });
@@ -146,7 +150,7 @@ export const useHistoryStore = defineStore("history", {
       }
       uiStore.toast(`Checkpoint saved: “${title}”`, {
         kind: "success",
-        description: `v${version.id} · ${version.segments.length} lines of chapter ${chId}. The script itself is untouched.`,
+        description: `v${version.id} · ${version.segments.length} lines of ${nameOf(bookId, chId)}. The script itself is untouched.`,
         undo: async () => {
           try {
             this._install(bookId, chId, await svc.dropVersion(bookId, chId, version.id));
@@ -178,7 +182,8 @@ export const useHistoryStore = defineStore("history", {
       if (!version) return false;
       const busy = this.busyJobs(bookId, chId);
       if (busy.length) {
-        uiStore.toast(`Chapter ${chId} has a run in flight`, {
+        // the job's label names the work alone ("Narrate"); the chapter is the one in the title
+        uiStore.toast(`A run is in flight on ${nameOf(bookId, chId)}`, {
           kind: "warn",
           description: `${busy[0].label} would write over anything restored now. Cancel it first — the run's own results are not undoable.`,
         });
@@ -222,7 +227,7 @@ export const useHistoryStore = defineStore("history", {
       castStore._retime(bookId, chId);
       scriptsStore._commit(bookId, chId, origin);
       const facts = restoreConsequences(plan);
-      uiStore.toast(`Chapter ${chId} restored to v${version.id}`, {
+      uiStore.toast(`Restored ${nameOf(bookId, chId)} to v${version.id}`, {
         kind: "success",
         description: `${originLabel(version.origin)} · ${facts.join(" · ")}. Everything after it is still in the history.`,
         timeout: 12000,

@@ -5,7 +5,9 @@
 // volume, and the strip above the list ticks a kind of note. Opening a chapter is a separate click
 // and never changes a tick.
 import { computed, nextTick, ref } from "vue";
+import { numberCell } from "@/lib/chapterNumber";
 import { excerptOf, stateOf } from "@/lib/contents";
+import { useLibraryStore } from "@/stores/library";
 import { STATE_CHIP, words } from "@/views/contents/shared";
 import { UiCheckbox } from "@/ui";
 import type { Chapter, Volume } from "@/types";
@@ -21,7 +23,6 @@ const props = defineProps<{
   bookId: string;
   rows: VolumeRow[];
   multi: boolean;
-  total: number;
   opened: number | null;
   collapsed: Set<number>;
   textOf: (c: Chapter) => string;
@@ -49,7 +50,16 @@ function excerpt(c: Chapter): string {
   return e;
 }
 
-const pad = computed(() => String(props.total).length);
+// A row shows its reading number, which a tick here gives or takes away, so the column renumbers
+// the moment a chapter is skipped or kept; a skipped row shows a dash.
+const libraryStore = useLibraryStore();
+const numbers = computed(() => libraryStore.chapterNumbers[props.bookId]);
+const pad = computed(() => String(numbers.value?.size ?? 0).length);
+/** "chapter 4", or "skipped chapter": how a row's label names it, for a screen reader. */
+const named = (c: Chapter) => {
+  const n = numbers.value?.get(c.id);
+  return n == null ? "skipped chapter" : `chapter ${n}`;
+};
 const rowId = (id: number) => `contents-${props.bookId}-${id}`;
 
 function volState(v: VolumeRow) {
@@ -170,18 +180,18 @@ defineExpose({ focusRow });
               : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/60',
             stateOf(c) === 'suggested' && opened !== c.id && 'bg-amber-400/5',
           ]"
-          :aria-label="`Chapter ${c.id}, ${c.title}${c.note ? `, ${c.note.reason}` : ''}${c.excluded ? ', skipped' : ''}`"
+          :aria-label="`${named(c)}, ${c.title}${c.note ? `, ${c.note.reason}` : ''}`"
           @keydown="onRowKey($event, c)"
         >
           <UiCheckbox
             class="mt-0.5"
             :model-value="!c.excluded"
-            :aria-label="`Include chapter ${c.id}, ${c.title}, in the audiobook`"
+            :aria-label="`Include ${named(c)}, ${c.title}, in the audiobook`"
             :title="c.excluded ? 'Include in the audiobook' : 'Skip for the audiobook'"
             @click="emit('toggle', c, $event)"
           />
           <span class="mt-0.5 font-mono text-[11px] text-zinc-400">{{
-            String(c.id).padStart(pad, "0")
+            numberCell(numbers?.get(c.id), pad)
           }}</span>
           <div class="min-w-0">
             <button

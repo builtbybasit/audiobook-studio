@@ -11,6 +11,7 @@
 // them in flight, so it has none here: what it heard is in the ledger once it answers.
 import type { Job, RequestRecord, WaitReason } from "@/types";
 import { speechReadiness, type UnifiedEndpoint } from "@/lib/endpoints";
+import { jobLabel } from "@/lib/queue";
 
 import { useScriptsStore } from "@/stores/scripts";
 import { useCastStore } from "@/stores/cast";
@@ -159,12 +160,16 @@ export function useEndpointActivity() {
     )) {
       const run = j.scriptRun!;
       const started = j.startedAt ?? j.queuedAt;
+      const label = jobLabel(
+        "Script chunk",
+        j.chapterId == null ? undefined : libraryStore.chapterRef(j.bookId, j.chapterId),
+      );
       for (let i = 0; i < run.active; i++)
         push({
           id: `job-${j.id}-run-${i}`,
           bookId: j.bookId,
           chapterId: j.chapterId,
-          label: `Script chunk · ch ${j.chapterId}`,
+          label,
           status: "running",
           attempts: 1,
           queuedAt: j.queuedAt,
@@ -182,7 +187,7 @@ export function useEndpointActivity() {
           id: `job-${j.id}-wait-${i}`,
           bookId: j.bookId,
           chapterId: j.chapterId,
-          label: `Script chunk · ch ${j.chapterId}`,
+          label,
           status: "queued",
           attempts: 0,
           queuedAt: j.queuedAt,

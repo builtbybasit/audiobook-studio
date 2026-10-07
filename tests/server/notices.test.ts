@@ -93,7 +93,7 @@ describe("notices in a web-novel EPUB", () => {
     ]);
     expect(notes[0]?.kind).toBe("hiatus");
     expect(notes[2]?.kind).toBe("duplicate");
-    expect(notes[2]?.evidence).toContain("same text as chapter 1");
+    expect(notes[2]?.evidence).toContain("same text as “Hiatus notice”");
   });
 
   test("a short notice with no keyword in it is still a notice", () => {

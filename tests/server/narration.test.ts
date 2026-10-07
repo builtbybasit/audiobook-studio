@@ -156,7 +156,7 @@ describe("narrating a chapter through the queue", () => {
     const before = await scriptOf(api, id);
     const { status, body } = await narrate(api, id, [1]);
     expect(status).toBe(202);
-    expect(body.jobs[0].label).toBe("Narrate · ch 1");
+    expect(body.jobs[0].label).toBe("Narrate");
     expect(body.jobs[0].bulk).toEqual({
       id: body.runId,
       op: "Narrate",
@@ -238,7 +238,7 @@ describe("what a scope renders", () => {
     expect((await chaptersOf(api, id))[0].narration).toBe("done");
 
     const { body } = await narrate(api, id, [1], "fill");
-    expect(body.jobs[0].label).toBe("Re-narrate · ch 1");
+    expect(body.jobs[0].label).toBe("Re-narrate");
     expect(body.jobs[0].bulk?.scope).toBe("Missing & changed");
     expect(body.jobs[0].narrationRun?.clips).toBe(1);
     await api.runner.idle();
@@ -266,7 +266,7 @@ describe("what a scope renders", () => {
     await api.runner.idle();
     const before = await scriptOf(api, id);
     const { body } = await narrate(api, id, [1], "all");
-    expect(body.jobs[0].label).toBe("Re-narrate · ch 1");
+    expect(body.jobs[0].label).toBe("Re-narrate");
     expect(body.jobs[0].bulk?.op).toBe("Re-narrate");
     await api.runner.idle();
     const { segments } = await scriptOf(api, id);
@@ -575,7 +575,7 @@ describe("a retake", () => {
     expect(status).toBe(202);
     expect(body.queued).toEqual([line.id]);
     expect(body.skipped).toEqual([]);
-    expect(body.job?.label).toBe("Retake · ch 1");
+    expect(body.job?.label).toBe("Retake");
     expect(body.job?.bulk).toMatchObject({ op: "Retake", index: 1, total: 1, scope: "Retake" });
     expect(body.job?.narrationRun?.clips).toBe(1);
     expect(["queued", "running"]).toContain(body.chapters[0].narration);
@@ -644,13 +644,15 @@ describe("a retake", () => {
     expect((await chaptersOf(api, id))[0].narration).toBe("done");
   });
 
-  test("is refused while the chapter is being narrated", async () => {
+  test("is refused while the chapter is being narrated, named by the number it is read by", async () => {
     const gate = gatedSpeechProvider();
     const { api, id } = await scripted(testApi({ speech: gate.provider }));
-    const first = await narrate(api, id, [1]);
+    // the first chapter left out, so the second is read as chapter 1
+    await api.request(`/api/books/${id}/chapters/skip`, jsonBody({ ids: [1] }));
+    const first = await narrate(api, id, [2]);
     await gate.started;
     const refused = await api.request<Failure>(
-      `/api/books/${id}/chapters/1/retakes`,
+      `/api/books/${id}/chapters/2/retakes`,
       jsonBody({ ids: [1] }),
     );
     expect(refused.status).toBe(409);

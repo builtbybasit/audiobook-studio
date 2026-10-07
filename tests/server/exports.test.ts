@@ -440,7 +440,7 @@ describe("building an audiobook", () => {
     // the two chapters it meant to copy were read from their clips instead: the same audio
     expect(playsFor(fileBytes(api, id, v2.id))).toBeCloseTo(playsFor(before) + grew, 0);
     const notes = (await jobById(api, v2.jobId!)).activity ?? [];
-    expect(notes.filter((e) => e.message.endsWith("could not be carried over"))).toHaveLength(2);
+    expect(notes.filter((e) => e.message.startsWith("Could not carry over"))).toHaveLength(2);
     expect(notes.find((e) => e.message === "Export ready")?.detail?.reusedChapters).toBe(0);
   });
 

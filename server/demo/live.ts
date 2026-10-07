@@ -167,7 +167,7 @@ function settle(tx: Tx, kind: EndpointKind, endpointId: string, m: Made): void {
       endpointId,
       kind,
       bookId,
-      label: chapterId == null ? EARLIER : `Script · ch ${chapterId}`,
+      label: chapterId == null ? EARLIER : "Script",
       status: m.ok ? "done" : "failed",
       attempts: 1,
       queuedAt: m.at - m.ms,

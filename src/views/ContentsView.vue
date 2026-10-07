@@ -15,7 +15,9 @@ import { useChapterText } from "@/queries";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useMediaQuery } from "@vueuse/core";
+import { numberSpan } from "@/lib/chapterNumber";
 import { importLabel, isUndecided, plural } from "@/lib/contents";
+import { chapterNumbers } from "@/lib/chapterNumber";
 import { useBookId } from "@/composables/useBookId";
 import {
   enumParam,
@@ -42,6 +44,10 @@ const bookId = useBookId();
 
 const book = computed(() => libraryStore.bookById(bookId));
 const chapters = computed(() => libraryStore.chaptersOf(bookId));
+/** reading numbers, which the search finds a chapter by and the rows and preview show */
+const numbers = computed(() => libraryStore.chapterNumbers[bookId]);
+const shows = (c: Chapter) =>
+  passes(c, numbers.value?.get(c.id), filter.value, kind.value, q.value);
 const volumes = computed(() => libraryStore.volumesOf(bookId));
 const multi = computed(() => volumes.value.length > 1);
 const summary = computed(() => libraryStore.contentsOf(bookId));
@@ -105,7 +111,7 @@ const rows = computed<VolumeRow[]>(() =>
       return {
         ...v,
         all,
-        chapters: all.filter((c) => passes(c, filter.value, kind.value, q.value)),
+        chapters: all.filter(shows),
       };
     })
     .filter((v) => v.chapters.length),
@@ -141,13 +147,23 @@ const range = useRangeSelect(() => visible.value.map((x) => x.id));
 function toggle(c: Chapter, e?: MouseEvent | KeyboardEvent) {
   const run = range.span(c.id, e);
   // one row is its own undo; a run toasts, with Undo, naming the chapters it covered
+  const skip = !c.excluded;
+  // the toast names the run by the reading numbers its chapters have while kept: the ones they
+  // held before a skip, the ones they are given by an include
+  const ids = new Set(run);
+  const span = numberSpan(
+    run,
+    skip
+      ? numbers.value
+      : chapterNumbers(
+          chapters.value.map((x) => ({ id: x.id, excluded: x.excluded && !ids.has(x.id) })),
+        ),
+  );
   libraryStore.skipChapters(
     bookId,
     run,
-    !c.excluded,
-    run.length === 1
-      ? { quiet: true }
-      : { scope: `chapters ${Math.min(...run)}–${Math.max(...run)}` },
+    skip,
+    run.length === 1 ? { quiet: true } : span ? { scope: span } : {},
   );
 }
 function toggleVolume(v: VolumeRow) {
@@ -210,7 +226,7 @@ async function nextUndecided() {
   const from = opened.value == null ? -1 : all.findIndex((c) => c.id === opened.value);
   const after = all.slice(from + 1).find(isUndecided) ?? all.find(isUndecided);
   if (!after) return;
-  if (!passes(after, filter.value, kind.value, q.value)) showEverything();
+  if (!shows(after)) showEverything();
   open(after.id);
   await nextTick();
   await list.value?.focusRow(after.id, after.volumeId);
@@ -410,7 +426,6 @@ async function discard() {
           :book-id="bookId"
           :rows="rows"
           :multi="multi"
-          :total="summary.total"
           :opened="opened"
           :collapsed="collapsed"
           :text-of="textOf"
@@ -453,7 +468,8 @@ async function discard() {
           :chapter="openedChapter"
           :volume="libraryStore.volumeOf(bookId, openedChapter.id)"
           :multi="multi"
-          :total="summary.total"
+          :number="numbers?.get(openedChapter.id)"
+          :kept="summary.included"
           :parts="openedParts"
           :undecided-left="undecidedAfter"
           @skip="libraryStore.skipChapters(bookId, [openedChapter.id], true, { quiet: true })"
@@ -542,7 +558,8 @@ async function discard() {
         :chapter="openedChapter"
         :volume="libraryStore.volumeOf(bookId, openedChapter.id)"
         :multi="multi"
-        :total="summary.total"
+        :number="numbers?.get(openedChapter.id)"
+        :kept="summary.included"
         :parts="openedParts"
         :undecided-left="undecidedAfter"
         sheet

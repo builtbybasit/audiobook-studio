@@ -183,6 +183,13 @@
       "when": 1791301792518,
       "tag": "0025_expression_brackets",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1791365648669,
+      "tag": "0026_labels_without_chapter",
+      "breakpoints": true
     }
   ]
 }

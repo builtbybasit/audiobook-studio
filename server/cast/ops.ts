@@ -162,7 +162,7 @@ export function putLexicon(
     const named = new Map(restore.map((r) => [r.chapterId, new Set(r.ids)]));
     const stale: RevisedLines[] = [];
     const restored: RevisedLines[] = [];
-    for (const chapterId of library.chapterNumbers(tx, bookId)) {
+    for (const chapterId of library.chapterIds(tx, bookId)) {
       const staled: number[] = [];
       const back: number[] = [];
       const undo = named.get(chapterId);

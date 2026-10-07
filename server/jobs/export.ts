@@ -52,6 +52,7 @@ import {
   scopeOf,
   setLabel,
 } from "@/lib/exports";
+import { chapterNumbers } from "@/lib/chapterNumber";
 import { heardLines } from "@/lib/siteText";
 import { pacingOrDefault, pauseAfter, sampleRateLabel } from "@/lib/speech";
 import { FORMAT_LABEL } from "@/lib/endpointShapes";
@@ -226,7 +227,9 @@ export function enqueueBuild(
   const absent = [...new Set(ids)].filter((id) => !known.has(id));
   if (absent.length)
     throw badRequest(
-      `This book has no chapter ${absent.join(", ")}`,
+      absent.length === 1
+        ? "The selection names a chapter this book does not have"
+        : `The selection names ${absent.length} chapters this book does not have`,
       "The selection names chapters that are not in the book any more. Read the book again and build from what is there.",
     );
   const chapters = [...new Set(ids)].sort((a, b) => a - b).map((id) => known.get(id)!);
@@ -370,6 +373,9 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
 
     const pacing = pacingOrDefault(book.pacing);
     const known = new Map(library.listChapters(db, job.bookId).map((c) => [c.id, c]));
+    // what the build's notes call a chapter: the number a person reads it by, never its id
+    const numbers = chapterNumbers([...known.values()]);
+    const nameOf = (id: number) => library.nameOf(numbers.get(id));
     if (!encoder.decodes) refuseEncodedClips(db, book, entry.chapterIds, known);
     const prev = entry.replaces == null ? null : (exports.getExport(db, entry.replaces) ?? null);
     // Only a file this same encoder wrote is ever copied out of: a span is bytes into a WAV and
@@ -505,7 +511,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       for (const id of file.chapterIds) {
         const chapter = known.get(id);
         if (!chapter)
-          throw notFound(`Chapter ${id} was removed while ${entry.filename} was being built`);
+          throw notFound(`A chapter was removed while ${entry.filename} was being built`);
         const { signature, lines } = audioOf(db, book, chapter, pacing);
         signatures.set(id, signature);
         const title = markerTitle(
@@ -552,7 +558,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
           continue;
         }
         if (span)
-          ctx.note(`Chapter ${id} could not be carried over`, "warning", {
+          ctx.note(`Could not carry over ${nameOf(id)}`, "warning", {
             chapter: chapter.title,
             reason: from ? "its audio has changed since" : "the file it was in is gone",
           });
@@ -572,7 +578,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
           if (landed.readAgain) {
             copied--;
             encoded++;
-            ctx.note(`Chapter ${landed.id} could not be carried over`, "warning", {
+            ctx.note(`Could not carry over ${nameOf(landed.id)}`, "warning", {
               chapter: known.get(landed.id)?.title ?? landed.id,
               reason: "the file it was in is gone",
             });

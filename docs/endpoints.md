@@ -371,7 +371,7 @@ thinking tokens, the cost, and the two messages exactly as sent. Nothing is writ
 script, its history or the cast.
 
 The request is real: it is held to the book's budget at its worst case first and recorded in the
-ledger as `Prompt trial · ch N · part P/T` (a simulated endpoint bills nothing). The last result
+ledger as `Prompt trial · part P/T`, beside the chapter it was made on (a simulated endpoint bills nothing). The last result
 stays, dimmed, when the prompt, part or endpoint it was made with changes. Cancel stops the request
 on the server, though a provider may still bill one that had already reached the model.
 

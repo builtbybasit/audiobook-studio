@@ -30,14 +30,14 @@ export function makeJobHistory(nextId: () => number, now: number = Date.now()): 
   });
   return [
     mk("export", "starforge", null, "Build M4B · 18 ch", "done", 95, 214),
-    mk("narration", "starforge", 18, "Narrate · ch 18", "done", 118, 71),
-    mk("narration", "starforge", 17, "Narrate · ch 17", "done", 121, 64),
-    mk("scripting", "cliche", 12, "Script · ch 12", "done", 41, 26),
-    mk("scripting", "cliche", 11, "Script · ch 11", "done", 42, 24),
-    mk("narration", "cliche", 4, "Narrate · ch 4", "failed", 33, 58),
-    mk("narration", "cliche", 3, "Narrate · ch 3", "done", 35, 61),
-    mk("scripting", "drowned", 2, "Script · ch 2", "failed", 12, 31),
-    mk("scripting", "drowned", 1, "Script · ch 1", "done", 13, 27),
-    mk("narration", "drowned", 1, "Narrate · ch 1", "cancelled", 9, 12),
+    mk("narration", "starforge", 18, "Narrate", "done", 118, 71),
+    mk("narration", "starforge", 17, "Narrate", "done", 121, 64),
+    mk("scripting", "cliche", 12, "Script", "done", 41, 26),
+    mk("scripting", "cliche", 11, "Script", "done", 42, 24),
+    mk("narration", "cliche", 4, "Narrate", "failed", 33, 58),
+    mk("narration", "cliche", 3, "Narrate", "done", 35, 61),
+    mk("scripting", "drowned", 2, "Script", "failed", 12, 31),
+    mk("scripting", "drowned", 1, "Script", "done", 13, 27),
+    mk("narration", "drowned", 1, "Narrate", "cancelled", 9, 12),
   ];
 }

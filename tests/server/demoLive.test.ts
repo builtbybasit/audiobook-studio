@@ -243,7 +243,7 @@ describe("what an endpoint has been through", () => {
       rateLimited: true,
       bookId,
       chapterId: 3,
-      label: "Script · ch 3",
+      label: "Script",
       error: { code: 429, body: RATE_LIMIT_BODY },
     });
     expect(rows[1].rateLimited).toBeUndefined();

@@ -2,7 +2,7 @@
 // run split by "Run next" kept as separate rows so the positions stay true.
 import { expect, test } from "bun:test";
 
-import { upNextGroups } from "@/lib/queue";
+import { jobLabel, upNextGroups } from "@/lib/queue";
 import type { Job } from "@/types";
 
 const job = (id: number, bulkId?: number, priority?: number) =>
@@ -20,4 +20,10 @@ test("groups a run's consecutive jobs in run order, a moved job splitting the ru
     [2, [5]],
     [3, [1, 2, 4]],
   ]);
+});
+
+test("puts the chapter after the job's verb, and leaves a label without one as it is", () => {
+  expect(jobLabel("Narrate", "ch 2")).toBe("Narrate · ch 2");
+  expect(jobLabel("Script · OpenAI", "ch 14")).toBe("Script · ch 14 · OpenAI");
+  expect(jobLabel("Export", undefined)).toBe("Export");
 });

@@ -70,7 +70,7 @@ async function book(api: TestApi = testApi()) {
   const work = {
     bookId: id,
     chapterUid: chapterUidOf(api.db, id, 1),
-    label: "Script chunk 1 · ch 1",
+    label: "Script chunk 1",
   };
   return { api, id, work };
 }

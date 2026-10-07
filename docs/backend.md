@@ -230,6 +230,23 @@ chapter itself, `ON DELETE SET NULL` and never cascade: the chapter is gone, wha
 not, and it stays in every total. The number a row displays is looked up when it is read, and
 `label`, frozen when the request settles, still names the work after the chapter has been removed.
 
+### A label names the work, never the chapter
+
+The id a chapter is filed under counts every chapter of the file, cover and contents pages
+included, so the book's "Chapter 2" can be id 4. What a person sees is the **reading number**: the
+chapter's place among the ones the audiobook keeps (`chapterNumbers` in
+[src/lib/chapterNumber.ts](../src/lib/chapterNumber.ts)), which moves whenever a chapter is skipped or
+kept. So no stored label carries a chapter: a job is `Narrate`, `Re-script · DeepSeek`, `Check` or
+`Retake`, and a ledger row `Script chunk 2` or `Prompt trial · part 2/3`, and the page puts the
+chapter in from the row's `chapterId` as it reads it (`jobLabel` in
+[src/lib/queue.ts](../src/lib/queue.ts)). A check's request is not named by the chapter's title
+either, which would spoil a chapter not yet read. Prose the server sends — a refusal, a build's
+note, the prompt's `{{chapter.number}}` — names a chapter by its reading number
+(`library.chapterName`, `library.readingNumber`); logs and structured fields keep the id. Migration
+`0026_labels_without_chapter` took the old `· ch N` out of every job's label, and out of a ledger
+row's while its chapter is still in the book: once the chapter has gone, the frozen label is the
+one trace left of where the money went.
+
 ### Voices are tied by value, not by key
 
 A save of the endpoints replaces every endpoint and voice row, so anything that must outlive a save

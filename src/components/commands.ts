@@ -11,6 +11,7 @@
 // the queue says it would actually re-run — because a palette with its own copy of either offers a
 // count the button then does not honour.
 import { useCastStore } from "@/stores/cast";
+import { numberCell } from "@/lib/chapterNumber";
 import { plural } from "@/lib/contents";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useJobsStore } from "@/stores/jobs";
@@ -332,8 +333,14 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         keywords: bk.author,
         run: go(`/book/${bk.id}`),
       });
-  // chapters of the open book → the stage they're at
+  // chapters of the open book → the stage they're at. A row is labelled, and found by typing, by its
+  // reading number ("chapter 2" is the book's Chapter 2, whatever cover pages come before it); a
+  // skipped chapter has none and is found by its title.
+  const numbers = b ? libraryStore.chapterNumbers[b] : undefined;
   for (const c of chs) {
+    const n = numbers?.get(c.id);
+    const label = `${numberCell(n)} · ${c.title}`;
+    const named = n == null ? "skipped" : `chapter ${n}`;
     const stage = isNarrated(c) || c.narration !== "none" ? "narration" : "scripting";
     const state =
       c.narration !== "none"
@@ -344,9 +351,9 @@ export function paletteCommands(router: Router, mod: string): Command[] {
     out.push({
       id: "ch-" + c.id,
       group: "Chapters",
-      label: `${String(c.id).padStart(2, "0")} · ${c.title}`,
+      label,
       hint: state,
-      keywords: `chapter ${c.id} ${libraryStore.volumeOf(b!, c.id)?.name ?? ""}`,
+      keywords: `${named} ${libraryStore.volumeOf(b!, c.id)?.name ?? ""}`,
       run: go({ path: `/book/${b}/${stage}`, query: { ch: c.id } }),
     });
     // a chapter with audio can also be read along with
@@ -354,9 +361,9 @@ export function paletteCommands(router: Router, mod: string): Command[] {
       out.push({
         id: "listen-" + c.id,
         group: "Listen",
-        label: `${String(c.id).padStart(2, "0")} · ${c.title}`,
+        label,
         hint: "read along",
-        keywords: `listen chapter ${c.id}`,
+        keywords: `listen ${named}`,
         run: go({ path: `/book/${b}/listen`, query: { ch: c.id } }),
       });
   }

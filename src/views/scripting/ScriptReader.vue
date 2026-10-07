@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { chapterName } from "@/lib/chapterNumber";
 import { useBookScripts, useChapterHistory } from "@/queries";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
@@ -117,6 +118,18 @@ const rows = computed(() =>
   ),
 );
 const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterId)!);
+/** Its reading number: undefined for a chapter the audiobook skips, which is then said so. */
+const number = computed(() => libraryStore.numberOf(props.bookId, props.chapterId));
+// Its place among the kept chapters of its volume, counted as the reading number is: the volume's
+// own position (`volumeIndex`) counts the cover and contents pages too.
+const numberInVolume = computed(
+  () =>
+    libraryStore
+      .chaptersOf(props.bookId)
+      .filter(
+        (c) => c.volumeId === chapter.value.volumeId && !c.excluded && c.id <= props.chapterId,
+      ).length,
+);
 const book = computed(() => libraryStore.bookById(props.bookId));
 /** the lines that are not the story, and the lines the detector questions, however they are typed */
 const siteText = computed(() => segments.value.filter((s) => s.type === "watermark").length);
@@ -316,21 +329,23 @@ watch(open, (v) => {
         <div class="flex flex-wrap items-start gap-2">
           <div class="min-w-[200px] flex-1">
             <div class="label">
-              <span v-if="multiVolume">{{ volume?.name }} · </span>Chapter {{ chapter.id
-              }}<span
-                v-if="multiVolume"
-                class="font-normal normal-case tracking-normal text-zinc-400"
-              >
-                (ch. {{ chapter.volumeIndex }} of this volume)</span
-              >
+              <span v-if="multiVolume">{{ volume?.name }} · </span
+              ><template v-if="number"
+                >Chapter {{ number
+                }}<span
+                  v-if="multiVolume"
+                  class="font-normal normal-case tracking-normal text-zinc-400"
+                >
+                  (ch. {{ numberInVolume }} of this volume)</span
+                ></template
+              ><template v-else>Skipped chapter</template>
             </div>
             <h2 class="truncate font-serif text-2xl">{{ chapter.title }}</h2>
             <div class="mt-0.5 text-xs text-zinc-500">
               {{ segments.length }} segments
               <template v-if="siteText"> · {{ siteText }} site text</template
               ><template v-if="notes"> · {{ plural(notes, "note") }}</template> ·
-              {{ inChapter.length }} speakers · {{ (chars / 1000).toFixed(1) }}k chars ·
-              <span class="font-mono">chapter_{{ String(chapter.id).padStart(3, "0") }}.json</span>
+              {{ inChapter.length }} speakers · {{ (chars / 1000).toFixed(1) }}k chars
             </div>
           </div>
           <button
@@ -349,7 +364,7 @@ watch(open, (v) => {
             >
             <PopoverPortal>
               <PopoverContent :side-offset="6" align="end" class="ui-popup w-80 p-3 text-xs">
-                <div class="label mb-2">Re-script chapter {{ chapter.id }}</div>
+                <div class="label mb-2">Re-script {{ chapterName(number) }}</div>
                 <div class="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1.5">
                   <span class="text-zinc-500">Endpoint</span><ScriptProfileSelect />
                   <span class="text-zinc-500">Chunking</span>

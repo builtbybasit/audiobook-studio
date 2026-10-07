@@ -70,7 +70,7 @@ async function work() {
     work: {
       bookId: body.book.id,
       chapterUid: chapterUidOf(api.db, body.book.id, 1),
-      label: "Script chunk 1 · ch 1",
+      label: "Script chunk 1",
     },
   };
 }

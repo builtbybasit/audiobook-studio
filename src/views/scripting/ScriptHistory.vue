@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { chapterName } from "@/lib/chapterNumber";
 // The chapter's script history, in the reader where the script is.
 //
 // Three states, and which one you are in is said at the top of the panel every time: the **list**
@@ -8,6 +9,7 @@
 // taken back from its toast afterwards.
 import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 
 import { computed, nextTick, ref, watch } from "vue";
@@ -46,6 +48,7 @@ const props = defineProps<{ bookId: string; chapterId: number }>();
 const emit = defineEmits<{ close: []; jump: [segId: number] }>();
 const historyStore = useHistoryStore();
 const jobsStore = useJobsStore();
+const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
 const reader = useReader();
 const { colorOf } = useScript(props);
@@ -80,6 +83,7 @@ const plan = computed(() =>
     : historyStore.restorePlanOf(props.bookId, props.chapterId, planFor.value),
 );
 const busy = computed(() => historyStore.busyJobs(props.bookId, props.chapterId));
+const name = computed(() => chapterName(libraryStore.numberOf(props.bookId, props.chapterId)));
 const consequences = computed(() => (plan.value ? restoreConsequences(plan.value) : []));
 
 /** How many lines this version differs from the current script by — the list's own summary. */
@@ -170,7 +174,7 @@ watch(
         class="icon shrink-0"
       />
       <span v-if="mode === 'list'" class="min-w-0 flex-1">
-        <b>Script history</b> · chapter {{ chapterId }} ·
+        <b>Script history</b> · {{ name }} ·
         {{ loaded ? plural(versions.length, "saved version") : "reading the saved versions…" }}. The
         current script is untouched while you are in here.
       </span>
@@ -319,9 +323,7 @@ watch(
                 v-if="planFor === v.id && plan"
                 class="mt-3 rounded-md border border-violet-300 bg-violet-50/60 p-3 text-xs dark:border-violet-500/40 dark:bg-violet-500/5"
               >
-                <div class="mb-1.5 font-semibold">
-                  Restoring v{{ v.id }} into chapter {{ chapterId }}
-                </div>
+                <div class="mb-1.5 font-semibold">Restoring v{{ v.id }} into {{ name }}</div>
                 <p v-if="plan.comparison.identical" class="text-zinc-600 dark:text-zinc-300">
                   This version is identical to the current script, so there is nothing to restore.
                 </p>

@@ -18,6 +18,7 @@ import type {
   SegmentType,
   Volume,
 } from "@/types";
+import { chapterNumbers } from "@/lib/chapterNumber";
 import { unspokenTypes } from "@/lib/siteText";
 import type { Db, Tx } from "~/db/client";
 import type { ChapterBody } from "~/import/assemble";
@@ -194,8 +195,8 @@ export function chapterExists(db: Db | Tx, bookId: string, id: number): boolean 
   return !!db.select({ id: chapters.id }).from(chapters).where(chapterAt(bookId, id)).get();
 }
 
-/** A book's chapter numbers in reading order, without the rest of each row. */
-export function chapterNumbers(db: Db | Tx, bookId: string): number[] {
+/** A book's chapter ids in book order, without the rest of each row. */
+export function chapterIds(db: Db | Tx, bookId: string): number[] {
   return db
     .select({ id: chapters.id })
     .from(chapters)
@@ -204,6 +205,31 @@ export function chapterNumbers(db: Db | Tx, bookId: string): number[] {
     .all()
     .map((c) => c.id);
 }
+
+/**
+ * How a sentence a person reads names this chapter: "chapter 2" by its reading number
+ * (`chapterNumbers`), never by its id, which counts the cover and contents pages too — or "a
+ * skipped chapter" for one the audiobook leaves out, which has no number.
+ */
+export const chapterName = (db: Db | Tx, bookId: string, id: number): string =>
+  nameOf(readingNumber(db, bookId, id));
+
+/**
+ * The number a person reads a chapter by (`chapterNumbers`): its place among the chapters the
+ * audiobook keeps. Undefined for a skipped chapter, and for one that is not in the book.
+ */
+export function readingNumber(db: Db | Tx, bookId: string, id: number): number | undefined {
+  const all = db
+    .select({ id: chapters.id, excluded: chapters.excluded })
+    .from(chapters)
+    .where(eq(chapters.bookId, bookId))
+    .all();
+  return chapterNumbers(all.map((c) => ({ id: c.id, excluded: !!c.excluded }))).get(id);
+}
+
+/** "chapter 2", or "a skipped chapter" for one with no reading number. */
+export const nameOf = (n: number | undefined): string =>
+  n == null ? "a skipped chapter" : `chapter ${n}`;
 
 /**
  * The identity a chapter keeps whatever number it goes by. A job reads it when it starts and finds

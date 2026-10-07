@@ -356,7 +356,7 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
           :to="{ path: `/book/${bookId}/scripting`, query: { ch: r.chapter.id } }"
           class="flex min-w-0 flex-1 items-center gap-2 hover:text-violet-500"
           ><span class="font-mono text-xs text-zinc-400">{{
-            String(r.chapter.id).padStart(2, "0")
+            String(libraryStore.numberOf(bookId, r.chapter.id) ?? "skipped").padStart(2, "0")
           }}</span
           ><b class="truncate">{{ r.chapter.title }}</b></RouterLink
         >

@@ -190,9 +190,12 @@ function blockIsNote(block: string): boolean {
  * read as story and carries no note.
  */
 export function detectNotices(chapters: readonly ParsedChapter[]): (ChapterNote | null)[] {
-  const seen = new Map<string, number>();
+  // A duplicate names the notice it repeats by its title, which the contents review lists beside
+  // it, and not by number: the file's position counts the cover and contents pages, and a reading
+  // number does not exist yet — the earlier notice is itself one the review suggests skipping.
+  const seen = new Map<string, string>();
 
-  return chapters.map((chapter, i) => {
+  return chapters.map((chapter) => {
     const { title } = chapter;
     // Judged on the prose, not on the markers in it. A keyword the author italicised is the same
     // keyword, and a fingerprint taken over `*` would make two postings of one notice differ.
@@ -238,10 +241,10 @@ export function detectNotices(chapters: readonly ParsedChapter[]): (ChapterNote 
       const earlier = seen.get(print);
       if (earlier != null)
         return note("duplicate", [
-          `same text as chapter ${earlier}`,
+          earlier ? `same text as “${earlier}”` : "same text as an earlier notice",
           ...evidenceFor(s).filter((e) => e !== "no dialogue"),
         ]);
-      seen.set(print, i + 1);
+      seen.set(print, title);
       // A notice with no keyword in it is still a notice — it is short, addressed to readers and
       // has no dialogue. `progress` is the least specific kind, which is the honest label for it.
       return note(s.kind?.kind ?? "progress", evidenceFor(s));

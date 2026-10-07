@@ -500,7 +500,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                       <RetryIcon class="icon-sm" />
                     </button>
                   </span>
-                  <span class="grid w-5 place-items-center">
+                  <span class="grid w-5 place-items-center" :class="!s.flag && 'row-tool'">
                     <FlagPopover
                       v-if="s.audio.duration"
                       :book-id="bookId"

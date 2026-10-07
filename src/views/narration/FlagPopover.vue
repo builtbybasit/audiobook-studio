@@ -6,8 +6,10 @@ import { useNarrationStore } from "@/stores/narration";
 // retake, which would read the same spelling, so that kind offers the likely word straight to it;
 // the others point at the line in the reader, where a wrong direction or voice is fixed.
 //
-// Opening is the ledger's to decide — `f` on a focused row opens it as the button does — so `open`
-// is a model; the form is filled from the line's flag each time it opens.
+// Opening is the page's to decide — `f` on a focused ledger row or on the line playing on the Listen
+// page opens it as the button does — so `open` is a model; the form is filled from the line's flag
+// each time it opens. Whether the button shows only on hover is the page's too (the ledger's cell
+// carries `row-tool`); here it is always drawn.
 import { computed, ref, watch } from "vue";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { BookA as DictionaryIcon, Flag as FlagIcon } from "@lucide/vue";
@@ -81,9 +83,7 @@ function clear() {
   <PopoverRoot v-model:open="open">
     <PopoverTrigger
       class="icon-btn"
-      :class="
-        segment.flag ? 'icon-btn-flag' : 'row-tool hover:!border-amber-400 hover:!text-amber-600'
-      "
+      :class="segment.flag ? 'icon-btn-flag' : 'hover:!border-amber-400 hover:!text-amber-600'"
       :title="
         segment.flag
           ? `flagged: ${FLAG_LABEL[segment.flag.kind]}${segment.flag.note ? ' — ' + segment.flag.note : ''}`

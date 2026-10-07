@@ -25,6 +25,17 @@ const groups = [
     ],
   },
   {
+    title: "Listen",
+    keys: [
+      ["click a line / word", "listen from there"],
+      ["j / k", "next / previous line"],
+      [", / .", "back / forward 10 seconds"],
+      ["f", "flag the line playing"],
+      ["r", "repeat the line playing"],
+      ["[ / ]", "previous / next flagged line"],
+    ],
+  },
+  {
     title: "Script reader",
     keys: [
       ["j / k · ↑ ↓", "move between lines"],

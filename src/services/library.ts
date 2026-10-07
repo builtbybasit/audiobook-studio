@@ -21,6 +21,7 @@ import type {
   ExportItem,
   Flagged,
   ImportedBook,
+  StartedOver,
   Judged,
   KeptSample,
   LexEntry,
@@ -50,6 +51,7 @@ export type {
   ChapterLines,
   ChapterScript,
   ImportedBook,
+  StartedOver,
   MovedLines,
   StoredSamples,
 } from "@/types";
@@ -131,6 +133,12 @@ export interface LibraryService {
   setDecisions(bookId: string, decisions: ReviewDecision[]): Promise<Chapter[]>;
   removeBook(bookId: string): Promise<void>;
   removeVolume(bookId: string, volumeId: number): Promise<"book" | "volume">;
+  /**
+   * Take every script and clip off the book so it can be scripted afresh; each script stays in
+   * its chapter's history. `cast` takes every speaker but the Narrator too. Refused while any job
+   * of the book is queued or running.
+   */
+  startOver(bookId: string, options: { cast: boolean }): Promise<StartedOver>;
   /**
    * Change a book's budget, script budget or pacing. Changing the pacing re-times every narrated
    * chapter on the server, so the chapters come back with the book.
@@ -346,6 +354,10 @@ export class HttpLibraryService implements LibraryService {
         `/books/${seg(bookId)}/volumes/${volumeId}`,
       )
     ).removed;
+  }
+
+  startOver(bookId: string, options: { cast: boolean }): Promise<StartedOver> {
+    return this.http.post<StartedOver>(`/books/${seg(bookId)}/start-over`, options);
   }
 
   updateBook(bookId: string, settings: BookSettings): Promise<ImportedBook> {

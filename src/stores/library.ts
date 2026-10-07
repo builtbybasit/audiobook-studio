@@ -40,6 +40,7 @@ import type {
   Pacing,
   PromptTrialRequest,
   PromptTrialResult,
+  StartedOver,
   Volume,
   VolumeStart,
 } from "@/types";
@@ -938,6 +939,37 @@ export const useLibraryStore = defineStore("library", {
       uiStore.toast(`Removed “${title}” from the library`, {
         description: `Its ${chapters} chapter${chapters === 1 ? "" : "s"}, script, cast and audiobooks went with it. This cannot be undone.`,
       });
+    },
+    /**
+     * Take every script and clip off a book so it can be scripted afresh; with `cast`, every
+     * speaker but the Narrator too. The server keeps each script in its chapter's history, but the
+     * clips' files are gone, so the toast offers no Undo. What this side held of the book's scripts
+     * and histories is let go, and every read filed under the book is made again. Returns whether
+     * the server did it.
+     */
+    async startOver(bookId: string, { cast = false }: { cast?: boolean } = {}): Promise<boolean> {
+      const castStore = useCastStore();
+      const historyStore = useHistoryStore();
+      const scriptsStore = useScriptsStore();
+      const uiStore = useUiStore();
+
+      let answer: StartedOver;
+      try {
+        answer = await this._service().startOver(bookId, { cast });
+      } catch (cause) {
+        toastFailure("start this book over", cause);
+        return false;
+      }
+      scriptsStore._dropBook(bookId);
+      historyStore.clearBook(bookId);
+      if (cast) castStore._dropBook(bookId);
+      this._put(answer.book, answer.chapters);
+      this._forgetBook(bookId);
+      const { scripts, clips, speakers } = answer.cleared;
+      uiStore.toast(`Started “${answer.book.title}” over`, {
+        description: `${plural(scripts, "script")}${clips ? ` and ${plural(clips, "clip")}` : ""} cleared${speakers ? `, and ${plural(speakers, "speaker")} taken off the cast` : ""}. A chapter scripted again keeps its old script in History.`,
+      });
+      return true;
     },
     /**
      * Everything a book owns, gone without a word. The server cancelled its jobs and took its

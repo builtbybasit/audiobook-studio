@@ -16,6 +16,7 @@ import type {
   PromptTrialRequest,
   PromptTrialResult,
   ScriptingQueued,
+  StartedOver,
 } from "@/types";
 import type { AudioFiles } from "~/audio/files";
 import { coverFiles, MAX_COVER_BYTES } from "~/covers/files";
@@ -39,6 +40,7 @@ import { serveFile } from "~/lib/serve";
 import { validate } from "~/lib/validate";
 import * as ops from "~/library/ops";
 import type { ScriptingProvider } from "~/providers/scripting";
+import * as scriptOps from "~/script/ops";
 import { tryPrompt } from "~/script/trial";
 
 const Ids = v.object({
@@ -167,6 +169,9 @@ const ImportForm = v.object({
   /** the volume's name; only read when `bookId` is set */
   name: v.optional(v.string()),
 });
+
+/** Whether the speakers the scripts found leave with them. */
+const StartOver = v.object({ cast: v.optional(v.boolean()) });
 
 const CoverForm = v.object({ file: v.instance(File) });
 const CoverParam = v.object({ id: v.string(), file: v.string() });
@@ -429,6 +434,14 @@ export function bookRoutes(
   });
 
   // ---------- removal ----------
+  /** Every script, clip and status goes, kept in each chapter's history; `cast` takes the speakers too. */
+  app.post("/:id/start-over", validate("param", BookParam), validate("json", StartOver), (c) => {
+    const { id } = c.req.valid("param");
+    const result = scriptOps.startOver(db, id, c.req.valid("json"), files);
+    c.var.logger.info({ book: id, ...result.cleared }, "book started over");
+    return c.json(result satisfies StartedOver);
+  });
+
   app.delete("/:id", validate("param", BookParam), async (c) => {
     const { id } = c.req.valid("param");
     await ops.removeBook(db, id, { runner, files, built });

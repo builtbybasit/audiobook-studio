@@ -225,6 +225,16 @@ reading order is unchanged, so no chapter number moves and nothing is re-keyed: 
 files chapters under their volume, and while one volume of a shelved book is still in review; a
 book that is itself in review may be cut, and every piece waits in the review with it.
 
+**Starting over keeps the book and takes its work.** `POST /api/books/:id/start-over` puts every
+chapter back as the import left it — no script, no clips, not narrated, no recap — so a book
+scripted with the wrong prompt can be scripted afresh without losing its text, volumes, contents
+decisions, dictionary, prompts, settings or the audiobooks already built (`startOver` in
+`server/script/ops.ts`). Each script is captured into its chapter's history first, so a chapter
+scripted again that came out worse can be restored as text; its clip files are removed after the
+rows, as a volume's are. With `cast: true` every speaker but the Narrator leaves the cast, their
+waiting voice samples discarded as a removal discards them. It is refused while any job of the
+book is queued or running.
+
 **A reorder is the same renumbering without the removal.** `PUT /api/books/:id/volumes/order`
 writes each volume's `position` and runs the same renumbering and `rekeyActive`. Nothing is
 cancelled — a running job finds its chapter by uid at every write — and nothing leaves the disk.
@@ -637,9 +647,10 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `GET`    | `/api/books/:id`                                  | A book and its chapters                                                                                      |
 | `PATCH`  | `/api/books/:id`                                  | Budget, script budget, pacing, prompt or `readNotes`; chapters are re-timed and, for `readNotes`, re-settled |
 | `DELETE` | `/api/books/:id`                                  | Remove a book and everything it owns                                                                         |
+| `POST`   | `/api/books/:id/start-over`                       | Clear every script, clip and status, History kept; `cast` takes the speakers; 409 mid-job                    |
 | `POST`   | `/api/books/:id/confirm`                          | The review is done; it joins the library                                                                     |
 | `POST`   | `/api/books/:id/discard`                          | Cancel: an unconfirmed book goes, or its new volume                                                          |
-| `PUT`    | `/api/books/:id/volumes`                          | Cut the book into volumes: where each begins and its name                                                   |
+| `PUT`    | `/api/books/:id/volumes`                          | Cut the book into volumes: where each begins and its name                                                    |
 | `PATCH`  | `/api/books/:id/volumes/:volumeId`                | Rename a volume                                                                                              |
 | `DELETE` | `/api/books/:id/volumes/:volumeId`                | Remove a volume; the last one removes the book; 409 mid-build                                                |
 | `PUT`    | `/api/books/:id/volumes/order`                    | Read the volumes in this order; chapters renumber to follow                                                  |

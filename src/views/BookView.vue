@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
+import { NARRATOR } from "@/lib/cast";
 import { numberSpan } from "@/lib/chapterNumber";
 import { plural } from "@/lib/contents";
 import { money } from "@/lib/pricing";
@@ -24,7 +25,7 @@ import {
   Inbox as ReviewIcon,
   Ear as CheckIcon,
 } from "@lucide/vue";
-import { UiHint, UiNumber, UiSwitch } from "@/ui";
+import { UiCheckbox, UiHint, UiNumber, UiSwitch } from "@/ui";
 import AddEpubDialog from "@/components/AddEpubDialog.vue";
 import BookCover from "@/components/BookCover.vue";
 import BookPromptPanel from "@/views/scripting/BookPromptPanel.vue";
@@ -127,6 +128,25 @@ function removeWarning(v: Volume): string {
   return book.value.volumes.length === 1
     ? `${v.name} is the only volume, so this removes the whole novel: its ${n} chapters${work ? ` (${work})` : ""}, script, cast and audiobooks. This cannot be undone.`
     : `Removes ${v.name} (${v.file}) and its ${n} chapters${work ? ` (${work})` : ""}, and renumbers the rest. This cannot be undone.`;
+}
+/** Start over asks first, and says what goes, before anything is sent. */
+const startingOver = ref(false);
+const clearCast = ref(false);
+const clearing = ref(false);
+const anythingToClear = computed(() =>
+  chapters.value.some((c) => c.scripting !== "none" || c.narration !== "none"),
+);
+const scriptedCount = computed(() => chapters.value.filter(isScripted).length);
+// the lines that play: the server also removes retakes and the clips of lines not read aloud
+const narratedLines = computed(() => chapters.value.reduce((n, c) => n + (c.lines?.done ?? 0), 0));
+const speakers = computed(() => cast.value.filter((c) => c.name !== NARRATOR).length);
+async function startOver() {
+  clearing.value = true;
+  const done = await libraryStore.startOver(bookId, { cast: clearCast.value });
+  clearing.value = false;
+  if (!done) return;
+  startingOver.value = false;
+  clearCast.value = false;
 }
 const budget = computed(() => book.value.budget ?? { cap: null, paused: false });
 // undefined until the book's spending has been read, which the panel says rather than showing $0
@@ -639,6 +659,51 @@ const next = computed(() =>
         >
       </div>
       <BookPromptPanel :key="bookId" :book-id="bookId" />
+    </section>
+    <!-- the way back to the start, for a book scripted with the wrong prompt: the scripts and clips
+         go, the book and what was set up for it stay -->
+    <section class="card p-4 text-xs text-zinc-500" aria-labelledby="start-over-title">
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-2">
+        <h2 id="start-over-title" class="label">Start over</h2>
+        <UiHint
+          label="starting over"
+          text="Every chapter goes back to how the import left it: no script, no clips, not narrated. The text, volumes, contents decisions, dictionary, prompts, settings and audiobooks already built all stay. A chapter scripted again keeps its old script in History, so it can be restored as text; its clips cannot come back."
+        />
+        <span class="min-w-0 flex-1">Clear every script and clip, to script the book afresh.</span>
+        <button
+          v-if="!startingOver"
+          class="btn-ghost btn-xs text-red-600 hover:border-red-400 dark:text-red-400"
+          :disabled="!anythingToClear"
+          @click="startingOver = true"
+        >
+          Start over…
+        </button>
+      </div>
+      <div v-if="startingOver" class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <label class="flex items-center gap-1.5">
+          <UiCheckbox
+            size="xs"
+            :model-value="clearCast"
+            @update:model-value="(v) => (clearCast = v === true)"
+          />
+          Also clear the cast · {{ plural(speakers, "speaker") }}, voices and all
+        </label>
+        <span class="ml-auto"
+          >{{ plural(scriptedCount, "script")
+          }}<template v-if="narratedLines">
+            and the audio of {{ plural(narratedLines, "narrated line") }}</template
+          >
+          go. This cannot be undone.</span
+        >
+        <button class="btn-ghost btn-xs" @click="startingOver = false">Keep it</button>
+        <button
+          class="rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-red-500 disabled:opacity-50"
+          :disabled="clearing"
+          @click="startOver"
+        >
+          Start over
+        </button>
+      </div>
     </section>
     <AddEpubDialog :pending="pendingAdd" @close="pendingAdd = null" />
   </div>

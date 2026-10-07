@@ -198,9 +198,13 @@ function gather(bookId: string): DecisionGroup[] {
   const chapters = libraryStore.chaptersOf(bookId);
   // `where` is asked once per row, and a long book has hundreds of rows and chapters
   const byId = new Map(chapters.map((c) => [c.id, c]));
+  // by its reading number, which the library works out once per book rather than once per row
+  const numbers = libraryStore.chapterNumbers[bookId];
   const where = (chId: number): string => {
     const c = byId.get(chId);
-    return c ? `Ch ${c.id} · ${c.title}` : `Ch ${chId}`;
+    if (!c) return "A chapter not in the book";
+    const n = numbers?.get(chId);
+    return `${n ? `Ch ${n}` : "Skipped"} · ${c.title}`;
   };
   const inNarration = (chId: number, segId: number, filter: string): RouteLocationRaw => ({
     path: `/book/${bookId}/narration`,
@@ -276,7 +280,11 @@ function gather(bookId: string): DecisionGroup[] {
   // ---- contents, grouped the way the review decides them: one verdict per kind of notice
   for (const g of libraryStore.noticeGroupsOf(bookId)) {
     if (!g.pending.length) continue;
-    const shown = `Ch ${g.pending.slice(0, 4).join(", ")}`;
+    // a pending chapter is still kept (a skipped one counts as decided), so each has its number
+    const shown = `Ch ${g.pending
+      .slice(0, 4)
+      .map((id) => numbers?.get(id))
+      .join(", ")}`;
     items.contents.push({
       id: `contents:${g.kind}`,
       kind: "contents",
@@ -404,14 +412,16 @@ function gather(bookId: string): DecisionGroup[] {
   // ---- the cast: names a re-script brought in, and names that look like one speaker twice
   const stats = castStore.castStats(bookId);
   const lines = (name: string): string => plural(stats[name]?.lines ?? 0, "line");
+  const firstIn = (name: string): string => {
+    const n = numbers?.get(stats[name].first);
+    return n ? `first in Ch ${n}` : "first in a skipped chapter";
+  };
   for (const c of castStore.charactersOf(bookId).filter((c) => c.isNew))
     items.speaker.push({
       id: `speaker:${c.name}`,
       kind: "speaker",
       title: c.name,
-      where: stats[c.name]
-        ? `${lines(c.name)} · first in Ch ${stats[c.name].first}`
-        : "no lines yet",
+      where: stats[c.name] ? `${lines(c.name)} · ${firstIn(c.name)}` : "no lines yet",
       detail:
         "New in the cast since the last script. Merge it into an existing speaker, or keep it.",
       at: 0,

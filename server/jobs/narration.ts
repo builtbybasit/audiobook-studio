@@ -440,7 +440,7 @@ function lineRun(o: {
     const settle = (sent: SentSpeech): void => {
       const priced = who.endpoint ? readEndpoint(db, who.endpoint) : undefined;
       if (!priced || !library.getBook(db, job.bookId)) return;
-      // a chapter removed mid-request is still where the money went; the label says which
+      // a chapter removed mid-request is still where the money went, and the row stays in every total
       const chapterUid = library.locateChapter(db, chapter.uid) ? chapter.uid : null;
       // a charge nobody knows is counted at what the line still holds, which it then gives back
       const { cost } = settleSpeech(db, priced, { ...work, chapterUid, held: left }, sent);
@@ -1001,7 +1001,7 @@ export function enqueueNarration(
       kind: "narration",
       bookId,
       chapterId: id,
-      label: `${replacing ? "Re-narrate" : "Narrate"} · ch ${id}`,
+      label: replacing ? "Re-narrate" : "Narrate",
       bulk: {
         id: runId,
         op: replacing ? "Re-narrate" : "Narrate",

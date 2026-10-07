@@ -754,7 +754,7 @@ describe("editing a script with a server answering", () => {
     expect(await castOf()).toContain("Tobin");
     // the undo: the script without Tobin's lines is written first, so removing Tobin from the
     // cast moves nothing and refuses nothing
-    await toasts.find((t) => t.msg.startsWith("Chapter 1 restored"))!.undo!();
+    await toasts.find((t) => t.msg.startsWith("Restored chapter 1"))!.undo!();
     await settle();
     expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
     expect(readScript(api.db, id, 1).some((s) => s.speaker === "Tobin")).toBe(false);
@@ -1239,7 +1239,7 @@ describe("retakes with a server answering", () => {
     narrationStore.retakeSegment(id, 1, line.id);
     await settle();
     expect(toasts.at(-1)?.msg).toBe("Retake · 1 line");
-    expect(jobsStore.jobs.at(-1)?.label).toBe("Retake · ch 1");
+    expect(jobsStore.jobs.at(-1)?.label).toBe("Retake");
     await api.runner.idle();
     await poll();
     // the candidate landed with a file, and the clip in the book is untouched
@@ -1309,7 +1309,7 @@ describe("retakes with a server answering", () => {
     narrationStore.retakeFlagged(id, 1);
     await settle();
     expect(toasts.at(-1)?.msg).toBe("Nothing to retake");
-    expect(jobsStore.jobs.filter((j) => j.label === "Retake · ch 1")).toHaveLength(1);
+    expect(jobsStore.jobs.filter((j) => j.label === "Retake")).toHaveLength(1);
   });
 });
 

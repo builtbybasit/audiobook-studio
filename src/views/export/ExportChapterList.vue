@@ -12,6 +12,7 @@ import { useLibraryStore } from "@/stores/library";
 import { computed, nextTick, ref } from "vue";
 
 import { readinessOf, READINESS } from "@/lib/exports";
+import { findsChapter, numberCell } from "@/lib/chapterNumber";
 import { enumParam, idSetParam, textParam, useQueryParam } from "@/composables/useQueryParam";
 import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
 import { clock } from "@/views/export/shared";
@@ -40,6 +41,8 @@ const readiness = computed(() => {
   for (const c of chapters.value) m.set(c.id, readinessOf(c));
   return m;
 });
+/** reading numbers: what each row shows and the search finds a number by (skipped rows have none) */
+const numbers = computed(() => libraryStore.chapterNumbers[props.bookId]);
 /** A chapter that is skipped is out of every stage; it cannot be put in a file either. */
 const canPick = (c: Chapter) => !c.excluded;
 
@@ -86,9 +89,7 @@ function passes(c: Chapter) {
   if (filter.value === "attention" && !needsAttention(c)) return false;
   if (filter.value === "other" && (selected.value.has(c.id) || ["ready", "skipped"].includes(r)))
     return false;
-  if (!q.value) return true;
-  const needle = q.value.trim().toLowerCase();
-  return c.title.toLowerCase().includes(needle) || String(c.id) === needle;
+  return !q.value || findsChapter(c.title, numbers.value?.get(c.id), q.value);
 }
 const visible = computed(() =>
   volumes.value
@@ -316,7 +317,7 @@ const tone: Record<string, string> = {
             <UiCheckbox
               :model-value="selected.has(c.id)"
               :disabled="!canPick(c)"
-              :aria-label="`Include chapter ${c.id}, ${c.title}`"
+              :aria-label="`Include ${numbers?.has(c.id) ? `chapter ${numbers.get(c.id)}` : 'skipped chapter'}, ${c.title}`"
               @click="toggle(c.id, $event)"
             />
             <span
@@ -325,7 +326,7 @@ const tone: Record<string, string> = {
             ></span>
             <span class="min-w-0 flex-1 truncate" :title="c.title">
               <span class="mr-1.5 font-mono text-[11px] text-zinc-400">{{
-                String(c.id).padStart(String(counts.total).length, "0")
+                numberCell(numbers?.get(c.id), String(numbers?.size ?? 0).length)
               }}</span
               ><span :class="c.excluded && 'line-through decoration-zinc-400'">{{ c.title }}</span>
             </span>

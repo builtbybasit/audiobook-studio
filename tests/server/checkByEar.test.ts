@@ -197,7 +197,7 @@ describe("checking a chapter by ear", () => {
     expect(rows.body.requests[0]).toMatchObject({
       kind: "transcription",
       bookId: id,
-      label: "Check · One",
+      label: "Check",
     });
     const seconds = segs.reduce((n, s) => n + s.audio.duration, 0);
     const cost = rows.body.requests.reduce((n, r) => n + (r.cost ?? 0), 0);

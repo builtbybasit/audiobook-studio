@@ -2,6 +2,7 @@
 import { useCastStore } from "@/stores/cast";
 import { plural } from "@/lib/contents";
 import { useEndpointsStore } from "@/stores/endpoints";
+import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 
 // The bulk action bar's own panel: it opens in place, under the buttons, rather than over the results
@@ -33,6 +34,10 @@ const emit = defineEmits<{ close: []; applied: [BulkResult] }>();
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const scriptsStore = useScriptsStore();
+const libraryStore = useLibraryStore();
+/** a row's chapter by its reading number, "04" */
+const chapterTag = (chId: number) =>
+  String(libraryStore.numberOf(props.bookId, chId) ?? "skipped").padStart(2, "0");
 
 const root = ref<HTMLElement | null>(null);
 const speaker = ref("");
@@ -359,7 +364,7 @@ function apply() {
           class="flex min-w-0 items-baseline gap-2 rounded bg-violet-500/5 px-2 py-1"
         >
           <span class="shrink-0 font-mono text-[10px] text-zinc-400"
-            >{{ String(r.chId).padStart(2, "0") }}·#{{ r.segId }}</span
+            >{{ chapterTag(r.chId) }}·#{{ r.segId }}</span
           >
           <span class="shrink-0 whitespace-nowrap">
             <span class="text-zinc-500 line-through">{{ r.before }}</span>
@@ -382,9 +387,7 @@ function apply() {
           class="flex flex-wrap items-baseline gap-x-2 border-b border-zinc-100 px-2 py-1 text-[11px] last:border-0 dark:border-zinc-800"
           :class="!r.changes && 'opacity-60'"
         >
-          <span class="font-mono text-zinc-400"
-            >{{ String(r.chId).padStart(2, "0") }}·#{{ r.segId }}</span
-          >
+          <span class="font-mono text-zinc-400">{{ chapterTag(r.chId) }}·#{{ r.segId }}</span>
           <span
             class="rounded-full px-1.5"
             :style="{ background: r.color + '33', color: r.color }"

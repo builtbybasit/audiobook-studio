@@ -29,7 +29,7 @@ function toUsage(row: RequestRow): RequestUsage {
  * `chapterId` is not on the row and cannot be: the ledger records *which chapter*, by an id that
  * never moves, and the number a chapter goes by today is the chapters table's to say. The caller
  * joins it and passes it in — null both for a request that belonged to no chapter and for one whose
- * chapter has since been removed, which is a difference the Activity list reads from `label`.
+ * chapter has since been removed.
  */
 export function toRequestRecord(row: RequestRow, chapterId: number | null = null): RequestRecord {
   const r: RequestRecord = {

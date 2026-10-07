@@ -147,7 +147,7 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
         .map((c) => c.name)
         .filter((n) => n !== NARRATOR);
       const lexicon = readLexicon(db, job.bookId);
-      const label = `Check · ${chapter.title || `ch ${chapter.id}`}`;
+      const label = "Check";
       let refused: string | null = null;
       let unhinted = false;
 
@@ -207,7 +207,7 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
               sent: (request) => {
                 const priced = readTranscriber(db, t.id);
                 if (!priced || !library.getBook(db, job.bookId)) return;
-                // a chapter removed mid-request is still where the money went; the label says which
+                // a chapter removed mid-request is still where the money went, and the row stays in every total
                 const chapterUid = library.locateChapter(db, uid) ? uid : null;
                 const work = { bookId: job.bookId, chapterUid, label, queuedAt: job.queuedAt };
                 settleTranscription(db, priced, { ...work, held: cost }, request);
@@ -345,7 +345,7 @@ export function enqueueCheck(
         kind: "check",
         bookId,
         chapterId: id,
-        label: `Check · ch ${id}`,
+        label: "Check",
         bulk: { id: runId, op: "Check", index: i + 1, total: targets.length },
         run: {
           checkRun: {

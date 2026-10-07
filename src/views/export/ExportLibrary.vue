@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useExportsStore } from "@/stores/exports";
 import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 
 // The audiobooks this book has produced. Each one knows what its chapters sounded like when it was
@@ -18,6 +19,7 @@ import { computed, ref } from "vue";
 import { usePlayer } from "@/composables/usePlayer";
 import { formatOf } from "@/lib/exports";
 import { exportFileUrl } from "@/services/jobs";
+import { numberSpan } from "@/lib/chapterNumber";
 import { plural } from "@/lib/contents";
 import { diskPath, hms, mb } from "@/views/export/shared";
 import {
@@ -38,6 +40,9 @@ const props = defineProps<{ bookId: string }>();
 const exportsStore = useExportsStore();
 const jobsStore = useJobsStore();
 const uiStore = useUiStore();
+const libraryStore = useLibraryStore();
+/** "ch 3–17": the reading numbers an export's chapters span today; null once all are skipped. */
+const builtFrom = (ids: number[]) => numberSpan(ids, libraryStore.chapterNumbers[props.bookId]);
 const { p: player, playQueue } = usePlayer();
 
 const items = computed(() =>
@@ -396,7 +401,9 @@ const summary = (u: ExportUpdate) => {
               >
             </li>
             <li class="pt-1 text-[11px] leading-relaxed text-zinc-500">
-              Built from chapters {{ e.chapterIds[0] }}–{{ e.chapterIds.at(-1) }} ·
+              <template v-if="builtFrom(e.chapterIds)"
+                >Built from {{ builtFrom(e.chapterIds) }} ·
+              </template>
               {{ e.markers ? plural(e.markers, "chapter mark") : "no chapter marks" }} ·
               {{ e.normalize ? `levels matched to ${e.loudness} LUFS` : "levels left as rendered"
               }}<span v-if="e.stale"> · {{ e.stale }} chapters used stale audio</span

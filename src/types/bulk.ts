@@ -49,7 +49,6 @@ export interface BulkOutcome {
 
 /** One row of the preview: what this line reads now and what it would read after. */
 export interface BulkRow extends BulkTarget {
-  chapter: string;
   speaker: string;
   color: string;
   text: string;

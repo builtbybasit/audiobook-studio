@@ -227,7 +227,10 @@ const runs = computed(() =>
     >
       <div class="flex justify-between gap-2">
         <span class="truncate font-medium"
-          >{{ job.scriptRun!.profile.name }} · ch {{ job.chapterId }}</span
+          >{{ job.scriptRun!.profile.name
+          }}<template v-if="job.chapterId != null">
+            · {{ libraryStore.chapterRef(job.bookId, job.chapterId) }}</template
+          ></span
         ><button class="text-zinc-500 hover:underline" @click="jobsStore.cancelJob(job.id)">
           Cancel
         </button>

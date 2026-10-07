@@ -14,6 +14,7 @@
 // puts that back through `setDecisions`, rather than running the inverse rule and letting an undone
 // skip come back as "looked at".
 import { useQueryCache } from "@pinia/colada";
+import { chapterNumbers, chapterRef } from "@/lib/chapterNumber";
 import { noticeGroups, plural, summarize } from "@/lib/contents";
 import { coverRefusal } from "@/lib/exports";
 import { bookPromptProblems } from "@/lib/prompt";
@@ -117,6 +118,29 @@ export const useLibraryStore = defineStore("library", {
     chapter(s): (bookId: string, chId: number) => Chapter | undefined {
       return (bookId: string, chId: number): Chapter | undefined =>
         (s.chapters[bookId] ?? []).find((c) => c.id === chId);
+    },
+    /**
+     * Each book's reading numbers (`@/lib/chapterNumber`), by chapter id. Reads only the chapters'
+     * ids and `excluded`, so a progress tick does not number the book again.
+     */
+    chapterNumbers(s): Record<string, Map<number, number>> {
+      return Object.fromEntries(
+        Object.entries(s.chapters).map(([id, chapters]) => [id, chapterNumbers(chapters)]),
+      );
+    },
+    /** A chapter's reading number; undefined when it is skipped or its book is not read yet. */
+    numberOf(): (bookId: string, chId: number) => number | undefined {
+      return (bookId: string, chId: number) => this.chapterNumbers[bookId]?.get(chId);
+    },
+    /**
+     * "ch 2", or "skipped": how a chapter is named on screen. Undefined while the book's chapters
+     * are not read, so a page leaves the chapter out rather than calling it skipped.
+     */
+    chapterRef(s): (bookId: string, chId: number) => string | undefined {
+      return (bookId: string, chId: number) =>
+        s.chapters[bookId]?.some((c) => c.id === chId)
+          ? chapterRef(this.chapterNumbers[bookId]?.get(chId))
+          : undefined;
     },
     volumesOf(s): (id: string) => Volume[] {
       return (id: string): Volume[] => s.books.find((b) => b.id === id)?.volumes ?? [];

@@ -273,7 +273,7 @@ describe("a prompt trial", () => {
     expect(rows[0]).toMatchObject({
       bookId: id,
       chapterId: 1,
-      label: "Prompt trial · ch 1 · part 2/3",
+      label: "Prompt trial · part 2/3",
       status: "done",
       simulated: false,
     });
@@ -362,12 +362,12 @@ describe("a prompt trial", () => {
     expect(body).toMatchObject({ part: 1, parts: 1, fidelity: { ok: true } });
     expect(body.lines.find((l) => l.type === "dialogue")?.speaker).toBe("Aurelie");
     const [row] = endpointRequests(api.db, "scripting", "sim", 0);
-    expect(row).toMatchObject({ simulated: true, label: "Prompt trial · ch 1 · part 1/1" });
+    expect(row).toMatchObject({ simulated: true, label: "Prompt trial · part 1/1" });
   });
 
   test.each([
     { why: "an unknown endpoint", request: { profile: "nobody" }, status: 404, said: /nobody/ },
-    { why: "an unknown chapter", request: { chapterId: 9 }, status: 404, said: /no chapter 9/ },
+    { why: "an unknown chapter", request: { chapterId: 9 }, status: 404, said: /no such chapter/ },
     { why: "a part past the last", request: { part: 4 }, status: 400, said: /into 3 parts/ },
     {
       why: "a prompt with no excerpt",

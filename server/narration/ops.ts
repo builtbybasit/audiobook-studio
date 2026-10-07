@@ -47,8 +47,14 @@ function requireScripted(db: Db, bookId: string, chapterId: number, what: string
   return { chapter, segs };
 }
 
-const beingNarrated = (chapterId: number, then: string) =>
-  conflict(`Chapter ${chapterId} is being narrated`, `Wait for the run to finish, then ${then}.`);
+/** The refusal names the chapter by its reading number, the one the page shows, never its id. */
+function beingNarrated(db: Db, bookId: string, chapterId: number, then: string) {
+  const name = library.chapterName(db, bookId, chapterId);
+  return conflict(
+    `${name[0].toUpperCase()}${name.slice(1)} is being narrated`,
+    `Wait for the run to finish, then ${then}.`,
+  );
+}
 
 /**
  * Render another take of these lines, as one job.
@@ -73,7 +79,7 @@ export function retakeLines(
 ): RetakesQueued {
   const { segs } = requireScripted(db, bookId, chapterId, "retake");
   if (activeJob(db, "narration", bookId, chapterId))
-    throw beingNarrated(chapterId, "ask for the retake");
+    throw beingNarrated(db, bookId, chapterId, "ask for the retake");
   const book = library.getBook(db, bookId);
 
   const queued: Segment[] = [];
@@ -101,7 +107,7 @@ export function retakeLines(
     kind: "narration",
     bookId,
     chapterId,
-    label: `${RETAKE_LABEL} · ch ${chapterId}`,
+    label: RETAKE_LABEL,
     bulk: { id: nextRunId(db), op: RETAKE_LABEL, index: 1, total: 1, scope: RETAKE_LABEL },
     run: { narrationRun: narrationRunOf(cost, queued.length, "pending") },
     // in the same transaction as the row, so the lines hold their slots before the run can start
@@ -117,7 +123,7 @@ export function retakeLines(
   });
   // the check above and the enqueue are not one transaction; a run that slipped in between is the
   // job handed back, and it was not this request's, so the lines were not queued
-  if (!created) throw beingNarrated(chapterId, "ask for the retake");
+  if (!created) throw beingNarrated(db, bookId, chapterId, "ask for the retake");
   // the chapters as they now stand, since the one retaken reads as queued from here on
   return {
     job,
@@ -158,7 +164,7 @@ export function judgeTake(
   if (verdict === "accept" && (candidate.status !== "done" || candidate.duration <= 0))
     throw conflict("The retake did not produce a clip; discard it instead");
   if (activeJob(db, "narration", bookId, chapterId))
-    throw beingNarrated(chapterId, "give the verdict");
+    throw beingNarrated(db, bookId, chapterId, "give the verdict");
 
   const revision = db.transaction((tx) => {
     if (verdict === "accept") {

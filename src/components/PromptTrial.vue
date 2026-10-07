@@ -37,6 +37,7 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { UiCombobox, UiSelect } from "@/ui";
 import { money } from "@/lib/pricing";
+import { numberCell } from "@/lib/chapterNumber";
 import type { PromptTrialResult } from "@/types";
 
 const props = withDefaults(
@@ -87,13 +88,16 @@ const chapter = computed(() =>
 const bookOptions = computed(() =>
   libraryStore.shelved.map((b) => ({ value: b.id, label: b.title, hint: b.author })),
 );
-const chapterOptions = computed(() =>
-  chapters.value.map((c) => ({
+// labelled by reading number, which typing a number into the box then finds; a skipped chapter has
+// a dash and is found by its title
+const chapterOptions = computed(() => {
+  const numbers = bookId.value ? libraryStore.chapterNumbers[bookId.value] : undefined;
+  return chapters.value.map((c) => ({
     value: c.id,
-    label: `${c.id}. ${c.title}`,
+    label: `${numberCell(numbers?.get(c.id))} · ${c.title}`,
     hint: c.excluded ? "skipped" : undefined,
-  })),
-);
+  }));
+});
 
 onMounted(() => {
   if (props.bookId !== null) return;

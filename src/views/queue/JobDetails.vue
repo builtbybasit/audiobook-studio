@@ -33,6 +33,11 @@ watch(
   },
 );
 const events = computed(() => props.job?.activity ?? []);
+const chapterRef = computed(() =>
+  props.job?.chapterId == null
+    ? undefined
+    : libraryStore.chapterRef(props.job.bookId, props.job.chapterId),
+);
 /** The other chapters of the same bulk run, so the panel can act on the run rather than one row. */
 const siblings = computed(() => (props.job?.bulk ? jobsStore.runJobs(props.job.bulk.id) : []));
 const runDone = computed(() => siblings.value.filter((j) => j.status === "done").length);
@@ -118,11 +123,16 @@ async function copy() {
             ><CloseIcon class="icon"
           /></DialogClose>
         </div>
-        <DialogTitle class="break-words text-lg font-semibold">{{ job.label }}</DialogTitle>
+        <!-- the label as the rest of the app shows it, with the chapter's reading number; the
+             server's own label and the chapter's id, which the logs are filed under, stay on hover
+             and in small print for whoever is reading those logs -->
+        <DialogTitle class="break-words text-lg font-semibold" :title="job.label">{{
+          jobsStore.labelOf(job)
+        }}</DialogTitle>
         <DialogDescription class="mt-1 text-sm text-zinc-500"
           >{{ libraryStore.bookById(job.bookId)?.title ?? job.bookId
-          }}<span v-if="job.chapterId !== null">
-            · Chapter {{ job.chapterId }}</span
+          }}<span v-if="job.chapterId !== null" class="font-mono text-xs text-zinc-400">
+            · chapter id {{ job.chapterId }}</span
           ></DialogDescription
         >
         <!-- the run this chapter belongs to: what was asked for, where this one sits in it,
@@ -499,8 +509,7 @@ async function copy() {
           <button class="btn-ghost btn-xs" @click="copy">
             <CopyIcon class="icon-sm" /> Copy diagnostics</button
           ><RouterLink :to="stage" class="btn-ghost btn-xs" @click="emit('close')"
-            >Open {{ PAGE[job.kind]
-            }}<template v-if="job.chapterId !== null"> · chapter {{ job.chapterId }}</template
+            >Open {{ PAGE[job.kind] }}<template v-if="chapterRef"> · {{ chapterRef }}</template
             ><OpenIcon class="icon-sm" /></RouterLink
           ><button
             v-if="!job.finishedAt"

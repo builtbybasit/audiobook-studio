@@ -10,6 +10,7 @@ import { useScriptsStore } from "@/stores/scripts";
 // a peek button that opens the one popover the list shares — and what it shows is worked out once.
 import { computed, ref } from "vue";
 import { isNarrated } from "@/lib/scriptReview";
+import { findsChapter, numberCell } from "@/lib/chapterNumber";
 import { chapterState, selectionSummary } from "@/lib/runPlan";
 import { idSetParam, textParam, useQueryParam } from "@/composables/useQueryParam";
 import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
@@ -68,8 +69,10 @@ const collapsed = useQueryParam("closed", idSetParam());
 const q = useQueryParam("find", textParam());
 const search = ref<HTMLInputElement | null>(null);
 const canPick = (c: Chapter) => props.selectable(c) && !c.excluded;
+/** reading numbers: what each row shows and the search finds a number by (skipped rows have none) */
+const numbers = computed(() => libraryStore.chapterNumbers[props.bookId]);
 const matches = (c: Chapter) =>
-  !q.value || c.title.toLowerCase().includes(q.value.toLowerCase()) || String(c.id) === q.value;
+  !q.value || findsChapter(c.title, numbers.value?.get(c.id), q.value);
 
 function statusOf(c: Chapter): string {
   if (props.stage === "scripting") return c.scripting;
@@ -112,7 +115,13 @@ function tagOf(c: Chapter, status: string): Tag | null {
   return null;
 }
 /** A chapter as its row shows it, worked out once for the row rather than once per binding. */
-type Row = { c: Chapter; status: string; pickable: boolean; tag: Tag | null };
+type Row = {
+  c: Chapter;
+  n: number | undefined;
+  status: string;
+  pickable: boolean;
+  tag: Tag | null;
+};
 /** A volume as the list shows it: the rows the search leaves in it, the ids a tick on its header
  *  covers, and how many of those rows this stage has finished. */
 type VolumeRow = Volume & { rows: Row[]; pickIds: number[]; done: number };
@@ -120,7 +129,13 @@ const visible = computed(() =>
   grouped.value.flatMap((v): VolumeRow[] => {
     const rows = v.chapters.filter(matches).map((c): Row => {
       const status = statusOf(c);
-      return { c, status, pickable: canPick(c), tag: tagOf(c, status) };
+      return {
+        c,
+        n: numbers.value?.get(c.id),
+        status,
+        pickable: canPick(c),
+        tag: tagOf(c, status),
+      };
     });
     if (!rows.length) return [];
     const pickIds = rows.filter((r) => r.pickable).map((r) => r.c.id);
@@ -419,7 +434,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
         </div>
         <template v-if="!collapsed.has(v.id)">
           <div
-            v-for="{ c, status, pickable, tag } in v.rows"
+            v-for="{ c, n, status, pickable, tag } in v.rows"
             :key="c.id"
             data-row
             tabindex="0"
@@ -435,7 +450,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
             <UiCheckbox
               :model-value="picked.has(c.id)"
               :disabled="!pickable"
-              :aria-label="`Select chapter ${c.id}`"
+              :aria-label="n == null ? `Select ${c.title} (skipped)` : `Select chapter ${n}`"
               @click="toggle(c.id, $event)"
             />
             <span
@@ -451,9 +466,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
               tabindex="-1"
               @click="emit('open', c.id)"
             >
-              <span class="mr-1.5 font-mono text-[11px] text-zinc-400">{{
-                String(c.id).padStart(2, "0")
-              }}</span
+              <span class="mr-1.5 font-mono text-[11px] text-zinc-400">{{ numberCell(n) }}</span
               >{{ c.title }}
             </button>
             <!-- peek -->
@@ -461,7 +474,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
               data-peek
               class="rounded px-1 text-[11px] text-zinc-400 opacity-0 hover:text-violet-500 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
               title="peek at the chapter text"
-              :aria-label="`Preview and exclude chapter ${c.id}, ${c.title}`"
+              :aria-label="`Preview and exclude ${n == null ? 'skipped chapter' : `chapter ${n}`}, ${c.title}`"
               aria-haspopup="dialog"
               :aria-expanded="peekOpen && peekId === c.id"
               @click="openPeek(c, $event)"

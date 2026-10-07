@@ -79,7 +79,9 @@ const shown = computed(() =>
 );
 
 const book = (j: Job) => libraryStore.bookById(j.bookId);
-const chapter = (j: Job) => (j.chapterId ? libraryStore.chapter(j.bookId, j.chapterId) : null);
+// The chapter by its reading number only: a title further on would give the plot away.
+const chapterRef = (j: Job) =>
+  j.chapterId == null ? undefined : libraryStore.chapterRef(j.bookId, j.chapterId);
 const elapsed = (j: Job) =>
   fmtDur(((j.finishedAt ?? now.value) - (j.startedAt ?? now.value)) / 1000);
 const fmtDur = (s: number) =>
@@ -216,15 +218,13 @@ async function toggleNotify() {
                   <div class="flex items-center gap-2 text-sm">
                     <button
                       class="font-semibold hover:text-violet-500 hover:underline"
-                      :aria-label="`View activity for ${j.label}`"
+                      :aria-label="`View activity for ${jobsStore.labelOf(j)}`"
                       @click="selectedId = j.id"
                     >
                       {{ KIND_LABEL[j.kind] }}</button
                     ><span class="truncate text-zinc-500"
                       >· {{ book(j)?.title
-                      }}<span v-if="chapter(j)">
-                        · ch {{ chapter(j)!.id }} {{ chapter(j)!.title }}</span
-                      ></span
+                      }}<span v-if="chapterRef(j)"> · {{ chapterRef(j) }}</span></span
                     >
                     <span
                       v-if="j.bulk"
@@ -360,10 +360,10 @@ async function toggleNotify() {
                   <td class="py-2">
                     <button
                       class="text-left hover:text-violet-500 hover:underline"
-                      :aria-label="`View activity for ${j.label}`"
+                      :aria-label="`View activity for ${jobsStore.labelOf(j)}`"
                       @click="selectedId = j.id"
                     >
-                      {{ j.label }}
+                      {{ jobsStore.labelOf(j) }}
                     </button>
                     <div class="text-xs text-zinc-500">{{ book(j)?.title }}</div>
                   </td>

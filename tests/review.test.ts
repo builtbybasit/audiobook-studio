@@ -113,6 +113,27 @@ describe("a book with clips to listen to again", () => {
     expect(retakes.items[0].detail).toMatch(/take \d/i);
   });
 
+  test("a row names its chapter by reading number, which moves when an earlier chapter is skipped", () => {
+    // the retake latest in the book, so there is a chapter before it to skip
+    const row = group("starforge", "retake")!.items.reduce((a, b) =>
+      b.chapterId! > a.chapterId! ? b : a,
+    );
+    const where = () => group("starforge", "retake")!.items.find((r) => r.id === row.id)!.where;
+    const chapter = libraryStore.chapter("starforge", row.chapterId!)!;
+    const n = libraryStore.numberOf("starforge", chapter.id)!;
+    expect(row.where).toBe(`Ch ${n} · ${chapter.title}`);
+
+    // skipping a chapter before it (on this page only) numbers it one lower
+    const earlier = libraryStore
+      .chaptersOf("starforge")
+      .find((c) => c.id < chapter.id && !c.excluded)!;
+    earlier.excluded = true;
+    expect(where()).toBe(`Ch ${n - 1} · ${chapter.title}`);
+    // and a skipped chapter has no number to give
+    chapter.excluded = true;
+    expect(where()).toBe(`Skipped · ${chapter.title}`);
+  });
+
   test("the count the badges show is the number of rows the page lists", () => {
     expect(reviewCount("starforge")).toBe(
       reviewInbox("starforge").reduce((n, g) => n + g.items.length, 0),

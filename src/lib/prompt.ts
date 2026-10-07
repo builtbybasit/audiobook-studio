@@ -224,7 +224,11 @@ export const PROMPT_TAGS: readonly PromptTag[] = [
   { name: "part", about: "Which request of the chapter this is, from 1", scope: "request" },
   { name: "parts", about: "How many requests the chapter is cut into", scope: "chapter" },
   { name: "chapter.title", about: "The chapter's title", scope: "chapter" },
-  { name: "chapter.number", about: "The chapter's number in the book", scope: "chapter" },
+  {
+    name: "chapter.number",
+    about: "The chapter's reading number: its place among the chapters the audiobook keeps",
+    scope: "chapter",
+  },
   {
     name: "cast",
     about:

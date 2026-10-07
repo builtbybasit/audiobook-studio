@@ -83,7 +83,7 @@ const chapterNames = (ids: number[]) =>
   ids
     .map((id) => libraryStore.chapter(props.bookId, id))
     .filter(Boolean)
-    .map((c) => `Ch ${c!.id} · ${c!.title}`);
+    .map((c) => `${libraryStore.chapterRef(props.bookId, c!.id)} · ${c!.title}`);
 /** A finished export this build would become the next version of. */
 const replaces = computed(() =>
   exportsStore

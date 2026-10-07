@@ -43,6 +43,7 @@ import {
   uncachedInput,
 } from "@/lib/pricing";
 import { hhmm } from "@/lib/format";
+import { useBooks } from "@/queries";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import type { ActivityFilter } from "@/views/endpoints/state";
 import type { EndpointKind, RequestRecord, SpeechCharge } from "@/types";
@@ -83,7 +84,7 @@ const shown = computed(() => {
       if (t < f.window.from || t > f.window.to) return false;
     }
     if (q) {
-      const hay = `${r.label} ${r.error?.message ?? ""} ${r.error?.code ?? ""} ${r.chapterId ?? ""}`;
+      const hay = `${r.label} ${r.error?.message ?? ""} ${r.error?.code ?? ""} ${chapterRef(r) ?? ""}`;
       if (!hay.toLowerCase().includes(q)) return false;
     }
     return true;
@@ -105,6 +106,13 @@ function toggle(id: string) {
   expanded.value = next;
 }
 const bookTitle = (id: string | null) => (id ? (libraryStore.bookById(id)?.title ?? id) : "—");
+// A request's chapter by its reading number, as every page names it; the id stays in the link. The
+// number needs its book's chapters, and this page can be the first one opened.
+useBooks(() => props.rows.flatMap((r) => (r.bookId ? [r.bookId] : [])));
+const chapterRef = (r: RequestRecord) =>
+  r.bookId && r.chapterId != null ? libraryStore.chapterRef(r.bookId, r.chapterId) : undefined;
+const where = (r: RequestRecord) =>
+  [bookTitle(r.bookId), chapterRef(r)].filter(Boolean).join(" · ");
 /** The instant a receipt read its rates at, shown to the second: it is the whole point of it. */
 const pricedAt = (ts: number) =>
   new Date(ts).toLocaleString([], {
@@ -625,9 +633,9 @@ function clearAll() {
                   v-if="r.bookId && r.chapterId"
                   :to="`/book/${r.bookId}/${CHAPTER_PAGE[u.kind]}?ch=${r.chapterId}`"
                   class="block truncate hover:text-violet-500"
-                  :title="`${bookTitle(r.bookId)} · chapter ${r.chapterId}`"
+                  :title="where(r)"
                   @click.stop
-                  >{{ bookTitle(r.bookId) }} · ch {{ r.chapterId }}</RouterLink
+                  >{{ where(r) }}</RouterLink
                 >
                 <span v-else>{{ bookTitle(r.bookId) }}</span>
               </td>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { chapterName } from "@/lib/chapterNumber";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
@@ -63,6 +64,7 @@ const runNote = computed(() => {
   );
 });
 const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
+const openedName = computed(() => chapterName(libraryStore.numberOf(bookId, opened.value)));
 const hasScript = computed(() => chapter.value && isScripted(chapter.value));
 /** the chapters' scripts and texts still on their way, which the reader and the buttons wait for */
 const waiting = computed(() => (hasScript.value && !loaded.value) || unread.value > 0);
@@ -156,7 +158,7 @@ function scriptFirst() {
           role="status"
         >
           <template v-if="scriptStatus === 'error'"
-            >Chapter {{ opened }}’s script could not be read.
+            >The script of {{ openedName }} could not be read.
             <button
               class="mt-2 text-violet-600 hover:underline dark:text-violet-400"
               @click="readScript()"
@@ -164,7 +166,7 @@ function scriptFirst() {
               Try again
             </button></template
           >
-          <template v-else>Reading chapter {{ opened }}’s script…</template>
+          <template v-else>Reading {{ openedName }}’s script…</template>
         </div>
         <ScriptReader
           v-else-if="hasScript"

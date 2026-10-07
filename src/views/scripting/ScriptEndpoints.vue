@@ -69,6 +69,10 @@ const sampleChapter = computed(
       .find((c) => props.selected.includes(c.id) && !c.excluded) ??
     libraryStore.chaptersOf(props.bookId).find((c) => !c.excluded),
 );
+/** a kept chapter, so it always has its reading number */
+const sampleNumber = computed(
+  () => sampleChapter.value && libraryStore.numberOf(props.bookId, sampleChapter.value.id),
+);
 const sample = useChapterText(
   () => props.bookId,
   () => sampleChapter.value?.id,
@@ -168,15 +172,12 @@ const thinkingNote = computed(() =>
         <div class="label">Chunk preview</div>
         <p class="my-2 text-xs text-zinc-500">
           <template v-if="!sampleChapter">No chapter to preview.</template>
-          <template v-else-if="!sampleRead"
-            >Reading chapter {{ sampleChapter.index }}’s text…</template
-          >
+          <template v-else-if="!sampleRead">Reading chapter {{ sampleNumber }}’s text…</template>
           <template v-else-if="errors.length"
-            >Chapter {{ sampleChapter.index }} · fix the settings above to see how it is
-            cut</template
+            >Chapter {{ sampleNumber }} · fix the settings above to see how it is cut</template
           >
           <template v-else
-            >Chapter {{ sampleChapter.index }} · {{ plural(parts.length, "request") }}</template
+            >Chapter {{ sampleNumber }} · {{ plural(parts.length, "request") }}</template
           >
         </p>
         <template v-if="parts.length">

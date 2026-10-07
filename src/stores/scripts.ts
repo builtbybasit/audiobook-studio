@@ -175,7 +175,6 @@ export const useScriptsStore = defineStore("scripts", {
      *  `applyBulk` then changes exactly the rows it counted. */
     bulkPreview(): (bookId: string, targets: BulkTarget[], action: BulkAction) => BulkPreview {
       const castStore = useCastStore();
-      const libraryStore = useLibraryStore();
 
       return (bookId, targets, action) => {
         const cast = castStore.charactersOf(bookId);
@@ -203,7 +202,6 @@ export const useScriptsStore = defineStore("scripts", {
           rows.push({
             chId: t.chId,
             segId: t.segId,
-            chapter: libraryStore.chapter(bookId, t.chId)?.title ?? `Chapter ${t.chId}`,
             speaker: s.speaker,
             color: cast.find((c) => c.name === s.speaker)?.color ?? "#71717a",
             text: s.text,

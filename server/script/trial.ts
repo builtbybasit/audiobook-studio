@@ -71,15 +71,14 @@ export async function tryPrompt(
   const chapter = library.getChapter(db, bookId, request.chapterId);
   const uid = library.chapterUid(db, bookId, request.chapterId);
   const body = chapter && library.getChapterBody(db, bookId, request.chapterId);
-  if (!chapter || uid == null || body == null)
-    throw notFound(`${book.title} has no chapter ${request.chapterId}`);
+  if (!chapter || uid == null || body == null) throw notFound(`${book.title} has no such chapter`);
 
   // Cut as the endpoint cuts it, so part 3 here is part 3 of a run.
   const chunks = chunksOf(plainText(body), profile);
   const part = request.part ?? 1;
   if (part < 1 || part > chunks.length)
     throw badRequest(
-      `${profile.name} cuts chapter ${request.chapterId} into ${chunks.length} part${chunks.length === 1 ? "" : "s"}; there is no part ${part}`,
+      `${profile.name} cuts ${library.chapterName(db, bookId, request.chapterId)} into ${chunks.length} part${chunks.length === 1 ? "" : "s"}; there is no part ${part}`,
     );
   const excerpt = chunks[part - 1];
 
@@ -100,7 +99,11 @@ export async function tryPrompt(
   const speakers = readSpeakers(db, bookId);
   const vars: PromptVars = {
     book: { title: book.title, author: book.author ?? "", notes: layers.book?.notes ?? "" },
-    chapter: { title: chapter.title, number: request.chapterId },
+    chapter: {
+      title: chapter.title,
+      // as a run tells it (`scriptingHandler`): the reading number, the id for a skipped chapter
+      number: library.readingNumber(db, bookId, request.chapterId) ?? request.chapterId,
+    },
     part,
     parts: chunks.length,
     cast: speakers,
@@ -132,7 +135,7 @@ export async function tryPrompt(
         {
           bookId,
           chapterUid: uid,
-          label: `Prompt trial · ch ${request.chapterId} · part ${part}/${chunks.length}`,
+          label: `Prompt trial · part ${part}/${chunks.length}`,
           held: reserve,
         },
         report,

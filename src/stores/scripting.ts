@@ -361,7 +361,8 @@ export const useScriptingStore = defineStore("scripting", {
         p.maxChars = was;
         return;
       }
-      uiStore.toast(`Re-scripting chapter ${chId} in smaller chunks`, {
+      const n = useLibraryStore().numberOf(bookId, chId);
+      uiStore.toast(`Re-scripting ${n ? `chapter ${n}` : "the chapter"} in smaller chunks`, {
         kind: "info",
         description: `${p.name} now cuts chapters at ${p.maxChars.toLocaleString("en")} characters — for every book it scripts, not just this one. Change it on the Endpoints page.`,
         timeout: 8000,

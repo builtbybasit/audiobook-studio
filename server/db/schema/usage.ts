@@ -50,7 +50,8 @@ export const requests = sqliteTable(
      *
      * `set null` when the chapter is deleted, never cascade. The chapter is gone; what was spent on
      * it is not, and it stays in every total. `label` is frozen at the time of the request and is
-     * what still names the work afterwards.
+     * what still names the work afterwards — the work, never the chapter, whose number would go
+     * stale in it for the same reason.
      */
     chapterUid: text("chapter_uid").references(() => chapters.uid, {
       onDelete: "set null",

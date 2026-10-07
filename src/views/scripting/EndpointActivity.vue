@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useJobsStore } from "@/stores/jobs";
+import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 import LatencySparkline from "@/components/LatencySparkline.vue";
 
@@ -18,9 +19,17 @@ const props = defineProps<{
   now: number;
 }>();
 const jobsStore = useJobsStore();
+const libraryStore = useLibraryStore();
 const uiStore = useUiStore();
 const stats = computed(() => scriptTelemetry(props.rows, props.profile));
 const error = computed(() => stats.value.lastError);
+// the reading number of the chapter it failed on, left out while that book's chapters are unread
+// or when the chapter is skipped
+const errorChapter = computed(() =>
+  error.value?.chapterId == null || error.value.bookId == null
+    ? undefined
+    : libraryStore.numberOf(error.value.bookId, error.value.chapterId),
+);
 const recovered = computed(() => !!error.value && stats.value.lastSuccess > error.value.at);
 const cooldown = computed(() =>
   Math.max(0, Math.ceil((stats.value.backoffUntil - props.now) / 1000)),
@@ -135,8 +144,8 @@ async function copyError() {
                 ? "Queued requests retry automatically after the cooldown."
                 : "Waiting for the next queued request to retry."
         }}
-        <template v-if="error.chapterId != null">Chapter {{ error.chapterId }} · </template
-        >{{ error.model }}<template v-if="simulated"> · simulated response</template>.
+        <template v-if="errorChapter">Chapter {{ errorChapter }} · </template>{{ error.model
+        }}<template v-if="simulated"> · simulated response</template>.
       </p>
       <pre
         class="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words rounded bg-white/60 p-2 font-mono text-[11px] dark:bg-zinc-950/50"

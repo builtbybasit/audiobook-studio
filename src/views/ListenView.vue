@@ -23,6 +23,7 @@ import { chapterQueue, chapterQueueId, segmentStart } from "@/composables/useCha
 import { useCast, useChapterScript } from "@/queries";
 import { useChapterHeard } from "@/queries/chapterHeard";
 import { useReader } from "@/stores/reader";
+import { numberCell } from "@/lib/chapterNumber";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { heardLines, isSpoken } from "@/lib/siteText";
 import { markAt, marksFor, type WordMark } from "@/lib/listen";
@@ -46,13 +47,14 @@ const { lines: heard } = useChapterHeard(bookId, opened);
 
 const book = computed(() => libraryStore.bookById(bookId));
 const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
-const chapterOptions = computed(() =>
-  libraryStore.chaptersOf(bookId).map((c) => ({
+const chapterOptions = computed(() => {
+  const numbers = libraryStore.chapterNumbers[bookId];
+  return libraryStore.chaptersOf(bookId).map((c) => ({
     value: c.id,
-    label: `${String(c.id).padStart(2, "0")} · ${c.title}`,
+    label: `${numberCell(numbers?.get(c.id))} · ${c.title}`,
     hint: isNarrated(c) ? "" : "no audio",
-  })),
-);
+  }));
+});
 /** what is read aloud; site text is not, and is not shown */
 const rows = computed(() => segments.value.filter((s) => isSpoken(s, book.value)));
 const narrated = computed(() => heardLines(segments.value, book.value).length);

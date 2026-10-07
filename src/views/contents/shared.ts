@@ -1,4 +1,5 @@
 // What the contents review's list, filters and chips share.
+import { findsChapter } from "@/lib/chapterNumber";
 import { stateOf } from "@/lib/contents";
 import type { Chapter, ContentState, NoticeKind } from "@/types";
 
@@ -34,7 +35,14 @@ export const STATE_CHIP: Record<ContentState, { label: string; cls: string } | n
   },
 };
 
-export function passes(c: Chapter, filter: ContentsFilter, kind: NoticeKind | null, q: string) {
+/** Does the row stay on screen; `n` is its reading number, which the search finds it by. */
+export function passes(
+  c: Chapter,
+  n: number | undefined,
+  filter: ContentsFilter,
+  kind: NoticeKind | null,
+  q: string,
+) {
   const s = stateOf(c);
   if (filter === "included" && s === "skipped") return false;
   if (filter === "suggested" && s !== "suggested") return false;
@@ -42,11 +50,9 @@ export function passes(c: Chapter, filter: ContentsFilter, kind: NoticeKind | nu
   if (filter === "skipped" && s !== "skipped") return false;
   if (kind && c.note?.kind !== kind) return false;
   if (!q) return true;
-  const needle = q.trim().toLowerCase();
   return (
-    c.title.toLowerCase().includes(needle) ||
-    String(c.id) === needle ||
-    (c.note?.reason.toLowerCase().includes(needle) ?? false)
+    findsChapter(c.title, n, q) ||
+    (c.note?.reason.toLowerCase().includes(q.trim().toLowerCase()) ?? false)
   );
 }
 

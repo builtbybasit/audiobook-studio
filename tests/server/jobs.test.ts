@@ -904,7 +904,7 @@ describe("a scripting run's spending", () => {
     expect(rows.length).toBeGreaterThan(1);
     expect(rows.every((r) => r.simulated && r.status === "done" && (r.cost ?? 0) > 0)).toBe(true);
     expect(rows.map((r) => r.label).sort()).toEqual(
-      rows.map((_, i) => `Script chunk ${i + 1} · ch 1`).sort(),
+      rows.map((_, i) => `Script chunk ${i + 1}`).sort(),
     );
     expect(job.scriptRun!.cost).toBeCloseTo(
       rows.reduce((n, r) => n + (r.cost ?? 0), 0),

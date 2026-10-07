@@ -61,6 +61,10 @@ export interface PlayerState {
   title: string;
   subtitle: string;
   href: string | null;
+  /** the clip played over and over — checking one delivery — or null */
+  repeat: string | null;
+  /** stop when this queue runs out rather than going on into `next()` */
+  stopAtEnd: boolean;
 }
 
 const TICK = 100;
@@ -79,6 +83,8 @@ const p = reactive<PlayerState>({
   title: "",
   subtitle: "",
   href: null,
+  repeat: null,
+  stopAtEnd: false,
 });
 
 const el = typeof Audio === "undefined" ? null : new Audio();
@@ -164,6 +170,11 @@ function tick(): void {
   } else {
     p.pos += dt * p.rate; // a timed clip, or the silence after one
   }
+  // a repeated line goes back to its start as the playhead leaves it, before any silence after it
+  if (p.repeat && before && before.clip.id === p.repeat && p.pos >= before.end) {
+    p.pos = before.start;
+    return sync();
+  }
   if (p.pos >= p.len) return finish();
   // crossing a boundary — into the next clip, or off the end of this one into its silence
   const after = entryAt(p.pos);
@@ -173,7 +184,7 @@ function tick(): void {
 
 /** the queue ran out: continue into whatever comes next, or stop at the end */
 function finish(): void {
-  const next = queue.next?.() ?? null;
+  const next = p.stopAtEnd ? null : (queue.next?.() ?? null);
   if (next) return load(next, 0, true);
   p.pos = p.len;
   setPlaying(false);
@@ -198,6 +209,7 @@ function load(q: Queue, at = 0, autoplay = false): void {
   p.subtitle = q.subtitle ?? "";
   p.href = q.href ?? null;
   p.pos = Math.min(Math.max(0, at), Math.max(0, p.len));
+  p.repeat = null; // the repeated line was in the old queue
   loaded = null; // a new queue may reuse a clip id with a different file
   if (autoplay) setPlaying(true);
   sync();
@@ -297,6 +309,8 @@ function stop(): void {
 /** seconds into the queue */
 function seekTo(sec: number): void {
   p.pos = Math.min(Math.max(0, sec), p.len);
+  // moving away from the repeated line by hand is leaving it
+  if (p.repeat && entryAt(p.pos)?.clip.id !== p.repeat) p.repeat = null;
   sync();
 }
 /** 0…1 of the queue — what a click on the scrubber gives */
@@ -342,6 +356,14 @@ function now(): number {
   return Math.min(e.start + el.currentTime, e.end);
 }
 
+/** Play one clip over and over — the one under the playhead, by id — or null to stop. */
+function repeatClip(id: string | null): void {
+  p.repeat = id;
+}
+function setStopAtEnd(v: boolean): void {
+  p.stopAtEnd = v;
+}
+
 function setRate(r: number): void {
   p.rate = r;
   media.rate.value = r;
@@ -367,6 +389,8 @@ const api = {
   prev,
   setRate,
   cycleRate,
+  repeatClip,
+  setStopAtEnd,
   clipProgress,
   now,
   /** the queue's clips, for a view that wants to draw them */

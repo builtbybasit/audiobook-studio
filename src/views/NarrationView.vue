@@ -12,7 +12,7 @@ import { useScriptsStore } from "@/stores/scripts";
 // this book's lines land.
 import { useStorage } from "@vueuse/core";
 import { computed, nextTick, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { plural } from "@/lib/contents";
 import { isSpoken } from "@/lib/siteText";
@@ -45,6 +45,7 @@ const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
 const scriptsStore = useScriptsStore();
 const route = useRoute();
+const router = useRouter();
 const bookId = useBookId();
 const TABS = [
   { value: "voices", label: "Voices" },
@@ -60,6 +61,18 @@ async function toDictionary(word: string) {
   await nextTick();
   lexicon.value?.prefill(word);
 }
+// …also asked for from another page — the Listen page's flag — as `?pronounce=word`, which is
+// taken out of the address once the panel has it
+watch(
+  () => route.query.pronounce,
+  (w) => {
+    if (typeof w !== "string" || !w) return;
+    void toDictionary(w);
+    const { pronounce: _, ...rest } = route.query;
+    void router.replace({ query: rest });
+  },
+  { immediate: true },
+);
 // Whether the setup panel is folded away, remembered per book and per browser. First time round
 // it is open for a book nothing has narrated yet and closed otherwise; the saved word is
 // "open"/"closed" rather than a boolean's spelling, so what earlier visits saved still reads.

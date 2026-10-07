@@ -5,8 +5,23 @@
 import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
 import { usePlayer, type Queue } from "@/composables/usePlayer";
 
-const { p, play, playQueue, cue, pause, stop, seek, seekTo, skip, next, prev, setRate, now } =
-  usePlayer();
+const {
+  p,
+  play,
+  playQueue,
+  cue,
+  pause,
+  stop,
+  seek,
+  seekTo,
+  skip,
+  next,
+  prev,
+  setRate,
+  now,
+  repeatClip,
+  setStopAtEnd,
+} = usePlayer();
 
 let clock = 0;
 let ticks = new Map<number, () => void>();
@@ -204,4 +219,37 @@ test("now is the playhead, when no file is playing to read a finer clock from", 
   pause();
   seekTo(4.25);
   expect(now()).toBe(4.25);
+});
+
+describe("repeating a line and stopping at the end", () => {
+  test("a repeated line starts again as the playhead leaves it", () => {
+    playQueue(chapter());
+    repeatClip("a");
+    advance(1.5);
+    expect(p.clipId).toBe("a");
+    advance(1); // 2.5s: past the end of a, where the silence would begin
+    expect(p.pos).toBe(0);
+    expect(p.clipId).toBe("a");
+    expect(p.playing).toBe(true);
+  });
+
+  test("seeking into another line ends the repeat; a new queue has none", () => {
+    playQueue(chapter());
+    repeatClip("a");
+    seekTo(4); // into b
+    expect(p.repeat).toBe(null);
+    repeatClip("b");
+    playQueue(chapter("ch2"));
+    expect(p.repeat).toBe(null);
+  });
+
+  test("stop at end holds the queue where it ran out instead of going on", () => {
+    playQueue(chapter("ch1", () => chapter("ch2")));
+    setStopAtEnd(true);
+    advance(7);
+    expect(p.id).toBe("ch1");
+    expect(p.playing).toBe(false);
+    expect(p.pos).toBe(6);
+    setStopAtEnd(false);
+  });
 });

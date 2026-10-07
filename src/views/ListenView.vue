@@ -26,7 +26,15 @@ import { useReader } from "@/stores/reader";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { heardLines, isSpoken } from "@/lib/siteText";
 import { markAt, marksFor, type WordMark } from "@/lib/listen";
+import { chapterTimeline } from "@/lib/speech";
 import type { Segment } from "@/types";
+// PROTOTYPE — throwaway: three redesigns of this page behind `?variant=`, on this route, with the
+// data and the player wiring above shared. `0` is the page as it is. See prototype/ctx.ts.
+import PrototypeSwitcher from "@/components/PrototypeSwitcher.vue";
+import VariantA from "@/views/listen/prototype/VariantA.vue";
+import VariantB from "@/views/listen/prototype/VariantB.vue";
+import VariantC from "@/views/listen/prototype/VariantC.vue";
+import { protoStopAtEnd, type ListenCtx } from "@/views/listen/prototype/ctx";
 
 const castStore = useCastStore();
 const libraryStore = useLibraryStore();
@@ -68,22 +76,31 @@ const colorOf = (name: string): string =>
   castStore.charactersOf(bookId).find((c) => c.name === name)?.color ?? "#71717a";
 
 // ---- the player ----
-const { p, playQueue, seekTo, layout, now } = usePlayer();
+const { p, playQueue, seekTo, layout, now, skip, next, prev, cycleRate } = usePlayer();
 const queueId = computed(() => chapterQueueId(bookId, opened.value));
 const isThis = computed(() => p.id === queueId.value);
 /** the line under the playhead, while this chapter is the one loaded */
 const current = computed(() =>
   isThis.value && p.clipId?.startsWith("seg") ? Number(p.clipId.slice(3)) : null,
 );
-const buildQueue = () =>
-  chapterQueue(bookId, opened.value, {
+const buildQueue = () => {
+  const q = chapterQueue(bookId, opened.value, {
     href: (id) => `/book/${bookId}/listen?ch=${id}`,
     // the page follows playback into the next chapter, as the ledger does
     onChapter: (id) => void router.replace({ query: { ...route.query, ch: String(id) } }),
   });
-function playChapter() {
+  // PROTOTYPE stub: a switch that stops at the chapter's end rather than running on
+  if (q) {
+    const on = q.next;
+    q.next = () => (protoStopAtEnd.value ? null : (on?.() ?? null));
+  }
+  return q;
+};
+function playChapter(at?: number) {
   const q = buildQueue();
-  if (q) playQueue(q);
+  if (!q) return;
+  if (at != null && isThis.value) return seekTo(at);
+  playQueue(q, at);
 }
 /** Listen from `offset` seconds into a line: moved to while this chapter plays, else started there. */
 function listenFrom(s: Segment, offset: number) {
@@ -159,13 +176,71 @@ onBeforeUnmount(() => cancelAnimationFrame(raf));
 const scrollTo = (id: number | null) =>
   id != null &&
   document.getElementById(`seg-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
-watch(current, (id) => p.playing && scrollTo(id));
+// PROTOTYPE: a scroll away from the line turns following off; the variants' "back to the line"
+// turns it on again
+const follow = ref(true);
+const onWheel = () => {
+  if (isThis.value && p.playing) follow.value = false;
+};
+window.addEventListener("wheel", onWheel, { passive: true });
+onBeforeUnmount(() => window.removeEventListener("wheel", onWheel));
+watch(current, (id) => p.playing && follow.value && scrollTo(id));
 // …and arriving on a chapter that is already playing finds its place once the script is in
 watch(loaded, (v) => v && p.playing && scrollTo(current.value), { flush: "post", immediate: true });
+
+// ---- PROTOTYPE: the variants ----
+const VARIANTS = [
+  { key: "0", name: "Today" },
+  { key: "A", name: "Dock: column + pinned transport" },
+  { key: "B", name: "Stage: one line, no scrolling" },
+  { key: "C", name: "Desk: column + chapter rail" },
+];
+const variant = computed(() => String(route.query.variant ?? "0"));
+const timeline = computed(() =>
+  chapterTimeline(segments.value, castStore.pacingOf(bookId), book.value),
+);
+const total = computed(() => {
+  const last = timeline.value.at(-1);
+  return last ? last.end + last.gap : 0;
+});
+const ctx = computed((): ListenCtx => ({
+  bookId,
+  book: book.value,
+  chapter: chapter.value,
+  chapters: libraryStore.chaptersOf(bookId),
+  opened: opened.value,
+  open,
+  rows: rows.value,
+  marks: marks.value,
+  heard: heard.value,
+  current: current.value,
+  word: word.value,
+  colorOf,
+  loaded: loaded.value,
+  status: status.value,
+  narrated: narrated.value,
+  refetch: () => void refetch(),
+  timeline: timeline.value,
+  total: total.value,
+  isThis: isThis.value,
+  p,
+  playChapter,
+  listenFrom,
+  seekTo,
+  skip,
+  next,
+  prev,
+  cycleRate,
+  follow: follow.value,
+  setFollow: (v) => (follow.value = v),
+}));
 </script>
 
 <template>
-  <div class="p-4">
+  <VariantA v-if="variant === 'A'" :ctx="ctx" />
+  <VariantB v-else-if="variant === 'B'" :ctx="ctx" />
+  <VariantC v-else-if="variant === 'C'" :ctx="ctx" />
+  <div v-else class="p-4">
     <div class="card mx-auto max-w-5xl">
       <header
         class="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-t-xl border-b border-zinc-200 bg-white/95 px-4 py-2.5 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/95"
@@ -175,7 +250,7 @@ watch(loaded, (v) => v && p.playing && scrollTo(current.value), { flush: "post",
           :disabled="!narrated"
           :aria-label="isThis && p.playing ? 'Pause' : 'Play this chapter'"
           :title="isThis && p.playing ? 'pause (space)' : 'play this chapter'"
-          @click="playChapter"
+          @click="playChapter()"
         >
           <component :is="isThis && p.playing ? PauseIcon : PlayIcon" class="icon icon-fill" />
         </button>
@@ -248,4 +323,5 @@ watch(loaded, (v) => v && p.playing && scrollTo(current.value), { flush: "post",
       </div>
     </div>
   </div>
+  <PrototypeSwitcher :variants="VARIANTS" :current="variant" />
 </template>

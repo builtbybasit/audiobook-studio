@@ -83,13 +83,14 @@ export function speak(text: string, list: LexEntry[]): Spoken {
 /**
  * What a voice may be sent, and nothing else: Latin letters (the books are English) and digits, the
  * punctuation that shapes how a line is read, the few symbols a voice says — `+5`, `10%`, `$3`,
- * `94/100` — and brackets, less those the voice reads as its own tags (`sayable`).
+ * `94/100` — and round and angle brackets, less those the voice reads as its own tags (`sayable`).
+ * Square and curly brackets are never sent: nobody says them, and Fish reads `[…]` as its own tag.
  */
 const SAYABLE =
-  /[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F0-9\s.,!?;:'"‘’“”\-–—…+%$£€#&/°()[\]{}<>]/;
+  /[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F0-9\s.,!?;:'"‘’“”\-–—…+%$£€#&/°()<>]/;
 const BRACKET_CHARS: Record<TagBracket, string> = { round: "()", square: "[]", angle: "<>" };
 /** each closing bracket's opener */
-const CLOSES: Record<string, string> = { ")": "(", "]": "[", "}": "{", ">": "<" };
+const CLOSES: Record<string, string> = { ")": "(", ">": "<" };
 /**
  * An HTML tag, whole: a table or list the book kept as markup, a stat sheet in a LitRPG. Only HTML's
  * own elements, so `<Rare>` in a line is prose.
@@ -103,7 +104,7 @@ const FOOTNOTE = /\[\d{1,3}\]/y;
 
 /**
  * A line as a voice is sent it, before any expression tag goes in: only what `SAYABLE` allows, less
- * the `brackets` the voice reads as tags, so prose is never taken for one; HTML tags and footnote
+ * the round or angle `brackets` the voice reads as tags, so prose is never taken for one; HTML tags and footnote
  * references out; and single quotes around a whole line (a thought) out. A voice given the rest
  * reads it out — "F A S T E R punct apostrophe", "div class" — or takes it for its own markup and
  * says nothing like the line. `at` maps an offset in `text` as given to the same place in what is

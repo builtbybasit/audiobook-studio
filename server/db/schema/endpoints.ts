@@ -98,6 +98,8 @@ export const endpoints = sqliteTable(
     promptUser: text("prompt_user"),
     /** scripting only: notes for this model, placed by `{{endpoint.notes}}`; null = none */
     promptNotes: text("prompt_notes"),
+    /** transcription only: `hotword_lambda` sent beside the hinted names; null sends none */
+    hotwordLambda: real("hotword_lambda"),
 
     // ---- speech rates ----
     billingUnit: text("billing_unit").$type<TtsBillingUnit>(),

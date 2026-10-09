@@ -533,6 +533,9 @@ export function transcriberErrors(t: Transcriber): string[] {
   const errors = connectionErrors(t, "transcription");
   if (!Number.isFinite(t.perMinute) || t.perMinute < 0)
     errors.push("The rate per audio minute must be zero or more.");
+  const lambda = t.hotwordLambda;
+  if (lambda != null && !(lambda >= 0 && lambda <= 100))
+    errors.push("The hotword strength must be from 0 to 100.");
   errors.push(...pricingProblems(ensurePricing(t)));
   return errors;
 }

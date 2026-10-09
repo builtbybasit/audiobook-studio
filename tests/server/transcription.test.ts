@@ -7,17 +7,17 @@ import { describe, expect, test } from "bun:test";
 import type { RequestRecord, Transcriber } from "@/types";
 import { toneWav } from "~/providers/fakeSpeech";
 import type { SentTranscription } from "~/providers/sent";
-import type { ProviderTarget } from "~/providers/target";
 import {
   endpointTranscriber,
   SIMULATED_TRANSCRIPT,
   type TranscriptionInput,
   type TranscriptionProvider,
+  type TranscriptionTarget,
 } from "~/providers/transcription";
 import { HEADS, sampleFile } from "../support/cloning";
 import { jsonBody, testApi, type TestApi } from "../support/server";
 
-const target = (over: Partial<ProviderTarget> = {}): ProviderTarget => ({
+const target = (over: Partial<TranscriptionTarget> = {}): TranscriptionTarget => ({
   id: "phonon",
   name: "Phonon",
   baseUrl: "http://127.0.0.1:8010/v1",
@@ -106,6 +106,15 @@ describe("the transcription wire", () => {
     expect(form.getAll("timestamp_granularities[]")).toEqual(["word"]);
     expect(form.get("prompt")).toBe("Mara, Ostrava");
     expect(new Headers(f.sent[0].init.headers).get("authorization")).toBe("Bearer sk-1");
+  });
+
+  test("sends the endpoint's hotword strength beside the hints, and never without them", async () => {
+    const f = answering(() => Response.json({ text: "Noel's worried voice reached my ears." }));
+    await f.provider.transcribe(input({ hints: ["Noel Rowe"] }), target({ hotwordLambda: 5 }));
+    await f.provider.transcribe(input(), target({ hotwordLambda: 5 }));
+    await f.provider.transcribe(input({ hints: ["Noel Rowe"] }), target());
+    const sent = f.sent.map((s) => (s.init.body as FormData).get("hotword_lambda"));
+    expect(sent).toEqual(["5", null, null]);
   });
 
   test("a server that drops a request with a prompt is heard without one, from then on", async () => {
@@ -246,9 +255,9 @@ const postTranscribe = (api: TestApi, body: FormData) =>
 /** A provider that remembers what it was asked and hears `text`, reporting each request. */
 function hearing(text = "We are short again."): {
   provider: TranscriptionProvider;
-  asked: { input: TranscriptionInput; target: ProviderTarget }[];
+  asked: { input: TranscriptionInput; target: TranscriptionTarget }[];
 } {
-  const asked: { input: TranscriptionInput; target: ProviderTarget }[] = [];
+  const asked: { input: TranscriptionInput; target: TranscriptionTarget }[] = [];
   return {
     asked,
     provider: {
@@ -276,10 +285,13 @@ function hearing(text = "We are short again."): {
 describe("transcription endpoints over HTTP", () => {
   test("are saved with the configuration, their key write-only, and kept by a save that leaves them out", async () => {
     const api = testApi();
-    await save(api, transcriber({ apiKey: "sk-secret", needsKey: true, perMinute: 0.006 }));
+    await save(
+      api,
+      transcriber({ apiKey: "sk-secret", needsKey: true, perMinute: 0.006, hotwordLambda: 5 }),
+    );
     const read = await api.request<{ transcribers: Transcriber[] }>("/api/endpoints");
     expect(read.body.transcribers).toEqual([
-      transcriber({ hasKey: true, needsKey: true, perMinute: 0.006 }),
+      transcriber({ hasKey: true, needsKey: true, perMinute: 0.006, hotwordLambda: 5 }),
     ]);
     expect(JSON.stringify(read.body)).not.toContain("sk-secret");
 

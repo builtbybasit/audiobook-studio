@@ -5,7 +5,8 @@
 // `verbose_json` with `timestamp_granularities[]=word` when the caller wants the time of each word,
 // which a server that has none answers without (`gpt-4o-transcribe` answers only `json`), and the
 // caller then has the words without their times. `prompt` carries names the audio is likely to
-// hold, which Whisper reads as context and Phonon as words to favour. A server that drops the
+// hold, which Whisper reads as context and Phonon as words to favour — by `hotword_lambda` when the
+// endpoint sets one, since Phonon's own default of 2 changes nothing it hears. A server that drops the
 // connection for a request with a prompt (Fermion 0.2.9, whose hotwords fail to load) and answers
 // the same request without one is sent none from then on, until restart, and each transcript
 // heard so says it was `unhinted`.
@@ -57,9 +58,15 @@ export interface Transcript {
   unhinted?: true;
 }
 
+/** A transcription endpoint as a request needs it: a target, and how hard to favour the hints. */
+export interface TranscriptionTarget extends ProviderTarget {
+  /** sent as `hotword_lambda` beside a prompt; absent sends none */
+  hotwordLambda?: number;
+}
+
 export interface TranscriptionProvider {
   name: string;
-  transcribe(input: TranscriptionInput, target: ProviderTarget): Promise<Transcript>;
+  transcribe(input: TranscriptionInput, target: TranscriptionTarget): Promise<Transcript>;
   probe(target: ProviderTarget, signal: AbortSignal): Promise<EndpointProbe>;
 }
 
@@ -95,7 +102,7 @@ const promptHurts = new Set<string>();
 /** One request to the server, with `prompt` when it is not empty. */
 async function send(
   input: TranscriptionInput,
-  target: ProviderTarget,
+  target: TranscriptionTarget,
   prompt: string,
   inject: Pick<CallOptions, "fetch" | "backoffMs">,
 ): Promise<Transcript> {
@@ -107,6 +114,8 @@ async function send(
   form.set("response_format", input.words ? "verbose_json" : "json");
   if (input.words) form.set("timestamp_granularities[]", "word");
   if (prompt) form.set("prompt", prompt);
+  if (prompt && target.hotwordLambda != null)
+    form.set("hotword_lambda", String(target.hotwordLambda));
 
   const stats: CallStats = { attempts: 0, rateLimited: false };
   const startedAt = Date.now();

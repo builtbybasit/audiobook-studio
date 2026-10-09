@@ -1,0 +1,1 @@
+ALTER TABLE `endpoints` ADD `hotword_lambda` real;

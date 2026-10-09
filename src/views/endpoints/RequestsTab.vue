@@ -419,6 +419,32 @@ const limitNote = computed(() => {
           /></label>
         </div>
       </section>
+
+      <!-- hotwords: how hard the check's cast names are favoured -->
+      <section v-if="u.transcriber" class="card p-3">
+        <label class="flex items-center justify-between gap-3 text-sm"
+          ><span class="min-w-0"
+            >Hotword strength
+            <UiHint
+              label="hotword strength"
+              text="Check by ear sends the cast's names with every clip. This is how hard the server favours them, sent as hotword_lambda (Fermion Phonon, 0–100). At Phonon's own 2 they change nothing; 5 puts most names right; from 10 it writes them where they were never said. Leave it blank for a server that takes no such field."
+            />
+            <span class="block text-[11px] text-zinc-500">Blank sends none.</span></span
+          ><UiNumber
+            :model-value="u.transcriber.hotwordLambda ?? null"
+            @update:model-value="
+              (v) =>
+                v == null ? delete u.transcriber!.hotwordLambda : (u.transcriber!.hotwordLambda = v)
+            "
+            class="w-28 shrink-0"
+            :min="0"
+            :max="100"
+            :step="0.5"
+            :empty="null"
+            placeholder="none"
+            label="Hotword strength"
+        /></label>
+      </section>
     </div>
 
     <div v-if="cut" class="space-y-3">

@@ -433,11 +433,17 @@ What uses it:
 each word starts and ends. `whisper-1`, Fermion's Phonon and faster-whisper servers do;
 `gpt-4o-transcribe` and `gpt-4o-mini-transcribe` answer `json` only, so they give the words
 without their times. `prompt` carries names the audio is likely to hold: Whisper reads it as
-context, Phonon as words to favour.
+context, Phonon as words to favour (at most 25 of them).
+
+**Hotword strength.** On the Requests tab, sent as `hotword_lambda` beside the hints, and only when
+it is set — a server that takes no such field is sent none. Phonon-2 reads it from 0 to 100 and
+defaults to 2, at which the cast's names changed nothing it heard (Fermion 0.2.11, two Advent
+clips: "No L's worried voice" stayed). At 5 "Noel's" came right; from 10 it wrote names where none
+were said. The Phonon preset sets 5; another preset chosen over it takes the strength off.
 
 **Fermion Phonon, locally.** `pip install fermion-research`, then `fermion serve phonon-2 --port
 8010` (its default, 8000, is the OmniVoice server's), and the **Fermion Phonon (local)** preset.
-English only, free, and far faster than real time. `/v1/models` lists it by its full name; the
+English only, free, and far faster than real time (0.2.11: 155 clips, 568 s of audio, in 16 s). `/v1/models` lists it by its full name; the
 Test button says so and the requests still go through, since the server takes `phonon-2` as an
 alias.
 

@@ -184,6 +184,11 @@ export interface Transcriber extends Partial<EndpointOps> {
   apiKey?: string;
   /** USD per minute of audio sent; 0 for a server that charges nothing */
   perMinute: number;
+  /**
+   * How hard the server favours the hinted names, sent as `hotword_lambda` beside them (Phonon-2
+   * reads it, 0–100, its own default 2); absent sends none, for a server that takes no such field
+   */
+  hotwordLambda?: number;
   /** the schedule and promotions on that rate, as on the other kinds */
   pricing?: PricingConfig;
 }

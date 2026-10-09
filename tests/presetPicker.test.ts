@@ -194,6 +194,26 @@ describe("a preset on a transcriber's Connection tab", () => {
     const preset = TRANSCRIPTION_PRESETS.find((p) => p.id === "openai-whisper")!;
     expect(t.pricing).not.toBe(preset.apply.pricing);
   });
+
+  test("Phonon's hotword strength goes on with it, and off with a preset that names none", () => {
+    const store = useEndpointsStore();
+    const t = store.addTranscriber();
+    const u = unifyTranscriber(t);
+    const it = pinia.run(() =>
+      usePresetPicker({
+        kind: () => u.kind,
+        endpoint: () => u.key,
+        fill: (fields, preset) => stagePreset(u, preset.label, fields),
+        next: "",
+      }),
+    );
+    it.choose("fermion-phonon");
+    applyDraft(u);
+    expect(t.hotwordLambda).toBe(5);
+    it.choose("openai-whisper");
+    applyDraft(u);
+    expect("hotwordLambda" in t).toBe(false);
+  });
 });
 
 describe("a preset in the scripting page's endpoint editor", () => {

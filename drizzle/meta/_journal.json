@@ -190,6 +190,13 @@
       "when": 1791365648669,
       "tag": "0026_labels_without_chapter",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1791562529773,
+      "tag": "0027_hotword_lambda",
+      "breakpoints": true
     }
   ]
 }

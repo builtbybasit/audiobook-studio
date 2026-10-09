@@ -275,6 +275,7 @@ export function toTranscriber(row: EndpointRow, parts: EndpointParts): Transcrib
     concurrency: row.concurrency,
     needsKey: row.needsKey,
     perMinute: row.billingRate ?? 0,
+    ...(row.hotwordLambda != null ? { hotwordLambda: row.hotwordLambda } : {}),
     ...(pricing ? { pricing } : {}),
     ...(row.apiKey ? { hasKey: true } : {}),
     ...ops(row),
@@ -444,6 +445,7 @@ export function transcriberValues(
     position,
     billingUnit: "minute",
     billingRate: t.perMinute,
+    hotwordLambda: t.hotwordLambda ?? null,
     timezone: t.pricing?.timezone ?? null,
     ...opsValues(t),
   };

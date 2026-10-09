@@ -33,13 +33,15 @@ export const TRANSCRIPTION_PRESETS: TranscriptionPreset[] = [
     hint: "phonon-2 on :8010, English only",
     note:
       "Started with `fermion serve phonon-2 --port 8010`; port 8000 is OmniVoice's. Phonon " +
-      "hears English only. Nothing is billed.",
+      "hears English only. Nothing is billed. Hotword strength 5: at Phonon's own 2 the cast's " +
+      "names change nothing; from 10 it writes them where they were never said.",
     apply: {
       name: "Fermion Phonon (local)",
       baseUrl: "http://127.0.0.1:8010/v1",
       model: "phonon-2",
       needsKey: false,
       perMinute: 0,
+      hotwordLambda: 5,
       // a local server has no published limit: what it holds depends on the machine and the model
       concurrency: 2,
       pricing: presetPricing(),

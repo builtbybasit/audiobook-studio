@@ -12,7 +12,7 @@ import type { Db, Tx } from "~/db/client";
 import { readEndpointKey } from "~/db/endpoints";
 import type { ScriptTarget, ScriptingProvider } from "~/providers/scripting";
 import type { SpeechProvider } from "~/providers/speech";
-import type { TranscriptionProvider } from "~/providers/transcription";
+import type { TranscriptionProvider, TranscriptionTarget } from "~/providers/transcription";
 import type { VoiceCloner } from "~/providers/clone";
 import type { VoiceLister } from "~/providers/voices";
 
@@ -89,8 +89,11 @@ export function scriptTarget(db: Db | Tx, p: Profile): ScriptTarget {
 }
 
 /** A transcription endpoint as a request needs it, and its key now. */
-export function transcriberTarget(db: Db | Tx, t: Transcriber): ProviderTarget {
-  return targetOf(t, "transcription", readEndpointKey(db, "transcription", t.id));
+export function transcriberTarget(db: Db | Tx, t: Transcriber): TranscriptionTarget {
+  return {
+    ...targetOf(t, "transcription", readEndpointKey(db, "transcription", t.id)),
+    ...(t.hotwordLambda != null ? { hotwordLambda: t.hotwordLambda } : {}),
+  };
 }
 
 function targetOf(

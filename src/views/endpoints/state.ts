@@ -198,6 +198,9 @@ export function applyDraft(u: UnifiedEndpoint): string[] {
   const d = draftFor(u);
   const target = u.entry as unknown as Record<string, unknown>;
   if (d.preset) Object.assign(target, d.preset.fields);
+  // a preset names a server, and one hotword strength is not another server's: Whisper may refuse it
+  if (d.preset && u.transcriber && !("hotwordLambda" in d.preset.fields))
+    delete u.transcriber.hotwordLambda;
   target.name = d.name.trim();
   target.model = d.model.trim();
   target.baseUrl = d.baseUrl.trim();

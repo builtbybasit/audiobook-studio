@@ -202,9 +202,8 @@ Cloning mechanics are in [the providers](backend.md#the-providers-and-where-a-ke
   kHz), MP3 (32 or 44.1 kHz; 64, 128 or 192 kbps) and Opus (48 kHz, automatic bitrate only: asking
   it for 24 or 32 kbps came back at about 272 kbps); OpenAI offers the same three with no rate or
   bitrate. A change that leaves a rate or bitrate the new format does not have resets it and says
-  so, as does a base URL saved onto another API. MP3 and Opus are about a tenth of WAV's size,
-  building an audiobook from them needs `EXPORT_ENCODER=ffmpeg`, and clips already rendered keep the
-  format they were made in.
+  so, as does a base URL saved onto another API. MP3 and Opus are about a tenth of WAV's size, and
+  clips already rendered keep the format they were made in.
 - **Simulated answers** (simulated speech endpoints): how long each answer takes, in milliseconds,
   and the share that fail, in percent (stored as `latency` and `failRate`, 0–1), so a run on it
   moves and fails like one on a real provider. A simulated scripting endpoint has neither: it
@@ -449,7 +448,7 @@ hears at. Fermion Phonon's CUDA build takes no other ("this runtime requires 16 
 converts for itself. It costs a few hundredths of a second a clip (Advent's 155: 4.4 s, two at a
 time, against Phonon's 16 s) and makes each upload about a third the size; the words keep their
 times. **Send 16 kHz mono** on the Requests tab, on by default, turned off sends each clip as the
-voice rendered it. A server with no ffmpeg sends them as rendered, and its boot log says so.
+voice rendered it.
 
 **Fermion Phonon, locally.** `pip install fermion-research`, then `fermion serve phonon-2 --port
 8010` (its default, 8000, is the OmniVoice server's), and the **Fermion Phonon (local)** preset.

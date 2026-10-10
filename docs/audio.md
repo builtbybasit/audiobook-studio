@@ -88,8 +88,7 @@ softened, gentle 2:1 compression and a short room around it
 - **Never in the way.** The endpoint's slot is given back as soon as a line's audio is in, so the
   effect runs while the next line is already out, and generation is no slower. One that fails keeps
   the clip the voice made and says so in the run's log; the line never fails over it.
-- **Needs ffmpeg** (`FFMPEG_BIN`), found at boot whatever the export encoder is. Without one the
-  boot log says so and thoughts are narrated plain. ffmpeg has no Freeverb, so the room is three
+- **Made by ffmpeg** (`FFMPEG_BIN`), which the server requires. ffmpeg has no Freeverb, so the room is three
   quiet early reflections (`aecho`).
 
 [tests/server/thoughtEffect.test.ts](../tests/server/thoughtEffect.test.ts) covers it.

@@ -4,7 +4,7 @@
 
 ## Setup and commands
 
-You need Node.js for Vite 8, pnpm for the checked-in `pnpm-lock.yaml`, and Bun 1.4 or later, which runs the server and the tests. Installing dependencies does not install Bun. ffmpeg is optional: the server only needs it when started with `EXPORT_ENCODER=ffmpeg` ([export](exports.md)). No provider keys are needed: a fresh library has no endpoints, and the **Simulated (free)** preset on the Endpoints page adds one the server answers itself, without the network or a charge.
+You need Node.js for Vite 8, pnpm for the checked-in `pnpm-lock.yaml`, and Bun 1.4 or later, which runs the server and the tests. Installing dependencies does not install Bun. You also need ffmpeg (with ffprobe, for the tests): the server refuses to start without it, since every audiobook build, the thought effect and the 16 kHz sent to speech-to-text run it (`brew install ffmpeg`, `apt install ffmpeg`; `FFMPEG_BIN` for one off `PATH`). No provider keys are needed: a fresh library has no endpoints, and the **Simulated (free)** preset on the Endpoints page adds one the server answers itself, without the network or a charge.
 
 ```sh
 pnpm install

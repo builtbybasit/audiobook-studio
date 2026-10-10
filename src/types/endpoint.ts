@@ -97,7 +97,7 @@ export interface Endpoint {
   sampleRate?: SampleRate | null;
   /**
    * What every line is asked for and kept as. Absent or null means WAV, which every part of the
-   * server reads; MP3 and Opus are a tenth of the size and need `EXPORT_ENCODER=ffmpeg` to build.
+   * server reads; MP3 and Opus are a tenth of the size.
    * What an endpoint can be asked for is `speechFormats` in `lib/endpointShapes.ts`.
    */
   encoding?: AudioEncoding | null;

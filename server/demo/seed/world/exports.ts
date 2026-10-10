@@ -163,8 +163,6 @@ export function makeExports(w: WorldDraft): ExportItem[] {
       version: 2,
       replaces: 2,
       status: "done",
-      reused: 1,
-      rebuilt: 1,
       state: sign("cliche", clicheV2Ids),
     },
     // the long serial, built when volume 6 was still being narrated: nine chapters have landed
@@ -196,8 +194,6 @@ export function makeExports(w: WorldDraft): ExportItem[] {
       version: 2,
       replaces: null,
       status: "done",
-      reused: 158,
-      rebuilt: 38,
       state: asBuiltEarlier(sign("gates", gatesIds), [37, 88, 96, 140, 141]),
     },
     // a build that fell over: the version before it is still the one on disk

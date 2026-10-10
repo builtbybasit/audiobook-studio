@@ -18,7 +18,7 @@ import type { SentSpeech } from "~/providers/sent";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 import { endpointVoiceLister } from "~/providers/voices";
-import { readWavHeader } from "~/providers/wavEncoder";
+import { readWavHeader } from "~/providers/wav";
 import { endpointRequests } from "~/usage/ledger";
 import { story } from "../support/epub";
 import {

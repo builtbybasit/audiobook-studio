@@ -10,7 +10,7 @@
 //  - **Silence has one owner.** Gaps *inside* a chapter belong to the book's pacing (and the
 //    per-line overrides on top of it) — the same numbers the reader, the ledger and the player use.
 //    Export only owns the gap *between* two chapters, because that join does not exist until the
-//    chapters are stitched. `durationOf` is therefore the only place chapter time is added up.
+//    chapters are joined into a file. `durationOf` is therefore the only place chapter time is added up.
 import { heardLines } from "@/lib/siteText";
 import { pauseAfter } from "@/lib/speech";
 import type {
@@ -436,9 +436,8 @@ export function reviewOf(chapters: Chapter[], settings: ExportSettings): ExportR
 }
 
 // ---------- loudness ----------
-// The page offers a target and a switch; the build is what measures and levels, and only an
-// encoder that can (`EXPORT_ENCODER=ffmpeg`, two-pass EBU R128 over each file's stitched audio).
-// Nothing here guesses at a level before a build has read the audio.
+// The page offers a target and a switch; the build is what measures and levels, with ffmpeg's
+// two-pass EBU R128 over each file's audio. Nothing here guesses at a level before a build has read the audio.
 
 /** FNV-1a. Identifies a preview's timeline, so the player knows when it has changed. */
 export const hash = (s: string): number => {
@@ -461,7 +460,7 @@ export const LOUDNESS_TARGETS = [
  *
  * It deliberately covers the stitched silence as well as the clips: a pause costs nothing and
  * invalidates no audio, but it does change the file, so an export built before it is out of date.
- * It covers the clips that are heard (`heardLines`), which are the clips a build stitches: a line
+ * It covers the clips that are heard (`heardLines`), which are the clips a build puts in the file: a line
  * marked as site text leaves the file, and so leaves the fingerprint.
  */
 export function chapterSignature(
@@ -489,7 +488,7 @@ export function chapterSignature(
   return [c.narration, clips.length, Math.round(c.duration * 100), silence, h].join(":");
 }
 
-/** One fingerprint per chapter of `ids` the book has, so a later build knows what it can carry over. */
+/** One fingerprint per chapter of `ids` the book has, so an export can tell when it is behind the book. */
 export function chapterStates(
   chapters: Chapter[],
   ids: number[],
@@ -561,33 +560,4 @@ export function settingsOf(e: ExportItem): Partial<ExportSettings> {
     year: e.year,
     description: e.description,
   };
-}
-
-/**
- * Would a rebuild write the same bytes for a chapter that has not moved? Only then can that chapter
- * be carried over instead of encoded again. The plan's estimate and the build itself both ask here,
- * so what the page promises and what the build does cannot drift apart.
- */
-export function sameOutput(prev: ExportItem, s: ExportSettings): boolean {
-  // A setting the export did not record cannot be compared, so it cannot rule reuse out either.
-  const was = settingsOf(prev);
-  return OUTPUT_KEYS.every((k) => was[k] === undefined || was[k] === s[k]);
-}
-
-/**
- * The chapters a build would carry over from `prev` untouched rather than encode again.
- *
- * The page's estimate, the build itself and the server's build all come here, so what the plan
- * panel promises and what is actually copied cannot drift apart. A setting that changes the bytes
- * rules the whole thing out at once: a different bitrate or layout is a different file, and
- * nothing in it can be carried over from the last one.
- */
-export function reusedChapters(
-  prev: ExportItem | null | undefined,
-  ids: readonly number[],
-  settings: ExportSettings,
-  now: Record<number, string>,
-): number[] {
-  if (!prev || !sameOutput(prev, settings)) return [];
-  return ids.filter((id) => !!prev.state?.[id] && prev.state[id] === now[id]);
 }

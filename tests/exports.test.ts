@@ -22,7 +22,6 @@ import {
   planOf,
   readinessOf,
   reviewOf,
-  sameOutput,
   trackNo,
   usable,
 } from "@/lib/exports";
@@ -229,7 +228,7 @@ const usableIds = (bookId = "starforge") =>
 describe("staying up to date", () => {
   beforeEach(() => open());
 
-  test("a chapter that has not been touched is carried over; one that changed is not", async () => {
+  test("a chapter that has not been touched is current; one that changed is not", async () => {
     const ids = usableIds().slice(0, 3);
     const item = await build("starforge", ids, own({ useStale: true }));
     expect(item.status).toBe("done");
@@ -242,7 +241,6 @@ describe("staying up to date", () => {
     castStore._retime("starforge", ids[1]);
     const update = exportsStore.exportUpdateFor(item);
     expect(update.changed).toEqual([ids[1]]);
-    expect(update.reusable).toBe(ids.length - 1);
     expect(update.needed).toBe(true);
   });
 
@@ -312,21 +310,12 @@ describe("staying up to date", () => {
     expect(update.outside).toEqual(readyIds.filter((id) => id !== 2 && id !== 3));
   });
 
-  test("the reuse the plan promises is the reuse the build performs", async () => {
+  test("a different bitrate is the same audiobook, built again as a new version", async () => {
     const ids = [2, 3];
     const s = own({ bitrate: 64 });
-    const first = await build("starforge", ids, s);
-    // the plan panel and the build ask the same question of the same answer
-    expect(exportsStore.exportReuse(first, ids, s)).toEqual(ids);
-    expect(exportsStore.exportReuse(first, ids, { ...s, bitrate: 128 })).toEqual([]);
-    expect(exportsStore.exportReuse(first, ids, { ...s, markerPattern: "{title}" })).toEqual([]);
-    expect(sameOutput(first, { ...s, cover: "art.jpg" })).toBe(false);
-
-    // a different bitrate is the same audiobook, built again — as a new version with nothing carried
+    await build("starforge", ids, s);
     const louder = await build("starforge", ids, { ...s, bitrate: 128 });
     expect(louder.version).toBe(2);
-    expect(louder.reused).toBe(0);
-    expect(louder.rebuilt).toBe(ids.length);
   });
 
   test("a finished export keeps the timeline it played, so a later correction is a difference", async () => {
@@ -417,8 +406,6 @@ describe("update and retry ask before they decide", () => {
         file: 1,
         fileName: s.filename,
         stage: "Encoding",
-        encode: ids.length,
-        reuse: 0,
         done: 0,
       },
     };
@@ -515,6 +502,5 @@ describe("the demo library", () => {
     const update = exportsStore.exportUpdateFor(behind);
     expect(update.added.length).toBeGreaterThan(0);
     expect(update.changed.length).toBeGreaterThan(0);
-    expect(update.reusable).toBeGreaterThan(100);
   });
 });

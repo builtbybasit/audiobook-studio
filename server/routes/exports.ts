@@ -70,7 +70,6 @@ export function exportRoutes(
         version: result.export.version,
         files: result.export.files.length,
         chapters: ids.length,
-        reused: result.export.reused ?? 0,
       },
       "build queued",
     );

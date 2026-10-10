@@ -12,7 +12,6 @@ import {
   DEFAULT_EXPORT_SETTINGS,
   OUTPUT_KEYS,
   planOf,
-  reusedChapters,
   reviewOf,
   scopeOf,
   SETTING_LABEL,
@@ -72,9 +71,8 @@ export const useExportsStore = defineStore("exports", {
     // ---------- export ----------
     // A build makes one *export*, which is one or more files: grouping decides how many and nothing
     // else changes. An export is identified by `key` (name + format + grouping), so building the
-    // same audiobook again is a new version of it rather than a second entry, and the chapters whose
-    // audio has not moved since the last version are carried over instead of encoded again. The
-    // encoding is the server's, and so is the file.
+    // same audiobook again is a new version of it rather than a second entry, and every chapter of
+    // it is encoded again. The encoding is the server's, and so is the file.
     /** Everything the page needs to describe a build, with no side effects. */
     exportPlanFor(bookId: string, ids: number[], settings: ExportSettings): ExportPlan {
       const libraryStore = useLibraryStore();
@@ -88,7 +86,7 @@ export const useExportsStore = defineStore("exports", {
       const chapters = libraryStore.chaptersOf(bookId).filter((c) => ids.includes(c.id));
       return reviewOf(chapters, settings);
     },
-    /** One fingerprint per chapter, so a later build knows what it can carry over. */
+    /** One fingerprint per chapter, so a finished export can tell which of its chapters have moved. */
     exportStateFor(bookId: string, ids: number[]): Record<number, string> {
       const castStore = useCastStore();
       const libraryStore = useLibraryStore();
@@ -128,19 +126,6 @@ export const useExportsStore = defineStore("exports", {
       if (scope === "book") return new Set(all.map((c) => c.id));
       const vols = new Set(e.chapterIds.map((id) => libraryStore.chapter(e.bookId, id)?.volumeId));
       return new Set(all.filter((c) => vols.has(c.volumeId)).map((c) => c.id));
-    },
-    /**
-     * The chapters a build would carry over from `prev` untouched rather than encode again. The
-     * plan's estimate and the build itself both come here, so the promise and the build agree.
-     */
-    exportReuse(
-      prev: ExportItem | null | undefined,
-      ids: number[],
-      settings: ExportSettings,
-      state?: Record<number, string>,
-    ): number[] {
-      if (!prev) return [];
-      return reusedChapters(prev, ids, settings, state ?? this.exportStateFor(prev.bookId, ids));
     },
     /**
      * Why a finished export no longer matches the book. `settings` is the form as it stands now,
@@ -185,7 +170,6 @@ export const useExportsStore = defineStore("exports", {
         stale,
         missing,
         settings: diff,
-        reusable: e.chapterIds.length - changed.length - missing.length,
         needed: !!(added.length || changed.length || missing.length || diff.length),
       };
     },
@@ -365,8 +349,8 @@ export const useExportsStore = defineStore("exports", {
       return `${parts.join(", ")}. It is waiting on the Build tab with everything it was ${verb} with — nothing was built.`;
     },
     /**
-     * Bring a finished export up to date: the chapters that have changed are encoded again, the rest
-     * are carried over, and the version that is current now stays current until the new one lands.
+     * Bring a finished export up to date: it is built again as a new version, and the version that
+     * is current now stays current until the new one lands.
      * `extra` adds chapters — the ones narrated since, or the ones outside its scope you chose to
      * fold in.
      *

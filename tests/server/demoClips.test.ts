@@ -19,7 +19,8 @@ import { writeScript } from "~/db/script";
 import { settleChapter } from "~/narration/chapter";
 import { DEMO_BASE, openLibrary, REAL_BASE, type Library } from "~/libraries";
 import { SAMPLE_RATE, toneOf, toneWav } from "~/providers/fakeSpeech";
-import { byteRate, readWavHeader, wavEncoders } from "~/providers/wavEncoder";
+import { byteRate, readWavHeader } from "~/providers/wav";
+import { ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import type { Providers } from "~/providers/target";
 import { epubFile, story } from "../support/epub";
 import {
@@ -50,7 +51,7 @@ function open(name: string, base: string, demo: boolean): Opened {
     audioDir,
     exportDir: tempExportDir(),
     voiceDir: tempVoiceDir(),
-    encoders: wavEncoders(),
+    encoders: ffmpegEncoders(),
     log: collectingLogger().log,
     providers: noProviders,
     demo,

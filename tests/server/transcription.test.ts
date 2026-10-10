@@ -8,7 +8,7 @@ import type { RequestRecord, Transcriber } from "@/types";
 import { ffmpegSpeechRate, type SpeechRate } from "~/audio/ffmpeg";
 import { toneWav } from "~/providers/fakeSpeech";
 import { ffmpegAvailable } from "~/providers/ffmpegEncoder";
-import { readWavHeader } from "~/providers/wavEncoder";
+import { readWavHeader } from "~/providers/wav";
 import type { SentTranscription } from "~/providers/sent";
 import {
   endpointTranscriber,

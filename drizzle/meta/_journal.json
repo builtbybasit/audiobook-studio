@@ -204,6 +204,13 @@
       "when": 1791624104450,
       "tag": "0028_transcribe_16k",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1791625160728,
+      "tag": "0029_ffmpeg_only_exports",
+      "breakpoints": true
     }
   ]
 }

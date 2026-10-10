@@ -13,35 +13,23 @@ import { CLONE_BODY_BYTES, env, importBodyBytes, scriptBodyBytes } from "~/env";
 import { DEMO_BASE, openLibrary, REAL_BASE, serveLibraries } from "~/libraries";
 import { log } from "~/log";
 import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
-import { wavEncoders } from "~/providers/wavEncoder";
 
 const boot = log.child({ name: "boot" });
 
-// An encoder that shells out is the one thing here that needs something outside this process, so
-// it is checked now rather than at the first build: a server that cannot write an audiobook says
-// so at boot, naming the binary, instead of queueing work that was always going to fail.
-if (env.EXPORT_ENCODER === "ffmpeg") {
-  const version = await ffmpegAvailable(env.FFMPEG_BIN);
-  if (!version)
-    throw new Error(
-      `EXPORT_ENCODER=ffmpeg, but ${env.FFMPEG_BIN} is not runnable. Install ffmpeg, point ` +
-        `FFMPEG_BIN at it, or set EXPORT_ENCODER=wav to stitch the clips with no binary at all.`,
-    );
-  boot.debug({ ffmpeg: version }, "encoder found");
-}
-const encoders = env.EXPORT_ENCODER === "ffmpeg" ? ffmpegEncoders(env.FFMPEG_BIN) : wavEncoders();
-
-// The thought effect and the 16 kHz a transcriber is sent are ffmpeg's too, but nothing depends on
-// them: without one, thought lines are narrated as the voice made them, recordings go to be
-// transcribed as they came, and the boot log says why.
+// ffmpeg is the one thing here outside this process — the audiobook encoder, the thought effect and
+// the 16 kHz a transcriber is sent — so it is checked now rather than at the first build: a server
+// without it says so at boot, naming the binary, instead of queueing work that was always going to
+// fail.
 const ffmpeg = await ffmpegAvailable(env.FFMPEG_BIN);
-const thoughtEffect = ffmpeg ? ffmpegThoughtEffect(env.FFMPEG_BIN) : undefined;
-const speechRate = ffmpeg ? ffmpegSpeechRate(env.FFMPEG_BIN) : undefined;
 if (!ffmpeg)
-  boot.warn(
-    `${env.FFMPEG_BIN} is not runnable: thought lines are narrated without their effect, and ` +
-      `recordings are transcribed at the rate they were made`,
+  throw new Error(
+    `${env.FFMPEG_BIN} is not runnable. Install ffmpeg (brew install ffmpeg, apt install ffmpeg) ` +
+      `or point FFMPEG_BIN at it.`,
   );
+boot.debug({ ffmpeg }, "ffmpeg found");
+const encoders = ffmpegEncoders(env.FFMPEG_BIN);
+const thoughtEffect = ffmpegThoughtEffect(env.FFMPEG_BIN);
+const speechRate = ffmpegSpeechRate(env.FFMPEG_BIN);
 
 const real = openLibrary({
   name: "real",

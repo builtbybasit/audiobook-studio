@@ -346,10 +346,7 @@ async function copy() {
               <dt class="text-zinc-500">Writing</dt>
               <dd class="break-all font-mono text-xs">{{ job.exportRun.fileName }}</dd>
               <dt class="text-zinc-500">Chapters</dt>
-              <dd>
-                {{ job.exportRun.done }}/{{ job.exportRun.chapterIds.length }} ·
-                {{ job.exportRun.encode }} encoded, {{ job.exportRun.reuse }} carried over
-              </dd>
+              <dd>{{ job.exportRun.done }}/{{ job.exportRun.chapterIds.length }}</dd>
               <dt class="text-zinc-500">Loudness</dt>
               <dd>
                 {{

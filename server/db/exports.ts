@@ -3,8 +3,7 @@
 // A build writes here three times: once when it is queued, so the Audiobooks tab shows a version
 // arriving rather than nothing at all; once per file as it lands; and once at the end, when the
 // row stops being a promise and becomes what was written — the real running time, the real size
-// on disk, and where each chapter sits inside its file. That last part is what makes the *next*
-// build cheap, so it is a column and not a detail of the log.
+// on disk, and how long each chapter in it plays.
 //
 // The version this one supersedes is only marked `replaced` by that final write. A build that
 // fails or is cancelled must leave the audiobook already on disk exactly as it was, and the
@@ -82,18 +81,9 @@ export function exportFileToken(db: Db | Tx, id: number, position: number): stri
  * same breath the job that builds it is, and the job carries the id in its `exportRun` so a
  * retry knows what it was making.
  */
-export function insertBuild(
-  tx: Tx,
-  draft: Omit<ExportItem, "id">,
-  createdAt: number,
-  encoder: string,
-): number {
+export function insertBuild(tx: Tx, draft: Omit<ExportItem, "id">, createdAt: number): number {
   const { id: _assigned, ...values } = exportValues({ ...draft, id: 0 }, createdAt);
-  const id = tx
-    .insert(exportItems)
-    .values({ ...values, encoder })
-    .returning({ id: exportItems.id })
-    .get().id;
+  const id = tx.insert(exportItems).values(values).returning({ id: exportItems.id }).get().id;
   const e: ExportItem = { ...draft, id };
   e.files.forEach((f, position) =>
     tx
@@ -120,7 +110,7 @@ export interface WrittenFile {
   duration: number;
   /** MB */
   size: number;
-  chapters: { id: number; start: number; length: number; seconds: number }[];
+  chapters: { id: number; seconds: number }[];
 }
 
 /** The file one output is being written to, claimed before the first byte goes into it. */
@@ -139,11 +129,9 @@ export function clearBuildFiles(db: Db | Tx, id: number): void {
 /**
  * The build is done: the row stops describing what was asked for and describes what is there.
  *
- * The chapters' spans land here too, and this is the only place they are written — a chapter
- * carried over from the previous version still gets its own span in *this* file, because that is
- * the one the version after this will copy from. Their signatures are rewritten with them, for
- * the same reason: what an export is out of date against is the audio it was actually built from,
- * which is not always the audio the build was queued against.
+ * Each chapter's running time lands here too, and its signature is rewritten with it: what an
+ * export is out of date against is the audio it was actually built from, which is not always the
+ * audio the build was queued against.
  */
 export function finishBuild(
   tx: Tx,
@@ -163,8 +151,6 @@ export function finishBuild(
     for (const c of f.chapters)
       tx.update(exportChapters)
         .set({
-          byteStart: c.start,
-          byteLength: c.length,
           duration: c.seconds,
           ...(signatures.has(c.id) ? { signature: signatures.get(c.id)! } : {}),
         })
@@ -193,44 +179,4 @@ export function setBuildStatus(
     .set({ status, error: error ?? null })
     .where(eq(exportItems.id, id))
     .run();
-}
-
-/** What wrote an export, so only the same encoder ever copies out of it. */
-export function exportEncoder(db: Db | Tx, id: number): string | null {
-  return (
-    db
-      .select({ encoder: exportItems.encoder })
-      .from(exportItems)
-      .where(eq(exportItems.id, id))
-      .get()?.encoder ?? null
-  );
-}
-
-/** Where each chapter of a finished export sits on disk, for the next version to copy it. */
-export interface ChapterSpan {
-  token: string;
-  start: number;
-  length: number;
-}
-
-export function chapterSpans(db: Db | Tx, exportId: number): Map<number, ChapterSpan> {
-  const files = new Map(
-    db
-      .select({ position: exportFiles.position, path: exportFiles.path })
-      .from(exportFiles)
-      .where(eq(exportFiles.exportId, exportId))
-      .all()
-      .map((f) => [f.position, f.path]),
-  );
-  const spans = new Map<number, ChapterSpan>();
-  for (const c of db
-    .select()
-    .from(exportChapters)
-    .where(eq(exportChapters.exportId, exportId))
-    .all()) {
-    const token = c.fileIndex == null ? null : files.get(c.fileIndex);
-    if (!token || c.byteStart == null || c.byteLength == null) continue;
-    spans.set(c.chapterId, { token, start: c.byteStart, length: c.byteLength });
-  }
-  return spans;
 }

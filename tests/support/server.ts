@@ -152,7 +152,6 @@ const noCloner: VoiceCloner = {
 const noTranscription: TranscriptionProvider = {
   name: "No transcription provider (test)",
   transcribe: () => Promise.reject(noFake("transcription provider")),
-  probe: () => Promise.reject(noFake("transcription provider")),
 };
 
 /** A database migrated once per file, copied for each test that asks — migrating is 25 ms a time. */

@@ -124,7 +124,7 @@ const MODEL_PLACEHOLDER: Record<EndpointKind, string> = {
 const PROBE_SAYS: Record<EndpointKind, string> = {
   scripting: "~24 input and 8 output tokens",
   tts: "12 characters of sample text",
-  transcription: "A model list, or the route with no audio where there is none",
+  transcription: "A 3-second recording of “The quick brown fox…”",
 };
 /** what removing it leaves behind */
 const REMOVE_SAYS: Record<EndpointKind, string> = {
@@ -198,12 +198,11 @@ const PATH: Record<EndpointKind, () => string> = {
 };
 const path = computed(() => (simulated.value ? "" : PATH[props.u.kind]()));
 /** Where the connection test goes: the request itself, but a transcriber is only asked its models —
- *  sending it audio to test would be a priced request for nothing. A server with no model list is
- *  asked its transcription route with no file in the form instead (`askRoute`). */
+ *  sending it audio to test would be a priced request for nothing. */
 const PROBE_PATH: Record<EndpointKind, () => string> = {
   scripting: () => path.value,
   tts: () => path.value,
-  transcription: () => "/models",
+  transcription: () => "/audio/transcriptions",
 };
 const probePath = computed(() => PROBE_PATH[props.u.kind]());
 /** The staged changes as the banner lists them; a preset's prices and limits are one of them. */

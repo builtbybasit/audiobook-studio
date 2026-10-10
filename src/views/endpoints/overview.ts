@@ -55,6 +55,7 @@ export function useEndpointOverview() {
       pricing: { base, config },
       // only a speech probe is priced on its billing model; the others have their own
       billing: u.endpoint ? billingOf(u.endpoint) : undefined,
+      perMinute: u.transcriber?.perMinute,
     };
   };
 

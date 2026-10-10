@@ -39,6 +39,8 @@ export interface EndpointDescriptor {
   pricing?: { base: RateSet; config: PricingConfig };
   /** tts: what the rate is per */
   billing?: TtsBilling;
+  /** transcription: its one rate */
+  perMinute?: number;
 }
 
 /**
@@ -51,6 +53,8 @@ export interface EndpointDescriptor {
 export const PROBE = {
   scripting: { inputTokens: 24, outputTokens: 8 },
   tts: { text: "The quick brown fox." },
+  // server/endpoints/test-sample.wav
+  transcription: { seconds: 3.39 },
 } as const;
 
 /** The probe's sample line, counted the way the endpoint's own billing model counts it. */
@@ -82,9 +86,8 @@ export function probeCost(ep: EndpointDescriptor, at: number = Date.now()): numb
         at,
         rule: PRICING_RULE,
       }).amount;
-    // a transcription endpoint is tested by listing its models, which sends no audio and is free
     case "transcription":
-      return 0;
+      return ep.perMinute == null ? null : (PROBE.transcription.seconds / 60) * ep.perMinute;
   }
 }
 

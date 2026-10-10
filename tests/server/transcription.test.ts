@@ -238,44 +238,6 @@ describe("the transcription wire", () => {
     expect(heard).toEqual({ text: SIMULATED_TRANSCRIPT });
     expect(f.sent).toHaveLength(0);
   });
-
-  test("the probe reads the models and says when the model is not listed", async () => {
-    const listed = answering(() => Response.json({ data: [{ id: "phonon-2" }] }));
-    const yes = await listed.provider.probe(target(), new AbortController().signal);
-    expect(yes.ok).toBe(true);
-    expect(yes.message).toContain("lists “phonon-2”");
-    expect(listed.sent[0].url).toBe("http://127.0.0.1:8010/v1/models");
-
-    const aliased = answering(() => Response.json({ data: [{ id: "FermionResearch/phonon-2" }] }));
-    const alias = await aliased.provider.probe(target(), new AbortController().signal);
-    expect(alias.ok).toBe(true);
-    expect(alias.message).toContain("lists “FermionResearch/phonon-2”, not “phonon-2”");
-  });
-
-  test("a server with no model list is asked its transcription route, with no audio", async () => {
-    // Fermion Phonon's CUDA build: no /models, and a form with no file refused on the route it has
-    const refuses = (status: number, message: string) =>
-      Response.json({ error: { message } }, { status });
-    const cuda = answering((n) =>
-      n === 1
-        ? refuses(404, "unknown route '/v1/models'")
-        : refuses(400, "no `file` part in the form"),
-    );
-    const there = await cuda.provider.probe(target(), new AbortController().signal);
-    expect(there.ok).toBe(true);
-    expect(there.message).toContain("lists no models, so “phonon-2” is not checked");
-    expect(cuda.sent.map((s) => [s.init.method, s.url])).toEqual([
-      ["GET", "http://127.0.0.1:8010/v1/models"],
-      ["POST", "http://127.0.0.1:8010/v1/audio/transcriptions"],
-    ]);
-    expect((cuda.sent[1].init.body as FormData).has("file")).toBe(false);
-
-    // a base URL that is wrong is a 404 on both, and the probe says so rather than passing
-    const wrong = answering(() => refuses(404, "unknown route"));
-    await expect(wrong.provider.probe(target(), new AbortController().signal)).rejects.toThrow(
-      "404",
-    );
-  });
 });
 
 // ---------- the routes ----------
@@ -331,7 +293,6 @@ function hearing(text = "We are short again."): {
         });
         return { text };
       },
-      probe: async () => ({ ok: true, message: "Answered in 3 ms", ms: 3 }),
     },
   };
 }
@@ -396,16 +357,35 @@ describe("transcription endpoints over HTTP", () => {
     expect(twice.body.error.message).toBe("Two transcription endpoints are called “phonon”");
   });
 
-  test("the Test button asks the saved endpoint", async () => {
-    const h = hearing();
+  test("the Test button sends the saved endpoint its sample, priced, and says what it heard", async () => {
+    const h = hearing("The quick brown fox jumps over the lazy dog.");
     const api = testApi({ transcription: h.provider });
-    await save(api, transcriber());
+    await save(api, transcriber({ perMinute: 0.6 }));
     const { status, body } = await api.request<{ ok: boolean; message: string }>(
       "/api/endpoints/test",
       jsonBody({ kind: "transcription", id: "phonon" }),
     );
     expect(status).toBe(200);
-    expect(body).toMatchObject({ ok: true, message: "Answered in 3 ms" });
+    expect(body.ok).toBe(true);
+    expect(body.message).toStartWith("Heard “The quick brown fox jumps over the lazy dog.” in ");
+    expect(h.asked).toHaveLength(1);
+    expect(h.asked[0].target).toMatchObject({ id: "phonon", maxRetries: 0 });
+    expect(h.asked[0].input.seconds).toBeCloseTo(3.39, 2);
+    const rows = await api.request<{ requests: RequestRecord[] }>(
+      "/api/endpoints/requests?kind=transcription&id=phonon&range=1h",
+    );
+    expect(rows.body.requests).toMatchObject([{ bookId: null, label: "Connection test" }]);
+    // 3.39 s at $0.60 a minute
+    expect(rows.body.requests[0].cost).toBeCloseTo(0.0339, 4);
+
+    const silent = testApi({ transcription: hearing("").provider });
+    await save(silent, transcriber());
+    const nothing = await silent.request<{ ok: boolean; message: string }>(
+      "/api/endpoints/test",
+      jsonBody({ kind: "transcription", id: "phonon" }),
+    );
+    expect(nothing.body.ok).toBe(false);
+    expect(nothing.body.message).toContain("heard nothing");
     const none = await api.request(
       "/api/endpoints/test",
       jsonBody({ kind: "transcription", id: "x" }),

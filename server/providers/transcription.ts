@@ -18,13 +18,11 @@
 // Every request that reached the wire is reported through `sent`, as speech is (`sent.ts`), so the
 // ledger prices it by the minute of audio sent — a cancelled one too, at a cost nobody knows. A simulated endpoint answers here with a fixed
 // sentence and no times, after its latency, and nothing is sent.
-import type { EndpointProbe } from "@/types";
 import type { SpeechRate } from "~/audio/ffmpeg";
 import { sleep } from "~/providers/fake";
 import {
   authHeaders,
   call,
-  jsonHeaders,
   ProviderError,
   requireKey,
   type CallOptions,
@@ -74,7 +72,6 @@ export interface TranscriptionTarget extends ProviderTarget {
 export interface TranscriptionProvider {
   name: string;
   transcribe(input: TranscriptionInput, target: TranscriptionTarget): Promise<Transcript>;
-  probe(target: ProviderTarget, signal: AbortSignal): Promise<EndpointProbe>;
 }
 
 /** What a simulated endpoint hears, whatever it is sent. */
@@ -191,41 +188,6 @@ async function atSpeechRate(
   }
 }
 
-/** What a transcription route answers a form with no file in it: there, and refusing it. */
-const NO_FILE = new Set([400, 422]);
-
-/**
- * A server with no model list — Fermion Phonon's CUDA build serves only its transcription route —
- * is asked that route instead, with no audio: one that is there refuses the form for want of a
- * file, and nothing is heard or billed. A wrong base URL is a 404 here too, and says so.
- */
-async function askRoute(
-  target: TranscriptionTarget,
-  signal: AbortSignal,
-  started: number,
-  inject: Pick<CallOptions, "fetch" | "backoffMs">,
-): Promise<EndpointProbe> {
-  const form = new FormData();
-  const model = target.model.trim();
-  if (model) form.set("model", model);
-  try {
-    await call(
-      { ...target, maxRetries: 0 },
-      `${target.baseUrl}/audio/transcriptions`,
-      { method: "POST", headers: authHeaders(target), body: form },
-      { signal, ...inject },
-    );
-  } catch (e) {
-    if (!(e instanceof ProviderError) || !NO_FILE.has(e.status)) throw e;
-  }
-  const ms = Date.now() - started;
-  return {
-    ok: true,
-    message: `Answered in ${ms} ms · it lists no models${model ? `, so “${model}” is not checked` : ""}`,
-    ms,
-  };
-}
-
 export function endpointTranscriber({
   speechRate,
   ...inject
@@ -262,45 +224,6 @@ export function endpointTranscriber({
         promptHurts.add(server);
         return { ...heard, unhinted: true };
       }
-    },
-
-    async probe(target, signal) {
-      if (target.simulation)
-        return { ok: true, message: "Simulated: answers without a server", ms: 0 };
-      requireKey(target);
-      const started = Date.now();
-      let res: Response;
-      try {
-        res = await call(
-          { ...target, maxRetries: 0 },
-          `${target.baseUrl}/models`,
-          { method: "GET", headers: jsonHeaders(target) },
-          { signal, ...inject },
-        );
-      } catch (e) {
-        if (!(e instanceof ProviderError) || e.status !== 404) throw e;
-        return askRoute(target, signal, started, inject);
-      }
-      const ms = Date.now() - started;
-      const body = (await res.json().catch(() => null)) as { data?: { id?: unknown }[] } | null;
-      const ids = Array.isArray(body?.data)
-        ? body.data.map((m) => m?.id).filter((id): id is string => typeof id === "string")
-        : [];
-      const model = target.model.trim();
-      // a local server lists its model by its full name and takes a short one: Fermion lists
-      // `FermionResearch/…` and takes `phonon-2`, so a model it does not list is said, not refused
-      const listed = !model || !ids.length || ids.includes(model);
-      return {
-        ok: true,
-        message:
-          `Answered in ${ms} ms` +
-          (listed
-            ? ids.length && model
-              ? ` and lists “${model}”`
-              : ""
-            : ` · it lists ${ids.map((id) => `“${id}”`).join(", ")}, not “${model}”`),
-        ms,
-      };
     },
   };
 }

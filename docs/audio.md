@@ -33,7 +33,7 @@ line, word by word, without anyone listening.
 
 - **What runs.** A `check` job per chapter (`POST /api/books/:id/chapters/check`,
   [server/jobs/check.ts](../server/jobs/check.ts)) on the first transcription endpoint switched on,
-  up to its concurrency at once, with the cast's names sent as hints — left out, and said in the
+  up to its concurrency at once, each clip sent as hints the cast's names its line is written with — left out, and said in the
   job's log, for a server that gives no answer to a request that has them. It hears every spoken line's
   clip in the book that has not been heard as the line now reads, so a second check of an unchanged
   chapter does nothing, and a line edited or rendered again since is heard again. **Check again**,

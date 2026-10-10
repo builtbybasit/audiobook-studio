@@ -93,6 +93,7 @@ export function transcriberTarget(db: Db | Tx, t: Transcriber): TranscriptionTar
   return {
     ...targetOf(t, "transcription", readEndpointKey(db, "transcription", t.id)),
     ...(t.hotwordLambda != null ? { hotwordLambda: t.hotwordLambda } : {}),
+    ...(t.resample16k === false ? { resample16k: false } : {}),
   };
 }
 

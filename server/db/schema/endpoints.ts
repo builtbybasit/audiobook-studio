@@ -100,6 +100,8 @@ export const endpoints = sqliteTable(
     promptNotes: text("prompt_notes"),
     /** transcription only: `hotword_lambda` sent beside the hinted names; null sends none */
     hotwordLambda: real("hotword_lambda"),
+    /** transcription only: send each recording as 16 kHz mono WAV; false sends it as rendered */
+    resample16k: integer("resample_16k", { mode: "boolean" }).notNull().default(true),
 
     // ---- speech rates ----
     billingUnit: text("billing_unit").$type<TtsBillingUnit>(),

@@ -462,6 +462,7 @@ export const TranscriberSchema = v.object({
   hasKey: Common.hasKey,
   perMinute: v.pipe(v.number(), v.minValue(0)),
   hotwordLambda: v.optional(v.pipe(v.number(), v.minValue(0), v.maxValue(100))),
+  resample16k: v.optional(v.boolean()),
   pricing: v.optional(PricingSchema),
   ...Ops,
 }) satisfies v.GenericSchema<unknown, Transcriber>;

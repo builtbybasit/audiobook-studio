@@ -5,7 +5,10 @@
 import { describe, expect, test } from "bun:test";
 
 import type { RequestRecord, Transcriber } from "@/types";
+import { ffmpegSpeechRate, type SpeechRate } from "~/audio/ffmpeg";
 import { toneWav } from "~/providers/fakeSpeech";
+import { ffmpegAvailable } from "~/providers/ffmpegEncoder";
+import { readWavHeader } from "~/providers/wavEncoder";
 import type { SentTranscription } from "~/providers/sent";
 import {
   endpointTranscriber,
@@ -43,13 +46,13 @@ const transcriber = (over: Partial<Transcriber> = {}): Transcriber => ({
 });
 
 /** A `fetch` that remembers each request and answers it with `answer`, and the real wire over it. */
-function answering(answer: (n: number) => Response | Promise<Response>) {
+function answering(answer: (n: number) => Response | Promise<Response>, speechRate?: SpeechRate) {
   const sent: { url: string; init: RequestInit }[] = [];
   const fetch = (async (url: string, init: RequestInit) => {
     sent.push({ url: String(url), init });
     return answer(sent.length);
   }) as unknown as typeof globalThis.fetch;
-  return { sent, provider: endpointTranscriber({ fetch, backoffMs: () => 0 }) };
+  return { sent, provider: endpointTranscriber({ fetch, backoffMs: () => 0, speechRate }) };
 }
 
 const input = (over: Partial<TranscriptionInput> = {}): TranscriptionInput => ({
@@ -115,6 +118,32 @@ describe("the transcription wire", () => {
     await f.provider.transcribe(input({ hints: ["Noel Rowe"] }), target());
     const sent = f.sent.map((s) => (s.init.body as FormData).get("hotword_lambda"));
     expect(sent).toEqual(["5", null, null]);
+  });
+
+  test("sends the recording at the speech rate, unless the endpoint says as rendered", async () => {
+    const at16k = new Uint8Array([1, 6]);
+    const f = answering(
+      () => Response.json({ text: "We are short again." }),
+      async () => at16k,
+    );
+    await f.provider.transcribe(input({ name: "line.mp3" }), target());
+    await f.provider.transcribe(input({ name: "line.mp3" }), target({ resample16k: false }));
+    const files = f.sent.map((s) => (s.init.body as FormData).get("file") as File);
+    expect(files.map((x) => x.name)).toEqual(["line.wav", "line.mp3"]);
+    expect(new Uint8Array(await files[0].arrayBuffer())).toEqual(at16k);
+    expect(files[0].type).toBe("audio/wav");
+  });
+
+  test("a recording ffmpeg cannot read goes as it came, for the server to say why", async () => {
+    const f = answering(
+      () => Response.json({ text: "We are short again." }),
+      async () => {
+        throw new Error("ffmpeg failed: Invalid data found when processing input");
+      },
+    );
+    await f.provider.transcribe(input(), target());
+    expect(((f.sent[0].init.body as FormData).get("file") as File).name).toBe("line.wav");
+    expect(f.sent).toHaveLength(1);
   });
 
   test("a server that drops a request with a prompt is heard without one, from then on", async () => {
@@ -287,11 +316,23 @@ describe("transcription endpoints over HTTP", () => {
     const api = testApi();
     await save(
       api,
-      transcriber({ apiKey: "sk-secret", needsKey: true, perMinute: 0.006, hotwordLambda: 5 }),
+      transcriber({
+        apiKey: "sk-secret",
+        needsKey: true,
+        perMinute: 0.006,
+        hotwordLambda: 5,
+        resample16k: false,
+      }),
     );
     const read = await api.request<{ transcribers: Transcriber[] }>("/api/endpoints");
     expect(read.body.transcribers).toEqual([
-      transcriber({ hasKey: true, needsKey: true, perMinute: 0.006, hotwordLambda: 5 }),
+      transcriber({
+        hasKey: true,
+        needsKey: true,
+        perMinute: 0.006,
+        hotwordLambda: 5,
+        resample16k: false,
+      }),
     ]);
     expect(JSON.stringify(read.body)).not.toContain("sk-secret");
 
@@ -405,5 +446,15 @@ describe("transcription endpoints over HTTP", () => {
     expect(over.status).toBe(409);
     expect(over.body.error?.message).toContain("daily limit");
     expect(h.asked).toHaveLength(0);
+  });
+});
+
+describe.skipIf(!(await ffmpegAvailable()))("ffmpeg's speech rate", () => {
+  test("makes 16 kHz mono of a 44.1 kHz clip, as long as it was", async () => {
+    const clip = toneWav(440, 1.5, 44100);
+    const out = await ffmpegSpeechRate()(clip, new AbortController().signal);
+    const head = readWavHeader(out);
+    expect([head.sampleRate, head.channels, head.bits]).toEqual([16000, 1, 16]);
+    expect(head.length / (16000 * 2)).toBeCloseTo(1.5, 2);
   });
 });

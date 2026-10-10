@@ -443,6 +443,14 @@ defaults to 2, at which the cast's names changed nothing it heard (Fermion 0.2.1
 clips: "No L's worried voice" stayed). At 5 "Noel's" came right; from 10 it wrote names where none
 were said. The Phonon preset sets 5; another preset chosen over it takes the strength off.
 
+**16 kHz mono.** Every recording goes to a transcription endpoint as 16 kHz mono WAV, converted by
+ffmpeg ([server/audio/ffmpeg.ts](../server/audio/ffmpeg.ts)), the rate every speech-to-text model
+hears at. Fermion Phonon's CUDA build takes no other ("this runtime requires 16 kHz"); its Mac build
+converts for itself. It costs a few hundredths of a second a clip (Advent's 155: 4.4 s, two at a
+time, against Phonon's 16 s) and makes each upload about a third the size; the words keep their
+times. **Send 16 kHz mono** on the Requests tab, on by default, turned off sends each clip as the
+voice rendered it. A server with no ffmpeg sends them as rendered, and its boot log says so.
+
 **Fermion Phonon, locally.** `pip install fermion-research`, then `fermion serve phonon-2 --port
 8010` (its default, 8000, is the OmniVoice server's), and the **Fermion Phonon (local)** preset.
 English only, free, and far faster than real time (0.2.11: 155 clips, 568 s of audio, in 16 s). `/v1/models` lists it by its full name; the

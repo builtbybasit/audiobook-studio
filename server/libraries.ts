@@ -12,6 +12,7 @@
 import type { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 
+import type { SpeechRate } from "~/audio/ffmpeg";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
 import { createApp } from "~/app";
 import { demoClips } from "~/audio/demoClips";
@@ -58,6 +59,11 @@ export interface LibraryOptions {
    * Absent = thought lines are kept as the voice made them.
    */
   thoughtEffect?: ThoughtEffect;
+  /**
+   * What a recording is made into before a transcription endpoint hears it — 16 kHz mono, ffmpeg's,
+   * when the server found one at boot. Absent = sent as it came.
+   */
+  speechRate?: SpeechRate;
   /** the logger its own is a child of */
   log?: Logger;
   /**
@@ -101,6 +107,15 @@ export interface Library {
   readonly providers: Providers;
 }
 
+/** The providers with a transcriber: the one given, else the endpoints' own, sent at `speechRate`. */
+const withTranscription = (
+  p: Providers,
+  speechRate: SpeechRate | undefined,
+): Providers & Required<Pick<Providers, "transcription">> => ({
+  ...p,
+  transcription: p.transcription ?? endpointTranscriber({ speechRate }),
+});
+
 /**
  * Open one library: its database migrated, its queue built with the four handlers, its API.
  *
@@ -121,10 +136,13 @@ export function openLibrary(options: LibraryOptions): Library {
   // Where a request goes, with what model and what key, is the Endpoints page's — read from the
   // database at the moment of each request. An endpoint or profile set to `simulated://` is
   // answered here without one, and nothing it does is billed.
-  const given = options.providers ?? {
-    scripting: endpointScriptingProvider(),
-    speech: endpointSpeechProvider(),
-  };
+  const given = withTranscription(
+    options.providers ?? {
+      scripting: endpointScriptingProvider(),
+      speech: endpointSpeechProvider(),
+    },
+    options.speechRate,
+  );
   // The demo's simulated work runs at the speed its drawer sets, and its builds take the time the
   // browser's did, so one running is seen running (`demo/pace.ts`). The real library has no pace.
   const pace = newPace();
@@ -144,7 +162,7 @@ export function openLibrary(options: LibraryOptions): Library {
       scripting: scriptingHandler(providers.scripting),
       narration: narrationHandler(providers.speech, files, gate, options.thoughtEffect),
       export: exportHandler(exports, files),
-      check: checkHandler(providers.transcription ?? endpointTranscriber(), files),
+      check: checkHandler(given.transcription, files),
     },
     { log },
   );

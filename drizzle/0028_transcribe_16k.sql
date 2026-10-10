@@ -1,0 +1,1 @@
+ALTER TABLE `endpoints` ADD `resample_16k` integer DEFAULT true NOT NULL;

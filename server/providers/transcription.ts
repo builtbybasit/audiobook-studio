@@ -11,10 +11,15 @@
 // the same request without one is sent none from then on, until restart, and each transcript
 // heard so says it was `unhinted`.
 //
+// The recording goes as 16 kHz mono WAV, made by ffmpeg (`SpeechRate`), unless the endpoint says to
+// send it as rendered (`resample16k: false`) or the server found no ffmpeg at boot: the rate every
+// speech-to-text model hears at, and the only one Phonon's CUDA build takes.
+//
 // Every request that reached the wire is reported through `sent`, as speech is (`sent.ts`), so the
 // ledger prices it by the minute of audio sent — a cancelled one too, at a cost nobody knows. A simulated endpoint answers here with a fixed
 // sentence and no times, after its latency, and nothing is sent.
 import type { EndpointProbe } from "@/types";
+import type { SpeechRate } from "~/audio/ffmpeg";
 import { sleep } from "~/providers/fake";
 import {
   authHeaders,
@@ -62,6 +67,8 @@ export interface Transcript {
 export interface TranscriptionTarget extends ProviderTarget {
   /** sent as `hotword_lambda` beside a prompt; absent sends none */
   hotwordLambda?: number;
+  /** false sends the recording as it came, not as 16 kHz mono (`SpeechRate`) */
+  resample16k?: boolean;
 }
 
 export interface TranscriptionProvider {
@@ -166,19 +173,43 @@ async function send(
   return { text: body.text.trim(), ...(words?.length ? { words } : {}) };
 }
 
-export function endpointTranscriber(
-  inject: Pick<CallOptions, "fetch" | "backoffMs"> = {},
-): TranscriptionProvider {
+/**
+ * The recording as 16 kHz mono WAV, under a name that says so — or as it came when ffmpeg cannot
+ * read it, for the server to say what is wrong with it.
+ */
+async function atSpeechRate(
+  input: TranscriptionInput,
+  speechRate: SpeechRate,
+): Promise<TranscriptionInput> {
+  try {
+    const wav = await speechRate(await input.audio.bytes(), input.signal);
+    const name = `${input.name.replace(/\.[^./]*$/, "")}.wav`;
+    return { ...input, audio: new Blob([wav], { type: "audio/wav" }), name };
+  } catch (e) {
+    if (input.signal.aborted) throw e;
+    return input;
+  }
+}
+
+export function endpointTranscriber({
+  speechRate,
+  ...inject
+}: Pick<CallOptions, "fetch" | "backoffMs"> & {
+  /** what a recording is turned into before it is sent; absent sends it as it came */
+  speechRate?: SpeechRate;
+} = {}): TranscriptionProvider {
   return {
     name: "transcription endpoints",
 
-    async transcribe(input, target) {
-      const { signal } = input;
+    async transcribe(given, target) {
+      const { signal } = given;
       if (target.simulation) {
         await sleep(target.simulation.latencyMs, signal);
         return { text: SIMULATED_TRANSCRIPT };
       }
       requireKey(target);
+      const input =
+        speechRate && target.resample16k !== false ? await atSpeechRate(given, speechRate) : given;
       const server = `${target.id} ${target.baseUrl}`;
       const prompt = promptOf(input.hints ?? []);
       if (!prompt) return send(input, target, "", inject);

@@ -189,6 +189,11 @@ export interface Transcriber extends Partial<EndpointOps> {
    * reads it, 0–100, its own default 2); absent sends none, for a server that takes no such field
    */
   hotwordLambda?: number;
+  /**
+   * Send each recording as 16 kHz mono WAV, the rate every speech-to-text model hears at (Fermion
+   * Phonon's CUDA build takes no other). Absent means yes; false sends it as it was rendered.
+   */
+  resample16k?: boolean;
   /** the schedule and promotions on that rate, as on the other kinds */
   pricing?: PricingConfig;
 }

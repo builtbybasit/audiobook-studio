@@ -420,8 +420,25 @@ const limitNote = computed(() => {
         </div>
       </section>
 
-      <!-- hotwords: how hard the check's cast names are favoured -->
-      <section v-if="u.transcriber" class="card p-3">
+      <!-- what a transcriber is sent: the recording's rate, and how hard the cast's names count -->
+      <section v-if="u.transcriber" class="card space-y-3 p-3">
+        <div class="flex items-center justify-between gap-3 text-sm">
+          <span class="min-w-0"
+            >Send 16 kHz mono
+            <UiHint
+              label="sending 16 kHz mono"
+              text="Each recording is converted with ffmpeg before it is sent: every speech-to-text model hears at 16 kHz, and Fermion Phonon's CUDA build refuses any other rate. It takes a few hundredths of a second per clip and makes the upload about a third the size. Off sends the clip as the voice rendered it."
+            />
+            <span class="block text-[11px] text-zinc-500">Off sends clips as rendered.</span></span
+          >
+          <UiSwitch
+            :model-value="u.transcriber.resample16k !== false"
+            label="Send 16 kHz mono"
+            @update:model-value="
+              (v) => (v ? delete u.transcriber!.resample16k : (u.transcriber!.resample16k = false))
+            "
+          />
+        </div>
         <label class="flex items-center justify-between gap-3 text-sm"
           ><span class="min-w-0"
             >Hotword strength

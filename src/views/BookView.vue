@@ -584,7 +584,7 @@ const next = computed(() =>
             />
             <UiHint
               label="the thought effect"
-              text="A soft, close, slightly roomy sound that sets a character's thoughts apart from what is said aloud. It is put on each thought line as its clip arrives, so lines narrated before a change keep the sound they were made with — retake them to change it. Needs ffmpeg on the server."
+              text="A soft, close, slightly roomy sound that sets a character's thoughts apart from what is said aloud. It is put on each thought line as its clip arrives, so lines narrated before a change keep the sound they were made with — retake them to change it."
             />
           </div>
           <p class="mt-1.5 text-[11px] leading-relaxed">

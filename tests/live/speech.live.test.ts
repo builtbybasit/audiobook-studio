@@ -14,7 +14,7 @@ import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { createSpeechGate } from "~/providers/gate";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
-import { readWavHeader } from "~/providers/wavEncoder";
+import { readWavHeader } from "~/providers/wav";
 import { TTS_PRESETS } from "@/lib/presets/speech";
 
 const env = process.env;

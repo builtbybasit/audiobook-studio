@@ -429,9 +429,8 @@ const trackSample = computed(() =>
       </div>
       <p class="mt-3 text-[11px] leading-relaxed text-zinc-500">
         A file is levelled as a whole, with one gain: two voices that differ from each other still
-        differ inside it. Only a server started with <code>EXPORT_ENCODER=ffmpeg</code> measures and
-        levels; the default encoder stitches the clips as they are, and the build's log says which
-        happened. What each file measured before levelling is in that log too, on the Queue page.
+        differ inside it. What each file measured before levelling is in the build's log, on the
+        Queue page.
       </p>
     </ExportSection>
   </div>

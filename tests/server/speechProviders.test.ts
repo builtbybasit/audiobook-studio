@@ -13,7 +13,7 @@ import { isLegacyGeminiSpeech } from "@/lib/providers/gemini";
 import type { SentSpeech } from "~/providers/sent";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
-import { readWavHeader } from "~/providers/wavEncoder";
+import { readWavHeader } from "~/providers/wav";
 import { silentMp3 } from "../support/encoded";
 
 const gemini: ProviderTarget = {

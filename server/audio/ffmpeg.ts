@@ -4,7 +4,7 @@
 //
 // ffmpeg reads the container off the bytes, so the format that came in needs no flag; no metadata,
 // so what comes back is a header and the samples.
-import { readWavHeader } from "~/providers/wavEncoder";
+import { readWavHeader } from "~/providers/wav";
 
 /**
  * A WAV written to a pipe, with its sizes filled in. ffmpeg cannot seek back over a pipe to write

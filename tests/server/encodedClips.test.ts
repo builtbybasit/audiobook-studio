@@ -408,22 +408,6 @@ const exportsOf = async (api: TestApi, id: string) =>
   (await api.request<{ exports: ExportItem[] }>(`/api/books/${id}/exports`)).body.exports;
 
 describe("building a book narrated in MP3", () => {
-  test("the WAV stitcher refuses, naming the chapter and the way out, before it writes anything", async () => {
-    const api = testApi({ speech: encodingFake() });
-    const id = await voiced(api, speechEndpoint({ encoding: { format: "mp3" } }));
-    await narrateChapters(api, id, [1]);
-    await api.request(`/api/books/${id}/exports`, jsonBody({ ids: [1], settings }));
-    await api.runner.idle();
-
-    const [built] = await exportsOf(api, id);
-    expect(built.status).toBe("failed");
-    expect(built.error).toStartWith(
-      "“One” was narrated in MP3, and this server builds with the WAV stitcher, which joins WAV clips only. Restart the server with EXPORT_ENCODER=ffmpeg",
-    );
-    const written = [...new Bun.Glob("**/*").scanSync(api.exportDir)];
-    expect(written).toEqual([]);
-  });
-
   test.skipIf(!ffmpeg)(
     "ffmpeg decodes each clip and builds from a mix of MP3 and WAV",
     async () => {

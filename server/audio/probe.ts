@@ -23,7 +23,7 @@ import { parseBuffer } from "music-metadata";
 import type { AudioFormat } from "@/types";
 import { AUDIO_MIME, FORMAT_LABEL } from "@/lib/endpointShapes";
 import { joinMp3, mp3Frames } from "~/audio/mp3";
-import { byteRate, joinWav, readWavHeader } from "~/providers/wavEncoder";
+import { byteRate, joinWav, readWavHeader } from "~/providers/wav";
 
 /** What a clip's bytes say about it. */
 export interface ClipInfo {

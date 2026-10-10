@@ -23,7 +23,7 @@ import { SIMULATED_ID } from "~/demo/seed";
 import { DEMO_BASE, openLibrary, REAL_BASE, serveLibraries, type Library } from "~/libraries";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
-import { wavEncoders } from "~/providers/wavEncoder";
+import { ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { epubFile, story } from "../support/epub";
 import { PNG } from "../support/images";
 import {
@@ -62,7 +62,7 @@ function open(
     base,
     databaseUrl,
     ...dirs,
-    encoders: wavEncoders(),
+    encoders: ffmpegEncoders(),
     log: collectingLogger().log,
     providers: {
       scripting: endpointScriptingProvider({ fetch }),

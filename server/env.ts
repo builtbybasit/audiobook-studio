@@ -95,20 +95,9 @@ const Env = v.object({
    */
   AUDIO_DIR: v.optional(v.string(), "./data/audio"),
   /**
-   * Which encoder a build writes its audiobook with.
-   *
-   * `wav` is the default and needs nothing installed: it stitches the rendered clips into one
-   * real, playable file per output file, so a fresh clone and the test suite build an audiobook
-   * without a binary on the machine. It is not an M4B and writes no chapter marks, and the build
-   * says so in its log rather than naming the file as though it were one.
-   *
-   * `ffmpeg` writes what the settings actually asked for — AAC in an M4B with the chapter marks a
-   * player reads, or an MP3 — and corrects the loudness with EBU R128 when the build asks for it.
-   * It runs the ffmpeg already on this machine, so it is checked at boot and refuses to start
-   * when there is none rather than failing every build later.
+   * The ffmpeg every build, thought effect and transcription goes through — required, checked at
+   * boot — for a machine that keeps it off `PATH`.
    */
-  EXPORT_ENCODER: v.optional(v.picklist(["wav", "ffmpeg"]), "wav"),
-  /** the ffmpeg to run — for builds and the thought effect — for a machine that keeps it off `PATH` */
   FFMPEG_BIN: v.optional(v.string(), "ffmpeg"),
   /**
    * Where built audiobooks are kept: one directory per book, one file per output file. Apart from

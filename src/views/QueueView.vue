@@ -257,9 +257,6 @@ async function toggleNotify() {
                 <span
                   >file <b>{{ j.exportRun.file }}</b> of {{ j.exportRun.files }}</span
                 >
-                <span v-if="j.exportRun.reuse"
-                  ><b class="text-emerald-500">{{ j.exportRun.reuse }}</b> carried over</span
-                >
                 <span class="min-w-0 truncate font-mono">{{ j.exportRun.fileName }}</span>
               </div>
               <div

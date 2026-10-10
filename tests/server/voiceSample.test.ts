@@ -17,7 +17,7 @@ import { endpointVoiceLister } from "~/providers/voices";
 import { voiceFiles } from "~/voices/files";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { SpeechInput, SpeechProvider } from "~/providers/speech";
-import { readWavHeader } from "~/providers/wavEncoder";
+import { readWavHeader } from "~/providers/wav";
 import { heldToday } from "~/usage/budget";
 import { saved } from "../support/cloning";
 import { jsonBody, testApi, type TestApi } from "../support/server";

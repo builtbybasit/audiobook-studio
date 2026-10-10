@@ -24,7 +24,7 @@ import { createSpeechGate, type SpeechGate } from "~/providers/gate";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import type { Providers } from "~/providers/target";
-import { wavEncoders } from "~/providers/wavEncoder";
+import { ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { audioRoutes } from "~/routes/audio";
 import { bookRoutes } from "~/routes/books";
 import { castRoutes } from "~/routes/cast";
@@ -93,7 +93,7 @@ export function createApp(
     log = defaultLog,
     runner = createRunner(db, {}, { log }),
     files = audioFiles(env.AUDIO_DIR, base),
-    exports = { encoders: wavEncoders(), files: audiobookFiles(env.EXPORT_DIR) },
+    exports = { encoders: ffmpegEncoders(), files: audiobookFiles(env.EXPORT_DIR) },
     providers = { scripting: endpointScriptingProvider(), speech: endpointSpeechProvider() },
     voiceFiles = voiceFilesIn(env.VOICE_DIR),
     gate = createSpeechGate(),

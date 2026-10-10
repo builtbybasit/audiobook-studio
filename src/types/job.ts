@@ -117,10 +117,6 @@ export interface Job {
     file: number;
     fileName: string;
     stage: string;
-    /** chapters this build has to encode */
-    encode: number;
-    /** chapters carried over from the previous version */
-    reuse: number;
     done: number;
   };
   /** Live detail of a check by ear: one chapter's current clips heard by a transcription endpoint. */

@@ -1,17 +1,12 @@
 // An encoder that writes a real audiobook: AAC in an M4B, or MP3, with chapter marks a player
 // reads, using an ffmpeg already installed on the machine.
 //
-// It is the first thing in this server that depends on something outside it, so the dependency is
-// declared rather than discovered: `EXPORT_ENCODER=ffmpeg` fails at boot with a sentence naming
-// the binary if it is not on `PATH`, instead of every build failing later with a spawn error. The
-// default stays `wav`, which needs nothing, so a fresh clone and the test suite never depend on a
-// binary being installed.
-//
-// **Three things ffmpeg does here that the stitcher cannot.**
+// It is the only encoder, and ffmpeg is required: the server checks for it at boot and refuses to
+// start without it (`server/index.ts`), rather than every build failing later with a spawn error.
 //
 // *Chapter marks.* An M4B's marks are a chapter list in the container, and the way to write one
 // is an FFMETADATA file: `[CHAPTER]` blocks with a timebase and a start and end in it. The spans
-// come out of the same lay-down the stitcher records, so a mark falls exactly where the chapter
+// are counted off the clips as they are laid down, so a mark falls exactly where the chapter
 // starts in the file and not at an estimate of where it should.
 //
 // *Loudness.* `loudnorm` is EBU R128, and it is run in two passes — measure, then correct with
@@ -52,7 +47,7 @@ import {
   silenceBytes,
   silentByte,
   type WavFormat,
-} from "~/providers/wavEncoder";
+} from "~/providers/wav";
 
 export type FfmpegFormat = "m4b" | "mp3";
 
@@ -157,7 +152,7 @@ async function concatList(
     let path = silences.get(key);
     if (!path) {
       path = join(dir, `silence-${key}.wav`);
-      // Whole sample frames, as the stitcher writes them; see `silenceBytes`.
+      // Whole sample frames; see `silenceBytes`.
       const size = silenceBytes(format, key / 1000);
       const bytes = new Uint8Array(44 + size).fill(silentByte(format), 44);
       bytes.set(wavHeaderFor(format, size), 0);
@@ -176,14 +171,11 @@ async function concatList(
         await silence(part.seconds);
         continue;
       }
-      // `carries: false`, so the build hands this encoder clips and silence and nothing else.
-      if (part.kind === "carry")
-        throw new Error("this encoder cannot copy a span out of an audiobook it already wrote");
       const path = decoded.get(part.path) ?? part.path;
       lines.push(listed(path));
       const head = readWavHeader(new Uint8Array(await Bun.file(path).arrayBuffer()));
       // The concat demuxer reads every file as the first one's format, so a clip at another rate
-      // would play at the wrong speed rather than fail. The stitcher refuses it; so does this.
+      // would play at the wrong speed rather than fail, so it is refused.
       if (
         head.channels !== format.channels ||
         head.sampleRate !== format.sampleRate ||
@@ -196,8 +188,8 @@ async function concatList(
     }
     spans.push({
       id: chapter.id,
-      // A position in *time* here, because a byte offset into an AAC stream means nothing. It is
-      // where the chapter's mark goes, rather than something the next version copies out.
+      // A position in *time*, because a byte offset into an AAC stream means nothing: it is where
+      // the chapter's mark goes.
       start: Math.round(start * 1000),
       length: Math.round((seconds - start) * 1000),
       seconds: seconds - start,
@@ -379,14 +371,6 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
     mime: MIME[format],
     markers,
     normalizes: options.loudness != null,
-    // A span of AAC cannot be spliced beside audio encoded in this run; see `carries` on the port.
-    carries: false,
-    // An MP4 cover atom and an MP3 picture frame both take the JPEG or PNG as it is.
-    covers: true,
-    // An MP3's ID3 frames and an M4B's atoms both have a place for every field the page asks for.
-    tags: true,
-    // Every clip that is not a WAV is decoded to one first; see the top of this file.
-    decodes: true,
 
     async encode({
       chapters,

@@ -90,11 +90,6 @@ const replaces = computed(() =>
     .exportsOf(props.bookId)
     .find((e) => e.key === exportKey(props.settings) && e.status === "done"),
 );
-// the store's own reuse rule, not a second opinion: change the bitrate and the estimate stops
-// promising a carry-over the build would not honour
-const reuse = computed(
-  () => exportsStore.exportReuse(replaces.value, props.selected, props.settings).length,
-);
 /** A build of this audiobook that is already running. Two would both claim the same version. */
 const running = computed(() =>
   exportsStore
@@ -497,11 +492,8 @@ const ACTION_LABEL: Record<string, string> = {
         v-if="replaces"
         class="mb-3 rounded-md bg-violet-50 px-2.5 py-2 text-xs text-violet-700 dark:bg-violet-500/10 dark:text-violet-300"
       >
-        This replaces <b class="font-mono">{{ replaces.filename }}</b> v{{ replaces.version
-        }}<span v-if="reuse">
-          — {{ reuse }} of {{ selected.length }} chapters have not changed and will be carried over
-          rather than encoded again</span
-        >. The old version stays listed until you delete it.
+        This replaces <b class="font-mono">{{ replaces.filename }}</b> v{{ replaces.version }}. The
+        old version stays listed until you delete it.
       </div>
 
       <div
@@ -525,12 +517,8 @@ const ACTION_LABEL: Record<string, string> = {
       >
         <BuildIcon class="icon" /> {{ buildLabel }}
       </button>
-      <!-- the page cannot tell which encoder the server has, so it says what each one writes -->
       <p class="mt-2 text-center text-[11px] leading-relaxed text-zinc-400">
-        A real job: the server stitches the clips into a file on disk you can download and play.
-        Unless it was started with <code>EXPORT_ENCODER=ffmpeg</code> its encoder writes a
-        <code>.wav</code> with no chapter marks, no cover and no title or author tags rather than
-        the format above, and the job's log says which it did.
+        A real job: the server builds a file on disk you can download and play.
       </p>
     </div>
 

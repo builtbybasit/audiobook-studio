@@ -10,7 +10,7 @@ import type { AudioFiles } from "~/audio/files";
 import { audiobookFiles } from "~/exports/files";
 import type { AudiobookFiles } from "~/exports/files";
 import { slugify } from "~/lib/http";
-import { wavEncoders } from "~/providers/wavEncoder";
+import { ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { epubFile, story } from "../support/epub";
 import { collectingLogger, tempExportDir, testApi, testDb, testRunner } from "../support/server";
 
@@ -76,7 +76,7 @@ describe("removing a book whose files will not go", () => {
       log,
       files,
       runner: testRunner(db, log),
-      exports: { encoders: wavEncoders(), files: built },
+      exports: { encoders: ffmpegEncoders(), files: built },
     });
     const form = new FormData();
     form.set("file", await book());

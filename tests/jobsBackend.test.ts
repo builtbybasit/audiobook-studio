@@ -1351,7 +1351,7 @@ describe("the audiobooks with a server answering", () => {
     const [done] = exports.exports.value;
     expect(done.status).toBe("done");
     expect(done.size).toBeGreaterThan(0);
-    expect(done.files[0].name).toEndWith(".wav");
+    expect(done.files[0].name).toEndWith(".m4b");
     // and the file behind it is served, so "Download" hands over something real
     const file = await api.fetch(`/api/books/${id}/exports/${done.id}/files/0`, {});
     expect(file.status).toBe(200);

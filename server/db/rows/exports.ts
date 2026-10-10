@@ -64,8 +64,6 @@ export function toExportItem(
   if (row.settings != null) e.settings = row.settings;
   if (row.progress != null) e.progress = row.progress;
   if (row.customCover) e.customCover = true;
-  if (row.rebuilt != null) e.rebuilt = row.rebuilt;
-  if (row.reused != null) e.reused = row.reused;
   if (row.stale != null) e.stale = row.stale;
   if (row.error != null) e.error = row.error;
   if (row.jobId != null) e.jobId = row.jobId;
@@ -115,8 +113,6 @@ export function exportValues(e: ExportItem, createdAt: number): typeof exportIte
     createdAt,
     scope: e.scope ?? null,
     settings: e.settings ?? null,
-    rebuilt: e.rebuilt ?? null,
-    reused: e.reused ?? null,
     stale: e.stale ?? null,
   };
 }

@@ -1,6 +1,6 @@
 // The sound a `thought` line is given as its clip lands: a voice heard from inside a head rather
-// than across a room — a little rumble and air taken off, the presence softened, gently held
-// together, and a short room around it.
+// than across a room — thinned and boxed in, the presence taken down, held together, and a small
+// room ringing around it.
 //
 // It is applied once, when the clip arrives, and kept in the file (`jobs/narration.ts`), so the
 // player, the Listen page, a check by ear and a build all hear the same thing and nothing has to
@@ -25,17 +25,17 @@ export type ThoughtEffect = (
 ) => Promise<Uint8Array>;
 
 /**
- * The chain, as one ffmpeg filter: highpass 90 Hz, −1.5 dB at 4 kHz, lowpass 9 kHz, 2:1 compression
- * from −18 dB, a short room, −1 dB. ffmpeg has no Freeverb, so the room is three quiet early
- * reflections.
+ * The chain, as one ffmpeg filter: highpass 220 Hz, lowpass 6 kHz, −4 dB at 2.5 kHz, 3:1
+ * compression from −20 dB, a small room, −1 dB. ffmpeg has no Freeverb, so the room is four early
+ * reflections. Chosen by ear (2026-10-10): the first, gentler chain was not audible as a thought.
  */
 // ponytail: aecho taps approximate a reverb; `afir` with a small room impulse response is the upgrade
 export const THOUGHT_FILTER = [
-  "highpass=f=90",
-  "equalizer=f=4000:t=q:w=1:g=-1.5",
-  "lowpass=f=9000",
-  "acompressor=threshold=-18dB:ratio=2:attack=15:release=120",
-  "aecho=in_gain=1:out_gain=0.9:delays=23|37|53:decays=0.12|0.08|0.05",
+  "highpass=f=220",
+  "lowpass=f=6000",
+  "equalizer=f=2500:t=q:w=1:g=-4",
+  "acompressor=threshold=-20dB:ratio=3",
+  "aecho=in_gain=0.9:out_gain=0.85:delays=40|75|115|160:decays=0.35|0.25|0.16|0.1",
   "volume=-1dB",
 ].join(",");
 

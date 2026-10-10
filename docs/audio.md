@@ -75,8 +75,8 @@ line, word by word, without anyone listening.
 ## The thought effect
 
 A character's thoughts are narrated in the same voice as what they say aloud, so a `thought` line
-is given a sound of its own as its clip lands: a little rumble and air taken off, the presence
-softened, gentle 2:1 compression and a short room around it
+is given a sound of its own as its clip lands: thinned and boxed in (220 Hz–6 kHz), the presence
+taken down, 3:1 compression and a small room ringing around it
 ([server/audio/thoughtEffect.ts](../server/audio/thoughtEffect.ts)).
 
 - **On by default**, per book: **Thought effect** on the book page's Reading card
@@ -88,8 +88,8 @@ softened, gentle 2:1 compression and a short room around it
 - **Never in the way.** The endpoint's slot is given back as soon as a line's audio is in, so the
   effect runs while the next line is already out, and generation is no slower. One that fails keeps
   the clip the voice made and says so in the run's log; the line never fails over it.
-- **Made by ffmpeg** (`FFMPEG_BIN`), which the server requires. ffmpeg has no Freeverb, so the room is three
-  quiet early reflections (`aecho`).
+- **Made by ffmpeg** (`FFMPEG_BIN`), which the server requires. ffmpeg has no Freeverb, so the room is four
+  early reflections (`aecho`).
 
 [tests/server/thoughtEffect.test.ts](../tests/server/thoughtEffect.test.ts) covers it.
 

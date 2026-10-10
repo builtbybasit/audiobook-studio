@@ -168,9 +168,9 @@ describe.skipIf(!ffmpeg)("ffmpeg's thought effect", () => {
     const after = await probeClip(out, "wav");
 
     expect(after.sampleRate).toBe(before.sampleRate);
-    // the room rings on a little past the last sample, never much
+    // the room rings on past the last sample by its longest reflection (160 ms), never much more
     expect(after.duration).toBeGreaterThanOrEqual(before.duration);
-    expect(after.duration - before.duration).toBeLessThan(0.1);
+    expect(after.duration - before.duration).toBeLessThan(0.2);
     const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
     expect(view.getUint32(4, true)).toBe(out.byteLength - 8);
     expect(out).not.toEqual(tone.bytes);

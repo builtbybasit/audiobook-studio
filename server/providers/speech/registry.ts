@@ -8,6 +8,7 @@
 import { speechProviderOf, type SpeechProviderId } from "@/lib/providers";
 import type { ProviderTarget } from "~/providers/target";
 import { breezeBlueWire } from "~/providers/speech/breezeblue";
+import { breezeCppWire } from "~/providers/speech/breezecpp";
 import { cartesiaWire } from "~/providers/speech/cartesia";
 import { elevenLabsWire } from "~/providers/speech/elevenlabs";
 import { fishWire } from "~/providers/speech/fish";
@@ -29,6 +30,7 @@ export const SPEECH_WIRES: Record<WiredProviderId, SpeechWire> = {
   minimax: miniMaxWire,
   cartesia: cartesiaWire,
   qwen: qwenWire,
+  breezecpp: breezeCppWire,
   compatible: compatibleWire,
 };
 

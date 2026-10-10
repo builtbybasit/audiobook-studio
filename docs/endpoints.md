@@ -74,8 +74,21 @@ providers' published cards on 28 September 2026; a preset's schedule and promoti
 - **Speech:** Fish Audio S2.1 Pro and S2.1 Pro Free; OpenAI gpt-4o-mini-tts, tts-1 and tts-1-hd;
   Gemini 3.8 Flash TTS and Flash-Lite TTS, and the legacy 3.1 Flash TTS; ElevenLabs Eleven v3,
   Multilingual v2 and Flash v2.5; BreezeBlue Breeze TTS 2 and 2 Multilingual; MiniMax Speech 2.8 HD
-  and Turbo; Cartesia Sonic 3.6; Alibaba Qwen-Audio 3.0 TTS Plus and Flash; and an OpenAI-compatible
-  server on your machine, Kokoro or vLLM-Omni.
+  and Turbo; Cartesia Sonic 3.6; Alibaba Qwen-Audio 3.0 TTS Plus and Flash; an OpenAI-compatible
+  server on your machine, Kokoro or vLLM-Omni; and a Breeze-TTS-2.cpp server (below).
+- **Server** (speech only): which server the endpoint talks to, for one its base URL cannot name.
+  A hosted API is known by its host, but a server on your machine is only
+  `http://127.0.0.1:<port>`, so a server that is not plain OpenAI-shaped is named here
+  (`Endpoint.server`, migration 0030); "Known by its base URL" is everything else. Changing it is
+  staged with the base URL, and a preset sets it or clears it.
+- **Breeze-TTS-2.cpp** (`breeze-server model.gguf --port 8137`,
+  [its docs](https://github.com/HoppouAI/Breeze-TTS-2.cpp/blob/main/docs/server.md)) has its own
+  description and wire ([breezecpp.ts](../server/providers/speech/breezecpp.ts)). A line goes as
+  OpenAI's JSON to `/audio/speech`, in WAV or MP3 at 24 kHz (it sends WAV when asked for Opus, so
+  Opus is not offered), with its vocal events written `(laugh)`. Test and **Fetch from server**
+  both ask `GET /voices`, since it has no model list. It renders one line at a time and refuses a
+  second with `409 busy`, its only 409, so a 409 from it is retried; no other provider's is. Its
+  preset sets concurrency 1.
 - **Scripting:** OpenAI GPT-6 Luna, Sol and Astra; DeepSeek V4.1 Flash; Gemini 3.8 Flash and 3.1
   Pro; Claude Opus 5.5, Sonnet 5 and Haiku 4.5 through Anthropic's OpenAI layer; xAI Grok 4.7 and
   4.3; Ollama and LM Studio on your own machine; and, through OpenRouter, the models near the top of
@@ -137,11 +150,14 @@ removed. Each voice shows how many speakers across the library use it.
   tone and bills nothing.
 
 **Clone a voice** appears on an endpoint whose provider clones — Fish Audio, ElevenLabs,
-BreezeBlue, Cartesia, MiniMax, or Qwen on `qwen3-tts-vc-2026-01-22`; a Qwen endpoint on another
+BreezeBlue, Cartesia, MiniMax, Breeze-TTS-2.cpp, or Qwen on `qwen3-tts-vc-2026-01-22`; a Qwen endpoint on another
 model names the model to switch to. An OpenAI-compatible server clones only once its **Make voices
 on this server** switch is on (`makesVoices`, off by default — the OmniVoice preset turns it on):
 the app cannot tell a server that makes voices from one that does not, and sends one recording and
-its transcript to the batch speech API's [`POST /audio/voices`](speech-batch-api.md#voices). It makes a voice from uploaded samples of one person speaking — any audio
+its transcript to the batch speech API's [`POST /audio/voices`](speech-batch-api.md#voices).
+Breeze-TTS-2.cpp saves a voice at `POST /voices` from one recording, turned into 16-bit WAV by
+ffmpeg since it reads nothing else, and its transcript, which it requires; the voice's name, with
+anything but letters, digits, `-` and `_` made `_`, is the file it is saved under on the server. It makes a voice from uploaded samples of one person speaking — any audio
 file of that one voice:
 
 - The form takes a name and the samples the provider takes; the button is ready once both are.

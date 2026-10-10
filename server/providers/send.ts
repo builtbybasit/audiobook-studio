@@ -52,6 +52,8 @@ export interface SpeechRequest {
   instructions: string;
   /** a refusal inside a 2xx, found before the answer is accepted (`CallOptions.check`) */
   check?(res: Response): Promise<ProviderError | null>;
+  /** a refused status this provider means as "try again" (`CallOptions.retryable`) */
+  retryable?(status: number): boolean;
   /**
    * How a 2xx becomes audio, when it is not the audio itself — Gemini answers JSON carrying base64
    * audio and what it counted. Absent, the answer's body is the audio (`audioAnswer`).
@@ -112,6 +114,7 @@ export async function sendSpeech(
       rateLimited: input.rateLimited,
       ...inject,
       ...(request.check ? { check: request.check } : {}),
+      ...(request.retryable ? { retryable: request.retryable } : {}),
     });
   } catch (e) {
     return failed(e, billsFailures);

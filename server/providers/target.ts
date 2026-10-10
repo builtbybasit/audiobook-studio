@@ -5,7 +5,14 @@
 // which is the only thing that ever puts the key on the wire. A target is never stored and never
 // logged whole: `apiKey` is on the logger's redaction list, but the rule is not to spread one into
 // a log record in the first place.
-import type { Endpoint, EndpointKind, EndpointOps, Profile, Transcriber } from "@/types";
+import type {
+  Endpoint,
+  EndpointKind,
+  EndpointOps,
+  Profile,
+  SpeechServer,
+  Transcriber,
+} from "@/types";
 import { OPS_DEFAULTS } from "@/lib/endpointShapes";
 import { isSimulated } from "@/lib/providers";
 import type { Db, Tx } from "~/db/client";
@@ -59,6 +66,8 @@ export interface ProviderTarget {
   maxRetries: EndpointOps["maxRetries"];
   /** how long to hold off after a 429 that names no Retry-After */
   cooldownSec: EndpointOps["cooldownSec"];
+  /** speech only: the server the endpoint names, for a base URL that cannot say (`Endpoint.server`) */
+  server?: SpeechServer | null;
   /**
    * For a simulated endpoint or profile (`isSimulated(baseUrl)`), how it behaves in place of a
    * server: how long each answer takes and how often one fails. Absent for every other target.
@@ -76,7 +85,10 @@ export interface Simulation {
 
 /** A speech endpoint as a request needs it, its key read now and its unset ops defaulted. */
 export function speechTarget(db: Db | Tx, e: Endpoint): ProviderTarget {
-  return targetOf(e, "tts", readEndpointKey(db, "tts", e.id));
+  return {
+    ...targetOf(e, "tts", readEndpointKey(db, "tts", e.id)),
+    ...(e.server ? { server: e.server } : {}),
+  };
 }
 
 /** A scripting profile as a request needs it — the one the run was queued with — and its key now. */

@@ -28,6 +28,7 @@ import type {
   ReasoningEffort,
   RateSet,
   SampleRate,
+  SpeechServer,
   SplitMode,
   TagBracket,
   TtsBillingUnit,
@@ -77,6 +78,8 @@ export const endpoints = sqliteTable(
     batch: integer("batch", { mode: "boolean" }).notNull().default(true),
     /** speech only: a compatible server that makes voices at POST …/audio/voices */
     makesVoices: integer("makes_voices", { mode: "boolean" }).notNull().default(false),
+    /** speech only: the server named for a base URL that cannot say; null = the base URL decides */
+    server: text("server").$type<SpeechServer>(),
     position: integer("position").notNull().default(0),
 
     // ---- scripting rates: USD per 1M tokens ----

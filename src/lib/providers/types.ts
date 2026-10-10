@@ -19,6 +19,7 @@ export type SpeechProviderId =
   | "minimax"
   | "cartesia"
   | "qwen"
+  | "breezecpp"
   | "simulated"
   | "compatible";
 

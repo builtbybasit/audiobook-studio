@@ -251,6 +251,31 @@ describe("the transcription wire", () => {
     expect(alias.ok).toBe(true);
     expect(alias.message).toContain("lists “FermionResearch/phonon-2”, not “phonon-2”");
   });
+
+  test("a server with no model list is asked its transcription route, with no audio", async () => {
+    // Fermion Phonon's CUDA build: no /models, and a form with no file refused on the route it has
+    const refuses = (status: number, message: string) =>
+      Response.json({ error: { message } }, { status });
+    const cuda = answering((n) =>
+      n === 1
+        ? refuses(404, "unknown route '/v1/models'")
+        : refuses(400, "no `file` part in the form"),
+    );
+    const there = await cuda.provider.probe(target(), new AbortController().signal);
+    expect(there.ok).toBe(true);
+    expect(there.message).toContain("lists no models, so “phonon-2” is not checked");
+    expect(cuda.sent.map((s) => [s.init.method, s.url])).toEqual([
+      ["GET", "http://127.0.0.1:8010/v1/models"],
+      ["POST", "http://127.0.0.1:8010/v1/audio/transcriptions"],
+    ]);
+    expect((cuda.sent[1].init.body as FormData).has("file")).toBe(false);
+
+    // a base URL that is wrong is a 404 on both, and the probe says so rather than passing
+    const wrong = answering(() => refuses(404, "unknown route"));
+    await expect(wrong.provider.probe(target(), new AbortController().signal)).rejects.toThrow(
+      "404",
+    );
+  });
 });
 
 // ---------- the routes ----------

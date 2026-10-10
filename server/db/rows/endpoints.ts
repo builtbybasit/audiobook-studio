@@ -180,6 +180,7 @@ export function toEndpoint(row: EndpointRow, parts: EndpointParts): Endpoint {
   if (row.sampleRate != null) e.sampleRate = row.sampleRate;
   if (!row.batch) e.batch = false;
   if (row.makesVoices) e.makesVoices = true;
+  if (row.server) e.server = row.server;
   if (row.audioFormat != null)
     e.encoding = {
       format: row.audioFormat,
@@ -332,6 +333,7 @@ export function endpointValues(
     audioBitrate: e.encoding?.bitrate ?? null,
     batch: e.batch ?? true,
     makesVoices: e.makesVoices ?? false,
+    server: e.server ?? null,
     ...opsValues(e),
   };
 }

@@ -606,4 +606,30 @@ export const TTS_PRESETS: TtsPreset[] = [
       failRate: 0.025,
     },
   },
+  {
+    id: "breeze-cpp",
+    group: "On your machine",
+    label: "Breeze-TTS-2.cpp server",
+    hint: "breeze-server --port 8137, one line at a time",
+    note:
+      "breeze-server renders one line at a time and refuses a second as busy, which is tried " +
+      "again. Voices live on the server — Fetch lists them, and the Voices tab saves new ones " +
+      "from a recording and its transcript, which it requires. Nothing is billed.",
+    apply: {
+      name: "Breeze-TTS-2 (local)",
+      baseUrl: "http://127.0.0.1:8137/v1",
+      server: "breezecpp",
+      // the server takes any model name and ignores it
+      model: "breeze-tts-2",
+      needsKey: false,
+      price: 0,
+      billing: { unit: "chars", rate: 0 },
+      // the server splits longer text itself, at its --split-chars (600 by default)
+      maxChars: 1500,
+      splitAt: "sentence",
+      concurrency: 1,
+      latency: 4000,
+      failRate: 0.025,
+    },
+  },
 ];

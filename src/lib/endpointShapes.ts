@@ -62,7 +62,7 @@ export const KIND_PATH: Record<EndpointKind, string> = {
 
 const speaks =
   (...ids: SpeechProviderId[]) =>
-  (e: Pick<Endpoint, "baseUrl">): boolean =>
+  (e: Pick<Endpoint, "baseUrl" | "server">): boolean =>
     ids.includes(speechProviderOf(e).id);
 
 /** Fish Audio takes the model in a header and the voice as `reference_id`, so the path everything
@@ -84,8 +84,9 @@ export const isCartesia = speaks("cartesia");
 export const isQwen = speaks("qwen");
 
 /** The path a line is sent to, after the base URL — worth showing, since every provider differs. */
-export const ttsRequestPath = (e: Pick<Endpoint, "baseUrl"> & { model?: string }): string =>
-  speechProviderOf(e).requestPath(e.model ?? "");
+export const ttsRequestPath = (
+  e: Pick<Endpoint, "baseUrl" | "server"> & { model?: string },
+): string => speechProviderOf(e).requestPath(e.model ?? "");
 
 /** Fish Audio serves speech under /v1 but its model catalogue at the host root, so the voice list
  *  cannot just be appended to the base URL the way an OpenAI-compatible /audio/voices can. */
@@ -111,7 +112,7 @@ export const AUDIO_MIME: Record<AudioFormat, string> = {
 export const AUDIO_EXT: Record<AudioFormat, string> = { wav: "wav", mp3: "mp3", opus: "opus" };
 
 /** The formats a speech endpoint can be asked for, by the API its base URL speaks. */
-export const speechFormats = (e: Pick<Endpoint, "baseUrl">): readonly FormatSupport[] =>
+export const speechFormats = (e: Pick<Endpoint, "baseUrl" | "server">): readonly FormatSupport[] =>
   speechProviderOf(e).formats;
 
 /** What an endpoint asks for: its own choice, or WAV when it has made none. */

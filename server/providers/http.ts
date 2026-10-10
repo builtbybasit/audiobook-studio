@@ -95,6 +95,11 @@ export interface CallOptions {
   /** the wait before attempt `n` (1-based) when the answer named none; tests make it 0 */
   backoffMs?: (attempt: number, target: ProviderTarget) => number;
   /**
+   * A refused status this provider means as "try again", beside those every provider does — a
+   * server that renders one request at a time and refuses a second with a 409 (Breeze-TTS-2.cpp).
+   */
+  retryable?(status: number): boolean;
+  /**
    * Filled in as the call goes, for the ledger: how many attempts went out and whether any was
    * refused with a 429. Written whether the call answers or throws, so a provider that reports a
    * failed request can say how hard it tried.
@@ -183,7 +188,7 @@ export async function call(
         last = new ProviderError(
           `${target.name} answered ${res.status}${said ? `: ${said}` : ""}`,
           res.status,
-          RETRYABLE.has(res.status),
+          RETRYABLE.has(res.status) || !!options.retryable?.(res.status),
         );
         wait = retryAfterMs(res.headers.get("retry-after"));
         if (res.status === 429) {

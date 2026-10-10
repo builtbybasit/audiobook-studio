@@ -400,6 +400,7 @@ export const EndpointSchema = v.object({
   ),
   batch: v.optional(v.boolean()),
   makesVoices: v.optional(v.boolean()),
+  server: v.optional(v.nullable(v.picklist(["breezecpp"]))),
 }) satisfies v.GenericSchema<unknown, StoredEndpoint>;
 
 // ---- the scripting prompt ----

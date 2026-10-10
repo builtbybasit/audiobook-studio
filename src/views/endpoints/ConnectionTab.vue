@@ -76,6 +76,18 @@ const CRED_OPTIONS = computed(() => [
   ...endpointsStore.credentials.map((c) => ({ value: c.id, label: c.label, hint: "" })),
 ]);
 
+/** Which server a speech endpoint talks to, for one its base URL cannot name. */
+const SERVER_OPTIONS = [
+  { value: "", label: "Known by its base URL", hint: "" },
+  { value: "breezecpp", label: "Breeze-TTS-2.cpp", hint: "breeze-server" },
+];
+const server = computed({
+  get: () => draft.value.server ?? "",
+  set: (v: string | number | null) => {
+    draft.value.server = v === "breezecpp" ? v : null;
+  },
+});
+
 const credential = computed({
   get: () => draft.value.credentialId ?? "__own__",
   set: (v: string | number | null) => {
@@ -197,14 +209,26 @@ const PATH: Record<EndpointKind, () => string> = {
   transcription: () => KIND_PATH.transcription,
 };
 const path = computed(() => (simulated.value ? "" : PATH[props.u.kind]()));
-/** Where the connection test goes: the request itself, but a transcriber is only asked its models —
- *  sending it audio to test would be a priced request for nothing. */
+/** Where the connection test goes: the request itself, or what stands in for it — a transcriber is
+ *  sent its sample recording there. */
 const PROBE_PATH: Record<EndpointKind, () => string> = {
   scripting: () => path.value,
-  tts: () => path.value,
+  // what is tested is what is saved; Breeze has no request that renders nothing on its speech
+  // route, so its voice list stands in
+  tts: () =>
+    props.u.endpoint?.server === "breezecpp"
+      ? "/voices"
+      : props.u.endpoint
+        ? ttsRequestPath(props.u.endpoint)
+        : path.value,
   transcription: () => "/audio/transcriptions",
 };
 const probePath = computed(() => PROBE_PATH[props.u.kind]());
+const probeSays = computed(() =>
+  props.u.endpoint?.server === "breezecpp"
+    ? "A voice list, nothing spoken"
+    : PROBE_SAYS[props.u.kind],
+);
 /** The staged changes as the banner lists them; a preset's prices and limits are one of them. */
 const changeList = computed(() =>
   changes.value
@@ -331,6 +355,22 @@ function newCredential() {
             >
           </div>
 
+          <div v-if="u.kind === 'tts' && !simulated" class="space-y-1 text-xs font-medium">
+            <span
+              ><span :id="`${u.key}-server-label`">Server</span>
+              <UiHint
+                label="the server"
+                text="A server on your own machine is known only by its port, so name the one that does not speak the OpenAI shape alone. Hosted providers are known by their address."
+            /></span>
+            <UiSelect
+              v-model="server"
+              :options="SERVER_OPTIONS"
+              size="xs"
+              class="w-full"
+              :aria-labelledby="`${u.key}-server-label`"
+            />
+          </div>
+
           <template v-if="!simulated">
             <div class="space-y-1 text-xs font-medium">
               <span
@@ -429,7 +469,7 @@ function newCredential() {
             with the key saved on the server.
           </p>
           <p class="mt-1 text-[11px] text-zinc-500">
-            {{ PROBE_SAYS[u.kind] }}
+            {{ probeSays }}
             · would cost
             <b :class="probeCost == null && 'text-amber-600 dark:text-amber-400'">{{
               maybeMoney(probeCost)

@@ -16,6 +16,7 @@ import {
   TRANSCRIPTION_PRESETS,
   TTS_PRESETS,
   scriptingPresetById,
+  unifyEndpoint,
   unifyProfile,
   unifyTranscriber,
 } from "@/lib/endpoints";
@@ -213,6 +214,30 @@ describe("a preset on a transcriber's Connection tab", () => {
     it.choose("openai-whisper");
     applyDraft(u);
     expect("hotwordLambda" in t).toBe(false);
+  });
+});
+
+describe("a preset on a speech endpoint's Connection tab", () => {
+  test("Breeze's names its server, staged until Save, and another preset names none", () => {
+    const store = useEndpointsStore();
+    const e = store.addEndpoint();
+    const u = unifyEndpoint(e);
+    const it = pinia.run(() =>
+      usePresetPicker({
+        kind: () => u.kind,
+        endpoint: () => u.key,
+        fill: (fields, preset) => stagePreset(u, preset.label, fields),
+        next: "",
+      }),
+    );
+    it.choose("breeze-cpp");
+    expect("server" in e).toBe(false);
+    expect(draftChanges(u)).toEqual(expect.arrayContaining(["baseUrl", "server"]));
+    applyDraft(u);
+    expect(e).toMatchObject({ baseUrl: "http://127.0.0.1:8137/v1", server: "breezecpp" });
+    it.choose("omnivoice");
+    applyDraft(u);
+    expect("server" in e).toBe(false);
   });
 });
 

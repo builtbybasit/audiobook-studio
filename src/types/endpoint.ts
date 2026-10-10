@@ -113,7 +113,16 @@ export interface Endpoint {
    * says whether such a server can until it is asked to.
    */
   makesVoices?: boolean;
+  /**
+   * The server this endpoint speaks to, for one whose base URL cannot say: a server on your own
+   * machine is `http://127.0.0.1:<port>`, whatever it runs. Absent, the base URL decides
+   * (`speechProviderOf`); a hosted API is always known by its host.
+   */
+  server?: SpeechServer | null;
 }
+
+/** A server known only by being named, never by its address: Breeze-TTS-2.cpp. */
+export type SpeechServer = "breezecpp";
 
 /** A container this app can keep a clip in. */
 export type AudioFormat = "wav" | "mp3" | "opus";

@@ -18,6 +18,7 @@ import type {
   PromptTemplate,
   RangeKey,
   RequestStatus,
+  SpeechServer,
   Transcriber,
 } from "@/types";
 
@@ -64,6 +65,8 @@ export interface ConnectionDraft {
   needsKey: boolean;
   credentialId: string | null;
   quotaGroup: string;
+  /** speech only: the server named for a base URL that cannot say (`Endpoint.server`) */
+  server: SpeechServer | null;
   /** what a preset filled in beyond the connection — billing or token prices, limits, concurrency —
    *  held here with the rest, so Save applies it and Discard drops it */
   preset: StagedPreset | null;
@@ -144,6 +147,7 @@ export function draftFor(u: UnifiedEndpoint): ConnectionDraft {
     needsKey: u.needsKey,
     credentialId: opsOf(u).credentialId,
     quotaGroup: opsOf(u).quotaGroup ?? "",
+    server: u.endpoint?.server ?? null,
     preset: null,
   });
 }
@@ -160,6 +164,11 @@ export function stagePreset(
 ): void {
   const d = draftFor(u);
   const { name, model, baseUrl, needsKey, ...rest } = fields;
+  // a speech preset names its server or none: Kokoro's preset is not left speaking Breeze
+  if (u.endpoint) {
+    d.server = (rest as Partial<Endpoint>).server ?? null;
+    delete (rest as Partial<Endpoint>).server;
+  }
   if (name !== undefined) d.name = name;
   if (model !== undefined) d.model = model;
   if (baseUrl !== undefined) d.baseUrl = baseUrl;
@@ -168,7 +177,12 @@ export function stagePreset(
 }
 
 /** Fields that identify *which provider* this configuration talks to. */
-export const PROVIDER_FIELDS: (keyof ConnectionDraft)[] = ["baseUrl", "model", "credentialId"];
+export const PROVIDER_FIELDS: (keyof ConnectionDraft)[] = [
+  "baseUrl",
+  "model",
+  "credentialId",
+  "server",
+];
 
 export function draftChanges(u: UnifiedEndpoint): (keyof ConnectionDraft)[] {
   const d = draftFor(u);
@@ -180,6 +194,7 @@ export function draftChanges(u: UnifiedEndpoint): (keyof ConnectionDraft)[] {
     needsKey: u.needsKey,
     credentialId: ops.credentialId,
     quotaGroup: ops.quotaGroup ?? "",
+    server: u.endpoint?.server ?? null,
     preset: null,
   };
   return (Object.keys(current) as (keyof ConnectionDraft)[]).filter((k) => d[k] !== current[k]);
@@ -209,6 +224,9 @@ export function applyDraft(u: UnifiedEndpoint): string[] {
   target.quotaGroup = d.quotaGroup.trim() || null;
   let notes: string[] = [];
   if (u.endpoint) {
+    // before the encoding is held to the formats: Breeze offers no Opus
+    if (d.server) u.endpoint.server = d.server;
+    else delete u.endpoint.server;
     const r = repairEncoding(u.endpoint);
     if (encodingChanged(u.endpoint, r)) {
       u.endpoint.encoding = r.encoding;
@@ -226,6 +244,7 @@ export function applyDraft(u: UnifiedEndpoint): string[] {
     needsKey: d.needsKey,
     credentialId: d.credentialId,
     quotaGroup: d.quotaGroup.trim(),
+    server: d.server,
     preset: null,
   };
   return notes;

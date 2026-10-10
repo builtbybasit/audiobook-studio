@@ -1,7 +1,7 @@
 // How long the demo's simulated work takes: as long as the browser's demo took, divided by the
 // speed the Demo drawer is set to.
 //
-// The demo's clips are short tones and the stitcher joins them in a blink, so a build there would
+// The demo's clips are short tones and ffmpeg encodes them in a blink, so a build there would
 // be finished before anyone could see it running — the "one running now" a situation asks for
 // included. Its speech endpoints are held to their latency for the same reason
 // (`providers/simulatedSpeech.ts`). The encoder is where a build's time goes, and it is handed to

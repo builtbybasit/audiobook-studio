@@ -245,20 +245,6 @@ describe("a build and its cover", () => {
     expect(await lastExport(api, book.id)).toBeUndefined();
   });
 
-  test("the stitcher writes no picture and no tags, and the build says so rather than leaving the promise", async () => {
-    const api = testApi();
-    const { book } = await narratedBook(api, { chapters: TWO, epub: covered });
-    const queued = await build(api, book.id, settingsFor());
-    expect(queued.status).toBe(202);
-    await api.runner.idle();
-    expect((await lastExport(api, book.id)).status).toBe("done");
-    const said = await notes(api, queued.body.job.id);
-    expect(said).toContain("A .wav file carries no cover; the image was not written");
-    expect(said).toContain(
-      "A .wav file carries no title or author; the book's details were not written",
-    );
-  });
-
   test("a chosen cover gone from the server fails the build that names it", async () => {
     const api = testApi();
     const { book } = await narratedBook(api, { chapters: TWO, epub: covered });

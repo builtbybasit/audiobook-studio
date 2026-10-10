@@ -25,6 +25,7 @@ import { demoClips } from "~/audio/demoClips";
 import { audioFiles } from "~/audio/files";
 import { createApp } from "~/app";
 import { startLive, type DemoLive, type SpeechTelemetry } from "~/demo/live";
+import { simulatedEncoders } from "~/demo/encoder";
 import { newPace, pacedEncoders, pacedProviders } from "~/demo/pace";
 import { seedDemo } from "~/demo/seed";
 import { audiobookFiles } from "~/exports/files";
@@ -36,7 +37,7 @@ import { DEMO_BASE } from "~/libraries";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { createSpeechGate } from "~/providers/gate";
-import { wavEncoders } from "~/providers/wavEncoder";
+import { ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { voiceFiles } from "~/voices/files";
 import { epubFile, story } from "../support/epub";
 import {
@@ -60,7 +61,7 @@ function demoLibrary({ chapterMs = 0, seeded = true } = {}) {
   const files = audioFiles(tempAudioDir(), DEMO_BASE, demoClips(db));
   const pace = newPace();
   const exports = {
-    encoders: pacedEncoders(wavEncoders(), pace, chapterMs),
+    encoders: pacedEncoders(simulatedEncoders(ffmpegEncoders()), pace, chapterMs),
     files: audiobookFiles(tempExportDir()),
   };
   const providers = pacedProviders(

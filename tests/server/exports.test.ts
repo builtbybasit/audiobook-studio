@@ -10,12 +10,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import type { Book, Chapter, ExportItem, ExportSettings, Job } from "@/types";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { makeWorld } from "~/demo/seed/world";
-import { chapterSpans, exportFileToken } from "~/db/exports";
+import { exportFileToken } from "~/db/exports";
 import { fakeSpeechProvider, SAMPLE_RATE, toneOf, toneWav } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";
 import type { AudiobookEncoder } from "~/providers/encoder";
 import { ffmpegAvailable, ffmpegEncoder, ffmpegEncoders } from "~/providers/ffmpegEncoder";
-import { byteRate, readWavHeader, wavEncoder } from "~/providers/wavEncoder";
 import { epubFile, line, story } from "../support/epub";
 import { writeExport } from "../support/persist";
 import { jsonBody, narratedBook, testApi, type TestApi } from "../support/server";
@@ -121,10 +120,10 @@ describe("a book's exports over HTTP", () => {
 
 // ---------- building one ----------
 //
-// The build job end to end: the real runner, the real routes, the WAV stitcher, and clips a fake
-// speech model actually wrote to disk. What is asserted is the file — its length, its bytes, and
-// the span each chapter occupies inside it — rather than the row's account of itself, because a
-// row that agrees with itself and not with the disk is the failure this page exists to catch.
+// The build job end to end: the real runner, the real routes, ffmpeg, and clips a fake speech model
+// actually wrote to disk. What is asserted is the file — how long it plays, as ffprobe reads it —
+// rather than the row's account of itself, because a row that agrees with itself and not with the
+// disk is the failure this page exists to catch.
 //
 // Where a build has to be genuinely in flight, `controlledEncoder` holds the door until the test
 // opens it, so nothing here waits on a timer except the two fire-and-forget removals. The door is
@@ -137,7 +136,7 @@ interface BuildResult {
 }
 
 /**
- * The stitcher, with a door the test can close.
+ * The encoder, with a door the test can close.
  *
  * `hold()` resolves once a build is inside the encoder and keeps it there until `open()`; a cancel
  * while it waits rejects the way an aborted encode would. `fail(message)` makes the next build
@@ -148,7 +147,7 @@ function controlledEncoder(): AudiobookEncoder & {
   open(): void;
   fail(message: string): void;
 } {
-  const inner = wavEncoder();
+  const inner = ffmpegEncoder();
   let door: { enter: () => void; open: () => void; opened: Promise<void> } | null = null;
   let failure: string | null = null;
   return {
@@ -257,11 +256,9 @@ const fileBytes = (
 ): Uint8Array<ArrayBuffer> =>
   new Uint8Array(readFileSync(filePath(api, bookId, exportId, position)));
 
-/** How long a stitched file plays, read out of the file rather than off the row. */
-function playsFor(bytes: Uint8Array): number {
-  const head = readWavHeader(bytes);
-  return head.length / byteRate(head);
-}
+/** How long a built file plays, read out of the file rather than off the row. */
+const playsFor = async (api: TestApi, bookId: string, exportId: number, position = 0) =>
+  (await probe(filePath(api, bookId, exportId, position))).seconds;
 
 /** A removal nothing waits for — a settle's, or a route's — so the test waits a little. */
 async function untilGone(path: string): Promise<boolean> {
@@ -285,10 +282,9 @@ describe("building an audiobook", () => {
     expect(done.files).toHaveLength(1);
     expect(done.size).toBeGreaterThan(0);
 
-    const bytes = fileBytes(api, id, done.id);
-    expect(bytes.byteLength).toBeGreaterThan(44);
+    expect(fileBytes(api, id, done.id).byteLength).toBeGreaterThan(0);
     // The running time on the row is the file's, not the plan's estimate of it.
-    expect(playsFor(bytes)).toBeCloseTo(done.duration, 1);
+    expect(await playsFor(api, id, done.id)).toBeCloseTo(done.duration, 1);
     // and what is in the file is every chapter, with one gap between each pair and none after
     const chapters = await chaptersOf(api, id);
     const expected = chapters.reduce((a, c) => a + c.duration, 0) + 2 * settings.chapterGap;
@@ -304,15 +300,9 @@ describe("building an audiobook", () => {
     const [done] = await exportsOf(api, id);
     expect(done.files).toHaveLength(3);
     expect(done.files.map((f) => f.chapterIds)).toEqual([[1], [2], [3]]);
-    // the stitcher writes a WAV, so that is what the files are called, rather than `.m4b`
-    expect(done.files.every((f) => f.name.endsWith(".wav"))).toBe(true);
-    // and it writes no chapter marks, so the export claims none
-    expect(done.markers).toBe(0);
+    expect(done.files.every((f) => f.name.endsWith(".m4b"))).toBe(true);
     for (const [position, file] of done.files.entries())
-      expect(playsFor(fileBytes(api, id, done.id, position))).toBeCloseTo(file.duration, 1);
-    // the job says both, rather than leaving a `.wav` to be discovered
-    const job = await jobById(api, done.jobId!);
-    expect(job.activity?.some((e) => e.message.includes("rather than .m4b"))).toBe(true);
+      expect(await playsFor(api, id, done.id, position)).toBeCloseTo(file.duration, 1);
   });
 
   test("a finished file downloads under its name, even one no header can carry, and answers a range", async () => {
@@ -330,7 +320,7 @@ describe("building an audiobook", () => {
 
     const res = await api.fetch(url);
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toBe("audio/wav");
+    expect(res.headers.get("content-type")).toBe("audio/mp4");
     const header = res.headers.get("content-disposition")!;
     // The name a browser reads, in UTF-8, and an ASCII stand-in beside it for one that cannot.
     expect(header).toContain(`filename*=UTF-8''${encodeURIComponent(done.files[0].name)}`);
@@ -360,96 +350,12 @@ describe("building an audiobook", () => {
     expect(await exportsOf(api, id)).toEqual([]);
   });
 
-  test("an update carries over what has not moved and reads again what has", async () => {
-    const api = testApi({ speech: slowerOnRetake() });
-    const { id } = await narratedBook(api, { chapters: THREE });
-    const settings = settingsFor();
-    await build(api, id, { ids: [1, 2, 3], settings });
-    await api.runner.idle();
-    const [v1] = await exportsOf(api, id);
-    const before = fileBytes(api, id, v1.id);
-    const was = chapterSpans(api.db, v1.id).get(1)!;
-    const lengths = (await chaptersOf(api, id)).map((c) => c.duration);
-
-    // chapter 3 is read again, and comes back longer; 1 and 2 are untouched
-    await api.request(`/api/books/${id}/chapters/narrate`, jsonBody({ ids: [3], scope: "all" }));
-    await api.runner.idle();
-    const grew = (await chaptersOf(api, id))[2].duration - lengths[2];
-    expect(grew).toBeGreaterThan(0);
-
-    const second = await build(api, id, { ids: [1, 2, 3], settings, updates: v1.id });
-    expect(second.body.export.reused).toBe(2);
-    expect(second.body.export.rebuilt).toBe(1);
-    await api.runner.idle();
-
-    const versions = await exportsOf(api, id);
-    const v2 = versions.find((e) => e.version === 2)!;
-    expect(v2.status).toBe("done");
-    expect(v2.replaces).toBe(v1.id);
-    // the version it supersedes is only replaced once the new one has landed
-    expect(versions.find((e) => e.version === 1)!.status).toBe("replaced");
-
-    // The carried chapter is the same *bytes*, not merely the same length: this is the whole
-    // claim "carried over rather than encoded again" makes.
-    const after = fileBytes(api, id, v2.id);
-    const now = chapterSpans(api.db, v2.id).get(1)!;
-    expect(now.length).toBe(was.length);
-    expect(after.slice(44 + now.start, 44 + now.start + now.length)).toEqual(
-      before.slice(44 + was.start, 44 + was.start + was.length),
-    );
-    // and the audiobook grew by exactly what the chapter that was read again grew by
-    expect(playsFor(after)).toBeCloseTo(playsFor(before) + grew, 0);
-    expect(
-      (await jobById(api, v2.jobId!)).activity?.some(
-        (e) => e.message === "Reusing 2 chapters that have not changed",
-      ),
-    ).toBe(true);
-    // and the version it superseded is still on disk, so it can still be saved
-    const old = await api.fetch(`/api/books/${id}/exports/${v1.id}/files/0`);
-    expect(old.status).toBe(200);
-  });
-
-  test("removing the version an update copies from costs its chapters the shortcut, not the build", async () => {
-    const encoder = controlledEncoder();
-    const api = testApi({ encoder, speech: slowerOnRetake() });
-    const { id } = await narratedBook(api, { chapters: THREE });
-    const settings = settingsFor();
-    await build(api, id, { ids: [1, 2, 3], settings });
-    await api.runner.idle();
-    const [v1] = await exportsOf(api, id);
-    const before = fileBytes(api, id, v1.id);
-    const kept = filePath(api, id, v1.id);
-    const was = (await chaptersOf(api, id))[2].duration;
-    await api.request(`/api/books/${id}/chapters/narrate`, jsonBody({ ids: [3], scope: "all" }));
-    await api.runner.idle();
-    const grew = (await chaptersOf(api, id))[2].duration - was;
-
-    // the plan is made, carries and all, and the version it copies from goes before a byte of it
-    const inside = encoder.hold();
-    const second = await build(api, id, { ids: [1, 2, 3], settings, updates: v1.id });
-    expect(second.body.export.reused).toBe(2);
-    await inside;
-    const removed = await api.request(`/api/books/${id}/exports/${v1.id}`, { method: "DELETE" });
-    expect(removed.status).toBe(200);
-    await untilGone(kept);
-    encoder.open();
-    await api.runner.idle();
-
-    const v2 = (await exportsOf(api, id)).find((e) => e.id === second.body.export.id)!;
-    expect(v2.status).toBe("done");
-    // the two chapters it meant to copy were read from their clips instead: the same audio
-    expect(playsFor(fileBytes(api, id, v2.id))).toBeCloseTo(playsFor(before) + grew, 0);
-    const notes = (await jobById(api, v2.jobId!)).activity ?? [];
-    expect(notes.filter((e) => e.message.startsWith("Could not carry over"))).toHaveLength(2);
-    expect(notes.find((e) => e.message === "Export ready")?.detail?.reusedChapters).toBe(0);
-  });
-
   test("a cancel that arrives after the last file is written still leaves the old version current", async () => {
     // The encoder has returned and the build is on its way to committing — the window the
     // encoders' own signal checks cannot see. Before the build checked once more, it committed,
     // marked the old version `replaced`, and was then called cancelled and deleted: no current
     // audiobook at all.
-    const inner = wavEncoder();
+    const inner = ffmpegEncoder();
     let written!: () => void;
     const encoded = new Promise<void>((r) => (written = r));
     let release!: () => void;
@@ -579,7 +485,7 @@ describe("building an audiobook", () => {
     // Held after the first of two files is written, where a build that carried on would reserve
     // the second and `mkdir` the book's directory back. It is cancelled and settled before the
     // rows and the directory go, so its `onSettled` clears what it wrote while it still can.
-    const inner = wavEncoder();
+    const inner = ffmpegEncoder();
     let written!: () => void;
     const between = new Promise<void>((r) => (written = r));
     let release!: () => void;
@@ -629,17 +535,13 @@ describe("building an audiobook", () => {
 
 // ---------- with a real encoder behind it ----------
 //
-// `EXPORT_ENCODER=ffmpeg` is the one configuration that depends on something outside this
-// process, so these run only where that something is installed and are skipped, loudly, where it
-// is not. What they are for is the three things the stitcher cannot do and therefore cannot be
-// checked on: the format the settings actually asked for, chapter marks a player reads, and a
-// carried-over span addressed in time rather than in bytes.
+// What the files hold beyond their length: the format the settings asked for, the chapter marks a
+// player reads, and an update encoded whole.
 
 const ffmpeg = await ffmpegAvailable();
 
 test("a machine without the ffmpeg it was told to run is told so, rather than failing a build", async () => {
-  // What boot asks before `EXPORT_ENCODER=ffmpeg` is allowed to start, and what decides whether
-  // the tests below run — so it is the one part of this encoder checked on every machine.
+  // What boot asks before the server is allowed to start: without ffmpeg it refuses to.
   expect(await ffmpegAvailable("/nonexistent/ffmpeg")).toBeNull();
 });
 
@@ -729,10 +631,8 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
     expect(read.seconds).toBeCloseTo(done.duration, 0);
     // at the clips' rate, though loudnorm resamples inside and the encoder would otherwise pick
     expect(read.rate).toBe(SAMPLE_RATE);
-    // nothing said the format was not the one asked for, because this time it was
     const job = await jobById(api, done.jobId!);
-    expect(job.activity?.some((e) => e.message.includes("rather than"))).toBe(false);
-    // and the loudness the panel offered was measured rather than waved away, with the figure the
+    // the loudness the panel offered was measured rather than waved away, with the figure the
     // file measured before it was levelled
     expect(job.activity?.some((e) => e.detail?.measured != null)).toBe(true);
     expect(job.activity?.find((e) => e.message.endsWith("is written"))?.detail?.loudness).toMatch(
@@ -740,10 +640,10 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
     );
   }, 30_000);
 
-  test("an update re-encodes the whole audiobook, and says why", async () => {
+  test("an update encodes the whole audiobook again, with the chapter read again in it", async () => {
     const api = testApi({ encoder: ffmpegEncoders(), speech: slowerOnRetake() });
     const { id } = await narratedBook(api, { chapters: THREE });
-    // the levels are left alone here: this is about what was copied, and a two-pass loudnorm
+    // the levels are left alone here: this is about what was encoded, and a two-pass loudnorm
     // over a whole audiobook twice over is minutes of a test suite for nothing
     const settings = settingsFor({ normalize: false });
     await build(api, id, { ids: [1, 2, 3], settings });
@@ -753,11 +653,7 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
 
     await api.request(`/api/books/${id}/chapters/narrate`, jsonBody({ ids: [3], scope: "all" }));
     await api.runner.idle();
-    const second = await build(api, id, { ids: [1, 2, 3], settings, updates: v1.id });
-    // Nothing is carried over: this encoder cannot splice a span of AAC beside audio it is
-    // encoding now, and the row promises what the build will actually do.
-    expect(second.body.export.reused).toBe(0);
-    expect(second.body.export.rebuilt).toBe(3);
+    await build(api, id, { ids: [1, 2, 3], settings, updates: v1.id });
     await api.runner.idle();
 
     const v2 = (await exportsOf(api, id)).find((e) => e.version === 2)!;
@@ -767,10 +663,5 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
     expect(now.chapters).toHaveLength(3);
     expect(now.seconds).toBeGreaterThan(was.seconds);
     expect(now.seconds).toBeCloseTo(v2.duration, 0);
-    expect(
-      (await jobById(api, v2.jobId!)).activity?.some(
-        (e) => e.message === "Every chapter is being encoded again",
-      ),
-    ).toBe(true);
   }, 30_000);
 });

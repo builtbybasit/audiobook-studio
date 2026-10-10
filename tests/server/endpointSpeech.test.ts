@@ -7,7 +7,7 @@ import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import type { SentSpeech } from "~/providers/sent";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
-import { readWavHeader } from "~/providers/wavEncoder";
+import { readWavHeader } from "~/providers/wav";
 
 const fish: ProviderTarget = {
   id: "fish",

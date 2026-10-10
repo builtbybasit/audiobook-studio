@@ -585,7 +585,7 @@ const limitNote = computed(() => {
           Audio
           <UiHint
             label="audio formats"
-            text="MP3 and Opus are about a tenth of WAV’s size but need ffmpeg on the server to build an audiobook; rendered clips keep their format, and a rate change marks clips at another rate for re-render."
+            text="MP3 and Opus are about a tenth of WAV’s size; rendered clips keep their format, and a rate change marks clips at another rate for re-render."
           />
         </h3>
         <div class="space-y-2.5 text-sm">

@@ -175,7 +175,7 @@ const STEPS: Record<string, string[]> = {
     "Open Loudness: the target the build levels each file to, and whether it will.",
   ],
   update: [
-    "v2 is nine chapters behind: the card says what changed and how many carry over.",
+    "v2 is nine chapters behind: the card says what changed since it was built.",
     "Press Update to v3 and watch the Queue say which file it is encoding.",
     "Nudge a pause under Pauses: the finished export says it is behind the book.",
   ],

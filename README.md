@@ -6,7 +6,7 @@ Import → review contents → script → assign voices → narrate and review �
 
 ## Run locally
 
-You need Node.js (for Vite), pnpm and Bun 1.4 or later. ffmpeg is optional; see [export](docs/exports.md).
+You need Node.js (for Vite), pnpm, Bun 1.4 or later, and ffmpeg, which the server requires.
 
 ```sh
 pnpm install

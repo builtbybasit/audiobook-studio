@@ -101,6 +101,48 @@ function sentHits(s: Segment, lexicon: LexEntry[]): LexHit[] {
   return s.audio.pronounced == null || s.audio.pronounced === sent.text ? sent.hits : [];
 }
 
+/** Capitalised words of a cast that name nobody: a speaker called "The man" must not hint every "The". */
+const NOT_NAMES = new Set(["The", "A", "An", "Mr", "Mrs", "Ms", "Miss", "Dr", "Sir", "Madam"]);
+
+/** A text's words, hyphens and apostrophes kept inside them. */
+const wordsOf = (text: string): string[] => text.match(/\p{L}[\p{L}'’-]*/gu) ?? [];
+
+/**
+ * The words a cast's names and aliases are made of that a line can name someone by: capitalised,
+ * and never written in lowercase in `prose` — an alias such as "This kid" or "Young master" is made
+ * of words the chapter itself shows are not names.
+ */
+export function nameWords(
+  cast: readonly { name: string; aliases?: readonly string[] }[],
+  prose: string,
+): Set<string> {
+  const common = new Set(wordsOf(prose).filter((w) => w === w.toLowerCase()));
+  return new Set(
+    cast
+      .filter((c) => c.name !== NARRATOR)
+      .flatMap((c) => [c.name, ...(c.aliases ?? [])].flatMap(wordsOf))
+      .filter(
+        (w) =>
+          /^\p{Lu}/u.test(w) && w.length > 1 && !NOT_NAMES.has(w) && !common.has(w.toLowerCase()),
+      ),
+  );
+}
+
+/**
+ * The cast's name words a line is written with, in its order, each once — what its clip is sent as
+ * hints, so a line that names nobody is sent none and a large cast never runs past what a server
+ * keeps (Phonon: 25). Matched as written, capitals and all, a possessive read as its name.
+ */
+export function namesIn(text: string, names: ReadonlySet<string>): string[] {
+  const out = new Set<string>();
+  for (const w of wordsOf(text)) {
+    const bare = w.replace(/['’]s$/, "");
+    if (names.has(w)) out.add(w);
+    else if (names.has(bare)) out.add(bare);
+  }
+  return [...out];
+}
+
 /** What hearing these clips costs at `t`'s rate per minute of audio. */
 const costOf = (t: Transcriber, seconds: number): number => (seconds / 60) * t.perMinute;
 
@@ -125,7 +167,8 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
 
       const book = library.getBook(db, job.bookId);
       const again = job.checkRun?.again === true;
-      const clips = clipsOf(readScript(db, job.bookId, job.chapterId), book);
+      const script = readScript(db, job.bookId, job.chapterId);
+      const clips = clipsOf(script, book);
       const todo = again ? clips : unheard(db, job.bookId, clips);
       const run: NonNullable<Job["checkRun"]> = {
         endpoint: t.id,
@@ -142,10 +185,9 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
       }
       ctx.note("Check started", "info", { endpoint: t.name, lines: todo.length });
 
-      // the names the clips are likely to hold, which Phonon reads as words to favour
-      const hints = readSpeakers(db, job.bookId)
-        .map((c) => c.name)
-        .filter((n) => n !== NARRATOR);
+      // the names a clip's line is written with, which Phonon reads as words to favour: a name
+      // said wrong may be heard right for it, a cost a check of the names alone would not pay
+      const names = nameWords(readSpeakers(db, job.bookId), script.map((s) => s.text).join(" "));
       const lexicon = readLexicon(db, job.bookId);
       const label = "Check";
       let refused: string | null = null;
@@ -209,7 +251,7 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
               name: c.file,
               seconds,
               words: true,
-              hints,
+              hints: namesIn(c.s.text, names),
               signal,
               sent: money.sent,
             },

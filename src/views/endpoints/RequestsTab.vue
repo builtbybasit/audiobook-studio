@@ -427,7 +427,7 @@ const limitNote = computed(() => {
             >Hotword strength
             <UiHint
               label="hotword strength"
-              text="Check by ear sends the cast's names with every clip. This is how hard the server favours them, sent as hotword_lambda (Fermion Phonon, 0–100). At Phonon's own 2 they change nothing; 5 puts most names right; from 10 it writes them where they were never said. Leave it blank for a server that takes no such field."
+              text="Check by ear sends each clip the cast's names its line is written with. This is how hard the server favours them, sent as hotword_lambda (Fermion Phonon, 0–100). At Phonon's own 2 they change nothing; 5 puts most names right; from 10 it writes them where they were never said. Leave it blank for a server that takes no such field."
             />
             <span class="block text-[11px] text-zinc-500">Blank sends none.</span></span
           ><UiNumber

@@ -15,6 +15,7 @@ import type {
   EndpointBatches,
   EndpointKind,
   EndpointProbe,
+  Transcriber,
   VoiceListPage,
 } from "@/types";
 import { profilePromptProblems, promptProblems, resolvePrompt } from "@/lib/prompt";
@@ -41,7 +42,7 @@ import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { ProviderError } from "~/providers/http";
 import { SAMPLE_HEAD_BYTES, SAMPLE_MIME, sniffSample, type SampleFormat } from "~/providers/clone";
 import { scriptTarget, speechTarget, transcriberTarget, type Providers } from "~/providers/target";
-import { endpointTranscriber } from "~/providers/transcription";
+import { endpointTranscriber, type Transcript } from "~/providers/transcription";
 import { endpointVoiceLister, type VoiceQuery } from "~/providers/voices";
 import { assertWithinBudget } from "~/usage/budget";
 import { dispatch } from "~/usage/dispatch";
@@ -173,9 +174,14 @@ export async function testEndpoint(
   if (kind === "transcription") {
     const t = readTranscriber(db, id);
     if (!t) throw notFound("There is no saved transcription endpoint by that id", `id: ${id}`);
-    const provider = providers.transcription ?? endpointTranscriber();
+    const started = Date.now();
     try {
-      return await provider.probe(transcriberTarget(db, t), signal);
+      const sample = await Bun.file(TEST_SAMPLE).bytes();
+      const { text } = await hear(db, providers, t, sample, "wav", "Connection test", signal);
+      const ms = Date.now() - started;
+      return text
+        ? { ok: true, message: `Heard “${text}” in ${ms} ms`, ms }
+        : { ok: false, message: `Answered in ${ms} ms but heard nothing`, ms };
     } catch (e) {
       if (e instanceof ProviderError) return { ok: false, message: e.message, ms: 0 };
       throw e;
@@ -471,6 +477,34 @@ export async function transcribeSample(
   const bytes = new Uint8Array(await file.arrayBuffer());
   const format = sniffSample(bytes.subarray(0, SAMPLE_HEAD_BYTES));
   if (!format) throw badRequest("That file is not audio this app can read");
+  try {
+    return {
+      text: (await hear(db, providers, t, bytes, format, "Sample transcript", signal)).text,
+    };
+  } catch (e) {
+    throw e instanceof ProviderError ? providerFailure(e) : e;
+  }
+}
+
+/**
+ * The recording a transcription endpoint's Test sends: Fish Audio saying “The quick brown fox jumps
+ * over the lazy dog.”, as 16 kHz mono WAV, 3.4 s (`PROBE.transcription` on the page).
+ */
+const TEST_SAMPLE = new URL("./test-sample.wav", import.meta.url);
+
+/**
+ * One recording heard by `t`, with no book: priced into the ledger under `label`, held to the
+ * endpoint's daily limit, and tried once.
+ */
+async function hear(
+  db: Db,
+  providers: Providers,
+  t: Transcriber,
+  bytes: Uint8Array<ArrayBuffer>,
+  format: SampleFormat,
+  label: string,
+  signal: AbortSignal,
+): Promise<Transcript> {
   // what it is priced by: how long it plays, read from the file, and 0 s when it cannot be
   const seconds = await parseBuffer(
     bytes,
@@ -490,7 +524,7 @@ export async function transcribeSample(
   const money = dispatch(db, {
     kind: "transcription",
     endpoint: t,
-    work: { bookId: null, chapterUid: null, label: "Sample transcript" },
+    work: { bookId: null, chapterUid: null, label },
     hold: cost,
   });
   const provider = providers.transcription ?? endpointTranscriber();
@@ -506,9 +540,7 @@ export async function transcribeSample(
       },
       { ...transcriberTarget(db, t), maxRetries: 0 },
     );
-    return { text: heard.text };
-  } catch (e) {
-    throw e instanceof ProviderError ? providerFailure(e) : e;
+    return heard;
   } finally {
     money.release();
   }

@@ -39,10 +39,20 @@ describe.skipIf(!env.LIVE || !env.TRANSCRIPTION_URL)("a transcription server, fo
   const provider = endpointTranscriber();
   const signal = () => new AbortController().signal;
 
-  test("the Test button's probe answers", async () => {
-    const probe = await provider.probe(target, signal());
-    expect(probe.ok).toBe(true);
-  });
+  test("hears the Test button's sample", async () => {
+    const sample = await Bun.file("server/endpoints/test-sample.wav").bytes();
+    const heard = await provider.transcribe(
+      {
+        audio: new Blob([sample], { type: "audio/wav" }),
+        name: "test-sample.wav",
+        seconds: 3.4,
+        words: false,
+        signal: signal(),
+      },
+      target,
+    );
+    expect(heard.text.toLowerCase()).toContain("quick brown fox");
+  }, 60_000);
 
   test("hears the sentence, each word with its time", async () => {
     const audio = new Blob([await spoken()], { type: "audio/wav" });

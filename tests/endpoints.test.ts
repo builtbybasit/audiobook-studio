@@ -417,11 +417,13 @@ test("a transcriber without its key is not ready, and says what that stops", () 
   });
 });
 
-test("a transcriber's throughput is the audio it heard, and testing it costs nothing", () => {
+test("a transcriber's throughput is the audio it heard, and testing it is priced by the minute", () => {
   // the figure itself is summed by the server (tests/server/usage.test.ts)
   expect(throughputLabel("transcription")).toBe("Audio minutes heard per minute");
-  // the test lists the server's models, which sends no audio
-  expect(probeCost({ key: "transcription:stt", id: "stt", kind: "transcription" })).toBe(0);
+  // the test sends a 3.39 s recording
+  const stt = { key: "transcription:stt", id: "stt", kind: "transcription" } as const;
+  expect(probeCost({ ...stt, perMinute: 0.6 })).toBeCloseTo(0.0339, 6);
+  expect(probeCost({ ...stt, perMinute: 0 })).toBe(0);
 });
 
 test("a transcriber's tabs are the ones every kind has, and no voices, expressions or prompt", () => {

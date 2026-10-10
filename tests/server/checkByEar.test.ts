@@ -88,7 +88,6 @@ function ears(): Ears {
         });
         return ears.say(s);
       },
-      probe: async () => ({ ok: true, message: "Answered in 3 ms", ms: 3 }),
     },
   };
   return ears;

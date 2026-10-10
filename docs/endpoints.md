@@ -452,9 +452,15 @@ voice rendered it.
 
 **Fermion Phonon, locally.** `pip install fermion-research`, then `fermion serve phonon-2 --port
 8010` (its default, 8000, is the OmniVoice server's), and the **Fermion Phonon (local)** preset.
-English only, free, and far faster than real time (0.2.11: 155 clips, 568 s of audio, in 16 s). `/v1/models` lists it by its full name; the
-Test button says so and the requests still go through, since the server takes `phonon-2` as an
-alias.
+English only, free, and far faster than real time (0.2.11: 155 clips, 568 s of audio, in 16 s).
+
+**Test.** The Connection tab's Test sends one real recording through the path a check takes:
+[server/endpoints/test-sample.wav](../server/endpoints/test-sample.wav), Fish Audio saying "The
+quick brown fox jumps over the lazy dog." (16 kHz mono, 3.4 s), and says what came back ("Heard
+'…' in 120 ms"), or that the server heard nothing. It is priced into the ledger as a
+"Connection test" with no book, at the cost shown beside the button. A model list would not do:
+Phonon's CUDA build serves no `/v1/models`, and a server that lists its models can still refuse
+the audio.
 
 A simulated transcription endpoint (`simulated://…`) hears the same fixed sentence in every
 recording and gives no word times.

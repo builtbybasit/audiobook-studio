@@ -21,7 +21,7 @@ import { fakeScriptingProvider } from "~/providers/fake";
 import type { AudiobookEncoder, EncoderChoice, ExportPorts } from "~/providers/encoder";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import { createSpeechGate, type SpeechGate } from "~/providers/gate";
-import { wavEncoders } from "~/providers/wavEncoder";
+import { ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import type {
   ScriptAnswer,
   ScriptInput,
@@ -87,7 +87,7 @@ export interface TestApiOptions {
   exportDir?: string;
   /** where cloned voices' recordings are kept; a fresh temporary directory by default */
   voiceDir?: string;
-  /** what a build writes its files with; the WAV stitcher by default */
+  /** what a build writes its files with; ffmpeg by default */
   encoder?: AudiobookEncoder | EncoderChoice;
   /** handlers for other kinds, or an override for `scripting` or `narration` */
   handlers?: JobHandlers;
@@ -109,7 +109,7 @@ export const tempVoiceDir = (): string => mkdtempSync(join(tmpdir(), "audiobook-
 /** Both halves of building a file, wherever this test keeps them. */
 export const testExports = (options: TestApiOptions = {}): ExportPorts => ({
   encoders: !options.encoder
-    ? wavEncoders()
+    ? ffmpegEncoders()
     : "for" in options.encoder
       ? options.encoder
       : { name: options.encoder.name, for: () => options.encoder as AudiobookEncoder },

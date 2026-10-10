@@ -84,21 +84,8 @@ export const exportItems = sqliteTable(
     /** everything it was built with, so an update starts from it rather than from the defaults */
     settings: text("settings", { mode: "json" }).$type<ExportSettings>(),
 
-    /** chapters re-encoded by the build that made this version */
-    rebuilt: integer("rebuilt"),
-    /** chapters carried over from the previous version untouched */
-    reused: integer("reused"),
     /** clips that were already stale when this was built, accepted on purpose */
     stale: integer("stale"),
-    /**
-     * What wrote it, by the encoder's own name.
-     *
-     * The next version only carries a chapter over from this one when the same encoder is writing
-     * it, because a span means different things to different encoders — bytes into a WAV, but
-     * milliseconds into an AAC stream, where a byte offset means nothing. Without this a server
-     * restarted with `EXPORT_ENCODER` changed would copy one as though it were the other.
-     */
-    encoder: text("encoder"),
   },
   (t) => [
     index("exports_book").on(t.bookId, t.id),
@@ -165,16 +152,6 @@ export const exportChapters = sqliteTable(
     duration: real("duration"),
     /** what this chapter's audio was when the export was built */
     signature: text("signature"),
-    /**
-     * Where this chapter's audio sits inside its output file, as a span of the file's samples.
-     *
-     * This is what makes "carried over rather than encoded again" a real thing the next build
-     * does rather than a number it reports: an update copies these bytes straight out of the
-     * version on disk for every chapter whose signature has not moved, and reads the clips again
-     * only for the ones that have. Null on an export nothing on this server built.
-     */
-    byteStart: integer("byte_start"),
-    byteLength: integer("byte_length"),
   },
   (t) => [
     primaryKey({ columns: [t.exportId, t.chapterId] }),

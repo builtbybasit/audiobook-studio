@@ -12,14 +12,10 @@
 // re-derives which chapter belongs in which file, because the page has already shown someone the
 // answer and a second copy of the rule is how the preview and the file stop agreeing.
 //
-// **An update copies what has not moved.** Every finished export records where each chapter's
-// audio sits inside its file. When the next version is built with the same output settings, a
-// chapter whose signature has not changed is copied straight out of the version on disk instead
-// of having its clips read again — `reusedChapters` decides which, and that same function drew
-// the "191 of its 196 chapters would be carried over" line on the page. Each span is checked
-// again as the build runs, so a chapter re-narrated since the build was queued, or a file removed
-// behind the server's back, costs one chapter its shortcut rather than putting stale audio in the
-// file or failing the build.
+// **An update is a whole new encode.** Every chapter's clips are read and encoded again, by ffmpeg,
+// the only encoder: a span of AAC or MP3 cannot be spliced beside audio encoded in another run.
+// What each chapter's audio was is recorded on the export (`state`), which is how the page says a
+// version is behind the book.
 //
 // **The version on disk stays current until the new one lands.** The row goes up as `building`
 // straight away, so the Audiobooks tab shows a version arriving; the export it supersedes is only
@@ -43,20 +39,16 @@ import type {
 import {
   chapterSignature,
   exportKey,
-  formatOf,
   fileTitle,
   markerTitle,
   planOf,
-  reusedChapters,
   reviewOf,
   scopeOf,
   setLabel,
 } from "@/lib/exports";
-import { chapterNumbers } from "@/lib/chapterNumber";
 import { heardLines } from "@/lib/siteText";
 import { pacingOrDefault, pauseAfter, sampleRateLabel } from "@/lib/speech";
-import { FORMAT_LABEL } from "@/lib/endpointShapes";
-import { formatOfFile, type AudioFiles } from "~/audio/files";
+import type { AudioFiles } from "~/audio/files";
 import { coverFiles, type CoverFiles } from "~/covers/files";
 import type { Db, Tx } from "~/db/client";
 import * as exports from "~/db/exports";
@@ -68,9 +60,9 @@ import { badRequest, conflict, notFound } from "~/lib/errors";
 import type {
   AudiobookEncoder,
   EncodeChapter,
+  EncodePart,
   EncodeTags,
   ExportPorts,
-  FreshPart,
 } from "~/providers/encoder";
 import { inBackground } from "~/lib/background";
 
@@ -111,27 +103,15 @@ function tagsOf(
   };
 }
 
-/**
- * The plan, with the names and the marks the encoder will really produce.
- *
- * With ffmpeg behind it these are the ones `planOf` drew and nothing changes. With the stitcher —
- * which is the default, because it needs nothing installed — the settings ask for an M4B and what
- * can be written is a WAV, so the files carry the extension of what was actually written and
- * claim no chapter marks. The format the listener chose is still recorded on the export: it is
- * half of the audiobook's identity, and an update has to be able to tell "the same one again"
- * from "a different one". Nothing pretends the bytes are in it, and the build says so in its log.
- */
+/** The plan, with the marks the encoder will really write: none in an MP3. */
 function planFor(
   chapters: Chapter[],
   volumes: Volume[],
   settings: ExportSettings,
   encoder: AudiobookEncoder,
 ): { files: ExportFile[]; label: string; markers: number } {
-  const asked = formatOf(settings.format).ext;
   const files: ExportFile[] = planOf({ chapters, volumes, settings }).files.map((f) => ({
-    name: f.name.endsWith(`.${asked}`)
-      ? `${f.name.slice(0, -asked.length - 1)}.${encoder.ext}`
-      : `${f.name}.${encoder.ext}`,
+    name: f.name,
     chapterIds: f.chapterIds,
     duration: f.duration,
     size: f.size,
@@ -160,31 +140,6 @@ function audioOf(
     signature: chapterSignature(chapter, segments, pacing, book),
     lines: heardLines(segments, book),
   };
-}
-
-/**
- * The stitcher joins WAV samples and has no decoder, so a book with a clip kept as MP3 or Opus is
- * refused before anything is written, naming the first chapter that has one and the two ways out.
- * Every clip is asked, a carried chapter's too: the version it would be copied from can be gone by
- * the time it is read, and then its clips are what is laid down.
- */
-function refuseEncodedClips(
-  db: Db,
-  book: Book,
-  ids: readonly number[],
-  known: Map<number, Chapter>,
-): void {
-  for (const id of ids) {
-    const chapter = known.get(id);
-    if (!chapter) continue;
-    for (const s of heardLines(readScript(db, book.id, id), book)) {
-      const format = s.audio.url ? formatOfFile(s.audio.url) : null;
-      if (format && format !== "wav")
-        throw new Error(
-          `“${chapter.title}” was narrated in ${FORMAT_LABEL[format]}, and this server builds with the WAV stitcher, which joins WAV clips only. Restart the server with EXPORT_ENCODER=ffmpeg to build from ${FORMAT_LABEL[format]}, or narrate the book again with its endpoints set to WAV.`,
-        );
-    }
-  }
 }
 
 // ---------- queueing one ----------
@@ -262,9 +217,6 @@ export function enqueueBuild(
   const ordered = chapters.map((c) => c.id);
   const state: Record<number, string> = {};
   for (const c of chapters) state[c.id] = audioOf(db, book, c, pacing).signature;
-  // An encoder that cannot splice re-encodes everything, and the row says so rather than
-  // promising a saving the build will not make.
-  const reuse = encoder.carries ? reusedChapters(prev, ordered, settings, state) : [];
 
   const { files, label, markers } = planFor(chapters, book.volumes, settings, encoder);
   const draft: Omit<ExportItem, "id"> = {
@@ -302,8 +254,6 @@ export function enqueueBuild(
     settings: { ...settings },
     customCover: !!settings.cover,
     timeline: chapters.map((c) => ({ id: c.id, title: c.title, duration: c.duration })),
-    rebuilt: chapters.length - reuse.length,
-    reused: reuse.length,
     stale: chapters.filter((c) => c.narration === "stale").length,
   };
 
@@ -316,8 +266,6 @@ export function enqueueBuild(
     file: 0,
     fileName: files[0]?.name ?? label,
     stage: "Preparing",
-    encode: chapters.length - reuse.length,
-    reuse: reuse.length,
     done: 0,
   };
 
@@ -327,14 +275,14 @@ export function enqueueBuild(
     bookId,
     chapterId: null,
     label: `Build ${label}`,
-    // the fake speech model costs nothing to reserve, and stitching its files nothing at all
+    // the fake speech model costs nothing to reserve, and encoding its files nothing at all
     run: { exportRun: run },
     // In the same transaction as the job row, so there is never a queued build with no version
     // showing, nor a version with no build coming — and so the job knows which version it is
     // making before the worker can claim it. An id written after the enqueue returns is an id the
     // handler can start without, since an enqueue wakes the queue at once.
     onCreated: (tx, id) => {
-      exportId = exports.insertBuild(tx, { ...draft, jobId: id }, Date.now(), encoder.name);
+      exportId = exports.insertBuild(tx, { ...draft, jobId: id }, Date.now());
       setRun(tx, id, { ...run, exportId });
     },
   });
@@ -373,21 +321,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
 
     const pacing = pacingOrDefault(book.pacing);
     const known = new Map(library.listChapters(db, job.bookId).map((c) => [c.id, c]));
-    // what the build's notes call a chapter: the number a person reads it by, never its id
-    const numbers = chapterNumbers([...known.values()]);
-    const nameOf = (id: number) => library.nameOf(numbers.get(id));
-    if (!encoder.decodes) refuseEncodedClips(db, book, entry.chapterIds, known);
     const prev = entry.replaces == null ? null : (exports.getExport(db, entry.replaces) ?? null);
-    // Only a file this same encoder wrote is ever copied out of: a span is bytes into a WAV and
-    // milliseconds into an AAC stream, and reading one as the other would splice noise into the
-    // middle of the audiobook. A server restarted with `EXPORT_ENCODER` changed re-encodes.
-    const sameEncoder =
-      encoder.carries && !!prev && exports.exportEncoder(db, prev.id) === encoder.name;
-    const spans: Map<number, exports.ChapterSpan> =
-      prev && sameEncoder ? exports.chapterSpans(db, prev.id) : new Map();
-    const carryable = new Set(
-      sameEncoder ? reusedChapters(prev, entry.chapterIds, run.settings, entry.state ?? {}) : [],
-    );
 
     ctx.note(
       prev ? `Updating ${entry.filename} to v${entry.version}` : `Building ${entry.filename}`,
@@ -400,26 +334,6 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         bitrateKbps: run.settings.bitrate,
       },
     );
-    // The one thing this server will not pretend about. The format is recorded because it is half
-    // of the audiobook's identity; the bytes are what the encoder it has could write.
-    const asked = formatOf(run.settings.format).ext;
-    if (encoder.ext !== asked)
-      ctx.note(`Writing .${encoder.ext} rather than .${asked}`, "warning", {
-        encoder: encoder.name,
-        asked: run.settings.format,
-        marks: encoder.markers ? "written" : "none — this encoder writes no chapter marks",
-      });
-    if (carryable.size)
-      ctx.note(`Reusing ${carryable.size} chapters that have not changed`, "info", {
-        reused: carryable.size,
-        reEncoding: entry.chapterIds.length - carryable.size,
-        basedOn: `v${prev!.version}`,
-      });
-    else if (prev && !encoder.carries)
-      ctx.note("Every chapter is being encoded again", "info", {
-        encoder: encoder.name,
-        why: "a span of an encoded file cannot be spliced into a new one",
-      });
     // The picture: the one the settings chose, or the EPUB's own. A chosen one that has gone is the
     // build failing — the audiobook asked for was one with that picture on it — while the EPUB's
     // gone missing is a build without one, said out loud.
@@ -438,49 +352,28 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
           {},
         );
     }
-    if (cover && !encoder.covers) {
-      ctx.note(`A .${encoder.ext} file carries no cover; the image was not written`, "warning", {
-        encoder: encoder.name,
-      });
-      cover = null;
-    } else if (cover)
+    if (cover)
       ctx.note(chosen ? "Embedding your cover image" : "Embedding the EPUB's cover", "info", {});
-    // The book's details from the page: written into every file by an encoder with somewhere to
-    // put them, and said to be missing by one without. A blank title is the book's own, because a
-    // file tagged with no title is listed by its file name.
+    // The book's details from the page, written into every file. A blank title is the book's own,
+    // because a file tagged with no title is listed by its file name.
     const details = { ...run.settings, title: run.settings.title.trim() || book.title };
-    if (!encoder.tags)
-      ctx.note(
-        `A .${encoder.ext} file carries no title or author; the book's details were not written`,
-        "warning",
-        {
-          encoder: encoder.name,
-        },
-      );
-    else
-      ctx.note("Tagging each file with the book's details", "info", {
-        title: details.title,
-        author: details.author.trim() || "none",
-        narrator: details.narrator.trim() || "none",
-      });
+    ctx.note("Tagging each file with the book's details", "info", {
+      title: details.title,
+      author: details.author.trim() || "none",
+      narrator: details.narrator.trim() || "none",
+    });
     if (entry.stale)
       ctx.note(`${entry.stale} chapters use clips the script has moved under`, "warning", {
         accepted: "the build was started with “use stale audio”",
       });
-    if (run.settings.normalize)
-      ctx.note(
-        `Loudness normalisation to ${run.settings.loudness} LUFS`,
-        encoder.normalizes ? "info" : "warning",
-        encoder.normalizes
-          ? { measured: "EBU R128, in two passes over the stitched audio" }
-          : { applied: "no — this encoder stitches the clips and measures nothing" },
-      );
+    if (run.settings.normalize && encoder.normalizes)
+      ctx.note(`Loudness normalisation to ${run.settings.loudness} LUFS`, "info", {
+        measured: "EBU R128, in two passes over the joined audio",
+      });
 
     const written: exports.WrittenFile[] = [];
     const signatures = new Map<number, string>();
     let done = 0;
-    let copied = 0;
-    let encoded = 0;
 
     const tick = (stage: string, file: number, fileName: string): void => {
       const pct = Math.round((done / Math.max(1, entry.chapterIds.length)) * 100);
@@ -501,8 +394,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       exports.setBuildFile(db, entry.id, position, token);
 
       const plan: EncodeChapter[] = [];
-      let carriedHere = 0;
-      // One file holds one sample rate — neither encoder resamples — so the first clip that says
+      // One file holds one sample rate — the encoder does not resample — so the first clip that says
       // what rate it is sets the file's, and a line rendered at another is named here, by chapter,
       // rather than by the path of a clip file deep inside the encoder. The rate is the one the
       // narration job read off the file whatever its format, so an MP3 at 44.1 kHz and a WAV at
@@ -520,7 +412,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
           run.settings,
           file.volume?.name ?? null,
         );
-        const parts: FreshPart[] = [];
+        const parts: EncodePart[] = [];
         for (const [i, s] of lines.entries()) {
           const at = await clipPath(job.bookId, s.audio.url);
           if (!at)
@@ -539,52 +431,20 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
           const pause = pauseAfter(s, lines[i + 1], pacing);
           if (pause > 0) parts.push({ kind: "silence", seconds: pause });
         }
-        const span = carryable.has(id) ? spans.get(id) : undefined;
-        const from = span ? files.path(job.bookId, span.token) : null;
-        // Checked again here and not only when the build was queued: a chapter re-narrated in the
-        // meantime has to be read from its clips, however cheap copying it would have been. The
-        // clips go with the carry too, for the encoder to fall back on if the version it copies
-        // from is removed before it gets there.
-        if (span && from && signature === entry.state?.[id]) {
-          plan.push({
-            id,
-            title,
-            parts: [
-              { kind: "carry", path: from, start: span.start, length: span.length, instead: parts },
-            ],
-          });
-          copied++;
-          carriedHere++;
-          continue;
-        }
-        if (span)
-          ctx.note(`Could not carry over ${nameOf(id)}`, "warning", {
-            chapter: chapter.title,
-            reason: from ? "its audio has changed since" : "the file it was in is gone",
-          });
         plan.push({ id, title, parts });
-        encoded++;
       }
 
-      tick(carriedHere === plan.length ? "Copying" : "Encoding", position + 1, file.name);
+      tick("Encoding", position + 1, file.name);
       const result = await encoder.encode({
         chapters: plan,
         gap: run.settings.chapterGap,
         out: path,
         signal,
         cover,
-        tags: encoder.tags ? tagsOf(details, file, position, entry.files.length, known) : null,
-        onChapter: (landed) => {
-          if (landed.readAgain) {
-            copied--;
-            encoded++;
-            ctx.note(`Could not carry over ${nameOf(landed.id)}`, "warning", {
-              chapter: known.get(landed.id)?.title ?? landed.id,
-              reason: "the file it was in is gone",
-            });
-          }
+        tags: tagsOf(details, file, position, entry.files.length, known),
+        onChapter: () => {
           done++;
-          tick(carriedHere === plan.length ? "Copying" : "Encoding", position + 1, file.name);
+          tick("Encoding", position + 1, file.name);
         },
       });
       written.push({
@@ -592,12 +452,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         token,
         duration: round2(result.seconds),
         size: mb(result.bytes),
-        chapters: result.chapters.map((c) => ({
-          id: c.id,
-          start: c.start,
-          length: c.length,
-          seconds: round2(c.seconds),
-        })),
+        chapters: result.chapters.map((c) => ({ id: c.id, seconds: round2(c.seconds) })),
       });
       ctx.note(`${file.name} is written`, "info", {
         seconds: Math.round(result.seconds),
@@ -633,8 +488,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       files: written.length,
       sizeMB: finished.size,
       audioSeconds: Math.round(finished.duration),
-      encodedChapters: encoded,
-      reusedChapters: copied,
+      chapters: entry.chapterIds.length,
     });
   }
 

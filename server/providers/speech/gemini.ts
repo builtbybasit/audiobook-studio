@@ -30,7 +30,7 @@ import { call, ProviderError } from "~/providers/http";
 import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 import { plainWav } from "~/providers/wav";
-import { wavHeader } from "~/providers/wavEncoder";
+import { wavHeader } from "~/providers/wav";
 import { onePage, type SpeechWire } from "~/providers/speech/wire";
 
 /** What a preview answers when it says nothing about its rate. */

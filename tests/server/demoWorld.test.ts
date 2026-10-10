@@ -58,7 +58,7 @@ import { DEMO_BASE, openLibrary, type Library } from "~/libraries";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { SAMPLE_RATE } from "~/providers/fakeSpeech";
-import { wavEncoders } from "~/providers/wavEncoder";
+import { ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { collectingLogger, tempAudioDir, tempExportDir, tempVoiceDir } from "../support/server";
 
 /** The instant both worlds are built at: every date either one takes from the clock is this. */
@@ -83,7 +83,7 @@ beforeAll(() => {
     audioDir,
     exportDir: tempExportDir(),
     voiceDir: tempVoiceDir(),
-    encoders: wavEncoders(),
+    encoders: ffmpegEncoders(),
     log: collectingLogger().log,
     providers: {
       scripting: endpointScriptingProvider({ fetch: noNetwork }),

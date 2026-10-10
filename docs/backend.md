@@ -1411,16 +1411,10 @@ accept is a **409 in the page's own words**. A build refuses rather than trimmin
 narration run — because a chapter quietly missing from an audiobook is the failure this page exists
 to avoid.
 
-**An update copies what has not moved.** A finished export records where each chapter's audio sits
-inside its file (`export_chapters.byte_start` and `byte_length`). When the next version is built
-with the same output settings, a chapter whose signature has not changed is copied straight out of
-the version on disk; `reusedChapters` decides which, the same function that drew "191 of its 196
-chapters would be carried over" on the page. Each span is checked again as the build runs, so a
-chapter re-narrated since, or a file removed behind the server's back, costs that one chapter its
-shortcut: a `carry` part brings the chapter's clips along as `instead`, and an encoder that finds the
-file gone lays those down and marks the chapter `readAgain`. `exports.encoder` records what wrote a
-version, and only the same encoder copies out of it, because a span is bytes into a WAV and
-milliseconds into an AAC stream.
+**An update is a whole new encode.** Every chapter's clips are read and encoded again: a span of AAC
+or MP3 cannot be spliced beside audio encoded in another run. A finished export records each
+chapter's signature and running time (`export_chapters.signature`, `duration`), which is how the page
+says a version is behind the book and how **Listen** plays it as it was built.
 
 **The version on disk stays current until the new one lands.** The row goes up as `building` at
 once; the export it supersedes is marked `replaced` by the write that finishes the new one. A build
@@ -1462,33 +1456,24 @@ is set outright so a `HEAD` reports it too.
 
 ### The encoder, and what it will not pretend
 
-An [`AudiobookEncoder`](../server/providers/encoder.ts) is handed a list of parts — a clip, a run of
-silence, or a span of a file this export supersedes — and answers with the file it wrote, how long
-it really plays, and where each chapter landed. It declares what it can do, because the Export page
-makes promises an encoder may not be able to keep: `markers`, `normalizes`, `carries`, `covers` and
-`tags`. What it cannot do, the job's log says. Which settings each one honours, from the page's
-side, is in [encoders and formats](exports.md#encoders-and-formats).
+An [`AudiobookEncoder`](../server/providers/encoder.ts) is handed a list of parts — a clip or a run
+of silence — and answers with the file it wrote, how long it really plays, and where each chapter
+landed. It says whether it writes chapter marks (`markers`: an M4B does, an MP3 does not) and whether
+it levels loudness (`normalizes`). There is one, [ffmpeg's](../server/providers/ffmpegEncoder.ts);
+the demo wraps it to write a sample of each file ([server/demo/encoder.ts](../server/demo/encoder.ts)).
+Which settings it honours, from the page's side, is in
+[encoders and formats](exports.md#encoders-and-formats).
 
-`EXPORT_ENCODER=wav`, the default, needs nothing installed: the
-[stitcher](../server/providers/wavEncoder.ts) joins the clips into a real WAV per output file, with
-the book's pacing inside a chapter and the export's gap between two, so a fresh clone, a CI run and
-the test suite all build something that plays. Rather than name a file `.m4b` that is not one, it
-writes `.wav`. It reads and checks every source file's RIFF header rather than assuming the fake's
-format, so a provider answering at 24 kHz or in 16-bit stitches correctly and one that changes
-format mid-chapter is an error naming the file.
-
-Neither encoder resamples, so one output file holds one rate: the build checks the rate each clip
+It does not resample, so one output file holds one rate: the build checks the rate each clip
 recorded before anything is written, and names the chapter that brought a second rate. A pause is a
 whole number of sample frames (`silenceBytes`), never a byte count rounded from seconds: at 16-bit,
 an odd number of bytes of silence puts every sample after it a byte out of step, which plays as
 noise to the end of the file.
 
-`EXPORT_ENCODER=ffmpeg` is the one thing in this server that depends on something outside the
-process, so it is checked at boot: a server configured for it with no runnable `FFMPEG_BIN` refuses
-to start, naming the binary, rather than queueing work that was always going to fail. It reports
-`carries: false`, because splicing an already-encoded span beside audio encoded in this run needs
-both to have been encoded identically — a file per chapter joined with `-c copy`, which is a
-different arrangement on disk from the one this server keeps. It copies the cover in untouched as
+ffmpeg is the one thing in this server that depends on something outside the process — the
+encoder, the thought effect and the 16 kHz a transcriber is sent all run it — so it is checked at
+boot: a server with no runnable `FFMPEG_BIN` refuses to start, naming the binary, rather than
+queueing work that was always going to fail. It copies the cover in untouched as
 the attached picture; a chosen image gone from disk fails the build, and the EPUB's cover gone
 missing is a warning. It writes the book's details with `-metadata`, whose generic keys ffmpeg
 spells as ID3v2.3 frames in an MP3 and iTunes atoms in an M4B: the file's own title, the book's
@@ -1566,7 +1551,7 @@ package promises is there at all.
 | Narration        | [narration](../tests/server/narration.test.ts), [narrationConcurrency](../tests/server/narrationConcurrency.test.ts), [narrationBatch](../tests/server/narrationBatch.test.ts), [speechGate](../tests/server/speechGate.test.ts), [speechBatch](../tests/server/speechBatch.test.ts), [simulatedSpeech](../tests/server/simulatedSpeech.test.ts), [encodedClips](../tests/server/encodedClips.test.ts), [ranges](../tests/server/ranges.test.ts) |
 | Providers        | [endpoints](../tests/server/endpoints.test.ts), [endpointKeys](../tests/server/endpointKeys.test.ts), [endpointSpeech](../tests/server/endpointSpeech.test.ts), [speechProviders](../tests/server/speechProviders.test.ts), [voices](../tests/server/voices.test.ts), [voiceSample](../tests/server/voiceSample.test.ts), [voiceClone](../tests/server/voiceClone.test.ts) and one per other cloning provider                                    |
 | Money            | [usage](../tests/server/usage.test.ts), [narrationBudget](../tests/server/narrationBudget.test.ts), [scriptCost](../tests/server/scriptCost.test.ts), [cloneFees](../tests/server/cloneFees.test.ts)                                                                                                                                                                                                                                             |
-| Export           | [exports](../tests/server/exports.test.ts), [wavEncoder](../tests/server/wavEncoder.test.ts)                                                                                                                                                                                                                                                                                                                                                     |
+| Export           | [exports](../tests/server/exports.test.ts), [demoEncoder](../tests/server/demoEncoder.test.ts)                                                                                                                                                                                                                                                                                                                                                   |
 | Script files     | [scriptExport](../tests/server/scriptExport.test.ts), [scriptImport](../tests/server/scriptImport.test.ts), [speakerSamples](../tests/server/speakerSamples.test.ts)                                                                                                                                                                                                                                                                             |
 | Demo             | [libraries](../tests/server/libraries.test.ts), [demoWorld](../tests/server/demoWorld.test.ts), [demoSituations](../tests/server/demoSituations.test.ts), [demoLive](../tests/server/demoLive.test.ts), [demoClips](../tests/server/demoClips.test.ts), [demoSpeed](../tests/server/demoSpeed.test.ts)                                                                                                                                           |
 | Stores           | [libraryBackend](../tests/libraryBackend.test.ts), [jobsBackend](../tests/jobsBackend.test.ts), [endpointsBackend](../tests/endpointsBackend.test.ts)                                                                                                                                                                                                                                                                                            |
@@ -1582,10 +1567,8 @@ provider is `gatedProvider` or `gatedSpeechProvider` from
 [tests/support/server.ts](../tests/support/server.ts), which holds the door until the test says so;
 a build has `controlledEncoder` in [exports.test.ts](../tests/server/exports.test.ts). Nothing in the
 queue's tests waits on a timer. The build's tests assert the **file**, not the row's account of
-itself: how long it plays is read out of its header, and "this chapter was carried over" is checked
-by comparing the bytes of that chapter's span in the new file against the old one. The tests that
-need a real encoder, in exports, covers and encodedClips, are skipped where `ffmpeg` is not
-installed.
+itself: how long it plays, its format and its chapter marks, read back out of it with ffprobe. The
+suite needs ffmpeg and ffprobe installed, as the server does.
 
 [tests/live/](../tests/live/) is the exception on purpose: `pnpm test:live` sends a few real
 requests to the scripting gateway and the Fish Audio account named in `.env` — scripting, speech in
@@ -1607,7 +1590,7 @@ are skipped unless `LIVE=1`, so the ordinary suite never reaches the network.
   a guess, and every figure that leans on it says so.
 - **Undoing an endpoint's removal brings it back without its key**, since the save removed the row
   the key was on.
-- **An update under ffmpeg re-encodes everything**, for the reason
+- **An update re-encodes everything**, for the reason
   [the encoder](#the-encoder-and-what-it-will-not-pretend) gives.
 - **A seeded demo audiobook has no file**, so downloading one of the demo's finished exports is a
   404; one the demo builds has its file.

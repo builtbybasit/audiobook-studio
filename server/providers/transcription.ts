@@ -12,7 +12,7 @@
 // heard so says it was `unhinted`.
 //
 // The recording goes as 16 kHz mono WAV, made by ffmpeg (`SpeechRate`), unless the endpoint says to
-// send it as rendered (`resample16k: false`) or the server found no ffmpeg at boot: the rate every
+// send it as rendered (`resample16k: false`) or the transcriber was made without one (a test's): the rate every
 // speech-to-text model hears at, and the only one Phonon's CUDA build takes.
 //
 // Every request that reached the wire is reported through `sent`, as speech is (`sent.ts`), so the

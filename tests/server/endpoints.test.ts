@@ -34,7 +34,7 @@ import { fakeScriptingProvider } from "~/providers/fake";
 import type { ScriptingProvider } from "~/providers/scripting";
 import { fakeSpeechProvider, SAMPLE_RATE } from "~/providers/fakeSpeech";
 import type { SpeechInput, SpeechProvider } from "~/providers/speech";
-import { readWavHeader } from "~/providers/wavEncoder";
+import { readWavHeader } from "~/providers/wav";
 import { epubFile, story } from "../support/epub";
 import { openaiProfile } from "../support/profiles";
 import { jsonBody, testApi, type TestApi } from "../support/server";

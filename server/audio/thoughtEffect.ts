@@ -6,8 +6,8 @@
 // player, the Listen page, a check by ear and a build all hear the same thing and nothing has to
 // remember to apply it later. The clip records that it carries it (`SegmentAudio.effect`).
 //
-// It is a port, like the encoders: ffmpeg when the server found one at boot, and nothing at all
-// otherwise — the test suite and a machine without ffmpeg narrate thoughts as the voice made them.
+// It is a port, like the encoder: ffmpeg's in a running server, and nothing at all in a test's
+// library that is handed none, which narrates thoughts as the voice made them.
 //
 // What comes out is always a WAV at the clip's own rate, whatever went in: re-encoding an MP3 or an
 // Opus clip would lose a second generation and mean choosing a bitrate, and a clip's format is only

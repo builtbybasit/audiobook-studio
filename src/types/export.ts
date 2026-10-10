@@ -174,10 +174,6 @@ export interface ExportItem {
   customCover?: boolean;
   /** what each chapter's audio was when this was built — how "needs an update" is decided */
   state: Record<number, string>;
-  /** chapters re-encoded by the build that made this version */
-  rebuilt?: number;
-  /** chapters carried over from the previous version untouched */
-  reused?: number;
   /** clips that were already stale when this was built, accepted on purpose */
   stale?: number;
   /** why a failed build failed */
@@ -199,7 +195,5 @@ export interface ExportUpdate {
   missing: number[];
   /** output settings that differ from the form as it stands */
   settings: string[];
-  /** chapters that can be carried over untouched */
-  reusable: number;
   needed: boolean;
 }

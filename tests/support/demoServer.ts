@@ -18,7 +18,7 @@ import { HttpUsageService, setUsageService } from "@/services/usage";
 import { DEMO_BASE, openLibrary, type Library } from "~/libraries";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
-import { wavEncoders } from "~/providers/wavEncoder";
+import { ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { collectingLogger, tempAudioDir, tempExportDir, tempVoiceDir } from "./server";
 
 /** A fetch that fails the test: the demo's endpoints are simulated, and must never reach one. */
@@ -58,7 +58,7 @@ export async function demoServer(): Promise<DemoServer> {
     audioDir: tempAudioDir(),
     exportDir: tempExportDir(),
     voiceDir: tempVoiceDir(),
-    encoders: wavEncoders(),
+    encoders: ffmpegEncoders(),
     log: collectingLogger().log,
     providers: {
       scripting: endpointScriptingProvider({ fetch: noNetwork }),

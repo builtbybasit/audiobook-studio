@@ -6,7 +6,7 @@ import { useUiStore } from "@/stores/ui";
 
 // The audiobooks this book has produced. Each one knows what its chapters sounded like when it was
 // built (`state`), so "needs an update" is a real comparison against the book as it stands rather
-// than a timestamp — and an update can say exactly how much of it will be carried over.
+// than a timestamp — and an update can say exactly which chapters have moved.
 //
 // A version that is on disk stays on disk. A failed build never replaces it, and cancelling one
 // leaves it alone too — and while one build of an audiobook is running, nothing here offers to
@@ -135,9 +135,8 @@ function copyPath(e: ExportItem) {
 /**
  * Fetch what the build wrote. A set of several files is several downloads rather than one: the
  * server serves a file at a time, and offering only the first would hand over part of an audiobook
- * without saying so. The name is the response's and not this card's, because the encoder the
- * server ran decides the extension and a `download` attribute here would rename a `.wav` after the
- * format the settings asked for.
+ * without saying so. The name is the response's and not this card's, so each file is saved under
+ * the name it has on disk.
  */
 function download(e: ExportItem) {
   for (let i = 0; i < e.files.length; i++) {
@@ -221,7 +220,6 @@ const summary = (u: ExportUpdate) => {
               >{{ job.exportRun.stage }} {{ job.exportRun.done }} of {{ e.chapters }} · file
               {{ job.exportRun.file }} of {{ job.exportRun.files }}</span
             >
-            <span v-if="e.reused">{{ e.reused }} reused</span>
             <RouterLink to="/queue" class="underline">Activity</RouterLink>
             <button
               v-if="job"
@@ -285,10 +283,6 @@ const summary = (u: ExportUpdate) => {
                   class="mt-0.5 text-xs leading-relaxed text-violet-700/90 dark:text-violet-200/90"
                 >
                   {{ summary(u) }}.
-                  <template v-if="u.reusable > 0"
-                    >{{ u.reusable }} of its {{ e.chapters }} chapters are unchanged and would be
-                    carried over rather than encoded again.</template
-                  >
                 </p>
                 <p v-if="u.stale.length" class="mt-1 text-xs text-amber-700 dark:text-amber-300">
                   <WarnIcon class="icon-sm" /> {{ plural(u.stale.length, "chapter") }} in it now
@@ -406,8 +400,7 @@ const summary = (u: ExportUpdate) => {
               </template>
               {{ e.markers ? plural(e.markers, "chapter mark") : "no chapter marks" }} ·
               {{ e.normalize ? `levels matched to ${e.loudness} LUFS` : "levels left as rendered"
-              }}<span v-if="e.stale"> · {{ e.stale }} chapters used stale audio</span
-              ><span v-if="e.reused"> · {{ e.reused }} carried over from v{{ e.version - 1 }}</span>
+              }}<span v-if="e.stale"> · {{ e.stale }} chapters used stale audio</span>
             </li>
           </ul>
 

@@ -20,6 +20,7 @@ import { audioFiles, type AudioFiles } from "~/audio/files";
 import { openDb, type Db } from "~/db/client";
 import { migrate } from "~/db/migrate";
 import { startLive, type DemoLive } from "~/demo/live";
+import { simulatedEncoders } from "~/demo/encoder";
 import { newPace, pacedEncoders, pacedProviders } from "~/demo/pace";
 import { demoReset } from "~/demo/reset";
 import { isFresh, seedDemo } from "~/demo/seed";
@@ -55,13 +56,13 @@ export interface LibraryOptions {
   /** what its builds write audiobooks with — one choice for the whole process, checked at boot */
   encoders: EncoderChoice;
   /**
-   * What a `thought` line is given as its clip lands — ffmpeg's, when the server found one at boot.
-   * Absent = thought lines are kept as the voice made them.
+   * What a `thought` line is given as its clip lands — ffmpeg's, in a running server. Absent (a
+   * test's library) = thought lines are kept as the voice made them.
    */
   thoughtEffect?: ThoughtEffect;
   /**
    * What a recording is made into before a transcription endpoint hears it — 16 kHz mono, ffmpeg's,
-   * when the server found one at boot. Absent = sent as it came.
+   * in a running server. Absent (a test's library) = sent as it came.
    */
   speechRate?: SpeechRate;
   /** the logger its own is a child of */
@@ -149,7 +150,9 @@ export function openLibrary(options: LibraryOptions): Library {
   const providers = options.demo ? pacedProviders(given, pace) : given;
   const files = audioFiles(options.audioDir, base, options.demo ? demoClips(db) : undefined);
   const exports = {
-    encoders: options.demo ? pacedEncoders(options.encoders, pace) : options.encoders,
+    encoders: options.demo
+      ? pacedEncoders(simulatedEncoders(options.encoders), pace)
+      : options.encoders,
     files: audiobookFiles(options.exportDir),
   };
   const voiceFiles = voiceFilesIn(options.voiceDir);

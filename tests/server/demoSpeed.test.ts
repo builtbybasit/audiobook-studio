@@ -16,7 +16,7 @@ import type { AudiobookEncoder, EncodeInput } from "~/providers/encoder";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import type { ScriptTarget } from "~/providers/scripting";
-import { wavEncoders } from "~/providers/wavEncoder";
+import { ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import {
   collectingLogger,
   jsonBody,
@@ -50,7 +50,7 @@ async function started(demo: boolean, still = true): Promise<Library> {
     audioDir: tempAudioDir(),
     exportDir: tempExportDir(),
     voiceDir: tempVoiceDir(),
-    encoders: wavEncoders(),
+    encoders: ffmpegEncoders(),
     log: collectingLogger().log,
     providers: {
       scripting: endpointScriptingProvider({ fetch: noNetwork, random: () => 1 }),
@@ -128,7 +128,7 @@ describe("the demo's speed", () => {
     const pace = newPace();
     const told: number[] = [];
     const inner: AudiobookEncoder = {
-      ...wavEncoders().for({} as never),
+      ...ffmpegEncoders().for({} as never),
       async encode(input: EncodeInput) {
         input.chapters.forEach((c, i) =>
           input.onChapter?.({ id: c.id, start: 0, length: 0, seconds: 1 }, i),

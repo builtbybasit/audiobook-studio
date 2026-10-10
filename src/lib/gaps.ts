@@ -38,14 +38,16 @@ export function tokensOf(text: string): WordToken[] {
  * (`alignHeard`) — so none of them disagrees with another about what a word is.
  */
 export function wordsOf(text: string): string[] {
-  return (
-    text
-      .normalize("NFKC")
-      .toLowerCase()
-      .replace(/[‘’ʼ`´]/g, "'")
-      .match(/[\p{L}\p{N}]+(?:'[\p{L}\p{N}]+)*/gu) ?? []
-  );
+  return folded(text).toLowerCase().match(WORD) ?? [];
 }
+
+/** The same words with their capitals kept, for a comparison that needs to know a name from a word. */
+export function writtenWordsOf(text: string): string[] {
+  return folded(text).match(WORD) ?? [];
+}
+
+const folded = (text: string): string => text.normalize("NFKC").replace(/[‘’ʼ`´]/g, "'");
+const WORD = /[\p{L}\p{N}]+(?:'[\p{L}\p{N}]+)*/gu;
 
 /**
  * The gaps of a line. A cut needs a word on each side, so "split" offers only the gaps inside;

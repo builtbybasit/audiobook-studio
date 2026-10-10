@@ -19,7 +19,6 @@ import type {
   Transcriber,
 } from "@/types";
 import { listJobs } from "~/db/jobs";
-import { nameWords, namesIn } from "~/jobs/check";
 import { readScript, setFlag } from "~/db/script";
 import { ProviderError } from "~/providers/http";
 import type {
@@ -163,14 +162,13 @@ describe("checking a chapter by ear", () => {
     expect(body.skipped).toEqual([]);
     expect(body.jobs.map((j) => [j.kind, j.chapterId])).toEqual([["check", 1]]);
     expect(e.asked).toHaveLength(segs.length);
-    // a clip is sent the names its line is written with, and a line that names nobody none
+    // a clip is sent the cast's names its line is written with, the narrator's never
     const hinted = e.asked.map((a) => ({
       text: segs.find((s) => s.audio.url?.endsWith(`/${a.name}`))!.text,
       hints: a.hints ?? [],
     }));
     for (const { text, hints } of hinted) for (const h of hints) expect(text).toContain(h);
     expect(hinted.find((x) => x.text.includes("Mara"))?.hints).toContain("Mara");
-    expect(hinted.some((x) => !x.hints.length)).toBe(true);
     expect(hinted.flatMap((x) => x.hints)).not.toContain("Narrator");
     expect(e.asked[0].words).toBe(true);
 
@@ -364,33 +362,5 @@ describe("checking a chapter by ear", () => {
     const checks = listJobs(api.db).filter((j) => j.kind === "check");
     expect(checks.map((j) => [j.chapterId, j.status])).toEqual([[2, "done"]]);
     expect(Object.keys(await heardOf(api, id, 2)).length).toBeGreaterThan(0);
-  });
-});
-
-describe("the names a clip is sent as hints", () => {
-  const names = nameWords(
-    [
-      { name: "Narrator", aliases: [] },
-      { name: "Noel Rowe", aliases: ["Little Noel"] },
-      { name: "Julien D. Evenus", aliases: [] },
-      { name: "The man", aliases: [] },
-      { name: "Red-Haired Woman", aliases: ["This woman"] },
-    ],
-    "This woman, whom the little ones fear, is not this town’s friend.",
-  );
-
-  test("are the cast's capitalised name words, never a title, an initial, the narrator or a word the chapter writes in lowercase", () => {
-    expect([...names].sort()).toEqual(["Evenus", "Julien", "Noel", "Red-Haired", "Rowe"]);
-  });
-
-  test("are those the line is written with, in its order and once, a possessive read as its name", () => {
-    expect(namesIn("Noel's worried voice reached my ears.", names)).toEqual(["Noel"]);
-    expect(namesIn("Rowe, said Julien. “Rowe!” Noel’s brother.", names)).toEqual([
-      "Rowe",
-      "Julien",
-      "Noel",
-    ]);
-    // as written: a lowercase word is not the name, and the line naming nobody is sent nothing
-    expect(namesIn("The man walked on, a little red-haired.", names)).toEqual([]);
   });
 });

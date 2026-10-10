@@ -424,8 +424,9 @@ What uses it:
   hand. The request is priced into the ledger with no book, held to the endpoint's daily limit and
   tried once.
 - **Checking by ear.** A `check` job sends each narrated line's clip to the first one switched on,
-  with the cast's names its line is written with as hints (aliases too, a possessive read as
-  its name; a line that names nobody is sent none), and flags a line whose clip says something else
+  with the words of the cast's names and aliases its line is written with as hints ("Noel's" and
+  "NOEL!" send `Noel`; "I will go" never sends `Will`; a line that names nobody is sent none —
+  `namesIn` in [src/lib/cast.ts](../src/lib/cast.ts)), and flags a line whose clip says something else
   ([audio](audio.md#checking-by-ear)); priced against the book, by the minute of audio. A server
   that drops the connection for a request with hints and answers it without them (Fermion 0.2.9,
   whose hotwords fail to load) is sent none from then on, until the app restarts.

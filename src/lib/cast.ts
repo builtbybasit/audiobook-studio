@@ -2,8 +2,11 @@
 //
 // Shared by the seeded world, the cast store and the server's scripting job, because all three
 // bring speakers into a cast and a walk-on the model turned up has to look the same whichever of
-// them found it. Nothing here reaches a store or the demo world.
+// them found it. And which of a cast's names a line is written with (`namesIn`), what a clip is
+// sent as hints when it is checked by ear. Nothing here reaches a store or the demo world.
 import type { Character, CharacterVoice, Gender, VoiceRef } from "@/types";
+import { writtenWordsOf } from "@/lib/gaps";
+import type { PromptCastMember } from "@/lib/prompt";
 
 /** The colours a cast is assigned from, in the order speakers arrive. */
 export const PALETTE: string[] = [
@@ -101,4 +104,44 @@ export function speakerVoice(
     if (ref) return { ref, from: "character" };
   }
   return { ref: narratorVoice, from: "narrator" };
+}
+
+// ---------- names in a line ----------
+
+/** Words a speaker's name can start with that name nobody: "The man" must not hint every "The". */
+const NOT_NAMES = new Set(["the", "a", "an", "mr", "mrs", "ms", "miss", "dr", "sir", "madam"]);
+
+/**
+ * The words a cast is named by — those its names and aliases spell with a capital, the narrator's
+ * aside — keyed by the word as compared, to the word as the cast spells it. An initial and a title
+ * are left out.
+ */
+export function nameWords(
+  cast: readonly Pick<PromptCastMember, "name" | "aliases">[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const c of cast) {
+    if (c.name === NARRATOR) continue;
+    for (const w of [c.name, ...(c.aliases ?? [])].flatMap(writtenWordsOf)) {
+      const key = w.toLowerCase();
+      if (/^\p{Lu}/u.test(w) && key.length > 1 && !NOT_NAMES.has(key) && !out.has(key))
+        out.set(key, w);
+    }
+  }
+  return out;
+}
+
+/**
+ * The cast's name words a line is written with, as the cast spells them, in the line's order and
+ * once each. A word counts when it is written with a capital — "NOEL!" and a stuttered "N-Noel" do,
+ * "I will go" never names Will — and a possessive ("Noel's", "James'") is read as its name.
+ */
+export function namesIn(text: string, words: ReadonlyMap<string, string>): string[] {
+  const out = new Set<string>();
+  for (const w of writtenWordsOf(text)) {
+    if (!/^\p{Lu}/u.test(w)) continue;
+    const name = words.get(w.toLowerCase().replace(/'s$/, "")) ?? words.get(w.toLowerCase());
+    if (name) out.add(name);
+  }
+  return [...out];
 }

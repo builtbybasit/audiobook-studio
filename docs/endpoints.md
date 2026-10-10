@@ -455,7 +455,10 @@ voice rendered it. A server with no ffmpeg sends them as rendered, and its boot 
 8010` (its default, 8000, is the OmniVoice server's), and the **Fermion Phonon (local)** preset.
 English only, free, and far faster than real time (0.2.11: 155 clips, 568 s of audio, in 16 s). `/v1/models` lists it by its full name; the
 Test button says so and the requests still go through, since the server takes `phonon-2` as an
-alias.
+alias. Its CUDA build serves no `/v1/models` (only `/v1/audio/transcriptions`, `/v1/audio/stream` and
+`/health`), so on a 404 there the Test button asks `POST …/audio/transcriptions` with no file in the
+form instead: the route refusing it for want of one (400) is the server answering, and nothing is
+heard or billed; a wrong base URL is a 404 there too.
 
 A simulated transcription endpoint (`simulated://…`) hears the same fixed sentence in every
 recording and gives no word times.

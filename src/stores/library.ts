@@ -19,6 +19,7 @@ import { noticeGroups, plural, summarize } from "@/lib/contents";
 import { coverRefusal } from "@/lib/exports";
 import { bookPromptProblems } from "@/lib/prompt";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
+import { staleMoved } from "@/queries/effects";
 import { invalidate } from "@/queries/invalidate";
 import { fetchBook, fetchShelf } from "@/queries/library";
 import { keys } from "@/queries/keys";
@@ -41,6 +42,7 @@ import type {
   PromptTrialRequest,
   PromptTrialResult,
   StartedOver,
+  ThoughtChoice,
   Volume,
   VolumeStart,
 } from "@/types";
@@ -557,19 +559,26 @@ export const useLibraryStore = defineStore("library", {
       );
     },
     /**
-     * Whether thought lines get the thought effect as they land. Like checking by ear it changes no
-     * clip already made — only what the next narration does — so nothing is read back.
+     * The book's thought effect: an effect's id, "none", or null to follow the library's. It
+     * changes no clip already made — those show in the old-sound count, which is read again, until
+     * a Re-apply or a retake redoes them.
      */
-    async setThoughtEffect(bookId: string, on: boolean): Promise<void> {
+    async setBookThoughts(bookId: string, choice: ThoughtChoice | null): Promise<void> {
       const b = this.bookById(bookId);
-      if (!b || (b.thoughts !== "none") === on) return;
-      if (on) delete b.thoughts;
-      else b.thoughts = "none";
-      await this._writeSettings(
-        bookId,
-        { thoughts: on ? null : "none" },
-        on ? "give this book's thoughts their effect" : "narrate this book's thoughts plain",
-      );
+      if (!b || (b.thoughts ?? null) === choice) return;
+      if (choice === null) delete b.thoughts;
+      else b.thoughts = choice;
+      await this._writeSettings(bookId, { thoughts: choice }, "save this book's thought effect");
+      void staleMoved(bookId);
+    },
+    /**
+     * An effect removed takes every book's choice of it: they follow the library again, as the
+     * server has them. Returns the books that chose it.
+     */
+    _dropEffect(id: string): string[] {
+      const chose = this.books.filter((b) => b.thoughts === id);
+      for (const b of chose) delete b.thoughts;
+      return chose.map((b) => b.id);
     },
     /**
      * The book's Character voice — what a speaker with no voice of their own is read in — or null

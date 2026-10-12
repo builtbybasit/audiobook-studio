@@ -12,6 +12,7 @@ Stores own reactive state and user actions. Every store reads and writes through
 | `transfer.ts`       | A script file read in: the plan the server answered with, applying it and the report of what it did                                      |
 | `speakerSamples.ts` | Voice samples a script file brought, waiting with a speaker: discarding them, and giving the voice cloned from them to the speaker       |
 | `cast.ts`           | Characters, dictionary, pacing, voice routing and pronunciation actions                                                                  |
+| `effects.ts`        | The library's voice effects, its thought effect, previewing and reading code into a chain, and queuing a book's Re-apply                 |
 | `endpoints.ts`      | Speech endpoints, scripting profiles, their rate cards and the credential registry; what the server's speech gate has seen of each       |
 | `jobs.ts`           | The job actions; the queue and each book's spending are the queries' reads, which its getters answer from                                |
 | `scripting.ts`      | Scripting settings, the scripting plan and estimate, and queuing a run                                                                   |

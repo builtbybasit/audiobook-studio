@@ -43,18 +43,15 @@ export function effectRoutes(db: Db, files: AudioFiles, effects?: EffectRunner):
 
   /**
    * A clip of this library's played through `chains`, as a WAV; nothing is kept. The url is one a
-   * clip was given (`AudioFiles.write`), checked the way the audio route checks it, so nothing
-   * outside the library's clips can be read through here.
+   * clip was given (`AudioFiles.write`), found by `AudioFiles.find`, so nothing outside the
+   * library's clips can be read through here.
    */
   app.post("/preview", validate("json", Preview), async (c) => {
     const { url, chains } = c.req.valid("json");
     const run = await runner();
-    const [bookId, file, ...rest] = url.startsWith(`${files.base}/audio/`)
-      ? url.slice(`${files.base}/audio/`.length).split("/")
-      : [];
-    const format = file && !rest.length ? formatOfFile(file) : null;
-    const path = format && (await files.ready(bookId, file));
-    if (!format || !path || !(await Bun.file(path).exists())) throw notFound("No such audio file");
+    const path = await files.find(url);
+    const format = path && formatOfFile(path);
+    if (!path || !format) throw notFound("No such audio file");
     let wav: Uint8Array;
     try {
       wav = await run.render(await Bun.file(path).bytes(), format, chains, c.req.raw.signal);

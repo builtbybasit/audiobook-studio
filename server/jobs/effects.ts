@@ -21,7 +21,7 @@ import type { Job } from "@/types";
 import { runnable } from "@/lib/effects";
 import { pacingOrDefault, chapterSeconds } from "@/lib/speech";
 import type { EffectJob, EffectRunner } from "~/audio/effects";
-import { formatOfFile, type AudioFiles } from "~/audio/files";
+import { fileName, formatOfFile, type AudioFiles } from "~/audio/files";
 import { probeClip } from "~/audio/probe";
 import type { Db } from "~/db/client";
 import { cannotRedo, staleClips, swapClipFile, type StaleClip } from "~/db/effects";
@@ -31,9 +31,6 @@ import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
 
 const LABEL = "Re-apply effects";
-
-/** A clip's file name, which is how its url ends (`audio/files.ts`). */
-const fileOf = (url: string): string => url.slice(url.lastIndexOf("/") + 1);
 
 const clipsWord = (n: number): string => `${n} clip${n === 1 ? "" : "s"}`;
 
@@ -90,8 +87,8 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
         c: StaleClip,
         next: { url: string; raw: string | null },
       ): Promise<boolean> => {
-        const path = await files.ready(bookId, fileOf(next.url));
-        const format = formatOfFile(next.url);
+        const path = await files.find(next.url, bookId);
+        const format = path && formatOfFile(path);
         if (!path || !format) throw new Error("The file is not one this library keeps");
         const { duration, sampleRate } = await probeClip(await Bun.file(path).bytes(), format);
         const at = db.transaction((tx) => {
@@ -116,7 +113,7 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
         if (at) {
           landed++;
           // a clip with a raw file was playing a processed one, which nothing plays now
-          if (c.raw) gone.push(fileOf(c.url));
+          if (c.raw) gone.push(fileName(c.url));
         } else skipped++;
         settled();
         return at > 0;
@@ -137,11 +134,11 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
         const jobs: EffectJob[] = [];
         const outs: string[] = [];
         for (const c of renders) {
-          // `ready`: a demo clip nobody has played yet is made now
-          const input = await files.ready(bookId, fileOf(c.raw ?? c.url));
+          // `find` makes a demo clip nobody has played yet
+          const input = await files.find(c.raw ?? c.url, bookId);
           const out = await files.fresh(bookId, "wav");
           jobs.push({
-            // a name this library never writes has no path, and fails in the batch as missing
+            // a file the book does not have fails in the batch as missing
             input: input ?? "",
             output: out.path,
             chains: c.effects.map((e) => runnable(e.chain)),
@@ -168,7 +165,7 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
             );
         } finally {
           await Promise.all(landings);
-          outs.forEach((url, i) => kept.has(i) || gone.push(fileOf(url)));
+          outs.forEach((url, i) => kept.has(i) || gone.push(fileName(url)));
         }
       } finally {
         await files.remove(bookId, gone).catch((e: unknown) => {

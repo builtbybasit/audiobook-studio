@@ -43,6 +43,12 @@ export function formatOfFile(name: string): AudioFormat | null {
 }
 
 /**
+ * The file name a clip's url ends with: the name `heard` keeps a finding by and `remove` takes. It
+ * says nothing about whether the url is one of this library's; `AudioFiles.find` does.
+ */
+export const fileName = (url: string): string => url.slice(url.lastIndexOf("/") + 1);
+
+/**
  * The bytes the clip a url names should hold, for a library that can make a clip's file again from
  * its row; null when no clip names that url, or none this can make.
  */
@@ -68,6 +74,12 @@ export interface AudioFiles {
    * file removed by hand — and the caller answers that as it answers a missing file.
    */
   ready(bookId: string, file: string): Promise<string | null>;
+  /**
+   * The file on disk a clip url names, made first as `ready` would; undefined for anything else —
+   * another library's url, one in a book other than `bookId` when given, a name that cannot be a
+   * clip's, or a file that is not there.
+   */
+  find(url: string, bookId?: string): Promise<string | undefined>;
   /** Some of a book's clips, by file name; one already gone is not an error. */
   remove(bookId: string, files: readonly string[]): Promise<void>;
   /** Everything a book's clips left on disk; a book that left nothing is not an error. */
@@ -118,6 +130,15 @@ export function audioFiles(dir: string, base = "/api", make?: MakeClip): AudioFi
       }
       await pending;
       return path;
+    },
+    async find(url, bookId) {
+      const prefix = `${base}/audio/`;
+      if (!url.startsWith(prefix)) return undefined;
+      const [book, file, ...rest] = url.slice(prefix.length).split("/");
+      if (rest.length || file === undefined || (bookId !== undefined && book !== bookId))
+        return undefined;
+      const path = await this.ready(book, file);
+      return path && (await Bun.file(path).exists()) ? path : undefined;
     },
     async remove(bookId, files) {
       for (const file of files) {

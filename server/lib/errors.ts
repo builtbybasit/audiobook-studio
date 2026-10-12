@@ -9,7 +9,7 @@ import type { ApiErrorCode } from "@/types";
 
 export type ErrorCode = ApiErrorCode;
 
-export type ErrorStatus = 400 | 403 | 404 | 409 | 413 | 415 | 416 | 500 | 502;
+export type ErrorStatus = 400 | 403 | 404 | 409 | 413 | 415 | 416 | 500 | 502 | 503;
 
 const CODES: Record<ErrorStatus, ErrorCode> = {
   400: "bad_request",
@@ -23,6 +23,8 @@ const CODES: Record<ErrorStatus, ErrorCode> = {
   // A provider this server asked on the page's behalf refused or failed. Not this server's fault,
   // and not the request's either; the message says which provider and what it answered.
   502: "upstream",
+  // What was asked needs a tool this machine does not have (uv, for voice effects).
+  503: "unavailable",
 };
 
 /** The code for a status this API did not choose itself: any other 4xx is the request's fault. */

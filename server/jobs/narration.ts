@@ -45,15 +45,18 @@
 // `server/narration/batch.ts`, which takes its lines through `lineRun` without ordering those
 // steps itself.
 import type { Job, NarrationQueued, NarrationScope, Segment, SegmentAudio } from "@/types";
+import { chainsFor, runnable, soundOf, thoughtEffectOf, type EffectContext } from "@/lib/effects";
 import { encodingOf } from "@/lib/endpointShapes";
 import { chapterNarration, narrationTargets, SCOPE_LABEL } from "@/lib/runPlan";
 import { isSpoken } from "@/lib/siteText";
 import { compareReading, cutReading, readingRecord, type Reading } from "@/lib/reading";
 import { requeue } from "@/lib/takes";
+import type { EffectRunner } from "~/audio/effects";
 import type { AudioFiles } from "~/audio/files";
 import { probeClip } from "~/audio/probe";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
 import type { Db, Tx } from "~/db/client";
+import { effectContext } from "~/db/effects";
 import { readEndpoint } from "~/db/endpoints";
 import { activeJob, getJob, nextRunId, setReserved } from "~/db/jobs";
 import * as library from "~/db/library";
@@ -129,6 +132,65 @@ export const scopeOf = (job: Job): RunScope =>
   job.narrationRun?.scope ?? SCOPE_OF_LABEL.get(job.bulk?.scope ?? "") ?? "all";
 const labelOf = (scope: RunScope): string =>
   scope === "pending" ? RETAKE_LABEL : SCOPE_LABEL[scope];
+
+/** What makes a line's clip sound the way its effects say, as it lands. */
+export interface SoundPorts {
+  /** Pedalboard, where this machine has it */
+  effects?: EffectRunner;
+  /** the ffmpeg thought effect, which thought lines are given where Pedalboard is missing */
+  thoughtEffect?: ThoughtEffect;
+}
+
+/** How a landing line's audio is processed, and the `sound` its clip then records. */
+interface LineSound {
+  sound: string;
+  apply: ThoughtEffect;
+}
+
+/**
+ * The sound each line of a run is given, from the effects read when the run started — like the
+ * cast, a choice changed mid-run applies from the next run, and a clip that missed it reads as an
+ * old sound. Null for a line no effect touches, which keeps the voice's file and no raw beside it.
+ *
+ * Where Pedalboard cannot run, a thought line is still heard as a thought: its thought effect is
+ * replaced by the ffmpeg one, recorded as the sound `"ffmpeg"`, so a Re-apply once Pedalboard is
+ * there gives it the real chain. A speaker's own effect has no stand-in and is left off, said once
+ * per run rather than once a line.
+ */
+function lineSounds(
+  ctx: JobContext,
+  fx: EffectContext,
+  { effects, thoughtEffect }: SoundPorts,
+): (s: Segment) => Promise<LineSound | null> {
+  // asked at the first line that needs it, so a run with no effects never waits on uv
+  let pedalboard: Promise<boolean> | undefined;
+  let toldSkipped = false;
+  return async (s) => {
+    const chains = chainsFor(s, fx);
+    const sound = soundOf(chains);
+    if (!sound) return null;
+    if (effects && (await (pedalboard ??= effects.available()))) {
+      const steps = chains.map((e) => runnable(e.chain));
+      return {
+        sound,
+        apply: (bytes, format, signal) => effects.render(bytes, format, steps, signal),
+      };
+    }
+    const thought = s.type === "thought" ? thoughtEffectOf(s.speaker, fx) : null;
+    // chainsFor puts the thought effect last, after the speaker's own
+    if (!toldSkipped && soundOf(thought ? chains.slice(0, -1) : chains)) {
+      toldSkipped = true;
+      ctx.note(
+        "Voice effects cannot run here (Pedalboard needs uv), so speakers' own effects were left off; Re-apply once they can",
+        "warning",
+        { line: s.id, speaker: s.speaker },
+      );
+    }
+    return thought && thoughtEffect && soundOf([thought])
+      ? { sound: "ffmpeg", apply: thoughtEffect }
+      : null;
+  };
+}
 
 /** The chapter as the job needs it: where it is, and the identity to find it by again. */
 function readChapter(db: Db, bookId: string, chapterId: number) {
@@ -275,8 +337,8 @@ function lineRun(o: {
   gate: SpeechGate;
   chapter: { uid: string };
   deliveryOf: (speaker: string) => Delivery;
-  /** what a `thought` line is given as it lands; absent when the book or the server has none */
-  thoughtEffect?: ThoughtEffect;
+  /** what a line's clip is processed with as it lands (`lineSounds`) */
+  soundFor: (s: Segment) => Promise<LineSound | null>;
   targets: readonly Target[];
   lines: number;
   stop: AbortSignal;
@@ -288,8 +350,7 @@ function lineRun(o: {
   close(): void;
   tally: Tally;
 } {
-  const { ctx, provider, files, gate, chapter, deliveryOf, thoughtEffect, targets, lines, stop } =
-    o;
+  const { ctx, provider, files, gate, chapter, deliveryOf, soundFor, targets, lines, stop } = o;
   const { job, db } = ctx;
 
   /** One write against the chapter wherever it is now, moving the revision with it. */
@@ -566,22 +627,23 @@ function lineRun(o: {
     });
 
   /**
-   * A thought line's audio with the thought effect on it, as a WAV, or null — said in the log — when
-   * it could not be applied: the line keeps the clip the voice made rather than failing over a sound.
+   * A line's audio through its effects, as a WAV, or null — said in the log — when they could not
+   * be applied: the line keeps the clip the voice made rather than failing over a sound.
    */
   const withEffect = async (
     s: Segment,
     rendered: RenderedClip,
-  ): Promise<{ bytes: Uint8Array; format: "wav"; duration: number } | null> => {
+    fx: LineSound,
+  ): Promise<{ bytes: Uint8Array; duration: number; sound: string } | null> => {
     try {
-      const bytes = await thoughtEffect!(rendered.bytes, rendered.format, stop);
-      // the room it adds rings on a little past the last word, so the length is read again
+      const bytes = await fx.apply(rendered.bytes, rendered.format, stop);
+      // a room or an echo rings on a little past the last word, so the length is read again
       const { duration } = await probeClip(bytes, "wav");
-      return { bytes, format: "wav", duration };
+      return { bytes, duration, sound: fx.sound };
     } catch (e) {
       if (stop.aborted) throw e;
       const why = e instanceof Error ? e.message : String(e);
-      ctx.note(`Line ${s.id}: the thought effect was not applied: ${why}`, "warning", {
+      ctx.note(`Line ${s.id}: its voice effects were not applied: ${why}`, "warning", {
         line: s.id,
         error: why,
       });
@@ -606,21 +668,27 @@ function lineRun(o: {
         const why = (e as Error).message;
         throw new Error(`The audio that came back could not be read: ${why}`, { cause: e });
       }
-      const kept = s.type === "thought" && thoughtEffect ? await withEffect(s, rendered) : null;
-      const audio = kept ?? rendered;
-      // by the book, which is where the file stays whatever the chapter's number becomes
-      const { url } = await files.write(job.bookId, audio.bytes, audio.format);
+      // Kept by the book, which is where the file stays whatever the chapter's number becomes.
+      // The voice's own file is written first, and a line with effects keeps it beside the one
+      // they made, as its raw, so a Re-apply works from it without asking the voice again.
+      const fx = await soundFor(s);
+      const voice = await files.write(job.bookId, rendered.bytes, rendered.format);
+      const processed = fx ? await withEffect(s, rendered, fx) : null;
+      const kept = processed && {
+        ...processed,
+        url: (await files.write(job.bookId, processed.bytes, "wav")).url,
+      };
       clip = {
         ...generating,
         status: "done",
         ms: rendered.ms,
-        duration: audio.duration,
-        url,
+        duration: kept?.duration ?? rendered.duration,
+        url: kept?.url ?? voice.url,
         at: Date.now(),
         model: rendered.model,
         ...(rendered.voice != null ? { voice: rendered.voice } : {}),
         sampleRate,
-        ...(kept ? { sound: "ffmpeg" } : {}),
+        ...(kept ? { sound: kept.sound, raw: voice.url } : {}),
       };
     } catch (e) {
       if (stop.aborted) throw e;
@@ -723,7 +791,7 @@ function lineRun(o: {
   /**
    * One line, on its own: a slot, then its request — or its parts, one after another. The slot is
    * the endpoint's, so it is given back as soon as the answer is in: what is done with the audio
-   * here — the thought effect, the file, the row — is no reason to keep the next line waiting.
+   * here — its effects, the files, the row — is no reason to keep the next line waiting.
    */
   const renderLine = async (t: Target): Promise<void> => {
     const answered = await sendLine(t);
@@ -761,7 +829,7 @@ export function narrationHandler(
   provider: SpeechProvider,
   files: AudioFiles,
   gate: SpeechGate = createSpeechGate(),
-  thoughtEffect?: ThoughtEffect,
+  sound: SoundPorts = {},
 ): JobHandler {
   return {
     async run(ctx: JobContext): Promise<void> {
@@ -775,8 +843,7 @@ export function narrationHandler(
       // cast is the book's and a rename mid-run is the rename's problem — it marks the clips it
       // moved stale.
       const deliveryOf = bookDelivery(db, job.bookId);
-      // read once, like the cast: a switch flipped mid-run applies from the next run
-      const plainThoughts = library.getBook(db, job.bookId)?.thoughts === "none";
+      const soundFor = lineSounds(ctx, effectContext(db, job.bookId), sound);
 
       const { targets, lines } = planRun(db, chapter.uid, scope);
       if (!targets.length) {
@@ -814,7 +881,7 @@ export function narrationHandler(
         gate,
         chapter,
         deliveryOf,
-        thoughtEffect: plainThoughts ? undefined : thoughtEffect,
+        soundFor,
         targets,
         lines,
         stop: stop.signal,

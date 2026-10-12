@@ -23,4 +23,6 @@ export type ApiErrorCode =
   | "range_not_satisfiable"
   /** a provider this server called refused or failed; the message is what it said */
   | "upstream"
+  /** something this server needs is not on this machine; the message says what */
+  | "unavailable"
   | "internal";

@@ -1,10 +1,12 @@
-// The sound a `thought` line is given as its clip lands: a voice heard from inside a head rather
-// than across a room — thinned and boxed in, the presence taken down, held together, and a small
-// room ringing around it.
+// The sound a `thought` line is given as its clip lands where Pedalboard cannot run (no uv): a
+// voice heard from inside a head rather than across a room — thinned and boxed in, the presence
+// taken down, held together, and a small room ringing around it. Where Pedalboard can, the line's
+// own thought effect is run instead (`audio/effects.ts`).
 //
 // It is applied once, when the clip arrives, and kept in the file (`jobs/narration.ts`), so the
 // player, the Listen page, a check by ear and a build all hear the same thing and nothing has to
-// remember to apply it later. The clip records that it carries it (`SegmentAudio.sound`).
+// remember to apply it later. The clip records that it carries it as the sound `"ffmpeg"`, and
+// keeps the voice's own file as its raw, so a Re-apply can give it the real chain later.
 //
 // It is a port, like the encoder: ffmpeg's in a running server, and nothing at all in a test's
 // library that is handed none, which narrates thoughts as the voice made them.

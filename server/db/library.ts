@@ -14,6 +14,7 @@ import type {
   ChapterCounts,
   LineCounts,
   NarrationStatus,
+  Pacing,
   ScriptingStatus,
   SegmentType,
   ThoughtChoice,
@@ -21,6 +22,7 @@ import type {
   VolumeStart,
 } from "@/types";
 import { chapterNumbers } from "@/lib/chapterNumber";
+import { pacingOrDefault } from "@/lib/speech";
 import { unspokenTypes } from "@/lib/siteText";
 import type { Db, Tx } from "~/db/client";
 import type { ChapterBody } from "~/import/assemble";
@@ -43,6 +45,7 @@ import {
   chapterValues,
   toBook,
   toChapter,
+  toPacing,
   volumeValues,
 } from "~/db/rows";
 
@@ -112,6 +115,21 @@ export function getBook(db: Db | Tx, id: string): Book | undefined {
     .orderBy(asc(volumes.position))
     .all();
   return toBook(row, vols, chapterCounts(db, id).get(id) ?? NO_CHAPTERS);
+}
+
+/** A book's pacing, the default when it has none of its own: one row's few columns, for a line. */
+export function readPacing(db: Db | Tx, bookId: string): Pacing {
+  const row = db
+    .select({
+      pacingLine: books.pacingLine,
+      pacingTurn: books.pacingTurn,
+      pacingInlineShort: books.pacingInlineShort,
+      pacingInlineLong: books.pacingInlineLong,
+    })
+    .from(books)
+    .where(eq(books.id, bookId))
+    .get();
+  return pacingOrDefault(row && toPacing(row));
 }
 
 export function listChapters(db: Db | Tx, bookId: string): Chapter[] {
@@ -686,7 +704,7 @@ export function deleteBook(db: Db, bookId: string): void {
 export interface BookSettings {
   budget?: { cap: number | null; paused: boolean } | null;
   scriptBudget?: number | null;
-  pacing?: { line: number; turn: number } | null;
+  pacing?: Pacing | null;
   /** the book's notes for the scripter and its own prompt; `null` clears both */
   prompt?: BookPrompt | null;
   /** read `note` lines aloud; `null` goes back to the default, which skips them */
@@ -702,7 +720,7 @@ export interface BookSettings {
 /**
  * Write the settings a request names, and nothing else.
  *
- * A budget and a pacing are each one value in two columns, and are written as one: the row reads
+ * A budget and a pacing are each one value in several columns, and are written as one: the row reads
  * back a pacing only when both of its columns are set, so writing half of one would store a value
  * that reads as the default. A prompt is one value in four, the same way.
  */
@@ -716,6 +734,8 @@ export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): v
   if (s.pacing !== undefined) {
     set.pacingLine = s.pacing?.line ?? null;
     set.pacingTurn = s.pacing?.turn ?? null;
+    set.pacingInlineShort = s.pacing?.inlineShort ?? null;
+    set.pacingInlineLong = s.pacing?.inlineLong ?? null;
   }
   if (s.prompt !== undefined) Object.assign(set, bookPromptValues(s.prompt));
   if (s.readNotes !== undefined) set.readNotes = s.readNotes;

@@ -42,6 +42,9 @@ export const books = sqliteTable("books", {
   scriptBudget: real("script_budget"),
   pacingLine: real("pacing_line"),
   pacingTurn: real("pacing_turn"),
+  /** the pauses inside a line; null on a book whose pacing was saved before they were asked */
+  pacingInlineShort: real("pacing_inline_short"),
+  pacingInlineLong: real("pacing_inline_long"),
   /** the book's notes for the scripter, which `{{book.notes}}` places; null = none */
   promptNotes: text("prompt_notes"),
   /** whether the two texts below are this book's whole prompt; kept either way */

@@ -7,7 +7,7 @@
 // as it lands — is the run's. What is decided here is only what a batch adds — which lines go
 // together, which part of which line an item is, and which lines go again when a batch did not
 // answer them.
-import type { SplitPart } from "@/lib/split";
+import { joinedParts, type SplitPart } from "@/lib/split";
 import { ProviderError } from "~/providers/http";
 import {
   BatchCut,
@@ -58,8 +58,8 @@ export interface LineRun<T, L extends BatchLine<T>> {
 /**
  * An endpoint's lines in batches: each batch takes one of the endpoint's slots, and is filled when
  * it has one, from the lines still waiting, in the chapter's order, up to what the endpoint said
- * it takes. A line longer than an item may be goes as its parts, each its own item, and is joined
- * when they have all come back. Each line lands on its own as its items are answered.
+ * it takes. A line longer than an item may be, or cut at a pause, goes as its parts, each its own
+ * item, and is joined — with the pause's silence — when they have all come back. Each line lands on its own as its items are answered.
  *
  * A line goes into a later batch, up to the endpoint's retries, when another batch could go
  * differently and nothing has tried it yet: the server answered its item as failed and worth
@@ -158,7 +158,7 @@ export async function batchLines<T, L extends BatchLine<T>>(
       settled.add(line);
       let joined: Outcome;
       try {
-        joined = { rendered: count > 1 ? joinParts(got) : got[0] };
+        joined = { rendered: joinedParts(line.cuts) ? joinParts(got, line.cuts!) : got[0] };
       } catch (e) {
         joined = { error: e };
       }

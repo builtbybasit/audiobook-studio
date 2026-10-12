@@ -1,11 +1,13 @@
-// A line too long for its endpoint, sent as parts and kept as one clip.
+// A line too long for its endpoint, or with a pause its voice has no tag for, sent as parts and
+// kept as one clip.
 //
-// The narration job sends a line whole when it fits the endpoint's `maxChars`, and otherwise as
-// the parts its reading is cut into (`cutReading`) — one request after another, or each part an item of a
-// batch (`batch.ts`) — and joins what comes back into one file. What a failed part, a part in the
-// wrong format and an Opus line in parts come to is stated here, once, for both ways of sending.
+// The narration job sends a line whole when it fits the endpoint's `maxChars` and has no such
+// pause, and otherwise as the parts its reading is cut into (`cutReading`) — one request after
+// another, or each part an item of a batch (`batch.ts`) — and joins what comes back into one file,
+// with a pause's silence where the line was cut for one. What a failed part, a part in the wrong
+// format and an Opus line in parts come to is stated here, once, for both ways of sending.
 import { FORMAT_LABEL } from "@/lib/endpointShapes";
-import type { SplitPart } from "@/lib/split";
+import { joinedParts, type SplitPart } from "@/lib/split";
 import { joinClips } from "~/audio/probe";
 import { ProviderError } from "~/providers/http";
 import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/speech";
@@ -34,13 +36,16 @@ export function failureCode(e: unknown): number {
 }
 
 /**
- * A line sent the way its endpoint will take it: whole, or — longer than its `maxChars` — as the
- * parts its reading is cut into (`cutReading`), one request after another, the audio joined into one file.
+ * A line sent the way its endpoint will take it: whole, or — longer than its `maxChars`, or with a
+ * pause its voice has no tag for — as the parts its reading is cut into (`cutReading`), one request
+ * after another, the audio joined into one file.
  *
- * Nothing goes between the parts. The cuts fall where the reading already pauses — a sentence's
- * end, then a clause's — and each request's audio carries its own breath at either end, so adding
- * silence would read as a pause the line never had. A part that fails fails the line, with its
- * number: the parts before it are thrown away rather than kept as half a line.
+ * Nothing goes between the parts cut at `maxChars`. Those cuts fall where the reading already
+ * pauses — a sentence's end, then a clause's — and each request's audio carries its own breath at
+ * either end, so adding silence would read as a pause the line never had. A cut made for a pause
+ * has the pause's silence (`SplitPart.after`, and `before` for one that opens the line). A part that
+ * fails fails the line, with its number: the parts before it are thrown away rather than kept as
+ * half a line.
  *
  * WAV parts join as samples and MP3 parts as frames (`joinClips`). An Opus line that needs parts
  * fails before the first is sent: joined Opus is two Ogg streams chained in one file, which is
@@ -52,7 +57,7 @@ export async function speakInParts(
   input: SpeechInput,
   cuts: SplitPart[] | null,
 ): Promise<RenderedClip> {
-  if (!cuts || cuts.length < 2) return provider.speak(input);
+  if (!cuts || !joinedParts(cuts)) return provider.speak(input);
   if (input.encoding.format === "opus") throw opusInParts(cuts.length);
   const rendered: RenderedClip[] = [];
   for (const [i, cut] of cuts.entries()) {
@@ -65,17 +70,22 @@ export async function speakInParts(
       throw new PartFailed(i + 1, e);
     }
   }
-  return joinParts(rendered);
+  return joinParts(rendered, cuts);
 }
 
 /** Why an Opus line cannot go in parts; see `speakInParts`. */
 export const opusInParts = (parts: number): Error =>
   new Error(
-    `This line needs ${parts} requests at its endpoint's max characters, and an Opus line cannot be split into parts; raise this endpoint's max characters or choose MP3 or WAV`,
+    parts > 1
+      ? `This line needs ${parts} requests, at its endpoint's max characters or at a pause its voice has no tag for, and an Opus line cannot be split into parts; raise this endpoint's max characters or choose MP3 or WAV`
+      : "This line has a pause its voice has no tag for, which is silence added to the clip, and an Opus clip cannot be added to; choose MP3 or WAV",
   );
 
-/** A line's parts, in order, as one clip: the audio joined end to end, the times summed. */
-export function joinParts(rendered: RenderedClip[]): RenderedClip {
+/**
+ * A line's parts, in order, as one clip: the audio joined end to end with the silence `cuts` puts
+ * around each part, the times summed.
+ */
+export function joinParts(rendered: RenderedClip[], cuts?: readonly SplitPart[]): RenderedClip {
   const { format, mime } = rendered[0];
   let bytes: Uint8Array;
   try {
@@ -86,7 +96,7 @@ export function joinParts(rendered: RenderedClip[]): RenderedClip {
       );
     bytes = joinClips(
       format,
-      rendered.map((r) => r.bytes),
+      rendered.flatMap((r, i) => [cuts?.[i]?.before ?? 0, r.bytes, cuts?.[i]?.after ?? 0]),
     );
   } catch (e) {
     throw new Error(`The parts that came back could not be joined: ${(e as Error).message}`, {
@@ -98,7 +108,9 @@ export function joinParts(rendered: RenderedClip[]): RenderedClip {
     bytes,
     format,
     mime,
-    duration: rendered.reduce((a, r) => a + r.duration, 0),
+    duration:
+      rendered.reduce((a, r) => a + r.duration, 0) +
+      (cuts ?? []).reduce((a, c) => a + (c.before ?? 0) + (c.after ?? 0), 0),
     ms: rendered.reduce((a, r) => a + r.ms, 0),
     model: last.model,
     voice: last.voice,

@@ -24,7 +24,7 @@ import type {
   VersionOrigin,
 } from "@/types";
 import { describeOrigin } from "@/lib/prompt";
-import { markSuffix } from "@/lib/scriptFile";
+import { markName, markSuffix } from "@/lib/scriptFile";
 import { chapterNarration } from "@/lib/runPlan";
 import { isSpoken } from "@/lib/siteText";
 import { clone } from "@/lib/utils";
@@ -39,11 +39,11 @@ const norm = (t: string): string => t.replace(/\s+/g, " ").trim();
 const tight = (t: string): string => t.replace(/\s+/g, "");
 
 /**
- * The expression annotations of a line, as they would be rendered: tag, position, written by the
- * scripting model, omitted, awaiting review.
+ * The expression annotations of a line, as they would be rendered: tag or pause and its own
+ * length, position, written by the scripting model, omitted, awaiting review.
  */
 const exprSignature = (s: Segment): string =>
-  (s.expressions ?? []).map((a) => `${a.id}@${a.at}${markSuffix(a)}`).join(",");
+  (s.expressions ?? []).map((a) => `${markName(a)}@${a.at}${markSuffix(a)}`).join(",");
 
 /**
  * Everything a version keeps about one line, exactly as it keeps it. The clip rendered from it is
@@ -298,7 +298,11 @@ const PAUSE = (s: Segment): string =>
   s.pause == null ? "the book’s pause" : s.pause === 0 ? "runs straight on" : `${s.pause}s`;
 const EXPR = (s: Segment): string =>
   (s.expressions ?? []).length
-    ? s.expressions!.map((a) => a.label + (a.omitted ? " (omitted)" : "")).join(" · ")
+    ? s
+        .expressions!.map(
+          (a) => (a.kind === "pause" ? markName(a) : a.label) + (a.omitted ? " (omitted)" : ""),
+        )
+        .join(" · ")
     : "none";
 
 /** What two lines disagree on, field by field. */

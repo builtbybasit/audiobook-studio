@@ -1,8 +1,11 @@
 // MiniMax (https://platform.minimax.io/docs/api-reference/speech-t2a-http): `POST /v1/t2a_v2`,
 // answered with JSON carrying the audio as hex.
-import type { SpeechProviderShape } from "@/lib/providers/types";
+import { pauseSecs, type SpeechProviderShape } from "@/lib/providers/types";
 
 const RATES = [16000, 22050, 24000, 32000, 44100] as const;
+
+/** `<#x#>`, every model's pause, held to the range its reference allows */
+const pause = (s: number): string => `<#${pauseSecs(Math.min(Math.max(s, 0.01), 99.99))}#>`;
 
 export const minimax: SpeechProviderShape = {
   id: "minimax",
@@ -34,6 +37,8 @@ export const minimax: SpeechProviderShape = {
   ],
   // Its reference: pauses as `<#x#>` on every model; interjections — `(laughs)`, `(sighs)`,
   // `(breath)` — "only supported when using speech-2.8-hd or speech-2.8-turbo". Both are sounds.
+  // A pause is "in seconds", "valid range: [0.01, 99.99], up to two decimal places", and "must be
+  // placed between speakable text segments" (https://platform.minimax.io/docs/api-reference/speech-t2a-http).
   tags: (model) =>
     /^speech-2\.8-/i.test(model.trim())
       ? {
@@ -42,6 +47,8 @@ export const minimax: SpeechProviderShape = {
           kinds: ["sound"],
           example: "(laughs)",
           hint: "MiniMax's 2.8 models take the interjections its reference lists, such as (sighs), and pauses as <#0.5#>.",
+          pause,
+          pauseInside: true,
         }
       : {
           brackets: ["angle"],
@@ -49,6 +56,8 @@ export const minimax: SpeechProviderShape = {
           kinds: ["sound"],
           example: "<#0.5#>",
           hint: "MiniMax's models before 2.8 take only pauses, in seconds, as <#0.5#>.",
+          pause,
+          pauseInside: true,
         },
   // Its error codes are refusals to retry or fix; nothing in its docs says one is charged.
   billsFailures: false,

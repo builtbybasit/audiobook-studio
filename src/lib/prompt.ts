@@ -25,7 +25,9 @@
 // format says how: plain words in a marker the excerpt does not already have (`[[sigh]]`), read out
 // of the line when the answer comes back (`readScriptedTags`), so the line's text stays the prose
 // and the word-for-word check never sees them. Which brackets a voice wants is decided when the
-// line is sent, by the voice it is sent to.
+// line is sent, by the voice it is sent to. A **pause** is written the same way, `[[pause]]` or
+// `[[long pause]]`, and becomes a pause of the book's length for it (`scriptedAnnotation`); the
+// built-in prompt says when to write one.
 //
 // **Tags** are `{{name}}`, filled in one pass: nothing a tag puts in is read for tags again, so a
 // novel that happens to contain `{{` is sent as it is. A line whose tags all came out empty is left
@@ -143,7 +145,7 @@ export const outputFormat = (marker: ScriptMarker | null): string =>
   FORMAT_TEMPLATE.replace(
     TAGS_SLOT,
     marker
-      ? `- Expression tags, only when your instructions ask for them: a sound the voice should make — a sigh, a laugh — goes in the line's "text" where it is heard, as ${marker[0]}sigh${marker[1]}: plain words between ${marker[0]} and ${marker[1]}, whatever brackets the instructions show. A tag is not a word of the excerpt and never takes the place of one. Never write a cue any other way, such as [sighs] or (laughs).\n`
+      ? `- Expression tags, only when your instructions ask for them: a sound the voice should make — a sigh, a laugh — goes in the line's "text" where it is heard, as ${marker[0]}sigh${marker[1]}: plain words between ${marker[0]} and ${marker[1]}, whatever brackets the instructions show. A tag is not a word of the excerpt and never takes the place of one. Never write a cue any other way, such as [sighs] or (laughs).\n- Pauses, only where your instructions call for one: a pause inside a line goes in its "text" where it falls, as ${marker[0]}pause${marker[1]} for a short one or ${marker[0]}long pause${marker[1]} for a long one. Like a tag, it is not a word of the excerpt.\n`
       : `- Never put a cue such as [sighs] in "text".\n`,
   );
 
@@ -185,6 +187,7 @@ Rules:
 4. Work out who is speaking from the tags, the conversation's back-and-forth, and where the text before the excerpt left off. A character goes by one name all through the book: resolve pronouns, titles and nicknames ("the girl", "the Captain") to it, using the known cast's other names. When a speaker is one of the known cast, use exactly that name; otherwise use the name the text gives them (e.g. "Old Tobiah"). Use "Unknown" only when nothing says who speaks.
 5. Consecutive sentences of narration may share one line; start a new line at every change of speaker or type, and at paragraph breaks.
 6. A direction is all the voice engine is told besides the words, and it knows nothing of the story — no names, no plot — so describe the sound: tone, pace, volume, breath. Not "mocking his plan" but "lazy, open contempt"; not "shaking her head" but "flat, tired refusal". Base it on the prose (speech tags, punctuation, what the narrator says of the speaker); keep the same wording while a character's mood holds; leave it out for plain delivery.
+7. Put a pause inside a line only for a real beat — trailing off, a hesitation, a breath before a reveal — never at an ordinary comma or the end of a sentence, which the voice already pauses at.
 
 Notes on this book: {{book.notes}}
 Notes for this model: {{endpoint.notes}}`,

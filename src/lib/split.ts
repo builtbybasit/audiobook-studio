@@ -19,7 +19,15 @@ const CHAIN: SplitMode[] = ["sentence", "clause", "word", "char"];
 
 export interface SplitPart extends Cut {
   text: string;
+  /** seconds of silence before this part: a pause at the start of the line */
+  before?: number;
+  /** seconds of silence after it: a pause the voice has no tag for (`expressionParts`) */
+  after?: number;
 }
+
+/** Whether a line cut as `cuts` comes back as more than one clip's audio, joined. */
+export const joinedParts = (cuts: readonly SplitPart[] | null): boolean =>
+  !!cuts && (cuts.length > 1 || !!cuts[0]?.before || !!cuts[0]?.after);
 
 // last boundary of `mode` at or before `max` (index where the next part starts), or -1
 function lastBoundary(text: string, max: number, mode: SplitMode): number {

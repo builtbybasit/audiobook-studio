@@ -1,6 +1,6 @@
 // ElevenLabs (https://elevenlabs.io/docs/api-reference/text-to-speech/convert): the voice in the
 // path, the model in the body, keyed by `xi-api-key`.
-import type { SpeechProviderShape } from "@/lib/providers/types";
+import { pauseSecs, type SpeechProviderShape } from "@/lib/providers/types";
 
 /** v3 and its conversational sibling: the models that take audio tags. */
 const isV3 = (model: string): boolean => /^eleven_v3/i.test(model.trim());
@@ -37,7 +37,8 @@ export const elevenlabs: SpeechProviderShape = {
   ],
   // Eleven v3 takes audio tags in square brackets — emotions, delivery and reactions alike
   // (`[curious]`, `[whispers]`, `[laughs]`) — and "does not support SSML break tags"; the models
-  // before it take only `<break time="1.5s" />`, a pause, which is a sound in this app's terms.
+  // before it take only `<break time="1.5s" />`, a pause "up to 3 seconds", which is a sound in
+  // this app's terms (https://elevenlabs.io/docs/best-practices/prompting/controls).
   tags: (model) =>
     isV3(model)
       ? {
@@ -53,6 +54,7 @@ export const elevenlabs: SpeechProviderShape = {
           kinds: ["sound"],
           example: '<break time="1.5s" />',
           hint: "ElevenLabs' models before v3 take only pauses, as a break tag of up to 3 seconds.",
+          pause: (s) => `<break time="${pauseSecs(Math.min(s, 3))}s" />`,
         },
   // ElevenLabs bills characters of text it spoke; its docs say nothing of charging a refusal.
   billsFailures: false,

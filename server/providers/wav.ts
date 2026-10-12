@@ -85,11 +85,13 @@ export function readWavHeader(head: Uint8Array): WavBody {
 }
 
 /**
- * Several WAV files as one, their samples end to end with nothing between them: a line an endpoint
- * would only take in parts, put back together. They have to agree on what a sample is — 24 kHz
- * laid after 22.05 kHz plays at the wrong pitch — and a part that does not is named by its place.
+ * Several WAV files as one, their samples end to end: a line an endpoint would only take in parts,
+ * put back together, with silence wherever `pieces` has a number of seconds rather than a file.
+ * The files have to agree on what a sample is — 24 kHz laid after 22.05 kHz plays at the wrong
+ * pitch — and a part that does not is named by its place.
  */
-export function joinWav(files: Uint8Array[]): Uint8Array {
+export function joinWav(pieces: (Uint8Array | number)[]): Uint8Array {
+  const files = pieces.filter((p) => typeof p !== "number");
   const bodies = files.map((f) => readWavHeader(f));
   const first = bodies[0];
   if (!first) throw new Error("there was nothing to join");
@@ -98,8 +100,14 @@ export function joinWav(files: Uint8Array[]): Uint8Array {
       throw new Error(
         `part ${i + 1} came back as ${formatLabel(b)} and part 1 as ${formatLabel(first)}`,
       );
-  // what is really there, if a header claims more samples than the file holds
-  const spans = bodies.map((b, i) => files[i].subarray(b.start, b.start + b.length));
+  let file = 0;
+  const spans = pieces.map((p) => {
+    if (typeof p === "number")
+      return new Uint8Array(silenceBytes(first, p)).fill(silentByte(first));
+    const b = bodies[file++];
+    // what is really there, if a header claims more samples than the file holds
+    return p.subarray(b.start, b.start + b.length);
+  });
   const length = spans.reduce((a, s) => a + s.byteLength, 0);
   const out = new Uint8Array(HEADER + length);
   out.set(wavHeader(first, length));

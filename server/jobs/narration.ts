@@ -49,6 +49,7 @@ import { chainsFor, runnable, soundOf, thoughtEffectOf, type EffectContext } fro
 import { encodingOf } from "@/lib/endpointShapes";
 import { chapterNarration, narrationTargets, SCOPE_LABEL } from "@/lib/runPlan";
 import { isSpoken } from "@/lib/siteText";
+import { joinedParts } from "@/lib/split";
 import { compareReading, cutReading, readingRecord, type Reading } from "@/lib/reading";
 import { requeue } from "@/lib/takes";
 import type { EffectRunner } from "~/audio/effects";
@@ -566,8 +567,9 @@ function lineRun(o: {
    * Why a committed line cannot be sent at all, or null: a tag the endpoint cannot say is the
    * demo's "blocked before dispatch" — the line is not sent, rather than sent without the tag
    * and marked stale on arrival; a tag longer than an item of the endpoint's batches may be has
-   * nowhere to go, since a tag is never cut (`cutReading`); and an Opus line in parts could not be
-   * kept (`speakInParts`). Each is that line's failure, and the run goes on.
+   * nowhere to go, since a tag is never cut (`cutReading`); and an Opus line in parts, or with a
+   * pause's silence added, could not be kept (`speakInParts`). Each is that line's failure, and
+   * the run goes on.
    */
   const unsendable = (line: Line): Error | null => {
     const { plan, reader } = line.reading;
@@ -579,8 +581,8 @@ function lineRun(o: {
         `The tag ${tag} is longer than one item of this endpoint's batches may be, and a tag is never cut; shorten the tag or switch this endpoint's batches off`,
       );
     }
-    return line.cuts && line.cuts.length > 1 && line.input.encoding.format === "opus"
-      ? opusInParts(line.cuts.length)
+    return joinedParts(line.cuts) && line.input.encoding.format === "opus"
+      ? opusInParts(line.cuts!.length)
       : null;
   };
 

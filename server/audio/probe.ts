@@ -15,7 +15,7 @@
 // is a frame out every few minutes.
 //
 // A line sent in parts comes back as one file per part and is kept as one: WAV samples end to end,
-// MP3 frames end to end. Opus is refused before the parts are sent (`narration.ts`): two Ogg
+// MP3 frames end to end, with a pause's silence between them where the line was cut for one. Opus is refused before the parts are sent (`narration.ts`): two Ogg
 // streams one after the other are a legal "chained" file, but browsers seek in one badly and
 // report its length as the first stream's.
 import { parseBuffer } from "music-metadata";
@@ -96,11 +96,12 @@ export async function probeClip(bytes: Uint8Array, format: AudioFormat): Promise
 }
 
 /**
- * The parts of a line as one clip in their format: WAV samples or MP3 frames end to end, nothing
- * between them. Throws for Opus, which is refused before its parts are sent, and for parts that
- * disagree on what they are, naming the one that does.
+ * The parts of a line as one clip in their format: WAV samples or MP3 frames end to end, with
+ * silence for each number of seconds among `parts` — a pause the voice had no tag for. Throws for
+ * Opus, which is refused before its parts are sent, and for parts that disagree on what they are,
+ * naming the one that does.
  */
-export function joinClips(format: AudioFormat, parts: Uint8Array[]): Uint8Array {
+export function joinClips(format: AudioFormat, parts: (Uint8Array | number)[]): Uint8Array {
   if (format === "wav") return joinWav(parts);
   if (format === "mp3") return joinMp3(parts);
   throw new Error(`${FORMAT_LABEL[format]} parts cannot be joined into one clip`);

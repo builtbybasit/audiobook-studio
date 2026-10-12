@@ -1,6 +1,6 @@
 // Cartesia (https://docs.cartesia.ai/api-reference/tts/bytes): `POST /tts/bytes` at the host root,
 // with a `Cartesia-Version` header.
-import type { SpeechProviderShape } from "@/lib/providers/types";
+import { pauseSecs, type SpeechProviderShape } from "@/lib/providers/types";
 
 export const cartesia: SpeechProviderShape = {
   id: "cartesia",
@@ -30,13 +30,16 @@ export const cartesia: SpeechProviderShape = {
     },
   ],
   // its SSML guide's self-closing tags — a pause, and the emotion, speed and volume a stretch of the
-  // transcript is spoken with — and `[laughter]`, which that guide's title still names
+  // transcript is spoken with — and `[laughter]`, which that guide's title still names. A break's
+  // `time` is "seconds (`s`) or milliseconds (`ms`)", with no longest given
+  // (https://docs.cartesia.ai/build-with-cartesia/sonic-3/ssml-tags).
   tags: () => ({
     brackets: ["angle", "square"],
     open: false,
     kinds: ["sound", "delivery"],
     example: '<break time="1s"/>',
     hint: 'Sonic takes SSML-like tags: <break time="1s"/>, <emotion value="calm"/>, <speed ratio="0.8"/>, and [laughter].',
+    pause: (s) => `<break time="${pauseSecs(s)}s"/>`,
   }),
   // Its pricing page: "Credits are only used by successful requests; errors will not consume credits."
   billsFailures: false,

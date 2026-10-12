@@ -10,6 +10,7 @@ import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
 import type {
+  BookUpdated,
   CheckQueued,
   ImportedBook,
   NarrationQueued,
@@ -34,6 +35,7 @@ import { enqueueScripting } from "~/jobs/scripting";
 import { fail } from "~/lib/errors";
 import { BookParam, IdParam, uploadLimit } from "~/lib/http";
 import { bookPromptProblems } from "@/lib/prompt";
+import { DEFAULT_PACING } from "@/lib/speech";
 import {
   BookPromptSchema,
   EffectIdSchema,
@@ -101,7 +103,16 @@ const Settings = v.pipe(
       v.nullable(v.strictObject({ cap: v.nullable(Dollars), paused: v.boolean() })),
     ),
     scriptBudget: v.optional(v.nullable(Dollars)),
-    pacing: v.optional(v.nullable(v.strictObject({ line: Seconds, turn: Seconds }))),
+    pacing: v.optional(
+      v.nullable(
+        v.strictObject({
+          line: Seconds,
+          turn: Seconds,
+          inlineShort: v.optional(Seconds, DEFAULT_PACING.inlineShort),
+          inlineLong: v.optional(Seconds, DEFAULT_PACING.inlineLong),
+        }),
+      ),
+    ),
     prompt: v.optional(v.nullable(BookPromptSchema)),
     readNotes: v.optional(v.nullable(v.boolean())),
     checkByEar: v.optional(v.nullable(v.boolean())),
@@ -298,7 +309,7 @@ export function bookRoutes(
   app.patch("/:id", validate("param", BookParam), validate("json", Settings), (c) => {
     const settings = c.req.valid("json");
     if (settings.prompt) refusePrompt("The book's prompt", bookPromptProblems(settings.prompt));
-    return c.json(ops.updateBook(db, c.req.valid("param").id, settings) satisfies ImportedBook);
+    return c.json(ops.updateBook(db, c.req.valid("param").id, settings) satisfies BookUpdated);
   });
 
   /** Cut the book into volumes: where each begins and what it is called; see `ops.setVolumes`. */

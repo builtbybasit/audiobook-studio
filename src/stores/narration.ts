@@ -1,6 +1,6 @@
 import type { ExpressionPlan } from "@/lib/expressions";
 // Narration, expression preflight and retakes. Accepted audio stays on the script segments.
-import { annotationFrom, expressionSupport, validToken } from "@/lib/expressions";
+import { annotationFrom, expressionSupport, pauseAnnotation, validToken } from "@/lib/expressions";
 import { compareReading, prepareReading, type Reading } from "@/lib/reading";
 import { narrationPlan, narrationTargets, SCOPE_LABEL, segmentFailed } from "@/lib/runPlan";
 import { isSpoken } from "@/lib/siteText";
@@ -80,6 +80,7 @@ export const useNarrationStore = defineStore("narration", {
             style: castStore.byName[bookId]?.get(s.speaker)?.style,
           },
           castStore.lexiconOf(bookId),
+          castStore.pacingOf(bookId),
         );
       };
     },
@@ -492,21 +493,45 @@ export const useNarrationStore = defineStore("narration", {
         at > s.text.length
       )
         return;
-      const undo = scriptsStore._editSnapshot(bookId, chId);
-      (s.expressions ??= []).push(
-        annotationFrom(
-          definition,
-          at,
-          Math.max(0, ...s.expressions!.map((a) => a.annotationId)) + 1,
-        ),
-      );
-      s.edited = true;
-      scriptsStore._markStale(bookId, chId, s);
-      scriptsStore._commit(bookId, chId);
+      const { undo } = this._annotate(bookId, chId, s, (id) => annotationFrom(definition, at, id));
       uiStore.toast(`${definition.label} added`, {
         description: "The source text is unchanged. Re-render this line to hear the expression.",
         undo,
       });
+    },
+    /**
+     * A pause at `at` in a line, as long as the book's short pause; its length is changed on its
+     * chip. It needs no tag set up: a voice with no pause tag hears it as silence. Returns the new
+     * pause's id, for the editor to open it.
+     */
+    addPause(bookId: string, chId: number, segId: number, at: number): number | null {
+      const scriptsStore = useScriptsStore();
+      const uiStore = useUiStore();
+
+      const s = scriptsStore.segmentsOf(bookId, chId).find((s) => s.id === segId);
+      if (!s || !Number.isInteger(at) || at < 0 || at > s.text.length) return null;
+      const { id, undo } = this._annotate(bookId, chId, s, (id) =>
+        pauseAnnotation("pause", at, id),
+      );
+      uiStore.toast("Pause added", { description: "Re-render this line to hear it.", undo });
+      return id;
+    },
+    /** Put the annotation `make` makes on line `s` as one edit: its id, and the edit's Undo. */
+    _annotate(
+      bookId: string,
+      chId: number,
+      s: Segment,
+      make: (annotationId: number) => ExpressionAnnotation,
+    ): { id: number; undo: () => void } {
+      const scriptsStore = useScriptsStore();
+
+      const undo = scriptsStore._editSnapshot(bookId, chId);
+      const id = Math.max(0, ...(s.expressions ?? []).map((a) => a.annotationId)) + 1;
+      (s.expressions ??= []).push(make(id));
+      s.edited = true;
+      scriptsStore._markStale(bookId, chId, s);
+      scriptsStore._commit(bookId, chId);
+      return { id, undo };
     },
     updateExpression(
       bookId: string,

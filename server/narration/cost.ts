@@ -27,7 +27,7 @@ import { prepareReading, type ReadLine, type Reader, type Reading } from "@/lib/
 import { readCast, readLexicon } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
-import { getBook } from "~/db/library";
+import { getBook, readPacing } from "~/db/library";
 
 /** Everything a clip records about how it was asked for, so drift can compare the line to it later. */
 export interface Delivery {
@@ -69,10 +69,10 @@ const readerOf = (db: Db | Tx, who: Delivery): Reader => ({
 
 /**
  * A line's reading (`@/lib/reading`) as the server takes it: read by `who`, against the endpoint
- * and the book's dictionary as they are stored now.
+ * and the book's dictionary and pacing as they are stored now.
  */
 export function lineReading(db: Db | Tx, bookId: string, s: ReadLine, who: Delivery): Reading {
-  return prepareReading(s, readerOf(db, who), readLexicon(db, bookId));
+  return prepareReading(s, readerOf(db, who), readLexicon(db, bookId), readPacing(db, bookId));
 }
 
 /**
@@ -119,6 +119,7 @@ export function narrationCost(
 ): NarrationCost {
   const deliveryOf = bookDelivery(db, bookId);
   const lexicon: LexEntry[] = readLexicon(db, bookId);
+  const pacing = readPacing(db, bookId);
   const endpoints = new Map<string, Endpoint | undefined>();
   const per = new Map<string, { ep: Endpoint; units: BillableUnits }>();
   const firsts: NarrationCost["firsts"] = [];
@@ -132,6 +133,7 @@ export function narrationCost(
       s,
       { endpoint: ep, voiceRef: who.voiceRef, style: who.style },
       lexicon,
+      pacing,
     );
     const units = plannedSpeechUnits(reading, ep);
     if (!per.has(ep.id)) firsts.push({ endpoint: ep.id, cost: lineWorstCase(reading, at) });

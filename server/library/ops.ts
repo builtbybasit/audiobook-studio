@@ -6,15 +6,23 @@
 // another for a new volume — so there is one statement of each, and none of them knows what a
 // status code is. A rule that does not hold is thrown as an `AppError`, which `app.onError` turns
 // into the API's one error shape.
-import type { Book, Chapter, ImportedBook, VolumeStart } from "@/types";
+import type {
+  Book,
+  BookUpdated,
+  Chapter,
+  ImportedBook,
+  Pacing,
+  RevisedLines,
+  VolumeStart,
+} from "@/types";
 import { chapterSeconds, pacingOrDefault } from "@/lib/speech";
 import type { AudioFiles } from "~/audio/files";
 import { MAX_COVER_BYTES, sniffCover, type CoverFiles } from "~/covers/files";
 import type { AudiobookFiles } from "~/exports/files";
-import type { Db } from "~/db/client";
+import type { Db, Tx } from "~/db/client";
 import * as queue from "~/db/jobs";
 import * as library from "~/db/library";
-import { readScript } from "~/db/script";
+import { bumpRevision, readScript, writeClip } from "~/db/script";
 import { requireEffect } from "~/effects/ops";
 import { env } from "~/env";
 import { checkArchive } from "~/epub/archive";
@@ -430,36 +438,68 @@ export async function removeVolume(
  * A pacing is stitched between clips rather than rendered, so changing it re-times every chapter
  * that has been narrated — `settleChapter`'s sum, clips plus the silence between them — and
  * invalidates nothing. A chapter nobody has narrated has no clips to put silence between and keeps
- * the length it has. The budget is stored and not yet enforced here: nothing the fake provider
- * does costs anything to hold against it.
+ * the length it has. The pauses inside a line are the exception: they are sent with the line, so a
+ * new length for one makes stale every clip whose line holds a pause of that length
+ * (`stalePauses`), and the answer names them. The budget is stored and not yet enforced here:
+ * nothing the fake provider does costs anything to hold against it.
  *
  * Reading the notes aloud changes which lines want a clip (`isSpoken`), so every narrated chapter is
  * settled again: switched on, a chapter whose notes were never rendered is partly narrated until
  * they are; switched off, it is narrated again, and a note's clip is kept but no longer heard. A
  * chapter a run holds is the run's to settle when it ends.
  */
-export function updateBook(db: Db, bookId: string, settings: library.BookSettings): ImportedBook {
+export function updateBook(db: Db, bookId: string, settings: library.BookSettings): BookUpdated {
   const before = requireBook(db, bookId);
   requireEffect(db, settings.thoughts, "The book's thought effect");
   const notesMoved =
     settings.readNotes !== undefined &&
     (settings.readNotes === true) !== (before.readNotes === true);
-  db.transaction((tx) => {
+  const stale = db.transaction((tx) => {
     library.setBookSettings(tx, bookId, settings);
-    if (settings.pacing === undefined && !notesMoved) return;
+    if (settings.pacing === undefined && !notesMoved) return [];
     const book = library.getBook(tx, bookId);
     const pacing = pacingOrDefault(book?.pacing);
+    const stale = stalePauses(tx, bookId, pacingOrDefault(before.pacing), pacing);
     for (const ch of library.listChapters(tx, bookId)) {
       if (ch.narration === "none") continue;
-      if (notesMoved) {
+      if (notesMoved || stale.some((r) => r.chapterId === ch.id)) {
         if (!narrationInProgress(tx, bookId, ch.id)) settleChapter(tx, bookId, ch.id);
       } else {
         const segs = readScript(tx, bookId, ch.id);
         library.setChapterDuration(tx, bookId, ch.id, chapterSeconds(segs, pacing, book));
       }
     }
+    return stale;
   });
-  return bookWithChapters(db, bookId);
+  return { ...bookWithChapters(db, bookId), stale };
+}
+
+/**
+ * Mark stale every rendered clip whose line holds a pause of the book's length for its word, where
+ * `after` gives that word another length than `before` — a pause with a length of its own, or one
+ * omitted, is sent as it was. By chapter, with the revision each script is at now.
+ */
+function stalePauses(tx: Tx, bookId: string, before: Pacing, after: Pacing): RevisedLines[] {
+  const moved = new Set([
+    ...(before.inlineShort !== after.inlineShort ? ["pause"] : []),
+    ...(before.inlineLong !== after.inlineLong ? ["long pause"] : []),
+  ]);
+  if (!moved.size) return [];
+  const stale: RevisedLines[] = [];
+  for (const chapterId of library.chapterIds(tx, bookId)) {
+    const ids: number[] = [];
+    for (const s of readScript(tx, bookId, chapterId)) {
+      if (s.audio.status !== "done") continue;
+      const held = s.expressions?.some(
+        (a) => a.kind === "pause" && !a.omitted && a.seconds == null && moved.has(a.id),
+      );
+      if (!held) continue;
+      writeClip(tx, bookId, chapterId, s.id, "current", { ...s.audio, status: "stale" });
+      ids.push(s.id);
+    }
+    if (ids.length) stale.push({ chapterId, ids, revision: bumpRevision(tx, bookId, chapterId) });
+  }
+  return stale;
 }
 
 /** Rename a volume. Nothing is renumbered; the name is what an audiobook cut by volume is called. */

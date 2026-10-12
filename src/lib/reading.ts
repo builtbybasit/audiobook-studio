@@ -9,9 +9,11 @@
 // A reading is the line after the book's pronunciation dictionary, kept to what a voice can say
 // (`sayable`), with its expression tags — the scripting model's and the ones placed by hand —
 // written in as the speaker's endpoint spells them (`expressionPlan`); the voice instructions sent
-// beside it (`speechInstructions`); and where it is cut to fit the endpoint's `maxChars`
-// (`expressionParts`, each tag kept whole). A clip records what of it can move afterwards
-// (`readingRecord`), and `compareReading` holds that record against the line's reading now.
+// beside it (`speechInstructions`); and where it is cut — at each pause the voice has no tag for,
+// to be joined with that silence, and to fit the endpoint's `maxChars` (`expressionParts`, each tag
+// kept whole). The book's pacing is read with it, for how long a pause of the book's length is. A
+// clip records what of it can move afterwards (`readingRecord`), and `compareReading` holds that
+// record against the line's reading now.
 //
 // What a reading is taken from, and when. The browser reads everything as it stands, every time.
 // A narration run (`server/jobs/narration.ts`) takes some of it once, when the run starts, and the
@@ -23,14 +25,14 @@
 //   choice among them (`effectContext`), and which endpoints take batches and how large. A cast
 //   edit mid-run is the edit's to mark stale; an effect chosen mid-run applies to the next run.
 // - **as each line goes out**: the endpoint's saved configuration — its tags and brackets, its
-//   `maxChars` and `splitAt`, its rate, format and key — and the book's dictionary, so a term added
-//   or a tag defined mid-run reaches every line not yet sent; the price the line holds is worked
-//   out at that moment too. The endpoint's concurrency and pause are read by the gate every time it
-//   looks.
+//   `maxChars` and `splitAt`, its rate, format and key — and the book's dictionary and pacing, so
+//   a term added, a tag defined or a pause lengthened mid-run reaches every line not yet sent; the
+//   price the line holds is worked out at that moment too. The endpoint's concurrency and pause
+//   are read by the gate every time it looks.
 // - **as each line lands**: the dictionary and the endpoint once more, to take the line's reading
 //   again with the same line and voice it went out with, and a clip that no longer matches lands
 //   stale.
-import type { Endpoint, LexEntry, Segment, SegmentAudio } from "@/types";
+import type { Endpoint, LexEntry, Pacing, Segment, SegmentAudio } from "@/types";
 import { expressionParts, expressionPlan, type ExpressionPlan } from "@/lib/expressions";
 import { sampleRateLabel, speechInstructions } from "@/lib/speech";
 import { partsFor, type SplitPart } from "@/lib/split";
@@ -54,13 +56,15 @@ export interface Reading {
   /** the voice instructions sent beside the line; empty when there is nothing to say */
   instructions: string;
   /**
-   * Where the line is cut at the endpoint's `maxChars`, one part when it fits; null when it is not
-   * sent at all — there is no endpoint, or a tag holds it (`plan.issues`).
+   * Where the line is cut at its silent pauses and the endpoint's `maxChars`, one part when it
+   * fits and has none; null when it is not sent at all — there is no endpoint, or a tag holds it
+   * (`plan.issues`).
    */
   cuts: SplitPart[] | null;
   /**
-   * How many requests the line is billed as: its parts, or — held by a tag — cut the plain way, so
-   * an estimate never reads cheaper for a line that needs attention. None with no endpoint.
+   * How many requests the line is billed as: its parts, those its silent pauses cut included — or,
+   * held by a tag, cut the plain way, so an estimate never reads cheaper for a line that needs
+   * attention. None with no endpoint.
    */
   requests: number;
 }
@@ -82,10 +86,15 @@ export function cutReading(
   return expressionParts(plan, { maxChars: limit, splitAt: ep.splitAt });
 }
 
-/** A line's reading by `reader`, with the book's dictionary as `lexicon` holds it. */
-export function prepareReading(line: ReadLine, reader: Reader, lexicon: LexEntry[]): Reading {
+/** A line's reading by `reader`, with the book's dictionary as `lexicon` holds it, and its pacing. */
+export function prepareReading(
+  line: ReadLine,
+  reader: Reader,
+  lexicon: LexEntry[],
+  pacing: Pacing,
+): Reading {
   const ep = reader.endpoint;
-  const plan = expressionPlan(line, ep, lexicon);
+  const plan = expressionPlan(line, ep, lexicon, pacing);
   const cuts = cutReading(plan, ep);
   return {
     reader,
@@ -176,7 +185,7 @@ export function compareReading(
   if (a.text === s.text && pronunciationMoved(a, now.plan.pronounced))
     out.push("pronunciation: the dictionary changed after this clip");
   if ((a.expressionSignature ?? "") !== now.plan.signature)
-    out.push("expressions: tags, position, or model support changed after this clip");
+    out.push("expressions: tags, pauses, position, or model support changed after this clip");
   if ((a.direction || "") !== (s.direction || ""))
     out.push(`direction: “${a.direction || "—"}” → “${s.direction || "—"}”`);
   if (a.type && a.type !== s.type) out.push(`type: ${a.type} → ${s.type}`);

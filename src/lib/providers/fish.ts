@@ -1,6 +1,6 @@
 // Fish Audio (https://docs.fish.audio): `POST /v1/tts` on the API's host, the model in a `model`
 // header and the voice as `reference_id`, so the path everyone else uses does not apply.
-import type { SpeechProviderShape } from "@/lib/providers/types";
+import { fixedPauses, type SpeechProviderShape } from "@/lib/providers/types";
 
 /**
  * The models Fish's text-to-speech reference names. It also says what happens to any other: "If
@@ -62,7 +62,9 @@ export const fish: SpeechProviderShape = {
   ],
   // Fish's models page: the S2 family takes free-form cues in square brackets (`[whispers
   // sweetly]`, `[laughing nervously]`), S1 its emotions in parentheses. `drama-3-preview` is not
-  // described there; it is served beside the S2 family, so it is given theirs.
+  // described there; it is served beside the S2 family, so it is given theirs. Both name two pauses,
+  // "brief" and "extended", with no length: `[break]` and `[long-break]` for S2, `(break)` and
+  // `(long-break)` for S1 (https://docs.fish.audio/developer-guide/core-features/emotions).
   tags: (model) =>
     model.trim().toLowerCase() === "s1"
       ? {
@@ -71,6 +73,7 @@ export const fish: SpeechProviderShape = {
           kinds: ["sound", "delivery"],
           example: "(laughing)",
           hint: "Fish's S1 takes its emotions and sounds in parentheses.",
+          pause: fixedPauses("(break)", "(long-break)"),
         }
       : {
           brackets: ["square"],
@@ -78,6 +81,7 @@ export const fish: SpeechProviderShape = {
           kinds: ["sound", "delivery"],
           example: "[laughing nervously]",
           hint: "Fish's S2 models take cues in square brackets, in words of your choosing.",
+          pause: fixedPauses("[break]", "[long-break]"),
         },
   // Fish's pricing and API docs say nothing of charging for a refused request.
   billsFailures: false,

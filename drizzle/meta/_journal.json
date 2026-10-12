@@ -225,6 +225,13 @@
       "when": 1791808015786,
       "tag": "0031_voice_effects",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1791820722448,
+      "tag": "0032_inline_pauses",
+      "breakpoints": true
     }
   ]
 }

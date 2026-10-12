@@ -34,6 +34,7 @@ import { unreachable } from "@/services/http";
 import type {
   Book,
   BookPrompt,
+  BookUpdated,
   Chapter,
   CharacterVoice,
   ContentsSummary,
@@ -412,17 +413,29 @@ export const useLibraryStore = defineStore("library", {
      * Settings writes are last-one-wins: a number box sends one per keystroke, so only the answer
      * to the latest write for a book is installed — an earlier answer arriving late would put back
      * a value the person has already typed past. Returns the answer, or null when it was refused
-     * or has been overtaken.
+     * or has been overtaken. The clips an answer says it staled — a new length for the pauses inside
+     * a line — are marked here whichever answer it is: each write staled its own.
      */
     async _writeSettings(
       bookId: string,
       settings: BookSettings,
       what: string,
-    ): Promise<ImportedBook | null> {
+    ): Promise<BookUpdated | null> {
+      const scriptsStore = useScriptsStore();
+      const uiStore = useUiStore();
+
       const n = (settingsWrites.get(bookId) ?? 0) + 1;
       settingsWrites.set(bookId, n);
       try {
         const answer = await this._service().updateBook(bookId, settings);
+        for (const { chapterId, ids, revision } of answer.stale)
+          scriptsStore._applyLines(bookId, chapterId, ids, {}, revision);
+        const staled = answer.stale.reduce((a, r) => a + r.ids.length, 0);
+        if (staled)
+          uiStore.toast("Pause length changed", {
+            kind: "warn",
+            description: `${staled} rendered line${staled === 1 ? "" : "s"} still have the old pause — re-narrate to apply.`,
+          });
         if (settingsWrites.get(bookId) !== n) return null;
         this._putBook(answer.book);
         return answer;

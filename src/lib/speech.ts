@@ -168,8 +168,11 @@ export function marks(text: string, list: LexEntry[]): Mark[] {
 // ---------- pacing ----------
 // Silence is not rendered, it is stitched: changing a pause re-times the chapter but invalidates no
 // audio. `line` is the gap after an ordinary line, `turn` the longer one when the voice changes.
+// `inlineShort` and `inlineLong` are the exception: they are the lengths of the pauses inside a
+// line (`[[pause]]`, `[[long pause]]`), which are part of what the line is sent as, so changing one
+// makes the clips of the lines that hold such a pause stale.
 
-export const DEFAULT_PACING: Pacing = { line: 0.35, turn: 0.7 };
+export const DEFAULT_PACING: Pacing = { line: 0.35, turn: 0.7, inlineShort: 0.4, inlineLong: 1 };
 /** offered in the reader; `null` = back to the book default */
 export const PAUSE_STEPS: (number | null)[] = [null, 0, 0.25, 0.5, 1, 1.5, 2.5];
 

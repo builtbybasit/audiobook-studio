@@ -23,7 +23,7 @@ import type { Effect } from "@/types";
 import { summaryOf } from "./catalog";
 import { uniqueName } from "./chain";
 import type { Choice, ChoiceView, Row } from "./choice";
-import { sheetOnTop } from "./keys";
+import { sheetOnTop } from "./sheetOnTop";
 import { useThinkers, type TryLine } from "./lines";
 import type { Previews } from "./preview";
 
@@ -52,7 +52,7 @@ const cards = computed<Card[]>(() => [
   {
     id: "none",
     name: "None",
-    summary: props.view === "all" ? "The voice as it was made" : "Thoughts left plain",
+    summary: props.view === "effect" ? "The voice as it was made" : "Thoughts left plain",
     effect: null,
   },
   ...effectsStore.effects.map((e) => ({
@@ -197,13 +197,13 @@ onUnmounted(() => {
     <div class="space-y-2 px-3 pt-3">
       <!-- what is used now, and where it comes from -->
       <div class="rounded-md bg-zinc-100 px-2.5 py-2 text-xs dark:bg-zinc-800/70">
-        <template v-if="view === 'all'">
+        <template v-if="view === 'effect'">
           {{ name }} uses: <b>{{ labelOf(current) }}</b>
         </template>
-        <template v-else-if="view === 'thought' && choice.following.value">
+        <template v-else-if="view === 'thoughts' && choice.following.value">
           {{ name }}’s thoughts follow this book: <b>{{ labelOf(current) }}</b>
         </template>
-        <template v-else-if="view === 'thought'">
+        <template v-else-if="view === 'thoughts'">
           {{ name }}’s thoughts use their own: <b>{{ labelOf(current) }}</b> ·
           <button
             class="text-violet-600 hover:underline dark:text-violet-400"
@@ -286,7 +286,7 @@ onUnmounted(() => {
               >All books</span
             >
             <span
-              v-if="view === 'thought' && c.id === choice.bookRow.value"
+              v-if="view === 'thoughts' && c.id === choice.bookRow.value"
               class="shrink-0 rounded bg-amber-400/20 px-1.5 py-px text-[10px] font-semibold text-amber-700 dark:text-amber-300"
               >This book</span
             >

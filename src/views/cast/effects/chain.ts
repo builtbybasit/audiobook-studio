@@ -9,6 +9,7 @@ import { toRaw } from "vue";
 
 import type { EffectUses, Layer, MixStep, Step } from "@/types";
 import { isMix } from "./catalog";
+import type { ChoiceView } from "./choice";
 
 const keys = new WeakMap<object, string>();
 let next = 0;
@@ -96,7 +97,7 @@ export function nameFromCode(code: string): string {
 /** Whose choice an editor is open for, so "Also on" can leave that one out. */
 export interface UsesSelf {
   bookId: string;
-  view: "all" | "thought" | "book";
+  view: ChoiceView;
   name: string;
 }
 
@@ -111,8 +112,8 @@ export function placesOf(uses: EffectUses, here: string, self: UsesSelf | null =
     !!self && self.bookId === bookId && self.view === view && self.name === name;
   for (const s of uses.speakers) {
     const where = s.bookId === here ? "" : ` in ${s.bookTitle}`;
-    if (s.effect && !mine(s.bookId, "all", s.name)) out.push(`${s.name}${where}`);
-    if (s.thoughts && !mine(s.bookId, "thought", s.name)) out.push(`${s.name}’s thoughts${where}`);
+    if (s.effect && !mine(s.bookId, "effect", s.name)) out.push(`${s.name}${where}`);
+    if (s.thoughts && !mine(s.bookId, "thoughts", s.name)) out.push(`${s.name}’s thoughts${where}`);
   }
   for (const b of uses.books)
     if (!mine(b.id, "book"))

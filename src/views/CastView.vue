@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useCastStore } from "@/stores/cast";
+import { newStat, useCastStore } from "@/stores/cast";
 import { useEffectsStore } from "@/stores/effects";
 import { plural } from "@/lib/contents";
 import { useEndpointsStore } from "@/stores/endpoints";
@@ -70,7 +70,7 @@ const rows = computed(() => {
     .filter((c) => !onlyNew.value || c.isNew)
     .map((c) => ({
       c,
-      st: stats.value[c.name] ?? { lines: 0, thoughts: 0, chapters: new Set<number>(), first: 0 },
+      st: stats.value[c.name] ?? newStat(),
       voice: endpointsStore.resolveVoice(c.voice),
       // a speaker with no voice of their own borrows the Character voice or the Narrator's
       borrowed: c.voice ? null : castStore.effectiveVoice(bookId, c.name),
@@ -548,7 +548,7 @@ const duplicate = computed(
                     class="chip min-w-0 max-w-[7.5rem]"
                     :class="effectOf(c.effect) ? 'chip-on' : 'chip-off'"
                     :aria-label="`${c.name}’s effect`"
-                    @click="editEffect({ kind: 'speaker', name: c.name, slot: 'all' })"
+                    @click="editEffect({ kind: 'speaker', name: c.name, slot: 'effect' })"
                   >
                     <span class="truncate">{{ effectOf(c.effect)?.name ?? "None" }}</span>
                   </button>
@@ -558,11 +558,12 @@ const duplicate = computed(
                     class="chip chip-on min-w-0 max-w-[6.5rem]"
                     :aria-label="`${c.name}’s own thought effect`"
                     title="Their own thought effect"
-                    @click="editEffect({ kind: 'speaker', name: c.name, slot: 'thought' })"
+                    @click="editEffect({ kind: 'speaker', name: c.name, slot: 'thoughts' })"
                   >
                     <ThoughtIcon class="icon-sm shrink-0" aria-hidden="true" /><span
                       class="truncate"
-                      >{{ effectOf(c.thoughts)?.name ?? "None" }}</span>
+                      >{{ effectOf(c.thoughts)?.name ?? "None" }}</span
+                    >
                   </button>
                 </div>
               </td>

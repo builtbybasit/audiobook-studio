@@ -35,12 +35,14 @@ import type {
   CastStat,
   Character,
   EffectiveVoice,
+  EffectSlot,
   Gender,
   LexEntry,
   MergeSuggestion,
   Pacing,
   RoutingIssue,
   Segment,
+  SpeakerEffectUse,
   ThoughtChoice,
   VoiceRef,
 } from "@/types";
@@ -88,6 +90,14 @@ interface BookWrites {
  * map keyed by `this` itself would start over on every call.
  */
 const pending = new WeakMap<object, Map<string, BookWrites>>();
+/** A speaker's counts before any line is counted: `castStats` starts each from it, and a speaker
+ *  with no line is shown it. */
+export const newStat = (first = 0): CastStat => ({
+  lines: 0,
+  thoughts: 0,
+  chapters: new Set(),
+  first,
+});
 export interface AutoVoiceAssignment {
   name: string;
   gender: Gender;
@@ -249,12 +259,7 @@ export const useCastStore = defineStore("cast", {
           for (const seg of scriptsStore.segments[`${bookId}:${c.id}`] ?? []) {
             // what a speaker is given to say, as `lineCounts` counts it
             if (!isSpoken(seg, book)) continue;
-            const st = (stats[seg.speaker] ??= {
-              lines: 0,
-              thoughts: 0,
-              chapters: new Set(),
-              first: c.id,
-            });
+            const st = (stats[seg.speaker] ??= newStat(c.id));
             st.lines++;
             if (seg.type === "thought") st.thoughts++;
             st.chapters.add(c.id);
@@ -904,7 +909,7 @@ export const useCastStore = defineStore("cast", {
     async _setChoice(
       bookId: string,
       name: string,
-      field: "effect" | "thoughts",
+      field: EffectSlot,
       choice: string | null,
     ): Promise<boolean> {
       const c = this.characters[bookId]?.find((x) => x.name === name);
@@ -919,10 +924,8 @@ export const useCastStore = defineStore("cast", {
      * An effect removed takes every speaker's choice of it, in every cast held here, as the server
      * has done in the same delete. Returns who had it, and as what.
      */
-    _dropEffect(
-      id: string,
-    ): { bookId: string; name: string; effect: boolean; thoughts: boolean }[] {
-      const out = [];
+    _dropEffect(id: string): SpeakerEffectUse[] {
+      const out: SpeakerEffectUse[] = [];
       for (const [bookId, cast] of Object.entries(this.characters))
         for (const c of cast) {
           const effect = c.effect === id;

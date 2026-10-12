@@ -48,6 +48,14 @@ const effectsStore = useEffectsStore();
 const effect = computed(() => effectsStore.byId.get(props.effectId));
 /** the sheet's subject hears this effect now */
 const inUse = computed(() => props.choice.current.value === props.effectId);
+/** How the subject comes to hear it: their own choice, or the level above's that they follow. */
+const source = computed(() =>
+  !props.choice.following.value
+    ? "Active"
+    : props.self.view === "book"
+      ? "From all books"
+      : "From this book",
+);
 /** the chain changed in place: write it behind */
 function changed() {
   if (effect.value) effectsStore.update(props.effectId, { chain: effect.value.chain });
@@ -145,7 +153,7 @@ const top = computed(() => {
 const addWhere = computed(() => {
   const chain = effect.value?.chain ?? [];
   const i = top.value;
-  return i < 0 || i === chain.length - 1 ? "at the end" : `after ${labelOf(chain[i]!)}`;
+  return i < 0 ? "at the end" : `after ${labelOf(chain[i]!)} (step ${i + 1})`;
 });
 /** a new step goes right after the selected top-level step, or at the end */
 function addTop(s: Step) {
@@ -227,7 +235,7 @@ onUnmounted(() => {
         <span
           v-if="inUse"
           class="shrink-0 rounded bg-violet-500/15 px-1.5 py-px text-[10px] font-semibold text-violet-700 dark:text-violet-300"
-          >Active</span
+          >{{ source }}</span
         >
         <button v-else class="btn-ghost btn-xs shrink-0" @click="choice.choose(effectId)">
           Use

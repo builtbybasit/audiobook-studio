@@ -22,8 +22,10 @@ import { speak } from "@/lib/speech";
 import type { Db } from "~/db/client";
 import * as cast from "~/db/cast";
 import * as library from "~/db/library";
+import { getEffect } from "~/db/effects";
 import { discardSpeakerSamples, moveSpeakerSamples } from "~/db/speakerSamples";
 import { attributeLines, bumpRevision, readScript, reattribute, writeClip } from "~/db/script";
+import { requireEffect } from "~/effects/ops";
 import { badRequest, conflict, notFound } from "~/lib/errors";
 import { requireBook } from "~/library/ops";
 import { narrationInProgress, settleChapter } from "~/narration/chapter";
@@ -39,6 +41,12 @@ function requireCharacter(db: Db, bookId: string, name: string): Character {
   return c;
 }
 
+/** Refuse a speaker who wears, or thinks in, an effect the library does not have. */
+function requireEffects(db: Db, c: Character): void {
+  requireEffect(db, c.effect, `${c.name}’s effect`);
+  requireEffect(db, c.thoughts, `${c.name}’s thought effect`);
+}
+
 /**
  * Write one speaker as stated: a new one joins the cast, an existing one is replaced. Everything
  * about a speaker that moves no lines — gender, description, voice, delivery style, aliases, the
@@ -47,6 +55,7 @@ function requireCharacter(db: Db, bookId: string, name: string): Character {
 export function putCharacter(db: Db, bookId: string, name: string, c: Character): Character[] {
   requireBook(db, bookId);
   if (c.name !== name) throw badRequest("The speaker in the body is not the one in the path");
+  requireEffects(db, c);
   cast.upsertCharacter(db, bookId, c);
   return cast.readCast(db, bookId);
 }
@@ -125,6 +134,13 @@ export function attribute(
   lines: readonly ChapterLines[],
 ): MovedLines {
   requireBook(db, bookId);
+  // put back as they were, less an effect removed since: an Undo is not refused for that
+  const known = (id?: string) => (id === "none" || (id && getEffect(db, id)) ? id : undefined);
+  character = {
+    ...character,
+    effect: known(character.effect),
+    thoughts: known(character.thoughts),
+  };
   return db.transaction((tx) => {
     cast.upsertCharacter(tx, bookId, character);
     const moved = attributeLines(tx, bookId, lines, character.name);

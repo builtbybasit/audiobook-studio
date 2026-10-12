@@ -32,6 +32,7 @@ import { BookParam, IdParam, uploadLimit } from "~/lib/http";
 import { bookPromptProblems } from "@/lib/prompt";
 import {
   BookPromptSchema,
+  EffectIdSchema,
   ProfilePromptSchema,
   PromptTemplateSchema,
   refusePrompt,
@@ -100,7 +101,8 @@ const Settings = v.pipe(
     prompt: v.optional(v.nullable(BookPromptSchema)),
     readNotes: v.optional(v.nullable(v.boolean())),
     checkByEar: v.optional(v.nullable(v.boolean())),
-    plainThoughts: v.optional(v.nullable(v.boolean())),
+    /** an effect's id or "none"; `null` follows the library's */
+    thoughts: v.optional(v.nullable(EffectIdSchema)),
     characterVoice: v.optional(
       v.nullable(
         v.strictObject({

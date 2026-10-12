@@ -32,7 +32,6 @@ import {
 
 import type {
   AudioStatus,
-  ClipEffect,
   Cut,
   ExpressionAnnotation,
   Segment,
@@ -159,8 +158,10 @@ export const clips = sqliteTable(
     expressions: text("expressions", { mode: "json" }).$type<string[]>(),
     /** the rate the file came back at, in Hz, read from the file rather than the request */
     sampleRate: integer("sample_rate"),
-    /** a sound put on the clip as it landed (`ClipEffect`); null = none */
-    effect: text("effect").$type<ClipEffect>(),
+    /** what the voice effects baked into the file are (`soundOf`); null = the voice's own */
+    sound: text("sound"),
+    /** the voice's own file, when `url` is one the effects made from it; null = `url` is that */
+    raw: text("raw"),
 
     // ---- splitting, when the line exceeded the endpoint's per-request cap ----
     parts: integer("parts"),

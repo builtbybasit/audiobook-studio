@@ -116,3 +116,14 @@ describe("the situations' routes", () => {
     expect(await request<{ books: Book[] }>("/books")).toEqual(before);
   });
 });
+
+describe("a reset", () => {
+  test("puts back the effects a migration laid down, which it empties with every other table", async () => {
+    await request("/demo/reset", { method: "POST" });
+    const { effects } = await request<{ effects: { id: string }[] }>("/effects");
+    expect(effects.map((e) => e.id)).toEqual(["inner-voice"]);
+    expect(await request<{ effect: string }>("/settings/thoughts")).toEqual({
+      effect: "inner-voice",
+    });
+  });
+});

@@ -29,6 +29,7 @@ import { audioRoutes } from "~/routes/audio";
 import { bookRoutes } from "~/routes/books";
 import { castRoutes } from "~/routes/cast";
 import { demoRoutes, type DemoControls } from "~/routes/demo";
+import { effectRoutes, settingRoutes } from "~/routes/effects";
 import { endpointRoutes } from "~/routes/endpoints";
 import { exportRoutes } from "~/routes/exports";
 import { jobRoutes } from "~/routes/jobs";
@@ -159,6 +160,9 @@ export function createApp(
   // The endpoints belong to the installation rather than to a book.
   app.route(`${base}/endpoints`, endpointRoutes(db, providers, voiceFiles, gate));
   app.route(`${base}/endpoints`, endpointUsageRoutes(db));
+  // So do the voice effects, which any book's speakers may wear, and the library's thought effect.
+  app.route(`${base}/effects`, effectRoutes(db));
+  app.route(`${base}/settings`, settingRoutes(db));
   // A clip's url is served from disk, and the files it names belong to the same book routes above
   // remove — see `server/audio/files.ts` for why the path is a book and a token.
   app.route(`${base}/audio`, audioRoutes(files));

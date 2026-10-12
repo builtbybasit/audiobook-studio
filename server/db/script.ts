@@ -284,11 +284,11 @@ export function dropCandidate(
 }
 
 /**
- * Freeze a clip as a take. `snapshotTake` is the store's rule for what a take keeps; the file is
- * added back because the store never had one and a take that cannot be played is not a take.
+ * Freeze a clip as a take. `snapshotTake` is the store's rule for what a take keeps; the files are
+ * added back because the store never had them and a take that cannot be played is not a take.
  */
 export function takeOf(a: SegmentAudio): Take {
-  return { ...snapshotTake(a), ...(a.url ? { url: a.url } : {}) };
+  return { ...snapshotTake(a), ...(a.url ? { url: a.url } : {}), ...(a.raw ? { raw: a.raw } : {}) };
 }
 
 /**

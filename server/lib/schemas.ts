@@ -22,6 +22,7 @@ import type {
   ScriptManifest,
   ScriptSettings,
   Segment,
+  Step,
   Transcriber,
   VersionOrigin,
 } from "@/types";
@@ -31,6 +32,83 @@ import type { StoredEndpoint } from "@/lib/endpointTelemetry";
 import { badRequest } from "~/lib/errors";
 
 const Gender = v.picklist(["m", "f", "n", "?"]);
+
+// ---- voice effects ----
+//
+// A chain is the user's to write, and it goes to Python as it stands (`server/audio/effects.ts`):
+// a step's plugin is looked up by name on the `pedalboard` module and its params are passed as
+// keyword arguments. So each is held to what can be nothing else — a name of letters and digits,
+// keywords that are identifiers, numbers that are finite — and a mix nests only so far.
+
+/** An effect's id; where a choice is asked for, "none" too. Whether it names one is the op's to say. */
+export const EffectIdSchema = v.pipe(v.string(), v.nonEmpty("must not be empty"), v.maxLength(64));
+
+const PluginStepSchema = v.strictObject({
+  plugin: v.pipe(
+    v.string(),
+    v.regex(/^[A-Za-z0-9]+$/, "must be a plugin's name: letters and digits"),
+    v.maxLength(64),
+  ),
+  params: v.record(
+    v.pipe(
+      v.string(),
+      v.regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "must be a parameter's name"),
+      v.maxLength(64),
+    ),
+    v.pipe(v.number(), v.finite()),
+  ),
+  on: v.boolean(),
+});
+
+/** A plugin step or a mix, told apart by the key a mix has, so a refusal names the right fields. */
+const StepSchema: v.GenericSchema<Step> = v.lazy((input) =>
+  typeof input === "object" && input !== null && "mix" in input ? MixStepSchema : PluginStepSchema,
+);
+
+const LayerSchema = v.strictObject({
+  name: v.pipe(v.string(), v.maxLength(100)),
+  steps: v.pipe(v.array(StepSchema), v.maxLength(64)),
+  on: v.boolean(),
+});
+
+const MixStepSchema = v.strictObject({
+  mix: v.pipe(v.array(LayerSchema), v.minLength(1), v.maxLength(16)),
+  on: v.boolean(),
+});
+
+/** How deep a chain's mixes go, and how many steps it has in all. */
+function chainSize(steps: readonly Step[]): { depth: number; steps: number } {
+  let depth = 0;
+  let count = steps.length;
+  for (const s of steps)
+    if ("mix" in s)
+      for (const layer of s.mix) {
+        const inner = chainSize(layer.steps);
+        depth = Math.max(depth, inner.depth + 1);
+        count += inner.steps;
+      }
+  return { depth, steps: count };
+}
+
+export const ChainSchema = v.pipe(
+  v.array(StepSchema),
+  v.check((c) => chainSize(c).depth <= 4, "nests mixes more than four deep"),
+  v.check((c) => chainSize(c).steps <= 256, "has more than 256 steps"),
+) satisfies v.GenericSchema<unknown, Step[]>;
+
+export const EffectBodySchema = v.object({
+  name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty"), v.maxLength(100)),
+  chain: ChainSchema,
+});
+
+/** null where a choice may be left to the next level; read as absent, which is what the row keeps. */
+const unset = <T>(schema: v.GenericSchema<T>) =>
+  v.optional(
+    v.pipe(
+      v.nullable(schema),
+      v.transform((x) => x ?? undefined),
+    ),
+  );
 
 export const CharacterSchema = v.object({
   name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),
@@ -43,6 +121,10 @@ export const CharacterSchema = v.object({
   major: v.boolean(),
   isNew: v.optional(v.boolean()),
   keep: v.optional(v.boolean()),
+  /** the effect on all their lines; null or absent = none */
+  effect: unset(EffectIdSchema),
+  /** their thought effect, an id or "none"; null or absent = the book's */
+  thoughts: unset(EffectIdSchema),
 }) satisfies v.GenericSchema<unknown, Character>;
 
 export const LexEntrySchema = v.object({

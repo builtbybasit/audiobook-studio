@@ -2,6 +2,7 @@
 // per-book settings — the pronunciation dictionary and the pacing — that change how it sounds
 // without changing a word of it.
 import type { Gender, VoiceRef } from "@/types/common";
+import type { ThoughtChoice } from "@/types/effect";
 import type { BookPrompt } from "@/types/scripting";
 
 /** One entry of a book's pronunciation dictionary. The book text is never rewritten: the term is
@@ -203,10 +204,10 @@ export interface Book {
    */
   checkByEar?: boolean;
   /**
-   * Narrate `thought` lines as the voice made them, without the thought effect a clip is otherwise
-   * given as it lands. Absent = the effect is on.
+   * The thought effect this book's `thought` lines get: an effect's id, or "none" to narrate them
+   * as the voice made them. Absent = the library's (`src/lib/effects.ts`).
    */
-  plainThoughts?: true;
+  thoughts?: ThoughtChoice;
   /** the voice a speaker with none of their own is read in; absent = the Narrator's */
   characterVoice?: CharacterVoice;
 }
@@ -239,6 +240,10 @@ export interface Character {
   isNew?: boolean;
   /** the user dismissed the merge suggestion for this name */
   keep?: boolean;
+  /** the voice effect on all of their lines, by id; absent = none */
+  effect?: string;
+  /** their thought lines' effect: an effect's id or "none"; absent = the book's */
+  thoughts?: ThoughtChoice;
 }
 
 export interface BookProgress {

@@ -80,10 +80,10 @@ taken down, 3:1 compression and a small room ringing around it
 ([server/audio/thoughtEffect.ts](../server/audio/thoughtEffect.ts)).
 
 - **On by default**, per book: **Thought effect** on the book page's Reading card
-  (`Book.plainThoughts` switches it off).
+  (`Book.thoughts: "none"` switches it off).
 - **Kept in the file.** It is put on once, as the clip arrives, so the player, the Listen page, a
   check by ear and a build all hear the same clip. A clip that has it says so
-  (`SegmentAudio.effect: "thought"`) and is always a WAV at the rate the voice came back at. Lines
+  (`SegmentAudio.sound: "ffmpeg"`) and is always a WAV at the rate the voice came back at. Lines
   narrated before the switch changed keep the sound they were made with; a retake makes them again.
 - **Never in the way.** The endpoint's slot is given back as soon as a line's audio is in, so the
   effect runs while the next line is already out, and generation is no slower. One that fails keeps

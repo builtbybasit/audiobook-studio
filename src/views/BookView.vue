@@ -578,7 +578,7 @@ const next = computed(() =>
           </p>
           <div class="mt-3 flex items-center gap-1.5">
             <UiSwitch
-              :model-value="!book.plainThoughts"
+              :model-value="book.thoughts !== 'none'"
               label="Thought effect"
               @update:model-value="(on: boolean) => libraryStore.setThoughtEffect(bookId, on)"
             />
@@ -589,7 +589,7 @@ const next = computed(() =>
           </div>
           <p class="mt-1.5 text-[11px] leading-relaxed">
             {{
-              book.plainThoughts
+              book.thoughts === "none"
                 ? "Thought lines are left as the voice made them."
                 : "Thought lines get a soft, inner-voice sound as they narrate."
             }}

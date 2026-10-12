@@ -5,10 +5,10 @@
 // setting being absent, never as an object the app cannot use.
 import { eq } from "drizzle-orm";
 
-import type { PromptTemplate, ScriptSettings } from "@/types";
+import type { PromptTemplate, ScriptSettings, ThoughtChoice } from "@/types";
 import { makeScriptSettings } from "@/lib/scripting";
 import type { Db, Tx } from "~/db/client";
-import { settings } from "~/db/schema";
+import { effects, settings } from "~/db/schema";
 
 /** The library's default scripting prompt, or null when it is the built-in one. */
 export function readLibraryPrompt(db: Db | Tx): PromptTemplate | null {
@@ -51,6 +51,28 @@ export function writeScriptSettings(db: Db | Tx, script: ScriptSettings): void {
   const value = { profile: script.profile };
   db.insert(settings)
     .values({ key: "script", value })
+    .onConflictDoUpdate({ target: settings.key, set: { value } })
+    .run();
+}
+
+/**
+ * The library's thought effect: an effect's id or "none". A row that is missing, not a string or
+ * naming no effect reads as the Inner voice the library starts with, or "none" once that is gone.
+ */
+export function readThoughts(db: Db | Tx): ThoughtChoice {
+  const value = db.select().from(settings).where(eq(settings.key, "thoughts")).get()?.value;
+  if (value === "none") return value;
+  const known = (id: unknown) =>
+    typeof id === "string" &&
+    !!db.select({ id: effects.id }).from(effects).where(eq(effects.id, id)).get();
+  if (known(value)) return value as string;
+  return known("inner-voice") ? "inner-voice" : "none";
+}
+
+/** Keep this as the library's thought effect. */
+export function writeThoughts(db: Db | Tx, value: ThoughtChoice): void {
+  db.insert(settings)
+    .values({ key: "thoughts", value })
     .onConflictDoUpdate({ target: settings.key, set: { value } })
     .run();
 }

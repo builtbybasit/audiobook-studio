@@ -171,7 +171,13 @@ keyed by `(book_id, file)` — the clip's file name under the book's audio direc
 no finding; a line edited since has a finding whose `text` no longer matches, and both are heard
 again by the next check. Rows go with their book; one whose file is no longer any line's clip is
 simply never read. Added by migration `0023_heard`, with `books.check_by_ear`. Migration
-`0024_thought_effect` adds `books.plain_thoughts` and `clips.effect` ([the thought effect](audio.md#the-thought-effect)).
+`0024_thought_effect` adds `books.plain_thoughts` and `clips.effect` ([the thought effect](audio.md#the-thought-effect)). Migration
+`0031_voice_effects` replaces both: the `effects` table, seeded with the Inner voice as the
+library's thought effect (`settings.thoughts`); `books.thoughts` and `characters.thoughts` (an
+effect's id, `"none"`, or null to follow the next level) and `characters.effect`; and `clips.sound`
+(the fingerprint of the effects baked into the file, `"ffmpeg"` for a clip the old effect made) with
+`clips.raw` (the voice's own file beside a processed one). A book with plain thoughts chooses
+`"none"`.
 
 ### Absent is not null
 

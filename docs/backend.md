@@ -126,12 +126,13 @@ of the wire.
 | Queue     | `jobs`, `job_events`                                                                  |
 | Export    | `exports`, `export_files`, `export_chapters`                                          |
 | Usage     | `requests`, `opening_spend`, `clone_fees`                                             |
-| App       | `settings`                                                                            |
+| App       | `settings`, `effects`                                                                 |
 
 `opening_spend` is what a book had spent before the ledger began; only the demo's seed writes one,
 so a book imported on the server starts at zero. `settings` holds what belongs to the installation
-rather than to a book, such as the library's default scripting prompt. Chapter text is a table of
-its own because the review lists a few hundred chapters at a time and needs none of their prose.
+rather than to a book, such as the library's default scripting prompt; so does `effects`, the
+voice effects any book's speakers may wear. Chapter text is a table of its own because the review
+lists a few hundred chapters at a time and needs none of their prose.
 
 ### What is a column and what is a document
 
@@ -170,14 +171,18 @@ keyed by `(book_id, file)` — the clip's file name under the book's audio direc
 (`replaceScript`) while a render's file never changes. A line rendered again has a new file and so
 no finding; a line edited since has a finding whose `text` no longer matches, and both are heard
 again by the next check. Rows go with their book; one whose file is no longer any line's clip is
-simply never read. Added by migration `0023_heard`, with `books.check_by_ear`. Migration
-`0024_thought_effect` adds `books.plain_thoughts` and `clips.effect` ([the thought effect](audio.md#the-thought-effect)). Migration
-`0031_voice_effects` replaces both: the `effects` table, seeded with the Inner voice as the
-library's thought effect (`settings.thoughts`); `books.thoughts` and `characters.thoughts` (an
-effect's id, `"none"`, or null to follow the next level) and `characters.effect`; and `clips.sound`
-(the fingerprint of the effects baked into the file, `"ffmpeg"` for a clip the old effect made) with
-`clips.raw` (the voice's own file beside a processed one). A book with plain thoughts chooses
-`"none"`.
+simply never read. Added by migration `0023_heard`, with `books.check_by_ear`.
+
+Migration `0024_thought_effect` added `books.plain_thoughts` and `clips.effect`, and
+`0031_voice_effects` replaced both ([voice effects](audio.md#voice-effects)): the `effects` table,
+seeded with the Inner voice as the library's thought effect (`settings.thoughts`);
+`books.thoughts` and `characters.thoughts` (an effect's id, `"none"`, or null to follow the next
+level) and `characters.effect`; and `clips.sound` (the fingerprint of the effects baked into the
+file, `"ffmpeg"` for a clip the old effect made) with `clips.raw` (the voice's own file beside a
+processed one, removed with it by whatever removes the clip). A book with plain thoughts chooses
+`"none"`. None of those names is a foreign key, since each also holds `"none"`, so removing an
+effect resets every choice of it in the same transaction
+([server/db/effects.ts](../server/db/effects.ts)).
 
 ### Absent is not null
 
@@ -262,9 +267,9 @@ The id a chapter is filed under counts every chapter of the file, cover and cont
 included, so the book's "Chapter 2" can be id 4. What a person sees is the **reading number**: the
 chapter's place among the ones the audiobook keeps (`chapterNumbers` in
 [src/lib/chapterNumber.ts](../src/lib/chapterNumber.ts)), which moves whenever a chapter is skipped or
-kept. So no stored label carries a chapter: a job is `Narrate`, `Re-script · DeepSeek`, `Check` or
-`Retake`, and a ledger row `Script chunk 2` or `Prompt trial · part 2/3`, and the page puts the
-chapter in from the row's `chapterId` as it reads it (`jobLabel` in
+kept. So no stored label carries a chapter: a job is `Narrate`, `Re-script · DeepSeek`, `Check`,
+`Retake` or `Re-apply effects`, and a ledger row `Script chunk 2` or `Prompt trial · part 2/3`, and
+the page puts the chapter in from the row's `chapterId` as it reads it (`jobLabel` in
 [src/lib/queue.ts](../src/lib/queue.ts)). A check's request is not named by the chapter's title
 either, which would spoil a chapter not yet read. Prose the server sends — a refusal, a build's
 note, the prompt's `{{chapter.number}}` — names a chapter by its reading number
@@ -336,10 +341,10 @@ over an imported book. The connection also waits up to five seconds on a busy da
 | [server/endpoints/ops.ts](../server/endpoints/ops.ts)                                         | The endpoint configuration saved whole; a voice sample; a provider's failure as a refusal             |
 | [server/voices/](../server/voices/), [speakerSamples/](../server/speakerSamples/)             | The recordings a cloned voice was made from, and the ones a script file brought for a speaker         |
 | [server/usage/](../server/usage/)                                                             | The ledger, and the budgets held against it                                                           |
-| [server/jobs/](../server/jobs/)                                                               | The runner, and the scripting, narration and build jobs with the enqueue half of each                 |
+| [server/jobs/](../server/jobs/)                                                               | The runner, and the scripting, narration, check, build and Re-apply jobs, each with its enqueue half  |
 | [server/providers/](../server/providers/)                                                     | The ports a scripting model, a speech model and an encoder are reached through, and what is behind    |
 | [server/epub/](../server/epub/), [import/](../server/import/)                                 | Reading an EPUB, cutting it into chapters, deciding which are notices, assembling a book              |
-| [server/audio/](../server/audio/), [covers/](../server/covers/)                               | Where a clip or a cover lives, and reading a clip's format and length off its bytes                   |
+| [server/audio/](../server/audio/), [covers/](../server/covers/)                               | Where a clip or a cover lives, its format and length read off its bytes, and its voice effects run    |
 | [server/demo/](../server/demo/)                                                               | The seed and `world.ts`; `situations.ts`, `pace.ts`, `reset.ts`, and `live.ts` for what stays running |
 | [server/db/](../server/db/)                                                                   | Every query, per area; the client, migrations, statements compiled once                               |
 | [server/db/schema/](../server/db/schema/), [rows/](../server/db/rows/)                        | The tables, and the only files that map columns to domain shapes                                      |
@@ -651,7 +656,7 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `GET`    | `/api/books`                                      | Every book, importing ones included, with chapter counts                                                     |
 | `POST`   | `/api/books/import`                               | An uploaded EPUB → a book, or one more volume of one                                                         |
 | `GET`    | `/api/books/:id`                                  | A book and its chapters                                                                                      |
-| `PATCH`  | `/api/books/:id`                                  | Budget, script budget, pacing, prompt or `readNotes`; chapters are re-timed and, for `readNotes`, re-settled |
+| `PATCH`  | `/api/books/:id`                                  | Budgets, pacing, prompt, `readNotes`, `thoughts`; the chapters are re-timed and, for `readNotes`, re-settled |
 | `DELETE` | `/api/books/:id`                                  | Remove a book and everything it owns                                                                         |
 | `POST`   | `/api/books/:id/start-over`                       | Clear every script, clip and status, History kept; `cast` takes the speakers; 409 mid-job                    |
 | `POST`   | `/api/books/:id/confirm`                          | The review is done; it joins the library                                                                     |
@@ -700,6 +705,8 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `GET`    | `/api/books/:id/exports/:e/files/:n`              | One of its files, to save                                                                                    |
 | `DELETE` | `/api/books/:id/exports/:e`                       | Forget one, and take its files off the disk                                                                  |
 | `GET`    | `/api/books/:id/spend`                            | What the book has spent, and what its unfinished work holds                                                  |
+| `GET`    | `/api/books/:id/effects/stale`                    | How many clips have an old sound, and how many cannot be redone                                              |
+| `POST`   | `/api/books/:id/effects/reapply`                  | Queue the book's Re-apply (202); 409 while one is queued or running                                          |
 | `GET`    | `/api/audio/:bookId/:file`                        | A rendered clip's audio                                                                                      |
 | `GET`    | `/api/endpoints`                                  | Endpoints, profiles, credentials, prompt, script settings                                                    |
 | `PUT`    | `/api/endpoints`                                  | The whole configuration, in place of what is stored                                                          |
@@ -715,6 +722,14 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `GET`    | `/api/endpoints/summary`                          | One endpoint's charts and totals over every row; `?kind&id&range&today`                                      |
 | `GET`    | `/api/endpoints/requests`                         | One endpoint's requests, a page at a time; `?kind&id&range&from&to&status&bookId&search&before&limit`        |
 | `GET`    | `/api/endpoints/live`                             | Each speech endpoint's lines out and held, cooldown, clips done                                              |
+| `GET`    | `/api/effects`                                    | The library's voice effects                                                                                  |
+| `POST`   | `/api/effects`                                    | A new effect (201)                                                                                           |
+| `PUT`    | `/api/effects/:id`                                | Rename an effect or replace its chain                                                                        |
+| `DELETE` | `/api/effects/:id`                                | Remove an effect, and every choice of it                                                                     |
+| `POST`   | `/api/effects/preview`                            | A clip played through unsaved chains, as a WAV; nothing kept; 503 without uv                                 |
+| `POST`   | `/api/effects/parse`                              | Pasted Pedalboard Python as a chain, read with `ast`, never run; 503 without uv                              |
+| `GET`    | `/api/settings/thoughts`                          | The thought effect for all books: an effect's id or `"none"`                                                 |
+| `PUT`    | `/api/settings/thoughts`                          | Choose it                                                                                                    |
 | `GET`    | `/api/jobs`                                       | Every job, oldest first; `?bookId=` narrows it                                                               |
 | `GET`    | `/api/jobs/:id`                                   | One job, with its activity                                                                                   |
 | `POST`   | `/api/jobs/:id/cancel`                            | Stop it: a queued job never starts, a running one stops                                                      |
@@ -1282,7 +1297,7 @@ judges drift with: the words after the book's dictionary (`speak` in
 [src/lib/speech.ts](../src/lib/speech.ts)), kept to what a voice can say, with the expression tags
 written in, the voice instructions beside them and the parts the endpoint's limit cuts them into.
 That module also writes down which settings a run takes once, when it starts — the line, the cast,
-the plain-thoughts switch, which endpoints batch — and which as each line goes out — the endpoint's
+the voice effects, which endpoints batch — and which as each line goes out — the endpoint's
 saved configuration and the dictionary, so a term added mid-run reaches every line not yet sent. The
 clip records its reading (`readingRecord`) — `pronounced`, and `said` with the number of
 substitutions (`lex`) when that differs — because the drift rule, `compareReading`, compares
@@ -1403,10 +1418,10 @@ Removing a book removes its directory; removing a volume removes the clips its c
 
 ## Export
 
-Building an audiobook is the third kind of job, and the one about a book rather than a chapter — its
-`chapterId` is null, so its dedupe key is `export:<book>:book` and a book builds one audiobook at a
-time, because a build reads every clip another build might be replacing. The page's side is
-[export planning](exports.md).
+Building an audiobook is a job about a book rather than a chapter, as a Re-apply of its voice
+effects is — its `chapterId` is null, so its dedupe key is `export:<book>:book` and a book builds
+one audiobook at a time, because a build reads every clip another build might be replacing. The
+page's side is [export planning](exports.md).
 
 **The plan the page drew is the plan that is written.** `planOf` in
 [src/lib/exports.ts](../src/lib/exports.ts) turns the selection, the volumes and the settings into
@@ -1476,10 +1491,13 @@ whole number of sample frames (`silenceBytes`), never a byte count rounded from 
 an odd number of bytes of silence puts every sample after it a byte out of step, which plays as
 noise to the end of the file.
 
-ffmpeg is the one thing in this server that depends on something outside the process — the
-encoder, the thought effect and the 16 kHz a transcriber is sent all run it — so it is checked at
+ffmpeg is the one thing in this server that must be there outside the process — the encoder, the
+fallback thought effect and the 16 kHz a transcriber is sent all run it — so it is checked at
 boot: a server with no runnable `FFMPEG_BIN` refuses to start, naming the binary, rather than
-queueing work that was always going to fail. It copies the cover in untouched as
+queueing work that was always going to fail. uv, which runs Pedalboard for the
+[voice effects](audio.md#voice-effects), is the other, and is not required: it is asked at boot in
+the background, and without it thought lines fall back to ffmpeg and speakers' own effects are left
+off. ffmpeg copies the cover in untouched as
 the attached picture; a chosen image gone from disk fails the build, and the EPUB's cover gone
 missing is a warning. It writes the book's details with `-metadata`, whose generic keys ffmpeg
 spells as ID3v2.3 frames in an MP3 and iTunes atoms in an M4B: the file's own title, the book's

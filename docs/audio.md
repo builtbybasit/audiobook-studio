@@ -72,26 +72,74 @@ line, word by word, without anyone listening.
 [tests/heard.test.ts](../tests/heard.test.ts) covers the comparison and
 [tests/server/checkByEar.test.ts](../tests/server/checkByEar.test.ts) the job.
 
-## The thought effect
+## Voice effects
 
-A character's thoughts are narrated in the same voice as what they say aloud, so a `thought` line
-is given a sound of its own as its clip lands: thinned and boxed in (220 Hz–6 kHz), the presence
-taken down, 3:1 compression and a small room ringing around it
-([server/audio/thoughtEffect.ts](../server/audio/thoughtEffect.ts)).
+A voice effect is a named [Pedalboard](https://github.com/spotify/pedalboard) chain — filters,
+compression, a room, layers mixed side by side — kept once for the whole library rather than per
+book, so the effect made for one book's ghost is there for the next
+([src/types/effect.ts](../src/types/effect.ts)). A line can be given two:
 
-- **On by default**, per book: **Thought effect** on the book page's Reading card
-  (`Book.thoughts: "none"` switches it off).
-- **Kept in the file.** It is put on once, as the clip arrives, so the player, the Listen page, a
-  check by ear and a build all hear the same clip. A clip that has it says so
-  (`SegmentAudio.sound: "ffmpeg"`) and is always a WAV at the rate the voice came back at. Lines
-  narrated before the switch changed keep the sound they were made with; a retake makes them again.
-- **Never in the way.** The endpoint's slot is given back as soon as a line's audio is in, so the
-  effect runs while the next line is already out, and generation is no slower. One that fails keeps
-  the clip the voice made and says so in the run's log; the line never fails over it.
-- **Made by ffmpeg** (`FFMPEG_BIN`), which the server requires. ffmpeg has no Freeverb, so the room is four
-  early reflections (`aecho`).
+- **A speaker's own effect**, on every line of theirs: a radio voice, a giant, a ghost. None by
+  default.
+- **The thought effect**, on a `thought` line only, so a character's thoughts — narrated in the same
+  voice as what they say aloud — are heard from inside the head. It is chosen speaker → book → all
+  books, each level following the next until one names an effect or `"none"`, which stops it there:
+  a book can narrate its thoughts plain while the library keeps its effect, and one speaker can keep
+  theirs in such a book. A library starts with **Inner voice** (thinned and boxed in, the presence
+  taken down, compressed, a small room) as the thought effect for all books. The book page's
+  **Thought effect** switch sets the book's level: off is `"none"`, on follows all books.
 
-[tests/server/thoughtEffect.test.ts](../tests/server/thoughtEffect.test.ts) covers it.
+The own effect runs first and the thought effect after it, so a thought is the speaker's voice,
+heard inward ([`chainsFor`](../src/lib/effects.ts), which the page reads too). Removing an effect
+puts every choice of it back to following the next level, and the library's to none — never on to
+an effect nobody picked.
+
+**Kept in the file, with the voice's own beside it.** The effects are run once, as the clip lands,
+so the player, the Listen page, a check by ear and a build all hear the same thing and nothing has
+to remember to apply them later. A processed clip is always a 16-bit WAV at the rate the voice came
+back at. The voice's file is kept as the clip's `raw`, and the clip records a fingerprint of the
+chains baked into it (`sound`; [`soundOf`](../src/lib/effects.ts) — names and switched-off steps
+don't count). The endpoint's slot is given back as soon as a line's audio is in, so effects run
+while the next line is already out; an effect that fails keeps the voice's clip and says so in the
+run's log, and the line never fails over it.
+
+**An old sound waits for Re-apply.** Editing an effect, or changing who wears which, changes no clip
+already made: a book's clips whose `sound` is not what their line would get now have the old sound
+(`GET /api/books/:id/effects/stale` counts them). **Re-apply** (`POST …/effects/reapply`) is an
+`effects` job over the whole book that runs each one's raw file through the chains its line gets
+now, or puts the raw back for a line that now gets none — local work, no voice is asked again and
+nothing is billed. It is never queued by itself: a book of 900 chapters is a long job, and an edit
+made to hear it in one chapter should not start it. Current clips and waiting retakes are redone;
+takes are history and stay as they were made. A line narrated again while the job ran keeps its
+new clip. Thought clips narrated with the ffmpeg effect before raw files were kept have no raw to
+work from; they are counted (`unavailable`) and left alone until a retake.
+
+**The tail is kept.** Pedalboard hands back as many samples as it is given, so a room or an echo
+ringing past the last word would be cut off. 0.4 s of silence goes on the end first, and whatever of
+it it is still silent afterwards comes off again — never more, so a clip is never shorter than it
+came — and a tail still ringing where the pad runs out fades over its last 30 ms instead of stopping
+with a click.
+
+**Pedalboard runs under uv**, which the server needs instead of a Python environment of its own:
+`uv run --no-project --with pedalboard==… python -I` ([effects.py](../server/audio/effects.py)), an
+exact version so the first run downloads it once and every run after starts offline from uv's cache,
+the same plugins making the same sound. A landing clip or a preview is a process of its own; a
+Re-apply is one batch spread over a worker per core, each answering a line per clip as it ends.
+Without uv the server still starts: a thought line gets the old ffmpeg thought effect instead
+([server/audio/thoughtEffect.ts](../server/audio/thoughtEffect.ts), recorded as the sound
+`"ffmpeg"` with its raw kept, so a Re-apply once uv is there gives it the real chain), and speakers'
+own effects, which have no stand-in, are left off with one warning per run.
+
+**A chain is data, never code.** A chain can be pasted as Pedalboard Python;
+`POST /api/effects/parse` reads it with Python's `ast` and never executes it, and only the plugins and numeric arguments the
+editor knows are ever built, from a pasted chain or a saved one. `POST /api/effects/preview` plays
+a clip already in the library through chains not yet saved and keeps nothing. Both answer 503 where
+uv is missing.
+
+[tests/server/effectsNarration.test.ts](../tests/server/effectsNarration.test.ts),
+[effectsRunner.test.ts](../tests/server/effectsRunner.test.ts),
+[reapply.test.ts](../tests/server/reapply.test.ts) and
+[thoughtEffect.test.ts](../tests/server/thoughtEffect.test.ts) cover them.
 
 ## Pronunciation and pacing
 

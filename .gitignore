@@ -13,3 +13,6 @@ data
 
 # Playwright test state
 .playwright-mcp
+
+# Python bytecode the effects runner leaves beside its script
+server/audio/__pycache__/

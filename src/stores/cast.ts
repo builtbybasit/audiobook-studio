@@ -249,8 +249,14 @@ export const useCastStore = defineStore("cast", {
           for (const seg of scriptsStore.segments[`${bookId}:${c.id}`] ?? []) {
             // what a speaker is given to say, as `lineCounts` counts it
             if (!isSpoken(seg, book)) continue;
-            const st = (stats[seg.speaker] ??= { lines: 0, chapters: new Set(), first: c.id });
+            const st = (stats[seg.speaker] ??= {
+              lines: 0,
+              thoughts: 0,
+              chapters: new Set(),
+              first: c.id,
+            });
             st.lines++;
+            if (seg.type === "thought") st.thoughts++;
             st.chapters.add(c.id);
             if (c.id < st.first) st.first = c.id;
           }

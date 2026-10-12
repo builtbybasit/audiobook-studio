@@ -290,6 +290,8 @@ export interface NoticeGroup {
 
 export interface CastStat {
   lines: number;
+  /** of `lines`, the thought lines: what the book's thought effect reaches */
+  thoughts: number;
   chapters: Set<number>;
   first: number;
 }

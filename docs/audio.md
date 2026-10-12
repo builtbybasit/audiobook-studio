@@ -86,8 +86,8 @@ book, so the effect made for one book's ghost is there for the next
   books, each level following the next until one names an effect or `"none"`, which stops it there:
   a book can narrate its thoughts plain while the library keeps its effect, and one speaker can keep
   theirs in such a book. A library starts with **Inner voice** (thinned and boxed in, the presence
-  taken down, compressed, a small room) as the thought effect for all books. The book page's
-  **Thought effect** switch sets the book's level: off is `"none"`, on follows all books.
+  taken down, compressed, a small room) as the thought effect for all books. The Cast page's
+  **Book defaults** card sets the book's level, and a speaker's Effect column their own.
 
 The own effect runs first and the thought effect after it, so a thought is the speaker's voice,
 heard inward ([`chainsFor`](../src/lib/effects.ts), which the page reads too). Removing an effect

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
+import { useEffectsStore } from "@/stores/effects";
 import { plural } from "@/lib/contents";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
@@ -17,7 +18,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import { useBookId } from "@/composables/useBookId";
-import { useBookScripts, useCast } from "@/queries";
+import { useBookScripts, useCast, useEffects } from "@/queries";
 import { GENDER } from "@/lib/scriptReview";
 import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
 import { UiSelect, UiCheckbox, UiHint, UiTooltip } from "@/ui";
@@ -26,13 +27,17 @@ import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
 import { Plus as AddIcon } from "@lucide/vue";
 import CastRecord from "@/views/cast/CastRecord.vue";
 import CastSelectionBar from "@/views/cast/CastSelectionBar.vue";
-import CharacterVoiceRow from "@/views/cast/CharacterVoiceRow.vue";
+import BookDefaults from "@/views/cast/BookDefaults.vue";
+import EffectsSheet from "@/views/cast/effects/EffectsSheet.vue";
+import ReapplyBar from "@/views/cast/effects/ReapplyBar.vue";
+import type { EffectSubject } from "@/views/cast/effects/subject";
 import type { Character, Gender } from "@/types";
 
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const samplesStore = useSpeakerSamplesStore();
+const effectsStore = useEffectsStore();
 const bookId = useBookId();
 // the cast: read from the server when the page opens, or the seeded world's
 const { characters: cast } = useCast(bookId);
@@ -65,7 +70,7 @@ const rows = computed(() => {
     .filter((c) => !onlyNew.value || c.isNew)
     .map((c) => ({
       c,
-      st: stats.value[c.name] ?? { lines: 0, chapters: new Set<number>(), first: 0 },
+      st: stats.value[c.name] ?? { lines: 0, thoughts: 0, chapters: new Set<number>(), first: 0 },
       voice: endpointsStore.resolveVoice(c.voice),
       // a speaker with no voice of their own borrows the Character voice or the Narrator's
       borrowed: c.voice ? null : castStore.effectiveVoice(bookId, c.name),
@@ -149,6 +154,19 @@ const GENDERS = (["f", "m", "n", "?"] as Gender[]).map((value) => ({
 function setGender(name: string, e: Event) {
   const gender = (e.target as HTMLSelectElement).value as Gender;
   void castStore.updateCharacter(bookId, name, { gender });
+}
+
+// ---------- voice effects ----------
+// The library's effects are read in for the Effect column and the sheet; a speaker's choice is an
+// id, named from the store's one map rather than a lookup per row.
+useEffects();
+const effectOf = (id: string | undefined) => (id ? effectsStore.byId.get(id) : undefined);
+// One sheet serves the book's thought effect and every speaker's, opened on what was clicked.
+const sheetOpen = ref(false);
+const sheetFor = ref<EffectSubject | null>(null);
+function editEffect(subject: EffectSubject) {
+  sheetFor.value = subject;
+  sheetOpen.value = true;
 }
 
 // ---------- the full record ----------
@@ -347,8 +365,16 @@ const duplicate = computed(
       @retry="readAgain"
     />
 
+    <BookDefaults
+      :book-id="bookId"
+      :stats="stats"
+      :counted="counted"
+      @thoughts="editEffect({ kind: 'book' })"
+    />
+    <ReapplyBar :book-id="bookId" />
+
     <div class="card overflow-x-auto">
-      <table class="w-full min-w-[600px] text-sm">
+      <table class="w-full min-w-[720px] text-sm">
         <thead
           class="bg-zinc-50 text-left text-[11px] uppercase tracking-wider text-zinc-500 dark:bg-zinc-900"
         >
@@ -358,12 +384,11 @@ const duplicate = computed(
             <th class="w-20">Gender</th>
             <th class="w-16 pr-4 text-right">Lines</th>
             <th class="w-52">Voice</th>
+            <th class="w-44 pl-2">Effect</th>
             <th class="w-10"></th>
           </tr>
         </thead>
         <tbody>
-          <!-- first whatever the sort or filter: it is the book's, not a speaker to find -->
-          <CharacterVoiceRow :book-id="bookId" />
           <template v-for="{ c, st, voice, borrowed } in rows" :key="c.name">
             <tr
               data-row
@@ -514,6 +539,32 @@ const duplicate = computed(
                   </svg>
                 </button>
               </td>
+              <td class="py-1 pl-2">
+                <!-- their own effect, and a thought effect only when it is their own: the book's
+                     default would be the same mark on every row -->
+                <div class="flex items-center gap-1">
+                  <button
+                    type="button"
+                    class="chip min-w-0 max-w-[7.5rem]"
+                    :class="effectOf(c.effect) ? 'chip-on' : 'chip-off'"
+                    :aria-label="`${c.name}’s effect`"
+                    @click="editEffect({ kind: 'speaker', name: c.name, slot: 'all' })"
+                  >
+                    <span class="truncate">{{ effectOf(c.effect)?.name ?? "None" }}</span>
+                  </button>
+                  <button
+                    v-if="c.thoughts != null"
+                    type="button"
+                    class="chip chip-on min-w-0 max-w-[6.5rem]"
+                    :aria-label="`${c.name}’s own thought effect`"
+                    title="Their own thought effect"
+                    @click="editEffect({ kind: 'speaker', name: c.name, slot: 'thought' })"
+                  >
+                    <span aria-hidden="true">💭</span
+                    ><span class="truncate">{{ effectOf(c.thoughts)?.name ?? "None" }}</span>
+                  </button>
+                </div>
+              </td>
               <td class="pr-3 text-right">
                 <button
                   v-if="c.name !== 'Narrator'"
@@ -544,7 +595,7 @@ const duplicate = computed(
             <!-- the full record: every field a speaker has, in the one place that has them all -->
             <tr v-if="open === c.name" class="bg-zinc-50/70 dark:bg-zinc-900/60">
               <td></td>
-              <td colspan="5" class="px-1 py-3 pr-4">
+              <td colspan="6" class="px-1 py-3 pr-4">
                 <CastRecord :book-id="bookId" :c="c" />
               </td>
             </tr>
@@ -560,6 +611,7 @@ const duplicate = computed(
         @update:model-value="(v) => voiceFor && castStore.setVoice(bookId, voiceFor.name, v)"
       />
     </div>
+    <EffectsSheet v-model:open="sheetOpen" :book-id="bookId" :subject="sheetFor" />
     <CastSelectionBar v-if="sel.size" :book-id="bookId" :selected="sel" @clear="sel = new Set()" />
   </div>
 </template>

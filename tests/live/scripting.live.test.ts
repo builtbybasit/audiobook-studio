@@ -6,22 +6,9 @@
 // person can judge the attribution as well as the assertions.
 import { describe, expect, test } from "bun:test";
 
-import { chatScriptingProvider, fidelity } from "~/providers/chatScripting";
+import { chatScriptingProvider } from "~/providers/chatScripting";
 import type { ScriptTarget } from "~/providers/scripting";
-
-const EXCERPT = `The rain had not stopped since noon, and the inn's common room smelled of wet wool and woodsmoke. Mara pushed the door shut with her shoulder and shook out her cloak.
-
-“You're late,” said Tobiah from the corner table. He did not look up from his cards.
-
-“The bridge was out.” She dropped into the chair opposite him. “I had to go round by the mill, and the miller's dog took a dislike to me.”
-
-“It takes a dislike to everyone.” He laid down a card, frowned at it, and picked it up again. “Did anyone follow you?”
-
-Mara thought of the rider on the ridge road, the one who had kept his distance for three miles and then vanished. No, she told herself. Nobody would come this far for a letter.
-
-“No,” she said quietly. “Nobody followed me.”
-
-Tobiah finally raised his eyes. “Then why are you still holding your knife?”`;
+import { EXCERPT, expectTheInn, printScript } from "../support/liveExcerpt";
 
 const env = process.env;
 
@@ -51,22 +38,8 @@ describe.skipIf(!env.LIVE || !env.SCRIPTING_PROVIDER_URL)("a real scripting mode
         target,
         cast: ["Narrator", "Mara"],
       });
-      console.log(`${Math.round(performance.now() - started)} ms, ${lines.length} lines`);
-      for (const l of lines)
-        console.log(
-          `${l.type.padEnd(9)} ${l.speaker.padEnd(8)} ${l.direction ? `[${l.direction}] ` : ""}${l.text}`,
-        );
-
-      console.log("cast:", JSON.stringify(cast), "\nrecap:", recap);
-
-      expect(fidelity(EXCERPT, lines).ok).toBe(true);
-      const said = (words: string) => lines.find((l) => l.text.includes(words));
-      expect(said("You're late")?.speaker ?? said("You’re late")?.speaker).toBe("Tobiah");
-      expect(said("The bridge was out")?.speaker).toBe("Mara");
-      expect(said("It takes a dislike")?.speaker).toBe("Tobiah");
-      expect(said("Nobody followed me")?.speaker).toBe("Mara");
-      expect(said("still holding your knife")?.speaker).toBe("Tobiah");
-      expect(said("said Tobiah")?.type).toBe("narration");
+      printScript(performance.now() - started, lines, cast, recap);
+      expectTheInn(lines);
     },
     { timeout: 180_000 },
   );

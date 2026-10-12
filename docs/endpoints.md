@@ -91,9 +91,23 @@ providers' published cards on 28 September 2026; a preset's schedule and promoti
   preset sets concurrency 1.
 - **Scripting:** OpenAI GPT-6 Luna, Sol and Astra; DeepSeek V4.1 Flash; Gemini 3.8 Flash and 3.1
   Pro; Claude Opus 5.5, Sonnet 5 and Haiku 4.5 through Anthropic's OpenAI layer; xAI Grok 4.7 and
-  4.3; Ollama and LM Studio on your own machine; and, through OpenRouter, the models near the top of
+  4.3; Ollama and LM Studio on your own machine; through OpenRouter, the models near the top of
   its Artificial Analysis Intelligence Index list on 28 September (Claude Opus 5.5, GPT-6 Astra and
-  Sol, Grok 4.7, Qwen3.8 Max, MiMo-V2.6-Pro).
+  Sol, Grok 4.7, Qwen3.8 Max, MiMo-V2.6-Pro); and two command-line tools run on this computer
+  (below): Codex with GPT-6 Luna, and Claude Code with Opus 5.5, Sonnet 5.5 or Haiku 5.5.
+- **Codex CLI and Claude Code CLI** (scripting only) run `codex exec` or `claude -p` on the computer
+  the server runs on, signed in with the tool's own login — a ChatGPT or Claude subscription — so
+  there is no base URL and no key. Their base URL is `codex:` or `claude-code:`, followed by the
+  program's path when it is not the one on the server's PATH; the tab shows a **Program** field in
+  place of the base URL, and no credential or key. A request is the same prompt, read and checked
+  word for word the same way, as a chat model's; how each tool is run and locked down is in
+  [the providers](backend.md#scripting-requests). The presets are at no charge, concurrency 2, a
+  600 s timeout and one retry, with the reasoning level at medium (Codex `model_reasoning_effort`,
+  Claude Code `--effort`; Claude Code has no off, so off is sent as low). Every request is recorded
+  with the tokens the tool reported, at no charge, so a budget never stops one. Neither tool takes a
+  cap on output tokens, so **Max output tokens** only sizes what a request holds against budgets.
+  A tool that is missing, not signed in, or refuses the model fails with a sentence saying what to
+  do (`codex login`; `claude`, then `/login`).
 - **OpenRouter's rates** are its listing, which need not be the provider's own card nor what a
   request is charged: OpenRouter bills at whichever of its providers serves the request and reports
   that cost with each answer, and that is the cost the ledger records. Grok 4.7 was listed at

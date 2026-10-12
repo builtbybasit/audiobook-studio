@@ -31,6 +31,7 @@ import {
 } from "@/lib/endpoints";
 import { maybeMoney } from "@/lib/pricing";
 import { isSimulated } from "@/lib/providers";
+import { cliOf } from "@/lib/providers/cli";
 import { encodingSummary } from "@/lib/audioFormat";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import { useEndpointsStore } from "@/stores/endpoints";
@@ -196,9 +197,20 @@ const {
 /** A `simulated:` base URL is answered by the server itself: there is no request line, no key and
  *  no account, so the form says that instead of asking for them. */
 const simulated = computed(() => isSimulated(draft.value.baseUrl));
+/** A `codex:` or `claude-code:` base URL runs that tool on this computer, signed in with its own
+ *  login: there is no URL and no key, only which program to run when it is not the one on PATH. */
+const cli = computed(() => cliOf(draft.value.baseUrl));
+// read as typed, spaces and all, so a path with one in it can be typed; saving trims it
+const program = computed({
+  get: () => (cli.value ? draft.value.baseUrl.trimStart().slice(cli.value.scheme.length) : ""),
+  set: (v: string) => {
+    if (cli.value) draft.value.baseUrl = cli.value.scheme + v;
+  },
+});
 // Typing a simulated base URL over a hosted one stages "needs no key" with it, so the endpoint is
-// not left waiting on a key it will never be asked for. Selecting another endpoint changes nothing.
-watch([() => props.u.key, simulated], ([key, now], [was]) => {
+// not left waiting on a key it will never be asked for; so does a tool's. Selecting another
+// endpoint changes nothing.
+watch([() => props.u.key, () => simulated.value || !!cli.value], ([key, now], [was]) => {
   if (key === was && now) draft.value.needsKey = false;
 });
 /** Where a request actually goes. Fish Audio serves /tts, not the OpenAI-style /audio/speech, so
@@ -208,7 +220,7 @@ const PATH: Record<EndpointKind, () => string> = {
   tts: () => ttsRequestPath(draft.value),
   transcription: () => KIND_PATH.transcription,
 };
-const path = computed(() => (simulated.value ? "" : PATH[props.u.kind]()));
+const path = computed(() => (simulated.value || cli.value ? "" : PATH[props.u.kind]()));
 /** Where the connection test goes: the request itself, or what stands in for it — a transcriber is
  *  sent its sample recording there. */
 const PROBE_PATH: Record<EndpointKind, () => string> = {
@@ -331,7 +343,29 @@ function newCredential() {
       <section class="card p-3">
         <h3 class="label mb-2">Provider connection</h3>
         <div class="space-y-2.5">
-          <div class="space-y-1 text-xs font-medium">
+          <div v-if="cli" class="space-y-1 text-xs font-medium">
+            <span
+              ><span :id="`${u.key}-program-label`">Program</span>
+              <UiHint label="the program"
+                >Runs <code class="font-mono">{{ cli.command }}</code> on the computer this app's
+                server runs on, signed in with the tool's own login. Leave empty for the
+                <code class="font-mono">{{ cli.program }}</code> found on its PATH, or give the full
+                path. Each request runs in an empty folder that is removed afterwards, with no
+                tools, files or commands, and no session saved.</UiHint
+              ></span
+            >
+            <input
+              v-model="program"
+              class="input w-full font-mono"
+              spellcheck="false"
+              :placeholder="cli.program"
+              :aria-labelledby="`${u.key}-program-label`"
+            />
+            <span class="block text-[11px] font-normal text-zinc-500"
+              >{{ cli.label }} — covered by your subscription; no key, no charge.</span
+            >
+          </div>
+          <div v-else class="space-y-1 text-xs font-medium">
             <span
               ><span :id="`${u.key}-url-label`">Base URL</span>
               <UiHint label="the base URL"
@@ -371,7 +405,7 @@ function newCredential() {
             />
           </div>
 
-          <template v-if="!simulated">
+          <template v-if="!simulated && !cli">
             <div class="space-y-1 text-xs font-medium">
               <span
                 ><span id="cred-label">Credential</span>
@@ -453,7 +487,11 @@ function newCredential() {
               text="One request from the server with the saved settings and key; it touches no book, queues no job and writes nothing to any chapter."
             />
           </h3>
-          <p v-if="isSimulated(u.baseUrl)" class="text-[11px] text-zinc-500">
+          <p v-if="cliOf(u.baseUrl)" class="text-[11px] text-zinc-500">
+            One run of <code class="font-mono">{{ cliOf(u.baseUrl)!.command }}</code> on this
+            computer, signed in with its own login.
+          </p>
+          <p v-else-if="isSimulated(u.baseUrl)" class="text-[11px] text-zinc-500">
             One simulated answer<template v-if="u.endpoint">
               in <b>{{ encodingSummary(u.endpoint) }}</b></template
             >; nothing reaches the network.

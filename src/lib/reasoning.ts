@@ -15,6 +15,7 @@
 import type { ReasoningEffort } from "@/types";
 import { gemini } from "@/lib/providers/gemini";
 import { openai } from "@/lib/providers/openai";
+import { cliOf } from "@/lib/providers/cli";
 import { isSimulated } from "@/lib/providers/simulated";
 
 /** What one request carries for a reasoning level, and what the page should say about it. */
@@ -178,6 +179,9 @@ export function reasoningRequest(
   effort: ReasoningEffort | null | undefined,
 ): ReasoningRequest {
   if (isSimulated(baseUrl)) return nothing();
+  // a command-line tool takes the level as a flag of its own (`@/lib/providers/cli`), not a field
+  const cli = cliOf(baseUrl);
+  if (cli) return { ...nothing(), note: effort ? cli.effort(effort).note : null };
   // No level still has to leave `temperature` out where it is refused whatever the level: GPT-6
   // models reason by default, and Claude 5 models refuse a non-default one on every request.
   if (!effort) return { ...nothing(), omitTemperature: REFUSE_TEMPERATURE.some((m) => m(baseUrl)) };

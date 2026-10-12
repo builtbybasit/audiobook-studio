@@ -8,6 +8,7 @@ import { computed } from "vue";
 
 import { money } from "@/lib/pricing";
 import { isSimulated } from "@/lib/providers";
+import { cliOf } from "@/lib/providers/cli";
 import { scriptTelemetry } from "@/lib/scriptActivity";
 import { useScriptTotals } from "@/queries/scriptActivity";
 import type { Profile, RequestRecord } from "@/types";
@@ -73,7 +74,9 @@ async function copyError() {
       JSON.stringify(
         {
           ...error.value,
-          endpoint: error.value.baseUrl.replace(/\/$/, "") + "/chat/completions",
+          endpoint:
+            cliOf(error.value.baseUrl)?.command ??
+            error.value.baseUrl.replace(/\/$/, "") + "/chat/completions",
           simulated: simulated.value,
         },
         null,

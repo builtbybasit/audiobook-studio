@@ -1,7 +1,9 @@
 // The scripting presets: what "Start from a preset…" offers a scripting endpoint, grouped by
-// provider — every one a model that serves OpenAI's /chat/completions.
+// provider — a model that serves OpenAI's /chat/completions, or a command-line tool on this
+// computer that is signed in to one (`@/lib/providers/cli`).
 import { presetPricing, type ScriptingPreset } from "@/lib/presets/preset";
 import { SIMULATED_BASE_URL, SIMULATED_SCRIPTING_MODEL } from "@/lib/providers";
+import { CLAUDE_CODE, CODEX } from "@/lib/providers/cli";
 
 // Every hosted rate below is the provider's own published card as read on 2026-09-28, standard
 // tier, USD per million tokens. A preset leaves limits and timing at `newProfile`'s defaults: a
@@ -77,6 +79,48 @@ function openRouter(
       inPrice: rates.input,
       outPrice: rates.output,
       pricing: presetPricing({ cachedInput: rates.cachedInput, cacheWrite: rates.cacheWrite }),
+    },
+  };
+}
+
+/**
+ * What a command-line tool's preset shares: no key, no charge — the tool's own login pays, out of
+ * a subscription — two chunks at once, and the time a reasoning model run as an agent takes over a
+ * chapter's chunk (a 7–9k-character one took about 65 s through Codex on gpt-6-luna).
+ */
+const ON_SUBSCRIPTION = {
+  needsKey: false,
+  inPrice: 0,
+  outPrice: 0,
+  concurrency: 2,
+  // neither tool takes a cap on output tokens, so this is only what a request holds against the
+  // budgets — at no charge, nothing
+  maxOutputTokens: 32000,
+  secPerChunk: 60,
+  timeoutSec: 600,
+  maxRetries: 1,
+} as const;
+
+const SUBSCRIPTION_NOTE =
+  "Runs on this computer, signed in with the tool's own login: covered by your subscription, so " +
+  "every request is recorded at no charge, and budgets never stop it. Each run is in an empty " +
+  "folder, with no tools, files or commands, and nothing saved.";
+
+/** A Claude model through Claude Code, at the medium effort. */
+function claudeCode(id: string, label: string, model: string, hint: string): ScriptingPreset {
+  return {
+    id: `claude-code-${id}`,
+    group: "Claude Code CLI",
+    label: `Claude Code · ${label}`,
+    hint,
+    note: `${SUBSCRIPTION_NOTE} Sign in by running \`claude\` once in a terminal.`,
+    apply: {
+      name: `Claude Code · ${label}`,
+      baseUrl: CLAUDE_CODE.scheme,
+      model,
+      reasoning: "medium",
+      ...ON_SUBSCRIPTION,
+      pricing: presetPricing(),
     },
   };
 }
@@ -408,4 +452,24 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       pricing: presetPricing(),
     },
   },
+  {
+    id: "codex-luna",
+    group: "Codex CLI",
+    label: "Codex · GPT-6 Luna",
+    hint: "gpt-6-luna through codex exec, on your ChatGPT plan",
+    note:
+      `${SUBSCRIPTION_NOTE} Sign in with \`codex login\`. A ChatGPT login takes gpt-6-luna; ` +
+      "it refuses gpt-6.1-luna.",
+    apply: {
+      name: "Codex · GPT-6 Luna",
+      baseUrl: CODEX.scheme,
+      model: "gpt-6-luna",
+      reasoning: "medium",
+      ...ON_SUBSCRIPTION,
+      pricing: presetPricing(),
+    },
+  },
+  claudeCode("opus", "Opus 5.5", "claude-opus-5-5", "claude-opus-5-5 through claude -p"),
+  claudeCode("sonnet", "Sonnet 5.5", "claude-sonnet-5-5", "claude-sonnet-5-5 through claude -p"),
+  claudeCode("haiku", "Haiku 5.5", "claude-haiku-5-5", "claude-haiku-5-5 through claude -p"),
 ];

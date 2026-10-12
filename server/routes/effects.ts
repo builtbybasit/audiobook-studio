@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
-import type { Effect, Step, ThoughtChoice } from "@/types";
+import type { Effect, EffectUses, Step, ThoughtChoice } from "@/types";
 import type { EffectRunner } from "~/audio/effects";
 import { formatOfFile, type AudioFiles } from "~/audio/files";
 import type { Db } from "~/db/client";
@@ -19,6 +19,7 @@ import { validate } from "~/lib/validate";
 
 const EffectParam = v.object({ id: EffectIdSchema });
 const Thoughts = v.object({ effect: EffectIdSchema });
+const NewEffect = v.object({ ...EffectBodySchema.entries, after: v.optional(EffectIdSchema) });
 // a speaker's own effect and a thought effect are two; a few more leaves room, and no more
 const Preview = v.object({
   url: v.pipe(v.string(), v.maxLength(512)),
@@ -78,10 +79,16 @@ export function effectRoutes(db: Db, files: AudioFiles, effects?: EffectRunner):
 
   app.get("/", (c) => c.json({ effects: ops.listEffects(db) satisfies Effect[] }));
 
-  app.post("/", validate("json", EffectBodySchema), (c) => {
-    const { name, chain } = c.req.valid("json");
-    return c.json({ effect: ops.createEffect(db, name, chain) satisfies Effect }, 201);
+  /** At the end of the list, or right after the effect `after` names; one there is not is a 400. */
+  app.post("/", validate("json", NewEffect), (c) => {
+    const { name, chain, after } = c.req.valid("json");
+    return c.json({ effect: ops.createEffect(db, name, chain, after) satisfies Effect }, 201);
   });
+
+  /** Everywhere it is chosen, across every book (`EffectUses`). */
+  app.get("/:id/uses", validate("param", EffectParam), (c) =>
+    c.json(ops.effectUses(db, c.req.valid("param").id) satisfies EffectUses),
+  );
 
   /** Its name and its chain, replaced; the id stays. */
   app.put("/:id", validate("param", EffectParam), validate("json", EffectBodySchema), (c) => {

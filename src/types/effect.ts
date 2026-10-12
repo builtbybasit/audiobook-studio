@@ -45,3 +45,23 @@ export interface StaleSound {
   lines: number;
   unavailable: number;
 }
+
+/**
+ * Everywhere an effect is chosen, across every book (`GET /api/effects/:id/uses`), so a delete or
+ * an edit can say whom it reaches before it does. A book that follows the library is reached
+ * through `library`, and is not listed in `books`.
+ */
+export interface EffectUses {
+  /** the library's thought effect (settings `thoughts`) is it */
+  library: boolean;
+  /** books whose own thought effect it is */
+  books: { id: string; title: string }[];
+  /** characters choosing it as their effect, their thought effect, or both */
+  speakers: {
+    bookId: string;
+    bookTitle: string;
+    name: string;
+    effect: boolean;
+    thoughts: boolean;
+  }[];
+}

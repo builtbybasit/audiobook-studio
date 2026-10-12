@@ -19,8 +19,9 @@
 //
 // - **at run start**: the line itself (its text, tags, direction and type, as `planRun` read the
 //   chapter), the cast — who reads each line, in which voice, on which endpoint, with which style
-//   (`bookDelivery`) — whether thoughts are read plain, and which endpoints take batches and how
-//   large. A cast edit mid-run is the edit's to mark stale; a switch flipped applies to the next run.
+//   (`bookDelivery`) — the voice effects its lines are run through, the book's thought effect
+//   choice among them (`effectContext`), and which endpoints take batches and how large. A cast
+//   edit mid-run is the edit's to mark stale; an effect chosen mid-run applies to the next run.
 // - **as each line goes out**: the endpoint's saved configuration — its tags and brackets, its
 //   `maxChars` and `splitAt`, its rate, format and key — and the book's dictionary, so a term added
 //   or a tag defined mid-run reaches every line not yet sent; the price the line holds is worked

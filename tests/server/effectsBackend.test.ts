@@ -6,7 +6,7 @@
 // with the Inner voice as the library's thought effect.
 import { describe, expect, test } from "bun:test";
 
-import type { Book, Cast, Character, Effect, ImportedBook, Step } from "@/types";
+import type { Book, Cast, Character, Effect, EffectUses, ImportedBook, Step } from "@/types";
 import { effectContext } from "~/db/effects";
 import { epubFile, story } from "../support/epub";
 import { jsonBody, testApi, type TestApi } from "../support/server";
@@ -37,9 +37,9 @@ const thoughts = async (api: TestApi) =>
   (await api.request<{ effect: string }>("/api/settings/thoughts")).body.effect;
 
 /** A shelved book; its id. */
-async function shelved(api: TestApi): Promise<string> {
+async function shelved(api: TestApi, title?: string): Promise<string> {
   const { body } = await api.import<ImportedBook>(
-    await epubFile({ chapters: [{ title: "One", paragraphs: story(2) }] }),
+    await epubFile({ title, chapters: [{ title: "One", paragraphs: story(2) }] }),
   );
   await api.request(`/api/books/${body.book.id}/confirm`, { method: "POST" });
   return body.book.id;
@@ -215,5 +215,81 @@ describe("a book's and a speaker's choices", () => {
     await create(api, "Echo");
     await api.request("/api/effects/echo", { method: "DELETE" });
     expect(await thoughts(api)).toBe("inner-voice");
+  });
+});
+
+describe("where an effect goes", () => {
+  test("one made after another sits right below it, and stays there", async () => {
+    const api = testApi();
+    await create(api, "Echo");
+    await create(api, "Phone");
+    const made = await api.request<{ effect: Effect }>(
+      "/api/effects",
+      jsonBody({ name: "Radio", chain: echo, after: "inner-voice" }),
+    );
+    expect(made.status).toBe(201);
+    expect(made.body.effect.id).toBe("radio");
+    // a fresh list from the database, not the order the page was told
+    expect((await list(api)).map((e) => e.id)).toEqual(["inner-voice", "radio", "echo", "phone"]);
+    await api.request("/api/effects", jsonBody({ name: "Last", chain: echo, after: "phone" }));
+    expect((await list(api)).map((e) => e.id)).toEqual([
+      "inner-voice",
+      "radio",
+      "echo",
+      "phone",
+      "last",
+    ]);
+  });
+
+  test("after an effect there is not is a 400, and nothing is made", async () => {
+    const api = testApi();
+    const made = await api.request(
+      "/api/effects",
+      jsonBody({ name: "Echo", chain: echo, after: "gone" }),
+    );
+    expect(made.status).toBe(400);
+    expect((await list(api)).map((e) => e.id)).toEqual(["inner-voice"]);
+  });
+});
+
+describe("an effect's uses", () => {
+  const uses = (api: TestApi, id: string) => api.request<EffectUses>(`/api/effects/${id}/uses`);
+
+  test("are every choice of it across the books, by book title and then name", async () => {
+    const api = testApi();
+    await create(api, "Echo");
+    const zebra = await shelved(api, "Zebra Days");
+    const apple = await shelved(api, "Apple Nights");
+    await api.request(`/api/books/${zebra}`, patch({ thoughts: "echo" }));
+    await putMara(api, zebra, { effect: "echo" });
+    await putMara(api, apple, { thoughts: "echo" });
+    await api.request(
+      `/api/books/${apple}/characters/Abe`,
+      put({ ...mara, name: "Abe", effect: "echo", thoughts: "echo" }),
+    );
+    await api.request("/api/settings/thoughts", put({ effect: "echo" }));
+
+    expect(await uses(api, "echo")).toEqual({
+      status: 200,
+      body: {
+        library: true,
+        books: [{ id: zebra, title: "Zebra Days" }],
+        speakers: [
+          { bookId: apple, bookTitle: "Apple Nights", name: "Abe", effect: true, thoughts: true },
+          { bookId: apple, bookTitle: "Apple Nights", name: "Mara", effect: false, thoughts: true },
+          { bookId: zebra, bookTitle: "Zebra Days", name: "Mara", effect: true, thoughts: false },
+        ],
+      },
+    });
+    // the Inner voice is no longer anyone's
+    expect((await uses(api, "inner-voice")).body).toEqual({
+      library: false,
+      books: [],
+      speakers: [],
+    });
+  });
+
+  test("of an effect there is not are a 404", async () => {
+    expect((await uses(testApi(), "gone")).status).toBe(404);
   });
 });

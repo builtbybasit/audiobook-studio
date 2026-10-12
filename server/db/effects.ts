@@ -4,9 +4,9 @@
 // thought effect, a speaker's own, the library's in `settings` — with no foreign key behind them,
 // so removing one resets those names here, in the same transaction, rather than leaving them
 // pointing at nothing.
-import { and, asc, eq, inArray, isNotNull, max } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, max, or, sql } from "drizzle-orm";
 
-import type { Effect, StaleSound, Step } from "@/types";
+import type { Effect, EffectUses, StaleSound, Step } from "@/types";
 import { chainsFor, soundOf, type EffectContext } from "@/lib/effects";
 import type { Db, Tx } from "~/db/client";
 import { books, characters, clips, effects, segments } from "~/db/schema";
@@ -55,27 +55,50 @@ export function getEffect(db: Db | Tx, id: string): Effect | undefined {
 }
 
 /**
- * A new effect at the end of the list, its id the slug it is given made free: `echo`, then
- * `echo-2`, … "none" is never one, since it is what a choice of no effect is written as.
+ * A new effect, its id the slug it is given made free: `echo`, then `echo-2`, … "none" is never
+ * one, since it is what a choice of no effect is written as. It goes right after the effect `after`
+ * names, the ones below moving down one in the same transaction, or at the end of the list without
+ * it — or when it names no effect, which the caller refuses first (`server/effects/ops.ts`).
  */
-export function createEffect(db: Db | Tx, slug: string, name: string, chain: Step[]): Effect {
-  const taken = new Set([
-    "none",
-    ...db
-      .select({ id: effects.id })
-      .from(effects)
-      .all()
-      .map((r) => r.id),
-  ]);
-  let id = slug;
-  for (let n = 2; taken.has(id); n++) id = `${slug}-${n}`;
-  const position =
-    (db
-      .select({ n: max(effects.position) })
-      .from(effects)
-      .get()?.n ?? -1) + 1;
-  db.insert(effects).values({ id, name, chain, position }).run();
-  return { id, name, chain };
+export function createEffect(
+  db: Db,
+  slug: string,
+  name: string,
+  chain: Step[],
+  after?: string,
+): Effect {
+  return db.transaction((tx) => {
+    const taken = new Set([
+      "none",
+      ...tx
+        .select({ id: effects.id })
+        .from(effects)
+        .all()
+        .map((r) => r.id),
+    ]);
+    let id = slug;
+    for (let n = 2; taken.has(id); n++) id = `${slug}-${n}`;
+    const prev =
+      after === undefined
+        ? undefined
+        : tx.select({ p: effects.position }).from(effects).where(eq(effects.id, after)).get();
+    let position: number;
+    if (prev?.p != null) {
+      position = prev.p + 1;
+      tx.update(effects)
+        .set({ position: sql`${effects.position} + 1` })
+        .where(gte(effects.position, position))
+        .run();
+    } else {
+      position =
+        (tx
+          .select({ n: max(effects.position) })
+          .from(effects)
+          .get()?.n ?? -1) + 1;
+    }
+    tx.insert(effects).values({ id, name, chain, position }).run();
+    return { id, name, chain };
+  });
 }
 
 /** Rename an effect or replace its chain; its id stays. Undefined when there is no such effect. */
@@ -104,6 +127,36 @@ export function deleteEffect(db: Db, id: string): boolean {
     if (wasLibrary) writeThoughts(tx, "none");
     return true;
   });
+}
+
+/**
+ * Everywhere an effect is chosen, across every book: the library's thought effect, the books that
+ * choose it as their own, and the speakers that wear it or think in it. One query per table,
+ * ordered by book title and then speaker name.
+ */
+export function effectUses(db: Db | Tx, id: string): EffectUses {
+  return {
+    library: readThoughts(db) === id,
+    books: db
+      .select({ id: books.id, title: books.title })
+      .from(books)
+      .where(eq(books.thoughts, id))
+      .orderBy(asc(books.title))
+      .all(),
+    speakers: db
+      .select({
+        bookId: books.id,
+        bookTitle: books.title,
+        name: characters.name,
+        effect: sql<boolean>`${characters.effect} IS ${id}`.mapWith(Boolean),
+        thoughts: sql<boolean>`${characters.thoughts} IS ${id}`.mapWith(Boolean),
+      })
+      .from(characters)
+      .innerJoin(books, eq(books.id, characters.bookId))
+      .where(or(eq(characters.effect, id), eq(characters.thoughts, id)))
+      .orderBy(asc(books.title), asc(characters.name))
+      .all(),
+  };
 }
 
 /** What a book's lines' effects are read from (`chainsFor`): narration and Re-apply read it once. */

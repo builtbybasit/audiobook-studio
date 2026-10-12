@@ -723,7 +723,8 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `GET`    | `/api/endpoints/requests`                         | One endpoint's requests, a page at a time; `?kind&id&range&from&to&status&bookId&search&before&limit`        |
 | `GET`    | `/api/endpoints/live`                             | Each speech endpoint's lines out and held, cooldown, clips done                                              |
 | `GET`    | `/api/effects`                                    | The library's voice effects                                                                                  |
-| `POST`   | `/api/effects`                                    | A new effect (201)                                                                                           |
+| `POST`   | `/api/effects`                                    | A new effect (201): at the end, or right after `after`; an `after` there is not is a 400                     |
+| `GET`    | `/api/effects/:id/uses`                           | Everywhere it is chosen: the library, books' own thought effects, speakers (`EffectUses`)                    |
 | `PUT`    | `/api/effects/:id`                                | Rename an effect or replace its chain                                                                        |
 | `DELETE` | `/api/effects/:id`                                | Remove an effect, and every choice of it                                                                     |
 | `POST`   | `/api/effects/preview`                            | A clip played through unsaved chains, as a WAV; nothing kept; 503 without uv                                 |

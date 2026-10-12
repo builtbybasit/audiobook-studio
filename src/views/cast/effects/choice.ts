@@ -9,9 +9,11 @@
 // following when the level above changes.
 //
 // Every change leaves `changed` — a line saying what now uses what, in the scope it was made in —
-// with an undo that puts back exactly the choices it moved.
+// with an undo that puts back exactly the choices it moved. A change to all books names how many
+// other books follow it: their clips have the old sound now, and each is re-applied on its own page.
 import { computed, ref } from "vue";
 
+import { plural } from "@/lib/contents";
 import { chainsFor } from "@/lib/effects";
 import { useCastStore } from "@/stores/cast";
 import { useEffectsStore } from "@/stores/effects";
@@ -107,8 +109,11 @@ export function useChoice(bookId: () => string, view: () => ChoiceView, name: ()
       const libraryWas = effectsStore.libraryThoughts;
       void effectsStore.setLibraryThoughts(row);
       void libraryStore.setBookThoughts(id, null);
+      const others = libraryStore.books.filter((b) => b.id !== id && b.thoughts == null).length;
       changed.value = {
-        text: `All books now use ${to}`,
+        text: others
+          ? `All books now use ${to} · ${plural(others, "other book follows", "other books follow")} it — Re-apply in each`
+          : `All books now use ${to}`,
         undo: () => {
           void effectsStore.setLibraryThoughts(libraryWas);
           void libraryStore.setBookThoughts(id, bookWas);

@@ -7,6 +7,7 @@
 // about it.
 import { join } from "node:path";
 
+import { pedalboardRunner } from "~/audio/effects";
 import { ffmpegSpeechRate } from "~/audio/ffmpeg";
 import { ffmpegThoughtEffect } from "~/audio/thoughtEffect";
 import { CLONE_BODY_BYTES, env, importBodyBytes, scriptBodyBytes } from "~/env";
@@ -28,6 +29,15 @@ if (!ffmpeg)
   );
 boot.debug({ ffmpeg }, "ffmpeg found");
 const encoders = ffmpegEncoders(env.FFMPEG_BIN);
+// uv is not required, unlike ffmpeg: without it a thought line is given the ffmpeg effect and a
+// speaker's own effect is left off. It is asked now, in the background, so the first run on a fresh
+// machine does not wait on Pedalboard's download, and the log says which of the two this server has.
+const effects = pedalboardRunner({ ffmpeg: env.FFMPEG_BIN });
+void effects
+  .available()
+  .then((ok) =>
+    boot.info({ pedalboard: ok }, ok ? "voice effects run" : "no uv: voice effects fall back"),
+  );
 const thoughtEffect = ffmpegThoughtEffect(env.FFMPEG_BIN);
 const speechRate = ffmpegSpeechRate(env.FFMPEG_BIN);
 
@@ -39,6 +49,7 @@ const real = openLibrary({
   exportDir: env.EXPORT_DIR,
   voiceDir: env.VOICE_DIR,
   encoders,
+  effects,
   thoughtEffect,
   speechRate,
 });
@@ -50,6 +61,7 @@ const demo = openLibrary({
   exportDir: join(env.DEMO_DIR, "exports"),
   voiceDir: join(env.DEMO_DIR, "voices"),
   encoders,
+  effects,
   thoughtEffect,
   speechRate,
   demo: true,

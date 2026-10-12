@@ -10,6 +10,7 @@ import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
 import { pinoLogger, type Env as PinoEnv } from "hono-pino";
 
+import type { EffectRunner } from "~/audio/effects";
 import { audioFiles, type AudioFiles } from "~/audio/files";
 import { coverFiles } from "~/covers/files";
 import type { Db } from "~/db/client";
@@ -79,6 +80,8 @@ export interface AppOptions {
    * nothing sends through — right for a test that is not about narration.
    */
   gate?: SpeechGate;
+  /** what a preview of an effect is rendered with; none by default, so previews answer 503 */
+  effects?: EffectRunner;
   /**
    * What `POST <base>/demo/reset` and `POST <base>/demo/situations/:id` do, and the pace
    * `<base>/demo/speed` sets: given to the demo library alone, so the real one has no route that
@@ -98,6 +101,7 @@ export function createApp(
     providers = { scripting: endpointScriptingProvider(), speech: endpointSpeechProvider() },
     voiceFiles = voiceFilesIn(env.VOICE_DIR),
     gate = createSpeechGate(),
+    effects,
     demo,
   }: AppOptions = {},
 ): Hono<PinoEnv> {
@@ -161,7 +165,7 @@ export function createApp(
   app.route(`${base}/endpoints`, endpointRoutes(db, providers, voiceFiles, gate));
   app.route(`${base}/endpoints`, endpointUsageRoutes(db));
   // So do the voice effects, which any book's speakers may wear, and the library's thought effect.
-  app.route(`${base}/effects`, effectRoutes(db));
+  app.route(`${base}/effects`, effectRoutes(db, files, effects));
   app.route(`${base}/settings`, settingRoutes(db));
   // A clip's url is served from disk, and the files it names belong to the same book routes above
   // remove — see `server/audio/files.ts` for why the path is a book and a token.

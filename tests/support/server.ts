@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { EffectRunner } from "~/audio/effects";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
 import { createApp } from "~/app";
 import { audioFiles, type AudioFiles } from "~/audio/files";
@@ -93,7 +94,9 @@ export interface TestApiOptions {
   handlers?: JobHandlers;
   /** the speech gate; one of this API's own by default, shared by its runner and its routes */
   gate?: SpeechGate;
-  /** what a thought line is given as it lands; none by default, so no test runs ffmpeg unasked */
+  /** what runs voice effects; none by default, so no test runs Python unasked */
+  effects?: EffectRunner;
+  /** what a thought line is given where `effects` cannot run; none by default, nor ffmpeg */
   thoughtEffect?: ThoughtEffect;
 }
 
@@ -173,12 +176,10 @@ export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): R
     db,
     {
       scripting: scriptingHandler(options.scripting ?? fakeScriptingProvider()),
-      narration: narrationHandler(
-        options.speech ?? fakeSpeechProvider(),
-        files,
-        options.gate,
-        options.thoughtEffect,
-      ),
+      narration: narrationHandler(options.speech ?? fakeSpeechProvider(), files, options.gate, {
+        effects: options.effects,
+        thoughtEffect: options.thoughtEffect,
+      }),
       export: exportHandler(testExports(options), files),
       check: checkHandler(options.transcription ?? noTranscription, files),
       ...options.handlers,
@@ -213,6 +214,7 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     providers,
     voiceFiles: voiceFiles(voiceDir),
     gate,
+    effects: options.effects,
   });
 
   const request = async <T>(path: string, init?: RequestInit) => {

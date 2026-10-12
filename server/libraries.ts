@@ -13,6 +13,7 @@ import type { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 
 import type { SpeechRate } from "~/audio/ffmpeg";
+import type { EffectRunner } from "~/audio/effects";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
 import { createApp } from "~/app";
 import { demoClips } from "~/audio/demoClips";
@@ -56,8 +57,13 @@ export interface LibraryOptions {
   /** what its builds write audiobooks with — one choice for the whole process, checked at boot */
   encoders: EncoderChoice;
   /**
-   * What a `thought` line is given as its clip lands — ffmpeg's, in a running server. Absent (a
-   * test's library) = thought lines are kept as the voice made them.
+   * What runs voice effects — on a clip as it lands, in a preview, in a Re-apply: Pedalboard under
+   * uv, in a running server. Absent (a test's library) = none can run, as on a machine without uv.
+   */
+  effects?: EffectRunner;
+  /**
+   * What a `thought` line is given where `effects` cannot run — ffmpeg's, in a running server.
+   * Absent too = thought lines are kept as the voice made them.
    */
   thoughtEffect?: ThoughtEffect;
   /**
@@ -163,7 +169,10 @@ export function openLibrary(options: LibraryOptions): Library {
     db,
     {
       scripting: scriptingHandler(providers.scripting),
-      narration: narrationHandler(providers.speech, files, gate, options.thoughtEffect),
+      narration: narrationHandler(providers.speech, files, gate, {
+        effects: options.effects,
+        thoughtEffect: options.thoughtEffect,
+      }),
       export: exportHandler(exports, files),
       check: checkHandler(given.transcription, files),
     },
@@ -213,6 +222,7 @@ export function openLibrary(options: LibraryOptions): Library {
     providers,
     voiceFiles,
     gate,
+    effects: options.effects,
     demo,
   });
   return {

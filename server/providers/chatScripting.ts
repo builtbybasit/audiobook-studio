@@ -23,7 +23,14 @@
 // `temperature` is left out where that host refuses or ignores it beside a reasoning level.
 import * as v from "valibot";
 
-import type { EndpointProbe, Gender, RenderedPrompt, SegmentType, TokenUsage } from "@/types";
+import type {
+  EndpointProbe,
+  Gender,
+  PromptTemplate,
+  RenderedPrompt,
+  SegmentType,
+  TokenUsage,
+} from "@/types";
 import {
   BUILT_IN_PROMPT,
   readScriptedTags,
@@ -66,7 +73,11 @@ export interface ChatScriptingOptions {
  * The built-in prompt for one request, for a caller that rendered none: the chapter's title, the
  * cast and the text, with nothing known of the book.
  */
-function builtInPrompt(title: string, cast: readonly string[], text: string): RenderedPrompt {
+export function builtInPrompt(
+  title: string,
+  cast: readonly string[],
+  text: string,
+): RenderedPrompt {
   return renderPrompt(BUILT_IN_PROMPT, {
     book: { title: "", author: "", notes: "" },
     chapter: { title, number: 1 },
@@ -341,6 +352,90 @@ export function answerOf(content: string, who: string, excerpt?: string): Script
   return { lines: out, cast: castOf(parsed.cast), ...(recap ? { recap } : {}) };
 }
 
+/**
+ * The script a model's final message holds, checked against the prose it was sent: something
+ * there, a script of some lines, and every word copied — or, `lenient`, the lines whatever the
+ * word check says. Throws what is wrong, as a `ProviderError` with `status` and naming `who`.
+ */
+export function checkedScript(
+  who: string,
+  content: string,
+  text: string,
+  status: number,
+  lenient: boolean,
+): ScriptAnswer {
+  if (!content.trim())
+    throw new ProviderError(`${who} answered with no script at all`, status, false);
+  // the excerpt names the marker, as it did for the prompt this answers
+  const answer = answerOf(content, who, text);
+  const { lines } = answer;
+  if (!lines.length)
+    throw new ProviderError(`${who} answered with a script of no lines`, status, false);
+  const check = fidelity(text, lines);
+  if (!check.ok && !lenient) {
+    const parts = [
+      check.missing ? `left out ${check.missing} of ${check.words} words` : "",
+      check.added ? `added ${check.added} that are not in the text` : "",
+    ].filter(Boolean);
+    const example = check.examples.length ? ` (missing e.g. “${check.examples.join("”, “")}”)` : "";
+    throw new ProviderError(
+      `${who} did not copy the text faithfully: it ${parts.join(" and ")}${example}. The script was not written; run it again or try another model`,
+      status,
+      false,
+    );
+  }
+  return answer;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The Test button
+
+/** Two sentences and one quote: what the Test button sends. */
+const PROBE_TEXT = "The lamp guttered in the draught. “Is someone there?” Mara whispered.";
+
+/**
+ * The Test button for any provider that sends a rendered prompt: the template the profile's runs
+ * would be sent, filled in around two sentences, through `send`, and what came back said in one
+ * line. Never throws but for a cancel: a refusal is an answer that is not ok.
+ */
+export async function probeWith(
+  target: ScriptTarget,
+  signal: AbortSignal,
+  given: { template: PromptTemplate; notes: string } | undefined,
+  send: (
+    prompt: RenderedPrompt,
+    text: string,
+  ) => Promise<{ answer: ScriptAnswer; reasoningTokens: number | null }>,
+): Promise<EndpointProbe> {
+  const started = performance.now();
+  const ms = (): number => Math.round(performance.now() - started);
+  try {
+    // reports nothing: a connection test belongs to no book, and the ledger is per book
+    const prompt = renderPrompt(
+      given?.template ?? BUILT_IN_PROMPT,
+      sampleVars(PROBE_TEXT, { name: target.name, model: target.model, notes: given?.notes }),
+    );
+    const {
+      answer: { lines },
+      reasoningTokens,
+    } = await send(prompt, PROBE_TEXT);
+    const speakers = [...new Set(lines.filter((l) => voiced(l.type)).map((l) => l.speaker))];
+    // a count of none is news only to someone who picked a level, "off" above all
+    const thought =
+      reasoningTokens !== null && (reasoningTokens > 0 || target.reasoning)
+        ? `; ${reasoningTokens} reasoning token${reasoningTokens === 1 ? "" : "s"}`
+        : "";
+    return {
+      ok: true,
+      message: `Answered in ${ms()} ms with ${lines.length} line${lines.length === 1 ? "" : "s"}${speakers.length ? `, spoken by ${speakers.join(", ")}` : ""}${thought}`,
+      ms: ms(),
+    };
+  } catch (e) {
+    if (signal.aborted) throw signal.reason;
+    return { ok: false, message: e instanceof Error ? e.message : String(e), ms: ms() };
+  }
+}
+
 // ---------------------------------------------------------------------------------------------
 // The provider
 
@@ -354,9 +449,6 @@ function said(raw: unknown): string {
 /** Said to a run that reached a real provider with no profile to send it to. */
 export const NO_PROFILE =
   "This run named no scripting profile; choose one on the Scripting page and run it again";
-
-/** Two sentences and one quote: what the Test button sends. */
-const PROBE_TEXT = "The lamp guttered in the draught. “Is someone there?” Mara whispered.";
 
 /**
  * The provider that sends each chunk to `{baseUrl}/chat/completions` of the profile the run was
@@ -481,30 +573,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         false,
       );
     }
-    const content = choice.message?.content ?? "";
-    if (!content.trim())
-      throw new ProviderError(`${target.name} answered with no script at all`, status, false);
-    // the excerpt names the marker, as it did for the prompt this answers
-    const answer = answerOf(content, target.name, text);
-    const { lines } = answer;
-    if (!lines.length)
-      throw new ProviderError(`${target.name} answered with a script of no lines`, status, false);
-    const check = fidelity(text, lines);
-    if (!check.ok && !lenient) {
-      const parts = [
-        check.missing ? `left out ${check.missing} of ${check.words} words` : "",
-        check.added ? `added ${check.added} that are not in the text` : "",
-      ].filter(Boolean);
-      const example = check.examples.length
-        ? ` (missing e.g. “${check.examples.join("”, “")}”)`
-        : "";
-      throw new ProviderError(
-        `${target.name} did not copy the text faithfully: it ${parts.join(" and ")}${example}. The script was not written; run it again or try another model`,
-        status,
-        false,
-      );
-    }
-    return answer;
+    return checkedScript(target.name, choice.message?.content ?? "", text, status, lenient);
   }
 
   return {
@@ -534,34 +603,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
       progress?.(1, 1);
       return answer;
     },
-    async probe(target, signal, given): Promise<EndpointProbe> {
-      const started = performance.now();
-      const ms = (): number => Math.round(performance.now() - started);
-      try {
-        // reports nothing: a connection test belongs to no book, and the ledger is per book
-        const prompt = renderPrompt(
-          given?.template ?? BUILT_IN_PROMPT,
-          sampleVars(PROBE_TEXT, { name: target.name, model: target.model, notes: given?.notes }),
-        );
-        const {
-          answer: { lines },
-          reasoningTokens,
-        } = await request(target, prompt, PROBE_TEXT, signal);
-        const speakers = [...new Set(lines.filter((l) => voiced(l.type)).map((l) => l.speaker))];
-        // a count of none is news only to someone who picked a level, "off" above all
-        const thought =
-          reasoningTokens !== null && (reasoningTokens > 0 || target.reasoning)
-            ? `; ${reasoningTokens} reasoning token${reasoningTokens === 1 ? "" : "s"}`
-            : "";
-        return {
-          ok: true,
-          message: `Answered in ${ms()} ms with ${lines.length} line${lines.length === 1 ? "" : "s"}${speakers.length ? `, spoken by ${speakers.join(", ")}` : ""}${thought}`,
-          ms: ms(),
-        };
-      } catch (e) {
-        if (signal.aborted) throw signal.reason;
-        return { ok: false, message: e instanceof Error ? e.message : String(e), ms: ms() };
-      }
-    },
+    probe: (target, signal, given) =>
+      probeWith(target, signal, given, (prompt, text) => request(target, prompt, text, signal)),
   };
 }

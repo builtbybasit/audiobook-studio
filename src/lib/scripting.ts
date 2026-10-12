@@ -8,6 +8,7 @@ import type {
 import { splitText } from "@/lib/split";
 import { REASONING_EFFORTS, profilePromptProblems, promptOverhead } from "@/lib/prompt";
 import { isSimulated } from "@/lib/providers";
+import { cliOf } from "@/lib/providers/cli";
 import {
   baseRates,
   ceilingRates,
@@ -117,8 +118,9 @@ export function upgradeProfilePrompt(prompt: unknown): unknown {
 }
 export function profileErrors(p: Profile): string[] {
   const errors: string[] = [];
-  // a simulated profile names no host — this server answers it — so it has no URL to check
-  if (!isSimulated(String(p.baseUrl)))
+  // a simulated profile names no host — this server answers it — and nor does one that runs a
+  // command-line tool, so neither has a URL to check
+  if (!isSimulated(String(p.baseUrl)) && !cliOf(String(p.baseUrl)))
     try {
       const url = new URL(p.baseUrl);
       if (

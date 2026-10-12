@@ -935,6 +935,10 @@ answers is decided per request, by the endpoint's base URL:
   `latency` (milliseconds) before each answer and fails its `failRate` (0–1) share as a server error
   worth another try, so a run on it moves, and fails, the way a real one can; the Requests tab edits
   both. It needs no key, and the preset's card is zero.
+- **A command-line scripting profile** (`codex:…`, `claude-code:…`,
+  [src/lib/providers/cli.ts](../src/lib/providers/cli.ts)) runs Codex or Claude Code on this
+  computer, signed in with the tool's own login ([cliScripting.ts](../server/providers/cliScripting.ts),
+  below). It needs no key.
 - **Every other endpoint** is called: a chapter goes to its profile's chat-completions model
   ([endpointScripting.ts](../server/providers/endpointScripting.ts)), a line to the endpoint its
   voice names (`<endpointId>/<voiceId>`).
@@ -975,6 +979,36 @@ low cap cuts the answer off. Before anything is written, the lines are held agai
 how many and which — an audiobook that silently skips a paragraph is the worst thing this job could
 do. Word counts, not order, so it catches a dropped sentence but not a moved one. A bad answer is
 not retried, so a failure never spends tokens twice without anyone asking.
+
+**Codex and Claude Code** ([cliScripting.ts](../server/providers/cliScripting.ts)) are sent the
+same rendered prompt, and their final message is read and checked by the same `checkedScript`. Each
+request is one run of the tool in a fresh empty temp folder, removed afterwards:
+
+- `codex exec --model M [--config model_reasoning_effort="E"] --config web_search="disabled"
+  --disable shell_tool --disable unified_exec --disable apps --disable browser_use --disable
+  computer_use --disable image_generation --disable memories --disable multi_agent --disable hooks
+  --disable plugins --ephemeral --skip-git-repo-check --ignore-user-config --ignore-rules
+  --sandbox read-only --cd DIR --json --output-last-message DIR/answer.txt
+  --config model_instructions_file="DIR/system.txt" -`, with the user message on stdin. The system
+  prompt replaces Codex's own agent instructions (about 10k tokens on how to work in a repository),
+  which also stopped it dropping words from the excerpt.
+  The last message is read from the file and the usage from the `turn.completed` event.
+- `claude --print --output-format json --model M [--effort E] --system-prompt-file DIR/system.txt
+  --tools "" --strict-mcp-config --permission-mode dontAsk --permission-prompts none
+  --no-session-persistence --safe-mode --disable-slash-commands`, with the user message on stdin.
+  `--safe-mode` leaves out CLAUDE.md, skills, hooks, plugins and MCP servers and keeps the login;
+  `--bare` would not (it reads only `ANTHROPIC_API_KEY`). The answer and usage are the JSON
+  result's `result` and `usage`; its `total_cost_usd` is the API price of the tokens, not what the
+  subscription charged, and is dropped.
+
+No `--dangerously-*` flag is passed. The tool leads a process group of its own, so the endpoint's
+`timeoutSec` and a cancel kill it and everything it started (SIGTERM, then SIGKILL after 2 s). A
+run that timed out, was rate limited or failed without a reason it names is retried up to
+`maxRetries`; one that names a reason another run will not change — not signed in, a model it
+refuses, the subscription's limit reached, a flag it does not know — is not, and says what to do.
+A program that cannot be found fails before anything runs and reports nothing to the ledger; every
+run that started is reported once, like an HTTP request, with the tokens it said it used, priced on
+the profile's card (the presets' is zero).
 
 Beside the lines the answer carries `cast` — gender, other names and a description of the speakers
 the excerpt says something new about — and a `recap` of where the excerpt leaves off. Both are read
@@ -1570,19 +1604,19 @@ bytes. It varies what real EPUBs vary: where the navigation sits, whether it nam
 differently from its heading, whether one file holds several chapters, and whether a file the
 package promises is there at all.
 
-| Area             | Files                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Import           | [epubImport](../tests/server/epubImport.test.ts), [markdown](../tests/server/markdown.test.ts), [notices](../tests/server/notices.test.ts), [covers](../tests/server/covers.test.ts), [security](../tests/server/security.test.ts)                                                                                                                                                                                                               |
-| Library          | [contentsReview](../tests/server/contentsReview.test.ts), [volumes](../tests/server/volumes.test.ts), [bookSettings](../tests/server/bookSettings.test.ts), [removal](../tests/server/removal.test.ts), [libraryClient](../tests/server/libraryClient.test.ts)                                                                                                                                                                                   |
-| Schema and store | [schema](../tests/server/schema.test.ts), [migrate](../tests/server/migrate.test.ts), [prepared](../tests/server/prepared.test.ts), [logging](../tests/server/logging.test.ts)                                                                                                                                                                                                                                                                   |
-| Scripting        | [jobs](../tests/server/jobs.test.ts), [scriptEdit](../tests/server/scriptEdit.test.ts), [cast](../tests/server/cast.test.ts), [chatScripting](../tests/server/chatScripting.test.ts), [scriptingPrompts](../tests/server/scriptingPrompts.test.ts), [promptTrial](../tests/server/promptTrial.test.ts), [simulatedScripting](../tests/server/simulatedScripting.test.ts), [fakeProvider](../tests/server/fakeProvider.test.ts)                   |
-| Narration        | [narration](../tests/server/narration.test.ts), [narrationConcurrency](../tests/server/narrationConcurrency.test.ts), [narrationBatch](../tests/server/narrationBatch.test.ts), [speechGate](../tests/server/speechGate.test.ts), [speechBatch](../tests/server/speechBatch.test.ts), [simulatedSpeech](../tests/server/simulatedSpeech.test.ts), [encodedClips](../tests/server/encodedClips.test.ts), [ranges](../tests/server/ranges.test.ts) |
-| Providers        | [endpoints](../tests/server/endpoints.test.ts), [endpointKeys](../tests/server/endpointKeys.test.ts), [endpointSpeech](../tests/server/endpointSpeech.test.ts), [speechProviders](../tests/server/speechProviders.test.ts), [voices](../tests/server/voices.test.ts), [voiceSample](../tests/server/voiceSample.test.ts), [voiceClone](../tests/server/voiceClone.test.ts) and one per other cloning provider                                    |
-| Money            | [usage](../tests/server/usage.test.ts), [narrationBudget](../tests/server/narrationBudget.test.ts), [scriptCost](../tests/server/scriptCost.test.ts), [cloneFees](../tests/server/cloneFees.test.ts)                                                                                                                                                                                                                                             |
-| Export           | [exports](../tests/server/exports.test.ts), [demoEncoder](../tests/server/demoEncoder.test.ts)                                                                                                                                                                                                                                                                                                                                                   |
-| Script files     | [scriptExport](../tests/server/scriptExport.test.ts), [scriptImport](../tests/server/scriptImport.test.ts), [speakerSamples](../tests/server/speakerSamples.test.ts)                                                                                                                                                                                                                                                                             |
-| Demo             | [libraries](../tests/server/libraries.test.ts), [demoWorld](../tests/server/demoWorld.test.ts), [demoSituations](../tests/server/demoSituations.test.ts), [demoLive](../tests/server/demoLive.test.ts), [demoClips](../tests/server/demoClips.test.ts), [demoSpeed](../tests/server/demoSpeed.test.ts)                                                                                                                                           |
-| Stores           | [libraryBackend](../tests/libraryBackend.test.ts), [jobsBackend](../tests/jobsBackend.test.ts), [endpointsBackend](../tests/endpointsBackend.test.ts)                                                                                                                                                                                                                                                                                            |
+| Area             | Files                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Import           | [epubImport](../tests/server/epubImport.test.ts), [markdown](../tests/server/markdown.test.ts), [notices](../tests/server/notices.test.ts), [covers](../tests/server/covers.test.ts), [security](../tests/server/security.test.ts)                                                                                                                                                                                                                                                   |
+| Library          | [contentsReview](../tests/server/contentsReview.test.ts), [volumes](../tests/server/volumes.test.ts), [bookSettings](../tests/server/bookSettings.test.ts), [removal](../tests/server/removal.test.ts), [libraryClient](../tests/server/libraryClient.test.ts)                                                                                                                                                                                                                       |
+| Schema and store | [schema](../tests/server/schema.test.ts), [migrate](../tests/server/migrate.test.ts), [prepared](../tests/server/prepared.test.ts), [logging](../tests/server/logging.test.ts)                                                                                                                                                                                                                                                                                                       |
+| Scripting        | [jobs](../tests/server/jobs.test.ts), [scriptEdit](../tests/server/scriptEdit.test.ts), [cast](../tests/server/cast.test.ts), [chatScripting](../tests/server/chatScripting.test.ts), [cliScripting](../tests/server/cliScripting.test.ts), [scriptingPrompts](../tests/server/scriptingPrompts.test.ts), [promptTrial](../tests/server/promptTrial.test.ts), [simulatedScripting](../tests/server/simulatedScripting.test.ts), [fakeProvider](../tests/server/fakeProvider.test.ts) |
+| Narration        | [narration](../tests/server/narration.test.ts), [narrationConcurrency](../tests/server/narrationConcurrency.test.ts), [narrationBatch](../tests/server/narrationBatch.test.ts), [speechGate](../tests/server/speechGate.test.ts), [speechBatch](../tests/server/speechBatch.test.ts), [simulatedSpeech](../tests/server/simulatedSpeech.test.ts), [encodedClips](../tests/server/encodedClips.test.ts), [ranges](../tests/server/ranges.test.ts)                                     |
+| Providers        | [endpoints](../tests/server/endpoints.test.ts), [endpointKeys](../tests/server/endpointKeys.test.ts), [endpointSpeech](../tests/server/endpointSpeech.test.ts), [speechProviders](../tests/server/speechProviders.test.ts), [voices](../tests/server/voices.test.ts), [voiceSample](../tests/server/voiceSample.test.ts), [voiceClone](../tests/server/voiceClone.test.ts) and one per other cloning provider                                                                        |
+| Money            | [usage](../tests/server/usage.test.ts), [narrationBudget](../tests/server/narrationBudget.test.ts), [scriptCost](../tests/server/scriptCost.test.ts), [cloneFees](../tests/server/cloneFees.test.ts)                                                                                                                                                                                                                                                                                 |
+| Export           | [exports](../tests/server/exports.test.ts), [demoEncoder](../tests/server/demoEncoder.test.ts)                                                                                                                                                                                                                                                                                                                                                                                       |
+| Script files     | [scriptExport](../tests/server/scriptExport.test.ts), [scriptImport](../tests/server/scriptImport.test.ts), [speakerSamples](../tests/server/speakerSamples.test.ts)                                                                                                                                                                                                                                                                                                                 |
+| Demo             | [libraries](../tests/server/libraries.test.ts), [demoWorld](../tests/server/demoWorld.test.ts), [demoSituations](../tests/server/demoSituations.test.ts), [demoLive](../tests/server/demoLive.test.ts), [demoClips](../tests/server/demoClips.test.ts), [demoSpeed](../tests/server/demoSpeed.test.ts)                                                                                                                                                                               |
+| Stores           | [libraryBackend](../tests/libraryBackend.test.ts), [jobsBackend](../tests/jobsBackend.test.ts), [endpointsBackend](../tests/endpointsBackend.test.ts)                                                                                                                                                                                                                                                                                                                                |
 
 The client tests matter more than they look: both sides of the seam are in this repository, so they
 drive the real `HttpLibraryService` and `HttpJobsService` against the real app, and a route that
@@ -1600,8 +1634,11 @@ suite needs ffmpeg and ffprobe installed, as the server does.
 
 [tests/live/](../tests/live/) is the exception on purpose: `pnpm test:live` sends a few real
 requests to the scripting gateway and the Fish Audio account named in `.env` — scripting, speech in
-each format, the voice list, the gate at the preset's concurrency, and the connection tests. They
-are skipped unless `LIVE=1`, so the ordinary suite never reaches the network.
+each format, the voice list, the gate at the preset's concurrency, and the connection tests — and
+one excerpt and one Test through each of `codex` and `claude` on PATH, on the user's own
+subscription (`CLI_CODEX_MODEL`, `CLI_CLAUDE_MODEL` pick other models). They are skipped unless
+`LIVE=1`, so the ordinary suite never reaches the network; the server tests run a fake `codex` and
+`claude` instead ([tests/support/fakeCli.ts](../tests/support/fakeCli.ts)).
 
 ## Known gaps
 

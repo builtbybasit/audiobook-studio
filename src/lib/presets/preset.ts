@@ -18,7 +18,7 @@ export interface Preset<T> {
 }
 export type TtsPreset = Preset<Endpoint>;
 /** A chat model the scripting queue can send a chapter to: anything serving OpenAI's
- *  `/chat/completions`, which is the only request shape the scripting provider makes. */
+ *  `/chat/completions`, or Codex or Claude Code run on this computer. */
 export type ScriptingPreset = Preset<Profile>;
 /** A speech-to-text server: anything answering OpenAI's `/audio/transcriptions`. */
 export type TranscriptionPreset = Preset<Transcriber>;

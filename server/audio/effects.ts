@@ -18,8 +18,8 @@ import { fileURLToPath } from "node:url";
 
 import type { AudioFormat, Step } from "@/types";
 
-const SCRIPT = fileURLToPath(new URL("./effects.py", import.meta.url));
-const PEDALBOARD = "pedalboard==0.9.26";
+export const SCRIPT = fileURLToPath(new URL("./effects.py", import.meta.url));
+export const PEDALBOARD = "pedalboard==0.9.26";
 
 export interface EffectJob {
   /** the clip's file; its extension says its format */

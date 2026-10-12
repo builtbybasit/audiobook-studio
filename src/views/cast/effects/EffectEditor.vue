@@ -27,7 +27,7 @@ import type { Choice } from "./choice";
 import type { TryLine } from "./lines";
 import type { Previews } from "./preview";
 import { useAudition } from "./audition";
-import { sheetOnTop } from "./keys";
+import { sheetOnTop } from "./sheetOnTop";
 import AddStep from "./AddStep.vue";
 import StepInspector from "./StepInspector.vue";
 

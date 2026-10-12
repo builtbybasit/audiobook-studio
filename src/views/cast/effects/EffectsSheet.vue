@@ -18,7 +18,8 @@ import { UiHint, UiSheet, UiToggleGroup } from "@/ui";
 import { useChoice, type ChoiceView } from "./choice";
 import { useTryLines } from "./lines";
 import { usePreviews } from "./preview";
-import type { EffectSlot, EffectSubject } from "./subject";
+import type { EffectSlot } from "@/types";
+import type { EffectSubject } from "./subject";
 import EffectEditor from "./EffectEditor.vue";
 import PasteDialog from "./PasteDialog.vue";
 import ReapplyBar from "./ReapplyBar.vue";
@@ -31,15 +32,13 @@ useEffects();
 const effectsStore = useEffectsStore();
 const castStore = useCastStore();
 
-const slot = ref<EffectSlot>("all");
+const slot = ref<EffectSlot>("effect");
 const SLOTS = [
-  { value: "all", label: "All lines" },
-  { value: "thought", label: "Thoughts" },
+  { value: "effect", label: "All lines" },
+  { value: "thoughts", label: "Thoughts" },
 ];
 const name = computed(() => (props.subject?.kind === "speaker" ? props.subject.name : ""));
-const view = computed<ChoiceView>(() =>
-  props.subject?.kind === "speaker" ? (slot.value === "all" ? "all" : "thought") : "book",
-);
+const view = computed<ChoiceView>(() => (props.subject?.kind === "speaker" ? slot.value : "book"));
 const color = computed(
   () => castStore.charactersOf(props.bookId).find((c) => c.name === name.value)?.color ?? "#a1a1aa",
 );
@@ -58,7 +57,7 @@ const lines = useTryLines(
       ? null
       : view.value === "book"
         ? { speaker: null, thoughts: true }
-        : { speaker: name.value, thoughts: view.value === "thought" },
+        : { speaker: name.value, thoughts: view.value === "thoughts" },
 );
 const idx = ref(0);
 /** the line's words are blurred until clicked: it is there to be heard, not read ahead */
@@ -186,7 +185,7 @@ function setSlot(s: EffectSlot) {
           </button>
         </div>
         <p v-else class="text-xs text-zinc-500">
-          No narrated {{ view === "all" ? "lines" : "thought lines" }} to try effects on yet.
+          No narrated {{ view === "effect" ? "lines" : "thought lines" }} to try effects on yet.
         </p>
         <div v-if="subject.kind === 'speaker'">
           <UiToggleGroup

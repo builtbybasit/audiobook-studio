@@ -16,11 +16,11 @@ import { chainsFor } from "@/lib/effects";
 import { useCastStore } from "@/stores/cast";
 import { useEffectsStore } from "@/stores/effects";
 import { useLibraryStore } from "@/stores/library";
-import type { Effect, ThoughtChoice } from "@/types";
+import type { Effect, EffectSlot, ThoughtChoice } from "@/types";
 import type { TryLine } from "./lines";
 
-/** What the list chooses for: a speaker's lines, a speaker's thoughts, or the book's thoughts. */
-export type ChoiceView = "all" | "thought" | "book";
+/** What the list chooses for: one of a speaker's two slots, or the book's thoughts. */
+export type ChoiceView = EffectSlot | "book";
 
 /** A row of the list: "none", or an effect's id. */
 export type Row = string;
@@ -50,15 +50,14 @@ export function useChoice(bookId: () => string, view: () => ChoiceView, name: ()
   const bookRow = computed(() => rowOf(bookOwn.value ?? effectsStore.libraryThoughts));
   /** the subject's own choice; null where it follows the level above (or wears nothing) */
   const own = computed<string | null>(() => {
-    if (view() === "all") return character.value?.effect ?? null;
-    if (view() === "thought") return character.value?.thoughts ?? null;
-    return bookOwn.value;
+    const v = view();
+    return v === "book" ? bookOwn.value : (character.value?.[v] ?? null);
   });
   /** whether the subject follows the level above: a speaker's thoughts the book, the book all books */
-  const following = computed(() => view() !== "all" && own.value === null);
+  const following = computed(() => view() !== "effect" && own.value === null);
   /** the row the subject hears now: the highlighted one */
   const current = computed<Row>(() => {
-    if (view() === "all") return rowOf(own.value);
+    if (view() === "effect") return rowOf(own.value);
     if (following.value) return view() === "book" ? libraryRow.value : bookRow.value;
     return rowOf(own.value);
   });
@@ -69,8 +68,8 @@ export function useChoice(bookId: () => string, view: () => ChoiceView, name: ()
 
   function setOwn(v: string | null): void {
     const who = name();
-    if (view() === "all") void castStore.setEffect(bookId(), who, v);
-    else if (view() === "thought") void castStore.setThoughts(bookId(), who, v);
+    if (view() === "effect") void castStore.setEffect(bookId(), who, v);
+    else if (view() === "thoughts") void castStore.setThoughts(bookId(), who, v);
     else void libraryStore.setBookThoughts(bookId(), v);
   }
 
@@ -78,14 +77,14 @@ export function useChoice(bookId: () => string, view: () => ChoiceView, name: ()
   function choose(row: Row): void {
     const was = own.value;
     const next =
-      view() === "all" ? (row === "none" ? null : row) : row === above.value ? null : row;
+      view() === "effect" ? (row === "none" ? null : row) : row === above.value ? null : row;
     setOwn(next);
     const to = labelOf(row);
     changed.value = {
       text:
-        view() === "all"
+        view() === "effect"
           ? `${name()} now uses ${to}`
-          : view() === "thought"
+          : view() === "thoughts"
             ? `${name()}’s thoughts now use ${to}`
             : `This book now uses ${to}; other books are unchanged`,
       undo: () => setOwn(was),
@@ -94,7 +93,7 @@ export function useChoice(bookId: () => string, view: () => ChoiceView, name: ()
 
   /** Whether the chosen row can be made the level above's: it is chosen, and isn't that already. */
   const canRaise = (row: Row): boolean =>
-    view() !== "all" && row === current.value && row !== above.value;
+    view() !== "effect" && row === current.value && row !== above.value;
 
   /**
    * The level above takes this row and the subject follows it again: on the book's sheet all books
@@ -145,8 +144,8 @@ export function useChoice(bookId: () => string, view: () => ChoiceView, name: ()
     const ctx = effectsStore.contextFor(bookId());
     const cast = new Map(ctx.cast);
     const me = { ...cast.get(line.speaker) };
-    if (view() === "all") me.effect = row === "none" ? undefined : row;
-    else if (view() === "thought") me.thoughts = row;
+    if (view() === "effect") me.effect = row === "none" ? undefined : row;
+    else if (view() === "thoughts") me.thoughts = row;
     else delete me.thoughts;
     cast.set(line.speaker, me);
     return chainsFor(line, { ...ctx, cast, book: view() === "book" ? row : ctx.book });

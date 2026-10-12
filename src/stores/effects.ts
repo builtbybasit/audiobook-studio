@@ -21,7 +21,7 @@ import { fetchBook } from "@/queries/library";
 import { fetchCast } from "@/queries/cast";
 import { ApiError } from "@/services/http";
 import { effectsService } from "@/services/effects";
-import type { Effect, EffectUses, Step, ThoughtChoice } from "@/types";
+import type { Effect, EffectUses, SpeakerEffectUse, Step, ThoughtChoice } from "@/types";
 import { useCastStore } from "@/stores/cast";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
@@ -38,7 +38,7 @@ export interface EffectTaken {
   /** books whose thought effect it was; they follow the library now */
   books: string[];
   /** speakers who wore it (`effect`) or thought in it (`thoughts`), of the casts this page has read */
-  speakers: { bookId: string; name: string; effect: boolean; thoughts: boolean }[];
+  speakers: SpeakerEffectUse[];
 }
 
 interface EffectsState {
@@ -229,7 +229,7 @@ export const useEffectsStore = defineStore("effects", {
     },
     /**
      * A copy of an effect named "<name> Duplicated" — " (2)" on, only while that is taken — placed
-     * right after it. The server lists a new effect last, so after a reload it is there.
+     * right after it, here and on the server, so a reload finds it there too.
      */
     async duplicate(id: string): Promise<Effect | null> {
       const source = this.byId.get(id);

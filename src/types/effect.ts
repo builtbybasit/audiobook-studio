@@ -37,6 +37,20 @@ export interface Effect {
 export type ThoughtChoice = string;
 
 /**
+ * A speaker's two effect choices, named as their fields on `Character`: their effect on all their
+ * lines, and their thought effect.
+ */
+export type EffectSlot = "effect" | "thoughts";
+
+/** One speaker's choices of one effect: as their effect, their thought effect, or both. */
+export interface SpeakerEffectUse {
+  bookId: string;
+  name: string;
+  effect: boolean;
+  thoughts: boolean;
+}
+
+/**
  * A book's clips whose sound is not what their lines' effects now make (`GET …/effects/stale`):
  * `lines` of them, of which `unavailable` cannot be redone — made with effects before the voice's
  * own file was kept beside them. `ready` says whether effects can run on this server at all (uv
@@ -59,11 +73,5 @@ export interface EffectUses {
   /** books whose own thought effect it is */
   books: { id: string; title: string }[];
   /** characters choosing it as their effect, their thought effect, or both */
-  speakers: {
-    bookId: string;
-    bookTitle: string;
-    name: string;
-    effect: boolean;
-    thoughts: boolean;
-  }[];
+  speakers: (SpeakerEffectUse & { bookTitle: string })[];
 }

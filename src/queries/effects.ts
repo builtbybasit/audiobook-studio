@@ -12,7 +12,7 @@
 // effect, a speaker's effect or thought effect, and a narration or Re-apply that ended
 // (`@/queries/jobs`).
 import { computed, toValue, type MaybeRefOrGetter } from "vue";
-import { useQuery } from "@pinia/colada";
+import { toCacheKey, useQuery } from "@pinia/colada";
 
 import type { Effect, StaleSound, ThoughtChoice } from "@/types";
 import { fetchQuery } from "@/queries/fetch";
@@ -79,6 +79,9 @@ export function staleMoved(bookId?: string): Promise<void> {
     ? invalidate({ key: keys.staleSound(bookId) })
     : invalidate({
         key: ["books"],
-        predicate: (e) => e.key[2] === "effects" && e.key[3] === "stale",
+        // a book's own count is its id put into `keys.staleSound`, where every book key keeps it
+        predicate: (e) =>
+          typeof e.key[1] === "string" &&
+          toCacheKey(e.key) === toCacheKey(keys.staleSound(e.key[1])),
       });
 }

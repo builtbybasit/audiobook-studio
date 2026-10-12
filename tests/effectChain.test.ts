@@ -112,7 +112,9 @@ describe("names", () => {
       "thoughts in Elsewhere",
       "all books’ thoughts",
     ]);
-    expect(placesOf(uses, "b1", { bookId: "b1", view: "all", name: "Ann" })).not.toContain("Ann");
+    expect(placesOf(uses, "b1", { bookId: "b1", view: "effect", name: "Ann" })).not.toContain(
+      "Ann",
+    );
     expect(placesOf(uses, "b1", { bookId: "b1", view: "book", name: "" })).not.toContain(
       "this book’s thoughts",
     );

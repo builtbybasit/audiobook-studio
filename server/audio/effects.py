@@ -53,6 +53,9 @@ POSITIONAL = {
 # silent afterwards comes off again — never more, so a clip is never shorter than it came.
 PAD_SECONDS = 0.4
 QUIET = 10 ** (-60 / 20)
+# A tail still ringing where the pad runs out (a big room, a long echo) would stop dead, with a
+# click: it fades out over this much of its end instead.
+FADE_SECONDS = 0.03
 
 
 def number(name, key, v):
@@ -121,7 +124,13 @@ def process(audio, rate, chains):
     pad = np.zeros((audio.shape[0], int(rate * PAD_SECONDS)), audio.dtype)
     wet = board(chains)(np.concatenate([audio, pad], axis=1), rate)
     loud = np.flatnonzero(np.abs(wet).max(axis=0) > QUIET)
-    return wet[:, : max(frames, loud[-1] + 1 if loud.size else 0)]
+    end = max(frames, loud[-1] + 1 if loud.size else 0)
+    out = wet[:, :end]
+    if end == wet.shape[1]:
+        # nothing at the end fell quiet: fade the tail, never into the voice's own samples
+        n = min(int(rate * FADE_SECONDS), end - frames)
+        out[:, end - n :] *= np.linspace(1, 0, n, dtype=out.dtype)
+    return out
 
 
 def wav_bytes(audio, rate):

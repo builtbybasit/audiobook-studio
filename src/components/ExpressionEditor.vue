@@ -5,6 +5,9 @@
 // placed: click one to replace, move, omit or remove it. There is no position dropdown, and the
 // source text is never rewritten to hold a tag.
 //
+// A pause is placed the same way, with "Add pause", and needs no tags set up: a voice without a
+// pause tag hears it as silence. Its chip changes its length instead of replacing it.
+//
 // When the speaker's model has no tags configured, the button says so and opens the configuration
 // in place, since that is the only thing that can happen next.
 import { useCastStore } from "@/stores/cast";
@@ -19,14 +22,16 @@ import {
   Trash2 as RemoveIcon,
   ChevronDown as ExpandIcon,
   MoveHorizontal as MoveIcon,
+  Pause as PauseIcon,
 } from "@lucide/vue";
-import { UiCombobox, UiDialog } from "@/ui";
+import { UiCombobox, UiDialog, UiHint } from "@/ui";
 
-import { expressionSupport, tokenFor, typedTag, validToken } from "@/lib/expressions";
+import { chipText, expressionSupport, tokenFor, typedTag, validToken } from "@/lib/expressions";
 import { gapLabel } from "@/lib/gaps";
+import { PAUSE_STEPS, secs } from "@/lib/speech";
 import ExpressionsTab from "@/views/endpoints/ExpressionsTab.vue";
 import WordStrip from "@/components/WordStrip.vue";
-import type { Segment, ExpressionAnnotation } from "@/types";
+import type { Segment, ExpressionAnnotation, PauseWord } from "@/types";
 
 const props = defineProps<{
   bookId: string;
@@ -69,11 +74,21 @@ const issue = (id: number) => plan.value.issues.find((i) => i.annotationId === i
 const issueReason = (id: number) => issue(id)?.reason;
 const skippedReason = (id: number) => plan.value.skipped.find((i) => i.annotationId === id)?.reason;
 const count = computed(() => props.segment.expressions?.length ?? 0);
+const pacing = computed(() => castStore.pacingOf(props.bookId));
+/** the line can be edited on its strip: its model takes tags, or it holds or is getting a pause */
+const editable = computed(
+  () =>
+    support.value === "supported" ||
+    pausing.value ||
+    !!props.segment.expressions?.some((a) => a.kind === "pause"),
+);
 const change = (id: number, patch: Partial<ExpressionAnnotation> | null) =>
   narrationStore.updateExpression(props.bookId, props.chapterId, props.segment.id, id, patch);
 
-// ---- placing: a gap is chosen on the strip, then a tag in the picker that opens under it
+// ---- placing: a gap is chosen on the strip, then a tag in the picker that opens under it — or,
+// placing a pause, the pause goes straight in and its chip opens for its length
 const placing = ref(false);
+const pausing = ref(false);
 const pickAt = ref<number | null>(null);
 const moving = ref<number | null>(null);
 const selected = ref("");
@@ -85,11 +100,12 @@ const caretAt = (el: HTMLElement) => {
   caretX.value = box ? Math.max(8, r.left - box.left + r.width / 2) : 8;
 };
 
-function startPlacing() {
-  if (support.value !== "supported") {
+function startPlacing(pause = false) {
+  if (!pause && support.value !== "supported") {
     if (endpoint.value) settings.value = true;
     return;
   }
+  pausing.value = pause;
   expanded.value = true;
   editing.value = null;
   moving.value = null;
@@ -103,6 +119,12 @@ function onPick(at: number, el: HTMLElement) {
     change(moving.value, { at, needsReview: false });
     moving.value = null;
     placing.value = false;
+    return;
+  }
+  if (pausing.value) {
+    const id = narrationStore.addPause(props.bookId, props.chapterId, props.segment.id, at);
+    cancel();
+    editing.value = id;
     return;
   }
   pickAt.value = at;
@@ -121,6 +143,7 @@ function insert() {
 }
 function cancel() {
   placing.value = false;
+  pausing.value = false;
   pickAt.value = null;
   moving.value = null;
   selected.value = "";
@@ -161,6 +184,23 @@ watch(expanded, (v) => {
   }
 });
 const tokenOf = (a: ExpressionAnnotation) => tokenFor(a, endpoint.value?.expressions).token;
+
+/** The lengths a pause can be: the book's short and long ones, or one of its own. */
+const lengths = computed(() => [
+  { word: "pause" as PauseWord, label: `short · ${secs(pacing.value.inlineShort)}` },
+  { word: "long pause" as PauseWord, label: `long · ${secs(pacing.value.inlineLong)}` },
+  ...PAUSE_STEPS.filter((v): v is number => !!v).map((seconds) => ({
+    word: "pause" as PauseWord,
+    seconds,
+    label: secs(seconds),
+  })),
+]);
+const isLength = (a: ExpressionAnnotation, l: { word: PauseWord; seconds?: number }) =>
+  l.seconds != null ? a.seconds === l.seconds : a.seconds == null && a.id === l.word;
+function setLength(l: { word: PauseWord; seconds?: number }) {
+  if (editing.value != null)
+    change(editing.value, { id: l.word, label: l.word, seconds: l.seconds });
+}
 </script>
 
 <template>
@@ -183,14 +223,22 @@ const tokenOf = (a: ExpressionAnnotation) => tokenFor(a, endpoint.value?.express
         >{{ plan.issues.length }} need review</span
       >
       <button
-        v-if="support === 'supported'"
+        v-if="endpoint"
         class="btn-ghost btn-xs ml-auto"
         :disabled="placing"
-        @click="startPlacing"
+        @click="startPlacing(true)"
+      >
+        <PauseIcon class="icon-sm" /> Add pause
+      </button>
+      <button
+        v-if="support === 'supported'"
+        class="btn-ghost btn-xs"
+        :disabled="placing"
+        @click="startPlacing()"
       >
         <AddIcon class="icon-sm" /> Add expression
       </button>
-      <button v-else-if="endpoint" class="btn-ghost btn-xs ml-auto" @click="settings = true">
+      <button v-else-if="endpoint" class="btn-ghost btn-xs" @click="settings = true">
         <SettingsIcon class="icon-sm" /> Set up expressions for {{ endpoint.model }}
       </button>
       <span v-else class="ml-auto text-zinc-400">Assign a voice to use expressions</span>
@@ -208,7 +256,7 @@ const tokenOf = (a: ExpressionAnnotation) => tokenFor(a, endpoint.value?.express
       </div>
 
       <p
-        v-if="support !== 'supported'"
+        v-if="support !== 'supported' && !editable"
         class="rounded-md bg-zinc-50 p-3 leading-relaxed text-zinc-500 dark:bg-zinc-800/50"
       >
         {{
@@ -220,7 +268,7 @@ const tokenOf = (a: ExpressionAnnotation) => tokenFor(a, endpoint.value?.express
         }}
       </p>
 
-      <template v-else>
+      <template v-if="editable">
         <!-- the line itself, as a strip of words; gaps show while placing -->
         <div
           ref="strip"
@@ -235,6 +283,7 @@ const tokenOf = (a: ExpressionAnnotation) => tokenFor(a, endpoint.value?.express
             :issue-of="issueReason"
             :skipped-of="skippedReason"
             :moving-id="moving"
+            :pacing="pacing"
             :quote="segment.type === 'dialogue' ? 'dialogue' : ''"
             verb="place"
             @pick="onPick"
@@ -246,13 +295,15 @@ const tokenOf = (a: ExpressionAnnotation) => tokenFor(a, endpoint.value?.express
           {{
             moving != null
               ? "Click the gap the expression should move to."
-              : "Click the gap where the expression goes."
+              : pausing
+                ? "Click the gap where the pause goes."
+                : "Click the gap where the expression goes."
           }}
           <span class="text-violet-500/70">← → walk the gaps, Enter picks.</span>
           <button class="ml-2 underline" @click="cancel">Cancel</button>
         </p>
         <p v-else-if="!placing && count" class="text-zinc-400">
-          Click a chip to replace, move, omit or remove it.
+          Click a chip to change, move, omit or remove it.
         </p>
         <p v-else-if="!placing" class="text-zinc-400">Nothing placed on this line yet.</p>
 
@@ -298,7 +349,17 @@ const tokenOf = (a: ExpressionAnnotation) => tokenFor(a, endpoint.value?.express
                 : 'border-zinc-300 bg-white dark:border-zinc-700'
             "
           >
-            <div class="flex flex-wrap items-center gap-2">
+            <div v-if="current.kind === 'pause'" class="flex flex-wrap items-center gap-2">
+              <b
+                ><PauseIcon class="-mt-px inline size-3" aria-hidden="true" /> Pause ·
+                {{ chipText(current, pacing) }}</b
+              ><span class="text-zinc-400">· {{ gapLabel(segment.text, current.at) }}</span
+              ><UiHint
+                label="pauses"
+                text="A short or long pause is as long as the book’s pacing says, and follows it when that changes. The voice is sent its own pause tag where it has one; otherwise the line is spoken in parts with this much silence between them, one more request each."
+              /><button class="btn-ghost btn-xs ml-auto" @click="editing = null">Done</button>
+            </div>
+            <div v-else class="flex flex-wrap items-center gap-2">
               <b>{{ current.label }}</b
               ><code class="text-violet-500">{{ tokenOf(current) }}</code
               ><span class="text-zinc-400">{{
@@ -321,8 +382,20 @@ const tokenOf = (a: ExpressionAnnotation) => tokenFor(a, endpoint.value?.express
                 Keep this position
               </button>
             </p>
+            <div v-if="current.kind === 'pause'" class="flex flex-wrap items-center gap-1.5">
+              <span class="text-zinc-400">Length</span>
+              <button
+                v-for="l in lengths"
+                :key="l.label"
+                class="chip"
+                :class="isLength(current, l) && 'chip-on'"
+                @click="setLength(l)"
+              >
+                {{ l.label }}
+              </button>
+            </div>
             <div class="flex flex-wrap items-end gap-2">
-              <label class="min-w-[12rem] flex-1"
+              <label v-if="current.kind !== 'pause'" class="min-w-[12rem] flex-1"
                 >Replace with<UiCombobox
                   :model-value="current.id"
                   :options="options"
@@ -332,7 +405,11 @@ const tokenOf = (a: ExpressionAnnotation) => tokenFor(a, endpoint.value?.express
                   class="mt-1"
                   @update:model-value="(v) => replace(String(v))"
               /></label>
-              <button class="btn-ghost btn-xs" @click="startMove">
+              <button
+                class="btn-ghost btn-xs"
+                :class="current.kind === 'pause' && 'ml-auto'"
+                @click="startMove"
+              >
                 <MoveIcon class="icon-sm" /> Move…
               </button>
               <button

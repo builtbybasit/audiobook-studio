@@ -5,11 +5,12 @@ import { useNarrationStore } from "@/stores/narration";
 
 // How this book is *said*: the pronunciation dictionary on the left, the pacing defaults on the right.
 // Neither one edits the book — a term is swapped on its way to the endpoint and silence is stitched
-// between clips — but they differ in cost: a respelling needs the line rendered again, a pause does not.
+// between clips — but they differ in cost: a respelling needs the line rendered again, a pause
+// between lines does not (a pause inside one does).
 // Click a term for its preview against a real line, plus match-case and a note.
 import { computed, nextTick, ref } from "vue";
 
-import { UiCheckbox, UiNumber, UiSwitch } from "@/ui";
+import { UiCheckbox, UiHint, UiNumber, UiSwitch } from "@/ui";
 import { hitsIn, marks, speak, DEFAULT_PACING, secs } from "@/lib/speech";
 import { plural } from "@/lib/contents";
 import {
@@ -91,6 +92,11 @@ function renarrate() {
 }
 const overrides = computed(() => castStore.pauseOverrides(props.bookId));
 const PRESETS = [0.2, 0.35, 0.6, 1];
+/** the pauses inside a line, and the lengths offered for each */
+const INLINE = [
+  { k: "inlineShort", label: "Short pause", presets: [0.25, 0.4, 0.6] },
+  { k: "inlineLong", label: "Long pause", presets: [0.75, 1, 1.5, 2] },
+] as const;
 </script>
 
 <template>
@@ -296,10 +302,47 @@ const PRESETS = [0.2, 0.35, 0.6, 1];
           </div>
         </div>
       </div>
+      <div class="mt-4 flex items-center gap-1.5">
+        <span class="label">Pauses inside a line</span
+        ><UiHint
+          label="pauses inside a line"
+          text="The pauses the scripting model writes, and the short and long ones you place on a line. They are sent with the line, so a new length makes the lines holding one need re-narrating; a pause given its own length keeps it."
+        />
+      </div>
+      <div class="mt-2 space-y-3">
+        <div v-for="p in INLINE" :key="p.k">
+          <div class="flex items-center justify-between gap-2 text-xs">
+            <span>{{ p.label }}</span>
+            <UiNumber
+              class="w-[4.5rem] text-xs"
+              :model-value="pacing[p.k]"
+              :min="0"
+              :max="5"
+              :step="0.05"
+              unit="s"
+              :label="p.label"
+              @update:model-value="
+                (v: number | null) => castStore.setPacing(bookId, { [p.k]: v ?? 0 })
+              "
+            />
+          </div>
+          <div class="mt-1 flex flex-wrap gap-1">
+            <button
+              v-for="v in p.presets"
+              :key="v"
+              class="chip"
+              :class="pacing[p.k] === v && 'chip-on'"
+              @click="castStore.setPacing(bookId, { [p.k]: v })"
+            >
+              {{ secs(v) }}
+            </button>
+          </div>
+        </div>
+      </div>
       <button
         v-if="book?.pacing"
         class="btn-ghost btn-xs mt-3"
-        :title="`back to ${secs(DEFAULT_PACING.line)} / ${secs(DEFAULT_PACING.turn)}`"
+        :title="`back to ${secs(DEFAULT_PACING.line)} / ${secs(DEFAULT_PACING.turn)}, pauses ${secs(DEFAULT_PACING.inlineShort)} / ${secs(DEFAULT_PACING.inlineLong)}`"
         @click="castStore.resetPacing(bookId)"
       >
         Reset to default

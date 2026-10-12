@@ -6,9 +6,11 @@
 //
 // Keyboard: the strip takes focus as a whole; ← → walk the gaps, Enter picks, Escape cancels.
 import { computed, ref, watch } from "vue";
-import { chipLook } from "@/lib/expressions";
+import { Pause as PauseIcon } from "@lucide/vue";
+import { chipLook, chipText } from "@/lib/expressions";
 import { gapLabel, gapsOf, tokensOf } from "@/lib/gaps";
-import type { ExpressionAnnotation } from "@/types";
+import { DEFAULT_PACING } from "@/lib/speech";
+import type { ExpressionAnnotation, Pacing } from "@/types";
 
 const props = withDefaults(
   defineProps<{
@@ -26,6 +28,8 @@ const props = withDefaults(
     quote?: "dialogue" | "thought" | "";
     /** what a gap does, for its label: "cut" or "place" */
     verb?: string;
+    /** the book's pacing, for how long a pause chip says it is */
+    pacing?: Pacing;
   }>(),
   {
     gaps: true,
@@ -35,6 +39,7 @@ const props = withDefaults(
     movingId: null,
     quote: "",
     verb: "",
+    pacing: () => DEFAULT_PACING,
   },
 );
 const emit = defineEmits<{
@@ -61,7 +66,7 @@ const pieces = computed<Piece[]>(() => {
     for (; c < chips.length && chips[c].at <= upTo; c++) {
       const a = chips[c];
       const issue = props.issueOf(a.annotationId);
-      const look = chipLook(a, issue, props.skippedOf(a.annotationId));
+      const look = chipLook(a, issue, props.skippedOf(a.annotationId), props.pacing);
       out.push({ kind: "chip", a, look, review: !!issue });
     }
   };
@@ -158,7 +163,9 @@ const label = (at: number) =>
         :title="p.look.title"
         @click.stop="emit('chip', p.a.annotationId, $event.currentTarget as HTMLElement)"
       >
-        {{ p.a.label }}<span v-if="p.review"> · review</span></button
+        <PauseIcon v-if="p.a.kind === 'pause'" class="-mt-px inline size-3" aria-hidden="true" />{{
+          chipText(p.a, pacing)
+        }}<span v-if="p.review"> · review</span></button
       ><template v-else>{{ p.text }}</template></template
     ><template v-if="quote === 'dialogue'">’</template></span
   >

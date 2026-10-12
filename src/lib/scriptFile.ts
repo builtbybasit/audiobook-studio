@@ -54,8 +54,7 @@ export const markSuffix = (a: {
   scripted?: boolean;
   omitted?: boolean;
   needsReview?: boolean;
-}): string =>
-  `${a.scripted ? "~" : ""}${a.omitted ? "!" : ""}${a.needsReview ? "?" : ""}`;
+}): string => `${a.scripted ? "~" : ""}${a.omitted ? "!" : ""}${a.needsReview ? "?" : ""}`;
 
 /**
  * A marker that starts a word — at the start of the line, or after whitespace — is written with one

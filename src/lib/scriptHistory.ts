@@ -43,9 +43,7 @@ const tight = (t: string): string => t.replace(/\s+/g, "");
  * scripting model, omitted, awaiting review.
  */
 const exprSignature = (s: Segment): string =>
-  (s.expressions ?? [])
-    .map((a) => `${a.id}@${a.at}${markSuffix(a)}`)
-    .join(",");
+  (s.expressions ?? []).map((a) => `${a.id}@${a.at}${markSuffix(a)}`).join(",");
 
 /**
  * Everything a version keeps about one line, exactly as it keeps it. The clip rendered from it is

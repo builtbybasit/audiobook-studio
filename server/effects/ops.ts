@@ -9,13 +9,17 @@ import { readThoughts, writeThoughts } from "~/db/settings";
 import { badRequest, notFound } from "~/lib/errors";
 import { slugify } from "~/lib/http";
 
+/** Whether a choice is "none" or an effect the library has. */
+export const isEffectChoice = (db: Db | Tx, choice: string): boolean =>
+  choice === "none" || effects.getEffect(db, choice) != null;
+
 /**
  * Refuse a choice that names an effect the library does not have. Null (follow the next level) and
  * "none" name none, and pass.
  */
 export function requireEffect(db: Db | Tx, choice: string | null | undefined, what: string): void {
-  if (choice == null || choice === "none") return;
-  if (!effects.getEffect(db, choice)) throw badRequest(`${what}: there is no effect “${choice}”`);
+  if (choice != null && !isEffectChoice(db, choice))
+    throw badRequest(`${what}: there is no effect “${choice}”`);
 }
 
 export const listEffects = (db: Db): Effect[] => effects.listEffects(db);

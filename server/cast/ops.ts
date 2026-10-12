@@ -22,10 +22,9 @@ import { speak } from "@/lib/speech";
 import type { Db } from "~/db/client";
 import * as cast from "~/db/cast";
 import * as library from "~/db/library";
-import { getEffect } from "~/db/effects";
 import { discardSpeakerSamples, moveSpeakerSamples } from "~/db/speakerSamples";
 import { attributeLines, bumpRevision, readScript, reattribute, writeClip } from "~/db/script";
-import { requireEffect } from "~/effects/ops";
+import { isEffectChoice, requireEffect } from "~/effects/ops";
 import { badRequest, conflict, notFound } from "~/lib/errors";
 import { requireBook } from "~/library/ops";
 import { narrationInProgress, settleChapter } from "~/narration/chapter";
@@ -135,7 +134,7 @@ export function attribute(
 ): MovedLines {
   requireBook(db, bookId);
   // put back as they were, less an effect removed since: an Undo is not refused for that
-  const known = (id?: string) => (id === "none" || (id && getEffect(db, id)) ? id : undefined);
+  const known = (id?: string) => (id && isEffectChoice(db, id) ? id : undefined);
   character = {
     ...character,
     effect: known(character.effect),

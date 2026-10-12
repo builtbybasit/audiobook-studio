@@ -18,6 +18,7 @@
 // One job per book at a time (`activeKey`), for the whole book. The job fails at the end when any
 // clip could not be made, as a check by ear does, so a retry redoes only those.
 import type { Job } from "@/types";
+import { plural } from "@/lib/contents";
 import { runnable } from "@/lib/effects";
 import { pacingOrDefault, chapterSeconds } from "@/lib/speech";
 import type { EffectJob, EffectRunner } from "~/audio/effects";
@@ -32,8 +33,6 @@ import { conflict, notFound } from "~/lib/errors";
 
 const LABEL = "Re-apply effects";
 
-const clipsWord = (n: number): string => `${n} clip${n === 1 ? "" : "s"}`;
-
 export function effectsHandler(runner: EffectRunner | undefined, files: AudioFiles): JobHandler {
   return {
     async run(ctx: JobContext): Promise<void> {
@@ -46,7 +45,7 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
       const stuck = stale.filter(cannotRedo).length;
       if (stuck)
         ctx.note(
-          `${clipsWord(stuck)} keep their old sound: they were made before the voice's own file was kept`,
+          `${plural(stuck, "clip")} keep their old sound: they were made before the voice's own file was kept`,
           "warning",
           { clips: stuck },
         );
@@ -179,7 +178,7 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
         ...(skipped ? { skipped } : {}),
         ...(failed ? { failed } : {}),
       });
-      if (failed) throw new Error(`${clipsWord(failed)} could not be re-applied`);
+      if (failed) throw new Error(`${plural(failed, "clip")} could not be re-applied`);
     },
   };
 }

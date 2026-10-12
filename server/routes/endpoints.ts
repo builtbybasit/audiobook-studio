@@ -71,6 +71,12 @@ type Form = FormData;
 const formOf = (req: HonoRequest): Promise<Form> =>
   req.formData().catch(() => fail(400, "The request was not a form"));
 
+/** A text field of a form, trimmed; empty when it is missing or was sent as a file. */
+const textOf = (form: Form, name: string): string => {
+  const value = form.get(name);
+  return typeof value === "string" ? value.trim() : "";
+};
+
 /**
  * The files under `samples`, and what is said in each under `transcripts`, one per file in the
  * same order; what each file is, and whether the provider takes it, is `readSamples`'.
@@ -148,7 +154,7 @@ export function endpointRoutes(
     const form = await formOf(c.req);
     const file = form.get("file");
     if (!(file instanceof File)) fail(400, "Send the recording as `file`");
-    const id = String(form.get("id") ?? "").trim() || undefined;
+    const id = textOf(form, "id") || undefined;
     const heard = await ops.transcribeSample(db, providers, file, id, c.req.raw.signal);
     c.var.logger.info({ id, chars: heard.text.length }, "sample transcribed");
     return c.json(heard);
@@ -205,8 +211,8 @@ export function endpointRoutes(
       0,
     );
     const form = await formOf(c.req);
-    const id = String(form.get("id") ?? "").trim();
-    const title = String(form.get("title") ?? "").trim();
+    const id = textOf(form, "id");
+    const title = textOf(form, "title");
     if (!id) fail(400, "Say which endpoint to make the voice on");
     if (!title || title.length > 100) fail(400, "Give the voice a name of up to 100 characters");
     const {

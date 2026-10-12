@@ -50,8 +50,7 @@ const line = (target: ProviderTarget | null, over: Partial<SpeechInput> = {}): S
 function streamingWav(rate: number, frames: number, extra = 0): Uint8Array {
   const bytes = new Uint8Array(44 + frames * 2 + extra);
   const view = new DataView(bytes.buffer);
-  const ascii = (at: number, s: string) =>
-    [...s].forEach((c, i) => (bytes[at + i] = c.charCodeAt(0)));
+  const ascii = (at: number, s: string) => bytes.set(new TextEncoder().encode(s), at);
   ascii(0, "RIFF");
   view.setUint32(4, 0xffffff24, true);
   ascii(8, "WAVE");
@@ -79,7 +78,7 @@ function scripted(...answers: (() => Response)[]) {
     const next = answers[Math.min(sent.length, answers.length) - 1];
     return next();
   }) as unknown as typeof globalThis.fetch;
-  return { sent, fetch, body: (i = 0) => JSON.parse(String(sent[i].init.body)) };
+  return { sent, fetch, body: (i = 0) => JSON.parse(sent[i].init.body as string) };
 }
 
 /** Collects what a provider reports through `sent`, to hand in as the line's own. */

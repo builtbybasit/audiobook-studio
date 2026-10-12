@@ -41,8 +41,8 @@ beforeEach(() => {
   pinia = testPinia();
   toasts = [];
   const uiStore = useUiStore();
-  uiStore.toast = ((msg: string, opts: { description?: string } = {}) => {
-    toasts.push({ msg, description: opts.description ?? "" });
+  uiStore.toast = ((msg: string, opts?: { description?: string }) => {
+    toasts.push({ msg, description: opts?.description ?? "" });
     return "test";
   }) as typeof uiStore.toast;
 });

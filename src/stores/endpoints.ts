@@ -953,7 +953,7 @@ export const useEndpointsStore = defineStore("endpoints", {
           ep.fetching = false;
         }
       })();
-      uiStore.toastLoading(work, {
+      void uiStore.toastLoading(work, {
         loading: `Fetching voices from ${ep.name}\u2026`,
         success: (n) =>
           n

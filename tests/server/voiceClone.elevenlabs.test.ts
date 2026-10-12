@@ -199,7 +199,7 @@ describe("the BreezeBlue cloner", () => {
       "application/json",
     ]);
     // the language is required, and this app's books are English
-    expect(JSON.parse(String(f.sent[1].init.body))).toEqual({
+    expect(JSON.parse(f.sent[1].init.body as string)).toEqual({
       voice_name: "Mara",
       language_code: "en",
     });

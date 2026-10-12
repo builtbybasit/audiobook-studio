@@ -371,7 +371,8 @@ export async function sendBatch(
   const why = idle.signal.aborted
     ? `sent nothing for ${target.timeoutSec} s part-way through a batch`
     : cut
-      ? `stopped sending a batch part-way (${cut instanceof Error ? cut.message : String(cut)})`
+      ? // oxlint-disable-next-line typescript/no-base-to-string -- whatever was thrown, as words
+        `stopped sending a batch part-way (${cut instanceof Error ? cut.message : String(cut)})`
       : stream.finished
         ? "said a batch was done"
         : "stopped sending a batch before it said it was done";

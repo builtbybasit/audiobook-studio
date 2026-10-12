@@ -197,7 +197,7 @@ export const fishWire: SpeechWire = {
       });
       const body = await getJson<FishModelList>(
         target,
-        `${root}/model?${q}`,
+        `${root}/model?${q.toString()}`,
         jsonHeaders(target),
         signal,
         options,
@@ -262,7 +262,7 @@ export const fishWire: SpeechWire = {
     if (query.language?.trim()) q.set("language", query.language.trim());
     const body = await getJson<FishModelList>(
       target,
-      `${root}/model?${q}`,
+      `${root}/model?${q.toString()}`,
       jsonHeaders(target),
       signal,
       options,

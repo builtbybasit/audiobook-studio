@@ -53,12 +53,12 @@ beforeEach(() => {
   pinia?.stop();
   pinia = testPinia();
   toasts = [];
-  useUiStore().toast = (msg, opts = {}) => (
+  useUiStore().toast = (msg, opts) => (
     toasts.push({
       msg,
-      kind: opts.kind,
-      description: opts.description,
-      ...(opts.action ? { action: opts.action } : {}),
+      kind: opts?.kind,
+      description: opts?.description,
+      ...(opts?.action ? { action: opts.action } : {}),
     }),
     ""
   );

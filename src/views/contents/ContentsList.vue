@@ -10,14 +10,9 @@ import { excerptOf, stateOf } from "@/lib/contents";
 import { useLibraryStore } from "@/stores/library";
 import { STATE_CHIP, words } from "@/views/contents/shared";
 import { UiCheckbox } from "@/ui";
-import type { Chapter, Volume } from "@/types";
+import type { Chapter } from "@/types";
+import type { VolumeRow } from "@/views/contents/shared";
 import { ChevronDown as ChevronDownIcon, ChevronRight as ChevronRightIcon } from "@lucide/vue";
-
-export interface VolumeRow extends Volume {
-  chapters: Chapter[];
-  /** every chapter of the volume, not only the ones on screen */
-  all: Chapter[];
-}
 
 const props = defineProps<{
   bookId: string;

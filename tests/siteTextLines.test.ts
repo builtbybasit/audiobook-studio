@@ -56,8 +56,8 @@ beforeEach(() => {
   pinia = testPinia();
   libraryStore = useLibraryStore();
   scriptsStore = useScriptsStore();
-  useUiStore().toast = (_msg, opts = {}) => {
-    if (opts.undo) undos.push(opts.undo);
+  useUiStore().toast = (_msg, opts) => {
+    if (opts?.undo) undos.push(opts.undo);
     return "";
   };
 });

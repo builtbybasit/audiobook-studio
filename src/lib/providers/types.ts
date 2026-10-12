@@ -63,7 +63,7 @@ export interface SpeechProviderShape {
   /** what the page and messages call the API */
   label: string;
   /** whether a base URL is this provider's; the fallback says yes to anything */
-  matches(baseUrl: string): boolean;
+  matches: (baseUrl: string) => boolean;
   /**
    * The path a line is sent to after the base URL, as the Connection tab shows it. A provider whose
    * path carries the voice puts `voice` in it, already escaped, and `<voice>` when there is none.

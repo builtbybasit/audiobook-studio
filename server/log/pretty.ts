@@ -41,6 +41,7 @@ function value(v: unknown, p: Palette): string {
   if (typeof v === "number") return p.cyan(String(v));
   if (typeof v === "boolean") return p.magenta(String(v));
   if (typeof v === "string") return v.length > MAX ? `${v.slice(0, MAX)}${p.dim("…")}` : v;
+  // oxlint-disable-next-line typescript/no-base-to-string -- only what JSON cannot write gets here
   const json = JSON.stringify(v) ?? String(v);
   return json.length > MAX ? `${json.slice(0, MAX)}${p.dim("…")}` : json;
 }

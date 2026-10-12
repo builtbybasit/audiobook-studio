@@ -197,8 +197,8 @@ describe("the review against the demo library", () => {
     pinia = testPinia();
     libraryStore = useLibraryStore();
     toasts = [];
-    useUiStore().toast = (msg, opts = {}) => {
-      toasts.push({ msg, undo: opts.undo ?? null });
+    useUiStore().toast = (msg, opts) => {
+      toasts.push({ msg, undo: opts?.undo ?? null });
       return "test";
     };
   });

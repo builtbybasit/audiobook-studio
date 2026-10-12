@@ -99,8 +99,8 @@ beforeEach(() => {
   // the real toast needs a DOM; this stub also keeps the last undo it was offered, which is how the
   // tests below take back a restore or an import exactly as the toast's Undo button would
   undos = [];
-  uiStore.toast = (_msg, opts = {}) => {
-    if (opts.undo) undos.push(opts.undo);
+  uiStore.toast = (_msg, opts) => {
+    if (opts?.undo) undos.push(opts.undo);
     return "test";
   };
 });
@@ -703,9 +703,9 @@ describe("voice samples a script file carries", () => {
 
   test("a row the server already lost is not a failure when the import is undone", async () => {
     const errors: string[] = [];
-    uiStore.toast = (msg, opts = {}) => {
-      if (opts.undo) undos.push(opts.undo);
-      if (opts.kind === "error") errors.push(msg);
+    uiStore.toast = (msg, opts) => {
+      if (opts?.undo) undos.push(opts.undo);
+      if (opts?.kind === "error") errors.push(msg);
       return "test";
     };
     const speaker = planWithSamples((sp) => [row(sp, { kind: "private" })]);

@@ -85,7 +85,7 @@ function counting(delayMs = 15, around?: SpeechProvider["speak"]) {
       mostTogether = Math.max(mostTogether, ++together);
       starts.push({ endpoint, at: Date.now() });
       try {
-        return await (around ?? inner.speak)(input);
+        return await (around ? around(input) : inner.speak(input));
       } finally {
         now.set(endpoint, now.get(endpoint)! - 1);
         together--;

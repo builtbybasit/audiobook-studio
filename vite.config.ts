@@ -19,6 +19,8 @@ export default defineConfig({
     },
     rules: {
       "vite-plus/prefer-vite-plus-imports": "error",
+      // bun:test types `expect(...).rejects` matchers as void, so every awaited one is flagged
+      "typescript/await-thenable": "off",
     },
     env: {
       builtin: true,
@@ -60,8 +62,10 @@ export default defineConfig({
         },
       },
     ],
-    // ponytail: type-aware lint off — it reads the root tsconfig (no `~/` alias, no .vue exports)
-    // and flags ~230 sites; `vue-tsc --build` does the type check. Turn on with tsconfig paths fixed.
+    options: {
+      typeAware: true,
+      typeCheck: true,
+    },
     jsPlugins: [
       {
         name: "vite-plus",

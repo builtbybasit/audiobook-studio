@@ -246,7 +246,7 @@ export function batchServer(options: BatchServerOptions = {}) {
   }
 
   const fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
-    const url = new URL(String(input));
+    const url = new URL(input instanceof Request ? input.url : input);
     const method = (init.method ?? "GET").toUpperCase();
     const path = url.pathname.replace(/^\/v1/, "");
     const body = typeof init.body === "string" ? JSON.parse(init.body) : null;

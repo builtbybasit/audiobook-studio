@@ -253,7 +253,7 @@ describe("a Fish voice", () => {
   function fishApi(samples: unknown[] | Response) {
     const seen: string[] = [];
     const fetch = (async (input: string | URL | Request) => {
-      const url = String(input);
+      const url = input instanceof Request ? input.url : input.toString();
       seen.push(url);
       if (url === RECORDING) return new Response(mp3);
       if (samples instanceof Response) return samples;

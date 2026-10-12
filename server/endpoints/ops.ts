@@ -167,9 +167,9 @@ export async function testEndpoint(
   if (kind === "tts") {
     const ep = readEndpoint(db, id);
     if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
-    const probe = providers.speech.probe;
-    if (!probe) return untestable(providers.speech.name);
-    return probe.call(providers.speech, speechTarget(db, ep), signal);
+    const speech = providers.speech;
+    if (!speech.probe) return untestable(speech.name);
+    return speech.probe(speechTarget(db, ep), signal);
   }
   if (kind === "transcription") {
     const t = readTranscriber(db, id);
@@ -189,14 +189,14 @@ export async function testEndpoint(
   }
   const profile = readProfiles(db).find((p) => p.id === id);
   if (!profile) throw notFound("There is no saved scripting profile by that id", `id: ${id}`);
-  const probe = providers.scripting.probe;
-  if (!probe) return untestable(providers.scripting.name);
+  const scripting = providers.scripting;
+  if (!scripting.probe) return untestable(scripting.name);
   // the prompt this profile's runs would be sent, over a book with none of its own
   const { system, user } = resolvePrompt({
     library: readLibraryPrompt(db),
     profile: profile.prompt,
   });
-  return probe.call(providers.scripting, scriptTarget(db, profile), signal, {
+  return scripting.probe(scriptTarget(db, profile), signal, {
     template: { system, user },
     notes: profile.prompt?.notes ?? "",
   });
@@ -270,10 +270,10 @@ export async function batchLimits(
 ): Promise<EndpointBatches> {
   const ep = readEndpoint(db, id);
   if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
-  const ask = providers.speech.batchLimits;
-  if (!ask) return { limits: null };
+  const speech = providers.speech;
+  if (!speech.batchLimits) return { limits: null };
   try {
-    return { limits: await ask.call(providers.speech, speechTarget(db, ep), signal, true) };
+    return { limits: await speech.batchLimits(speechTarget(db, ep), signal, true) };
   } catch (e) {
     throw e instanceof ProviderError ? providerFailure(e) : e;
   }

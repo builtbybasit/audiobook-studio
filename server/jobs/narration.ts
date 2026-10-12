@@ -244,7 +244,7 @@ interface Line extends BatchLine<Target> {
   generating: SegmentAudio;
   startedAt: number;
   /** hands back whatever of the line's reservation its requests did not use */
-  release(): void;
+  release: () => void;
 }
 
 /** A line's delivery, its reading, and the worst case it holds while it is out. */

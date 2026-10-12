@@ -47,7 +47,7 @@ export interface EncodeInput {
    * Called as each chapter lands, so the Queue can count a long file down rather than showing
    * nothing between "writing" and "written".
    */
-  onChapter?(chapter: EncodedChapter, index: number): void;
+  onChapter?: (chapter: EncodedChapter, index: number) => void;
 }
 
 /**

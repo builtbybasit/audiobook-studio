@@ -1,7 +1,13 @@
 // What the contents review's list, filters and chips share.
 import { findsChapter } from "@/lib/chapterNumber";
 import { stateOf } from "@/lib/contents";
-import type { Chapter, ContentState, NoticeKind } from "@/types";
+import type { Chapter, ContentState, NoticeKind, Volume } from "@/types";
+
+export interface VolumeRow extends Volume {
+  chapters: Chapter[];
+  /** every chapter of the volume, not only the ones on screen */
+  all: Chapter[];
+}
 
 export type ContentsFilter = "all" | "included" | "suggested" | "review" | "skipped";
 export const FILTER_KEYS: ContentsFilter[] = ["all", "included", "suggested", "review", "skipped"];

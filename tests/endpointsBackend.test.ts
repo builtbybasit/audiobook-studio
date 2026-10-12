@@ -247,8 +247,8 @@ beforeEach(() => {
   pinia = testPinia();
   endpointsStore = useEndpointsStore();
   toasts = [];
-  useUiStore().toast = (msg, opts = {}) => {
-    toasts.push({ msg, kind: opts.kind });
+  useUiStore().toast = (msg, opts) => {
+    toasts.push({ msg, kind: opts?.kind });
     return "";
   };
 });
@@ -595,7 +595,7 @@ describe("the connection test with a server answering", () => {
     });
     expect(calls[0].url).toBe("/api/endpoints/test");
     expect(calls[0].init?.method).toBe("POST");
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ kind: "scripting", id: "openai" });
+    expect(JSON.parse(calls[0].init?.body as string)).toEqual({ kind: "scripting", id: "openai" });
   });
 });
 
@@ -717,7 +717,7 @@ describe("voices with a server answering", () => {
     expect(await http.listVoices("fish", { source: "public", query: "calm" })).toEqual(answer);
     expect(calls[0].url).toBe("/api/endpoints/voices");
     expect(calls[0].init?.method).toBe("POST");
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+    expect(JSON.parse(calls[0].init?.body as string)).toEqual({
       id: "fish",
       source: "public",
       query: "calm",
@@ -817,7 +817,7 @@ describe("cloning a voice with a server answering", () => {
     await endpointsStore.load();
     const ep = endpointsStore.endpoints[0];
     let undo: (() => void) | null | undefined;
-    useUiStore().toast = (_msg, opts = {}) => ((undo = opts.undo), "");
+    useUiStore().toast = (_msg, opts) => ((undo = opts?.undo), "");
     const back: KeptVoiceSamples[] = [];
     expect(await endpointsStore.forgetVoiceSamples(ep, keptOf("v1"), (k) => back.push(k))).toBe(
       true,

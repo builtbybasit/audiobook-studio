@@ -82,7 +82,7 @@ async function voicePage(
   if (owned) q.set("is_owner", "true");
   const res = await call(
     target,
-    `${cartesiaRoot(target.baseUrl)}/voices?${q}`,
+    `${cartesiaRoot(target.baseUrl)}/voices?${q.toString()}`,
     { method: "GET", headers: cartesiaHeaders(target) },
     { signal, ...options },
   );
@@ -95,7 +95,7 @@ async function voicePage(
     .map((v) => ({
       id: v.id,
       name: typeof v.name === "string" && v.name.trim() ? v.name.trim() : v.id,
-      gender: String(v.gender ?? ""),
+      gender: typeof v.gender === "string" ? v.gender : "",
     }));
   return { voices, hasMore: body?.has_more === true };
 }

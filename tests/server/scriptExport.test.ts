@@ -144,8 +144,7 @@ describe("voice samples", () => {
     voices: [{ id: "v1", gender: "f", label: "Mara (clone)" }],
   };
   // a WAV header is all a kept recording needs to be: nothing here decodes it
-  const wav = (tag: string) =>
-    new Uint8Array([...`RIFF\0\0\0\0WAVEfmt ${tag}`].map((c) => c.charCodeAt(0)));
+  const wav = (tag: string) => new TextEncoder().encode(`RIFF\0\0\0\0WAVEfmt ${tag}`);
 
   /** A scripted book whose one speaker is voiced by a clone with two recordings kept. */
   async function cloned() {

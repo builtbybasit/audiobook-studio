@@ -103,7 +103,7 @@ export function elevenLabsRequest(
   const query = new URLSearchParams({ output_format: elevenLabsOutputFormat(input, shape) });
   const path = shape.requestPath(target.model, encodeURIComponent(voice));
   return {
-    url: `${elevenLabsRoot(target.baseUrl)}${path}?${query}`,
+    url: `${elevenLabsRoot(target.baseUrl)}${path}?${query.toString()}`,
     init: {
       method: "POST",
       headers: elevenLabsHeaders(target),
@@ -209,7 +209,7 @@ export const elevenLabsWire: SpeechWire = {
       if (token) q.set("next_page_token", token);
       const res = await call(
         target,
-        `${new URL(elevenLabsRoot(target.baseUrl)).origin}/v2/voices?${q}`,
+        `${new URL(elevenLabsRoot(target.baseUrl)).origin}/v2/voices?${q.toString()}`,
         { method: "GET", headers: elevenLabsHeaders(target) },
         { signal, ...options },
       );
@@ -220,7 +220,7 @@ export const elevenLabsWire: SpeechWire = {
       } | null;
       for (const v of body?.voices ?? []) {
         if (typeof v.voice_id !== "string" || !v.voice_id) continue;
-        const gender = String(v.labels?.gender ?? "").toLowerCase();
+        const gender = (typeof v.labels?.gender === "string" ? v.labels.gender : "").toLowerCase();
         voices.push({
           id: v.voice_id,
           label: typeof v.name === "string" && v.name.trim() ? v.name.trim() : v.voice_id,

@@ -146,8 +146,8 @@ function wireStores({ endpoints = false }: ServiceWiring = {}) {
   queue = pinia.run(() => useBookJobs());
   toasts = [];
   const uiStore = useUiStore();
-  uiStore.toast = (msg, opts = {}) => {
-    toasts.push({ msg, kind: opts.kind, undo: opts.undo ?? null });
+  uiStore.toast = (msg, opts) => {
+    toasts.push({ msg, kind: opts?.kind, undo: opts?.undo ?? null });
     return "";
   };
 }
@@ -248,7 +248,7 @@ describe("the queue with a server answering", () => {
     const gate = gatedProvider();
     wire({ scripting: gate.provider });
     const id = await shelved();
-    scriptingStore.runScripting(id, [1, 2]);
+    await scriptingStore.runScripting(id, [1, 2]);
     await settle();
     // the toast, and the two jobs the server made, read back through the queue
     expect(toasts.at(-1)?.msg).toBe("Script · 2 chapters");
@@ -930,7 +930,7 @@ describe("narration with a server answering", () => {
   test("a run is queued on the server, and the clips arrive with files to play", async () => {
     const { id } = await scriptedAndOpen();
     const narrationStore = useNarrationStore();
-    narrationStore.runNarration(id, [1]);
+    await narrationStore.runNarration(id, [1]);
     await settle();
     expect(toasts.at(-1)?.msg).toBe("Narrate · 1 chapter");
     expect(jobsStore.jobs.map((j) => j.kind)).toContain("narration");
@@ -1052,7 +1052,7 @@ describe("narration with a server answering", () => {
     expect(segs.slice(1).map((s) => s.audio.url)).toEqual(before.slice(1));
     expect(libraryStore.chapter(id, 1)?.narration).toBe("done");
     // nothing left in the scope: the server says so rather than queueing an empty run
-    narrationStore.runNarration(id, [1], { scope: "fill" });
+    await narrationStore.runNarration(id, [1], { scope: "fill" });
     await settle();
     expect(toasts.at(-1)?.msg).toBe("Nothing to narrate in this selection");
     expect(toasts.at(-1)?.kind).toBe("warn");
@@ -1234,7 +1234,7 @@ describe("retakes with a server answering", () => {
     const { id, narrationStore } = await narrated();
     const line = scriptsStore.segmentsOf(id, 1)[0];
     const before = clone(line.audio);
-    narrationStore.flagSegment(id, 1, line.id, "delivery", "too flat");
+    await narrationStore.flagSegment(id, 1, line.id, "delivery", "too flat");
     await scriptsStore._settled(id, 1);
     narrationStore.retakeSegment(id, 1, line.id);
     await settle();
@@ -1294,8 +1294,10 @@ describe("retakes with a server answering", () => {
   test("retaking the flagged lines queues each once, and a line already waiting is left alone", async () => {
     const { id, narrationStore } = await narrated();
     const [a, b] = scriptsStore.segmentsOf(id, 1);
-    narrationStore.flagSegment(id, 1, a.id, "pause", "");
-    narrationStore.flagSegment(id, 1, b.id, "other", "hmm");
+    await Promise.all([
+      narrationStore.flagSegment(id, 1, a.id, "pause", ""),
+      narrationStore.flagSegment(id, 1, b.id, "other", "hmm"),
+    ]);
     await scriptsStore._settled(id, 1);
     narrationStore.retakeFlagged(id, 1);
     await settle();
@@ -1328,7 +1330,7 @@ describe("the audiobooks with a server answering", () => {
     const { id } = await scriptedAndOpen();
     const exportsStore = useExportsStore();
     const narrationStore = useNarrationStore();
-    narrationStore.runNarration(id, [1]);
+    await narrationStore.runNarration(id, [1]);
     await settle();
     await api.runner.idle();
     await poll();
@@ -1421,7 +1423,7 @@ describe("spending with a server answering", () => {
     await priced();
     const id = await shelved(["One"]);
     await libraryStore.setBudgetCap(id, 0.0001);
-    scriptingStore.runScripting(id, [1]);
+    await scriptingStore.runScripting(id, [1]);
     await settle();
     const refusal = toasts.at(-1)!;
     expect(refusal.kind).toBe("error");

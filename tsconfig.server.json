@@ -23,6 +23,7 @@
     "drizzle.config.ts",
     "tests/server/**/*.ts",
     "tests/live/**/*.ts",
+    "tests/support/batchServer.ts",
     "src/types/**/*.ts",
     "src/lib/**/*.ts"
   ]

@@ -55,7 +55,7 @@ function segmentEditing(
     // the second half is the one that usually needs a different speaker — open it
     open.value = id;
     focus.value = id;
-    nextTick(() =>
+    void nextTick(() =>
       document.getElementById("seg-" + id)?.scrollIntoView({ block: "center", behavior: "smooth" }),
     );
   }

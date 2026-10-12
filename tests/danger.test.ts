@@ -39,8 +39,8 @@ beforeEach(async () => {
   endpointsStore = useEndpointsStore();
   libraryStore = useLibraryStore();
   toasts = [];
-  useUiStore().toast = (message, options = {}) => {
-    toasts.push({ message, options });
+  useUiStore().toast = (message, options) => {
+    toasts.push({ message, options: options ?? {} });
     return "test";
   };
   await Promise.all([libraryStore.loadBook("cliche"), endpointsStore.load()]);

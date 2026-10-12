@@ -60,12 +60,12 @@ export interface SpeechInput {
   /** aborted when the job is cancelled; a provider that is mid-request should stop */
   signal: AbortSignal;
   /** called once for every request that reached the wire, answered or not; see `sent.ts` */
-  sent?(request: SentSpeech): void;
+  sent?: (request: SentSpeech) => void;
   /**
    * Called each time the endpoint refuses a request as rate limited, with how long the request
    * will wait before trying again — so the job can hold its other lines for as long (`gate.ts`).
    */
-  rateLimited?(waitMs: number): void;
+  rateLimited?: (waitMs: number) => void;
 }
 
 export interface RenderedClip {
@@ -117,9 +117,9 @@ export interface SpeechBatch {
    * Told once for each item as it is answered, in whatever order the server finishes them. A
    * failure whose `ProviderError` is `retryable` may go differently in a later batch.
    */
-  answered(index: number, outcome: BatchOutcome): void;
+  answered: (index: number, outcome: BatchOutcome) => void;
   /** as `SpeechInput.rateLimited`, for a refusal of the whole batch */
-  rateLimited?(waitMs: number): void;
+  rateLimited?: (waitMs: number) => void;
 }
 
 export interface SpeechProvider {

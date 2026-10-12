@@ -16,7 +16,7 @@ import { unwrittenEdits, type UnwrittenEdit, type UnwrittenFlag } from "./suppor
 // The batch undo is the store's own undo stack, and that stack lives on a toast. Swap the toast
 // library for a silent one so `revertEntry` can be exercised for real.
 let shown = 0;
-mock.module("vue-toastflow", () => ({
+await mock.module("vue-toastflow", () => ({
   toast: {
     show: () => String(++shown),
     dismiss: () => {},
@@ -170,7 +170,7 @@ test("undoing a batch writes every chapter it changed back as it was", async () 
   // undo is on the page at once, but it is only kept if it reaches the server: without these
   // writes the next read of the book would hand the batch back
   const back = writes.slice(batch);
-  expect(back.map((w) => w.chId).toSorted()).toEqual([1, 5]);
+  expect(back.map((w) => w.chId).toSorted((a, b) => a - b)).toEqual([1, 5]);
   for (const [i, chId] of [1, 5].entries())
     expect(back.find((w) => w.chId === chId)!.edit.segments).toEqual(original[i]);
 });
@@ -249,9 +249,9 @@ test("a bulk correction leaves the prose and its expression annotations untouche
   ).toEqual(marks);
 });
 
-test("flagging keeps existing flags unless replacement is chosen, and stales nothing", () => {
+test("flagging keeps existing flags unless replacement is chosen, and stales nothing", async () => {
   const targets = all(1);
-  narrationStore.flagSegment("cliche", 1, targets[0].segId, "pause", "keep me");
+  await narrationStore.flagSegment("cliche", 1, targets[0].segId, "pause", "keep me");
   const statuses = scriptsStore.segmentsOf("cliche", 1).map((s) => s.audio.status);
 
   const keep = scriptsStore.bulkPreview("cliche", targets, {

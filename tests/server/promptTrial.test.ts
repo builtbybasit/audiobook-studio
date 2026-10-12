@@ -86,7 +86,7 @@ async function setup(
   const sent: { system: string; user: string }[] = [];
   let answer = options.answer ?? faithful;
   const fetch = (async (_url: string, init: RequestInit) => {
-    const body = JSON.parse(String(init.body)) as { messages: { content: string }[] };
+    const body = JSON.parse(init.body as string) as { messages: { content: string }[] };
     const [system, user] = body.messages.map((m) => m.content);
     sent.push({ system, user });
     return answer(excerptOf(user));

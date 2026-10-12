@@ -70,9 +70,9 @@ export interface Dispatch<K extends EndpointKind> {
    * charge. A request in parts — a long line cut to fit — reports once per part, all against the
    * one hold. The row appended, or null when the book has gone.
    */
-  sent(report: Kinds[K]["sent"]): RequestRecord | null;
+  sent: (report: Kinds[K]["sent"]) => RequestRecord | null;
   /** The request is over, however it ended: give back what it still holds. Safe to call again. */
-  release(): void;
+  release: () => void;
 }
 
 /** Hold a request's worst case while it is out, and settle what it reports; see the header. */

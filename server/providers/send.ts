@@ -33,7 +33,7 @@ export interface ReadContext {
    * What the answer says the request used, as soon as it has been read — before anything that
    * might fail — so a failure after it still reports it to the ledger.
    */
-  counted(reported: SpeechUsage | null): void;
+  counted: (reported: SpeechUsage | null) => void;
   /**
    * A further request that is part of this one — Qwen's download of the audio it links to — sent
    * with the same injected `fetch` and backoff, its attempts counted as this request's.
@@ -51,9 +51,9 @@ export interface SpeechRequest {
   /** exactly as it is in the body; empty when none was sent */
   instructions: string;
   /** a refusal inside a 2xx, found before the answer is accepted (`CallOptions.check`) */
-  check?(res: Response): Promise<ProviderError | null>;
+  check?: (res: Response) => Promise<ProviderError | null>;
   /** a refused status this provider means as "try again" (`CallOptions.retryable`) */
-  retryable?(status: number): boolean;
+  retryable?: (status: number) => boolean;
   /**
    * How a 2xx becomes audio, when it is not the audio itself — Gemini answers JSON carrying base64
    * audio and what it counted. Absent, the answer's body is the audio (`audioAnswer`).

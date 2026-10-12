@@ -56,7 +56,7 @@ export const cloneTarget = (over: Partial<ProviderTarget> = {}): ProviderTarget 
 
 // ---------- the first bytes of each kind of file ----------
 
-const ascii = (text: string): number[] => [...text].map((ch) => ch.charCodeAt(0));
+const ascii = (text: string): number[] => Array.from(new TextEncoder().encode(text));
 const bytes = (...parts: (string | number[])[]): Uint8Array =>
   new Uint8Array(parts.flatMap((p) => (typeof p === "string" ? ascii(p) : p)));
 

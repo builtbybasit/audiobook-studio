@@ -95,7 +95,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.once(signal, () => {
     boot.info({ signal }, "stopping");
     void Promise.all(libraries.map((l) => l.runner.stop())).then(() => {
-      server.stop(true);
+      void server.stop(true);
       process.exit(0);
     });
   });

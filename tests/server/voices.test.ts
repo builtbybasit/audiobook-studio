@@ -33,7 +33,7 @@ async function api(
 ): Promise<{ api: TestApi; seen: Seen[] }> {
   const seen: Seen[] = [];
   const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = new URL(String(input));
+    const url = new URL(input instanceof Request ? input.url : input);
     seen.push({ url, auth: new Headers(init?.headers).get("authorization") });
     return answer(url);
   }) as typeof globalThis.fetch;

@@ -115,14 +115,14 @@ test("splitting refuses a cut that would leave an empty half", () => {
   expect(scriptsStore.segmentsOf("cliche", 1)).toHaveLength(n);
 });
 
-test("joining folds the next line into this one and the first speaker wins", () => {
+test("joining folds the next line into this one and the first speaker wins", async () => {
   const segs = scriptsStore.segmentsOf("cliche", 1);
   const count = segs.length;
   const i = segs.findIndex((s, k) => k > 0 && s.speaker !== segs[k - 1].speaker);
   const a = segs[i - 1];
   const b = segs[i];
   const joined = `${a.text} ${b.text}`;
-  narrationStore.flagSegment("cliche", 1, b.id, "delivery", "too fast");
+  await narrationStore.flagSegment("cliche", 1, b.id, "delivery", "too fast");
 
   expect(scriptsStore.joinSegments("cliche", 1, a.id)).toBe(true);
   const after = scriptsStore.segmentsOf("cliche", 1);

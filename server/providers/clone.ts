@@ -87,7 +87,7 @@ export const SAMPLE_HEAD_BYTES = 512;
 const M4A_BRANDS = /^(M4A |M4B |mp4[12]|iso[m2-6]|dash|3gp[4-6]|3g2a)$/;
 
 const says = (b: Uint8Array, at: number, text: string): boolean =>
-  b.length >= at + text.length && [...text].every((ch, i) => b[at + i] === ch.charCodeAt(0));
+  b.length >= at + text.length && text.split("").every((ch, i) => b[at + i] === ch.charCodeAt(0));
 
 /** What a file's first bytes say it is, or null when they say none of the formats the sniffer knows. */
 export function sniffSample(b: Uint8Array): SampleFormat | null {
@@ -132,8 +132,8 @@ export function endpointVoiceCloner(options: VoiceClonerOptions = {}): VoiceClon
     async clone(target, request, signal, wentOut) {
       const shape = speechProviderOf(target);
       // a provider described without cloning is never asked for its wire: a simulated one has none
-      const clone = shape.cloning && wireOf(target).wire.clone;
-      if (!clone)
+      const wire = shape.cloning ? wireOf(target).wire : null;
+      if (!wire?.clone)
         throw new ProviderError(
           `${target.name} cannot make a voice from samples: ${shape.label} has no cloning this app speaks to`,
           0,
@@ -143,7 +143,7 @@ export function endpointVoiceCloner(options: VoiceClonerOptions = {}): VoiceClon
       // once, and with a clock sized for the upload: see the top of this file; every request goes
       // out through the one `fetch`, which is where it is seen leaving
       const send = callOptions.fetch ?? fetch;
-      return clone({ ...target, maxRetries: 0, timeoutSec }, request, signal, {
+      return wire.clone({ ...target, maxRetries: 0, timeoutSec }, request, signal, {
         ...callOptions,
         fetch: ((url: string, init: RequestInit) => {
           wentOut?.();

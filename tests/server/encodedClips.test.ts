@@ -71,7 +71,7 @@ function answering(answer: () => Response) {
     sent.push(init);
     return answer();
   }) as unknown as typeof globalThis.fetch;
-  return { sent, fetch, body: (i = 0) => JSON.parse(String(sent[i].body)) };
+  return { sent, fetch, body: (i = 0) => JSON.parse(sent[i].body as string) };
 }
 
 const served = (bytes: Uint8Array, type: string) => () =>

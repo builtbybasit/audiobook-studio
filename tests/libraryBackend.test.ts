@@ -68,8 +68,8 @@ beforeEach(() => {
   scriptsStore = useScriptsStore();
   toasts = [];
   const uiStore = useUiStore();
-  uiStore.toast = (msg, opts = {}) => {
-    toasts.push({ msg, undo: opts.undo ?? null });
+  uiStore.toast = (msg, opts) => {
+    toasts.push({ msg, undo: opts?.undo ?? null });
     return "";
   };
 });
@@ -363,8 +363,8 @@ describe("a book's settings with a server answering", () => {
     pinia = testPinia();
     libraryStore = useLibraryStore();
     const uiStore = useUiStore();
-    uiStore.toast = (msg, opts = {}) => {
-      toasts.push({ msg, undo: opts.undo ?? null });
+    uiStore.toast = (msg, opts) => {
+      toasts.push({ msg, undo: opts?.undo ?? null });
       return "";
     };
     await libraryStore.load();

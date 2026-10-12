@@ -59,8 +59,7 @@ const line = (target: ProviderTarget, over: Partial<SpeechInput> = {}): SpeechIn
 function wav(rate: number, frames: number): Uint8Array {
   const bytes = new Uint8Array(44 + frames * 2);
   const view = new DataView(bytes.buffer);
-  const ascii = (at: number, s: string) =>
-    [...s].forEach((c, i) => (bytes[at + i] = c.charCodeAt(0)));
+  const ascii = (at: number, s: string) => bytes.set(new TextEncoder().encode(s), at);
   ascii(0, "RIFF");
   view.setUint32(4, 36 + frames * 2, true);
   ascii(8, "WAVE");
@@ -110,7 +109,7 @@ function scripted(...answers: (() => Response)[]) {
     sent.push({ url: String(url), init });
     return answers[Math.min(sent.length, answers.length) - 1]();
   }) as unknown as typeof globalThis.fetch;
-  return { sent, fetch, body: (i = 0) => JSON.parse(String(sent[i].init.body)) };
+  return { sent, fetch, body: (i = 0) => JSON.parse(sent[i].init.body as string) };
 }
 
 function reports() {

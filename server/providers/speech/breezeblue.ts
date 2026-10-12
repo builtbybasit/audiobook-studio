@@ -40,7 +40,7 @@ const BREEZE_CLONE_LANGUAGE = "en";
 
 export const breezeBlueWire: SpeechWire = {
   async clone(target, request, signal, options) {
-    const chars = [...request.title].length;
+    const chars = Array.from(request.title).length;
     if (chars > BREEZE_NAME_CHARS)
       throw new ProviderError(
         `${target.name} takes a voice name of up to ${BREEZE_NAME_CHARS} characters, and this one ` +
@@ -104,7 +104,7 @@ export const breezeBlueWire: SpeechWire = {
       );
     const name =
       typeof voice.name === "string" && voice.name.trim() ? voice.name.trim() : request.title;
-    const gender = String(voice.gender ?? "").toLowerCase();
+    const gender = (typeof voice.gender === "string" ? voice.gender : "").toLowerCase();
     return {
       id: voice.voice_id,
       label: name,
@@ -115,7 +115,7 @@ export const breezeBlueWire: SpeechWire = {
 
   request(input, target, voice) {
     const instructions = input.instructions.trim();
-    const chars = [...instructions].length;
+    const chars = Array.from(instructions).length;
     if (chars > BREEZE_INSTRUCTION_CHARS)
       throw new ProviderError(
         `${target.name} takes up to ${BREEZE_INSTRUCTION_CHARS.toLocaleString("en")} characters ` +
@@ -137,7 +137,7 @@ export const breezeBlueWire: SpeechWire = {
     let token: string | null = null;
     let more = true;
     for (let page = 1; more && page <= VOICE_PAGES; page++) {
-      const q = token ? `?${new URLSearchParams({ next_page_token: token })}` : "";
+      const q = token ? `?${new URLSearchParams({ next_page_token: token }).toString()}` : "";
       const res = await call(
         target,
         `${elevenLabsRoot(target.baseUrl)}/voices${q}`,
@@ -151,7 +151,7 @@ export const breezeBlueWire: SpeechWire = {
       } | null;
       for (const v of body?.voices ?? []) {
         if (typeof v.voice_id !== "string" || !v.voice_id) continue;
-        const gender = String(v.gender ?? "").toLowerCase();
+        const gender = (typeof v.gender === "string" ? v.gender : "").toLowerCase();
         voices.push({
           id: v.voice_id,
           label: typeof v.name === "string" && v.name.trim() ? v.name.trim() : v.voice_id,

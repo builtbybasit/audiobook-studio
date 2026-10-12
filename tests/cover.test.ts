@@ -43,8 +43,8 @@ function start() {
   );
   pinia = testPinia();
   toasts = [];
-  useUiStore().toast = (msg, opts = {}) => {
-    toasts.push({ msg, kind: opts.kind, description: opts.description });
+  useUiStore().toast = (msg, opts) => {
+    toasts.push({ msg, kind: opts?.kind, description: opts?.description });
     return "";
   };
   return useExportsStore();

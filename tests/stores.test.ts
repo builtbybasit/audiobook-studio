@@ -56,8 +56,8 @@ describe("automatic voice assignment", () => {
     expect(plan.every((row) => row.name !== "Narrator" && row.voice.includes("/"))).toBe(true);
 
     let undo: (() => void) | undefined;
-    ui.toast = (_message, options = {}) => {
-      undo = options.undo ?? undefined;
+    ui.toast = (_message, options) => {
+      undo = options?.undo ?? undefined;
       return "test";
     };
     expect(cast.autoAssignByGender("starforge")).toBe(plan.length);

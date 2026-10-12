@@ -553,8 +553,7 @@ describe("voice samples in the file", () => {
   beforeAll(() => shelve());
 
   // a WAV header is all a recording needs to be here: it is sniffed, never decoded
-  const wav = (tag: string) =>
-    new Uint8Array([...`RIFF\0\0\0\0WAVEfmt ${tag}`].map((c) => c.charCodeAt(0)));
+  const wav = (tag: string) => new TextEncoder().encode(`RIFF\0\0\0\0WAVEfmt ${tag}`);
   const listing = (
     samples = [{ file: "sample-1.wav", name: "take-1.wav", format: "wav" }],
     over: Record<string, unknown> = {},

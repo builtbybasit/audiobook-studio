@@ -29,8 +29,7 @@ import {
   useQueryParam,
 } from "@/composables/useQueryParam";
 import { useRangeSelect } from "@/composables/useRangeSelect";
-import type { VolumeRow } from "@/views/contents/ContentsList.vue";
-import { FILTER_KEYS, passes, type ContentsFilter } from "@/views/contents/shared";
+import { FILTER_KEYS, passes, type ContentsFilter, type VolumeRow } from "@/views/contents/shared";
 import type { Chapter, NoticeGroup, NoticeKind, VolumeStart } from "@/types";
 
 export const TABS = [
@@ -153,7 +152,7 @@ export function useContents() {
             chapters.value.map((x) => ({ id: x.id, excluded: x.excluded && !ids.has(x.id) })),
           ),
     );
-    libraryStore.skipChapters(
+    void libraryStore.skipChapters(
       bookId,
       run,
       skip,
@@ -163,7 +162,7 @@ export function useContents() {
   function toggleVolume(v: Pick<VolumeRow, "name" | "all" | "chapters">) {
     const on = v.all.filter((c) => !c.excluded).length;
     const hidden = v.all.length - v.chapters.length;
-    libraryStore.skipChapters(
+    void libraryStore.skipChapters(
       bookId,
       v.all.map((c) => c.id),
       on === v.all.length,
@@ -182,7 +181,7 @@ export function useContents() {
   const keepGroup = (g: NoticeGroup) => libraryStore.keepChapters(bookId, g.pending);
   function skipAllSuggested() {
     const ids = undecided.value.filter((c) => c.note?.verdict === "skip").map((c) => c.id);
-    libraryStore.skipChapters(bookId, ids, true, { scope: "every suggested chapter" });
+    void libraryStore.skipChapters(bookId, ids, true, { scope: "every suggested chapter" });
   }
   function setFilter(f: ContentsFilter) {
     filter.value = f;
@@ -228,7 +227,7 @@ export function useContents() {
   function joinAt(id: number) {
     const i = starts.value.findIndex((s) => s.chapter === id);
     if (i < 1) return;
-    write(
+    void write(
       vol.joinAt(starts.value, id),
       `${starts.value[i].name} joined with ${starts.value[i - 1].name}`,
     );
@@ -238,25 +237,25 @@ export function useContents() {
     const next = vol.moveStart(starts.value, chapterIds.value, id, delta);
     const moved = next[starts.value.findIndex((s) => s.chapter === id)];
     if (!moved || moved.chapter === id) return id;
-    write(next, `${moved.name} now starts at ${refOf(moved.chapter)}`);
+    void write(next, `${moved.name} now starts at ${refOf(moved.chapter)}`);
     return moved.chapter;
   }
   function rename(id: number, name: string) {
     const before = nameAt(id);
     const next = vol.renameAt(starts.value, id, name);
     if (next.find((s) => s.chapter === id)?.name !== before)
-      write(next, `Renamed ${before} to ${name.trim()}`);
+      void write(next, `Renamed ${before} to ${name.trim()}`);
   }
   const firstName = () => starts.value[0]?.name ?? book.value?.title ?? "Volume 1";
   const cutEvery = (n: number) =>
     write(vol.every(chapterIds.value, n, firstName()), `Every ${n} chapters`);
   function cutEvenly(n: number) {
     const next = vol.evenly(chapterIds.value, n, firstName());
-    write(next, `${next.length} volumes`);
+    void write(next, `${next.length} volumes`);
   }
   function cutByTitles(ids: number[]) {
     const next = vol.atChapters(chapterIds.value, ids, firstName());
-    write(next, `${next.length} volumes, where the titles say so`);
+    void write(next, `${next.length} volumes, where the titles say so`);
   }
 
   // ---- the import itself

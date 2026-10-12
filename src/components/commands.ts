@@ -166,7 +166,7 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         run: () => {
           // held to the Run button's blockers, which it says in a toast when one stands in the way
           void scriptingStore.startRun(b, pending);
-          router.push(`/book/${b}/scripting`);
+          void router.push(`/book/${b}/scripting`);
         },
       });
     if (scripted.length)
@@ -177,8 +177,8 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         hint: `${scripted.length} ch`,
         keywords: "tts render run",
         run: () => {
-          narrationStore.startRun(b, scripted);
-          router.push(`/book/${b}/narration`);
+          void narrationStore.startRun(b, scripted);
+          void router.push(`/book/${b}/narration`);
         },
       });
     if (stale.length)
@@ -192,12 +192,12 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         // guard holds one pending review at a time, so chapter 2 overwrote chapter 1's and only the
         // last blocked chapter ever got a dialog — the rest returned having queued nothing.
         run: () => {
-          narrationStore.startRun(
+          void narrationStore.startRun(
             b,
             stale.map((c) => c.id),
             { scope: "fill" },
           );
-          router.push(`/book/${b}/narration`);
+          void router.push(`/book/${b}/narration`);
         },
       });
     if (failedN.length)
@@ -208,12 +208,12 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         hint: `${failedN.length} ch`,
         // one run, one expression review — see "Re-narrate changed segments" above
         run: () => {
-          narrationStore.startRun(
+          void narrationStore.startRun(
             b,
             failedN.map((c) => c.id),
             { scope: "failed" },
           );
-          router.push(`/book/${b}/narration`);
+          void router.push(`/book/${b}/narration`);
         },
       });
     if (castStore.charactersOf(b).some((c) => !c.voice && c.name !== "Narrator"))
@@ -224,7 +224,7 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         hint: "unvoiced cast",
         run: () => {
           castStore.autoAssignByGender(b);
-          router.push(`/book/${b}/narration`);
+          void router.push(`/book/${b}/narration`);
         },
       });
     const merges = castStore.mergeSuggestions(b).length;
@@ -266,7 +266,7 @@ export function paletteCommands(router: Router, mod: string): Command[] {
     keywords: "server voice api",
     run: () => {
       endpointsStore.addEndpoint();
-      router.push("/endpoints");
+      void router.push("/endpoints");
     },
   });
   out.push({
@@ -276,7 +276,7 @@ export function paletteCommands(router: Router, mod: string): Command[] {
     keywords: "server llm model api openai compatible",
     run: () => {
       endpointsStore.addScriptProfile();
-      router.push("/endpoints");
+      void router.push("/endpoints");
     },
   });
   out.push({
@@ -286,7 +286,7 @@ export function paletteCommands(router: Router, mod: string): Command[] {
     keywords: "server transcription transcribe whisper stt api",
     run: () => {
       endpointsStore.addTranscriber();
-      router.push("/endpoints");
+      void router.push("/endpoints");
     },
   });
   out.push({

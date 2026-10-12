@@ -37,7 +37,7 @@ export interface ScriptInput {
   /** aborted when the job is cancelled; a provider that is mid-request should stop */
   signal: AbortSignal;
   /** how far along, for the queue's progress bar */
-  progress?(done: number, total: number): void;
+  progress?: (done: number, total: number) => void;
   /**
    * The profile the run was queued with, and its key; null when the run named none. The fake
    * reads only its simulation; a real provider refuses a run without one rather than guessing
@@ -61,7 +61,7 @@ export interface ScriptInput {
    */
   lenient?: boolean;
   /** called once for every request that reached the wire, answered or not; see `sent.ts` */
-  sent?(request: SentScript): void;
+  sent?: (request: SentScript) => void;
 }
 
 /** One line the model attributed. The job gives it an id and a place. */

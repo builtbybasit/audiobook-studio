@@ -83,7 +83,7 @@ const ORDINAL: Record<string, string> = {
 /** A whole number as it is said; digits one by one when it is too long, or starts with a 0. */
 function numberWords(digits: string): string[] {
   if (digits.length > 9 || (digits.length > 1 && digits[0] === "0"))
-    return [...digits].map((d) => ONES[+d]);
+    return Array.from(digits, (d) => ONES[+d]);
   const n = +digits;
   if (n < 20) return [ONES[n]];
   if (n < 100) return n % 10 ? [TENS[Math.floor(n / 10)], ONES[n % 10]] : [TENS[n / 10]];
@@ -97,7 +97,7 @@ const ordinalOf = (w: string): string =>
   ORDINAL[w] ?? (w.endsWith("y") ? `${w.slice(0, -1)}ieth` : `${w}th`);
 
 const romanValue = (r: string): number =>
-  [...r].reduce(
+  Array.from(r).reduce(
     (sum, c, i) =>
       ROMAN_VALUE[c] < (ROMAN_VALUE[r[i + 1]] ?? 0) ? sum - ROMAN_VALUE[c] : sum + ROMAN_VALUE[c],
     0,

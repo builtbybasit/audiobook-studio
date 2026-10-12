@@ -61,7 +61,12 @@ const insertFor = (db: Handle, table: SQLiteTable): Insert =>
       .insert(table)
       .values(Object.fromEntries(columns.map(([key]) => [key, sql.placeholder(key).getSQL()])))
       .prepare();
-    return { columns, run: (values) => void statement.run(values) };
+    return {
+      columns,
+      run: (values) => {
+        statement.run(values);
+      },
+    };
   });
 
 /** What drizzle's insert would fill this column with, before the column's mapping. */

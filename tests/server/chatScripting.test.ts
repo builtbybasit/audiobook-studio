@@ -65,7 +65,7 @@ function gateway(...replies: (() => Response | Promise<Response>)[]) {
     sent.push({
       url,
       headers: new Headers(init.headers),
-      body: JSON.parse(String(init.body)) as Record<string, unknown>,
+      body: JSON.parse(init.body as string) as Record<string, unknown>,
     });
     const reply = replies[Math.min(sent.length - 1, replies.length - 1)];
     return reply();

@@ -95,7 +95,7 @@ describe("useQueryParam", () => {
 
     await router.replace({ path: "/page", query: { closed: "7,3" } });
     await settle();
-    expect([...closed.value].sort()).toEqual([3, 7]);
+    expect([...closed.value].sort((a, b) => a - b)).toEqual([3, 7]);
     stop();
   });
 });

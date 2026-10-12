@@ -18,8 +18,7 @@ import { epubFile } from "../support/epub";
 import { testApi, type TestApi } from "../support/server";
 
 // a WAV header is all a recording needs to be here: it is sniffed, never decoded
-const wav = (tag: string) =>
-  new Uint8Array([...`RIFF\0\0\0\0WAVEfmt ${tag}`].map((c) => c.charCodeAt(0)));
+const wav = (tag: string) => new TextEncoder().encode(`RIFF\0\0\0\0WAVEfmt ${tag}`);
 
 const speaker = (name: string, folder?: string): ScriptFileSpeaker => ({
   name,
@@ -159,8 +158,9 @@ describe("keeping them", () => {
       method: "POST",
     });
     expect(back.status).toBe(200);
-    expect((await list()).map((s) => s.id).sort()).toEqual(
-      [first.id, again.body.stored[0].id].sort(),
+    const byId = (a: number, b: number) => a - b;
+    expect((await list()).map((s) => s.id).sort(byId)).toEqual(
+      [first.id, again.body.stored[0].id].sort(byId),
     );
   });
 

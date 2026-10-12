@@ -118,7 +118,7 @@ describe("editing a script", () => {
 });
 
 describe("a line's flag", () => {
-  const flag = (api: TestApi, id: string, line: number, body: unknown | null) =>
+  const flag = (api: TestApi, id: string, line: number, body: unknown) =>
     api.request<{ flag: Segment["flag"] | null; revision: number }>(
       `/api/books/${id}/chapters/1/lines/${line}/flag`,
       body ? { ...jsonBody(body), method: "PUT" } : { method: "DELETE" },

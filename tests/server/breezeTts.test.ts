@@ -100,7 +100,7 @@ describe("a Breeze-TTS-2.cpp endpoint", () => {
     );
     expect(s.sent).toHaveLength(2);
     expect(s.sent[1].url).toBe("http://127.0.0.1:8137/v1/audio/speech");
-    expect(JSON.parse(String(s.sent[1].init.body))).toEqual({
+    expect(JSON.parse(s.sent[1].init.body as string)).toEqual({
       model: "breeze-tts-2",
       input: "Come in.",
       voice: "harbour",

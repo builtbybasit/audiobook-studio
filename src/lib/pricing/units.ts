@@ -132,7 +132,7 @@ export function utf8Bytes(text: string): number {
 }
 
 /** Billable characters — Unicode code points, so an emoji is one character and not two. */
-export const billableChars = (text: string): number => [...text].length;
+export const billableChars = (text: string): number => Array.from(text).length;
 
 /** Estimated input text tokens. A tokeniser is the provider's, so this is explicitly an estimate. */
 const textTokensOf = (text: string): number => Math.ceil(billableChars(text) / CHARS_PER_TOKEN);

@@ -344,6 +344,57 @@ out = board(audio, sample_rate)
     );
     await expect(runner.parse("Pedalboard([Gain(", live())).rejects.toThrow(/^line 1: /);
   });
+  test("parse works out arithmetic and named numbers, and refuses what is not a number", async () => {
+    const step = (plugin: string, params: Record<string, number>) => ({ plugin, params, on: true });
+    expect(await runner.parse("sr = 880\nPedalboard([HighpassFilter(sr / 4)])", live())).toEqual([
+      step("HighpassFilter", { cutoff_frequency_hz: 220 }),
+    ]);
+    const named =
+      "sr = 44100\ncutoff = sr // 4 - 25\nPedalboard([LowpassFilter(cutoff), Gain(-(1 + 2) * 2 ** 2 % 7)])";
+    expect(await runner.parse(named, live())).toEqual([
+      step("LowpassFilter", { cutoff_frequency_hz: 11000 }),
+      step("Gain", { gain_db: 2 }),
+    ]);
+    await expect(runner.parse("Gain(10 ** 10 ** 10)", live())).rejects.toThrow(
+      "line 1: 10 ** 10 ** 10 is too big a power",
+    );
+    await expect(runner.parse("import math\nGain(math.pi)", live())).rejects.toThrow(
+      "line 2: Gain's gain_db must be a number, not math.pi",
+    );
+    await expect(runner.parse("Gain(level)", live())).rejects.toThrow(
+      "line 1: level is not given a value above",
+    );
+    await expect(runner.parse("LadderFilter(800)", live())).rejects.toThrow(
+      "line 1: LadderFilter's mode can't be set here; it keeps its default, so name the numbers, like cutoff_hz=",
+    );
+    await expect(
+      runner.parse("LadderFilter(mode=LadderFilter.Mode.HPF12, cutoff_hz=800)", live()),
+    ).rejects.toThrow("line 1: LadderFilter's mode can't be set here; it keeps its default");
+    expect(await runner.parse("LadderFilter(cutoff_hz=800)", live())).toEqual([
+      step("LadderFilter", { cutoff_hz: 800 }),
+    ]);
+  });
+
+  test("parse follows a board changed after it is built, and refuses a change it can't follow", async () => {
+    const code = `board = Pedalboard([Gain(-3)])
+board.append(Reverb())
+board.insert(-1, Invert())
+board.extend([Clipping(-6)])
+board += [Bitcrush(8)]
+board = board + [PitchShift(2)]
+board.insert(0, HighpassFilter(80))
+out = board(audio, sample_rate)
+`;
+    expect(
+      (await runner.parse(code, live())).map((s) => ("plugin" in s ? s.plugin : "Mix")),
+    ).toEqual(["HighpassFilter", "Gain", "Invert", "Reverb", "Clipping", "Bitcrush", "PitchShift"]);
+    await expect(
+      runner.parse("board = Pedalboard([Gain(-3)])\nboard[0] = Gain(1)", live()),
+    ).rejects.toThrow("line 2: only append, insert, extend and += change a board here");
+    await expect(
+      runner.parse("board = [Gain(-3)]\nfor p in [Reverb()]:\n    board.append(p)", live()),
+    ).rejects.toThrow("line 3: only append, insert, extend and += change a board here");
+  });
 });
 
 describe("the fake runner", () => {

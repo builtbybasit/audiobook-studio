@@ -18,6 +18,8 @@ export function toCharacter(row: CharacterRow): Character {
   };
   if (row.isNew) c.isNew = true;
   if (row.keep) c.keep = true;
+  if (row.effect != null) c.effect = row.effect;
+  if (row.thoughts != null) c.thoughts = row.thoughts;
   return c;
 }
 
@@ -38,6 +40,8 @@ export function characterValues(
     major: c.major,
     isNew: c.isNew ?? null,
     keep: c.keep ?? null,
+    effect: c.effect ?? null,
+    thoughts: c.thoughts ?? null,
     position,
   };
 }

@@ -35,9 +35,10 @@ const LETTERS: Record<string, string> = {
  * audio was written and then could never be fetched or removed. Accents come off (`Pokémon` →
  * `pokemon`, where the combining mark used to become a hyphen: `poke-mon`), the few letters
  * without a base letter are spelled out, and anything left that is not a letter or a digit is a
- * separator; an apostrophe is dropped. A title with nothing ASCII in it at all is a `book`.
+ * separator; an apostrophe is dropped. A title with nothing ASCII in it at all is a `book`, or
+ * whatever `empty` names.
  */
-export function slugify(s: string): string {
+export function slugify(s: string, empty = "book"): string {
   const slug = s
     .replace(/\.epub$/i, "")
     .toLowerCase()
@@ -49,7 +50,7 @@ export function slugify(s: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .slice(0, 48)
     .replace(/^-+|-+$/g, "");
-  return slug || "book";
+  return slug || empty;
 }
 
 /**

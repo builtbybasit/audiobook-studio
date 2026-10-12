@@ -20,6 +20,7 @@ import { presetById, scriptingPresetById, type Preset } from "@/lib/presets";
 import { makeScriptSettings, newProfile } from "@/lib/scripting";
 import type { DemoResult, DemoScenario } from "@/types";
 import type { Db } from "~/db/client";
+import { seedEffects } from "~/db/effects";
 import { books, endpoints } from "~/db/schema";
 import { writeScriptSettings } from "~/db/settings";
 import type { DemoLive } from "~/demo/live";
@@ -101,6 +102,8 @@ export function seedDemo(
     saveEndpoints(tx, config, voiceFiles);
     // runs go to the world's own first profile, as they would once somebody had picked it
     writeScriptSettings(tx, { ...makeScriptSettings(), profile: config.profiles[0].id });
+    // a reset empties every table, the effects a migration laid down among them
+    seedEffects(tx);
     writeWorld(tx, demo, { base, now });
   });
 

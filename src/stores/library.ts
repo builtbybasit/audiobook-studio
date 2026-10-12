@@ -562,12 +562,12 @@ export const useLibraryStore = defineStore("library", {
      */
     async setThoughtEffect(bookId: string, on: boolean): Promise<void> {
       const b = this.bookById(bookId);
-      if (!b || !b.plainThoughts === on) return;
-      if (on) delete b.plainThoughts;
-      else b.plainThoughts = true;
+      if (!b || (b.thoughts !== "none") === on) return;
+      if (on) delete b.thoughts;
+      else b.thoughts = "none";
       await this._writeSettings(
         bookId,
-        { plainThoughts: !on },
+        { thoughts: on ? null : "none" },
         on ? "give this book's thoughts their effect" : "narrate this book's thoughts plain",
       );
     },

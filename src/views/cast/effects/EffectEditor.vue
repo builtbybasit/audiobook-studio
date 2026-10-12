@@ -240,12 +240,12 @@ onUnmounted(() => {
             <MoreIcon class="icon-lg" />
           </PopoverTrigger>
           <PopoverPortal v-if="menu">
-            <PopoverContent align="end" :side-offset="4" class="ui-popup w-40 p-1 text-xs">
+            <PopoverContent align="end" :side-offset="4" class="ui-popup w-52 p-1 text-xs">
               <button
                 class="ui-item w-full text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10"
                 @click="askRemove"
               >
-                Delete effect
+                Delete effect from all books…
               </button>
             </PopoverContent>
           </PopoverPortal>
@@ -415,7 +415,7 @@ onUnmounted(() => {
   </div>
 
   <UiDialog v-model:open="confirming" class="card w-[min(420px,94vw)] space-y-3 p-4">
-    <DialogTitle class="font-semibold">Delete “{{ effect?.name }}”?</DialogTitle>
+    <DialogTitle class="font-semibold">Delete “{{ effect?.name }}” from every book?</DialogTitle>
     <p class="text-sm text-zinc-600 dark:text-zinc-300">
       <template v-if="losers === null">Where it is used couldn’t be checked.</template>
       <template v-else-if="losers.length">Used by {{ listed(losers, 6) }}.</template>
@@ -432,7 +432,7 @@ onUnmounted(() => {
         class="rounded-md bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-500"
         @click="remove"
       >
-        Delete {{ effect?.name }}
+        Delete from every book
       </button>
     </div>
   </UiDialog>

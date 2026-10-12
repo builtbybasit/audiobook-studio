@@ -1084,9 +1084,10 @@ What every provider's audio goes through:
   which is what Fish sends), an Opus by reading to the last page. A 200 carrying JSON, an empty
   body, the wrong container or something unreadable becomes a failure a person can read.
 - A line split at `maxChars` is joined per format: WAV end to end, MP3 by laying the parts' frames
-  end to end with every tag and Xing/Info frame dropped ([mp3.ts](../server/audio/mp3.ts)). An Opus
-  line that would need parts fails before any request: chained Ogg streams are legal, but players
-  seek them badly.
+  end to end with every tag and Xing/Info frame dropped ([mp3.ts](../server/audio/mp3.ts)). A pause
+  the voice has no tag for is silence in the join: zero samples in a WAV, silent frames copied from
+  the first frame's header in an MP3. An Opus line that would need parts or silence fails before any
+  request: chained Ogg streams are legal, but players seek them badly.
 
 ### Voices, samples and test requests
 
@@ -1327,7 +1328,9 @@ cut where its reading says (`cutReading`) at the
 endpoint's `splitAt`, falling down to a clause, a word, a hard cut, with every tag protected so a
 laugh is never sent as half a token. Each part is its own request, in order, holding the line's one
 slot, and the audio comes back as one file with nothing between the parts, because the cuts fall
-where the reading already pauses. Parts that disagree on rate, width or channels fail the line
+where the reading already pauses. A line is also cut at each [pause inside it](audio.md#pauses-inside-a-line)
+its voice has no tag for, and there the pause's silence goes between the parts (`SplitPart.before`,
+`after`). Parts that disagree on rate, width or channels fail the line
 rather than play at the wrong pitch. The clip records `parts`, `splitAt` and `cuts` for the render
 details and the Queue's badge; a part that fails fails the line with `error.part`, and the parts
 before it are thrown away rather than kept as half a line. A failed clip's `error.code` is the

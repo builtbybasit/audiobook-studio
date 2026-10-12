@@ -99,8 +99,6 @@ export interface TestApiOptions {
   effects?: EffectRunner;
   /** what a thought line is given where `effects` cannot run; none by default, nor ffmpeg */
   thoughtEffect?: ThoughtEffect;
-  /** what voice effects run through; none by default, so a Re-apply that renders fails */
-  effects?: EffectRunner;
 }
 
 /** A directory of its own for one test's clips, so no two suites can read each other's files. */

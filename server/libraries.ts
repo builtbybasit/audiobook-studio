@@ -12,7 +12,6 @@
 import type { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 
-import type { EffectRunner } from "~/audio/effects";
 import type { SpeechRate } from "~/audio/ffmpeg";
 import type { EffectRunner } from "~/audio/effects";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
@@ -60,7 +59,8 @@ export interface LibraryOptions {
   encoders: EncoderChoice;
   /**
    * What runs voice effects — on a clip as it lands, in a preview, in a Re-apply: Pedalboard under
-   * uv, in a running server. Absent (a test's library) = none can run, as on a machine without uv.
+   * uv, in a running server. Absent (a test's library) = none can run, as on a machine without uv,
+   * and a Re-apply that has anything to render fails saying so.
    */
   effects?: EffectRunner;
   /**
@@ -68,11 +68,6 @@ export interface LibraryOptions {
    * Absent too = thought lines are kept as the voice made them.
    */
   thoughtEffect?: ThoughtEffect;
-  /**
-   * What voice effects run through — Pedalboard under uv, in a running server. Absent (a test's
-   * library) = a Re-apply that has anything to render fails saying effects cannot run here.
-   */
-  effects?: EffectRunner;
   /**
    * What a recording is made into before a transcription endpoint hears it — 16 kHz mono, ffmpeg's,
    * in a running server. Absent (a test's library) = sent as it came.

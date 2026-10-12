@@ -297,7 +297,8 @@ def parse(text):
         if isinstance(node, (ast.List, ast.Tuple)):
             return [item(e) for e in node.elts]
         if is_board(node):
-            return items(node.args[0]) if node.args else []
+            given = plugins_of(node)
+            return items(given) if given is not None else []
         if isinstance(node, ast.Call):
             return step(node)
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add) and listy(node.left):
@@ -324,10 +325,17 @@ def parse(text):
     def literal(name, key, node):
         return number(name, key, num(node, f"{name}'s {key}"))
 
+    def plugins_of(node):
+        """What a Pedalboard, Chain or Mix was handed: `Pedalboard([...])` or `plugins=[...]`."""
+        if node.args:
+            return node.args[0]
+        return next((kw.value for kw in node.keywords if kw.arg == "plugins"), None)
+
     def step(node):
         name = called(node)
         if name == "Mix":
-            layers = item(node.args[0]) if node.args else None
+            given = plugins_of(node)
+            layers = item(given) if given is not None else None
             if not isinstance(layers, list):
                 raise at(node, "Mix takes a list of chains")
             return {

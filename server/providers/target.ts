@@ -15,6 +15,7 @@ import type {
 } from "@/types";
 import { OPS_DEFAULTS } from "@/lib/endpointShapes";
 import { isSimulated } from "@/lib/providers";
+import { cliOf } from "@/lib/providers/cli";
 import type { Db, Tx } from "~/db/client";
 import { readEndpointKey } from "~/db/endpoints";
 import type { ScriptTarget, ScriptingProvider } from "~/providers/scripting";
@@ -121,8 +122,9 @@ function targetOf(
     baseUrl: e.baseUrl.trim().replace(/\/+$/, ""),
     model: e.model,
     apiKey,
-    // a simulated one is answered here, so a key it was saved as needing would only refuse it
-    needsKey: e.needsKey && !isSimulated(e.baseUrl),
+    // a simulated one is answered here, and a command-line tool signs in with its own login, so a
+    // key either was saved as needing would only refuse it
+    needsKey: e.needsKey && !isSimulated(e.baseUrl) && !cliOf(e.baseUrl),
     timeoutSec: e.timeoutSec ?? d.timeoutSec,
     maxRetries: e.maxRetries ?? d.maxRetries,
     cooldownSec: e.cooldownSec ?? d.cooldownSec,

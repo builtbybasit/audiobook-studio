@@ -24,6 +24,8 @@
     "tests/server/**/*.ts",
     "tests/live/**/*.ts",
     "tests/support/batchServer.ts",
+    "tests/support/fakeCli.ts",
+    "tests/support/liveExcerpt.ts",
     "src/types/**/*.ts",
     "src/lib/**/*.ts"
   ]

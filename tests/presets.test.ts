@@ -20,6 +20,7 @@ import {
   unifyTranscriber,
 } from "@/lib/endpoints";
 import { isSimulated } from "@/lib/providers";
+import { cliOf } from "@/lib/providers/cli";
 import { configErrors, expressionSupport } from "@/lib/expressions";
 import { newProfile, profileErrors } from "@/lib/scripting";
 import { clone } from "@/lib/utils";
@@ -29,7 +30,9 @@ import { testPinia, type TestPinia } from "./support/pinia";
 
 const LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/)/;
 /** A server of your own, or this one's simulated provider: neither is a hosted account. */
-const unhosted = (baseUrl = ""): boolean => LOCAL.test(baseUrl) || isSimulated(baseUrl);
+/** A server of your own, the simulated one, or a command-line tool your subscription pays for. */
+const unhosted = (baseUrl = ""): boolean =>
+  LOCAL.test(baseUrl) || isSimulated(baseUrl) || !!cliOf(baseUrl);
 
 describe("scripting presets", () => {
   test("each makes a profile the scripting queue accepts, with a rate card that reads", () => {

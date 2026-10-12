@@ -16,7 +16,6 @@ import {
   Plus as AddIcon,
 } from "@lucide/vue";
 
-import { plural } from "@/lib/contents";
 import { useCastStore } from "@/stores/cast";
 import { useEffectsStore } from "@/stores/effects";
 import type { Effect } from "@/types";
@@ -24,7 +23,7 @@ import { summaryOf } from "./catalog";
 import { uniqueName } from "./chain";
 import type { Choice, ChoiceView, Row } from "./choice";
 import { sheetOnTop } from "./sheetOnTop";
-import { useThinkers, type TryLine } from "./lines";
+import { thoughtReach, type TryLine } from "./lines";
 import type { Previews } from "./preview";
 
 const props = defineProps<{
@@ -66,20 +65,11 @@ const current = computed(() => props.choice.current.value);
 const labelOf = (row: Row) => props.choice.labelOf(row);
 
 // ---------- the book's one line about its speakers ----------
-const thinkers = useThinkers(
-  () => props.bookId,
-  () => props.view === "book",
+const reach = computed(() =>
+  props.view === "book"
+    ? thoughtReach(castStore.charactersOf(props.bookId), castStore.castStats(props.bookId))
+    : "",
 );
-const bookCounts = computed(() => {
-  const own = new Set(
-    castStore
-      .charactersOf(props.bookId)
-      .filter((c) => c.thoughts)
-      .map((c) => c.name),
-  );
-  const mine = [...thinkers.value].filter((n) => own.has(n)).length;
-  return { using: thinkers.value.size - mine, own: mine };
-});
 
 // ---------- playing: one row at a time ----------
 const el = new Audio();
@@ -226,8 +216,7 @@ onUnmounted(() => {
             </button>
           </template>
           <div class="mt-0.5 text-[11px] text-zinc-500">
-            {{ plural(bookCounts.using, "speaker uses", "speakers use") }} it · {{ bookCounts.own }}
-            {{ bookCounts.own === 1 ? "has" : "have" }} their own
+            {{ reach }}
           </div>
         </template>
       </div>

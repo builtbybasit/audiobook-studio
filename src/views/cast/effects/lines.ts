@@ -1,4 +1,4 @@
-// The narrated lines an effects sheet tries effects on, and who in the book thinks aloud.
+// The narrated lines an effects sheet tries effects on, and whom the book's thought effect reaches.
 //
 // They are read off the scripts store, which the cast page fills with every scripted chapter
 // (`useBookScripts`); this walks it once per subject and slot, not per row or per play, so a book of
@@ -6,10 +6,11 @@
 // sheet shows a line's place among the subject's own lines, never where it falls in the book.
 import { computed } from "vue";
 
+import { plural } from "@/lib/contents";
 import { heardLines } from "@/lib/siteText";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
-import type { SegmentType } from "@/types";
+import type { CastStat, Character, SegmentType } from "@/types";
 
 /** One narrated line, as the sheet plays it. */
 export interface TryLine {
@@ -62,18 +63,19 @@ export function useTryLines(bookId: () => string, of: () => LinesOf | null) {
   });
 }
 
-/** Every speaker with a thought line in the book, narrated or not — whom its thought effect reaches. */
-export function useThinkers(bookId: () => string, on: () => boolean) {
-  const libraryStore = useLibraryStore();
-  const scriptsStore = useScriptsStore();
-  return computed<Set<string>>(() => {
-    const who = new Set<string>();
-    if (!on()) return who;
-    const id = bookId();
-    for (const ch of libraryStore.chaptersOf(id))
-      if (!ch.excluded)
-        for (const s of scriptsStore.segmentsOf(id, ch.id))
-          if (s.type === "thought") who.add(s.speaker);
-    return who;
-  });
+/**
+ * Whom the book's thought effect reaches, in words: "3 speakers use it · 1 has their own" — of the
+ * speakers with a thought line (`stats`, the Cast page's counts), those who follow the book and
+ * those with a thought effect of their own. The book card and the book's sheet both say it.
+ */
+export function thoughtReach(cast: Character[], stats: Record<string, CastStat>): string {
+  let using = 0;
+  let own = 0;
+  for (const c of cast)
+    if ((stats[c.name]?.thoughts ?? 0) > 0) {
+      if (c.thoughts != null) own++;
+      else using++;
+    }
+  if (!using && !own) return "no thought lines yet";
+  return `${plural(using, "speaker uses", "speakers use")} it · ${own} ${own === 1 ? "has" : "have"} their own`;
 }

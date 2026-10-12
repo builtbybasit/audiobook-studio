@@ -1,10 +1,11 @@
 // The effects editor's moves on a chain — keys that stay with a step through a move and a reactive
 // proxy, copies with keys of their own, deletes that can be put back — and the names it gives: a
-// copy's, a pasted board's, and the places an effect is used.
+// copy's, a pasted board's, the places an effect is used, and whom the book's thought effect reaches.
 import { describe, expect, test } from "bun:test";
 import { reactive } from "vue";
 
-import type { EffectUses, MixStep, Step } from "@/types";
+import { newStat } from "@/stores/cast";
+import type { Character, EffectUses, MixStep, Step } from "@/types";
 import {
   duplicateAt,
   keyOf,
@@ -16,6 +17,7 @@ import {
   shift,
   uniqueName,
 } from "@/views/cast/effects/chain";
+import { thoughtReach } from "@/views/cast/effects/lines";
 
 const gain = (db: number): Step => ({ plugin: "Gain", params: { gain_db: db }, on: true });
 const chain = (): Step[] => [
@@ -122,5 +124,20 @@ describe("names", () => {
   test("a long list is cut short", () => {
     expect(listed(["a", "b"])).toBe("a, b");
     expect(listed(["a", "b", "c", "d", "e", "f"], 4)).toBe("a, b, c, d and 2 more");
+  });
+});
+
+describe("thoughtReach", () => {
+  test("counts the speakers with a thought line, following the book or with their own", () => {
+    const cast = [
+      { name: "Ann" },
+      { name: "Bo", thoughts: "e1" },
+      { name: "Cy", thoughts: "none" },
+      { name: "Di" },
+    ] as Character[];
+    const thinks = (thoughts: number) => ({ ...newStat(), thoughts });
+    const stats = { Ann: thinks(2), Bo: thinks(1), Cy: thinks(1), Di: thinks(0) };
+    expect(thoughtReach(cast, stats)).toBe("1 speaker uses it · 2 have their own");
+    expect(thoughtReach(cast, {})).toBe("no thought lines yet");
   });
 });

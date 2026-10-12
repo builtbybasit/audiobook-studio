@@ -6,12 +6,12 @@
 import { computed, ref } from "vue";
 import { Cloud as ThoughtIcon, Mic as VoiceIcon } from "@lucide/vue";
 
-import { plural } from "@/lib/contents";
 import { useCastStore } from "@/stores/cast";
 import { useEffectsStore } from "@/stores/effects";
 import { useLibraryStore } from "@/stores/library";
 import { UiHint, UiToggleGroup } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
+import { thoughtReach } from "@/views/cast/effects/lines";
 import type { CastStat, CharacterVoice, VoiceRef } from "@/types";
 
 const props = defineProps<{
@@ -75,14 +75,7 @@ const thoughtEffect = computed(() =>
 const thoughtName = computed(() =>
   effectsStore.loaded ? (thoughtEffect.value?.name ?? "None") : "…",
 );
-/** Of the speakers with thought lines, how many get the book's effect and how many their own. */
-const reach = computed(() => {
-  const thinkers = castStore
-    .charactersOf(props.bookId)
-    .filter((c) => (props.stats[c.name]?.thoughts ?? 0) > 0);
-  const theirOwn = thinkers.filter((c) => c.thoughts != null).length;
-  return { using: thinkers.length - theirOwn, theirOwn };
-});
+const reach = computed(() => thoughtReach(castStore.charactersOf(props.bookId), props.stats));
 </script>
 
 <template>
@@ -148,13 +141,7 @@ const reach = computed(() => {
             :class="thoughtName === 'None' ? 'chip-off' : 'chip-on'"
             ><template v-if="own === null">follows all books: </template>{{ thoughtName }}</span
           >
-          <span v-if="counted" class="text-[11px] text-zinc-500">
-            <template v-if="reach.using || reach.theirOwn"
-              >{{ plural(reach.using, "speaker") }} {{ reach.using === 1 ? "uses" : "use" }} it ·
-              {{ reach.theirOwn }} {{ reach.theirOwn === 1 ? "has" : "have" }} their own</template
-            >
-            <template v-else>no thought lines yet</template>
-          </span>
+          <span v-if="counted" class="text-[11px] text-zinc-500">{{ reach }}</span>
         </div>
         <div class="flex items-center gap-1">
           <button class="btn-ghost btn-xs" @click="emit('thoughts')">Change for this book…</button>

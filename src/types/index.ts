@@ -9,6 +9,7 @@ export type * from "@/types/expression";
 export type * from "@/types/pricing";
 export type * from "@/types/endpoint";
 export type * from "@/types/segment";
+export type * from "@/types/effect";
 export type * from "@/types/book";
 export type * from "@/types/job";
 export type * from "@/types/scripting";

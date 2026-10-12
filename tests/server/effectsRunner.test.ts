@@ -335,6 +335,20 @@ out = board(audio, sample_rate)
     ]);
   });
 
+  test("parse reads the plugins= form of a board and of a Mix", async () => {
+    const code = `board = Pedalboard(plugins=[Gain(-2), Mix(plugins=[[Gain(1)], [Gain(2)]])])`;
+    expect(await runner.parse(code, live())).toEqual([
+      { plugin: "Gain", params: { gain_db: -2 }, on: true },
+      {
+        mix: [
+          { name: "A", steps: [{ plugin: "Gain", params: { gain_db: 1 }, on: true }], on: true },
+          { name: "B", steps: [{ plugin: "Gain", params: { gain_db: 2 }, on: true }], on: true },
+        ],
+        on: true,
+      },
+    ]);
+  });
+
   test("parse never runs what it is given, and names the line it stopped at", async () => {
     await expect(runner.parse("x = 1\n__import__('os').system('true')", live())).rejects.toThrow(
       /^line 2: system is not a plugin/,

@@ -4,7 +4,7 @@
 
 ## Setup and commands
 
-You need Node.js for Vite 8, pnpm for the checked-in `pnpm-lock.yaml`, and Bun 1.4 or later, which runs the server and the tests. Installing dependencies does not install Bun. You also need ffmpeg (with ffprobe, for the tests): the server refuses to start without it, since every audiobook build, the thought effect and the 16 kHz sent to speech-to-text run it (`brew install ffmpeg`, `apt install ffmpeg`; `FFMPEG_BIN` for one off `PATH`). No provider keys are needed: a fresh library has no endpoints, and the **Simulated (free)** preset on the Endpoints page adds one the server answers itself, without the network or a charge.
+You need Node.js for Vite 8, pnpm for the checked-in `pnpm-lock.yaml`, and Bun 1.4 or later, which runs the server and the tests. Installing dependencies does not install Bun. You also need ffmpeg (with ffprobe, for the tests): the server refuses to start without it, since every audiobook build, the fallback thought effect and the 16 kHz sent to speech-to-text run it (`brew install ffmpeg`, `apt install ffmpeg`; `FFMPEG_BIN` for one off `PATH`). [uv](https://docs.astral.sh/uv/) is optional: [voice effects](audio.md#voice-effects) run Pedalboard through it, fetched on first use, and without it thought lines get ffmpeg's thought effect and speakers' own effects are left off. No provider keys are needed: a fresh library has no endpoints, and the **Simulated (free)** preset on the Endpoints page adds one the server answers itself, without the network or a charge.
 
 ```sh
 pnpm install

@@ -35,6 +35,10 @@ Folded in from D1: the rail is mini by default with a widening toggle (`uiStore.
 
 Ten shapes of the book overview were prototyped on the existing `/book/:bookId` route behind a `?variant=` switcher and compared in the browser against the real library and the seeded demo: a tightened version of the current page, a chapter map, a stat board, an activity feed, an editorial page with the status written as sentences, and five checklist shapes (a stepper with a sidebar, the stepper over tabs, an accordion, master–detail, a horizontal track). The checklist came closest but none was adopted; the current overview stays. The full set is on the `prototype/book-overview` branch (commit `cecb087`), which is not merged.
 
+## Voice effects — 2026-10-12
+
+The editor for voice effects was picked through a prototype on the Cast page, in rounds A to A8 on the `prototype/effects-editor` branch, which is not merged. A8 won: a try-on list where the highlighted row is the effect in use, so a click on a row chooses it (with Undo) and ▶ only plays; a split editor with the chain on one side and an Original/Effect compare on the other; and the book's sheet and a speaker's sheet in the one shape. The backend goes in first ([voice effects](audio.md#voice-effects)) and the screens after it.
+
 ## Prototype rounds
 
 | Original milestone                                                           | Date recorded | Where its details live now                                                                                                  |

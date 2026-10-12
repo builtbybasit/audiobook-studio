@@ -19,11 +19,12 @@ import type {
   StaleSound,
   StartedOver,
 } from "@/types";
+import type { EffectRunner } from "~/audio/effects";
 import type { AudioFiles } from "~/audio/files";
 import { coverFiles, MAX_COVER_BYTES } from "~/covers/files";
 import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
-import { staleSound } from "~/db/effects";
+import { staleSound } from "~/effects/ops";
 import { env } from "~/env";
 import { enqueueCheck } from "~/jobs/check";
 import { enqueueReapply } from "~/jobs/effects";
@@ -188,6 +189,8 @@ export function bookRoutes(
   built: AudiobookFiles | undefined,
   /** what a prompt trial is sent to: the app's own, so a test's stands in for the network */
   scripting: ScriptingProvider,
+  /** what runs voice effects, if anything does here */
+  effects?: EffectRunner,
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
   // A book's covers are kept beside its clips, so they go when its directory does.
@@ -439,12 +442,10 @@ export function bookRoutes(
   });
 
   // ---------- voice effects ----------
-  /** How many of the book's clips have an old sound, and how many of those cannot be redone. */
-  app.get("/:id/effects/stale", validate("param", BookParam), (c) => {
-    const { id } = c.req.valid("param");
-    ops.requireBook(db, id);
-    return c.json(staleSound(db, id) satisfies StaleSound);
-  });
+  /** How many of the book's clips have an old sound, and whether effects can run to redo them. */
+  app.get("/:id/effects/stale", validate("param", BookParam), async (c) =>
+    c.json((await staleSound(db, c.req.valid("param").id, effects)) satisfies StaleSound),
+  );
 
   /** Queue the book's Re-apply (`jobs/effects.ts`); 409 while one is queued or running. */
   app.post("/:id/effects/reapply", validate("param", BookParam), (c) => {

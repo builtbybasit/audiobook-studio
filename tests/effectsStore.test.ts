@@ -75,7 +75,7 @@ beforeEach(() => {
     },
     stale: async () => {
       calls.stale++;
-      return { lines: 0, unavailable: 0 };
+      return { lines: 0, unavailable: 0, ready: true };
     },
   };
   setEffectsService(fake as EffectsService);

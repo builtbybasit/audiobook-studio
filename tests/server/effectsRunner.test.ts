@@ -178,6 +178,16 @@ describe.skipIf(!uv)("Pedalboard under uv", () => {
     expect(peak(dry, 0)).toBeCloseTo(peak(clip, 0) / 2, 2);
   });
 
+  test("a room still ringing where the pad ends is faded out, not cut", async () => {
+    const wet = await runner.render(sine(0.5), "wav", [[ROOM]], live());
+    const { duration } = await probeClip(wet, "wav");
+    // the room outlasts the pad, so the clip runs to its end …
+    expect(duration).toBeCloseTo(0.9, 3);
+    expect(peak(wet, duration - 0.06, duration - 0.03)).toBeGreaterThan(0.001);
+    // … and its last samples come down to nothing rather than stopping on a step
+    expect(peak(wet, duration - 0.0005)).toBeLessThan(0.001);
+  });
+
   test("an off step is skipped", async () => {
     const clip = sine(0.2);
     const out = await runner.render(clip, "wav", [[{ ...GAIN, on: false }]], live());

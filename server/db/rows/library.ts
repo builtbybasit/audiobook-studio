@@ -11,14 +11,32 @@ import type {
   ChapterCounts,
   ChapterNote,
   NarrationStatus,
+  Pacing,
   ScriptingStatus,
   Volume,
 } from "@/types";
+import { DEFAULT_PACING } from "@/lib/speech";
 import type { books, chapters, volumes } from "~/db/schema";
 
 type BookRow = typeof books.$inferSelect;
 type VolumeRow = typeof volumes.$inferSelect;
 type ChapterRow = typeof chapters.$inferSelect;
+
+/**
+ * A book's own pacing, or none when it keeps the default. A pacing saved before the pauses inside a
+ * line were asked for has their default lengths.
+ */
+export function toPacing(
+  row: Pick<BookRow, "pacingLine" | "pacingTurn" | "pacingInlineShort" | "pacingInlineLong">,
+): Pacing | undefined {
+  if (row.pacingLine == null || row.pacingTurn == null) return undefined;
+  return {
+    line: row.pacingLine,
+    turn: row.pacingTurn,
+    inlineShort: row.pacingInlineShort ?? DEFAULT_PACING.inlineShort,
+    inlineLong: row.pacingInlineLong ?? DEFAULT_PACING.inlineLong,
+  };
+}
 
 /**
  * Rebuild a book from its row and the volumes that belong to it, already in reading order.
@@ -43,8 +61,8 @@ export function toBook(row: BookRow, vols: readonly VolumeRow[], counts?: Chapte
   if (row.budgetCap != null || row.budgetPaused != null)
     book.budget = { cap: row.budgetCap ?? null, paused: row.budgetPaused ?? false };
   if (row.scriptBudget != null) book.scriptBudget = row.scriptBudget;
-  if (row.pacingLine != null && row.pacingTurn != null)
-    book.pacing = { line: row.pacingLine, turn: row.pacingTurn };
+  const pacing = toPacing(row);
+  if (pacing) book.pacing = pacing;
   const prompt = toBookPrompt(row);
   if (prompt) book.prompt = prompt;
   if (row.readNotes != null) book.readNotes = row.readNotes;
@@ -130,6 +148,8 @@ export function bookValues(book: Book, addedAt: number): typeof books.$inferInse
     scriptBudget: book.scriptBudget ?? null,
     pacingLine: book.pacing?.line ?? null,
     pacingTurn: book.pacing?.turn ?? null,
+    pacingInlineShort: book.pacing?.inlineShort ?? null,
+    pacingInlineLong: book.pacing?.inlineLong ?? null,
     ...bookPromptValues(book.prompt),
     readNotes: book.readNotes ?? null,
     checkByEar: book.checkByEar ?? null,

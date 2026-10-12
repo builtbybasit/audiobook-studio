@@ -22,12 +22,19 @@ export interface LexEntry {
   enabled: boolean;
 }
 
-/** Default silence between clips, in seconds. Per-line overrides live on the segment. */
+/**
+ * Default silence between clips, and the lengths of the pauses inside a line, in seconds. Per-line
+ * overrides live on the segment; a pause placed with a length of its own keeps it.
+ */
 export interface Pacing {
   /** after a line followed by the same speaker */
   line: number;
   /** after a line when the next one is someone else */
   turn: number;
+  /** a pause inside a line, `[[pause]]`, unless it has a length of its own */
+  inlineShort: number;
+  /** a long pause inside a line, `[[long pause]]` */
+  inlineLong: number;
 }
 
 export type ScriptingStatus = "none" | "queued" | "running" | "done" | "failed" | "fallback";

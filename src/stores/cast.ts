@@ -729,7 +729,8 @@ export const useCastStore = defineStore("cast", {
      * been would give it a length of nothing but silence — so only those are re-timed here, for a
      * length that moves as the slider does, and the pacing is written to the server, which re-times
      * every narrated chapter from its clips. The lengths it answers with are the ones the store
-     * keeps.
+     * keeps. A new length for the pauses inside a line stales the clips of the lines that hold one,
+     * which the server names and `_writeSettings` marks.
      */
     async _pacingChanged(bookId: string, pacing: Pacing | null): Promise<void> {
       const libraryStore = useLibraryStore();

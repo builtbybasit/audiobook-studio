@@ -1,6 +1,6 @@
 // BreezeBlue's hosted API (https://docs.breezeblue.ai), which copies ElevenLabs' shape — path, key
 // header, `output_format` — and adds an `instructions` field for delivery.
-import type { SpeechProviderShape } from "@/lib/providers/types";
+import { fixedPauses, type SpeechProviderShape } from "@/lib/providers/types";
 
 /** Its instructions guide: "Keep `instructions` within 1,000 characters." */
 export const BREEZE_INSTRUCTION_CHARS = 1000;
@@ -35,13 +35,15 @@ export const breezeblue: SpeechProviderShape = {
   ],
   // Its audio-tags guide: 34 vocal events at points in the text; "English tags use parentheses;
   // every other supported language uses square brackets". Whispering and shouting are among the
-  // events, so both kinds are taken; a longer delivery goes in `instructions`.
+  // events, so both kinds are taken; a longer delivery goes in `instructions`. One of them is
+  // `(pause)`, with no length: a short pause, so a long one goes as silence instead.
   tags: () => ({
     brackets: ["round", "square"],
     open: false,
     kinds: ["sound", "delivery"],
     example: "(sighs)",
     hint: "BreezeBlue's English audio tags are in parentheses; other languages use square brackets.",
+    pause: fixedPauses("(pause)", null),
   }),
   // Its pricing page: "Failed requests release their reservation."
   billsFailures: false,

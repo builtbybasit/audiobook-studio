@@ -56,7 +56,32 @@ export interface TagSyntax {
   example: string;
   /** one sentence on where the syntax comes from, for the Expressions tab */
   hint: string;
+  /**
+   * How a pause of some seconds inside a line is written for this model, from its provider's docs:
+   * a length clamped to the longest the docs allow, or the nearer of the fixed pauses they name
+   * (`fixedPauses`) — or null for a length no tag of the docs stands for. Absent when the docs name
+   * no pause. A pause with no tag is silence between the parts the line is spoken in instead.
+   */
+  pause?: (seconds: number) => string | null;
+  /** the docs take a pause only between words, never at the start or end of the text */
+  pauseInside?: boolean;
 }
+
+/** Seconds as a pause tag writes them: at most two decimals, no trailing zeros. */
+export const pauseSecs = (seconds: number): string => String(Number(seconds.toFixed(2)));
+
+/**
+ * Below this a pause is the short one of a provider's two fixed pause tags, and from it the long:
+ * halfway between the book's default lengths, 0.4 s and 1 s, since no provider's docs give a
+ * length for theirs.
+ */
+export const FIXED_PAUSE_SPLIT = 0.7;
+
+/** A provider's fixed pause tags as a `pause`: the nearer one, or null for a long one it lacks. */
+export const fixedPauses =
+  (short: string, long: string | null) =>
+  (seconds: number): string | null =>
+    seconds < FIXED_PAUSE_SPLIT ? short : long;
 
 export interface SpeechProviderShape {
   id: SpeechProviderId;

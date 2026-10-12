@@ -88,7 +88,8 @@ describe("a book's settings", () => {
     await patch(api, id, { budget: { cap: 10, paused: true } });
     let { book } = await read(api, id);
     expect(book.budget).toEqual({ cap: 10, paused: true });
-    expect(book.pacing).toEqual({ line: 0.2, turn: 0.4 });
+    // the pauses inside a line, left out, take their default lengths
+    expect(book.pacing).toEqual({ line: 0.2, turn: 0.4, inlineShort: 0.4, inlineLong: 1 });
 
     // the default pacing is the absence of one, not a copy of the default
     await patch(api, id, { pacing: null, budget: null });
@@ -125,7 +126,7 @@ describe("a book's settings", () => {
     const spoken = segs.reduce((n, s) => n + s.audio.duration, 0);
     expect(before[0].duration).toBeCloseTo(spoken + silenceOf(segs, DEFAULT_PACING, undefined), 6);
 
-    const pacing = { line: 2, turn: 3 };
+    const pacing = { ...DEFAULT_PACING, line: 2, turn: 3 };
     const { body } = await patch(api, id, { pacing });
     expect(body.chapters[0].duration).toBeCloseTo(spoken + silenceOf(segs, pacing, undefined), 6);
     expect(body.chapters[0].duration).toBeGreaterThan(before[0].duration);

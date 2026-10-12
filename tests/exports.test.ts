@@ -352,7 +352,9 @@ describe("staying up to date", () => {
     expect(segs.length).toBeGreaterThan(0);
     const a = chapterSignature(c, segs, DEFAULT_PACING, undefined);
     expect(chapterSignature(c, segs, DEFAULT_PACING, undefined)).toBe(a);
-    expect(chapterSignature(c, segs, { line: 1, turn: 2 }, undefined)).not.toBe(a);
+    expect(chapterSignature(c, segs, { ...DEFAULT_PACING, line: 1, turn: 2 }, undefined)).not.toBe(
+      a,
+    );
     expect(
       chapterSignature({ ...c, narration: "stale" }, segs, DEFAULT_PACING, undefined),
     ).not.toBe(a);

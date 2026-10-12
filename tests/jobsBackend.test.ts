@@ -16,7 +16,7 @@ import { makeCredentials } from "~/demo/seed/fixtures/credentials";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
 import { key } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
-import { silenceOf } from "@/lib/speech";
+import { DEFAULT_PACING, silenceOf } from "@/lib/speech";
 import {
   useBookExports,
   useBookJobs,
@@ -975,7 +975,7 @@ describe("narration with a server answering", () => {
     const segs = readScript(api.db, id, 1);
     const expected =
       segs.reduce((a, s) => a + s.audio.duration, 0) +
-      silenceOf(segs, { line: 3, turn: 3 }, undefined);
+      silenceOf(segs, { ...DEFAULT_PACING, line: 3, turn: 3 }, undefined);
     // not the length of silence alone, which is what re-timing it from no clips would give
     expect(libraryStore.chapter(id, 1)?.duration).toBeCloseTo(expected, 6);
     expect(libraryStore.chapter(id, 1)?.duration).toBeGreaterThan(length);
@@ -985,7 +985,7 @@ describe("narration with a server answering", () => {
     wireStores();
     await libraryStore.load();
     await libraryStore.loadBook(id);
-    expect(libraryStore.bookById(id)?.pacing).toEqual({ line: 3, turn: 3 });
+    expect(libraryStore.bookById(id)?.pacing).toEqual({ ...DEFAULT_PACING, line: 3, turn: 3 });
     expect(libraryStore.chapter(id, 1)?.duration).toBeCloseTo(expected, 6);
   });
 

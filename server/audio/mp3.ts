@@ -137,11 +137,29 @@ export function mp3Frames(b: Uint8Array): Mp3Frames {
 }
 
 /**
- * Several MP3 files as one: every part's audio frames end to end, with no tag and no Xing frame
- * from any of them. The parts have to agree on rate and channels — a player reads the whole file
- * at the first frame's — and a part that does not is named by its place.
+ * `seconds` of silence as MP3 frames like the one at `at` in `b`: its header without padding or a
+ * CRC, and side information and main data all zero, which every decoder plays as silence. The
+ * length is whole frames, the nearest to `seconds`.
  */
-export function joinMp3(files: Uint8Array[]): Uint8Array {
+function silentFrames(b: Uint8Array, at: number, seconds: number): Uint8Array {
+  const head = b.slice(at, at + 4);
+  head[1] |= 1; // no CRC
+  head[2] &= ~2; // no padding
+  const h = header(head, 0)!;
+  const count = Math.round((seconds * h.sampleRate) / h.samples);
+  const out = new Uint8Array(count * h.length);
+  for (let i = 0; i < count; i++) out.set(head, i * h.length);
+  return out;
+}
+
+/**
+ * Several MP3 files as one: every part's audio frames end to end, with no tag and no Xing frame
+ * from any of them, and silence wherever `pieces` has a number of seconds rather than a file. The
+ * parts have to agree on rate and channels — a player reads the whole file at the first frame's —
+ * and a part that does not is named by its place.
+ */
+export function joinMp3(pieces: (Uint8Array | number)[]): Uint8Array {
+  const files = pieces.filter((p) => typeof p !== "number");
   const parts = files.map((f) => mp3Frames(f));
   const first = parts[0];
   if (!first) throw new Error("there was nothing to join");
@@ -150,13 +168,18 @@ export function joinMp3(files: Uint8Array[]): Uint8Array {
       throw new Error(
         `part ${i + 1} came back as ${p.sampleRate} Hz in ${p.channels} channels and part 1 as ${first.sampleRate} Hz in ${first.channels}`,
       );
-  const length = parts.reduce((n, p) => n + p.frames.reduce((a, f) => a + f.end - f.start, 0), 0);
-  const out = new Uint8Array(length);
+  let file = 0;
+  const spans = pieces.flatMap((p) => {
+    if (typeof p === "number")
+      return p > 0 ? [silentFrames(files[0], first.frames[0].start, p)] : [];
+    const i = file++;
+    return parts[i].frames.map((f) => files[i].subarray(f.start, f.end));
+  });
+  const out = new Uint8Array(spans.reduce((n, s) => n + s.byteLength, 0));
   let at = 0;
-  for (const [i, p] of parts.entries())
-    for (const f of p.frames) {
-      out.set(files[i].subarray(f.start, f.end), at);
-      at += f.end - f.start;
-    }
+  for (const s of spans) {
+    out.set(s, at);
+    at += s.byteLength;
+  }
   return out;
 }

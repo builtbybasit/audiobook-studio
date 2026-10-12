@@ -71,6 +71,14 @@ export interface RevisedLines extends ChapterLines {
 }
 
 /**
+ * A book's settings written: the book and its chapters, and the lines whose clips the change made
+ * stale — those holding a pause of a length the pacing moved.
+ */
+export interface BookUpdated extends ImportedBook {
+  stale: RevisedLines[];
+}
+
+/**
  * Lines that changed hands when a speaker was renamed, merged or removed — by chapter, with the
  * revision each chapter's script is at now that they have — and the cast after it.
  */

@@ -178,7 +178,9 @@ export const SegmentSchema = v.looseObject({
         id: v.string(),
         label: v.string(),
         token: v.string(),
-        kind: v.picklist(["sound", "delivery"]),
+        kind: v.picklist(["sound", "delivery", "pause"]),
+        /** a pause's own length, in seconds */
+        seconds: v.optional(v.pipe(v.number(), v.minValue(0), v.maxValue(60))),
         annotationId: v.number(),
         at: v.pipe(v.number(), v.integer(), v.minValue(0)),
         omitted: v.optional(v.boolean()),

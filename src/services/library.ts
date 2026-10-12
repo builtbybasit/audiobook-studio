@@ -8,6 +8,7 @@
 // or the demo's, which the server holds as a second library with a database of its own.
 import type {
   Book,
+  BookUpdated,
   BookPrompt,
   CharacterVoice,
   Cast,
@@ -142,9 +143,10 @@ export interface LibraryService {
   startOver(bookId: string, options: { cast: boolean }): Promise<StartedOver>;
   /**
    * Change a book's budget, script budget or pacing. Changing the pacing re-times every narrated
-   * chapter on the server, so the chapters come back with the book.
+   * chapter on the server, so the chapters come back with the book — and a new length for the
+   * pauses inside a line stales the clips of the lines holding one, which come back as `stale`.
    */
-  updateBook(bookId: string, settings: BookSettings): Promise<ImportedBook>;
+  updateBook(bookId: string, settings: BookSettings): Promise<BookUpdated>;
   /** Make this JPEG or PNG the book's own cover, the shelf's and the overview's. */
   changeCover(bookId: string, file: File): Promise<Book>;
   /** Give a volume a new name. */
@@ -361,8 +363,8 @@ export class HttpLibraryService implements LibraryService {
     return this.http.post<StartedOver>(`/books/${seg(bookId)}/start-over`, options);
   }
 
-  updateBook(bookId: string, settings: BookSettings): Promise<ImportedBook> {
-    return this.http.patch<ImportedBook>(`/books/${seg(bookId)}`, settings);
+  updateBook(bookId: string, settings: BookSettings): Promise<BookUpdated> {
+    return this.http.patch<BookUpdated>(`/books/${seg(bookId)}`, settings);
   }
 
   async changeCover(bookId: string, file: File): Promise<Book> {

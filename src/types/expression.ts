@@ -30,7 +30,18 @@ export interface ScriptedTag {
   at: number;
 }
 
-export interface ExpressionAnnotation extends ExpressionTag {
+/** The two pauses a line can hold by name, each as long as the book's pacing says (`Pacing`). */
+export type PauseWord = "pause" | "long pause";
+
+/**
+ * One annotation on a line: a tag, or a pause (`kind: "pause"`, `id` a `PauseWord`). A pause is
+ * sent as the voice's own pause tag where its provider has one, and otherwise as silence between
+ * the parts the line is spoken in — it is never left out.
+ */
+export interface ExpressionAnnotation extends Omit<ExpressionTag, "kind"> {
+  kind: ExpressionTag["kind"] | "pause";
+  /** a pause's own length in seconds; absent, it is the book's length for its word */
+  seconds?: number;
   annotationId: number;
   /** UTF-16 insertion position in the unchanged source text. */
   at: number;

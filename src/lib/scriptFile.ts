@@ -6,13 +6,14 @@
 // `{sigh!}` for one that is omitted, `{sigh?}` for one awaiting review and `{sigh~}` for one the
 // scripting model wrote (`markSuffix`, which the history's signature uses too). The name is the
 // tag's shared `id`, never a provider's token: each provider spells tags its own way, and the file
-// must not care which one rendered it.
+// must not care which one rendered it. A pause is `{pause}` or `{long pause}`, as long as the book
+// makes it, or `{pause 1.5s}` with a length of its own (`markName`).
 //
 // Pure, and in `src/lib` rather than on the server, so the browser can read a chapter file with
 // the same scanner the server imports it with.
 import type { ExpressionAnnotation, ExpressionTag, ScriptFileLine, Segment } from "@/types";
 import { NARRATOR } from "@/lib/cast";
-import { scriptedAnnotation } from "@/lib/expressions";
+import { PAUSE_WORDS, pauseAnnotation, scriptedAnnotation } from "@/lib/expressions";
 import { isSiteText } from "@/lib/siteText";
 
 export const SCRIPT_FORMAT = "audiobook-studio/script";
@@ -57,6 +58,15 @@ export const markSuffix = (a: {
 }): string => `${a.scripted ? "~" : ""}${a.omitted ? "!" : ""}${a.needsReview ? "?" : ""}`;
 
 /**
+ * What a marker names: the tag's id, and for a pause with a length of its own, the length —
+ * `pause 1.5s`. The history's signature of a line names them the same way.
+ */
+export const markName = (a: Pick<ExpressionAnnotation, "id" | "kind" | "seconds">): string =>
+  a.kind === "pause" && a.seconds != null ? `${a.id} ${a.seconds}s` : a.id;
+/** A pause's marker name read back: its word, and its own length when it has one. */
+const PAUSE_MARK = new RegExp(`^(${PAUSE_WORDS.join("|")})(?: (\\d+(?:\\.\\d+)?)s)?$`);
+
+/**
  * A marker that starts a word — at the start of the line, or after whitespace — is written with one
  * space after it, and the reader takes that space back: `{sigh} Don't move.` is how a person types
  * it, and reads as the line `Don't move.` with the tag before its first word. Glued to a word, as in
@@ -80,7 +90,7 @@ export function writeMarkers(text: string, expressions?: readonly ExpressionAnno
   const escape = (s: string): string => s.replaceAll("{", "{{");
   for (const a of marks) {
     const at = Math.max(from, Math.min(a.at, text.length));
-    out += escape(text.slice(from, at)) + `{${escapeId(a.id)}${markSuffix(a)}}`;
+    out += escape(text.slice(from, at)) + `{${escapeId(markName(a))}${markSuffix(a)}}`;
     if (startsWord(text.slice(0, at))) out += " ";
     from = at;
   }
@@ -198,6 +208,19 @@ export function fromFileLine(
   };
   if (marks.length)
     s.expressions = marks.map((m) => {
+      const pause = m.id.match(PAUSE_MARK);
+      if (pause) {
+        const a = pauseAnnotation(
+          pause[1] as (typeof PAUSE_WORDS)[number],
+          m.at,
+          nextAnnotationId(),
+          pause[2] ? Number(pause[2]) : undefined,
+        );
+        if (m.scripted) a.scripted = true;
+        if (m.omitted) a.omitted = true;
+        if (m.needsReview) a.needsReview = true;
+        return a;
+      }
       const tag = tags.find((t) => t.id === m.id);
       // one the scripting model wrote stays its plain words, matched to a voice only when sent
       if (m.scripted) {

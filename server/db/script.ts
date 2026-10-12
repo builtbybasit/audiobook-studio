@@ -17,7 +17,7 @@ import type {
   Take,
 } from "@/types";
 import { snapshotTake } from "@/lib/takes";
-import { chapterAt } from "~/db/library";
+import { chapterAt, clipFiles } from "~/db/library";
 import { insertRows, prepared } from "~/db/prepared";
 import type { Db, Tx } from "~/db/client";
 import { chapters, clips, heard, segments } from "~/db/schema";
@@ -605,7 +605,7 @@ export function writeHeard(
 /**
  * Take every script in the book away, and leave each chapter as an import left it: not scripted,
  * not narrated, no recap for the next run to carry forward. Returns the file names of every clip
- * the scripts held — the book's current clips, candidates and takes — for the caller to remove
+ * the scripts held — the book's current clips, candidates and takes, raw files too — for the caller to remove
  * from disk once the rows are gone.
  *
  * The revisions move on, so a write that read a script before this cannot land on the empty
@@ -614,11 +614,11 @@ export function writeHeard(
  */
 export function dropBookScripts(tx: Tx, bookId: string): string[] {
   const files = tx
-    .select({ url: clips.url })
+    .select({ url: clips.url, raw: clips.raw })
     .from(clips)
     .where(eq(clips.bookId, bookId))
     .all()
-    .flatMap((c) => (c.url ? [c.url.split("/").at(-1)!] : []));
+    .flatMap(clipFiles);
   // clips cascade from their segment
   tx.delete(segments).where(eq(segments.bookId, bookId)).run();
   tx.delete(heard).where(eq(heard.bookId, bookId)).run();

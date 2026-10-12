@@ -4,7 +4,7 @@ import type { ExportSettings } from "@/types/export";
 import type { NarrationScope } from "@/types/run";
 import type { Profile, ResolvedPrompt } from "@/types/scripting";
 
-export type JobKind = "scripting" | "narration" | "export" | "check";
+export type JobKind = "scripting" | "narration" | "export" | "check" | "effects";
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
 export interface JobEvent {

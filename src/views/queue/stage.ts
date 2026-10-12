@@ -12,6 +12,7 @@ export const KIND_LABEL: Record<JobKind, string> = {
   narration: "Narration",
   export: "Export",
   check: "Check by ear",
+  effects: "Re-apply effects",
 };
 
 /** the filter the Narration page opens on for this job, if any */
@@ -32,6 +33,7 @@ export const PAGE: Record<JobKind, string> = {
   narration: "narration",
   export: "export",
   check: "narration",
+  effects: "narration",
 };
 
 /** The page a job's work is looked at on, at its chapter when it has one. */

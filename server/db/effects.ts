@@ -4,12 +4,12 @@
 // thought effect, a speaker's own, the library's in `settings` — with no foreign key behind them,
 // so removing one resets those names here, in the same transaction, rather than leaving them
 // pointing at nothing.
-import { asc, eq, max } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, max } from "drizzle-orm";
 
-import type { Effect, Step } from "@/types";
-import type { EffectContext } from "@/lib/effects";
+import type { Effect, StaleSound, Step } from "@/types";
+import { chainsFor, soundOf, type EffectContext } from "@/lib/effects";
 import type { Db, Tx } from "~/db/client";
-import { books, characters, effects } from "~/db/schema";
+import { books, characters, clips, effects, segments } from "~/db/schema";
 import { readThoughts, writeThoughts } from "~/db/settings";
 
 /**
@@ -129,4 +129,113 @@ export function effectContext(db: Db | Tx, bookId: string): EffectContext {
         ]),
     ),
   };
+}
+
+// ---------- Re-apply ----------
+
+/** A clip in a book whose sound is not what its line's effects now make. */
+export interface StaleClip {
+  chapterId: number;
+  segmentId: number;
+  /** the file it plays */
+  url: string;
+  /** the voice's own file, when `url` is not it */
+  raw: string | null;
+  sound: string | null;
+  /** what its line is run through now, in order; none = the raw file is the clip */
+  effects: Effect[];
+  /** `soundOf(effects)` */
+  want: string | null;
+}
+
+/** A clip with effects in it and no raw file to make it again from: an old ffmpeg thought clip. */
+export const cannotRedo = (c: Pick<StaleClip, "raw" | "sound">): boolean =>
+  c.raw == null && c.sound != null;
+
+/**
+ * Every finished clip in a book's current and retake slots whose sound is not its line's now. One
+ * query over the book, and a line's effects worked out once per speaker and kind of line rather
+ * than once per line, so a book of 900 chapters is one pass. Takes are history and are left as
+ * they were made.
+ */
+export function staleClips(db: Db | Tx, bookId: string): StaleClip[] {
+  const ctx = effectContext(db, bookId);
+  const rows = db
+    .select({
+      chapterId: clips.chapterId,
+      segmentId: clips.segmentId,
+      url: clips.url,
+      raw: clips.raw,
+      sound: clips.sound,
+      type: segments.type,
+      speaker: segments.speaker,
+    })
+    .from(clips)
+    .innerJoin(
+      segments,
+      and(
+        eq(segments.bookId, clips.bookId),
+        eq(segments.chapterId, clips.chapterId),
+        eq(segments.id, clips.segmentId),
+      ),
+    )
+    .where(
+      and(
+        eq(clips.bookId, bookId),
+        inArray(clips.role, ["current", "candidate"]),
+        eq(clips.status, "done"),
+        isNotNull(clips.url),
+      ),
+    )
+    .all();
+  const known = new Map<string, Pick<StaleClip, "effects" | "want">>();
+  const out: StaleClip[] = [];
+  for (const { type, speaker, url, ...r } of rows) {
+    const key = `${type === "thought"}:${speaker}`;
+    let line = known.get(key);
+    if (!line) {
+      const effects = chainsFor({ type, speaker }, ctx);
+      line = { effects, want: soundOf(effects) };
+      known.set(key, line);
+    }
+    if (r.sound !== line.want) out.push({ ...r, url: url!, ...line });
+  }
+  return out;
+}
+
+/** How many of a book's clips have an old sound, and how many of those cannot be redone. */
+export function staleSound(db: Db | Tx, bookId: string): StaleSound {
+  const stale = staleClips(db, bookId);
+  return { lines: stale.length, unavailable: stale.filter(cannotRedo).length };
+}
+
+/**
+ * Put a re-applied file in place of the clip that played `was`, in whichever slot of the book's
+ * still plays it, and say where that was — nothing when no slot does any more: the line was
+ * narrated again, its retake kept, or its script written over while the file was made.
+ */
+export function swapClipFile(
+  tx: Tx,
+  bookId: string,
+  was: string,
+  next: {
+    url: string;
+    raw: string | null;
+    sound: string | null;
+    duration: number;
+    sampleRate: number;
+  },
+): { chapterId: number; role: string }[] {
+  return tx
+    .update(clips)
+    .set(next)
+    .where(
+      and(
+        eq(clips.bookId, bookId),
+        eq(clips.url, was),
+        inArray(clips.role, ["current", "candidate"]),
+      ),
+    )
+    .returning({ chapterId: clips.chapterId, role: clips.role })
+    .all();
 }

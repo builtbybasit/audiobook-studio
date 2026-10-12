@@ -23,7 +23,13 @@ import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
-const AVG_JOB: Record<JobKind, number> = { scripting: 25, narration: 60, export: 120, check: 15 };
+const AVG_JOB: Record<JobKind, number> = {
+  scripting: 25,
+  narration: 60,
+  export: 120,
+  check: 15,
+  effects: 120,
+};
 
 /** The queue before it has been read. */
 const NO_JOBS: readonly Job[] = [];
@@ -435,6 +441,8 @@ export const useJobsStore = defineStore("jobs", {
             ),
           // filtered out above: a build is retried from its own row, by the settings it carried
           export: () => false,
+          // a Re-apply is the whole book's, with no chapter, so it never gets this far
+          effects: () => false,
         };
         if (still[j.kind]()) out.push(j);
       }

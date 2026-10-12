@@ -12,6 +12,7 @@
 import type { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 
+import type { EffectRunner } from "~/audio/effects";
 import type { SpeechRate } from "~/audio/ffmpeg";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
 import { createApp } from "~/app";
@@ -26,6 +27,7 @@ import { demoReset } from "~/demo/reset";
 import { isFresh, seedDemo } from "~/demo/seed";
 import { audiobookFiles } from "~/exports/files";
 import { checkHandler } from "~/jobs/check";
+import { effectsHandler } from "~/jobs/effects";
 import { exportHandler } from "~/jobs/export";
 import { narrationHandler } from "~/jobs/narration";
 import { createRunner, type Runner } from "~/jobs/runner";
@@ -60,6 +62,11 @@ export interface LibraryOptions {
    * test's library) = thought lines are kept as the voice made them.
    */
   thoughtEffect?: ThoughtEffect;
+  /**
+   * What voice effects run through — Pedalboard under uv, in a running server. Absent (a test's
+   * library) = a Re-apply that has anything to render fails saying effects cannot run here.
+   */
+  effects?: EffectRunner;
   /**
    * What a recording is made into before a transcription endpoint hears it — 16 kHz mono, ffmpeg's,
    * in a running server. Absent (a test's library) = sent as it came.
@@ -118,7 +125,7 @@ const withTranscription = (
 });
 
 /**
- * Open one library: its database migrated, its queue built with the four handlers, its API.
+ * Open one library: its database migrated, its queue built with the five handlers, its API.
  *
  * Migrations run here, before anything can ask the database a question, so a checkout that has
  * just pulled a schema change is usable without a separate step.
@@ -166,6 +173,7 @@ export function openLibrary(options: LibraryOptions): Library {
       narration: narrationHandler(providers.speech, files, gate, options.thoughtEffect),
       export: exportHandler(exports, files),
       check: checkHandler(given.transcription, files),
+      effects: effectsHandler(options.effects, files),
     },
     { log },
   );

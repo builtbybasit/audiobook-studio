@@ -97,7 +97,8 @@ const pasteInto = computed(() =>
     : null,
 );
 
-/** Opened, or opened for someone else: start on the list, at their first line. */
+/** Opened, or opened for someone else: start on the list, at their first line — or in the editor,
+ *  when the book's sheet was opened to tune an effect. */
 watch(
   () => [open.value, props.subject] as const,
   ([o, s]) => {
@@ -108,6 +109,7 @@ watch(
     choice.changed.value = null;
     if (s?.kind === "speaker") slot.value = s.slot;
     if (!o) previews.clear();
+    else if (s?.kind === "book" && s.effect) edit(s.effect);
   },
   { immediate: true },
 );

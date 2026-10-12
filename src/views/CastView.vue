@@ -370,6 +370,7 @@ const duplicate = computed(
       :stats="stats"
       :counted="counted"
       @thoughts="editEffect({ kind: 'book' })"
+      @tune="(id) => editEffect({ kind: 'book', effect: id })"
     />
     <ReapplyBar :book-id="bookId" />
 

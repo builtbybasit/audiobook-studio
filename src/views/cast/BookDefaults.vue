@@ -21,8 +21,8 @@ const props = defineProps<{
   /** whether every scripted chapter is in, so the counts are counts */
   counted: boolean;
 }>();
-/** the sheet for the book's thought effect */
-const emit = defineEmits<{ thoughts: [] }>();
+/** the sheet for the book's thought effect: on the list, or (`tune`) in the editor on that effect */
+const emit = defineEmits<{ thoughts: []; tune: [id: string] }>();
 const libraryStore = useLibraryStore();
 const castStore = useCastStore();
 const effectsStore = useEffectsStore();
@@ -68,12 +68,13 @@ function setSlot(slot: Slot, voice: VoiceRef | null) {
 // ---------- the thought effect ----------
 /** The book's own choice, or null when it follows the library's. */
 const own = computed(() => libraryStore.bookById(props.bookId)?.thoughts ?? null);
-/** What the book's thought lines get, by name: its own choice, else the library's. */
-const thoughtName = computed(() => {
-  if (!effectsStore.loaded) return "…";
-  const choice = own.value ?? effectsStore.libraryThoughts;
-  return (choice !== "none" && effectsStore.byId.get(choice)?.name) || "None";
-});
+/** The effect the book's thought lines get — its own choice, else the library's; none for None. */
+const thoughtEffect = computed(() =>
+  effectsStore.byId.get(own.value ?? effectsStore.libraryThoughts),
+);
+const thoughtName = computed(() =>
+  effectsStore.loaded ? (thoughtEffect.value?.name ?? "None") : "…",
+);
 /** Of the speakers with thought lines, how many get the book's effect and how many their own. */
 const reach = computed(() => {
   const thinkers = castStore
@@ -155,7 +156,17 @@ const reach = computed(() => {
             <template v-else>no thought lines yet</template>
           </span>
         </div>
-        <button class="btn-ghost btn-xs" @click="emit('thoughts')">Change for this book…</button>
+        <div class="flex items-center gap-1">
+          <button class="btn-ghost btn-xs" @click="emit('thoughts')">Change for this book…</button>
+          <button
+            v-if="thoughtEffect"
+            class="btn-ghost btn-xs"
+            :aria-label="`Tune ${thoughtEffect.name}`"
+            @click="emit('tune', thoughtEffect.id)"
+          >
+            Tune
+          </button>
+        </div>
       </div>
     </div>
   </section>

@@ -94,7 +94,8 @@ test("dismissing a suggestion drops only the suggestion — the line is not an e
 });
 
 test("a line of site text and a note the book does not read are no one's lines, and the server counts them the same way", async () => {
-  const segs = await open({ type: "watermark" }, { type: "note" });
+  // a thought is spoken, and counted apart too
+  const segs = await open({ type: "watermark" }, { type: "note" }, { type: "thought" });
   const spoken = segs.slice(2);
   const bySpeaker: Record<string, number> = {};
   for (const s of spoken) bySpeaker[s.speaker] = (bySpeaker[s.speaker] ?? 0) + 1;
@@ -106,6 +107,11 @@ test("a line of site text and a note the book does not read are no one's lines, 
   );
   const stats = useCastStore().castStats(BOOK);
   for (const [name, n] of Object.entries(bySpeaker)) expect(stats[name]?.lines).toBe(n);
+  // and of those, the thought lines the book's thought effect reaches
+  for (const name of Object.keys(bySpeaker))
+    expect(stats[name]?.thoughts).toBe(
+      spoken.filter((s) => s.speaker === name && s.type === "thought").length,
+    );
 
   const counts = scriptsStore.lineCountsOf(BOOK, 1);
   expect(counts).toMatchObject({ total: spoken.length, skipped: 2 });

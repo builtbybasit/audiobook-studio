@@ -373,7 +373,9 @@ what a run [remembers between requests](scripting.md#what-a-run-remembers), and 
 shows both under the lines. The format also says how to write an expression tag — `[[sigh]]`, or
 `<<sigh>>` for an excerpt that already has `[[` or `]]` in it — but only when the instructions ask
 for tags; the built-in prompt does not, so a prompt that wants them says so, e.g. "Add a tag for
-a sigh, laugh or gasp the prose shows, at most one per line, from: {{expressions}}".
+a sigh, laugh or gasp the prose shows, at most one per line, from: {{expressions}}". It always says
+how to write a [pause inside a line](audio.md#pauses-inside-a-line), `[[pause]]` or `[[long pause]]`;
+the built-in prompt asks for one only on a real beat.
 
 A run snapshots the resolved prompt and the book's notes when it is queued, so editing a prompt
 mid-run changes only later runs. The estimate and the budget hold price the prompt's real length.

@@ -115,6 +115,9 @@ its place:
   the scripting model wrote, which comes back as its plain words and is left out quietly where a
   voice cannot take it, rather than awaiting review. The suffixes go in the order `~!?`, the one
   `exprSignature` uses.
+- A pause is `{pause}` or `{long pause}`, as long as the book's pacing makes it, or `{pause 1.5s}`
+  with a length of its own (`markName`); it takes the same suffixes, `{long pause~}` for one the
+  scripting model wrote.
 - A literal `{` in the book is written `{{`. A lone `}` needs no escape, because only `{` opens a
   marker. Inside a marker a backslash escapes `{ } ! ? ~ \`, since a tag id is whatever was typed when
   the tag was configured: `{huh\?}` is the tag `huh?`, where `{huh?}` is the tag `huh` awaiting

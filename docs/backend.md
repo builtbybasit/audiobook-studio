@@ -988,8 +988,10 @@ request is one run of the tool in a fresh empty temp folder, removed afterwards:
   --disable shell_tool --disable unified_exec --disable apps --disable browser_use --disable
   computer_use --disable image_generation --disable memories --disable multi_agent --disable hooks
   --disable plugins --ephemeral --skip-git-repo-check --ignore-user-config --ignore-rules
-  --sandbox read-only --cd DIR --json --output-last-message DIR/answer.txt -`, with the system
-  prompt, a `---`, the user message, a `---` and a closing line asking for the JSON alone on stdin.
+  --sandbox read-only --cd DIR --json --output-last-message DIR/answer.txt
+  --config model_instructions_file="DIR/system.txt" -`, with the user message on stdin. The system
+  prompt replaces Codex's own agent instructions (about 10k tokens on how to work in a repository),
+  which also stopped it dropping words from the excerpt.
   The last message is read from the file and the usage from the `turn.completed` event.
 - `claude --print --output-format json --model M [--effort E] --system-prompt-file DIR/system.txt
   --tools "" --strict-mcp-config --permission-mode dontAsk --permission-prompts none

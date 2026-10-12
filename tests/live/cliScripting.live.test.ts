@@ -2,7 +2,8 @@
 // `LIVE=1 bun test tests/live`. Each runs with the tool's own login — the user's subscription —
 // so it is one excerpt and one Test button each. A tool not on PATH is skipped.
 //
-// The models are the presets' unless `CLI_CODEX_MODEL` or `CLI_CLAUDE_MODEL` names another.
+// The models and reasoning levels are the presets' unless `CLI_CODEX_MODEL` or `CLI_CLAUDE_MODEL`
+// names another model.
 import { describe, expect, test } from "bun:test";
 
 import { CLAUDE_CODE, CODEX, type CliShape } from "@/lib/providers/cli";
@@ -12,12 +13,12 @@ import { EXCERPT, expectTheInn, printScript } from "../support/liveExcerpt";
 
 const env = process.env;
 
-const TOOLS: [CliShape, string][] = [
-  [CODEX, env.CLI_CODEX_MODEL ?? "gpt-6-luna"],
-  [CLAUDE_CODE, env.CLI_CLAUDE_MODEL ?? "claude-sonnet-5-5"],
+const TOOLS: [CliShape, string, ScriptTarget["reasoning"]][] = [
+  [CODEX, env.CLI_CODEX_MODEL ?? "gpt-6-luna", "high"],
+  [CLAUDE_CODE, env.CLI_CLAUDE_MODEL ?? "claude-sonnet-5-5", "medium"],
 ];
 
-for (const [cli, model] of TOOLS)
+for (const [cli, model, reasoning] of TOOLS)
   describe.skipIf(!env.LIVE || !Bun.which(cli.program))(`${cli.label}, for real`, () => {
     const target: ScriptTarget = {
       id: "live",
@@ -30,7 +31,7 @@ for (const [cli, model] of TOOLS)
       maxRetries: 0,
       cooldownSec: 5,
       maxOutputTokens: 0,
-      reasoning: "medium",
+      reasoning,
     };
 
     test(

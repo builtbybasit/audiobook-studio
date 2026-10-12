@@ -3,9 +3,9 @@
 //
 // The request is the one a chat-completions model is sent (`renderPrompt`), and the answer is read
 // and checked word for word the same way (`checkedScript`): only the way there differs. Claude Code
-// is given the system prompt as its own (`--system-prompt-file`) and the user message on stdin;
-// Codex has no system prompt of its own to replace, so both go on stdin, one after the other, with
-// a closing line asking for the JSON alone.
+// and Codex are both given the system prompt as their own — Claude Code's `--system-prompt-file`,
+// Codex's `model_instructions_file`, which replaces its agent instructions (about 10k tokens of
+// how to work in a repository, which also made it drop words) — and the user message on stdin.
 //
 // **Locked down.** Each run is in a fresh empty folder, removed after: Codex runs in it read-only
 // with its shell and every other tool it can switch off switched off, ignoring the user's own
@@ -44,10 +44,6 @@ export interface CliScriptingOptions {
   /** the environment the tool runs in; the server's own otherwise */
   env?: NodeJS.ProcessEnv;
 }
-
-/** Said after the prompt to Codex, which would otherwise take it as a task to work on. */
-export const CODEX_CLOSING =
-  "Answer with the JSON only, in your final message. Do not run commands or read files: everything you need is above.";
 
 /**
  * Codex features that reach outside the conversation, switched off for every run. `codex features
@@ -91,6 +87,8 @@ export function invocation(
         target.model,
         ...(effort ? ["--config", `model_reasoning_effort="${effort}"`] : []),
         "--config",
+        `model_instructions_file=${JSON.stringify(join(dir, SYSTEM_FILE))}`,
+        "--config",
         'web_search="disabled"',
         ...CODEX_OFF.flatMap((feature) => ["--disable", feature]),
         "--ephemeral",
@@ -106,8 +104,8 @@ export function invocation(
         join(dir, ANSWER_FILE),
         "-",
       ],
-      stdin: `${prompt.system}\n\n---\n\n${prompt.user}\n\n---\n${CODEX_CLOSING}`,
-      files: {},
+      stdin: prompt.user,
+      files: { [SYSTEM_FILE]: prompt.system },
     };
   return {
     argv: [

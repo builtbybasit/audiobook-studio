@@ -24,7 +24,7 @@ import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
 import { UiSelect, UiCheckbox, UiHint, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
 import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
-import { Plus as AddIcon } from "@lucide/vue";
+import { Cloud as ThoughtIcon, Plus as AddIcon } from "@lucide/vue";
 import CastRecord from "@/views/cast/CastRecord.vue";
 import CastSelectionBar from "@/views/cast/CastSelectionBar.vue";
 import BookDefaults from "@/views/cast/BookDefaults.vue";
@@ -560,8 +560,9 @@ const duplicate = computed(
                     title="Their own thought effect"
                     @click="editEffect({ kind: 'speaker', name: c.name, slot: 'thought' })"
                   >
-                    <span aria-hidden="true">💭</span
-                    ><span class="truncate">{{ effectOf(c.thoughts)?.name ?? "None" }}</span>
+                    <ThoughtIcon class="icon-sm shrink-0" aria-hidden="true" /><span
+                      class="truncate"
+                      >{{ effectOf(c.thoughts)?.name ?? "None" }}</span>
                   </button>
                 </div>
               </td>

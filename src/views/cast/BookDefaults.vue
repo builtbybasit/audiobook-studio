@@ -4,7 +4,7 @@
 // gets unless its speaker has their own. Both are the book's, not a speaker's, so neither is a row
 // of the table — a row there had to be kept first whatever the sort and stepped over by j/k.
 import { computed, ref } from "vue";
-import { Mic as VoiceIcon } from "@lucide/vue";
+import { Cloud as ThoughtIcon, Mic as VoiceIcon } from "@lucide/vue";
 
 import { plural } from "@/lib/contents";
 import { useCastStore } from "@/stores/cast";
@@ -135,7 +135,7 @@ const reach = computed(() => {
       </div>
       <div class="space-y-2 px-4 py-3">
         <div class="flex items-center gap-1.5 text-sm font-medium">
-          <span aria-hidden="true">💭</span> Thoughts
+          <ThoughtIcon class="icon-sm text-zinc-400" /> Thoughts
           <UiHint
             label="the thought effect"
             text="Put on every thought line after its speaker’s own effect. A speaker can have their own from their row."

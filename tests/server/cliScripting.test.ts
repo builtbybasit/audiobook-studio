@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type { Book, Profile, PromptTrialResult } from "@/types";
 import { SCRIPTING_PRESETS } from "@/lib/presets";
 import { newProfile } from "@/lib/scripting";
-import { CODEX_CLOSING, cliScriptingProvider } from "~/providers/cliScripting";
+import { cliScriptingProvider } from "~/providers/cliScripting";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
 import { ProviderError } from "~/providers/http";
 import type { ScriptInput, ScriptTarget } from "~/providers/scripting";
@@ -66,7 +66,7 @@ function input(t: ScriptTarget, over: Partial<ScriptInput> = {}) {
 const flagOf = (argv: string[], name: string): string | undefined => argv[argv.indexOf(name) + 1];
 
 describe("Codex", () => {
-  test("is run locked down in an empty folder, with both messages on stdin, and its last message read", async () => {
+  test("is run locked down in an empty folder, its instructions replaced by the prompt, and its last message read", async () => {
     const cli = fakeCli("codex", { stdout: codexEvents(), answer: SCRIPT });
     const { input: given, sent } = input(target(`codex:${cli.path}`, { reasoning: "medium" }));
     const answer = await provider.script(given);
@@ -83,10 +83,12 @@ describe("Codex", () => {
     expect(call.cwd).toEndWith(flagOf(call.argv, "--cd")!);
     expect(call.argv.at(-1)).toBe("-");
     expect(call.argv.some((a) => a.includes("dangerously"))).toBe(false);
-    expect(call.files).toEqual([]);
+    // the system prompt replaces Codex's own instructions, from a file in the run's folder
+    expect(call.files).toEqual(["system.txt"]);
+    expect(call.system).toBe(PROMPT.system);
     // the folder went with the run
     expect(existsSync(call.cwd)).toBe(false);
-    expect(call.stdin).toBe(`${PROMPT.system}\n\n---\n\n${PROMPT.user}\n\n---\n${CODEX_CLOSING}`);
+    expect(call.stdin).toBe(PROMPT.user);
 
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ status: "done", attempts: 1, simulated: false });
@@ -343,8 +345,8 @@ describe("a CLI endpoint in the app", () => {
       jsonBody({ profile: "codex", chapterId: 1 }),
     );
     expect(prompt.status).toBe(200);
-    const excerpt = cli.calls()[0].stdin;
-    expect(excerpt).toContain(CODEX_CLOSING);
+    // the trial's user message: the chapter's chunk, not a stand-in
+    expect(cli.calls()[0].stdin).toContain("Excerpt:");
 
     const rows = endpointRequests(api.db, "scripting", "codex", 0);
     expect(rows).toHaveLength(1);

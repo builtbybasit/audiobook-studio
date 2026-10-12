@@ -459,12 +459,14 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
     hint: "gpt-6-luna through codex exec, on your ChatGPT plan",
     note:
       `${SUBSCRIPTION_NOTE} Sign in with \`codex login\`. A ChatGPT login takes gpt-6-luna; ` +
-      "it refuses gpt-6.1-luna.",
+      "it refuses gpt-6.1-luna. Reasoning is high: at medium and below it thinks not at all, and drops words.",
     apply: {
       name: "Codex · GPT-6 Luna",
       baseUrl: CODEX.scheme,
       model: "gpt-6-luna",
-      reasoning: "medium",
+      // at low or medium Codex reports no reasoning at all, and the model then drops words — the
+      // two-sentence Test excerpt lost "Mara whispered" every time; at high it kept them
+      reasoning: "high",
       ...ON_SUBSCRIPTION,
       pricing: presetPricing(),
     },

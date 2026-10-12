@@ -102,8 +102,9 @@ providers' published cards on 28 September 2026; a preset's schedule and promoti
   place of the base URL, and no credential or key. A request is the same prompt, read and checked
   word for word the same way, as a chat model's; how each tool is run and locked down is in
   [the providers](backend.md#scripting-requests). The presets are at no charge, concurrency 2, a
-  600 s timeout and one retry, with the reasoning level at medium (Codex `model_reasoning_effort`,
-  Claude Code `--effort`; Claude Code has no off, so off is sent as low). Every request is recorded
+  600 s timeout and one retry, with the reasoning level at medium for Claude Code (`--effort`; it
+  has no off, so off is sent as low) and high for Codex (`model_reasoning_effort`): at medium and
+  below gpt-6-luna reports no reasoning tokens at all and drops words from the excerpt. Every request is recorded
   with the tokens the tool reported, at no charge, so a budget never stops one. Neither tool takes a
   cap on output tokens, so **Max output tokens** only sizes what a request holds against budgets.
   A tool that is missing, not signed in, or refuses the model fails with a sentence saying what to

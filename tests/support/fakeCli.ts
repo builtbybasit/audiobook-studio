@@ -28,7 +28,7 @@ export interface FakeCall {
   cwd: string;
   /** what was in the working folder when it started */
   files: string[];
-  /** the file `--system-prompt-file` named, read */
+  /** the file `--system-prompt-file` (Claude Code) or `model_instructions_file` (Codex) named, read */
   system: string | null;
 }
 
@@ -39,7 +39,8 @@ const replies = JSON.parse(fs.readFileSync(dir + "/replies.json", "utf8"));
 const argv = process.argv.slice(2);
 const flag = (name) => { const i = argv.indexOf(name); return i < 0 ? null : argv[i + 1]; };
 const stdin = fs.readFileSync(0, "utf8");
-const system = flag("--system-prompt-file");
+const instructions = argv.find((a) => a.startsWith("model_instructions_file="));
+const system = flag("--system-prompt-file") ?? (instructions ? JSON.parse(instructions.slice(instructions.indexOf("=") + 1)) : null);
 const log = dir + "/calls.jsonl";
 const n = fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\\n").filter(Boolean).length : 0;
 fs.appendFileSync(log, JSON.stringify({

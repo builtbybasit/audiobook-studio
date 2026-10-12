@@ -35,3 +35,13 @@ export interface Effect {
  * `"none"` for no thought effect. Absent (null) on a speaker or a book = follow the next level.
  */
 export type ThoughtChoice = string;
+
+/**
+ * A book's clips whose sound is not what their lines' effects now make (`GET …/effects/stale`):
+ * `lines` of them, of which `unavailable` cannot be redone — made with effects before the voice's
+ * own file was kept beside them.
+ */
+export interface StaleSound {
+  lines: number;
+  unavailable: number;
+}

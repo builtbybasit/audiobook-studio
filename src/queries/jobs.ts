@@ -98,6 +98,10 @@ const useJobsQuery = defineQuery(() => {
         // takes its row with it. Every move of one is therefore a change to the Audiobooks tab.
         case "export":
           void invalidate({ key: keys.exports(j.bookId) }, "all");
+          break;
+        // a Re-apply swaps clips' files anywhere in the book, so every chapter's script is read again
+        case "effects":
+          void invalidate({ key: keys.scripts(j.bookId) }, "all");
       }
     }
     // a job that moved sent a request, finished or let go of what it held: the book's spending is

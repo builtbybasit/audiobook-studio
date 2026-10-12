@@ -21,6 +21,7 @@ import {
   Download as ExportIcon,
   PencilLine as ScriptingIcon,
   Ear as CheckIcon,
+  AudioWaveform as EffectsIcon,
   RotateCcw as RetryIcon,
   X as CloseIcon,
 } from "@lucide/vue";
@@ -54,6 +55,7 @@ const icon: Record<JobKind, Component> = {
   narration: NarrationIcon,
   export: ExportIcon,
   check: CheckIcon,
+  effects: EffectsIcon,
 };
 const running = computed(() => jobsStore.jobs.filter((j) => j.status === "running"));
 const queued = computed(() => jobsStore.jobs.filter((j) => j.status === "queued"));

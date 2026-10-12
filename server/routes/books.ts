@@ -16,14 +16,17 @@ import type {
   PromptTrialRequest,
   PromptTrialResult,
   ScriptingQueued,
+  StaleSound,
   StartedOver,
 } from "@/types";
 import type { AudioFiles } from "~/audio/files";
 import { coverFiles, MAX_COVER_BYTES } from "~/covers/files";
 import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
+import { staleSound } from "~/db/effects";
 import { env } from "~/env";
 import { enqueueCheck } from "~/jobs/check";
+import { enqueueReapply } from "~/jobs/effects";
 import { enqueueNarration } from "~/jobs/narration";
 import type { Runner } from "~/jobs/runner";
 import { enqueueScripting } from "~/jobs/scripting";
@@ -433,6 +436,20 @@ export function bookRoutes(
       "check queued",
     );
     return c.json(result satisfies CheckQueued, 202);
+  });
+
+  // ---------- voice effects ----------
+  /** How many of the book's clips have an old sound, and how many of those cannot be redone. */
+  app.get("/:id/effects/stale", validate("param", BookParam), (c) => {
+    const { id } = c.req.valid("param");
+    ops.requireBook(db, id);
+    return c.json(staleSound(db, id) satisfies StaleSound);
+  });
+
+  /** Queue the book's Re-apply (`jobs/effects.ts`); 409 while one is queued or running. */
+  app.post("/:id/effects/reapply", validate("param", BookParam), (c) => {
+    const job = enqueueReapply(db, runner, c.req.valid("param").id);
+    return c.json({ job }, 202);
   });
 
   // ---------- removal ----------

@@ -39,11 +39,13 @@ export type ThoughtChoice = string;
 /**
  * A book's clips whose sound is not what their lines' effects now make (`GET …/effects/stale`):
  * `lines` of them, of which `unavailable` cannot be redone — made with effects before the voice's
- * own file was kept beside them.
+ * own file was kept beside them. `ready` says whether effects can run on this server at all (uv
+ * and Pedalboard found): without it a Re-apply can only fail, so the page says why instead.
  */
 export interface StaleSound {
   lines: number;
   unavailable: number;
+  ready: boolean;
 }
 
 /**

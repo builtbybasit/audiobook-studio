@@ -3,15 +3,17 @@
 // The same arrangement as `@/services/library`: one HTTP implementation, asking the library this
 // tab is on (`API_BASE`) — yours, or the demo's — unless a test set another. The effects store
 // asks `effectsService()`; no view knows which answered.
-import type { Effect, Job, StaleSound, Step, ThoughtChoice } from "@/types";
+import type { Effect, EffectUses, Job, StaleSound, Step, ThoughtChoice } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { API_BASE } from "@/services/mode";
 
 export interface EffectsService {
   /** Every effect, in the order the library lists them. */
   list(): Promise<Effect[]>;
-  /** A new effect at the end of the list; the server gives it its id. */
-  create(name: string, chain: Step[]): Promise<Effect>;
+  /** A new effect, right after `after` or at the end of the list; the server gives it its id. */
+  create(name: string, chain: Step[], after?: string): Promise<Effect>;
+  /** Every book and speaker that chooses it, and whether the library's thought effect is it. */
+  uses(id: string): Promise<EffectUses>;
   /** Its name and chain replaced; the id stays. */
   update(id: string, name: string, chain: Step[]): Promise<Effect>;
   /** Gone, and every choice of it with it: the server clears each book's and speaker's. */
@@ -39,8 +41,13 @@ export class HttpEffectsService implements EffectsService {
     return (await this.http.get<{ effects: Effect[] }>("/effects")).effects;
   }
 
-  async create(name: string, chain: Step[]): Promise<Effect> {
-    return (await this.http.post<{ effect: Effect }>("/effects", { name, chain })).effect;
+  async create(name: string, chain: Step[], after?: string): Promise<Effect> {
+    const body = after ? { name, chain, after } : { name, chain };
+    return (await this.http.post<{ effect: Effect }>("/effects", body)).effect;
+  }
+
+  async uses(id: string): Promise<EffectUses> {
+    return await this.http.get<EffectUses>(`/effects/${seg(id)}/uses`);
   }
 
   async update(id: string, name: string, chain: Step[]): Promise<Effect> {

@@ -21,7 +21,7 @@ import { fetchBook } from "@/queries/library";
 import { fetchCast } from "@/queries/cast";
 import { ApiError } from "@/services/http";
 import { effectsService } from "@/services/effects";
-import type { Effect, Step, ThoughtChoice } from "@/types";
+import type { Effect, EffectUses, Step, ThoughtChoice } from "@/types";
 import { useCastStore } from "@/stores/cast";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
@@ -120,10 +120,12 @@ export const useEffectsStore = defineStore("effects", {
       this.loaded = true;
     },
     /** A new effect at the end of the list, once the server has given it its id; null if refused. */
-    async create(name: string, chain: Step[]): Promise<Effect | null> {
+    async create(name: string, chain: Step[], after?: string): Promise<Effect | null> {
       try {
-        const effect = await effectsService().create(name, clone(chain));
-        this.effects.push(effect);
+        const effect = await effectsService().create(name, clone(chain), after);
+        const at = after ? this.effects.findIndex((e) => e.id === after) : -1;
+        if (at < 0) this.effects.push(effect);
+        else this.effects.splice(at + 1, 0, effect);
         return effect;
       } catch (cause) {
         toastFailure("add this effect", cause);
@@ -233,12 +235,19 @@ export const useEffectsStore = defineStore("effects", {
       const source = this.byId.get(id);
       if (!source) return null;
       const name = duplicateName(source.name, new Set(this.effects.map((e) => e.name)));
-      const copy = await this.create(name, source.chain);
-      if (!copy) return null;
-      const made = this.effects.findIndex((e) => e.id === copy.id);
-      const [moved] = this.effects.splice(made, 1);
-      this.effects.splice(this.effects.findIndex((e) => e.id === id) + 1, 0, moved!);
-      return copy;
+      return await this.create(name, source.chain, id);
+    },
+    /**
+     * Everywhere an effect is chosen, in every book — what a delete or a shared edit names before it
+     * goes ahead. Null after a toast when the server could not say.
+     */
+    async usesOf(id: string): Promise<EffectUses | null> {
+      try {
+        return await effectsService().uses(id);
+      } catch (cause) {
+        toastFailure("find where this effect is used", cause);
+        return null;
+      }
     },
     /** The library's thought effect: an effect's id, or "none". True once the server has it. */
     async setLibraryThoughts(choice: ThoughtChoice): Promise<boolean> {

@@ -4,10 +4,10 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { Step } from "@/types";
-import { lanes, pedalboardRunner } from "~/audio/effects";
+import { lanes, PEDALBOARD, pedalboardRunner, SCRIPT } from "~/audio/effects";
 import { probeClip } from "~/audio/probe";
 import { ffmpegAvailable } from "~/providers/ffmpegEncoder";
 import { readWavHeader, wavHeader } from "~/providers/wav";
@@ -192,6 +192,90 @@ describe.skipIf(!uv)("Pedalboard under uv", () => {
     const clip = sine(0.2);
     const out = await runner.render(clip, "wav", [[{ ...GAIN, on: false }]], live());
     expect(peak(out, 0)).toBeCloseTo(peak(clip, 0), 3);
+  });
+
+  test("the plugins are read from Pedalboard: the number-only ones, never a file loader", async () => {
+    const read = `import json, sys; sys.path.insert(0, ${JSON.stringify(dirname(SCRIPT))})
+import effects; print(json.dumps(effects.plugins()))`;
+    const proc = Bun.spawn([
+      "uv",
+      "run",
+      "-q",
+      "--no-project",
+      "--with",
+      PEDALBOARD,
+      "python",
+      "-I",
+      "-c",
+      read,
+    ]);
+    const table = (await new Response(proc.stdout).json()) as Record<
+      string,
+      [string[], number, string[]]
+    >;
+    const numbers = (name: string) => table[name]?.[0];
+    expect(numbers("Gain")).toEqual(["gain_db"]);
+    expect(numbers("Compressor")).toEqual(["threshold_db", "ratio", "attack_ms", "release_ms"]);
+    expect(numbers("Limiter")).toEqual(["threshold_db", "release_ms"]);
+    expect(numbers("NoiseGate")).toEqual(["threshold_db", "ratio", "attack_ms", "release_ms"]);
+    for (const f of ["HighpassFilter", "LowpassFilter"])
+      expect(numbers(f)).toEqual(["cutoff_frequency_hz"]);
+    for (const f of ["HighShelfFilter", "LowShelfFilter", "PeakFilter"])
+      expect(numbers(f)).toEqual(["cutoff_frequency_hz", "gain_db", "q"]);
+    expect(numbers("Delay")).toEqual(["delay_seconds", "feedback", "mix"]);
+    expect(numbers("Reverb")).toEqual([
+      "room_size",
+      "damping",
+      "wet_level",
+      "dry_level",
+      "width",
+      "freeze_mode",
+    ]);
+    expect(numbers("Chorus")).toEqual(["rate_hz", "depth", "centre_delay_ms", "feedback", "mix"]);
+    expect(numbers("Phaser")).toEqual([
+      "rate_hz",
+      "depth",
+      "centre_frequency_hz",
+      "feedback",
+      "mix",
+    ]);
+    expect(numbers("Distortion")).toEqual(["drive_db"]);
+    expect(numbers("Bitcrush")).toEqual(["bit_depth"]);
+    expect(numbers("Clipping")).toEqual(["threshold_db"]);
+    expect(numbers("PitchShift")).toEqual(["semitones"]);
+    expect(table.Resample).toEqual([["target_sample_rate"], 1, ["quality"]]);
+    expect(numbers("MP3Compressor")).toEqual(["vbr_quality"]);
+    expect(numbers("Invert")).toEqual([]);
+    expect(table.BrickwallLimiter).toEqual([
+      ["ceiling_db", "release_ms", "lookahead_ms"],
+      3,
+      ["true_peak"],
+    ]);
+    expect(table.LadderFilter).toEqual([["cutoff_hz", "resonance", "drive"], 0, ["mode"]]);
+    expect(table.GSMFullRateCompressor).toEqual([[], 0, ["quality"]]);
+    for (const never of ["Convolution", "VST3Plugin", "AudioUnitPlugin", "Pedalboard", "Mix"])
+      expect(table[never]).toBeUndefined();
+  });
+
+  test("the new plugins render, a ladder filter's cutoff by name", async () => {
+    const clip = sine(0.3);
+    const out = await runner.render(
+      clip,
+      "wav",
+      [
+        [
+          { plugin: "BrickwallLimiter", params: { ceiling_db: -12 }, on: true },
+          { plugin: "LadderFilter", params: { cutoff_hz: 800, resonance: 0.2 }, on: true },
+        ],
+      ],
+      live(),
+    );
+    expect((await probeClip(out, "wav")).duration).toBeGreaterThanOrEqual(0.3);
+    expect(peak(out, 0.05)).toBeLessThan(peak(clip, 0.05));
+    const mode = [{ plugin: "LadderFilter", params: { mode: 1 }, on: true }];
+    await expect(runner.render(clip, "wav", [mode], live())).rejects.toThrow(
+      "LadderFilter's mode can't be set here; it keeps its default",
+    );
   });
 
   test("a plugin it does not know is refused", async () => {

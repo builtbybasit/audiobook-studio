@@ -1,7 +1,8 @@
 // The Pedalboard plugins the effects editor offers, with the range and unit of each number it
-// takes, and the few words a step is shown in. The server reads any plugin it knows
-// (`server/audio/effects.py`, POSITIONAL); a pasted chain may hold one this catalog has no entry
-// for, and the editor then shows its numbers without sliders rather than refusing it.
+// takes, and the few words a step is shown in. The server reads any plugin Pedalboard offers that
+// takes only numbers (`server/audio/effects.py`, `plugins()`); a pasted chain may hold one this
+// catalog has no entry for, and the editor then shows its numbers without sliders rather than
+// refusing it.
 import type { Layer, MixStep, PluginStep, Step } from "@/types";
 
 export interface Param {
@@ -69,6 +70,16 @@ export const PLUGINS: Record<string, PluginDef> = {
       q: p("Sharpness", 0.1, 4, 0.05, "", 0.707),
     },
   },
+  LadderFilter: {
+    label: "Ladder filter",
+    group: "Tone",
+    blurb: "A warm, rounded lowpass",
+    params: {
+      cutoff_hz: p("Cutoff", 20, 20000, 10, "Hz", 200),
+      resonance: p("Resonance", 0, 1, 0.01, "", 0),
+      drive: p("Drive", 1, 10, 0.1, "", 1),
+    },
+  },
   Compressor: {
     label: "Compressor",
     group: "Loudness",
@@ -87,6 +98,16 @@ export const PLUGINS: Record<string, PluginDef> = {
     params: {
       threshold_db: p("Ceiling", -30, 0, 0.5, "dB", -3),
       release_ms: p("Release", 10, 1000, 5, "ms", 100),
+    },
+  },
+  BrickwallLimiter: {
+    label: "Brickwall limiter",
+    group: "Loudness",
+    blurb: "A hard ceiling that sees peaks coming",
+    params: {
+      ceiling_db: p("Ceiling", -30, 0, 0.5, "dB", -1),
+      release_ms: p("Release", 10, 1000, 5, "ms", 100),
+      lookahead_ms: p("Look-ahead", 0.5, 20, 0.5, "ms", 5),
     },
   },
   NoiseGate: {
@@ -181,6 +202,12 @@ export const PLUGINS: Record<string, PluginDef> = {
     group: "Character",
     blurb: "Lo-fi, like an old phone line",
     params: { target_sample_rate: p("Rate", 2000, 44100, 100, "Hz", 8000) },
+  },
+  GSMFullRateCompressor: {
+    label: "Old mobile",
+    group: "Character",
+    blurb: "The squash of a 2G phone call",
+    params: {},
   },
   MP3Compressor: {
     label: "MP3 squash",

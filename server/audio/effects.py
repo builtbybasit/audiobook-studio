@@ -12,9 +12,10 @@
 # it cannot do, so one bad clip never costs the rest of a book.
 #
 # Chains are user input — typed into the editor, or pasted as Python — so nothing in them is ever
-# run as code: `parse` reads the text with `ast` and never executes it, and only the plugins named
-# in POSITIONAL, with only the arguments it lists, are ever built.
+# run as code: `parse` reads the text with `ast` and never executes it, and only the plugins in
+# `plugins()`, with only the number arguments it lists, are ever built.
 import ast
+import functools
 import io
 import json
 import os
@@ -23,30 +24,14 @@ import sys
 import tempfile
 import wave
 
-# Each plugin's arguments in the order Pedalboard takes them, so `HighpassFilter(170)` reads as well
-# as the keyword. Every argument listed takes a number; Resample's `quality` (an enum) is left out.
-POSITIONAL = {
-    "Gain": ["gain_db"],
-    "Compressor": ["threshold_db", "ratio", "attack_ms", "release_ms"],
-    "Limiter": ["threshold_db", "release_ms"],
-    "NoiseGate": ["threshold_db", "ratio", "attack_ms", "release_ms"],
-    "HighpassFilter": ["cutoff_frequency_hz"],
-    "LowpassFilter": ["cutoff_frequency_hz"],
-    "HighShelfFilter": ["cutoff_frequency_hz", "gain_db", "q"],
-    "LowShelfFilter": ["cutoff_frequency_hz", "gain_db", "q"],
-    "PeakFilter": ["cutoff_frequency_hz", "gain_db", "q"],
-    "Delay": ["delay_seconds", "feedback", "mix"],
-    "Reverb": ["room_size", "damping", "wet_level", "dry_level", "width", "freeze_mode"],
-    "Chorus": ["rate_hz", "depth", "centre_delay_ms", "feedback", "mix"],
-    "Phaser": ["rate_hz", "depth", "centre_frequency_hz", "feedback", "mix"],
-    "Distortion": ["drive_db"],
-    "Bitcrush": ["bit_depth"],
-    "Clipping": ["threshold_db"],
-    "PitchShift": ["semitones"],
-    "Resample": ["target_sample_rate"],
-    "MP3Compressor": ["vbr_quality"],
-    "Invert": [],
+# Pedalboard classes that are never built from a chain: the containers (a chain's structure, not a
+# step), the abstract bases, and the plugins that load a file or someone else's code.
+NEVER = {
+    "Pedalboard", "Chain", "Mix", "PluginContainer",
+    "Plugin", "IIRFilter", "ExternalPlugin",
+    "Convolution", "VST3Plugin", "AudioUnitPlugin",
 }
+NUMBER = ("float", "int")
 
 # Pedalboard gives back as many samples as it is given, so a reverb or a delay ringing on past the
 # last word would be cut off: this much silence goes on the end first, and whatever of it is still
@@ -64,6 +49,67 @@ def number(name, key, v):
     return v
 
 
+def signature(cls):
+    """
+    A plugin's arguments after `self`, as (name, type, has a default), read from the first line of
+    its `__init__` docstring, where pybind11 writes the signature: `__init__(self: …, room_size:
+    float = 0.5, …) -> None`. A comma inside brackets (`Union[str, …]`, `<Mode.LPF12: 0>`) is part
+    of an argument, not between two.
+    """
+    line = cls.__init__.__doc__.strip().splitlines()[0]
+    inner = line[line.index("(") + 1 : line.rindex(")")]
+    parts, depth, start = [], 0, 0
+    for i, c in enumerate(inner + ","):
+        depth += (c in "[(<") - (c in "])>")
+        if c == "," and depth == 0:
+            parts.append(inner[start:i])
+            start = i + 1
+    out = []
+    for part in parts[1:]:
+        name, _, rest = part.partition(":")
+        kind, default, _ = rest.partition("=")
+        out.append((name.strip(), kind.strip(), bool(default)))
+    return out
+
+
+@functools.cache
+def plugins():
+    """
+    Every plugin this Pedalboard offers that a chain may build, read from Pedalboard itself:
+    name -> (its number arguments in order, how many of them may be given in order, its other
+    arguments). Numbers go in order only up to the first argument that is not one (an enum, a
+    flag); past it they must be named. A plugin needing anything but a number to be built at all
+    is left out, as is one whose signature cannot be read.
+    """
+    import pedalboard as pb
+
+    out = {}
+    for name in dir(pb):
+        cls = getattr(pb, name)
+        if name.startswith("_") or name in NEVER or not (isinstance(cls, type) and issubclass(cls, pb.Plugin)):
+            continue
+        try:
+            args = signature(cls)
+        except (AttributeError, IndexError, ValueError):
+            continue
+        if any(kind not in NUMBER and not default for _, kind, default in args):
+            continue
+        numbers = [a for a, kind, _ in args if kind in NUMBER]
+        fixed = [a for a, kind, _ in args if kind not in NUMBER]
+        ordered = next((i for i, (_, kind, _) in enumerate(args) if kind not in NUMBER), len(args))
+        out[name] = (numbers, ordered, fixed)
+    return out
+
+
+def settable(name, key):
+    """Refuses an argument the plugin has but a chain may not set, or one it does not have."""
+    numbers, _, fixed = plugins()[name]
+    if key in fixed:
+        raise ValueError(f"{name}'s {key} can't be set here; it keeps its default")
+    if key not in numbers:
+        raise ValueError(f"{name} has no {key}")
+
+
 def board(chains):
     """The chains, in order, as one Pedalboard. Off steps and layers are left out."""
     import pedalboard as pb
@@ -79,11 +125,10 @@ def board(chains):
                     out.append(pb.Mix(layers))
                 continue
             name, params = s.get("plugin"), s.get("params", {})
-            if name not in POSITIONAL:
+            if name not in plugins():
                 raise ValueError(f"{name} is not a plugin this editor knows")
             for k, v in params.items():
-                if k not in POSITIONAL[name]:
-                    raise ValueError(f"{name} has no {k}")
+                settable(name, k)
                 number(name, k, v)
             out.append(getattr(pb, name)(**params))
         return out
@@ -217,15 +262,21 @@ def parse(text):
                 "mix": [{"name": chr(65 + i), "steps": steps_of(l), "on": True} for i, l in enumerate(layers.elts)],
                 "on": True,
             }
-        if name not in POSITIONAL:
+        if name not in plugins():
             raise ValueError(f"line {node.lineno}: {name or ast.unparse(node.func)} is not a plugin this editor knows")
-        keys = POSITIONAL[name]
-        if len(node.args) > len(keys):
-            raise ValueError(f"line {node.lineno}: {name} takes at most {len(keys)} values in order")
+        keys, ordered, fixed = plugins()[name]
+        if len(node.args) > ordered:
+            # the value past the last number in order would set the first argument that is not one
+            if not fixed:
+                raise ValueError(f"line {node.lineno}: {name} takes at most {ordered} values in order")
+            named = f", so name the numbers, like {keys[ordered]}=…" if ordered < len(keys) else ""
+            raise ValueError(f"line {node.lineno}: {name}'s {fixed[0]} can't be set here; it keeps its default{named}")
         params = {k: literal(name, k, a) for k, a in zip(keys, node.args)}
         for kw in node.keywords:
-            if kw.arg not in keys:
-                raise ValueError(f"line {node.lineno}: {name} has no {kw.arg}")
+            try:
+                settable(name, kw.arg)
+            except ValueError as e:
+                raise ValueError(f"line {node.lineno}: {e}") from None
             params[kw.arg] = literal(name, kw.arg, kw.value)
         return {"plugin": name, "params": params, "on": True}
 

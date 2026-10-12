@@ -18,6 +18,8 @@ import ast
 import functools
 import io
 import json
+import math
+import operator
 import os
 import subprocess
 import sys
@@ -212,13 +214,34 @@ def batch(ffmpeg):
             print(json.dumps({"i": i, "error": last_line(str(e)) or type(e).__name__}), flush=True)
 
 
+# The arithmetic a pasted value may use. A power's exponent is held to MAX_POWER, and every result
+# must be a finite number, so no value can grow without end (`10**10**10`) or take long to work out.
+OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+}
+MAX_POWER = 16
+
+
 def parse(text):
-    """The chain pasted Pedalboard code builds: read with `ast`, never run."""
+    """
+    The chain pasted Pedalboard code builds: read with `ast`, never run. Statements are read top to
+    bottom as Python would, each name keeping its value — a number, a plugin, or a list of plugins
+    and lists — or why it has none, which is raised only once the name is used.
+    """
     try:
         tree = ast.parse(text)
     except SyntaxError as e:
         raise ValueError(f"line {e.lineno}: {e.msg}") from None
-    names = {}  # a variable -> the expression it was given
+    names = {}
+
+    def at(node, why):
+        return ValueError(f"line {node.lineno}: {why}")
 
     def called(node):
         f = node.func
@@ -229,72 +252,185 @@ def parse(text):
 
     def lookup(node):
         if node.id not in names:
-            raise ValueError(f"line {node.lineno}: {node.id} is not given a value above")
+            raise at(node, f"{node.id} is not given a value above")
+        if isinstance(names[node.id], ValueError):
+            raise names[node.id]
         return names[node.id]
 
-    def steps_of(node):
-        """A list, a Pedalboard([...]), a plugin, or a name for one: its steps, flattened."""
+    def listy(node):
+        """Whether an expression is a list of plugins, so `+` joins it to another rather than adds."""
         if isinstance(node, ast.Name):
-            return steps_of(lookup(node))
+            return isinstance(names.get(node.id), list)
+        if isinstance(node, ast.BinOp):
+            return isinstance(node.op, ast.Add) and listy(node.left)
+        return isinstance(node, (ast.List, ast.Tuple)) or is_board(node)
+
+    def num(node, what):
+        """A number written out, or worked out from numbers and names given one above."""
+        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+            return node.value
+        if isinstance(node, ast.Name) and type(lookup(node)) in (int, float):
+            return names[node.id]
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            v = num(node.operand, what)
+            return -v if isinstance(node.op, ast.USub) else v
+        if isinstance(node, ast.BinOp) and type(node.op) in OPS:
+            a, b = num(node.left, what), num(node.right, what)
+            if isinstance(node.op, ast.Pow) and abs(b) > MAX_POWER:
+                raise at(node, f"{ast.unparse(node)} is too big a power; keep it to {MAX_POWER}")
+            try:
+                v = OPS[type(node.op)](a, b)
+                if math.isfinite(v):
+                    return v
+            except (ArithmeticError, TypeError):  # by zero, too big, or a complex root
+                pass
+            raise at(node, f"{ast.unparse(node)} does not come to a number")
+        raise at(node, f"{what} must be a number, not {ast.unparse(node)}")
+
+    def value(node, what=None):
+        """
+        What an expression comes to. `what` names it where a number may stand (a name's value), and
+        is None where only a plugin or a list may.
+        """
+        if isinstance(node, ast.Name):
+            return lookup(node)
         if isinstance(node, (ast.List, ast.Tuple)):
-            return [s for e in node.elts for s in steps_of(e)]
+            return [item(e) for e in node.elts]
         if is_board(node):
-            return steps_of(node.args[0]) if node.args else []
-        return [step(node)]
+            return items(node.args[0]) if node.args else []
+        if isinstance(node, ast.Call):
+            return step(node)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add) and listy(node.left):
+            return value(node.left) + items(node.right)
+        if what is None:
+            raise at(node, f"expected a plugin, found {ast.unparse(node)}")
+        return num(node, what)
+
+    def item(node):
+        """A plugin, or a list of them: one thing in a board."""
+        v = value(node)
+        if not isinstance(v, (dict, list)):
+            raise at(node, f"expected a plugin, found {ast.unparse(node)}")
+        return v
+
+    def items(node):
+        v = item(node)
+        return v if isinstance(v, list) else [v]
+
+    def steps(v):
+        """A plugin, or a list of plugins and lists, flattened into a chain's steps."""
+        return [v] if isinstance(v, dict) else [s for e in v for s in steps(e)]
 
     def literal(name, key, node):
-        try:
-            return number(name, key, ast.literal_eval(node))
-        except ValueError:
-            raise ValueError(f"line {node.lineno}: {name}'s {key} must be a number, not {ast.unparse(node)}") from None
+        return number(name, key, num(node, f"{name}'s {key}"))
 
     def step(node):
-        if not isinstance(node, ast.Call):
-            raise ValueError(f"line {node.lineno}: expected a plugin, found {ast.unparse(node)}")
         name = called(node)
         if name == "Mix":
-            layers = node.args[0] if node.args else None
-            if isinstance(layers, ast.Name):
-                layers = lookup(layers)
-            if not isinstance(layers, (ast.List, ast.Tuple)):
-                raise ValueError(f"line {node.lineno}: Mix takes a list of chains")
+            layers = item(node.args[0]) if node.args else None
+            if not isinstance(layers, list):
+                raise at(node, "Mix takes a list of chains")
             return {
-                "mix": [{"name": chr(65 + i), "steps": steps_of(l), "on": True} for i, l in enumerate(layers.elts)],
+                "mix": [{"name": chr(65 + i), "steps": steps(l), "on": True} for i, l in enumerate(layers)],
                 "on": True,
             }
         if name not in plugins():
-            raise ValueError(f"line {node.lineno}: {name or ast.unparse(node.func)} is not a plugin this editor knows")
+            raise at(node, f"{name or ast.unparse(node.func)} is not a plugin this editor knows")
         keys, ordered, fixed = plugins()[name]
         if len(node.args) > ordered:
             # the value past the last number in order would set the first argument that is not one
             if not fixed:
-                raise ValueError(f"line {node.lineno}: {name} takes at most {ordered} values in order")
+                raise at(node, f"{name} takes at most {ordered} values in order")
             named = f", so name the numbers, like {keys[ordered]}=…" if ordered < len(keys) else ""
-            raise ValueError(f"line {node.lineno}: {name}'s {fixed[0]} can't be set here; it keeps its default{named}")
+            raise at(node, f"{name}'s {fixed[0]} can't be set here; it keeps its default{named}")
         params = {k: literal(name, k, a) for k, a in zip(keys, node.args)}
         for kw in node.keywords:
             try:
                 settable(name, kw.arg)
             except ValueError as e:
-                raise ValueError(f"line {node.lineno}: {e}") from None
+                raise at(node, e) from None
             params[kw.arg] = literal(name, kw.arg, kw.value)
         return {"plugin": name, "params": params, "on": True}
 
-    # The board is the last Pedalboard(...) built, so `board(audio, sample_rate)` after it is
-    # passed over; with none, the last thing written (a list, a Mix, one plugin) is.
+    def changed(stmt):
+        """
+        A board changed in place by `board.append(p)`, `.insert(i, p)` or `.extend([...])`, as its
+        name and its new list; None for any other statement.
+        """
+        call = stmt.value if isinstance(stmt, ast.Expr) else None
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and not call.keywords):
+            return None
+        board, how, args = call.func.value, call.func.attr, call.args
+        if not (isinstance(board, ast.Name) and isinstance(names.get(board.id), list)):
+            return None
+        new = list(names[board.id])
+        if how == "append" and len(args) == 1:
+            new.append(item(args[0]))
+        elif how == "extend" and len(args) == 1:
+            new += items(args[0])
+        elif how == "insert" and len(args) == 2:
+            i = num(args[0], "insert's place")
+            if not isinstance(i, int):
+                raise at(args[0], f"insert's place must be a whole number, not {ast.unparse(args[0])}")
+            new.insert(i, item(args[1]))
+        else:
+            return None
+        return board.id, new
+
+    def reaches(stmt, target):
+        """Where a statement changes a board in a way this reader does not follow, if it does."""
+        boards = {k for k, v in names.items() if isinstance(v, list)}
+        for n in ast.walk(stmt):
+            if n is target:
+                continue
+            if isinstance(n, ast.Name) and n.id in boards and not isinstance(n.ctx, ast.Load):
+                return n
+            inside = isinstance(n, (ast.Attribute, ast.Subscript)) and isinstance(n.value, ast.Name)
+            if inside and n.value.id in boards and (isinstance(n, ast.Attribute) or not isinstance(n.ctx, ast.Load)):
+                return n
+        return None
+
+    # The board is the last Pedalboard(...) built or board changed, so `board(audio, sample_rate)`
+    # after it is passed over; with none, the last thing written (a list, a Mix, one plugin) is.
+    # Each is kept as (the node it was written as, its value or why it has none).
     found = last = None
     for stmt in tree.body:
-        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
-            names[stmt.targets[0].id] = last = stmt.value
-        elif isinstance(stmt, ast.Expr):
-            last = stmt.value
-        else:
+        if change := changed(stmt):
+            names[change[0]] = change[1]
+            found = (stmt, change[1])
             continue
-        if is_board(last):
+        target = node = None
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+            target, node = stmt.targets[0], stmt.value
+        elif isinstance(stmt, ast.AugAssign) and isinstance(stmt.target, ast.Name):
+            # `x += v` is `x = x + v`, for a number and for a board alike
+            target = stmt.target
+            read = ast.copy_location(ast.Name(target.id, ast.Load()), stmt)
+            node = ast.copy_location(ast.BinOp(read, stmt.op, stmt.value), stmt)
+        elif isinstance(stmt, ast.Expr):
+            node = stmt.value
+        if (bad := reaches(stmt, target)) is not None:
+            raise at(bad, "only append, insert, extend and += change a board here")
+        if node is None:
+            continue
+        built = is_board(node) or (isinstance(node, ast.BinOp) and listy(node))
+        try:
+            v = value(node, target.id if target else None)
+        except ValueError as e:
+            v = e
+        if target:
+            names[target.id] = v
+        last = (node, v)
+        if built:
             found = last
     if (found or last) is None:
         raise ValueError("no Pedalboard found")
-    return steps_of(found or last)
+    node, v = found or last
+    if isinstance(v, ValueError):
+        raise v
+    if not isinstance(v, (dict, list)):
+        raise at(node, f"expected a plugin, found {ast.unparse(node)}")
+    return steps(v)
 
 
 def last_line(text):

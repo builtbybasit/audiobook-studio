@@ -131,8 +131,13 @@ Without uv the server still starts: a thought line gets the old ffmpeg thought e
 own effects, which have no stand-in, are left off with one warning per run.
 
 **A chain is data, never code.** A chain can be pasted as Pedalboard Python;
-`POST /api/effects/parse` reads it with Python's `ast` and never executes it, and only the plugins and numeric arguments the
-editor knows are ever built, from a pasted chain or a saved one. `POST /api/effects/preview` plays
+`POST /api/effects/parse` reads it with Python's `ast` and never executes it. It follows values
+worked out from numbers (`sr = 44100`, `HighpassFilter(sr / 4)`, powers held to 16) and a board
+changed after it is built with `append`, `insert`, `extend` or `+=`; any other change to a board is
+refused rather than dropped. The plugins it builds are read from Pedalboard itself: every one that
+takes only numbers, so none that loads a file or outside code, and an enum or flag argument (a
+LadderFilter's `mode`) keeps its default. Only those plugins and their number arguments are ever
+built, from a pasted chain or a saved one. `POST /api/effects/preview` plays
 a clip already in the library through chains not yet saved and keeps nothing. Both answer 503 where
 uv is missing.
 

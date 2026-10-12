@@ -5,7 +5,8 @@
 //
 // Clips made before an effect was kept apart from the voice's own file cannot be re-applied — the
 // old effect is in the only file there is — so they are said on their own, and a book whose old
-// sound is all of that kind has no button at all.
+// sound is all of that kind has no button at all. Nor does a server that cannot run effects at all
+// (`ready`): a Re-apply there could only fail, so the bar says why instead.
 import { computed, ref } from "vue";
 
 import { plural } from "@/lib/contents";
@@ -26,6 +27,7 @@ const job = computed(() =>
 /** the old-sound lines a Re-apply can redo; `lines` counts the ones it cannot too */
 const redo = computed(() => (stale.value ? stale.value.lines - stale.value.unavailable : 0));
 const unavailable = computed(() => stale.value?.unavailable ?? 0);
+const cannotRun = computed(() => stale.value?.ready === false);
 
 const asking = ref(false);
 async function reapply() {
@@ -42,6 +44,13 @@ async function reapply() {
   >
     <span v-if="job?.status === 'queued'">Re-apply is waiting in the queue</span>
     <span v-else-if="job">Re-applying this book’s effects · {{ Math.round(job.progress) }}%</span>
+    <span v-else-if="redo && cannotRun" class="flex items-center gap-1">
+      Voice effects can’t run on this machine
+      <UiHint
+        label="why effects can’t run"
+        :text="`The server runs them with uv, and can’t find it. Install uv, restart the server, then Re-apply the ${plural(redo, 'line')} with the old sound.`"
+      />
+    </span>
     <span v-else-if="redo" class="flex items-center gap-2">
       {{ plural(redo, "line") }} in this book {{ redo === 1 ? "has" : "have" }} the old sound
       <button class="btn-primary btn-xs" :disabled="asking" @click="reapply">Re-apply</button>

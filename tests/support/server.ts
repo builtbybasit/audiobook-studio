@@ -95,7 +95,9 @@ export interface TestApiOptions {
   handlers?: JobHandlers;
   /** the speech gate; one of this API's own by default, shared by its runner and its routes */
   gate?: SpeechGate;
-  /** what a thought line is given as it lands; none by default, so no test runs ffmpeg unasked */
+  /** what runs voice effects; none by default, so no test runs Python unasked */
+  effects?: EffectRunner;
+  /** what a thought line is given where `effects` cannot run; none by default, nor ffmpeg */
   thoughtEffect?: ThoughtEffect;
   /** what voice effects run through; none by default, so a Re-apply that renders fails */
   effects?: EffectRunner;
@@ -177,12 +179,10 @@ export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): R
     db,
     {
       scripting: scriptingHandler(options.scripting ?? fakeScriptingProvider()),
-      narration: narrationHandler(
-        options.speech ?? fakeSpeechProvider(),
-        files,
-        options.gate,
-        options.thoughtEffect,
-      ),
+      narration: narrationHandler(options.speech ?? fakeSpeechProvider(), files, options.gate, {
+        effects: options.effects,
+        thoughtEffect: options.thoughtEffect,
+      }),
       export: exportHandler(testExports(options), files),
       check: checkHandler(options.transcription ?? noTranscription, files),
       effects: effectsHandler(options.effects, files),
@@ -218,6 +218,7 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     providers,
     voiceFiles: voiceFiles(voiceDir),
     gate,
+    effects: options.effects,
   });
 
   const request = async <T>(path: string, init?: RequestInit) => {

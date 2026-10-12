@@ -83,7 +83,8 @@ export interface Take {
   sampleRate?: number;
   /**
    * What the voice effects baked into the file do (`soundOf`): absent = the file is the voice's own.
-   * "ffmpeg" for a thought line given the old ffmpeg effect, which kept no raw file.
+   * "ffmpeg" for a thought line given the ffmpeg stand-in where Pedalboard could not run; one
+   * narrated before voice effects has no raw file to Re-apply from.
    */
   sound?: string;
   /** the voice's own file, kept beside `url` when that is one the effects made from it */
@@ -144,7 +145,8 @@ export interface SegmentAudio {
   sampleRate?: number;
   /**
    * What the voice effects baked into the file do (`soundOf`): absent = the file is the voice's own.
-   * "ffmpeg" for a thought line given the old ffmpeg effect, which kept no raw file.
+   * "ffmpeg" for a thought line given the ffmpeg stand-in where Pedalboard could not run; one
+   * narrated before voice effects has no raw file to Re-apply from.
    */
   sound?: string;
   /** the voice's own file, kept beside `url` when that is one the effects made from it */

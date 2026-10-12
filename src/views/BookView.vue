@@ -576,26 +576,6 @@ const next = computed(() =>
             }}
             Site text is never read.
           </p>
-          <div class="mt-3 flex items-center gap-1.5">
-            <UiSwitch
-              :model-value="book.thoughts !== 'none'"
-              label="Thought effect"
-              @update:model-value="
-                (on: boolean) => libraryStore.setBookThoughts(bookId, on ? null : 'none')
-              "
-            />
-            <UiHint
-              label="the thought effect"
-              text="A thinner, boxed-in sound with a small room around it that sets a character's thoughts apart from what is said aloud. It is put on each thought line as its clip arrives, so lines narrated before a change keep the sound they were made with — retake them to change it."
-            />
-          </div>
-          <p class="mt-1.5 text-[11px] leading-relaxed">
-            {{
-              book.thoughts === "none"
-                ? "Thought lines are left as the voice made them."
-                : "Thought lines get a soft, inner-voice sound as they narrate."
-            }}
-          </p>
         </div>
         <!-- hearing the narration back: after each chapter narrates, or now for what is narrated -->
         <div class="card p-4 text-xs text-zinc-500">

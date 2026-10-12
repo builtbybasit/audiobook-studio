@@ -19,6 +19,7 @@ import { computed, toValue, watch, type MaybeRefOrGetter } from "vue";
 import { defineQuery, useQuery } from "@pinia/colada";
 
 import type { Job } from "@/types";
+import { staleMoved } from "@/queries/effects";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { fetchBook } from "@/queries/library";
@@ -103,6 +104,10 @@ const useJobsQuery = defineQuery(() => {
         case "effects":
           void invalidate({ key: keys.scripts(j.bookId) }, "all");
       }
+      // a narration or a Re-apply that ended made clips with the sound their lines now have, or
+      // gave up leaving some old: the book's old-sound count is read again either way
+      if ((j.kind === "narration" || j.kind === "effects") && !live(j) && (!was || live(was)))
+        void staleMoved(j.bookId);
     }
     // a job that moved sent a request, finished or let go of what it held: the book's spending is
     // read again, the way its chapters are

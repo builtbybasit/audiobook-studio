@@ -580,7 +580,9 @@ const next = computed(() =>
             <UiSwitch
               :model-value="book.thoughts !== 'none'"
               label="Thought effect"
-              @update:model-value="(on: boolean) => libraryStore.setThoughtEffect(bookId, on)"
+              @update:model-value="
+                (on: boolean) => libraryStore.setBookThoughts(bookId, on ? null : 'none')
+              "
             />
             <UiHint
               label="the thought effect"

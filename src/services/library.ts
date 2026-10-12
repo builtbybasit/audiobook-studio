@@ -37,6 +37,7 @@ import type {
   SegmentFlag,
   SpeakerSamples,
   StoredSamples,
+  ThoughtChoice,
   VersionOrigin,
   VolumeStart,
 } from "@/types";
@@ -71,7 +72,7 @@ export interface BookSettings {
   /** check each chapter by ear once it is narrated (`Book.checkByEar`) */
   checkByEar?: boolean;
   /** the book's thought effect (`Book.thoughts`): an id or "none"; `null` = the library's */
-  thoughts?: "none" | null;
+  thoughts?: ThoughtChoice | null;
   /** the voice for speakers with none of their own (`Book.characterVoice`); `null` = the Narrator's */
   characterVoice?: CharacterVoice | null;
 }

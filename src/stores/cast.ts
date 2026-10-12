@@ -16,6 +16,7 @@ import type { Spoken } from "@/lib/speech";
 // was made here, would otherwise put the older speaker back — and with two writes out at once the
 // server could take them in either order and keep the older one too.
 import { fetchCast } from "@/queries/cast";
+import { staleMoved } from "@/queries/effects";
 import { speechReadiness } from "@/lib/endpoints";
 import { norm } from "@/lib/scriptReview";
 import { isSpoken } from "@/lib/siteText";
@@ -40,6 +41,7 @@ import type {
   Pacing,
   RoutingIssue,
   Segment,
+  ThoughtChoice,
   VoiceRef,
 } from "@/types";
 import { defineStore } from "pinia";
@@ -877,6 +879,53 @@ export const useCastStore = defineStore("cast", {
      *  read. */
     setVoice(bookId: string, name: string, voice: VoiceRef | null): Promise<void> {
       return this.updateCharacter(bookId, name, { voice });
+    },
+    /**
+     * Put a voice effect on all of a speaker's lines (an effect's id), or take theirs off (null).
+     * Their clips already made show in the old-sound count, which is read again once it is saved.
+     * True once the server has it.
+     */
+    setEffect(bookId: string, name: string, id: string | null): Promise<boolean> {
+      return this._setChoice(bookId, name, "effect", id);
+    },
+    /**
+     * The thought effect a speaker's thought lines get: an effect's id, "none", or null to follow
+     * the book's. True once the server has it.
+     */
+    setThoughts(bookId: string, name: string, choice: ThoughtChoice | null): Promise<boolean> {
+      return this._setChoice(bookId, name, "thoughts", choice);
+    },
+    async _setChoice(
+      bookId: string,
+      name: string,
+      field: "effect" | "thoughts",
+      choice: string | null,
+    ): Promise<boolean> {
+      const c = this.characters[bookId]?.find((x) => x.name === name);
+      if (!c) return false;
+      if (choice === null) delete c[field];
+      else c[field] = choice;
+      const ok = await this._push(bookId, name);
+      if (ok) void staleMoved(bookId);
+      return ok;
+    },
+    /**
+     * An effect removed takes every speaker's choice of it, in every cast held here, as the server
+     * has done in the same delete. Returns who had it, and as what.
+     */
+    _dropEffect(
+      id: string,
+    ): { bookId: string; name: string; effect: boolean; thoughts: boolean }[] {
+      const out = [];
+      for (const [bookId, cast] of Object.entries(this.characters))
+        for (const c of cast) {
+          const effect = c.effect === id;
+          const thoughts = c.thoughts === id;
+          if (effect) delete c.effect;
+          if (thoughts) delete c.thoughts;
+          if (effect || thoughts) out.push({ bookId, name: c.name, effect, thoughts });
+        }
+      return out;
     },
     /** Dismiss a merge suggestion: the name stays as its own speaker, and stops being new. */
     async keepCharacter(bookId: string, name: string): Promise<void> {

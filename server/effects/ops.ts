@@ -1,8 +1,10 @@
 // What the library's voice effects do, as operations: the same arrangement as `server/cast/ops.ts`,
 // a route turning a request into one of these and the rules living here.
-import type { Effect, EffectUses, Step, ThoughtChoice } from "@/types";
+import type { Effect, EffectUses, StaleSound, Step, ThoughtChoice } from "@/types";
+import type { EffectRunner } from "~/audio/effects";
 import type { Db, Tx } from "~/db/client";
 import * as effects from "~/db/effects";
+import { getBook } from "~/db/library";
 import { readThoughts, writeThoughts } from "~/db/settings";
 import { badRequest, notFound } from "~/lib/errors";
 import { slugify } from "~/lib/http";
@@ -37,6 +39,19 @@ export function updateEffect(db: Db, id: string, name: string, chain: Step[]): E
 
 export function deleteEffect(db: Db, id: string): void {
   if (!effects.deleteEffect(db, id)) throw notFound("No such effect");
+}
+
+/**
+ * How many of a book's clips have an old sound, how many of those cannot be redone, and whether
+ * `runner` can redo any here at all.
+ */
+export async function staleSound(
+  db: Db,
+  bookId: string,
+  runner?: EffectRunner,
+): Promise<StaleSound> {
+  if (!getBook(db, bookId)) throw notFound("No such book");
+  return { ...effects.staleSound(db, bookId), ready: (await runner?.available()) ?? false };
 }
 
 export const libraryThoughts = (db: Db): ThoughtChoice => readThoughts(db);

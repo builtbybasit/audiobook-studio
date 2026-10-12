@@ -75,26 +75,38 @@ const setClip = (
 describe("what has an old sound", () => {
   test("a clip whose line's effects changed, went, or cannot be redone", async () => {
     const { api, id } = await book();
-    expect(await stale(api, id)).toEqual({ lines: 0, unavailable: 0 });
+    expect(await stale(api, id)).toEqual({ lines: 0, unavailable: 0, ready: true });
 
     // Mara wears an effect her clips were made without
     const e = createEffect(api.db, "echo", "Echo", echo);
     wear(api, id, e.id);
     const [a, b] = maras(api, id);
-    expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 0 });
+    expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 0, ready: true });
 
     // one is processed as she now sounds; the other as she used to
     setClip(api, a.audio.url!, { sound: soundOf([e]), raw: "/api/audio/x/raw-a.wav" });
     setClip(api, b.audio.url!, { sound: "0ld50und", raw: "/api/audio/x/raw-b.wav" });
-    expect(await stale(api, id)).toEqual({ lines: 1, unavailable: 0 });
+    expect(await stale(api, id)).toEqual({ lines: 1, unavailable: 0, ready: true });
 
     // she wears nothing now: both go back to their raw files
     wear(api, id, null);
-    expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 0 });
+    expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 0, ready: true });
 
     // an ffmpeg thought clip from before raw files were kept cannot be undone
     setClip(api, b.audio.url!, { sound: "ffmpeg", raw: null });
-    expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 1 });
+    expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 1, ready: true });
+  });
+
+  test("says whether effects can run here to redo them", async () => {
+    const fake = fakeEffectRunner();
+    const { api, id } = await book(fake);
+    expect((await stale(api, id)).ready).toBe(true);
+    fake.ready = false;
+    expect((await stale(api, id)).ready).toBe(false);
+
+    const bare = testApi();
+    const { id: other } = await narratedBook(bare, { chapters: [["One", line("One")]] });
+    expect((await stale(bare, other)).ready).toBe(false);
   });
 
   test("an unknown book is a 404", async () => {
@@ -122,7 +134,7 @@ describe("re-applying", () => {
     expect(first.map((s) => s.audio.url)).not.toEqual(raws);
     // the voice's files stay, beside the new ones
     expect(onDisk(api, id)).toEqual([...before, ...first.map((s) => fileOf(s.audio.url))].sort());
-    expect(await stale(api, id)).toEqual({ lines: 0, unavailable: 0 });
+    expect(await stale(api, id)).toEqual({ lines: 0, unavailable: 0, ready: true });
 
     // the effect changes: made again from the raw files, the first renders gone
     wear(api, id, createEffect(api.db, "louder", "Louder", louder).id);

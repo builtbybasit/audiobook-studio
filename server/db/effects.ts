@@ -257,7 +257,7 @@ export function staleClips(db: Db | Tx, bookId: string): StaleClip[] {
 }
 
 /** How many of a book's clips have an old sound, and how many of those cannot be redone. */
-export function staleSound(db: Db | Tx, bookId: string): StaleSound {
+export function staleSound(db: Db | Tx, bookId: string): Omit<StaleSound, "ready"> {
   const stale = staleClips(db, bookId);
   return { lines: stale.length, unavailable: stale.filter(cannotRedo).length };
 }

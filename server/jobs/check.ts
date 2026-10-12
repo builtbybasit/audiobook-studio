@@ -37,7 +37,7 @@ import { AUDIO_MIME } from "@/lib/endpointShapes";
 import { alignHeard } from "@/lib/heard";
 import { isSpoken } from "@/lib/siteText";
 import { speak, type LexHit } from "@/lib/speech";
-import { formatOfFile, type AudioFiles } from "~/audio/files";
+import { fileName, formatOfFile, type AudioFiles } from "~/audio/files";
 import { readLexicon, readSpeakers } from "~/db/cast";
 import type { Db } from "~/db/client";
 import { readTranscriber } from "~/db/endpoints";
@@ -64,9 +64,6 @@ const NOTE_CHARS = 140;
 
 const NO_TRANSCRIBER = "No transcription endpoint is switched on. Add one on the Endpoints page.";
 
-/** A clip's file name, which is how its url ends (`audio/files.ts`). */
-const fileOf = (url: string): string => url.slice(url.lastIndexOf("/") + 1);
-
 /** A line whose clip is in the book, and the file that clip is. */
 interface Clip {
   s: Segment;
@@ -79,7 +76,7 @@ const clipsOf = (segs: readonly Segment[], book: Pick<Book, "readNotes"> | undef
     .filter(
       (s) => isSpoken(s, book) && s.audio.status === "done" && s.audio.url && s.audio.duration > 0,
     )
-    .map((s) => ({ s, file: fileOf(s.audio.url!) }));
+    .map((s) => ({ s, file: fileName(s.audio.url!) }));
 
 /** Those of `clips` not yet heard as their line now reads. */
 function unheard(db: Db, bookId: string, clips: readonly Clip[]): Clip[] {
@@ -160,7 +157,7 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
           // the line as it is now: one edited or rendered again while it was heard is not flagged
           // for a clip it no longer plays, and a person's flag is never touched
           const now = lineNow(tx, at.bookId, at.id, c.s.id);
-          if (!now || now.url == null || fileOf(now.url) !== c.file || now.text !== line.text)
+          if (!now || now.url == null || fileName(now.url) !== c.file || now.text !== line.text)
             return;
           if (now.flag && now.flag.kind !== "heard") return;
           if (line.mismatch) setFlag(tx, at.bookId, at.id, c.s.id, heardFlag(line.heard, line.at));
@@ -394,7 +391,7 @@ export function chapterHeard(db: Db, bookId: string, chapterId: number): Chapter
   if (scriptRevision(db, bookId, chapterId) == null) throw notFound("No such chapter");
   const clips = readScript(db, bookId, chapterId)
     .filter((s) => s.audio.url)
-    .map((s) => ({ s, file: fileOf(s.audio.url!) }));
+    .map((s) => ({ s, file: fileName(s.audio.url!) }));
   const found = readHeard(
     db,
     bookId,

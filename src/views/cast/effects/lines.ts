@@ -20,6 +20,11 @@ export interface TryLine {
   /** the voice's own clip — the file beside one the effects made, when one was kept */
   url: string;
   duration: number;
+  /**
+   * Made before effects were kept apart from the voice: the old effect is in the only file there
+   * is, so every effect tried plays on top of it.
+   */
+  baked: boolean;
 }
 
 /** Whose lines: one speaker's (all, or only their thoughts), or every thought line in the book. */
@@ -49,6 +54,7 @@ export function useTryLines(bookId: () => string, of: () => LinesOf | null) {
           text: s.text,
           url,
           duration: s.audio.duration,
+          baked: !!s.audio.sound && !s.audio.raw,
         });
       }
     }

@@ -186,7 +186,17 @@ function setSlot(s: EffectSlot) {
             {{ line?.text }}
           </button>
         </div>
-        <p v-else class="text-xs text-zinc-500">
+        <p
+          v-if="line?.baked"
+          class="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400"
+        >
+          This line still has its old effect baked in
+          <UiHint
+            label="a line with its old effect"
+            text="It was made before effects were kept apart from the voice, so each effect here plays on top of the old one. Re-narrate it to hear it clean."
+          />
+        </p>
+        <p v-if="!lines.length" class="text-xs text-zinc-500">
           No narrated {{ view === "effect" ? "lines" : "thought lines" }} to try effects on yet.
         </p>
         <div v-if="subject.kind === 'speaker'">

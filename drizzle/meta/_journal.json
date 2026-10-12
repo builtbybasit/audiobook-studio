@@ -218,6 +218,13 @@
       "when": 1791630712483,
       "tag": "0030_speech_server",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1791808015786,
+      "tag": "0031_voice_effects",
+      "breakpoints": true
     }
   ]
 }

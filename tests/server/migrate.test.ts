@@ -7,7 +7,8 @@
 // table yet; this writes the one the next schema change on `chapters` would, and runs it.
 //
 // And the migrations that rewrite rows rather than tables: a book's cover, once kept as a file
-// name, kept as the url it is served at; and a label, once naming its chapter by id, naming none.
+// name, kept as the url it is served at; a label, once naming its chapter by id, naming none; and a
+// book's switch for plain thoughts, kept as its choice of no thought effect.
 import { describe, expect, test } from "bun:test";
 import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -211,5 +212,36 @@ describe("labels without their chapter", () => {
       "Script chunk 1 · ch 7",
       "Check · A Chapter Since Removed",
     ]);
+  });
+});
+
+describe("voice effects", () => {
+  test("a book that narrated thoughts plain chooses none, and a thought clip says it has ffmpeg's", () => {
+    const { db, rest } = migratedUpTo("0031_voice_effects");
+    db.$client.exec(
+      "INSERT INTO books (id, title, author, cover_from, cover_to, added_at, plain_thoughts) VALUES " +
+        "('plain', 'Plain', 'A', '#000', '#111', 0, 1), ('on', 'On', 'A', '#000', '#111', 0, NULL);" +
+        "INSERT INTO volumes (book_id, id, name, file, from_index, to_index, position) VALUES ('on', 1, 'V', 'v.epub', 0, 0, 0);" +
+        "INSERT INTO chapters (book_id, id, uid, volume_id, volume_index, title, words) VALUES ('on', 1, 'u1', 1, 0, 'One', 10);" +
+        "INSERT INTO segments (book_id, chapter_id, id, position, type, speaker, text, direction) VALUES " +
+        "('on', 1, 1, 0, 'thought', 'Mara', 'Hm.', ''), ('on', 1, 2, 1, 'dialogue', 'Mara', 'Hi.', '');" +
+        "INSERT INTO clips (book_id, chapter_id, segment_id, role, status, url, effect) VALUES " +
+        "('on', 1, 1, 'current', 'done', '/a.wav', 'thought'), ('on', 1, 2, 'current', 'done', '/b.wav', NULL);",
+    );
+
+    rest();
+    expect(db.$client.query("SELECT id, thoughts FROM books ORDER BY id").all()).toEqual([
+      { id: "on", thoughts: null },
+      { id: "plain", thoughts: "none" },
+    ]);
+    expect(
+      db.$client.query("SELECT segment_id, url, sound, raw FROM clips ORDER BY segment_id").all(),
+    ).toEqual([
+      { segment_id: 1, url: "/a.wav", sound: "ffmpeg", raw: null },
+      { segment_id: 2, url: "/b.wav", sound: null, raw: null },
+    ]);
+    expect(db.$client.query("SELECT value FROM settings WHERE key = 'thoughts'").get()).toEqual({
+      value: '"inner-voice"',
+    });
   });
 });

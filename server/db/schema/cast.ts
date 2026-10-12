@@ -37,6 +37,10 @@ export const characters = sqliteTable(
     isNew: integer("is_new", { mode: "boolean" }),
     /** the user dismissed the merge suggestion for this name */
     keep: integer("keep", { mode: "boolean" }),
+    /** the effect on every line this speaker has, by id (`Character.effect`); null = none */
+    effect: text("effect"),
+    /** their thought effect (`Character.thoughts`): an effect's id or "none"; null = the book's */
+    thoughts: text("thoughts"),
     /** the order the cast list reads in */
     position: integer("position").notNull().default(0),
   },

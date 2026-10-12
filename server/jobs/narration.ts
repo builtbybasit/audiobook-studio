@@ -620,7 +620,7 @@ function lineRun(o: {
         model: rendered.model,
         ...(rendered.voice != null ? { voice: rendered.voice } : {}),
         sampleRate,
-        ...(kept ? { effect: "thought" as const } : {}),
+        ...(kept ? { sound: "ffmpeg" } : {}),
       };
     } catch (e) {
       if (stop.aborted) throw e;
@@ -776,7 +776,7 @@ export function narrationHandler(
       // moved stale.
       const deliveryOf = bookDelivery(db, job.bookId);
       // read once, like the cast: a switch flipped mid-run applies from the next run
-      const plainThoughts = !!library.getBook(db, job.bookId)?.plainThoughts;
+      const plainThoughts = library.getBook(db, job.bookId)?.thoughts === "none";
 
       const { targets, lines } = planRun(db, chapter.uid, scope);
       if (!targets.length) {

@@ -10,8 +10,9 @@ import { sqliteTable, text } from "drizzle-orm/sqlite-core";
  *
  *   script   `ScriptSettings` — the chosen profile, watermark stripping, keep-my-edits
  *   prompt   `PromptTemplate` — the library's default scripting prompt; absent = the built-in one
+ *   thoughts `ThoughtChoice` — the library's thought effect: an effect's id or "none"
  */
-export type SettingKey = "script" | "prompt";
+export type SettingKey = "script" | "prompt" | "thoughts";
 
 export const settings = sqliteTable("settings", {
   key: text("key").$type<SettingKey>().primaryKey(),

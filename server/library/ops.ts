@@ -15,6 +15,7 @@ import type { Db } from "~/db/client";
 import * as queue from "~/db/jobs";
 import * as library from "~/db/library";
 import { readScript } from "~/db/script";
+import { requireEffect } from "~/effects/ops";
 import { env } from "~/env";
 import { checkArchive } from "~/epub/archive";
 import { diagnose } from "~/epub/diagnose";
@@ -439,6 +440,7 @@ export async function removeVolume(
  */
 export function updateBook(db: Db, bookId: string, settings: library.BookSettings): ImportedBook {
   const before = requireBook(db, bookId);
+  requireEffect(db, settings.thoughts, "The book's thought effect");
   const notesMoved =
     settings.readNotes !== undefined &&
     (settings.readNotes === true) !== (before.readNotes === true);

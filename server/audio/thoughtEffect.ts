@@ -4,7 +4,7 @@
 //
 // It is applied once, when the clip arrives, and kept in the file (`jobs/narration.ts`), so the
 // player, the Listen page, a check by ear and a build all hear the same thing and nothing has to
-// remember to apply it later. The clip records that it carries it (`SegmentAudio.effect`).
+// remember to apply it later. The clip records that it carries it (`SegmentAudio.sound`).
 //
 // It is a port, like the encoder: ffmpeg's in a running server, and nothing at all in a test's
 // library that is handed none, which narrates thoughts as the voice made them.

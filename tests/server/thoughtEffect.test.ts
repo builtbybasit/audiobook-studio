@@ -51,7 +51,7 @@ async function bookWithAThought(api: TestApi, plain = false): Promise<string> {
   });
   if (plain)
     await api.request(`/api/books/${id}`, {
-      ...jsonBody({ plainThoughts: true }),
+      ...jsonBody({ thoughts: "none" }),
       method: "PATCH",
     });
   return id;
@@ -68,25 +68,25 @@ async function narrate(api: TestApi, id: string): Promise<{ job: Job; lines: Seg
   return { job, lines };
 }
 
-describe("the book's switch", () => {
-  test("is on until switched off, and off is the only thing kept", async () => {
+describe("the book's choice", () => {
+  test("follows the library until it names one, and null follows it again", async () => {
     const api = testApi();
     const id = await bookWithAThought(api);
-    const patch = async (plainThoughts: boolean | null) =>
-      (
-        await api.request<{ book: Book }>(`/api/books/${id}`, {
-          ...jsonBody({ plainThoughts }),
-          method: "PATCH",
-        })
-      ).body.book;
+    const patch = async (thoughts: string | null) =>
+      await api.request<{ book: Book }>(`/api/books/${id}`, {
+        ...jsonBody({ thoughts }),
+        method: "PATCH",
+      });
     const read = async () => (await api.request<{ book: Book }>(`/api/books/${id}`)).body.book;
 
-    expect(await read()).not.toHaveProperty("plainThoughts");
-    expect((await patch(true)).plainThoughts).toBe(true);
-    expect((await read()).plainThoughts).toBe(true);
-    expect(await patch(false)).not.toHaveProperty("plainThoughts");
-    await patch(true);
-    expect(await patch(null)).not.toHaveProperty("plainThoughts");
+    expect(await read()).not.toHaveProperty("thoughts");
+    expect((await patch("none")).body.book.thoughts).toBe("none");
+    expect((await read()).thoughts).toBe("none");
+    expect((await patch("inner-voice")).body.book.thoughts).toBe("inner-voice");
+    expect((await patch(null)).body.book).not.toHaveProperty("thoughts");
+    // an effect the library does not have is refused, and nothing changes
+    expect((await patch("no-such-effect")).status).toBe(400);
+    expect(await read()).not.toHaveProperty("thoughts");
   });
 });
 
@@ -99,11 +99,11 @@ describe("the thought effect in narration", () => {
 
     expect(job.status).toBe("done");
     const thought = lines.find((s) => s.type === "thought")!;
-    expect(thought.audio).toMatchObject({ status: "done", effect: "thought" });
+    expect(thought.audio).toMatchObject({ status: "done", sound: "ffmpeg" });
     expect(thought.audio.url).toEndWith(".wav");
     expect(calls).toHaveLength(1);
     for (const s of lines.filter((s) => s.type !== "thought" && s.audio.status === "done"))
-      expect(s.audio.effect).toBeUndefined();
+      expect(s.audio.sound).toBeUndefined();
   });
 
   test("a book that narrates its thoughts plain never calls it", async () => {
@@ -115,7 +115,7 @@ describe("the thought effect in narration", () => {
     expect(calls).toHaveLength(0);
     const thought = lines.find((s) => s.type === "thought")!;
     expect(thought.audio.status).toBe("done");
-    expect(thought.audio.effect).toBeUndefined();
+    expect(thought.audio.sound).toBeUndefined();
   });
 
   test("one that fails keeps the clip the voice made, and the log says which line", async () => {
@@ -127,7 +127,7 @@ describe("the thought effect in narration", () => {
     expect(job.status).toBe("done");
     const thought = lines.find((s) => s.type === "thought")!;
     expect(thought.audio.status).toBe("done");
-    expect(thought.audio.effect).toBeUndefined();
+    expect(thought.audio.sound).toBeUndefined();
     const warned = job.activity?.find((e) => e.message.includes("thought effect was not applied"));
     expect(warned?.message).toContain(`Line ${thought.id}`);
     expect(warned?.message).toContain("no ffmpeg here");

@@ -55,6 +55,11 @@ export interface AudioFiles {
   readonly base: string;
   /** Keep one render, under its format's extension, and say where a browser can fetch it. */
   write(bookId: string, bytes: Uint8Array, format: AudioFormat): Promise<{ url: string }>;
+  /**
+   * A name no render has yet, for something that writes the file itself (the effect runner's
+   * batch): where to write it, and the url it will then be fetched at.
+   */
+  fresh(bookId: string, format: AudioFormat): Promise<{ path: string; url: string }>;
   /** The file a request names, or null when the request names something that cannot be a file. */
   path(bookId: string, file: string): string | null;
   /**
@@ -90,10 +95,14 @@ export function audioFiles(dir: string, base = "/api", make?: MakeClip): AudioFi
     dir,
     base,
     async write(bookId, bytes, format) {
+      const { path, url } = await this.fresh(bookId, format);
+      await writeFile(path, bytes);
+      return { url };
+    },
+    async fresh(bookId, format) {
       const file = `${crypto.randomUUID()}.${AUDIO_EXT[format]}`;
       await mkdir(join(dir, bookId), { recursive: true });
-      await writeFile(join(dir, bookId, file), bytes);
-      return { url: urlOf(bookId, file) };
+      return { path: join(dir, bookId, file), url: urlOf(bookId, file) };
     },
     path(bookId, file) {
       if (!BOOK_ID.test(bookId) || !FILE.test(file)) return null;

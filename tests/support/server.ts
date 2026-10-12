@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { EffectRunner } from "~/audio/effects";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
 import { createApp } from "~/app";
 import { audioFiles, type AudioFiles } from "~/audio/files";
@@ -12,6 +13,7 @@ import { connect, openDb, type Db } from "~/db/client";
 import { migrate } from "~/db/migrate";
 import { audiobookFiles } from "~/exports/files";
 import { checkHandler } from "~/jobs/check";
+import { effectsHandler } from "~/jobs/effects";
 import { exportHandler } from "~/jobs/export";
 import { narrationHandler } from "~/jobs/narration";
 import { createRunner, type JobHandlers, type Runner } from "~/jobs/runner";
@@ -95,6 +97,8 @@ export interface TestApiOptions {
   gate?: SpeechGate;
   /** what a thought line is given as it lands; none by default, so no test runs ffmpeg unasked */
   thoughtEffect?: ThoughtEffect;
+  /** what voice effects run through; none by default, so a Re-apply that renders fails */
+  effects?: EffectRunner;
 }
 
 /** A directory of its own for one test's clips, so no two suites can read each other's files. */
@@ -181,6 +185,7 @@ export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): R
       ),
       export: exportHandler(testExports(options), files),
       check: checkHandler(options.transcription ?? noTranscription, files),
+      effects: effectsHandler(options.effects, files),
       ...options.handlers,
     },
     { log, pollMs: 60_000 },

@@ -597,6 +597,13 @@ function renumber(tx: Tx, bookId: string): void {
 }
 
 /** What taking a volume off left behind on disk, for the caller to remove once the rows are gone. */
+/**
+ * The file names a clip row holds on disk: the file it plays and, when effects made that one, the
+ * voice's own file beside it (`raw`). Whatever removes a clip's row removes both.
+ */
+export const clipFiles = (c: { url: string | null; raw: string | null }): string[] =>
+  [c.url, c.raw].flatMap((u) => (u ? [u.split("/").at(-1)!] : []));
+
 export interface DeletedVolume {
   /** how many chapters went */
   chapters: number;
@@ -627,8 +634,8 @@ export function deleteVolume(db: Db, bookId: string, volumeId: number): DeletedV
     const touched = new Set<number>();
     for (const part of chunked(mine)) {
       const within = and(eq(clips.bookId, bookId), inArray(clips.chapterId, part));
-      for (const c of tx.select({ url: clips.url }).from(clips).where(within).all())
-        if (c.url) out.clips.push(c.url.split("/").at(-1)!);
+      for (const c of tx.select({ url: clips.url, raw: clips.raw }).from(clips).where(within).all())
+        out.clips.push(...clipFiles(c));
       for (const e of tx
         .select({ id: exportChapters.exportId })
         .from(exportChapters)

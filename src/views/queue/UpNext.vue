@@ -10,6 +10,7 @@ import {
   Download as ExportIcon,
   PencilLine as ScriptingIcon,
   Ear as CheckIcon,
+  AudioWaveform as EffectsIcon,
   X as CancelIcon,
 } from "@lucide/vue";
 
@@ -30,6 +31,7 @@ const icon: Record<JobKind, Component> = {
   narration: NarrationIcon,
   export: ExportIcon,
   check: CheckIcon,
+  effects: EffectsIcon,
 };
 // Where a job's chapter sits, named by book and volume, and by its reading number only: the titles
 // of chapters still to come would give the plot away.

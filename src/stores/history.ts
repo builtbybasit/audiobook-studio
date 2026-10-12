@@ -40,13 +40,14 @@ import { useUiStore } from "@/stores/ui";
 
 /**
  * The runs that write into a chapter's script: a scripting run writes its lines, a narration its
- * clips, and a check by ear its flags. An export only reads the clips.
+ * clips, a check by ear its flags, and a Re-apply its clips' files. An export only reads the clips.
  */
 const LANDS_ON_SCRIPT: Record<JobKind, boolean> = {
   scripting: true,
   narration: true,
   check: true,
   export: false,
+  effects: true,
 };
 
 const nameOf = (bookId: string, chId: number) =>

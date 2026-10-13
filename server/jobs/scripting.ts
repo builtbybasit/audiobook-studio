@@ -27,6 +27,7 @@
 // description, and a recap — is kept with the script, and the line effects it named on a line go on
 // that line by id.
 import type { Book, Job, Profile, PromptTemplate, ScriptingQueued, Segment } from "@/types";
+import { castNameFor } from "@/lib/cast";
 import { expressionNames, scriptedAnnotation } from "@/lib/expressions";
 import {
   BUILT_IN_PROMPT,
@@ -337,6 +338,20 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       if (signal.aborted) throw signal.reason;
       if (refused != null) throw new Error(refused);
 
+      // A speaker the model named by another of their names is the cast member it meant
+      // (`castNameFor`), so "Hero" is read in Young Soldier's voice rather than added as a second
+      // character. But not a name the answer calls a disguise, though the cast once filed it as its
+      // wearer's other name: that one is a speaker of its own, for `learnCast` to make a persona.
+      const notes = answers.flatMap((a) => a.cast ?? []);
+      const disguises = new Set(
+        notes.filter((n) => n.personaOf || n.masked).map((n) => n.name.toLowerCase()),
+      );
+      const known = speakers.map((c) => ({
+        name: c.name,
+        aliases: c.aliases?.filter((a) => !disguises.has(a.toLowerCase())),
+      }));
+      const meant = (name: string) => castNameFor(name, known);
+
       // Stitched in reading order and numbered afresh: a line belongs to the chunk it came back
       // in, and the ids are the chapter's, 1 to n, as are the ids of the tags the model wrote.
       let annotation = 0;
@@ -347,7 +362,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           return {
             id: i + 1,
             type: l.type,
-            speaker: l.speaker,
+            speaker: meant(l.speaker),
             text: l.text,
             direction: l.direction ?? "",
             ...(l.tags?.length
@@ -400,11 +415,16 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             at.bookId,
             segs.map((s) => s.speaker),
           );
-          // after the new speakers are in, so what the model said of them has somewhere to go
+          // after the new speakers are in, so what the model said of them has somewhere to go —
+          // and a note on "Hero" is a note on the member the model meant, as Hero's lines are
           const learnt = learnCast(
             tx,
             at.bookId,
-            answers.flatMap((a) => a.cast ?? []),
+            notes.map((n) => ({
+              ...n,
+              name: meant(n.name),
+              ...(n.personaOf ? { personaOf: meant(n.personaOf) } : {}),
+            })),
             new Set(added),
           );
           // a recap belongs to the script it came with: one written without leaves none

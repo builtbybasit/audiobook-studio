@@ -24,7 +24,7 @@ import { defineStore } from "pinia";
 import { computed, type ComputedRef, type MaybeRefOrGetter, toValue } from "vue";
 import type { RouteLocationRaw } from "vue-router";
 import { flagText } from "@/lib/scriptReview";
-import type { Job } from "@/types";
+import type { Job, Segment } from "@/types";
 import { plural } from "@/lib/contents";
 import { isSpoken, UNREAD_SHARE_WARNING, unreadShare } from "@/lib/siteText";
 
@@ -175,27 +175,69 @@ const excerpt = (t: string, n = 64): string =>
  * it is never stale: a read after any change it depends on works it out again.
  */
 const useInboxes = defineStore("reviewInbox", () => {
+  // One scan per chapter, so a change to one chapter's script — or a batch of scripts landing on a
+  // long book — scans those chapters again and not every line of the book. Not returned, so Pinia
+  // does not wrap each of a long book's thousands of calls as an action.
+  // ponytail: one entry per chapter ever scanned, never evicted; key by book if memory matters
+  const chapters = new Map<string, ComputedRef<ChapterScan>>();
+  function scanOf(bookId: string, chId: number): ChapterScan {
+    const k = `${bookId}:${chId}`;
+    let scanned = chapters.get(k);
+    if (!scanned) chapters.set(k, (scanned = computed(() => scan(bookId, chId))));
+    return scanned.value;
+  }
   const books = new Map<string, ComputedRef<DecisionGroup[]>>();
   function of(bookId: string): DecisionGroup[] {
     let inbox = books.get(bookId);
-    if (!inbox) books.set(bookId, (inbox = computed(() => gather(bookId))));
+    if (!inbox) books.set(bookId, (inbox = computed(() => gather(bookId, scanOf))));
     return inbox.value;
   }
   return { of };
 });
 
+/** What one chapter's script has waiting, as the lines that are waiting. */
+interface ChapterScan {
+  /** the share of the chapter's words marked as not read, counted as the scripting job counts it */
+  unread: ReturnType<typeof unreadShare>;
+  siteChecks: Segment[];
+  fallbacks: Segment[];
+  flags: Segment[];
+  candidates: Segment[];
+  /** whether any line has an expression, which only then can be out of place */
+  expressions: boolean;
+}
+
+function scan(bookId: string, chId: number): ChapterScan {
+  const segs = useScriptsStore().segmentsOf(bookId, chId);
+  const book = useLibraryStore().bookById(bookId);
+  return {
+    // counting a chapter's words is the costly part, so only where something is unread
+    unread: segs.some((s) => !isSpoken(s, book))
+      ? unreadShare(segs, book)
+      : { words: 0, unread: 0, lines: 0, share: 0 },
+    siteChecks: segs.filter((s) => s.siteCheck),
+    fallbacks: segs.filter((s) => s.fallback),
+    flags: segs.filter((s) => s.flag),
+    candidates: segs.filter((s) => s.candidate),
+    expressions: segs.some((s) => s.expressions?.length),
+  };
+}
+
 /** Every decision on this book, grouped, empty groups dropped. */
 export const reviewInbox = (bookId: string): DecisionGroup[] => useInboxes().of(bookId);
 
-function gather(bookId: string): DecisionGroup[] {
+function gather(
+  bookId: string,
+  scanOf: (bookId: string, chId: number) => ChapterScan,
+): DecisionGroup[] {
   const castStore = useCastStore();
   const exportsStore = useExportsStore();
   const jobsStore = useJobsStore();
   const libraryStore = useLibraryStore();
   const narrationStore = useNarrationStore();
-  const scriptsStore = useScriptsStore();
 
   const chapters = libraryStore.chaptersOf(bookId);
+  const scans = chapters.map((c) => scanOf(bookId, c.id));
   // `where` is asked once per row, and a long book has hundreds of rows and chapters
   const byId = new Map(chapters.map((c) => [c.id, c]));
   // by its reading number, which the library works out once per book rather than once per row
@@ -305,19 +347,10 @@ function gather(bookId: string): DecisionGroup[] {
   // ---- site text. Marking too much is the dangerous direction — a line of story marked as site
   // text is simply not in the audiobook, and nothing else says so — so a chapter where the unread
   // marks are an unusual share of the words is listed before the detector's line-by-line doubts.
-  const book = libraryStore.bookById(bookId);
-  for (const c of chapters) {
-    const segs = scriptsStore.segmentsOf(bookId, c.id);
-    // the figure the scripting job warns at, counted the same way (`unreadShare`) — and only where
-    // something is unread, since counting a chapter's words is the costly part
-    const {
-      words: all,
-      unread,
-      lines,
-      share,
-    } = segs.some((s) => !isSpoken(s, book))
-      ? unreadShare(segs, book)
-      : { words: 0, unread: 0, lines: 0, share: 0 };
+  chapters.forEach((c, i) => {
+    const scanned = scans[i];
+    // the figure the scripting job warns at, counted the same way (`unreadShare`)
+    const { words: all, unread, lines, share } = scanned.unread;
     if (share > UNREAD_SHARE_WARNING)
       items.sitetext.push({
         id: `sitetext:share:${c.id}`,
@@ -329,7 +362,7 @@ function gather(bookId: string): DecisionGroup[] {
         chapterId: c.id,
         to: { path: `/book/${bookId}/scripting`, query: { ch: String(c.id), lines: "site" } },
       });
-    for (const s of segs)
+    for (const s of scanned.siteChecks)
       if (s.siteCheck)
         items.sitetext.push({
           id: `sitetext:${c.id}:${s.id}`,
@@ -345,11 +378,12 @@ function gather(bookId: string): DecisionGroup[] {
           to: inScripting(c.id, s.id),
           siteCheck: { chapterId: c.id, segmentId: s.id, suggest: s.siteCheck.suggest },
         });
-  }
+  });
 
-  // ---- one pass over the script: unverified chunks, drifted expressions, flags, second takes
-  for (const c of chapters)
-    for (const s of scriptsStore.segmentsOf(bookId, c.id)) {
+  // ---- unverified chunks, flags and second takes, from each chapter's scan
+  chapters.forEach((c, i) => {
+    const scanned = scans[i];
+    for (const s of scanned.fallbacks)
       if (s.fallback)
         items.unverified.push({
           id: `unverified:${c.id}:${s.id}`,
@@ -363,6 +397,7 @@ function gather(bookId: string): DecisionGroup[] {
           chapterId: c.id,
           to: inScripting(c.id, s.id),
         });
+    for (const s of scanned.flags)
       if (s.flag)
         items.flagged.push({
           id: `flagged:${c.id}:${s.id}`,
@@ -374,6 +409,7 @@ function gather(bookId: string): DecisionGroup[] {
           chapterId: c.id,
           to: inNarration(c.id, s.id, "flagged"),
         });
+    for (const s of scanned.candidates)
       if (s.candidate) {
         const rendering = ["queued", "generating"].includes(s.candidate.status);
         items.retake.push({
@@ -389,14 +425,12 @@ function gather(bookId: string): DecisionGroup[] {
           to: inNarration(c.id, s.id, "review"),
         });
       }
-    }
+  });
   // only chapters with an expression in them can have one out of place: working out a line's
   // render reads its whole text through the dictionary
   for (const issue of narrationStore.expressionIssues(
     bookId,
-    chapters
-      .filter((c) => scriptsStore.segmentsOf(bookId, c.id).some((s) => s.expressions?.length))
-      .map((c) => c.id),
+    chapters.filter((_, i) => scans[i].expressions).map((c) => c.id),
   ))
     items.expression.push({
       id: `expression:${issue.chId}:${issue.segId}:${issue.annotationId}`,

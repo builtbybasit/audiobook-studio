@@ -106,13 +106,14 @@ export function personaOwner<C>(
 }
 
 /**
- * Whether a speaker needs no voice assigned: they have one, or they are a linked persona, read in
- * their character's. What the "voiced" counts and "unassigned" filters count.
+ * Whether a speaker has a voice of their own picked — for a linked persona, whether their
+ * character has, since that is the voice they are read in. What the "voiced" counts and
+ * "unassigned" filters count.
  */
 export const voiced = (
   c: Pick<Character, "name" | "voice" | "personaOf">,
-  cast: Pick<ReadonlyMap<string, unknown>, "get">,
-): boolean => !!c.voice || !!personaOwner(c, cast);
+  cast: Pick<ReadonlyMap<string, Pick<Character, "voice">>, "get">,
+): boolean => !!(personaOwner(c, cast) ?? c).voice;
 
 /**
  * Why `name` cannot be made a persona of `personaOf` in this cast, or null when they can. A persona

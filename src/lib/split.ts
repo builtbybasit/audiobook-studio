@@ -1,6 +1,7 @@
 // Splitting a segment that is longer than an endpoint's per-request limit. The endpoint chooses
 // where cuts may fall; when the preferred boundary doesn't exist inside the window we fall back
-// down the chain (sentence → clause → word → hard cut) and mark that part so the UI can say so.
+// down the chain (paragraph → sentence → clause → word → hard cut) and mark that part so the UI can
+// say so. A paragraph end is for scripting a chapter; a line to speak has none inside it.
 import type { Cut, Endpoint, SplitMode } from "@/types";
 
 export interface SplitModeOption {
@@ -10,12 +11,13 @@ export interface SplitModeOption {
 }
 
 export const SPLIT_MODES: SplitModeOption[] = [
+  { value: "paragraph", label: "Paragraph end", hint: "blank line" },
   { value: "sentence", label: "Sentence end", hint: ". ! ? …" },
   { value: "clause", label: "Clause", hint: ", ; : —" },
   { value: "word", label: "Word", hint: "last space" },
   { value: "char", label: "Hard cut", hint: "exactly at the limit" },
 ];
-const CHAIN: SplitMode[] = ["sentence", "clause", "word", "char"];
+const CHAIN: SplitMode[] = ["paragraph", "sentence", "clause", "word", "char"];
 
 export interface SplitPart extends Cut {
   text: string;
@@ -33,13 +35,15 @@ export const joinedParts = (cuts: readonly SplitPart[] | null): boolean =>
 function lastBoundary(text: string, max: number, mode: SplitMode): number {
   const win = text.slice(0, max + 1);
   const re =
-    mode === "sentence"
-      ? /[.!?…]+["'’”)\]]*\s+/g
-      : mode === "clause"
-        ? /(?:[.!?…]+["'’”)\]]*|[,;:—–])\s+/g
-        : mode === "word"
-          ? /\s+/g
-          : null;
+    mode === "paragraph"
+      ? /\n\s*\n\s*/g
+      : mode === "sentence"
+        ? /[.!?…]+["'’”)\]]*\s+/g
+        : mode === "clause"
+          ? /(?:[.!?…]+["'’”)\]]*|[,;:—–])\s+/g
+          : mode === "word"
+            ? /\s+/g
+            : null;
   if (!re) return max;
   let best = -1;
   let m: RegExpExecArray | null;

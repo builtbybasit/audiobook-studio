@@ -7,8 +7,9 @@
 // table yet; this writes the one the next schema change on `chapters` would, and runs it.
 //
 // And the migrations that rewrite rows rather than tables: a book's cover, once kept as a file
-// name, kept as the url it is served at; a label, once naming its chapter by id, naming none; and a
-// book's switch for plain thoughts, kept as its choice of no thought effect.
+// name, kept as the url it is served at; a label, once naming its chapter by id, naming none; a
+// book's switch for plain thoughts, kept as its choice of no thought effect; and a scripting
+// endpoint on the old sentence-end default, cut at a paragraph end.
 import { describe, expect, test } from "bun:test";
 import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -243,5 +244,24 @@ describe("voice effects", () => {
     expect(db.$client.query("SELECT value FROM settings WHERE key = 'thoughts'").get()).toEqual({
       value: '"inner-voice"',
     });
+  });
+});
+
+describe("scripting cut at a paragraph end", () => {
+  test("moves a scripting endpoint off the old default, and leaves a chosen cut and speech alone", () => {
+    const { db, rest } = migratedUpTo("0035_scripting_cut_at_paragraph");
+    db.$client.exec(
+      "INSERT INTO endpoints (id, kind, name, base_url, model, split_at) VALUES " +
+        "('old', 'scripting', 'Old', 'u', 'm', 'sentence'), " +
+        "('chosen', 'scripting', 'Chosen', 'u', 'm', 'clause'), " +
+        "('voice', 'speech', 'Voice', 'u', 'm', 'sentence')",
+    );
+
+    rest();
+    expect(db.$client.query("SELECT id, split_at FROM endpoints ORDER BY id").all()).toEqual([
+      { id: "chosen", split_at: "clause" },
+      { id: "old", split_at: "paragraph" },
+      { id: "voice", split_at: "sentence" },
+    ]);
   });
 });

@@ -905,7 +905,9 @@ A job is a row in `jobs`, laid out to hold the frontend's `Job`. Each rule below
 A chapter longer than its scripting profile's `maxChars` goes to the provider as several requests,
 cut exactly where the Endpoints page's chunk preview cuts it ([chunks.ts](../server/script/chunks.ts)):
 `scriptParts` in [src/lib/scripting.ts](../src/lib/scripting.ts), at the profile's `splitAt` and falling down to a
-clause, a word, a hard cut, with the source's whitespace kept so the pieces rejoin to the chapter.
+sentence end, a clause, a word, a hard cut, with the source's whitespace kept so the pieces rejoin to
+the chapter. A new profile cuts at a paragraph end: a request that opened mid-paragraph — inside a
+`[Silver Bell: … ]` item — had the model script the paragraph's start, sent as context, as well.
 The profile is the one the page names in the request's body, read from the saved endpoints when the
 run is **queued** and copied onto each job as `scriptRun.profile`, so an edit to it afterwards does
 not re-cut a run already waiting. A profile the server does not have is refused before anything is

@@ -182,7 +182,11 @@ file, `"ffmpeg"` for a clip the old effect made) with `clips.raw` (the voice's o
 processed one, removed with it by whatever removes the clip). A book with plain thoughts chooses
 `"none"`. None of those names is a foreign key, since each also holds `"none"`, so removing an
 effect resets every choice of it in the same transaction
-([server/db/effects.ts](../server/db/effects.ts)).
+([server/db/effects.ts](../server/db/effects.ts)). `0033_personas_line_effects` added
+`effects.use_when` (the sentence that offers an effect to the scripting model; null = not offered),
+`characters.persona_of` (the name of the character a persona is a disguise of) and
+`segments.effects` (a line's own effects, a JSON array of ids; null = none, and an effect removed is
+taken out of every array in the same transaction).
 
 ### Absent is not null
 
@@ -725,7 +729,7 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `GET`    | `/api/effects`                                    | The library's voice effects                                                                                  |
 | `POST`   | `/api/effects`                                    | A new effect (201): at the end, or right after `after`; an `after` there is not is a 400                     |
 | `GET`    | `/api/effects/:id/uses`                           | Everywhere it is chosen: the library, books' own thought effects, speakers (`EffectUses`)                    |
-| `PUT`    | `/api/effects/:id`                                | Rename an effect or replace its chain                                                                        |
+| `PUT`    | `/api/effects/:id`                                | Replace an effect's name, chain and `useWhen` (left out = cleared)                                           |
 | `DELETE` | `/api/effects/:id`                                | Remove an effect, and every choice of it                                                                     |
 | `POST`   | `/api/effects/preview`                            | A clip played through unsaved chains, as a WAV; nothing kept; 503 without uv                                 |
 | `POST`   | `/api/effects/parse`                              | Pasted Pedalboard Python as a chain, read with `ast`, never run; 503 without uv                              |
@@ -1026,8 +1030,10 @@ book row's `prompt_*` columns, set by `PATCH /api/books/:id`. Saves are held to 
 shows (`profilePromptProblems`, `bookPromptProblems`) and refused with a 400 naming the problem.
 `enqueueScripting` resolves the layers once and keeps the template on `scriptRun.prompt`, so an edit
 made after queueing reaches only later runs; at dispatch each request's tags are filled in and the
-locked output format is added after the system prompt. The history version records the prompt's
-origin and fingerprint.
+locked output format is added after the system prompt, offering the library's effects that have a
+`useWhen` as line effects (`lineEffectsOf`); the effect names a line comes back with are matched to
+those effects case-insensitively and kept on the segment as ids (`Segment.effects`), an unknown one
+dropped. The history version records the prompt's origin and fingerprint.
 
 **A prompt trial** is `POST /api/books/:id/script-trial` ([server/script/trial.ts](../server/script/trial.ts)):
 one chunk sent with draft layers over the saved ones and `lenient` set, so lines that fail
@@ -1534,8 +1540,8 @@ fallback thought effect and the 16 kHz a transcriber is sent all run it — so i
 boot: a server with no runnable `FFMPEG_BIN` refuses to start, naming the binary, rather than
 queueing work that was always going to fail. uv, which runs Pedalboard for the
 [voice effects](audio.md#voice-effects), is the other, and is not required: it is asked at boot in
-the background, and without it thought lines fall back to ffmpeg and speakers' own effects are left
-off. ffmpeg copies the cover in untouched as
+the background, and without it thought lines fall back to ffmpeg and speakers' own and line effects
+are left off. ffmpeg copies the cover in untouched as
 the attached picture; a chosen image gone from disk fails the build, and the EPUB's cover gone
 missing is a warning. It writes the book's details with `-metadata`, whose generic keys ffmpeg
 spells as ID3v2.3 frames in an MP3 and iTunes atoms in an M4B: the file's own title, the book's

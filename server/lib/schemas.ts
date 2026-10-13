@@ -291,6 +291,7 @@ export const CastFileSchema = v.array(
     style: v.optional(v.string(), ""),
     color: v.optional(v.string()),
     major: v.optional(v.boolean()),
+    personaOf: v.optional(v.pipe(v.string(), v.trim())),
     voice: v.optional(
       v.looseObject({
         endpoint: v.string(),

@@ -5,11 +5,14 @@
 // Every test drives the real routes over a private database the migrations laid down, so it starts
 // with the Inner voice as the library's thought effect.
 import { describe, expect, test } from "bun:test";
+import { and, eq } from "drizzle-orm";
 
 import type { Book, Cast, Character, Effect, EffectUses, ImportedBook, Step } from "@/types";
 import { effectContext } from "~/db/effects";
-import { epubFile, story } from "../support/epub";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import { segments } from "~/db/schema";
+import { readScript } from "~/db/script";
+import { epubFile, line, story } from "../support/epub";
+import { jsonBody, narratedBook, testApi, type TestApi } from "../support/server";
 
 const put = (body: unknown): RequestInit => ({ ...jsonBody(body), method: "PUT" });
 const patch = (body: unknown): RequestInit => ({ ...jsonBody(body), method: "PATCH" });
@@ -132,6 +135,66 @@ describe("the effects", () => {
     for (const chain of refused) expect((await create(api, "Bad", chain)).status).toBe(400);
     expect((await create(api, "", [])).status).toBe(400);
     expect(await list(api)).toHaveLength(1);
+  });
+});
+
+describe("an effect's use-when and the lines that have it", () => {
+  test("useWhen goes in, is read back, and an update without it clears it", async () => {
+    const api = testApi();
+    const useWhen = "words sent mind to mind, not spoken aloud";
+    const made = await api.request<{ effect: Effect }>(
+      "/api/effects",
+      jsonBody({ name: "Telepathy", chain: echo, useWhen: `  ${useWhen} ` }),
+    );
+    expect(made.body.effect).toEqual({ id: "telepathy", name: "Telepathy", chain: echo, useWhen });
+    expect((await list(api))[1]).toEqual(made.body.effect);
+
+    const kept = await api.request<{ effect: Effect }>(
+      "/api/effects/telepathy",
+      put({ name: "Telepathy", chain: [], useWhen: "a mind speaking" }),
+    );
+    expect(kept.body.effect.useWhen).toBe("a mind speaking");
+    // the body is the whole effect: left out, or blank, it is not offered any more
+    for (const body of [{}, { useWhen: " " }, { useWhen: null }]) {
+      await api.request("/api/effects/telepathy", put({ name: "T", chain: [], useWhen: "x" }));
+      const cleared = await api.request<{ effect: Effect }>(
+        "/api/effects/telepathy",
+        put({ name: "T", chain: [], ...body }),
+      );
+      expect(cleared.body.effect).not.toHaveProperty("useWhen");
+      expect((await list(api))[1]).not.toHaveProperty("useWhen");
+    }
+  });
+
+  test("an effect removed is taken off every line that has it, and the rest stay in order", async () => {
+    const api = testApi();
+    const { id } = await narratedBook(api, { chapters: [["One", line("One")]] });
+    await create(api, "Phone");
+    await create(api, "Radio");
+    const [a, b] = readScript(api.db, id, 1);
+    const give = (seg: number, effects: string[]) =>
+      api.db
+        .update(segments)
+        .set({ effects })
+        .where(and(eq(segments.bookId, id), eq(segments.id, seg)))
+        .run();
+    give(a.id, ["radio", "phone"]);
+    give(b.id, ["phone"]);
+
+    await api.request("/api/effects/phone", { method: "DELETE" });
+    const [a2, b2] = readScript(api.db, id, 1);
+    expect(a2.effects).toEqual(["radio"]);
+    expect(b2).not.toHaveProperty("effects");
+    // none left is null, not an empty list
+    const row = api.db
+      .select({ e: segments.effects })
+      .from(segments)
+      .where(and(eq(segments.bookId, id), eq(segments.id, b.id)))
+      .get();
+    expect(row).toEqual({ e: null });
+    // a new effect given the old id is not heard on them
+    await create(api, "Phone");
+    expect(readScript(api.db, id, 1).flatMap((s) => s.effects ?? [])).toEqual(["radio"]);
   });
 });
 

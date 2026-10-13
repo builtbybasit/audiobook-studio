@@ -6,7 +6,7 @@
 // pointing at nothing.
 import { and, asc, eq, gte, inArray, isNotNull, max, or, sql } from "drizzle-orm";
 
-import type { Effect, EffectUses, StaleSound, Step } from "@/types";
+import type { Effect, EffectUses, StaleSound } from "@/types";
 import { chainsFor, soundOf, type EffectContext } from "@/lib/effects";
 import type { Db, Tx } from "~/db/client";
 import { books, characters, clips, effects, segments } from "~/db/schema";
@@ -43,15 +43,34 @@ export function seedEffects(db: Db | Tx): void {
   writeThoughts(db, INNER_VOICE.id);
 }
 
-const columns = { id: effects.id, name: effects.name, chain: effects.chain };
+const columns = {
+  id: effects.id,
+  name: effects.name,
+  chain: effects.chain,
+  useWhen: effects.useWhen,
+};
 
-/** Every effect, in the order they are listed. */
+/** A row as an `Effect`: no `useWhen` key when it has none. */
+function toEffect({ useWhen, ...e }: Omit<Effect, "useWhen"> & { useWhen: string | null }): Effect {
+  return useWhen != null ? { ...e, useWhen } : e;
+}
+
+/** What an effect is made of besides its id: what a create or an update writes, whole. */
+export type EffectBody = Omit<Effect, "id">;
+
+/** Every effect, in the order they are listed — also the order a line's own effects run in. */
 export function listEffects(db: Db | Tx): Effect[] {
-  return db.select(columns).from(effects).orderBy(asc(effects.position), asc(effects.name)).all();
+  return db
+    .select(columns)
+    .from(effects)
+    .orderBy(asc(effects.position), asc(effects.name))
+    .all()
+    .map(toEffect);
 }
 
 export function getEffect(db: Db | Tx, id: string): Effect | undefined {
-  return db.select(columns).from(effects).where(eq(effects.id, id)).get();
+  const row = db.select(columns).from(effects).where(eq(effects.id, id)).get();
+  return row && toEffect(row);
 }
 
 /**
@@ -60,13 +79,7 @@ export function getEffect(db: Db | Tx, id: string): Effect | undefined {
  * names, the ones below moving down one in the same transaction, or at the end of the list without
  * it — or when it names no effect, which the caller refuses first (`server/effects/ops.ts`).
  */
-export function createEffect(
-  db: Db,
-  slug: string,
-  name: string,
-  chain: Step[],
-  after?: string,
-): Effect {
+export function createEffect(db: Db, slug: string, body: EffectBody, after?: string): Effect {
   return db.transaction((tx) => {
     const taken = new Set([
       "none",
@@ -96,25 +109,32 @@ export function createEffect(
           .from(effects)
           .get()?.n ?? -1) + 1;
     }
-    tx.insert(effects).values({ id, name, chain, position }).run();
-    return { id, name, chain };
+    tx.insert(effects)
+      .values({ id, ...body, useWhen: body.useWhen ?? null, position })
+      .run();
+    return { id, ...body };
   });
 }
 
-/** Rename an effect or replace its chain; its id stays. Undefined when there is no such effect. */
-export function updateEffect(
-  db: Db | Tx,
-  id: string,
-  name: string,
-  chain: Step[],
-): Effect | undefined {
-  return db.update(effects).set({ name, chain }).where(eq(effects.id, id)).returning(columns).get();
+/**
+ * Replace an effect's name, chain and `useWhen` — a `useWhen` left out is cleared; its id stays.
+ * Undefined when there is no such effect.
+ */
+export function updateEffect(db: Db | Tx, id: string, body: EffectBody): Effect | undefined {
+  const row = db
+    .update(effects)
+    .set({ name: body.name, chain: body.chain, useWhen: body.useWhen ?? null })
+    .where(eq(effects.id, id))
+    .returning(columns)
+    .get();
+  return row && toEffect(row);
 }
 
 /**
  * Remove an effect, and every choice of it: a book's or a speaker's thought effect goes back to
- * following the next level, a speaker's own to none, and the library's thought effect to none —
- * not to another effect nobody picked. False when there was no such effect.
+ * following the next level, a speaker's own to none, the library's thought effect to none — not
+ * to another effect nobody picked — and every line that has it as a line effect loses it, so a
+ * later effect given the same id is not heard on them. False when there was no such effect.
  */
 export function deleteEffect(db: Db, id: string): boolean {
   return db.transaction((tx) => {
@@ -125,6 +145,14 @@ export function deleteEffect(db: Db, id: string): boolean {
     tx.update(characters).set({ thoughts: null }).where(eq(characters.thoughts, id)).run();
     tx.update(characters).set({ effect: null }).where(eq(characters.effect, id)).run();
     if (wasLibrary) writeThoughts(tx, "none");
+    // the line's other effects kept in their order; none left is null, as an empty list is written
+    tx.update(segments)
+      .set({
+        effects: sql`(SELECT CASE WHEN count(*) > 0 THEN json_group_array(value) END
+          FROM json_each(${segments.effects}) WHERE value <> ${id})`,
+      })
+      .where(sql`EXISTS (SELECT 1 FROM json_each(${segments.effects}) WHERE value = ${id})`)
+      .run();
     return true;
   });
 }
@@ -162,7 +190,12 @@ export function effectUses(db: Db | Tx, id: string): EffectUses {
 /** What a book's lines' effects are read from (`chainsFor`): narration and Re-apply read it once. */
 export function effectContext(db: Db | Tx, bookId: string): EffectContext {
   const cast = db
-    .select({ name: characters.name, effect: characters.effect, thoughts: characters.thoughts })
+    .select({
+      name: characters.name,
+      effect: characters.effect,
+      thoughts: characters.thoughts,
+      personaOf: characters.personaOf,
+    })
     .from(characters)
     .where(eq(characters.bookId, bookId))
     .all();
@@ -172,12 +205,13 @@ export function effectContext(db: Db | Tx, bookId: string): EffectContext {
     book: db.select({ t: books.thoughts }).from(books).where(eq(books.id, bookId)).get()?.t ?? null,
     cast: new Map(
       cast
-        .filter((c) => c.effect != null || c.thoughts != null)
+        .filter((c) => c.effect != null || c.thoughts != null || c.personaOf != null)
         .map((c) => [
           c.name,
           {
             ...(c.effect != null ? { effect: c.effect } : {}),
             ...(c.thoughts != null ? { thoughts: c.thoughts } : {}),
+            ...(c.personaOf != null ? { personaOf: c.personaOf } : {}),
           },
         ]),
     ),
@@ -207,8 +241,9 @@ export const cannotRedo = (c: Pick<StaleClip, "raw" | "sound">): boolean =>
 
 /**
  * Every finished clip in a book's current and retake slots whose sound is not its line's now. One
- * query over the book, and a line's effects worked out once per speaker and kind of line rather
- * than once per line, so a book of 900 chapters is one pass. Takes are history and are left as
+ * query over the book, and a line's effects worked out once per speaker, kind of line and set of
+ * line effects rather than once per line, so a book of 900 chapters is one pass. (A persona's
+ * character is fixed by its speaker, so the speaker keys that too.) Takes are history and are left as
  * they were made.
  */
 export function staleClips(db: Db | Tx, bookId: string): StaleClip[] {
@@ -222,6 +257,7 @@ export function staleClips(db: Db | Tx, bookId: string): StaleClip[] {
       sound: clips.sound,
       type: segments.type,
       speaker: segments.speaker,
+      lineEffects: segments.effects,
     })
     .from(clips)
     .innerJoin(
@@ -243,11 +279,11 @@ export function staleClips(db: Db | Tx, bookId: string): StaleClip[] {
     .all();
   const known = new Map<string, Pick<StaleClip, "effects" | "want">>();
   const out: StaleClip[] = [];
-  for (const { type, speaker, url, ...r } of rows) {
-    const key = `${type === "thought"}:${speaker}`;
+  for (const { type, speaker, lineEffects, url, ...r } of rows) {
+    const key = JSON.stringify([type === "thought", speaker, lineEffects]);
     let line = known.get(key);
     if (!line) {
-      const effects = chainsFor({ type, speaker }, ctx);
+      const effects = chainsFor({ type, speaker, effects: lineEffects ?? undefined }, ctx);
       line = { effects, want: soundOf(effects) };
       known.set(key, line);
     }

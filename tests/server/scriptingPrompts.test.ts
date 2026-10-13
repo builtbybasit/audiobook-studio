@@ -17,10 +17,11 @@ import type {
   Job,
   Profile,
   RequestRecord,
+  Segment,
 } from "@/types";
 import { BUILT_IN_PROMPT, OUTPUT_FORMAT } from "@/lib/prompt";
 import { scriptTelemetry } from "@/lib/scriptActivity";
-import { chapters, characters, endpoints, requests } from "~/db/schema";
+import { chapters, characters, effects, endpoints, requests } from "~/db/schema";
 import { profileKey } from "~/db/rows/endpoints";
 import { fakeScriptingProvider } from "~/providers/fake";
 import type { ScriptInput, ScriptingProvider } from "~/providers/scripting";
@@ -468,6 +469,71 @@ describe("what a model says beside its lines", () => {
       { id: 1, recap: "Tobiah spoke last, in One." },
       { id: 2, recap: "Tobiah spoke last, in Two." },
     ]);
+  });
+});
+
+describe("personas and line effects", () => {
+  test("a persona is marked in the cast, and the line effects named go on the line by id", async () => {
+    const inputs: ScriptInput[] = [];
+    const provider: ScriptingProvider = {
+      name: "Effects (test)",
+      async script(input) {
+        inputs.push(input);
+        return {
+          lines: [
+            {
+              type: "dialogue",
+              speaker: "Lord of Shadows",
+              text: input.text,
+              // any case, each once; a name not offered (the Inner voice has no use-when) is dropped
+              effects: ["TELEPHONE", "inner echo", "Telephone", "Inner voice", "Kazoo"],
+            },
+          ],
+        };
+      },
+    };
+    const api = testApi({ scripting: provider });
+    const id = await shelved(api);
+    api.db
+      .insert(characters)
+      .values([
+        { bookId: id, name: "Sunny", gender: "m", color: "#333" },
+        { bookId: id, name: "Lord of Shadows", gender: "m", personaOf: "Sunny", color: "#444" },
+        // of nobody in the cast, so of nobody
+        { bookId: id, name: "Mask", personaOf: "Nobody", color: "#555" },
+      ])
+      .run();
+    api.db
+      .insert(effects)
+      .values([
+        {
+          id: "phone",
+          name: "Telephone",
+          chain: [],
+          position: 1,
+          useWhen: "heard through a phone.",
+        },
+        { id: "echo", name: "Inner echo", chain: [], position: 2, useWhen: "telepathy" },
+      ])
+      .run();
+    await put(api, { profiles: [openaiProfile({ maxChars: 0 })] });
+    await api.request(
+      `/api/books/${id}/chapters/script`,
+      jsonBody({ ids: [1], profile: "openai" }),
+    );
+    await api.runner.idle();
+
+    const { system, user } = inputs[0].prompt!;
+    expect(user).toContain(
+      "Known cast: Lord of Shadows (male; persona of Sunny), Mask, Sunny (male)\n",
+    );
+    expect(system).toContain(
+      '- "effects" (optional): sound effects for how this line is heard, by name, only from this list — "Telephone": heard through a phone; "Inner echo": telepathy. Several may apply',
+    );
+    const { segments } = (
+      await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`)
+    ).body;
+    expect(segments.map((s) => s.effects)).toEqual([["phone", "echo"]]);
   });
 });
 

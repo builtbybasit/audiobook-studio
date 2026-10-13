@@ -16,7 +16,7 @@ import type {
   RevisedLines,
   SegmentAudio,
 } from "@/types";
-import { NARRATOR } from "@/lib/cast";
+import { NARRATOR, personaRefusal } from "@/lib/cast";
 import { pronunciationMoved } from "@/lib/reading";
 import { speak } from "@/lib/speech";
 import type { Db } from "~/db/client";
@@ -49,19 +49,26 @@ function requireEffects(db: Db, c: Character): void {
 /**
  * Write one speaker as stated: a new one joins the cast, an existing one is replaced. Everything
  * about a speaker that moves no lines — gender, description, voice, delivery style, aliases, the
- * merge suggestion being dismissed — arrives this way.
+ * character they are a persona of, the merge suggestion being dismissed — arrives this way. A
+ * persona link is checked when it changes (`personaRefusal`), so a speaker is never refused an
+ * edit for a link they already had.
  */
 export function putCharacter(db: Db, bookId: string, name: string, c: Character): Character[] {
   requireBook(db, bookId);
   if (c.name !== name) throw badRequest("The speaker in the body is not the one in the path");
   requireEffects(db, c);
+  if (c.personaOf && c.personaOf !== cast.getCharacter(db, bookId, name)?.personaOf) {
+    const why = personaRefusal(name, c.personaOf, cast.readCast(db, bookId));
+    if (why) throw badRequest(why);
+  }
   cast.upsertCharacter(db, bookId, c);
   return cast.readCast(db, bookId);
 }
 
 /**
- * Change a speaker's name, and re-attribute every line that names them. Not the Narrator's: the
- * Narrator is the speaker every book has and every removal hands lines to, by that name.
+ * Change a speaker's name, and re-attribute every line that names them, and their personas with
+ * them. Not the Narrator's: the Narrator is the speaker every book has and every removal hands
+ * lines to, by that name.
  */
 export function renameCharacter(db: Db, bookId: string, from: string, to: string): MovedLines {
   requireBook(db, bookId);
@@ -74,6 +81,7 @@ export function renameCharacter(db: Db, bookId: string, from: string, to: string
     throw conflict(`“${to}” is already in the cast`, "Merge the two speakers instead.");
   return db.transaction((tx) => {
     cast.renameCharacterRow(tx, bookId, from, to);
+    cast.relinkPersonas(tx, bookId, from, to);
     const moved = reattribute(tx, bookId, from, to);
     return { characters: cast.readCast(tx, bookId), moved };
   });
@@ -83,6 +91,11 @@ export function renameCharacter(db: Db, bookId: string, from: string, to: string
  * Fold one speaker into another: the lines move, the name and its aliases become aliases of the
  * speaker that stays, and the speaker that went comes off the cast. Anyone can be folded into the
  * Narrator; the Narrator is folded into no one, for the reason they cannot be removed.
+ *
+ * The personas of the speaker that went become the personas of the one that stays — unless that
+ * one is a persona themselves, or is the Narrator, and a persona of them would be refused
+ * (`personaRefusal`); then they are unlinked rather than chained. A persona of the one that went
+ * folded into it is a persona no more.
  */
 export function mergeCharacter(db: Db, bookId: string, from: string, into: string): MovedLines {
   requireBook(db, bookId);
@@ -94,19 +107,24 @@ export function mergeCharacter(db: Db, bookId: string, from: string, into: strin
   const src = requireCharacter(db, bookId, from);
   const dst = requireCharacter(db, bookId, into);
   if (from === into) throw badRequest("A speaker cannot be merged into themselves");
+  // a persona of the one that went, folded into it, would be a persona of themselves
+  const personaOf = dst.personaOf === from ? undefined : dst.personaOf;
   return db.transaction((tx) => {
     cast.upsertCharacter(tx, bookId, {
       ...dst,
       aliases: [...new Set([...dst.aliases, from, ...src.aliases])],
+      personaOf,
     });
     moveSpeakerSamples(tx, bookId, from, into);
     cast.deleteCharacterRow(tx, bookId, from);
+    cast.relinkPersonas(tx, bookId, from, personaOf || into === NARRATOR ? null : into);
     const moved = reattribute(tx, bookId, from, into);
     return { characters: cast.readCast(tx, bookId), moved };
   });
 }
 
-/** Take a speaker off the cast; the lines they read go to the Narrator. */
+/** Take a speaker off the cast; the lines they read go to the Narrator, and their personas are
+ *  unlinked, to keep voices of their own. */
 export function deleteCharacter(db: Db, bookId: string, name: string): MovedLines {
   requireBook(db, bookId);
   if (name === NARRATOR) throw conflict("The Narrator cannot be removed");
@@ -115,6 +133,7 @@ export function deleteCharacter(db: Db, bookId: string, name: string): MovedLine
     cast.ensureSpeakers(tx, bookId, [NARRATOR]);
     discardSpeakerSamples(tx, bookId, name, NARRATOR);
     cast.deleteCharacterRow(tx, bookId, name);
+    cast.relinkPersonas(tx, bookId, name, null);
     const moved = reattribute(tx, bookId, name, NARRATOR);
     return { characters: cast.readCast(tx, bookId), moved };
   });
@@ -133,12 +152,16 @@ export function attribute(
   lines: readonly ChapterLines[],
 ): MovedLines {
   requireBook(db, bookId);
-  // put back as they were, less an effect removed since: an Undo is not refused for that
+  // put back as they were, less an effect removed since or a persona link the cast no longer
+  // allows: an Undo is not refused for either
   const known = (id?: string) => (id && isEffectChoice(db, id) ? id : undefined);
+  const others = cast.readCast(db, bookId).filter((c) => c.name !== character.name);
+  const of = character.personaOf;
   character = {
     ...character,
     effect: known(character.effect),
     thoughts: known(character.thoughts),
+    personaOf: of && !personaRefusal(character.name, of, others) ? of : undefined,
   };
   return db.transaction((tx) => {
     cast.upsertCharacter(tx, bookId, character);

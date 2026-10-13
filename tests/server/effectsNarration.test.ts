@@ -3,7 +3,7 @@
 // A line with effects lands as two files — the voice's own, kept as the clip's raw, and the one its
 // chains made, which the clip plays — and records the fingerprint of those chains as its sound. A
 // line with none is one file and no sound. Where Pedalboard cannot run, a thought line is given the
-// ffmpeg thought effect and a speaker's own effect is left off, said once.
+// ffmpeg thought effect and a speaker's own effect and a line's own are left off, said once.
 //
 // The speech is the tone-rendering fake, the runner the fake one (`tests/support/effects.ts`), and
 // the ffmpeg thought effect a stand-in that counts its calls.
@@ -30,6 +30,9 @@ const endpoint = (over: Partial<Endpoint> = {}): Endpoint =>
   speechEndpoint({ id: "a", concurrency: 1, ...over });
 
 const ECHO: Step[] = [{ plugin: "Delay", params: { delay_seconds: 0.2, mix: 0.3 }, on: true }];
+const PHONE: Step[] = [
+  { plugin: "HighpassFilter", params: { cutoff_frequency_hz: 400 }, on: true },
+];
 
 /** A stand-in ffmpeg thought effect: the bytes back unchanged, its calls counted. */
 function stubThought(): { effect: ThoughtEffect; calls: number[] } {
@@ -39,11 +42,11 @@ function stubThought(): { effect: ThoughtEffect; calls: number[] } {
 
 /**
  * A scripted one-chapter book, its first spoken line made a thought by hand; the id, and who
- * thinks it. `echo` gives that speaker an effect of their own.
+ * thinks it. `echo` gives that speaker an effect of their own, `phone` the thought a line effect.
  */
 async function bookWithAThought(
   api: TestApi,
-  { echo = false, plain = false } = {},
+  { echo = false, plain = false, phone = false } = {},
 ): Promise<{ id: string; who: string }> {
   const id = await voicedBook(api, {
     endpoints: [endpoint()],
@@ -58,8 +61,9 @@ async function bookWithAThought(
   const script = (await api.request<ChapterScript>(`/api/books/${id}/chapters/1/script`)).body;
   const first = script.segments.findIndex((s) => s.type === "dialogue");
   const who = script.segments[first].speaker;
+  if (phone) await api.request("/api/effects", jsonBody({ name: "Phone", chain: PHONE }));
   const segments = script.segments.map((s, i) =>
-    i === first ? { ...s, type: "thought" as const } : s,
+    i === first ? { ...s, type: "thought" as const, ...(phone ? { effects: ["phone"] } : {}) } : s,
   );
   await api.request(`/api/books/${id}/chapters/1/script`, {
     ...jsonBody({ segments, ifRevision: script.revision }),
@@ -146,6 +150,22 @@ describe("narration with Pedalboard", () => {
       expect(s.audio.raw).toBeUndefined();
   });
 
+  test("a line's own effect runs after the speaker's and before the thought effect", async () => {
+    const { api, fx } = withRunner();
+    const { id } = await bookWithAThought(api, { echo: true, phone: true });
+    const { lines } = await narrate(api, id);
+    const echo: Effect = { id: "echo", name: "Echo", chain: ECHO };
+    const phone: Effect = { id: "phone", name: "Phone", chain: PHONE };
+
+    const thought = lines.find((s) => s.type === "thought")!;
+    expect(thought.effects).toEqual(["phone"]);
+    expect(thought.audio).toMatchObject({ sound: soundOf([echo, phone, INNER_VOICE]) });
+    expect(fx.calls.render).toContainEqual({
+      format: "wav",
+      chains: [ECHO, PHONE, INNER_VOICE.chain],
+    });
+  });
+
   test("a book whose thoughts are plain runs nothing, and keeps one file a line", async () => {
     const { api, fx } = withRunner();
     const { id } = await bookWithAThought(api, { plain: true });
@@ -224,6 +244,18 @@ describe("narration where Pedalboard cannot run", () => {
     const told = job.activity?.filter((e) => e.message.includes("cannot run here")) ?? [];
     expect(told).toHaveLength(1);
     expect(told[0].level).toBe("warning");
+  });
+
+  test("a line's own effect is left off too, and the thought still gets the ffmpeg effect", async () => {
+    const { effect, calls } = stubThought();
+    const { api, fx } = withRunner({ thoughtEffect: effect });
+    fx.ready = false;
+    const { id } = await bookWithAThought(api, { phone: true });
+    const { job, lines } = await narrate(api, id);
+
+    expect(calls).toHaveLength(1);
+    expect(lines.find((s) => s.type === "thought")!.audio.sound).toBe("ffmpeg");
+    expect(job.activity?.filter((e) => e.message.includes("cannot run here"))).toHaveLength(1);
   });
 
   test("with no runner at all, the same", async () => {

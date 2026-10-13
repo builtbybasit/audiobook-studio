@@ -1,9 +1,10 @@
 // What the library's voice effects do, as operations: the same arrangement as `server/cast/ops.ts`,
 // a route turning a request into one of these and the rules living here.
-import type { Effect, EffectUses, StaleSound, Step, ThoughtChoice } from "@/types";
+import type { Effect, EffectUses, StaleSound, ThoughtChoice } from "@/types";
 import type { EffectRunner } from "~/audio/effects";
 import type { Db, Tx } from "~/db/client";
 import * as effects from "~/db/effects";
+import type { EffectBody } from "~/db/effects";
 import { getBook } from "~/db/library";
 import { readThoughts, writeThoughts } from "~/db/settings";
 import { badRequest, notFound } from "~/lib/errors";
@@ -24,10 +25,10 @@ export function requireEffect(db: Db | Tx, choice: string | null | undefined, wh
 
 export const listEffects = (db: Db): Effect[] => effects.listEffects(db);
 
-export function createEffect(db: Db, name: string, chain: Step[], after?: string): Effect {
+export function createEffect(db: Db, body: EffectBody, after?: string): Effect {
   if (after !== undefined && !effects.getEffect(db, after))
     throw badRequest(`There is no effect “${after}” to put it after`);
-  return effects.createEffect(db, slugify(name, "effect"), name, chain, after);
+  return effects.createEffect(db, slugify(body.name, "effect"), body, after);
 }
 
 export function effectUses(db: Db, id: string): EffectUses {
@@ -35,8 +36,8 @@ export function effectUses(db: Db, id: string): EffectUses {
   return effects.effectUses(db, id);
 }
 
-export function updateEffect(db: Db, id: string, name: string, chain: Step[]): Effect {
-  const effect = effects.updateEffect(db, id, name, chain);
+export function updateEffect(db: Db, id: string, body: EffectBody): Effect {
+  const effect = effects.updateEffect(db, id, body);
   if (!effect) throw notFound("No such effect");
   return effect;
 }

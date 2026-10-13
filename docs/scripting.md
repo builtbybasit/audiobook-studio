@@ -64,8 +64,10 @@ before it, and each answer says what the next request will need:
 - **The cast, with what tells its members apart.** `{{cast}}` names every speaker the book has with
   their gender and other names ("Havoc (male; also called the mercenary)"), so a "she said" can be
   narrowed down and "the Captain" is given the name the book already uses rather than becoming a new
-  speaker. Descriptions go only with `{{cast.details}}`: a web novel's cast runs to hundreds, and
-  every character of the prompt is sent, and billed, with every request.
+  speaker. A persona says whose disguise it is ("Lord of Shadows (male; persona of Sunny)"), and the
+  built-in prompt's rule 4 gives the character's lines to the persona while the scene has them in
+  that identity. Descriptions go only with `{{cast.details}}`: a web novel's cast runs to hundreds,
+  and every character of the prompt is sent, and billed, with every request.
 - **What the model learnt of them.** An answer's `cast` gives the gender, other names and a
   one-sentence description of the speakers the excerpt says something new about. The run fills in
   only what the cast leaves blank — a gender or description set by hand, or by an earlier chapter,

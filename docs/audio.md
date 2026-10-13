@@ -77,10 +77,17 @@ line, word by word, without anyone listening.
 A voice effect is a named [Pedalboard](https://github.com/spotify/pedalboard) chain — filters,
 compression, a room, layers mixed side by side — kept once for the whole library rather than per
 book, so the effect made for one book's ghost is there for the next
-([src/types/effect.ts](../src/types/effect.ts)). A line can be given two:
+([src/types/effect.ts](../src/types/effect.ts)). A line can be given three kinds:
 
 - **A speaker's own effect**, on every line of theirs: a radio voice, a giant, a ghost. None by
-  default.
+  default. A persona (a cast member whose `personaOf` names another, a disguise or false identity
+  of theirs) wears that character's own effect first, then its own; a `personaOf` naming nobody in
+  the cast, or the persona itself, links nobody.
+- **Line effects**, on one line only (`Segment.effects`, by id): a phone call, telepathy, a voice
+  through a mask. An effect with a `useWhen` — one sentence saying when a line is heard through it,
+  "words sent mind to mind, not spoken aloud" — is offered to the scripting model, which may put
+  several on a line; any effect can be put on a line by hand. Old scripts get none until they are
+  scripted again.
 - **The thought effect**, on a `thought` line only, so a character's thoughts — narrated in the same
   voice as what they say aloud — are heard from inside the head. It is chosen speaker → book → all
   books, each level following the next until one names an effect or `"none"`, which stops it there:
@@ -89,10 +96,13 @@ book, so the effect made for one book's ghost is there for the next
   taken down, compressed, a small room) as the thought effect for all books. The Cast page's
   **Book defaults** card sets the book's level, and a speaker's Effect column their own.
 
-The own effect runs first and the thought effect after it, so a thought is the speaker's voice,
-heard inward ([`chainsFor`](../src/lib/effects.ts), which the page reads too). Removing an effect
-puts every choice of it back to following the next level, and the library's to none — never on to
-an effect nobody picked.
+A line runs through, in order: a persona's character's own effect, the speaker's own, the line
+effects in the library's order (not the order the line lists them), then the thought effect — so a
+thought is the speaker's voice, heard inward, and a telepathic line typed `thought` gets both
+([`chainsFor`](../src/lib/effects.ts), which the page reads too). An id no effect has is passed
+over. Removing an effect puts every choice of it back to following the next level, the library's to
+none — never on to an effect nobody picked — and takes it off every line that has it, so a later
+effect given the same id is not heard there.
 
 **Kept in the file, with the voice's own beside it.** The effects are run once, as the clip lands,
 so the player, the Listen page, a check by ear and a build all hear the same thing and nothing has
@@ -128,7 +138,7 @@ Re-apply is one batch spread over a worker per core, each answering a line per c
 Without uv the server still starts: a thought line gets the old ffmpeg thought effect instead
 ([server/audio/thoughtEffect.ts](../server/audio/thoughtEffect.ts), recorded as the sound
 `"ffmpeg"` with its raw kept, so a Re-apply once uv is there gives it the real chain), and speakers'
-own effects, which have no stand-in, are left off with one warning per run.
+own effects and line effects, which have no stand-in, are left off with one warning per run.
 
 **A chain is data, never code.** A chain can be pasted as Pedalboard Python;
 `POST /api/effects/parse` reads it with Python's `ast` and never executes it. It follows values

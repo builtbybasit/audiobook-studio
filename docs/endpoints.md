@@ -371,7 +371,8 @@ where they are typed, with a button that adds the tag.
 the user message), `{{excerpt.before}}` (the last paragraphs of the chunk before, up to about 800
 characters; empty for a chapter's first request), `{{part}}` / `{{parts}}`, `{{chapter.title}}`,
 `{{chapter.number}}`, `{{previous.recap}}` (where the chapter before left off, as its model put
-it), `{{cast}}` (the known speakers' names, each with gender and other names), `{{cast.details}}`
+it), `{{cast}}` (the known speakers' names, each with gender, whose persona it is, and other
+names), `{{cast.details}}`
 (one line per speaker, the description too), `{{book.title}}`, `{{book.author}}`,
 `{{book.notes}}`, `{{endpoint.name}}`, `{{endpoint.notes}}`, `{{model}}` and `{{expressions}}`
 (the tag names your speech endpoints list on their confirmed Expressions tabs, for a prompt that
@@ -390,7 +391,9 @@ shows both under the lines. The format also says how to write an expression tag 
 for tags; the built-in prompt does not, so a prompt that wants them says so, e.g. "Add a tag for
 a sigh, laugh or gasp the prose shows, at most one per line, from: {{expressions}}". It always says
 how to write a [pause inside a line](audio.md#pauses-inside-a-line), `[[pause]]` or `[[long pause]]`;
-the built-in prompt asks for one only on a real beat.
+the built-in prompt asks for one only on a real beat. When the library has effects with a "use
+when" sentence, it lists them too, as line effects a line may name in an optional `effects` list
+(a phone, telepathy); a name it does not list is dropped. With none, the format is unchanged.
 
 A run snapshots the resolved prompt and the book's notes when it is queued, so editing a prompt
 mid-run changes only later runs. The estimate and the budget hold price the prompt's real length.

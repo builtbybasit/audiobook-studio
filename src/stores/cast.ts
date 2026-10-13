@@ -22,7 +22,14 @@ import { norm } from "@/lib/scriptReview";
 import { isSpoken } from "@/lib/siteText";
 import { pronunciationMoved } from "@/lib/reading";
 import { chapterSeconds, hitsIn, pacingOrDefault, speak } from "@/lib/speech";
-import { characterSlot, NARRATOR, newSpeaker, speakerVoice, voiceRef } from "@/lib/cast";
+import {
+  characterSlot,
+  NARRATOR,
+  newSpeaker,
+  personaOwner,
+  speakerVoice,
+  voiceRef,
+} from "@/lib/cast";
 import { clone } from "@/lib/utils";
 import {
   type Cast,
@@ -164,19 +171,17 @@ export const useCastStore = defineStore("cast", {
       }
       return out;
     },
-    // a character with no voice of their own is read in the book's Character voice, or else the
-    // Narrator's — `speakerVoice`, the rule the narration job keeps too
+    // a linked persona is read in their character's voice, and a character with no voice of their
+    // own in the book's Character voice, or else the Narrator's — `speakerVoice`, the rule the
+    // narration job keeps too
     effectiveVoice(): (bookId: string, name: string) => EffectiveVoice {
       const endpointsStore = useEndpointsStore();
       const libraryStore = useLibraryStore();
 
       return (bookId, name) => {
-        const cast = this.byName[bookId];
-        const c = cast?.get(name);
-        const { ref, from } = speakerVoice(
+        const { ref, from, of } = speakerVoice(
           name,
-          c,
-          cast?.get("Narrator")?.voice ?? null,
+          this.byName[bookId] ?? new Map(),
           libraryStore.bookById(bookId)?.characterVoice,
         );
         const r = endpointsStore.resolveVoice(ref);
@@ -184,6 +189,7 @@ export const useCastStore = defineStore("cast", {
           ref,
           own: from === "own",
           from,
+          ...(of ? { of } : {}),
           voice: r?.voice.id ?? null,
           label: r ? r.voice.label : ref ? "missing" : null,
           endpoint: r?.endpoint ?? null,
@@ -192,17 +198,26 @@ export const useCastStore = defineStore("cast", {
     },
     /**
      * What a speaker with no voice of their own is read in — "Character voice" or "Narrator’s
-     * voice" — whether or not they have one now: what the empty choice in their picker means.
+     * voice" — whether or not they have one now: what the empty choice in their picker means. A
+     * linked persona is read in their character's, whatever they are given: "Sunny’s voice".
      */
     fallbackLabel(): (bookId: string, name: string) => string {
       const libraryStore = useLibraryStore();
 
       return (bookId, name) => {
-        const c = this.byName[bookId]?.get(name);
+        const cast = this.byName[bookId] ?? new Map<string, Character>();
+        const c = cast.get(name);
         const cv = libraryStore.bookById(bookId)?.characterVoice;
-        return speakerVoice(name, c && { ...c, voice: null }, null, cv).from === "character"
-          ? "Character voice"
-          : "Narrator’s voice";
+        // the speaker as if they had no voice of their own
+        const bare = {
+          get: (n: string) => (n === name && c ? { ...c, voice: null } : cast.get(n)),
+        };
+        const { from, of } = speakerVoice(name, bare, cv);
+        return from === "persona"
+          ? `${of}’s voice`
+          : from === "character"
+            ? "Character voice"
+            : "Narrator’s voice";
       };
     },
     /**
@@ -210,7 +225,8 @@ export const useCastStore = defineStore("cast", {
      * paused or has no key (`speechReadiness`). A cooldown passes on its own and is not an issue.
      * A speaker's own voice is named for them; a Character voice slot some speaker with no voice
      * of their own is read in is named "Character voice", or "Character voice (male)" by gender;
-     * and the Narrator's row covers everyone who falls through to the Narrator's.
+     * and the Narrator's row covers everyone who falls through to the Narrator's. A linked persona
+     * is read in their character's voice, which their character's row covers.
      */
     routingIssues(): (bookId: string) => RoutingIssue[] {
       const endpointsStore = useEndpointsStore();
@@ -234,7 +250,8 @@ export const useCastStore = defineStore("cast", {
               endpoint: r.endpoint,
             });
         };
-        const cast = this.characters[bookId] ?? [];
+        const byName = this.byName[bookId] ?? new Map<string, Character>();
+        const cast = (this.characters[bookId] ?? []).filter((c) => !personaOwner(c, byName));
         for (const c of cast) if (c.voice) check(c.name, c.voice);
         const cv = libraryStore.bookById(bookId)?.characterVoice;
         if (cv) {

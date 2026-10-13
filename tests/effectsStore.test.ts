@@ -38,11 +38,15 @@ beforeEach(() => {
   pinia = testPinia();
   server = {
     effects: [
-      { id: "echo", name: "Echo", chain: gain(1) },
+      { id: "echo", name: "Echo", chain: gain(1), useWhen: "a voice from far off" },
       { id: "room", name: "Room", chain: gain(2) },
     ],
     thoughts: "echo",
-    characters: [narrator(), { ...newSpeaker("Ana", 1), effect: "echo", thoughts: "room" }],
+    characters: [
+      narrator(),
+      { ...newSpeaker("Ana", 1), effect: "echo", thoughts: "room" },
+      { ...newSpeaker("Veil", 2), personaOf: "Ana" },
+    ],
   };
   calls = { update: [], stale: 0 };
   refuseNext = null;
@@ -51,18 +55,18 @@ beforeEach(() => {
   const fake: Partial<EffectsService> = {
     list: async () => clone(server.effects),
     libraryThoughts: async () => server.thoughts,
-    create: async (name, chain) => {
+    create: async (body) => {
       refused();
-      const e = { id: `e${server.effects.length}`, name, chain: clone(chain) };
+      const e = { id: `e${server.effects.length}`, ...clone(body) };
       server.effects.push(e);
       return clone(e);
     },
-    update: async (id, name, chain) => {
-      calls.update.push({ id, name, chain: clone(chain) });
+    update: async (effect) => {
+      calls.update.push(clone(effect));
       if (hold) await hold;
       refused();
-      const e = { id, name, chain: clone(chain) };
-      server.effects = server.effects.map((x) => (x.id === id ? e : x));
+      const e = clone(effect);
+      server.effects = server.effects.map((x) => (x.id === e.id ? e : x));
       return clone(e);
     },
     remove: async (id) => {
@@ -110,6 +114,8 @@ describe("editing an effect", () => {
     expect(calls.update).toHaveLength(0);
     await effects().flush();
     expect(calls.update.map((e) => e.chain)).toEqual([gain(5)]);
+    // the write is the whole effect, so it keeps what it was not told to change
+    expect(calls.update[0]!.useWhen).toBe("a voice from far off");
     expect(server.effects[0]!.chain).toEqual(gain(5));
   });
 
@@ -147,6 +153,7 @@ describe("duplicating", () => {
     await effects().duplicate("echo");
     expect(names()).toEqual(["Echo", "Echo Duplicated (2)", "Echo Duplicated", "Room"]);
     expect(effects().effects[1]!.chain).toEqual(gain(1));
+    expect(effects().effects[1]!.useWhen).toBe("a voice from far off");
   });
 });
 
@@ -188,6 +195,7 @@ describe("the library's thought effect", () => {
     const ctx = effects().contextFor("b");
     expect([ctx.library, ctx.book]).toEqual(["echo", "room"]);
     expect(ctx.cast.get("Ana")).toEqual({ effect: "echo", thoughts: "room" });
+    expect(ctx.cast.get("Veil")).toEqual({ personaOf: "Ana" });
     expect(ctx.effects.get("room")!.name).toBe("Room");
   });
 });

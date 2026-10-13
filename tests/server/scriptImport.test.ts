@@ -336,11 +336,11 @@ describe("the cast and the dictionary", () => {
       await zipOf({
         cast: [
           speaker({ description: "a clerk", aliases: ["Mar", "Miss Mara"] }),
-          speaker({ name: "Tobin", gender: "m" }),
+          speaker({ name: "Tobin", gender: "m", personaOf: " Mara " }),
         ],
       }),
     );
-    expect(got.cast.add.map((s) => s.name)).toEqual(["Tobin"]);
+    expect(got.cast.add.map((s) => [s.name, s.personaOf])).toEqual([["Tobin", "Mara"]]);
     expect(got.cast.differ).toEqual([
       {
         name: "Mara",

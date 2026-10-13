@@ -7,7 +7,7 @@
 import { and, asc, eq, max } from "drizzle-orm";
 
 import type { Character, LexEntry } from "@/types";
-import { NARRATOR, narrator, newSpeaker } from "@/lib/cast";
+import { NARRATOR, narrator, newSpeaker, personaOwner } from "@/lib/cast";
 import type { PromptCastMember } from "@/lib/prompt";
 import type { Db, Tx } from "~/db/client";
 import { characters, lexiconEntries } from "~/db/schema";
@@ -25,19 +25,28 @@ export function readCast(db: Db | Tx, bookId: string): Character[] {
 
 /**
  * The speakers the book already has, as the prompt's cast tags read them, so a chunk read on its
- * own still calls Mara "Mara". A scripting run and a prompt trial both send it.
+ * own still calls Mara "Mara". A scripting run and a prompt trial both send it. A persona says
+ * whose it is only when that character is in the cast and is not the persona itself, as narration
+ * links them.
  */
 export function readSpeakers(db: Db | Tx, bookId: string): PromptCastMember[] {
-  return db
+  const rows = db
     .select({
       name: characters.name,
       aliases: characters.aliases,
       gender: characters.gender,
       description: characters.description,
+      personaOf: characters.personaOf,
     })
     .from(characters)
     .where(eq(characters.bookId, bookId))
     .all();
+  const byName = new Map(rows.map((r) => [r.name, r]));
+  return rows.map(({ personaOf, ...c }) =>
+    personaOwner({ name: c.name, personaOf: personaOf ?? undefined }, byName)
+      ? { ...c, personaOf: personaOf! }
+      : c,
+  );
 }
 
 export function getCharacter(db: Db | Tx, bookId: string, name: string): Character | undefined {
@@ -187,4 +196,14 @@ export function replaceLexicon(db: Db | Tx, bookId: string, entries: readonly Le
         .run(),
     );
   });
+}
+
+// ---------- personas ----------
+
+/** Point every persona of `from` at `to` instead, or unlink them where `to` is null. */
+export function relinkPersonas(db: Db | Tx, bookId: string, from: string, to: string | null): void {
+  db.update(characters)
+    .set({ personaOf: to })
+    .where(and(eq(characters.bookId, bookId), eq(characters.personaOf, from)))
+    .run();
 }

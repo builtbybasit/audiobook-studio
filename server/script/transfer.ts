@@ -195,6 +195,7 @@ function speakerOf(c: Character, endpoints: readonly Endpoint[]): ScriptFileSpea
     color: c.color,
     major: c.major,
   };
+  if (c.personaOf) out.personaOf = c.personaOf;
   const voice = voiceHint(c.voice, endpoints);
   if (voice) out.voice = voice;
   return out;

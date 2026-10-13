@@ -20,6 +20,7 @@ import type {
   PromptTrialResult,
 } from "@/types";
 import {
+  lineEffectsOf,
   notesProblems,
   promptProblems,
   renderPrompt,
@@ -30,6 +31,7 @@ import { expressionNames } from "@/lib/expressions";
 import { tokenEstimate } from "@/lib/scripting";
 import { readSpeakers } from "~/db/cast";
 import type { Db } from "~/db/client";
+import { listEffects } from "~/db/effects";
 import { readEndpoints, readProfiles } from "~/db/endpoints";
 import * as library from "~/db/library";
 import { readLibraryPrompt } from "~/db/settings";
@@ -112,6 +114,7 @@ export async function tryPrompt(
     recap: library.previousRecap(db, bookId, request.chapterId),
     endpoint: { name: profile.name, model: profile.model, notes: layers.profile?.notes ?? "" },
     expressions: expressionNames(readEndpoints(db)),
+    lineEffects: lineEffectsOf(listEffects(db)),
   };
   const prompt = renderPrompt(template, vars);
 

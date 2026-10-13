@@ -298,6 +298,27 @@ describe("a request", () => {
     expect(answer).toEqual({ lines: expect.any(Array), cast: [] });
   });
 
+  test("reads the line effects a line names, each once, and passes over what is not a name", async () => {
+    const { provider } = gateway(() =>
+      completion(
+        fenced([
+          { ...LINES[0], effects: "Telephone" },
+          {
+            ...LINES[1],
+            effects: [" Telephone ", "Inner  echo", "Telephone", "", 7, null, "x".repeat(81)],
+          },
+          { ...LINES[2], effects: { name: "Telephone" } },
+        ]),
+      ),
+    );
+    const { lines } = await provider.script(input());
+    expect(lines.map((l) => l.effects)).toEqual([
+      undefined,
+      ["Telephone", "Inner echo"],
+      undefined,
+    ]);
+  });
+
   // the words stay in the script, so the prose read here carries the site's line and the note too
   test.each<[string, SegmentType]>([
     ["watermark", "watermark"],

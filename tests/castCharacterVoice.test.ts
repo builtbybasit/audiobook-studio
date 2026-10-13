@@ -1,5 +1,6 @@
 // The Character voice as the cast store reports it: what a speaker with no voice of their own is
-// read in, and a broken Character voice slot among the voices the cast routes to. Stores filled by
+// read in, what a linked persona is, and a broken Character voice slot among the voices the cast
+// routes to. Stores filled by
 // hand — no server — since both are getters over what is already held.
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
@@ -93,5 +94,34 @@ describe("routing issues", () => {
     // everyone voiced: the Character voice reads nobody
     for (const c of cast.characters.b) c.voice = "ok/v1";
     expect(cast.routingIssues("b")).toEqual([]);
+  });
+});
+
+describe("a linked persona", () => {
+  beforeEach(() => {
+    // a voice and a gender of their own, which the link sets aside
+    cast.characters.b.push({ ...speaker("Mask", "m", "gone/v1"), personaOf: "Ana" });
+  });
+
+  test("is read in their character's voice, whatever they are given", () => {
+    book.characterVoice = byGender({ female: "ok/v1" });
+    expect(cast.fallbackLabel("b", "Mask")).toBe("Ana’s voice");
+    expect(cast.effectiveVoice("b", "Mask")).toMatchObject({
+      ref: "ok/v1",
+      own: false,
+      from: "persona",
+      of: "Ana",
+    });
+  });
+
+  test("is no routing issue of their own: their character's row covers them", () => {
+    book.characterVoice = byGender({ male: "off/v1" });
+    cast.characters.b[2].voice = "ok/v1";
+    // Mask's own voice is gone and Bo is voiced, so the male slot reads nobody but an unlinked Mask
+    expect(cast.routingIssues("b")).toEqual([]);
+    cast.characters.b.at(-1)!.personaOf = "Nobody";
+    expect(cast.routingIssues("b").map((i) => i.name)).toEqual(["Mask"]);
+    cast.characters.b.at(-1)!.voice = null;
+    expect(cast.routingIssues("b").map((i) => i.name)).toEqual(["Character voice (male)"]);
   });
 });

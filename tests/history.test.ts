@@ -29,6 +29,7 @@ import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 import { useTransferStore } from "@/stores/transfer";
 import { useUiStore } from "@/stores/ui";
 import type {
+  Character,
   ImportChapter,
   Job,
   ScriptImportPlan,
@@ -553,6 +554,54 @@ describe("importing a script file", () => {
     expect(JSON.stringify(castStore.lexiconOf("cliche"))).toBe(lexicon);
     expect(JSON.stringify(segments())).toBe(script);
     expect(fish.voices).toHaveLength(fishVoices);
+  });
+
+  test("a persona comes in linked to a speaker the cast ends up with, and unlinked otherwise", async () => {
+    await open(1);
+    const file = (name: string, personaOf?: string) => ({
+      name,
+      aliases: [],
+      gender: "m" as const,
+      description: "",
+      style: "",
+      ...(personaOf ? { personaOf } : {}),
+    });
+    readIn(
+      [
+        fileChapter(1, (lines) => {
+          const said = dialogue(lines);
+          for (const [i, who] of ["Mask", "Stranger", "Shade", "Ghost"].entries())
+            said[i].speaker = who;
+        }),
+      ],
+      {
+        cast: {
+          // the persona listed before the speaker they are a persona of
+          add: [
+            file("Mask", "Stranger"),
+            file("Stranger"),
+            file("Shade", "Elder Mo"),
+            file("Ghost", "Nobody Here"),
+            file("Nobody Here"),
+          ],
+          differ: [],
+          aliases: [],
+        },
+      },
+    );
+    await transferStore.apply("cliche", [1]);
+    await castStore._castSettled("cliche");
+    const linked = (cs: Character[]) =>
+      Object.fromEntries(cs.flatMap((c) => (c.personaOf ? [[c.name, c.personaOf]] : [])));
+    // Nobody Here speaks no applied line, so is not added, and Ghost keeps a voice of their own
+    expect(linked(castStore.charactersOf("cliche"))).toEqual({
+      Mask: "Stranger",
+      Shade: "Elder Mo",
+    });
+    expect(linked((await libraryService().cast("cliche")).characters)).toEqual({
+      Mask: "Stranger",
+      Shade: "Elder Mo",
+    });
   });
 
   test("the book keeps its own speakers and terms until one is taken from the file", async () => {

@@ -950,7 +950,7 @@ answers is decided per request, by the endpoint's base URL:
 The tests hand the app the fakes directly ([tests/support/server.ts](../tests/support/server.ts)),
 so no test reaches the network whatever it saves. **Nothing about a provider is in the
 environment**: base URL, model, timeout, retries and key are the endpoint's, saved with it. The
-`.env` variables `SCRIPTING_PROVIDER_URL`, `…_MODEL`, `…_TOKEN`, `FISHAUDIO_TOKEN` and
+`.env` variables `SCRIPTING_PROVIDER_URL`, `…_MODEL`, `…_KEY`, `…_REASONING`, `FISHAUDIO_TOKEN` and
 `FISHAUDIO_VOICE_ID` are read by `pnpm test:live` and nothing else.
 
 **The key is write-only.** It is `endpoints.api_key`, one per endpoint and one per profile (a

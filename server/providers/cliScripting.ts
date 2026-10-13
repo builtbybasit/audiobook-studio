@@ -46,8 +46,10 @@ export interface CliScriptingOptions {
 }
 
 /**
- * Codex features that reach outside the conversation, switched off for every run. `codex features
- * list` names them; one Codex no longer knows fails the run with "Unknown feature flag".
+ * Codex features that reach outside the conversation, or only put tools in front of the model,
+ * switched off for every run. `codex features list` names them; one Codex no longer knows fails
+ * the run with "Unknown feature flag". The last three are only tokens: goals' tools (about 600 of
+ * them), the image viewer and the sleep tool.
  */
 const CODEX_OFF = [
   "shell_tool",
@@ -60,6 +62,9 @@ const CODEX_OFF = [
   "multi_agent",
   "hooks",
   "plugins",
+  "goals",
+  "view_image",
+  "sleep_tool",
 ];
 
 /** What one run is: the command line, what goes on stdin, and a file it needs written first. */

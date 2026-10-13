@@ -6,8 +6,11 @@ import { SIMULATED_BASE_URL, SIMULATED_SCRIPTING_MODEL } from "@/lib/providers";
 import { CLAUDE_CODE, CODEX } from "@/lib/providers/cli";
 
 // Every hosted rate below is the provider's own published card as read on 2026-09-28, standard
-// tier, USD per million tokens. A preset leaves limits and timing at `newProfile`'s defaults: a
-// provider's output ceiling is far above what a chunk of one chapter asks for.
+// tier, USD per million tokens. A preset's `maxOutputTokens` is the model's own ceiling per request
+// as its provider documents it, read on 2026-10-13 — thinking counts against it for every one of
+// these but Grok, where xAI documents no ceiling and caps a request at 128,000 visible tokens when
+// none is sent — so a reasoning model is never cut off by a cap of ours. A budget holds a request
+// at that ceiling until it lands. Other limits and timing stay at `newProfile`'s defaults.
 
 const PRICES_AS_OF = "Rates as published on 28 September 2026 — check them against your own plan.";
 
@@ -56,6 +59,7 @@ function openRouter(
   model: string,
   hint: string,
   rates: { input: number; output: number; cachedInput: number | null; cacheWrite: number | null },
+  maxOutputTokens: number,
 ): ScriptingPreset {
   return {
     id: `openrouter-${id}`,
@@ -76,6 +80,7 @@ function openRouter(
       baseUrl: "https://openrouter.ai/api/v1",
       model,
       needsKey: true,
+      maxOutputTokens,
       inPrice: rates.input,
       outPrice: rates.output,
       pricing: presetPricing({ cachedInput: rates.cachedInput, cacheWrite: rates.cacheWrite }),
@@ -93,8 +98,8 @@ const ON_SUBSCRIPTION = {
   inPrice: 0,
   outPrice: 0,
   concurrency: 2,
-  // neither tool takes a cap on output tokens, so this is only what a request holds against the
-  // budgets — at no charge, nothing
+  // neither tool takes a cap on output tokens, so a preset's figure (the model's own ceiling) is
+  // only what a request holds against the budgets — at no charge, nothing
   maxOutputTokens: 32000,
   secPerChunk: 60,
   timeoutSec: 600,
@@ -120,6 +125,7 @@ function claudeCode(id: string, label: string, model: string, hint: string): Scr
       model,
       reasoning: "medium",
       ...ON_SUBSCRIPTION,
+      maxOutputTokens: 128000,
       pricing: presetPricing(),
     },
   };
@@ -161,6 +167,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       baseUrl: "https://api.openai.com/v1",
       model: "gpt-6-luna",
       needsKey: true,
+      maxOutputTokens: 128000,
       inPrice: 0.1,
       outPrice: 0.5,
       pricing: presetPricing({ cachedInput: 0.01, cacheWrite: 0.125 }),
@@ -180,6 +187,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       baseUrl: "https://api.openai.com/v1",
       model: "gpt-6-sol",
       needsKey: true,
+      maxOutputTokens: 128000,
       inPrice: 2,
       outPrice: 10,
       pricing: presetPricing({ cachedInput: 0.2, cacheWrite: 2.5 }),
@@ -196,6 +204,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       baseUrl: "https://api.openai.com/v1",
       model: "gpt-6-astra",
       needsKey: true,
+      maxOutputTokens: 128000,
       inPrice: 10,
       outPrice: 50,
       pricing: presetPricing({ cachedInput: 1, cacheWrite: 12.5 }),
@@ -216,6 +225,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       baseUrl: "https://api.deepseek.com",
       model: "deepseek-flash",
       needsKey: true,
+      maxOutputTokens: 393216,
       inPrice: 0.15,
       outPrice: 0.6,
       pricing: presetPricing({
@@ -242,6 +252,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
       model: "gemini-3.8-flash",
       needsKey: true,
+      maxOutputTokens: 65536,
       inPrice: 1.5,
       outPrice: 7.5,
       pricing: presetPricing({
@@ -265,6 +276,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
       model: "gemini-3.1-pro-preview",
       needsKey: true,
+      maxOutputTokens: 65536,
       inPrice: 2,
       outPrice: 12,
       pricing: presetPricing({ cachedInput: 0.2, cacheWrite: null }),
@@ -286,6 +298,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       baseUrl: "https://api.anthropic.com/v1",
       model: "claude-opus-5-5",
       needsKey: true,
+      maxOutputTokens: 128000,
       inPrice: 4,
       outPrice: 20,
       pricing: presetPricing(),
@@ -306,6 +319,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       baseUrl: "https://api.anthropic.com/v1",
       model: "claude-sonnet-5",
       needsKey: true,
+      maxOutputTokens: 128000,
       inPrice: 2,
       outPrice: 10,
       pricing: presetPricing(),
@@ -324,6 +338,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       baseUrl: "https://api.anthropic.com/v1",
       model: "claude-haiku-4-5",
       needsKey: true,
+      maxOutputTokens: 64000,
       inPrice: 1,
       outPrice: 5,
       pricing: presetPricing(),
@@ -344,6 +359,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       baseUrl: "https://api.x.ai/v1",
       model: "grok-4.7",
       needsKey: true,
+      maxOutputTokens: 128000,
       inPrice: 2,
       outPrice: 6,
       pricing: presetPricing({ cachedInput: 0.5, cacheWrite: null }),
@@ -363,6 +379,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       baseUrl: "https://api.x.ai/v1",
       model: "grok-4.3",
       needsKey: true,
+      maxOutputTokens: 128000,
       inPrice: 1.25,
       outPrice: 2.5,
       pricing: presetPricing({ cachedInput: 0.2, cacheWrite: null }),
@@ -379,31 +396,60 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       cachedInput: 0.2,
       cacheWrite: 5,
     },
+    128000,
   ),
-  openRouter("gpt-6-astra", "GPT-6 Astra", "openai/gpt-6-astra", "openai/gpt-6-astra", {
-    input: 10,
-    output: 50,
-    cachedInput: 1,
-    cacheWrite: 12.5,
-  }),
-  openRouter("gpt-6-sol", "GPT-6 Sol", "openai/gpt-6-sol", "openai/gpt-6-sol", {
-    input: 2,
-    output: 10,
-    cachedInput: 0.2,
-    cacheWrite: 2.5,
-  }),
-  openRouter("grok-4.7", "Grok 4.7", "x-ai/grok-4.7", "x-ai/grok-4.7", {
-    input: 1.6,
-    output: 4.8,
-    cachedInput: 0.4,
-    cacheWrite: null,
-  }),
-  openRouter("qwen3.8-max", "Qwen3.8 Max", "qwen/qwen3.8-max-0902", "qwen/qwen3.8-max-0902", {
-    input: 2,
-    output: 6,
-    cachedInput: 0.25,
-    cacheWrite: 2.5,
-  }),
+  openRouter(
+    "gpt-6-astra",
+    "GPT-6 Astra",
+    "openai/gpt-6-astra",
+    "openai/gpt-6-astra",
+    {
+      input: 10,
+      output: 50,
+      cachedInput: 1,
+      cacheWrite: 12.5,
+    },
+    128000,
+  ),
+  openRouter(
+    "gpt-6-sol",
+    "GPT-6 Sol",
+    "openai/gpt-6-sol",
+    "openai/gpt-6-sol",
+    {
+      input: 2,
+      output: 10,
+      cachedInput: 0.2,
+      cacheWrite: 2.5,
+    },
+    128000,
+  ),
+  openRouter(
+    "grok-4.7",
+    "Grok 4.7",
+    "x-ai/grok-4.7",
+    "x-ai/grok-4.7",
+    {
+      input: 1.6,
+      output: 4.8,
+      cachedInput: 0.4,
+      cacheWrite: null,
+    },
+    128000,
+  ),
+  openRouter(
+    "qwen3.8-max",
+    "Qwen3.8 Max",
+    "qwen/qwen3.8-max-0902",
+    "qwen/qwen3.8-max-0902",
+    {
+      input: 2,
+      output: 6,
+      cachedInput: 0.25,
+      cacheWrite: 2.5,
+    },
+    131072,
+  ),
   openRouter(
     "mimo-v2.6-pro",
     "MiMo-V2.6-Pro",
@@ -415,6 +461,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       cachedInput: 0.0036,
       cacheWrite: null,
     },
+    131072,
   ),
   {
     id: "ollama",
@@ -468,6 +515,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       // two-sentence Test excerpt lost "Mara whispered" every time; at high it kept them
       reasoning: "high",
       ...ON_SUBSCRIPTION,
+      maxOutputTokens: 128000,
       pricing: presetPricing(),
     },
   },

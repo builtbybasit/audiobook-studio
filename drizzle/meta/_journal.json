@@ -232,6 +232,13 @@
       "when": 1791820722448,
       "tag": "0032_inline_pauses",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1791865105352,
+      "tag": "0033_personas_line_effects",
+      "breakpoints": true
     }
   ]
 }

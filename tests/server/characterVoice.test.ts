@@ -1,10 +1,12 @@
 // The book's Character voice: what a speaker with no voice of their own is read in, before the
-// Narrator's. The rule is `speakerVoice`, shared by the narration job and the page; here it is
-// checked on its own, then through the settings route and a real run.
+// Narrator's, and a linked persona's: their character's. The rule is `speakerVoice`, shared by the
+// narration job and the page; here it is checked on its own, then through the settings route and
+// a real run.
 import { describe, expect, test } from "bun:test";
 
 import type { Book, Character, CharacterVoice, Segment } from "@/types";
 import { narrator, speakerVoice } from "@/lib/cast";
+import { deliveryFor } from "~/narration/cost";
 import { story } from "../support/epub";
 import {
   jsonBody,
@@ -29,44 +31,107 @@ const cv = (over: Partial<CharacterVoice> = {}): CharacterVoice => ({
   ...over,
 });
 
+/** A cast by name, the Narrator in it read in `narr`. */
+const castOf = (narr: string | null, ...cs: Character[]) =>
+  new Map([narrator(narr), ...cs].map((c) => [c.name, c]));
+
 describe("the voice a speaker is read in", () => {
   test("is their own first, whatever the Character voice says", () => {
-    const c = speaker("Mara", "f", "ep/mara");
-    expect(speakerVoice("Mara", c, "ep/narr", cv({ one: "ep/char" }))).toEqual({
+    const cast = castOf("ep/narr", speaker("Mara", "f", "ep/mara"));
+    expect(speakerVoice("Mara", cast, cv({ one: "ep/char" }))).toEqual({
       ref: "ep/mara",
       from: "own",
     });
   });
 
   test("is the one Character voice for everyone else, and the Narrator's without one", () => {
-    const c = speaker("Tobin", "m");
-    expect(speakerVoice("Tobin", c, "ep/narr", cv({ one: "ep/char" })).ref).toBe("ep/char");
-    expect(speakerVoice("Tobin", c, "ep/narr", undefined)).toEqual({
-      ref: "ep/narr",
-      from: "narrator",
-    });
+    const cast = castOf("ep/narr", speaker("Tobin", "m"));
+    expect(speakerVoice("Tobin", cast, cv({ one: "ep/char" })).ref).toBe("ep/char");
+    expect(speakerVoice("Tobin", cast, undefined)).toEqual({ ref: "ep/narr", from: "narrator" });
     // a name not in the cast is a character too
-    expect(speakerVoice("Stranger", undefined, "ep/narr", cv({ one: "ep/char" })).from).toBe(
-      "character",
-    );
+    expect(speakerVoice("Stranger", cast, cv({ one: "ep/char" })).from).toBe("character");
   });
 
   test("by gender picks the speaker's slot, neutral and unknown share `other`, and an empty slot is the Narrator's", () => {
     const g = cv({ by: "gender", one: "ep/one", male: "ep/m", female: "ep/f", other: "ep/o" });
-    expect(speakerVoice("A", speaker("A", "m"), "ep/narr", g).ref).toBe("ep/m");
-    expect(speakerVoice("B", speaker("B", "f"), "ep/narr", g).ref).toBe("ep/f");
-    expect(speakerVoice("C", speaker("C", "n"), "ep/narr", g).ref).toBe("ep/o");
-    expect(speakerVoice("D", speaker("D", "?"), "ep/narr", g).ref).toBe("ep/o");
-    expect(speakerVoice("A", speaker("A", "m"), "ep/narr", { ...g, male: null })).toEqual({
+    const cast = castOf(
+      "ep/narr",
+      speaker("A", "m"),
+      speaker("B", "f"),
+      speaker("C", "n"),
+      speaker("D", "?"),
+    );
+    expect(speakerVoice("A", cast, g).ref).toBe("ep/m");
+    expect(speakerVoice("B", cast, g).ref).toBe("ep/f");
+    expect(speakerVoice("C", cast, g).ref).toBe("ep/o");
+    expect(speakerVoice("D", cast, g).ref).toBe("ep/o");
+    expect(speakerVoice("A", cast, { ...g, male: null })).toEqual({
       ref: "ep/narr",
       from: "narrator",
     });
   });
 
   test("never applies to the Narrator", () => {
-    expect(speakerVoice("Narrator", narrator(null), null, cv({ one: "ep/char" }))).toEqual({
+    expect(speakerVoice("Narrator", castOf(null), cv({ one: "ep/char" }))).toEqual({
       ref: null,
       from: "narrator",
+    });
+  });
+});
+
+describe("the voice a persona is read in", () => {
+  // a persona of a woman, given a voice and a gender of their own that a link overrides
+  const lord = { ...speaker("Lord of Shadows", "m", "ep/lord"), personaOf: "Sunny" };
+  const g = cv({ by: "gender", male: "ep/m", female: "ep/f" });
+
+  test("is their character's own voice when linked", () => {
+    const cast = castOf("ep/narr", speaker("Sunny", "f", "ep/sunny"), lord);
+    expect(speakerVoice("Lord of Shadows", cast, g)).toEqual({
+      ref: "ep/sunny",
+      from: "persona",
+      of: "Sunny",
+    });
+  });
+
+  test("is the Character voice for their character's gender, or the Narrator's, when the character has none", () => {
+    const cast = castOf("ep/narr", speaker("Sunny", "f"), lord);
+    expect(speakerVoice("Lord of Shadows", cast, g).ref).toBe("ep/f");
+    expect(speakerVoice("Lord of Shadows", cast, undefined)).toEqual({
+      ref: "ep/narr",
+      from: "persona",
+      of: "Sunny",
+    });
+  });
+
+  test("is their own while the link names nobody in the cast, or themselves", () => {
+    expect(speakerVoice("Lord of Shadows", castOf("ep/narr", lord), g)).toEqual({
+      ref: "ep/lord",
+      from: "own",
+    });
+    const self = { ...lord, voice: null, personaOf: "Lord of Shadows" };
+    expect(speakerVoice("Lord of Shadows", castOf("ep/narr", self), g).ref).toBe("ep/m");
+  });
+
+  test("follows one link only", () => {
+    const cast = castOf(
+      "ep/narr",
+      { ...speaker("Sunny", "f", "ep/sunny"), personaOf: "Nephis" },
+      speaker("Nephis", "f", "ep/neph"),
+      lord,
+    );
+    expect(speakerVoice("Lord of Shadows", cast, g).ref).toBe("ep/sunny");
+  });
+});
+
+describe("a delivery", () => {
+  test("gives a linked persona their character's voice and their own style", () => {
+    const sunny = { ...speaker("Sunny", "m", "ep/sunny"), style: "dry" };
+    const lord = { ...speaker("Lord of Shadows", "m"), style: "cold, distant", personaOf: "Sunny" };
+    expect(deliveryFor([narrator("ep/narr"), sunny, lord])("Lord of Shadows")).toEqual({
+      voiceRef: "ep/sunny",
+      voice: "sunny",
+      endpoint: "ep",
+      style: "cold, distant",
     });
   });
 });

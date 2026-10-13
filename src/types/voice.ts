@@ -65,13 +65,18 @@ export interface ResolvedVoice {
   voice: Voice;
 }
 
-/** Which voice actually renders a speaker, after falling back to the Character voice or the Narrator's. */
+/**
+ * Which voice actually renders a speaker, after a linked persona takes their character's and a
+ * speaker with none falls back to the Character voice or the Narrator's.
+ */
 export interface EffectiveVoice {
   ref: VoiceRef | null;
-  /** false when the speaker is borrowing the Character voice or the Narrator's */
+  /** false when the speaker is borrowing their character's, the Character voice or the Narrator's */
   own: boolean;
   /** where the voice comes from (`speakerVoice`) */
-  from: "own" | "character" | "narrator";
+  from: "own" | "character" | "narrator" | "persona";
+  /** for a linked persona, the character whose voice they are read in */
+  of?: string;
   voice: string | null;
   label: string | null;
   endpoint: Endpoint | null;

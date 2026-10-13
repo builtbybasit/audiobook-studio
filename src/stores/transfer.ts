@@ -13,7 +13,7 @@
 import { key } from "@/lib/scriptReview";
 import { planRestore, type RestoreOptions } from "@/lib/scriptHistory";
 import { chapterNarration } from "@/lib/runPlan";
-import { newSpeaker } from "@/lib/cast";
+import { newSpeaker, personaRefusal } from "@/lib/cast";
 import { clone } from "@/lib/utils";
 import { fetchScript } from "@/queries/chapterScript";
 import { libraryService } from "@/services/library";
@@ -281,7 +281,11 @@ export const useTransferStore = defineStore("transfer", {
       const used = new Set(writes.flatMap((w) => w.restore.segments.map((s) => s.speaker)));
       const pushed = new Map<string, Promise<boolean>>();
       const added: string[] = [];
-      for (const speaker of plan.cast.add) {
+      // personas last, so the character a persona is of is in the cast first; a link that would
+      // be refused there (`personaRefusal`) — to a speaker this import does not bring, say — is
+      // dropped, and the persona keeps a voice of their own
+      const personasLast = [...plan.cast.add].sort((a, b) => +!!a.personaOf - +!!b.personaOf);
+      for (const speaker of personasLast) {
         if (cast().some((c) => c.name === speaker.name)) continue;
         if (!used.has(speaker.name)) {
           report.unused.push(speaker.name);
@@ -295,6 +299,9 @@ export const useTransferStore = defineStore("transfer", {
           style: speaker.style,
           ...(speaker.color ? { color: speaker.color } : {}),
           ...(speaker.major != null ? { major: speaker.major } : {}),
+          ...(speaker.personaOf && !personaRefusal(speaker.name, speaker.personaOf, cast())
+            ? { personaOf: speaker.personaOf }
+            : {}),
         };
         pushed.set(c.name, castStore._addSpeaker(bookId, c));
         added.push(c.name);

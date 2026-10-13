@@ -41,6 +41,8 @@ export const characters = sqliteTable(
     effect: text("effect"),
     /** their thought effect (`Character.thoughts`): an effect's id or "none"; null = the book's */
     thoughts: text("thoughts"),
+    /** `Character.personaOf`: the name of the character this one is a persona of; null = none */
+    personaOf: text("persona_of"),
     /** the order the cast list reads in */
     position: integer("position").notNull().default(0),
   },

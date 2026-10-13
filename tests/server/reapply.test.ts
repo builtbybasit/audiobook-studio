@@ -12,9 +12,11 @@ import { describe, expect, test } from "bun:test";
 
 import type { Job, StaleSound, Step } from "@/types";
 import { soundOf } from "@/lib/effects";
+import { newSpeaker } from "@/lib/cast";
 import { createEffect } from "~/db/effects";
+import { characterValues } from "~/db/rows/cast";
 import { listJobs } from "~/db/jobs";
-import { clips, characters } from "~/db/schema";
+import { clips, characters, segments } from "~/db/schema";
 import { readScript } from "~/db/script";
 import { and, eq } from "drizzle-orm";
 import { fakeEffectRunner, type FakeEffectRunner } from "../support/effects";
@@ -78,7 +80,7 @@ describe("what has an old sound", () => {
     expect(await stale(api, id)).toEqual({ lines: 0, unavailable: 0, ready: true });
 
     // Mara wears an effect her clips were made without
-    const e = createEffect(api.db, "echo", "Echo", echo);
+    const e = createEffect(api.db, "echo", { name: "Echo", chain: echo });
     wear(api, id, e.id);
     const [a, b] = maras(api, id);
     expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 0, ready: true });
@@ -95,6 +97,37 @@ describe("what has an old sound", () => {
     // an ffmpeg thought clip from before raw files were kept cannot be undone
     setClip(api, b.audio.url!, { sound: "ffmpeg", raw: null });
     expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 1, ready: true });
+  });
+
+  test("a clip whose line gained a line effect, or whose speaker became a persona", async () => {
+    const { api, id } = await book();
+    const e = createEffect(api.db, "phone", { name: "Phone", chain: echo });
+    const [a, b] = maras(api, id);
+    api.db
+      .update(segments)
+      .set({ effects: [e.id] })
+      .where(and(eq(segments.bookId, id), eq(segments.chapterId, a.ch), eq(segments.id, a.id)))
+      .run();
+    expect(await stale(api, id)).toEqual({ lines: 1, unavailable: 0, ready: true });
+    // made as it now sounds, it is not old; its neighbour with no line effect never was
+    setClip(api, a.audio.url!, { sound: soundOf([e]), raw: "/api/audio/x/raw-a.wav" });
+    expect(await stale(api, id)).toEqual({ lines: 0, unavailable: 0, ready: true });
+
+    // Mara becomes a persona of a speaker who wears an effect: hers go first, on every line
+    const louderFx = createEffect(api.db, "louder", { name: "Louder", chain: louder });
+    api.db
+      .insert(characters)
+      .values(characterValues(id, { ...newSpeaker("Ann", 1), effect: louderFx.id }, 99))
+      .run();
+    api.db
+      .update(characters)
+      .set({ personaOf: "Ann" })
+      .where(and(eq(characters.bookId, id), eq(characters.name, "Mara")))
+      .run();
+    expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 0, ready: true });
+    setClip(api, a.audio.url!, { sound: soundOf([louderFx, e]) });
+    setClip(api, b.audio.url!, { sound: soundOf([louderFx]), raw: "/api/audio/x/raw-b.wav" });
+    expect(await stale(api, id)).toEqual({ lines: 0, unavailable: 0, ready: true });
   });
 
   test("says whether effects can run here to redo them", async () => {
@@ -121,7 +154,7 @@ describe("re-applying", () => {
     const raws = maras(api, id).map((s) => s.audio.url!);
     const before = onDisk(api, id);
 
-    const e = createEffect(api.db, "echo", "Echo", echo);
+    const e = createEffect(api.db, "echo", { name: "Echo", chain: echo });
     wear(api, id, e.id);
     expect((await reapply(api, id)).status).toBe("done");
     expect(fake.calls.batch).toHaveLength(1);
@@ -137,7 +170,7 @@ describe("re-applying", () => {
     expect(await stale(api, id)).toEqual({ lines: 0, unavailable: 0, ready: true });
 
     // the effect changes: made again from the raw files, the first renders gone
-    wear(api, id, createEffect(api.db, "louder", "Louder", louder).id);
+    wear(api, id, createEffect(api.db, "louder", { name: "Louder", chain: louder }).id);
     expect((await reapply(api, id)).status).toBe("done");
     expect(fake.calls.batch[1].map((j) => fileOf(j.input))).toEqual(raws.map(fileOf));
     const second = maras(api, id);
@@ -162,7 +195,7 @@ describe("re-applying", () => {
     const { api, id } = await book(fake);
     const before = onDisk(api, id);
     const [a, b] = maras(api, id);
-    wear(api, id, createEffect(api.db, "echo", "Echo", echo).id);
+    wear(api, id, createEffect(api.db, "echo", { name: "Echo", chain: echo }).id);
 
     // the first clip is narrated again while the batch runs; the second fails in it
     const batch = fake.batch.bind(fake);
@@ -190,7 +223,7 @@ describe("re-applying", () => {
     const fake = fakeEffectRunner();
     fake.ready = false;
     const { api, id } = await book(fake);
-    wear(api, id, createEffect(api.db, "echo", "Echo", echo).id);
+    wear(api, id, createEffect(api.db, "echo", { name: "Echo", chain: echo }).id);
     const job = await reapply(api, id);
     expect(job.status).toBe("failed");
     expect(job.activity?.at(-1)?.detail?.error).toContain("cannot run on this machine");
@@ -200,7 +233,7 @@ describe("re-applying", () => {
 describe("removing clips", () => {
   test("takes their raw files with them", async () => {
     const { api, id } = await book();
-    wear(api, id, createEffect(api.db, "echo", "Echo", echo).id);
+    wear(api, id, createEffect(api.db, "echo", { name: "Echo", chain: echo }).id);
     await reapply(api, id);
     expect(maras(api, id).every((s) => s.audio.raw)).toBe(true);
     await api.request(`/api/books/${id}/start-over`, jsonBody({}));

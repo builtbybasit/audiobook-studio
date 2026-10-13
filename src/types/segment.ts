@@ -197,6 +197,12 @@ export interface Segment {
    *  a hand split records it so the join that undoes it restores the paragraph break */
   sep?: string;
   expressions?: ExpressionAnnotation[];
+  /**
+   * Line effects: effects this one line is heard through, by id, after its speaker's own — a
+   * phone, telepathy, a voice through a mask. Run in the library's order, whatever order they are
+   * listed in here (`chainsFor`). An id no effect has any more is passed over. Absent = none.
+   */
+  effects?: string[];
 }
 
 /** Keyed `${bookId}:${chapterId}`. */

@@ -83,27 +83,82 @@ export function characterVoiceFor(cv: CharacterVoice | undefined, gender: Gender
   return cv ? cv[characterSlot(cv, gender)] : null;
 }
 
-/** Where a speaker's voice comes from: their own, the book's Character voice, or the Narrator's. */
-export type VoiceSource = "own" | "character" | "narrator";
+/**
+ * Where a speaker's voice comes from: their own, the book's Character voice, the Narrator's, or —
+ * for a linked persona — the character they are a persona of (`of`), whichever voice that is.
+ */
+export type VoiceSource = "own" | "character" | "narrator" | "persona";
+
+/** A book's cast by name: how the voice rule finds the Narrator and the character behind a persona. */
+export type CastLookup = Pick<ReadonlyMap<string, Character>, "get">;
+
+/**
+ * The character a speaker is a linked persona of: the one their `personaOf` names, when that is
+ * someone else in the cast. Undefined for anyone else, and for a persona whose `personaOf` names
+ * nobody in the cast (or themselves), who keeps their own voice — a masked stranger stays a
+ * stranger until someone links them.
+ */
+export function personaOwner<C>(
+  c: Pick<Character, "name" | "personaOf"> | undefined,
+  cast: Pick<ReadonlyMap<string, C>, "get">,
+): C | undefined {
+  return c?.personaOf && c.personaOf !== c.name ? cast.get(c.personaOf) : undefined;
+}
+
+/**
+ * Why `name` cannot be made a persona of `personaOf` in this cast, or null when they can. A persona
+ * is of someone else in the cast who is not the Narrator and not a persona themselves, and a
+ * speaker others are personas of cannot become one: one level only, so the voice rule never chains.
+ * The server refuses a speaker written with a refused link; an import drops the link instead.
+ */
+export function personaRefusal(
+  name: string,
+  personaOf: string,
+  cast: readonly Pick<Character, "name" | "personaOf">[],
+): string | null {
+  if (personaOf === name) return "A speaker cannot be a persona of themselves";
+  if (name === NARRATOR) return "The Narrator cannot be a persona";
+  if (personaOf === NARRATOR) return "A speaker cannot be a persona of the Narrator";
+  const of = cast.find((c) => c.name === personaOf);
+  if (!of) return `“${personaOf}” is not in this book’s cast`;
+  if (of.personaOf)
+    return `“${personaOf}” is a persona of “${of.personaOf}”, and a persona has none of its own`;
+  const mine = cast.find((c) => c.personaOf === name && c.name !== name);
+  if (mine) return `“${mine.name}” is a persona of “${name}”, so “${name}” cannot be one`;
+  return null;
+}
 
 /**
  * The voice a speaker is read in — the one rule the narration job, its estimate and every page
- * that says "read in …" share. Their own voice; else, for anyone but the Narrator, the book's
- * Character voice for their gender; else the Narrator's. A name not in the cast is a speaker of
- * unknown gender.
+ * that says "read in …" share. A linked persona (`personaOwner`) is read in whatever voice their
+ * character is, one level only; anyone else in their own voice; else, for anyone but the Narrator,
+ * the book's Character voice for their gender; else the Narrator's. A name not in the cast is a
+ * speaker of unknown gender. So moving a line between a character and their persona never changes
+ * its voice.
  */
 export function speakerVoice(
   name: string,
-  c: Character | undefined,
-  narratorVoice: VoiceRef | null,
+  cast: CastLookup,
+  cv: CharacterVoice | undefined,
+): { ref: VoiceRef | null; from: VoiceSource; of?: string } {
+  const c = cast.get(name);
+  const owner = personaOwner(c, cast);
+  if (owner) return { ref: voiceOf(owner, cast, cv).ref, from: "persona", of: owner.name };
+  return voiceOf(c ?? { name, gender: "?", voice: null }, cast, cv);
+}
+
+/** `speakerVoice` without the persona step. */
+function voiceOf(
+  c: Pick<Character, "name" | "gender" | "voice">,
+  cast: CastLookup,
   cv: CharacterVoice | undefined,
 ): { ref: VoiceRef | null; from: VoiceSource } {
-  if (c?.voice) return { ref: c.voice, from: "own" };
-  if (name !== NARRATOR) {
-    const ref = characterVoiceFor(cv, c?.gender ?? "?");
+  if (c.voice) return { ref: c.voice, from: "own" };
+  if (c.name !== NARRATOR) {
+    const ref = characterVoiceFor(cv, c.gender);
     if (ref) return { ref, from: "character" };
   }
-  return { ref: narratorVoice, from: "narrator" };
+  return { ref: cast.get(NARRATOR)?.voice ?? null, from: "narrator" };
 }
 
 // ---------- names in a line ----------

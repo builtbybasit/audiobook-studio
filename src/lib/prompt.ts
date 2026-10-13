@@ -29,12 +29,22 @@
 // `[[long pause]]`, and becomes a pause of the book's length for it (`scriptedAnnotation`); the
 // built-in prompt says when to write one.
 //
+// **Line effects** are offered the same way, in the output format: every library effect with a
+// `useWhen` sentence is listed by name, and the model may name several on a line ("effects"), which
+// the job matches back to the effects' ids (`Segment.effects`). With none offered the format is
+// word for word what it was, so a provider's cache and the page's copy of it hold.
+//
+// **Personas** are cast entries marked as another character's disguise (`Character.personaOf`);
+// `{{cast}}` says so ("persona of Sunny"), and the built-in prompt's rule 4 says when a line goes
+// to the persona rather than the character.
+//
 // **Tags** are `{{name}}`, filled in one pass: nothing a tag puts in is read for tags again, so a
 // novel that happens to contain `{{` is sent as it is. A line whose tags all came out empty is left
 // out, which is how `Notes on this book: {{book.notes}}` disappears from a book with no notes
 // without the template needing a conditional.
 import type {
   BookPrompt,
+  Effect,
   ScriptedTag,
   Gender,
   ProfilePrompt,
@@ -136,21 +146,42 @@ export function readScriptedTags(
   return { text, tags: shiftTags(tags, lead, text.length) };
 }
 
+/** A library effect the model may put on a line: one with a sentence saying when. */
+export type LineEffect = Effect & { useWhen: string };
+
+/** The library's effects that are offered to the model as line effects, in the library's order. */
+export const lineEffectsOf = (effects: readonly Effect[]): LineEffect[] =>
+  effects.filter((e): e is LineEffect => !!e.useWhen?.trim());
+
 /**
- * What every answer must look like, with its tags in `marker`. Not editable: the parser and the
- * word-for-word check depend on it. Appended to the system prompt of every request. A cue written
- * any other way is forbidden either way: nothing could tell it from the prose.
+ * What every answer must look like, with its tags in `marker` and the `lineEffects` it may name.
+ * Not editable: the parser and the word-for-word check depend on it. Appended to the system prompt
+ * of every request. A cue written any other way is forbidden either way: nothing could tell it from
+ * the prose.
  */
-export const outputFormat = (marker: ScriptMarker | null): string =>
+export const outputFormat = (
+  marker: ScriptMarker | null,
+  lineEffects: readonly { name: string; useWhen: string }[] = [],
+): string =>
   FORMAT_TEMPLATE.replace(
     TAGS_SLOT,
     marker
       ? `- Expression tags, only when your instructions ask for them: a sound the voice should make — a sigh, a laugh — goes in the line's "text" where it is heard, as ${marker[0]}sigh${marker[1]}: plain words between ${marker[0]} and ${marker[1]}, whatever brackets the instructions show. A tag is not a word of the excerpt and never takes the place of one. Never write a cue any other way, such as [sighs] or (laughs).\n- Pauses, only where your instructions call for one: a pause inside a line goes in its "text" where it falls, as ${marker[0]}pause${marker[1]} for a short one or ${marker[0]}long pause${marker[1]} for a long one. Like a tag, it is not a word of the excerpt.\n`
       : `- Never put a cue such as [sighs] in "text".\n`,
+  ).replace(
+    EFFECTS_SLOT,
+    // last, and a function: what the library typed is read for neither a slot nor a `$` pattern
+    () =>
+      lineEffects.length
+        ? `- "effects" (optional): sound effects for how this line is heard, by name, only from this list — ${lineEffects.map((e) => `"${oneLine(e.name)}": ${oneLine(e.useWhen).replace(/\.$/, "")}`).join("; ")}. Several may apply to one line. Use one only when the text says so; most lines have none, and then leave "effects" out. A persona's disguise is already in its voice, so never add a mask effect to a persona's lines.\n`
+        : "",
   );
 
-/** Where `outputFormat` puts what it says of expression tags; not a prompt tag. */
+/** Where `outputFormat` puts what it says of expression tags and line effects; not prompt tags. */
 const TAGS_SLOT = "%EXPRESSION_TAGS%\n";
+const EFFECTS_SLOT = "%LINE_EFFECTS%\n";
+
+const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
 const FORMAT_TEMPLATE = `Output format (always required):
 The script is a list of consecutive lines that together read out the excerpt from start to finish: every word of the excerpt exactly once, in the original order. Add nothing, drop nothing, summarise nothing, correct nothing, and keep the punctuation of the prose — an answer that leaves words out or adds any is refused.
@@ -158,6 +189,7 @@ Each line has:
 - "type": "narration" for the narrator's prose, "dialogue" for words a character says aloud, "thought" for words a character thinks, "watermark" for text that is not the story but the website's (see below), "note" for a translator's or author's note.
 - "speaker": "${NARRATOR}" for narration, watermark and note lines; for dialogue and thought, the name of the character speaking or thinking.
 - "text": the words of the line, copied verbatim from the excerpt.
+%LINE_EFFECTS%
 - "direction" (optional): how the line is delivered, in a few words for the voice (see the rules).
 %EXPRESSION_TAGS%
 
@@ -173,7 +205,10 @@ Besides the lines, the answer has:
 Answer with JSON only, in this shape:
 {"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","aliases":["the lamplighter"],"description":"A young lamplighter, quick and wary."}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."}`;
 
-/** The output format as almost every request is sent it, for the page to show under the editor. */
+/**
+ * The output format as almost every request is sent it, with no line effects offered, for the page
+ * to show under the editor.
+ */
 export const OUTPUT_FORMAT = outputFormat(SCRIPT_MARKERS[0]);
 
 /** The prompt a library starts with, and what Reset puts back. */
@@ -185,6 +220,7 @@ Rules:
 2. Dialogue text is the spoken words without their surrounding quotation marks. A quotation interrupted by narration becomes three lines: dialogue, narration, dialogue.
 3. Attribution tags such as "said Mara" or "he asked, frowning" are narration, read by the ${NARRATOR}; they are never part of the dialogue line.
 4. Work out who is speaking from the tags, the conversation's back-and-forth, and where the text before the excerpt left off. A character goes by one name all through the book: resolve pronouns, titles and nicknames ("the girl", "the Captain") to it, using the known cast's other names. When a speaker is one of the known cast, use exactly that name; otherwise use the name the text gives them, as it writes it. Use "Unknown" only when nothing says who speaks.
+   The one exception is a persona — a cast entry marked "persona of" another character: a separate identity that character takes on in disguise (a mask, a false name strangers know them by). Lines that character says aloud while the scene has them in that identity go to the persona's name, even when the narration keeps calling them by their real name; their thoughts stay under their own name. Once the disguise is off, or they speak only to people who know who they are, use their own name again. Their words played back or quoted later — a recording, a clip, a rumour repeating what they said — still go to the persona. Always write the persona's cast name, never one of its other names. A masked or disguised figure the text has not identified is a new speaker under what the text calls them.
 5. Consecutive sentences of narration may share one line; start a new line at every change of speaker or type, and at paragraph breaks.
 6. A direction is all the voice engine is told besides the words, and it knows nothing of the story — no names, no plot — so describe the sound: tone, pace, volume, breath. Not "mocking his plan" but "lazy, open contempt"; not "shaking her head" but "flat, tired refusal". Base it on the prose (speech tags, punctuation, what the narrator says of the speaker); keep the same wording while a character's mood holds; leave it out for plain delivery.
 7. Put a pause inside a line only for a real beat — trailing off, a hesitation, a breath before a reveal — never at an ordinary comma or the end of a sentence, which the voice already pauses at.
@@ -235,7 +271,7 @@ export const PROMPT_TAGS: readonly PromptTag[] = [
   {
     name: "cast",
     about:
-      "The known speakers' names with gender and other names, comma-separated, or “(none yet)”",
+      "The known speakers' names with gender, whose persona one is, and other names, comma-separated, or “(none yet)”",
     scope: "chapter",
   },
   {
@@ -287,6 +323,8 @@ export interface PromptCastMember {
   aliases?: readonly string[];
   gender?: Gender;
   description?: string;
+  /** the character this speaker is a persona of, when that character is in the cast */
+  personaOf?: string;
 }
 
 /** Everything a request's tags are filled from. */
@@ -307,6 +345,8 @@ export interface PromptVars {
   endpoint: { name: string; model: string; notes?: string };
   /** the tag names the speech endpoints list (`expressionNames`); absent is none */
   expressions?: readonly string[];
+  /** the line effects the output format offers (`lineEffectsOf`); absent is none */
+  lineEffects?: readonly { name: string; useWhen: string }[];
 }
 
 const GENDER: Record<Gender, string> = { m: "male", f: "female", n: "non-binary", "?": "" };
@@ -317,10 +357,14 @@ function castOf(vars: PromptVars): PromptCastMember[] {
   return vars.cast.filter((c) => c.name !== NARRATOR && c.name !== UNKNOWN);
 }
 
-/** "Mara (female; also called Mar)": what tells a speaker apart, without the description. */
+/**
+ * "Mara (female; also called Mar)", "Lord of Shadows (male; persona of Sunny)": what tells a
+ * speaker apart, without the description.
+ */
 function nameOf(c: PromptCastMember): string {
   const facts = [
     GENDER[c.gender ?? "?"],
+    c.personaOf ? `persona of ${c.personaOf}` : "",
     c.aliases?.length ? `also called ${c.aliases.join(", ")}` : "",
   ].filter(Boolean);
   return `${c.name}${facts.length ? ` (${facts.join("; ")})` : ""}`;
@@ -402,7 +446,9 @@ export function fill(text: string, vars: PromptVars): string {
 export function renderPrompt(template: PromptTemplate, vars: PromptVars): RenderedPrompt {
   const system = fill(template.system, vars);
   return {
-    system: [system, outputFormat(scriptMarkerFor(vars.excerpt))].filter(Boolean).join("\n\n"),
+    system: [system, outputFormat(scriptMarkerFor(vars.excerpt), vars.lineEffects)]
+      .filter(Boolean)
+      .join("\n\n"),
     user: fill(template.user, vars),
   };
 }
@@ -577,7 +623,7 @@ export function sampleVars(excerpt: string, endpoint: PromptVars["endpoint"]): P
 /**
  * Roughly how many characters a request sends besides its excerpt: both messages rendered with an
  * empty excerpt, a cast of ten, a paragraph of each kind of notes, of text before the excerpt and of
- * recap, the output format included. For estimates and budget holds, which are made before the cast
+ * recap, the output format included with two line effects offered. For estimates and budget holds, which are made before the cast
  * and the chunks are known.
  */
 export function promptOverhead(t: PromptTemplate): number {
@@ -597,6 +643,10 @@ export function promptOverhead(t: PromptTemplate): number {
     before: "x".repeat(600),
     recap: "x".repeat(400),
     endpoint: { name: "An endpoint", model: "a-model-id", notes: "x".repeat(300) },
+    lineEffects: [1, 2].map((i) => ({
+      name: `Effect ${i}`,
+      useWhen: "A typical sentence saying when a line is heard through it.",
+    })),
   };
   const r = renderPrompt(t, vars);
   return r.system.length + r.user.length;

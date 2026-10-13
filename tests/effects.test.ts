@@ -1,5 +1,5 @@
-// Which effects a line gets — the speaker's own, then the thought effect chosen speaker → book →
-// library — and the fingerprint that tells a clip with the old sound from one with the current.
+// Which effects a line gets — a persona's character's own, the speaker's own, the line's own in the
+// library's order, then the thought effect chosen speaker → book → library — and the fingerprint that tells a clip with the old sound from one with the current.
 import { describe, expect, test } from "bun:test";
 
 import { chainsFor, soundOf, type EffectContext } from "@/lib/effects";
@@ -11,14 +11,16 @@ const fx = (id: string, gain = -1): Effect => ({
   chain: [{ plugin: "Gain", params: { gain_db: gain }, on: true }],
 });
 const ctx = (over: Partial<EffectContext> = {}): EffectContext => ({
-  effects: new Map(["inner", "mask", "echo"].map((id) => [id, fx(id)])),
+  effects: new Map(["inner", "mask", "echo", "phone", "radio"].map((id) => [id, fx(id)])),
   library: "inner",
   book: null,
   cast: new Map(),
   ...over,
 });
-const ids = (line: { type: "thought" | "dialogue"; speaker: string }, c: EffectContext) =>
-  chainsFor(line, c).map((e) => e.id);
+const ids = (
+  line: { type: "thought" | "dialogue"; speaker: string; effects?: string[] },
+  c: EffectContext,
+) => chainsFor(line, c).map((e) => e.id);
 
 describe("chainsFor", () => {
   test("a thought follows the library when the book and speaker follow", () => {
@@ -42,6 +44,36 @@ describe("chainsFor", () => {
   test("an effect that is gone is nothing", () => {
     const cast = new Map([["Ann", { effect: "gone" }]]);
     expect(ids({ type: "thought", speaker: "Ann" }, ctx({ cast, library: "gone" }))).toEqual([]);
+  });
+  test("a line's own effects run after the speaker's, in the library's order, before the thought", () => {
+    const cast = new Map([["Ann", { effect: "mask" }]]);
+    const line = { speaker: "Ann", effects: ["radio", "gone", "phone"] };
+    expect(ids({ type: "dialogue", ...line }, ctx({ cast }))).toEqual(["mask", "phone", "radio"]);
+    expect(ids({ type: "thought", ...line }, ctx({ cast }))).toEqual([
+      "mask",
+      "phone",
+      "radio",
+      "inner",
+    ]);
+  });
+  test("a persona wears its character's effect, then its own; its thoughts are its own", () => {
+    const cast = new Map([
+      ["Ann", { effect: "echo", thoughts: "none" }],
+      ["The Veil", { effect: "mask", personaOf: "Ann" }],
+    ]);
+    const line = { speaker: "The Veil", effects: ["phone"] };
+    expect(ids({ type: "thought", ...line }, ctx({ cast }))).toEqual([
+      "echo",
+      "mask",
+      "phone",
+      "inner",
+    ]);
+  });
+  test("a persona of nobody in the cast, or of itself, wears only its own", () => {
+    for (const personaOf of ["Nobody", "The Veil"]) {
+      const cast = new Map([["The Veil", { effect: "mask", personaOf }]]);
+      expect(ids({ type: "dialogue", speaker: "The Veil" }, ctx({ cast }))).toEqual(["mask"]);
+    }
   });
 });
 

@@ -78,8 +78,8 @@ export function effectRoutes(db: Db, files: AudioFiles, effects?: EffectRunner):
 
   /** At the end of the list, or right after the effect `after` names; one there is not is a 400. */
   app.post("/", validate("json", NewEffect), (c) => {
-    const { name, chain, after } = c.req.valid("json");
-    return c.json({ effect: ops.createEffect(db, name, chain, after) satisfies Effect }, 201);
+    const { after, ...body } = c.req.valid("json");
+    return c.json({ effect: ops.createEffect(db, body, after) satisfies Effect }, 201);
   });
 
   /** Everywhere it is chosen, across every book (`EffectUses`). */
@@ -87,13 +87,12 @@ export function effectRoutes(db: Db, files: AudioFiles, effects?: EffectRunner):
     c.json(ops.effectUses(db, c.req.valid("param").id) satisfies EffectUses),
   );
 
-  /** Its name and its chain, replaced; the id stays. */
-  app.put("/:id", validate("param", EffectParam), validate("json", EffectBodySchema), (c) => {
-    const { name, chain } = c.req.valid("json");
-    return c.json({
-      effect: ops.updateEffect(db, c.req.valid("param").id, name, chain) satisfies Effect,
-    });
-  });
+  /** Its name, chain and `useWhen`, replaced — the body is the whole effect; the id stays. */
+  app.put("/:id", validate("param", EffectParam), validate("json", EffectBodySchema), (c) =>
+    c.json({
+      effect: ops.updateEffect(db, c.req.valid("param").id, c.req.valid("json")) satisfies Effect,
+    }),
+  );
 
   /** Gone, and every choice of it with it (`deleteEffect`). */
   app.delete("/:id", validate("param", EffectParam), (c) => {

@@ -20,6 +20,7 @@ export function toCharacter(row: CharacterRow): Character {
   if (row.keep) c.keep = true;
   if (row.effect != null) c.effect = row.effect;
   if (row.thoughts != null) c.thoughts = row.thoughts;
+  if (row.personaOf != null) c.personaOf = row.personaOf;
   return c;
 }
 
@@ -42,6 +43,7 @@ export function characterValues(
     keep: c.keep ?? null,
     effect: c.effect ?? null,
     thoughts: c.thoughts ?? null,
+    personaOf: c.personaOf ?? null,
     position,
   };
 }

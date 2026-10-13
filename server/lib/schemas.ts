@@ -99,6 +99,13 @@ export const ChainSchema = v.pipe(
 export const EffectBodySchema = v.object({
   name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty"), v.maxLength(100)),
   chain: ChainSchema,
+  /** `Effect.useWhen`; blank, null or absent = not offered to the scripting model */
+  useWhen: v.optional(
+    v.pipe(
+      v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(300))),
+      v.transform((x) => x || undefined),
+    ),
+  ),
 });
 
 /** null where a choice may be left to the next level; read as absent, which is what the row keeps. */
@@ -125,6 +132,8 @@ export const CharacterSchema = v.object({
   effect: unset(EffectIdSchema),
   /** their thought effect, an id or "none"; null or absent = the book's */
   thoughts: unset(EffectIdSchema),
+  /** the character they are a persona of, by name; null or absent = none */
+  personaOf: unset(v.pipe(v.string(), v.trim(), v.nonEmpty())),
 }) satisfies v.GenericSchema<unknown, Character>;
 
 export const LexEntrySchema = v.object({
@@ -189,6 +198,7 @@ export const SegmentSchema = v.looseObject({
       }),
     ),
   ),
+  effects: v.optional(v.pipe(v.array(EffectIdSchema), v.maxLength(16))),
 });
 
 /** The body a script arrives as; `satisfies` keeps it from drifting from the domain type. */
@@ -281,6 +291,7 @@ export const CastFileSchema = v.array(
     style: v.optional(v.string(), ""),
     color: v.optional(v.string()),
     major: v.optional(v.boolean()),
+    personaOf: v.optional(v.pipe(v.string(), v.trim())),
     voice: v.optional(
       v.looseObject({
         endpoint: v.string(),

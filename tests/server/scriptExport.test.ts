@@ -89,6 +89,11 @@ test("the zip holds a manifest, the cast with voice hints, the dictionary and on
     ...jsonBody({ ...mara, voice: "studio/ash" }),
     method: "PUT",
   });
+  // a persona of hers, carried by name
+  await api.request(`/api/books/${id}/characters/${encodeURIComponent("The Mask")}`, {
+    ...jsonBody({ ...mara, name: "The Mask", voice: null, personaOf: mara.name }),
+    method: "PUT",
+  });
   await api.request(`/api/books/${id}/lexicon`, {
     ...jsonBody({ entries: [{ id: 1, term: "Mara", say: "MAH-ra", enabled: true }] }),
     method: "PUT",
@@ -130,6 +135,8 @@ test("the zip holds a manifest, the cast with voice hints, the dictionary and on
     voiceLabel: "Ash",
   });
   expect(JSON.stringify(speakers)).not.toContain("studio/ash");
+  expect(speakers.find((s) => s.name === "The Mask")?.personaOf).toBe(mara.name);
+  expect(speakers.find((s) => s.name === mara.name)?.personaOf).toBeUndefined();
   expect(await read<ScriptFileTerm[]>("lexicon.json")).toEqual([
     { term: "Mara", say: "MAH-ra", enabled: true },
   ]);

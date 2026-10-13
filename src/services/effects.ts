@@ -11,11 +11,11 @@ export interface EffectsService {
   /** Every effect, in the order the library lists them. */
   list(): Promise<Effect[]>;
   /** A new effect, right after `after` or at the end of the list; the server gives it its id. */
-  create(name: string, chain: Step[], after?: string): Promise<Effect>;
+  create(effect: Omit<Effect, "id">, after?: string): Promise<Effect>;
   /** Every book and speaker that chooses it, and whether the library's thought effect is it. */
   uses(id: string): Promise<EffectUses>;
-  /** Its name and chain replaced; the id stays. */
-  update(id: string, name: string, chain: Step[]): Promise<Effect>;
+  /** Its name, chain and `useWhen` replaced by these — one left out is cleared; the id stays. */
+  update(effect: Effect): Promise<Effect>;
   /** Gone, and every choice of it with it: the server clears each book's and speaker's. */
   remove(id: string): Promise<void>;
   /** The library's thought effect: an effect's id, or "none". */
@@ -41,8 +41,8 @@ export class HttpEffectsService implements EffectsService {
     return (await this.http.get<{ effects: Effect[] }>("/effects")).effects;
   }
 
-  async create(name: string, chain: Step[], after?: string): Promise<Effect> {
-    const body = after ? { name, chain, after } : { name, chain };
+  async create(effect: Omit<Effect, "id">, after?: string): Promise<Effect> {
+    const body = after ? { ...effect, after } : effect;
     return (await this.http.post<{ effect: Effect }>("/effects", body)).effect;
   }
 
@@ -50,8 +50,8 @@ export class HttpEffectsService implements EffectsService {
     return await this.http.get<EffectUses>(`/effects/${seg(id)}/uses`);
   }
 
-  async update(id: string, name: string, chain: Step[]): Promise<Effect> {
-    return (await this.http.put<{ effect: Effect }>(`/effects/${seg(id)}`, { name, chain })).effect;
+  async update({ id, ...body }: Effect): Promise<Effect> {
+    return (await this.http.put<{ effect: Effect }>(`/effects/${seg(id)}`, body)).effect;
   }
 
   async remove(id: string): Promise<void> {

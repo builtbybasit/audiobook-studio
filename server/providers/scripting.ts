@@ -72,6 +72,8 @@ export interface ScriptedLine {
   direction?: string;
   /** expression tags the model wrote into the line, read out of its text */
   tags?: ScriptedTag[];
+  /** the line effects the model put on it, by name as it wrote them; the job matches them to ids */
+  effects?: string[];
 }
 
 /**

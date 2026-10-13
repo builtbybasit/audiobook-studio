@@ -100,8 +100,11 @@ export const useEffectsStore = defineStore("effects", {
         cast: new Map(
           castStore
             .charactersOf(bookId)
-            .filter((c) => c.effect || c.thoughts)
-            .map((c) => [c.name, { effect: c.effect, thoughts: c.thoughts }]),
+            .filter((c) => c.effect || c.thoughts || c.personaOf)
+            .map((c) => [
+              c.name,
+              { effect: c.effect, thoughts: c.thoughts, personaOf: c.personaOf },
+            ]),
         ),
       });
     },
@@ -119,10 +122,21 @@ export const useEffectsStore = defineStore("effects", {
       if (!p.thoughtsOut) this.libraryThoughts = thoughts;
       this.loaded = true;
     },
-    /** A new effect at the end of the list, once the server has given it its id; null if refused. */
-    async create(name: string, chain: Step[], after?: string): Promise<Effect | null> {
+    /**
+     * A new effect at the end of the list, or right after `after`, once the server has given it its
+     * id; null if refused.
+     */
+    async create(
+      name: string,
+      chain: Step[],
+      after?: string,
+      useWhen?: string,
+    ): Promise<Effect | null> {
       try {
-        const effect = await effectsService().create(name, clone(chain), after);
+        const effect = await effectsService().create(
+          useWhen ? { name, chain: clone(chain), useWhen } : { name, chain: clone(chain) },
+          after,
+        );
         const at = after ? this.effects.findIndex((e) => e.id === after) : -1;
         if (at < 0) this.effects.push(effect);
         else this.effects.splice(at + 1, 0, effect);
@@ -133,14 +147,19 @@ export const useEffectsStore = defineStore("effects", {
       }
     },
     /**
-     * Change an effect's name or chain here at once, and write it behind (`EFFECT_WRITE_MS`). Call
-     * it as often as a slider moves; `flush` sends what is waiting now.
+     * Change an effect's name, chain or `useWhen` (blank = none) here at once, and write it behind
+     * (`EFFECT_WRITE_MS`), whole. Call it as often as a slider moves; `flush` sends what is waiting
+     * now.
      */
-    update(id: string, patch: { name?: string; chain?: Step[] }): void {
+    update(id: string, patch: { name?: string; chain?: Step[]; useWhen?: string }): void {
       const e = this.byId.get(id);
       if (!e) return;
       if (patch.name !== undefined) e.name = patch.name;
       if (patch.chain !== undefined) e.chain = patch.chain;
+      if (patch.useWhen !== undefined) {
+        if (patch.useWhen.trim()) e.useWhen = patch.useWhen;
+        else delete e.useWhen;
+      }
       const w = pendingOf(this).edits.get(id) ?? { timer: null, out: null, again: false };
       pendingOf(this).edits.set(id, w);
       if (w.timer) clearTimeout(w.timer);
@@ -163,7 +182,7 @@ export const useEffectsStore = defineStore("effects", {
           // removed here since: the removal is the write that counts
           if (!e) return false;
           try {
-            await effectsService().update(id, e.name, clone(e.chain));
+            await effectsService().update(clone(e));
           } catch (cause) {
             if (!this.byId.get(id)) return false;
             toastFailure("save this effect", cause);
@@ -229,13 +248,14 @@ export const useEffectsStore = defineStore("effects", {
     },
     /**
      * A copy of an effect named "<name> Duplicated" — " (2)" on, only while that is taken — placed
-     * right after it, here and on the server, so a reload finds it there too.
+     * right after it, here and on the server, so a reload finds it there too. Its `useWhen` is
+     * copied with its chain.
      */
     async duplicate(id: string): Promise<Effect | null> {
       const source = this.byId.get(id);
       if (!source) return null;
       const name = duplicateName(source.name, new Set(this.effects.map((e) => e.name)));
-      return await this.create(name, source.chain, id);
+      return await this.create(name, source.chain, id, source.useWhen);
     },
     /**
      * Everywhere an effect is chosen, in every book — what a delete or a shared edit names before it

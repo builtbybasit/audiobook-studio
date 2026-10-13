@@ -82,6 +82,8 @@ export const segments = sqliteTable(
     flag: text("flag", { mode: "json" }).$type<SegmentFlag>(),
     /** expression tags placed at positions in the unchanged source text */
     expressions: text("expressions", { mode: "json" }).$type<ExpressionAnnotation[]>(),
+    /** line effects by id (`Segment.effects`), as a JSON array; null = none */
+    effects: text("effects", { mode: "json" }).$type<string[]>(),
   },
   (t) => [
     primaryKey({ columns: [t.bookId, t.chapterId, t.id] }),

@@ -28,6 +28,12 @@ export interface Effect {
   id: string;
   name: string;
   chain: Step[];
+  /**
+   * When a line is heard through it, in one sentence for the scripting model ("words sent mind to
+   * mind"): an effect with one is offered to the model as a line effect (`Segment.effects`).
+   * Absent = never offered; it can still be worn by a speaker or put on a line by hand.
+   */
+  useWhen?: string;
 }
 
 /**

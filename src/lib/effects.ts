@@ -1,16 +1,18 @@
 // Which effects a line is given, and the fingerprint of what was baked into its clip. Shared by the
 // server (narration, Re-apply) and the page (the "old sound" count), so both read it the same way.
-import type { Effect, SegmentType, Step, ThoughtChoice } from "@/types";
+import type { Character, Effect, SegmentType, Step, ThoughtChoice } from "@/types";
+import { personaOwner } from "@/lib/cast";
 
 /** What a line's effects are read from. */
 export interface EffectContext {
+  /** in the library's order, which is the order a line's own effects run in */
   effects: ReadonlyMap<string, Effect>;
   /** the library's thought effect (settings `thoughts`) */
   library: ThoughtChoice;
   /** the book's own; null = follow the library */
   book: ThoughtChoice | null;
-  /** by speaker name; a speaker not in it follows the book and wears nothing */
-  cast: ReadonlyMap<string, { effect?: string; thoughts?: ThoughtChoice }>;
+  /** by speaker name; a speaker not in it follows the book, wears nothing and is nobody's persona */
+  cast: ReadonlyMap<string, Pick<Character, "effect" | "thoughts" | "personaOf">>;
 }
 
 /** The thought effect a speaker's thought lines get: speaker → book → library. */
@@ -19,15 +21,27 @@ export function thoughtEffectOf(speaker: string, ctx: EffectContext): Effect | n
   return choice === "none" ? null : (ctx.effects.get(choice) ?? null);
 }
 
-/** The effects a line is run through, in order: the speaker's own, then (thoughts) the thought effect. */
+/**
+ * The effects a line is run through, in order: a persona's character's own (the one its
+ * `personaOf` names, when that is someone else in the cast), the speaker's own, the line's own
+ * (`Segment.effects`) in the library's order, then (thoughts) the thought effect — always last.
+ * An id no effect has is passed over.
+ */
 export function chainsFor(
-  line: { type: SegmentType; speaker: string },
+  line: { type: SegmentType; speaker: string; effects?: readonly string[] },
   ctx: EffectContext,
 ): Effect[] {
-  const own = ctx.cast.get(line.speaker)?.effect;
+  const me = ctx.cast.get(line.speaker);
+  const owner = personaOwner(me && { name: line.speaker, ...me }, ctx.cast);
   const out: Effect[] = [];
-  const worn = own ? ctx.effects.get(own) : undefined;
-  if (worn) out.push(worn);
+  for (const id of [owner?.effect, me?.effect]) {
+    const worn = id ? ctx.effects.get(id) : undefined;
+    if (worn) out.push(worn);
+  }
+  if (line.effects?.length) {
+    const on = new Set(line.effects);
+    for (const e of ctx.effects.values()) if (on.has(e.id)) out.push(e);
+  }
   if (line.type === "thought") {
     const thought = thoughtEffectOf(line.speaker, ctx);
     if (thought) out.push(thought);

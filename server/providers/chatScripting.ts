@@ -150,6 +150,8 @@ const Line = v.object({
   speaker: v.optional(v.nullable(v.string()), ""),
   text: v.optional(v.nullable(v.string()), ""),
   direction: v.optional(v.nullable(v.string())),
+  // read apart, like the notes below: a malformed list must not cost a good script
+  effects: v.optional(v.unknown()),
 });
 const Answer = v.object({
   lines: v.array(Line),
@@ -164,6 +166,19 @@ const CastNote = v.object({
   aliases: v.optional(v.nullable(v.array(v.string()))),
   description: v.optional(v.nullable(v.string())),
 });
+
+/** The longest a line effect's name can be; anything longer is not one of the names offered. */
+const EFFECT_NAME_MAX = 80;
+
+/** The line effects a line names, each once: what is not a short string is passed over. */
+function effectsOf(said: unknown): string[] {
+  if (!Array.isArray(said)) return [];
+  const names = said
+    .filter((e): e is string => typeof e === "string")
+    .map(oneLine)
+    .filter((e) => e && e.length <= EFFECT_NAME_MAX);
+  return [...new Set(names)];
+}
 
 /** The longest description kept from a model, which a chatty one can run to a paragraph. */
 const DESCRIPTION_MAX = 300;
@@ -339,6 +354,7 @@ export function answerOf(content: string, who: string, excerpt?: string): Script
     // a line with no words — a stray dash, an ellipsis — has nothing to read out
     if (!wordsOf(text).length) continue;
     const direction = (l.direction ?? "").trim();
+    const effects = effectsOf(l.effects);
     out.push({
       type,
       // site text and notes are nobody's lines but the page's, whoever the model said
@@ -346,6 +362,7 @@ export function answerOf(content: string, who: string, excerpt?: string): Script
       text,
       ...(direction ? { direction } : {}),
       ...(tags.length ? { tags } : {}),
+      ...(effects.length ? { effects } : {}),
     });
   }
   const recap = typeof parsed.recap === "string" ? oneLine(parsed.recap) : "";

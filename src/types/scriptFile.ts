@@ -76,6 +76,8 @@ export interface ScriptFileSpeaker {
   color?: string;
   major?: boolean;
   voice?: VoiceHint;
+  /** the speaker in this file they are a persona of (`Character.personaOf`), by name */
+  personaOf?: string;
   /**
    * `voices/<slug>/`, when the export was asked to carry this speaker's voice samples: the folder
    * in the zip holding the recordings and their `samples.json`.

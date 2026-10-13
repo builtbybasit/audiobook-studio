@@ -19,7 +19,7 @@ import type {
   LexEntry,
   Segment,
 } from "@/types";
-import { NARRATOR, speakerVoice } from "@/lib/cast";
+import { speakerVoice } from "@/lib/cast";
 import { billingOf } from "@/lib/endpoints";
 import { plannedSpeechUnits, worstCaseOf } from "@/lib/narrationCost";
 import { addUnits, estimateSpeech, noUnits, readPricing } from "@/lib/pricing";
@@ -38,24 +38,25 @@ export interface Delivery {
 }
 
 /**
- * Who says a line, and how: the voice `speakerVoice` gives the speaker — their own, the book's
- * Character voice, or the Narrator's — and the speaker's own style; the cast store's
- * `effectiveVoice`, over the cast as it was read.
+ * Who says a line, and how: the voice `speakerVoice` gives the speaker — a linked persona's
+ * character's, their own, the book's Character voice, or the Narrator's — and the speaker's own
+ * style, a persona's included; the cast store's `effectiveVoice`, over the cast as it was read.
  */
 export function deliveryFor(
   cast: Character[],
   characterVoice?: CharacterVoice,
 ): (speaker: string) => Delivery {
-  const narratorVoice = cast.find((c) => c.name === NARRATOR)?.voice ?? null;
+  // the first of a name, as `find` would have it
+  const byName = new Map<string, Character>();
+  for (const c of cast) if (!byName.has(c.name)) byName.set(c.name, c);
   return (speaker) => {
-    const who = cast.find((c) => c.name === speaker);
-    const voiceRef = speakerVoice(speaker, who, narratorVoice, characterVoice).ref;
+    const voiceRef = speakerVoice(speaker, byName, characterVoice).ref;
     const slash = voiceRef?.indexOf("/") ?? -1;
     return {
       voiceRef,
       voice: voiceRef ? voiceRef.slice(slash + 1) : null,
       endpoint: voiceRef && slash > 0 ? voiceRef.slice(0, slash) : null,
-      style: who?.style ?? "",
+      style: byName.get(speaker)?.style ?? "",
     };
   };
 }

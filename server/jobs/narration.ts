@@ -155,8 +155,8 @@ interface LineSound {
  *
  * Where Pedalboard cannot run, a thought line is still heard as a thought: its thought effect is
  * replaced by the ffmpeg one, recorded as the sound `"ffmpeg"`, so a Re-apply once Pedalboard is
- * there gives it the real chain. A speaker's own effect has no stand-in and is left off, said once
- * per run rather than once a line.
+ * there gives it the real chain. A speaker's own effect and a line's own have no stand-in and are
+ * left off, said once per run rather than once a line.
  */
 function lineSounds(
   ctx: JobContext,
@@ -178,11 +178,11 @@ function lineSounds(
       };
     }
     const thought = s.type === "thought" ? thoughtEffectOf(s.speaker, fx) : null;
-    // chainsFor puts the thought effect last, after the speaker's own
+    // chainsFor puts the thought effect last, after the speaker's own and the line's
     if (!toldSkipped && soundOf(thought ? chains.slice(0, -1) : chains)) {
       toldSkipped = true;
       ctx.note(
-        "Voice effects cannot run here (Pedalboard needs uv), so speakers' own effects were left off; Re-apply once they can",
+        "Voice effects cannot run here (Pedalboard needs uv), so speakers' own and line effects were left off; Re-apply once they can",
         "warning",
         { line: s.id, speaker: s.speaker },
       );

@@ -3,8 +3,11 @@ import { describe, expect, test } from "bun:test";
 import {
   BUILT_IN_PROMPT,
   OUTPUT_FORMAT,
+  SCRIPT_MARKERS,
   fill,
   fingerprint,
+  lineEffectsOf,
+  outputFormat,
   promptProblems,
   promptWarnings,
   renderPrompt,
@@ -49,6 +52,19 @@ describe("fill", () => {
     expect(fill("{{cast}}", vars({ cast: [] }))).toBe("(none yet)");
   });
 
+  test("a persona says whose it is, between its gender and its other names", () => {
+    const cast = [
+      { name: "Sunny", gender: "m" as const },
+      { name: "Lord of Shadows", gender: "m" as const, personaOf: "Sunny", aliases: ["Mongrel"] },
+    ];
+    expect(fill("{{cast}}", vars({ cast }))).toBe(
+      "Sunny (male), Lord of Shadows (male; persona of Sunny; also called Mongrel)",
+    );
+    expect(fill("{{cast.details}}", vars({ cast }))).toContain(
+      "- Lord of Shadows (male; persona of Sunny; also called Mongrel)",
+    );
+  });
+
   test("leaves an unknown tag as it was written", () => {
     expect(fill("{{nope}}", vars())).toBe("{{nope}}");
   });
@@ -78,6 +94,48 @@ describe("renderPrompt", () => {
 
   test("an empty system prompt still sends the output format", () => {
     expect(renderPrompt({ system: "", user: "{{excerpt}}" }, vars()).system).toBe(OUTPUT_FORMAT);
+  });
+
+  test("the built-in rule 4 gives a persona's lines to the persona", () => {
+    const [rule4] = BUILT_IN_PROMPT.system.match(/^4\. [\s\S]*?(?=\n5\. )/m)!;
+    expect(rule4).toContain(
+      '\n   The one exception is a persona — a cast entry marked "persona of" another character:',
+    );
+    expect(rule4).toContain("Always write the persona's cast name, never one of its other names.");
+  });
+});
+
+describe("line effects in the output format", () => {
+  const OFFERED = [
+    { name: "Telephone", useWhen: "heard through a phone." },
+    { name: "Inner  echo", useWhen: "words sent\nmind to mind" },
+  ];
+
+  test("none offered leaves the format as it always was", () => {
+    expect(outputFormat(SCRIPT_MARKERS[0], [])).toBe(OUTPUT_FORMAT);
+    expect(OUTPUT_FORMAT).not.toContain('"effects"');
+    expect(renderPrompt(BUILT_IN_PROMPT, vars({ lineEffects: [] })).system).toEndWith(
+      OUTPUT_FORMAT,
+    );
+  });
+
+  test("offered ones are listed by name, with when, just before the direction", () => {
+    const { system } = renderPrompt(BUILT_IN_PROMPT, vars({ lineEffects: OFFERED }));
+    expect(system).toContain(
+      '- "text": the words of the line, copied verbatim from the excerpt.\n- "effects" (optional): sound effects for how this line is heard, by name, only from this list — "Telephone": heard through a phone; "Inner echo": words sent mind to mind. Several may apply to one line.',
+    );
+    expect(system).toContain(
+      'never add a mask effect to a persona\'s lines.\n- "direction" (optional):',
+    );
+    // what the library typed is not read as a replacement pattern
+    expect(outputFormat(null, [{ name: "$&", useWhen: "$'" }])).toContain(`"$&": $'.`);
+  });
+
+  test("only the library's effects with a use-when are offered", () => {
+    const fx = (id: string, useWhen?: string) => ({ id, name: id, chain: [], useWhen });
+    expect(lineEffectsOf([fx("a", "on a phone"), fx("b"), fx("c", " ")]).map((e) => e.id)).toEqual([
+      "a",
+    ]);
   });
 });
 

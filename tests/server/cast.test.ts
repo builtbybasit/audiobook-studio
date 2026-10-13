@@ -233,6 +233,124 @@ describe("renaming and merging", () => {
   });
 });
 
+describe("personas", () => {
+  /** Write `name` as a new speaker, a persona of `of`; the answer says whether it was taken. */
+  const persona = (api: TestApi, id: string, name: string, of: string) =>
+    api.request<{ characters: Character[] } & Failure>(
+      `/api/books/${id}/characters/${encodeURIComponent(name)}`,
+      put({
+        name,
+        aliases: [],
+        gender: "?",
+        description: "",
+        voice: null,
+        style: "",
+        color: "#fbbf24",
+        major: false,
+        personaOf: of,
+      }),
+    );
+  const personaOf = async (api: TestApi, id: string) =>
+    Object.fromEntries(
+      (await castOf(api, id)).characters.flatMap((c) =>
+        c.personaOf ? [[c.name, c.personaOf]] : [],
+      ),
+    );
+
+  test("a link is kept, and refused to themselves, the Narrator, a stranger or another persona", async () => {
+    const { api, id } = await scripted();
+    expect((await persona(api, id, "The Mask", "Mara")).status).toBe(200);
+    expect(await personaOf(api, id)).toEqual({ "The Mask": "Mara" });
+    for (const [name, of, says] of [
+      ["Ghost", "Ghost", "themselves"],
+      ["Ghost", "Narrator", "Narrator"],
+      ["Ghost", "Nobody", "not in this book"],
+      ["Ghost", "The Mask", "persona of “Mara”"],
+    ]) {
+      const { status, body } = await persona(api, id, name, of);
+      expect(status).toBe(400);
+      expect(body.error.message).toContain(says);
+    }
+    // nor a persona of the Narrator, nor of someone who has personas of their own
+    const mara = (await castOf(api, id)).characters.find((c) => c.name === "Mara")!;
+    const narrator = (await castOf(api, id)).characters[0];
+    for (const c of [
+      { ...mara, personaOf: "Tobin" },
+      { ...narrator, personaOf: "Tobin" },
+    ]) {
+      const { status } = await api.request<Failure>(
+        `/api/books/${id}/characters/${c.name}`,
+        put(c),
+      );
+      expect(status).toBe(400);
+    }
+    // and a persona is not refused an edit for the link they already have
+    const mask = (await castOf(api, id)).characters.find((c) => c.name === "The Mask")!;
+    const edit = await api.request(
+      `/api/books/${id}/characters/${encodeURIComponent("The Mask")}`,
+      put({ ...mask, style: "cold" }),
+    );
+    expect(edit.status).toBe(200);
+  });
+
+  test("follow their character through a rename, and are unlinked when the character goes", async () => {
+    const { api, id } = await scripted();
+    await persona(api, id, "The Mask", "Mara");
+    await api.request(`/api/books/${id}/characters/Mara/rename`, jsonBody({ to: "Mara Voss" }));
+    expect(await personaOf(api, id)).toEqual({ "The Mask": "Mara Voss" });
+    await api.request(`/api/books/${id}/characters/${encodeURIComponent("Mara Voss")}`, {
+      method: "DELETE",
+    });
+    expect(await personaOf(api, id)).toEqual({});
+  });
+
+  test("follow their character into a merge, unless the speaker that stays is a persona", async () => {
+    const { api, id } = await scripted();
+    await persona(api, id, "The Mask", "Tobin");
+    await api.request(`/api/books/${id}/characters/Tobin/merge`, jsonBody({ into: "Mara" }));
+    expect(await personaOf(api, id)).toEqual({ "The Mask": "Mara" });
+
+    // Mara folded into a persona of hers: the stay is a speaker in their own right, and her other
+    // personas are now theirs
+    await persona(api, id, "Ghost", "Mara");
+    await api.request(`/api/books/${id}/characters/Mara/merge`, jsonBody({ into: "The Mask" }));
+    expect(await personaOf(api, id)).toEqual({ Ghost: "The Mask" });
+
+    // folded into a persona: their personas are unlinked rather than chained
+    const again = await scripted();
+    await persona(again.api, again.id, "The Mask", "Mara");
+    await persona(again.api, again.id, "Ghost", "Tobin");
+    await again.api.request(
+      `/api/books/${again.id}/characters/Tobin/merge`,
+      jsonBody({ into: "The Mask" }),
+    );
+    expect(await personaOf(again.api, again.id)).toEqual({ "The Mask": "Mara" });
+  });
+
+  test("an undo puts a persona back linked, unless the character is gone", async () => {
+    const { api, id } = await scripted();
+    await persona(api, id, "The Mask", "Mara");
+    const mask = (await castOf(api, id)).characters.find((c) => c.name === "The Mask")!;
+    const back = () =>
+      api.request<MovedLines>(
+        `/api/books/${id}/characters/attribute`,
+        jsonBody({ character: mask, lines: [] }),
+      );
+    await api.request(`/api/books/${id}/characters/${encodeURIComponent("The Mask")}`, {
+      method: "DELETE",
+    });
+    expect((await back()).status).toBe(200);
+    expect(await personaOf(api, id)).toEqual({ "The Mask": "Mara" });
+
+    await api.request(`/api/books/${id}/characters/${encodeURIComponent("The Mask")}`, {
+      method: "DELETE",
+    });
+    await api.request(`/api/books/${id}/characters/Mara`, { method: "DELETE" });
+    expect((await back()).status).toBe(200);
+    expect(await personaOf(api, id)).toEqual({});
+  });
+});
+
 describe("the pronunciation dictionary", () => {
   test("is written whole and read back in the order it was written", async () => {
     const { api, id } = await shelved();

@@ -62,9 +62,14 @@ export function useJob(props: ChapterProps) {
   const voiceOf = (name: string): string => {
     const v = castStore.effectiveVoice(props.bookId, name);
     if (!v.label) return "?";
-    return v.own
-      ? v.label
-      : `${v.label} (${v.from === "character" ? "Character voice" : "Narrator’s"})`;
+    if (v.own) return v.label;
+    const from =
+      v.from === "persona"
+        ? `${v.of}’s`
+        : v.from === "character"
+          ? "Character voice"
+          : "Narrator’s";
+    return `${v.label} (${from})`;
   };
   const epName = (id: string | null): string =>
     endpointsStore.endpoints.find((e) => e.id === id)?.name ?? "—";

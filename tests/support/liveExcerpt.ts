@@ -179,6 +179,12 @@ export function problemsOf(c: LiveCase, lines: ScriptedLine[]): string[] {
       `words: ${f.missing} missing (${f.examples.join(" ")}), ${f.added} added (${added.slice(0, 8).join(" ")})`,
     );
   }
+  const paragraphs = c.text.split(/\n\s*\n/).map((p) => ` ${wordsOf(p).join(" ")} `);
+  for (const l of lines) {
+    const run = ` ${wordsOf(l.text).join(" ")} `;
+    if (run.trim() && !paragraphs.some((p) => p.includes(run)))
+      problems.push(`"${l.text.slice(0, 40)}": runs across a paragraph break`);
+  }
   for (const { words, speaker, type } of c.checks) {
     const line = lines.find((l) => straight(l.text).includes(straight(words)));
     if (!line) problems.push(`"${words}": no line`);

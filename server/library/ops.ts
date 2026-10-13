@@ -72,6 +72,22 @@ export function chapterText(
   return format === "plain" ? plainText(body) : body;
 }
 
+/** Several chapters' prose at once, by id; a chapter the book does not have is left out. */
+export function chapterTexts(
+  db: Db,
+  bookId: string,
+  chapterIds: readonly number[],
+  format: "markdown" | "plain",
+): Record<number, string> {
+  requireBook(db, bookId);
+  const texts: Record<number, string> = {};
+  for (const id of chapterIds) {
+    const body = library.getChapterBody(db, bookId, id);
+    if (body != null) texts[id] = format === "plain" ? plainText(body) : body;
+  }
+  return texts;
+}
+
 /** For each of `names`, the chapters whose text names it as written (`library.chaptersMentioning`). */
 export function chaptersMentioning(
   db: Db,

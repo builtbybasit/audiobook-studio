@@ -33,7 +33,7 @@ import { enqueueNarration } from "~/jobs/narration";
 import type { Runner } from "~/jobs/runner";
 import { enqueueScripting } from "~/jobs/scripting";
 import { fail } from "~/lib/errors";
-import { BookParam, IdParam, uploadLimit } from "~/lib/http";
+import { BookParam, ChapterIds, IdParam, uploadLimit } from "~/lib/http";
 import { bookPromptProblems } from "@/lib/prompt";
 import { DEFAULT_PACING } from "@/lib/speech";
 import {
@@ -181,6 +181,9 @@ const TextQuery = v.object({
  * The names a mention search looks for: `?name=…`, repeated for each. A query string carries one
  * as a string and several as a list, so both are read as a list.
  */
+/** Several chapters' prose in one read: `?id=…` repeated, in either format. */
+const TextsQuery = v.object({ ...TextQuery.entries, id: ChapterIds });
+
 const MentionsQuery = v.object({
   name: v.pipe(
     v.union([v.string(), v.array(v.string())]),
@@ -243,6 +246,19 @@ export function bookRoutes(
       return c.json({ text: ops.chapterText(db, id, chapterId, format), format });
     },
   );
+
+  /**
+   * Several chapters' prose at once: `{ texts: { [chapter]: text }, format }`. A page that prices
+   * or searches hundreds of chapters asks for them in a few reads rather than one each, which a
+   * browser cannot hold open at once. A chapter the book does not have is left out.
+   */
+  app.get("/:id/texts", validate("param", BookParam), validate("query", TextsQuery), (c) => {
+    const { id: chapterIds, format } = c.req.valid("query");
+    return c.json({
+      texts: ops.chapterTexts(db, c.req.valid("param").id, chapterIds, format),
+      format,
+    });
+  });
 
   /** For each name, the chapters whose text names it as written: `{ byName: { name: [ids] } }`. */
   app.get("/:id/mentions", validate("param", BookParam), validate("query", MentionsQuery), (c) =>

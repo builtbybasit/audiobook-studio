@@ -332,7 +332,7 @@ describe("chapter prose with a server answering", () => {
     await libraryStore.confirmImport(id);
     await libraryStore.importVolume(id, { source: await volume(["Three"]), name: "Vol. 2" });
     await libraryStore.confirmImport(id);
-    const text = `/api/books/${id}/chapters/3/text?format=markdown`;
+    const text = `/api/books/${id}/texts?format=markdown&id=3`;
     const third = pinia.run(() => useChapterText(id, 3));
     await flush();
     expect(third.text.value).toBeTruthy();

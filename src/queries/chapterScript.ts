@@ -8,6 +8,7 @@
 import { computed, toValue, watch, type MaybeRefOrGetter } from "vue";
 import { useQuery, useQueryCache } from "@pinia/colada";
 
+import { batchReads } from "@/queries/batch";
 import { fetchQuery } from "@/queries/fetch";
 import { keys } from "@/queries/keys";
 import { libraryService, type ChapterScript } from "@/services/library";
@@ -20,11 +21,14 @@ async function readScript(
   chapterId: number,
   signal: AbortSignal,
 ): Promise<ChapterScript> {
-  const script = await libraryService().chapterScript(bookId, chapterId);
+  const script = await readScripts(bookId, chapterId);
   // a read overtaken by a later one leaves the store to the later one
   if (!signal.aborted) useScriptsStore()._install(bookId, chapterId, script);
   return script;
 }
+
+// a page reading every script of a long book reads them a few requests at a time
+const readScripts = batchReads((bookId, ids) => libraryService().chapterScripts(bookId, ids));
 
 /** One chapter's script as a query: what `useChapterScript` watches and `useChapterScripts` reads. */
 const scriptQuery = (bookId: string, chapterId: number) => ({

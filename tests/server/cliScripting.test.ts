@@ -87,7 +87,9 @@ describe("Codex", () => {
     expect(call.argv.at(-1)).toBe("-");
     expect(call.argv.some((a) => a.includes("dangerously"))).toBe(false);
     // the system prompt replaces Codex's own instructions, from a file in the run's folder
-    expect(call.files).toEqual(["system.txt"]);
+    expect([...call.files].sort()).toEqual(["schema.json", "system.txt"]);
+    // and the answer is held to a schema written beside it
+    expect(flagOf(call.argv, "--output-schema")).toEndWith("/schema.json");
     expect(call.system).toBe(PROMPT.system);
     // the folder went with the run
     expect(existsSync(call.cwd)).toBe(false);

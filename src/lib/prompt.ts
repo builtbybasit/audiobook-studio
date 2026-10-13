@@ -35,7 +35,7 @@
 // word for word what it was, so a provider's cache and the page's copy of it hold.
 //
 // **Personas** are cast entries marked as another character's disguise (`Character.personaOf`);
-// `{{cast}}` says so ("persona of Sunny"), and the built-in prompt's rule 4 says when a line goes
+// `{{cast}}` says so ("persona of Sunny"), and the built-in prompt's rule 5 says when a line goes
 // to the persona rather than the character.
 //
 // **Tags** are `{{name}}`, filled in one pass: nothing a tag puts in is read for tags again, so a
@@ -213,14 +213,15 @@ export const BUILT_IN_PROMPT: PromptTemplate = {
   system: `You turn an excerpt from a chapter of an English novel into an audiobook script.
 
 Rules:
-1. Thoughts are usually in italics or marked "she thought"; they are "thought" lines, not narration.
-2. Dialogue text is the spoken words without their surrounding quotation marks. A quotation interrupted by narration becomes three lines: dialogue, narration, dialogue.
-3. Attribution tags such as "said Mara" or "he asked, frowning" are narration, read by the ${NARRATOR}; they are never part of the dialogue line.
-4. Work out who is speaking from the tags, the conversation's back-and-forth, and where the text before the excerpt left off. A character goes by one name all through the book: resolve pronouns, titles and nicknames ("the girl", "the Captain") to it, using the known cast's other names. When a speaker is one of the known cast, use exactly that name; otherwise use the name the text gives them, as it writes it. Use "Unknown" only when nothing says who speaks.
-   The one exception is a persona — a cast entry marked "persona of" another character: a separate identity that character takes on in disguise (a mask, a false name strangers know them by). Lines that character says aloud while the scene has them in that identity go to the persona's name, even when the narration keeps calling them by their real name; their thoughts stay under their own name. Once the disguise is off, or they speak only to people who know who they are, use their own name again. Their words played back or quoted later — a recording, a clip, a rumour repeating what they said — still go to the persona. Always write the persona's cast name, never one of its other names. A masked or disguised figure the text has not identified is a new speaker under what the text calls them.
-5. Consecutive sentences of narration may share one line; start a new line at every change of speaker or type, and at paragraph breaks.
-6. A direction is all the voice engine is told besides the words, and it knows nothing of the story — no names, no plot — so describe the sound: tone, pace, volume, breath. Not "mocking his plan" but "lazy, open contempt"; not "shaking her head" but "flat, tired refusal". Base it on the prose (speech tags, punctuation, what the narrator says of the speaker); keep the same wording while a character's mood holds; leave it out for plain delivery.
-7. Put a pause inside a line only for a real beat — trailing off, a hesitation, a breath before a reveal — never at an ordinary comma or the end of a sentence, which the voice already pauses at.
+1. Split by voice. Whenever a paragraph mixes narration, dialogue and thought, split it into separate lines. A quote with a speech tag in or after it is always several lines: “No,” she said quietly. “Nobody followed me.” is dialogue “No,”, narration “she said quietly.”, dialogue “Nobody followed me.” Speech tags such as “said Mara” or “he asked, frowning” are narration, read by the ${NARRATOR}.
+2. Words in quotation marks are dialogue; the line's text leaves the quotation marks out. Name who speaks from the tags, the back-and-forth of the conversation, and the text before the excerpt, which is there only to tell who is speaking or thinking at the start.
+3. Thoughts are “thought” lines: italics, “she thought”, “she told herself”, and the point-of-view character's unspoken reflections. Their speaker is the character thinking — usually the one whose point of view the scene follows.
+4. A character goes by one name all through the book. Resolve pronouns, titles and nicknames to the known cast's names, and write a known speaker's name exactly as the cast does; a new speaker goes by what the text calls them. Use “Unknown” only when nothing says who speaks. Never write a speaker into the text.
+5. A cast entry marked “persona of” is that character's disguise. While the scene has them in that identity, the words they say aloud — and those words replayed or quoted later — go to the persona's cast name; their thoughts, and what they say once the disguise is off, go to their own name. A masked figure the text has not identified is a new speaker.
+6. A direction is all the voice engine is told besides the words, and it knows nothing of the story: describe the sound — tone, pace, volume, breath — in a few words (“flat, tired refusal”, not “refusing his plan”). Keep the same wording while a mood holds; leave it out for plain delivery.
+7. Put a pause inside a line only for a real beat — trailing off, a hesitation, a breath before a reveal — never at an ordinary comma or the end of a sentence.
+
+Before you answer, check that every sentence of the excerpt is in a line, once.
 
 Notes on this book: {{book.notes}}
 Notes for this model: {{endpoint.notes}}`,

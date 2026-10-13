@@ -98,8 +98,9 @@ describe("renderPrompt", () => {
 
   test("the built-in rule 5 gives a persona's lines to the persona", () => {
     const [rule5] = BUILT_IN_PROMPT.system.match(/^5\. [\s\S]*?(?=\n6\. )/m)!;
-    expect(rule5).toContain("A cast entry marked “persona of” is that character's disguise.");
+    expect(rule5).toContain("A cast entry marked “persona of” is one");
     expect(rule5).toContain("go to the persona's cast name");
+    expect(rule5).toContain("An entry marked “masked, identity unknown”");
   });
 });
 

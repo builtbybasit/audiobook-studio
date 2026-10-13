@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // In the editor of a dialogue or thought line: who it is spoken as — the character or one of their
 // personas — and the line effects it is heard through. Both change only how the line sounds: a
-// persona speaks in its character's voice, so a clip needs Re-apply, not new speech — unless the
-// persona has a delivery style of their own (`scriptsStore.retouchLines`).
+// persona with no voice of its own speaks in its character's, so a clip needs Re-apply, not new
+// speech — unless the persona has a voice or a delivery style of their own
+// (`scriptsStore.retouchLines`).
 import { computed, ref } from "vue";
 import { VenetianMask as MaskIcon } from "@lucide/vue";
 import { plural } from "@/lib/contents";
@@ -91,7 +92,7 @@ function toggle(id: string) {
       </label>
       <UiHint
         label="speaking as a persona"
-        text="A persona speaks in its character’s voice, so a switch changes only the line’s effects: its clip needs Re-apply on the Cast page, not new speech — unless the persona has a delivery style of its own."
+        text="A persona with no voice of its own speaks in its character’s, so a switch changes only the line’s effects: its clip needs Re-apply on the Cast page, not new speech — unless the persona has a voice or a delivery style of its own."
       />
     </div>
     <div class="flex flex-wrap items-center gap-1.5">

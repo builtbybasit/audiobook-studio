@@ -253,11 +253,18 @@ export interface Character {
   thoughts?: ThoughtChoice;
   /**
    * The character this speaker is a persona of — a disguise or false identity of theirs (a mask,
-   * a name strangers know them by), by name. A linked persona speaks in that character's voice and
-   * effect, then its own effect; a name not in the cast (or its own) links nobody, and the persona
-   * keeps its own voice. Absent = a speaker in their own right.
+   * a name strangers know them by), by name. A linked persona speaks with that character's effect,
+   * then its own, in its own voice when it has one picked and that character's otherwise; a name
+   * not in the cast (or its own) links nobody. Absent = a speaker in their own right.
    */
   personaOf?: string;
+  /**
+   * The scripting model found this speaker to be a disguise: with no `personaOf`, one whose wearer
+   * the book has not said yet ("masked, identity unknown"), whom a later chapter's answer may link;
+   * with one, a link the model made, shown only behind a spoiler. Linking or unlinking by hand
+   * clears it, so a model's note never undoes what a person did. Absent = not found by the model.
+   */
+  masked?: boolean;
 }
 
 export interface BookProgress {

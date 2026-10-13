@@ -177,6 +177,23 @@ const TextQuery = v.object({
   format: v.optional(v.picklist(["markdown", "plain"]), "markdown"),
 });
 
+/**
+ * The names a mention search looks for: `?name=…`, repeated for each. A query string carries one
+ * as a string and several as a list, so both are read as a list.
+ */
+const MentionsQuery = v.object({
+  name: v.pipe(
+    v.union([v.string(), v.array(v.string())]),
+    v.transform((n) =>
+      [n]
+        .flat()
+        .map((x) => x.trim())
+        .filter(Boolean),
+    ),
+    v.minLength(1, "must name someone"),
+  ),
+});
+
 const ImportForm = v.object({
   file: v.instance(File),
   /** override the title the EPUB declares */
@@ -225,6 +242,13 @@ export function bookRoutes(
       // two forms are the same prose and only one of them is safe to bill for.
       return c.json({ text: ops.chapterText(db, id, chapterId, format), format });
     },
+  );
+
+  /** For each name, the chapters whose text names it as written: `{ byName: { name: [ids] } }`. */
+  app.get("/:id/mentions", validate("param", BookParam), validate("query", MentionsQuery), (c) =>
+    c.json({
+      byName: ops.chaptersMentioning(db, c.req.valid("param").id, c.req.valid("query").name),
+    }),
   );
 
   // ---------- importing ----------

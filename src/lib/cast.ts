@@ -106,14 +106,14 @@ export function personaOwner<C>(
 }
 
 /**
- * Whether a speaker has a voice of their own picked — for a linked persona, whether their
- * character has, since that is the voice they are read in. What the "voiced" counts and
- * "unassigned" filters count.
+ * Whether a speaker is read in a voice someone picked: their own, or for a linked persona with
+ * none, their character's (`speakerVoice`). What the "voiced" counts and "unassigned" filters
+ * count.
  */
 export const voiced = (
   c: Pick<Character, "name" | "voice" | "personaOf">,
   cast: Pick<ReadonlyMap<string, Pick<Character, "voice">>, "get">,
-): boolean => !!(personaOwner(c, cast) ?? c).voice;
+): boolean => !!(c.voice || personaOwner(c, cast)?.voice);
 
 /**
  * Why `name` cannot be made a persona of `personaOf` in this cast, or null when they can. A persona
@@ -140,11 +140,13 @@ export function personaRefusal(
 
 /**
  * The voice a speaker is read in — the one rule the narration job, its estimate and every page
- * that says "read in …" share. A linked persona (`personaOwner`) is read in whatever voice their
- * character is, one level only; anyone else in their own voice; else, for anyone but the Narrator,
- * the book's Character voice for their gender; else the Narrator's. A name not in the cast is a
- * speaker of unknown gender. So moving a line between a character and their persona never changes
- * its voice.
+ * that says "read in …" share. Anyone with a voice of their own is read in it, a linked persona
+ * too: a masked stranger given a voice keeps it when the book says who they are, so linking them
+ * changes nothing already heard. A linked persona with none (`personaOwner`) is read in whatever
+ * voice their character is, one level only; anyone else, for anyone but the Narrator, in the book's
+ * Character voice for their gender; else the Narrator's. A name not in the cast is a speaker of
+ * unknown gender. So moving a line between a character and a voiceless persona of theirs never
+ * changes its voice.
  */
 export function speakerVoice(
   name: string,
@@ -152,7 +154,7 @@ export function speakerVoice(
   cv: CharacterVoice | undefined,
 ): { ref: VoiceRef | null; from: VoiceSource; of?: string } {
   const c = cast.get(name);
-  const owner = personaOwner(c, cast);
+  const owner = c?.voice ? undefined : personaOwner(c, cast);
   if (owner) return { ref: voiceOf(owner, cast, cv).ref, from: "persona", of: owner.name };
   return voiceOf(c ?? { name, gender: "?", voice: null }, cast, cv);
 }

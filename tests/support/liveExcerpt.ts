@@ -9,7 +9,8 @@ import type { ScriptedLine } from "~/providers/scripting";
 /** One line the script must have: the line holding `words`, of this type and/or speaker. */
 interface Check {
   words: string;
-  speaker?: string;
+  /** a name, or a pattern where the text leaves the model a choice ("the Grey Fox", "Grey Fox") */
+  speaker?: string | RegExp;
   type?: ScriptedLine["type"];
 }
 
@@ -20,8 +21,15 @@ export interface LiveCase {
   cast: string[];
   /** cast entries that are another's disguise: persona name → character */
   personas?: Record<string, string>;
+  /** cast entries marked "masked, identity unknown" */
+  masked?: string[];
   text: string;
   checks: Check[];
+  /**
+   * The disguises the answer's cast notes must report: a name pattern and its wearer, or
+   * "unknown". A case without any must report none beyond the personas it was sent.
+   */
+  disguises?: { name: RegExp; of: string }[];
 }
 
 const INN: LiveCase = {
@@ -144,7 +152,73 @@ Later, in the alley behind the stables, Lin pulled the mask off and leaned again
   ],
 };
 
-export const LIVE_CASES = [INN, LETTER, CARGO, MASK];
+/** The Grey Fox again, with nobody told it is a disguise: the model must find it. */
+const FOX: LiveCase = {
+  ...MASK,
+  id: "fox",
+  cast: ["Narrator", "Lin", "Odo"],
+  personas: undefined,
+  checks: MASK.checks.map((c) =>
+    c.speaker === "The Grey Fox" ? { ...c, speaker: /Grey Fox/ } : c,
+  ),
+  disguises: [{ name: /Grey Fox/, of: "Lin" }],
+};
+
+/** A masked stranger nobody names: a disguise whose wearer is unknown. */
+const BLACK_MASK: LiveCase = {
+  id: "black-1",
+  title: "The Pass",
+  cast: ["Narrator", "Bram"],
+  text: `The caravan had stopped for the night when the stranger rode in. A black mask covered the rider's face from brow to chin, and the hood of a travel-stained cloak hid the rest.
+
+“Who leads this caravan?” the stranger asked. The voice was low and rough, and gave nothing away.
+
+Old Bram stepped forward, lantern raised. “I do. And who might you be?”
+
+“Someone who can get you through the pass alive.” The masked rider swung down from the saddle. “For a price.”
+
+“We've no need of—”
+
+“You do. The bridge at Hollow Ford is down. The pass is the only road left, and it belongs to the wolves now.”
+
+Bram studied the masked figure for a long moment. “Name your price.”`,
+  checks: [
+    { words: "Who leads this caravan", speaker: /mask|stranger|rider/i },
+    { words: "who might you be", speaker: "Bram" },
+    { words: "Someone who can get you through", speaker: /mask|stranger|rider/i },
+    { words: "no need of", speaker: "Bram" },
+    { words: "The bridge at Hollow Ford", speaker: /mask|stranger|rider/i },
+    { words: "Name your price", speaker: "Bram" },
+  ],
+  disguises: [{ name: /mask|stranger|rider/i, of: "unknown" }],
+};
+
+/** Chapters later, the same rider unmasks: the masked entry now has a wearer. */
+const UNMASKED: LiveCase = {
+  id: "black-2",
+  title: "The Top of the Pass",
+  cast: ["Narrator", "Bram", "Black Mask"],
+  masked: ["Black Mask"],
+  text: `They reached the top of the pass at dawn. The wolves had not come, and Bram allowed himself to breathe.
+
+“You kept your word,” he said.
+
+“I always do.” The rider reined in beside him. Then, slowly, the rider reached up and untied the black mask.
+
+Bram's lantern nearly slipped from his hand. The face beneath was one he had buried in his memory twenty years ago. “Aria? They said you drowned.”
+
+“They said a lot of things.” Aria let the mask fall into the snow. “Take your caravan home, Bram. And don't tell anyone you saw me.”`,
+  checks: [
+    { words: "You kept your word", speaker: "Bram" },
+    { words: "I always do", speaker: "Black Mask" },
+    { words: "They said you drowned", speaker: "Bram" },
+    { words: "They said a lot of things", speaker: "Aria" },
+    { words: "Take your caravan home", speaker: "Aria" },
+  ],
+  disguises: [{ name: /^Black Mask$/, of: "Aria" }],
+};
+
+export const LIVE_CASES = [INN, LETTER, CARGO, MASK, FOX, BLACK_MASK, UNMASKED];
 
 /** The excerpt the one-shot live tests send. */
 export const EXCERPT = INN.text;
@@ -167,7 +241,11 @@ export function printScript(
 const straight = (s: string) => s.replace(/[‘’]/g, "'");
 
 /** What is wrong with a script of `c`: words lost or added, and each check it fails. */
-export function problemsOf(c: LiveCase, lines: ScriptedLine[]): string[] {
+export function problemsOf(
+  c: LiveCase,
+  lines: ScriptedLine[],
+  cast?: readonly PromptCastMember[],
+): string[] {
   const problems: string[] = [];
   const f = fidelity(c.text, lines);
   if (f.missing || f.added) {
@@ -181,9 +259,28 @@ export function problemsOf(c: LiveCase, lines: ScriptedLine[]): string[] {
   }
   for (const { words, speaker, type } of c.checks) {
     const line = lines.find((l) => straight(l.text).includes(straight(words)));
+    const right = (name: string) =>
+      !speaker || (typeof speaker === "string" ? name === speaker : speaker.test(name));
     if (!line) problems.push(`"${words}": no line`);
-    else if ((speaker && line.speaker !== speaker) || (type && line.type !== type))
+    else if (!right(line.speaker) || (type && line.type !== type))
       problems.push(`"${words}": ${line.type} by ${line.speaker}`);
+  }
+  if (cast) {
+    const ofNote = (n: PromptCastMember) => (n.masked ? "unknown" : n.personaOf);
+    for (const d of c.disguises ?? []) {
+      const note = cast.find((n) => d.name.test(n.name) && ofNote(n));
+      if (ofNote(note ?? { name: "" }) !== d.of)
+        problems.push(
+          `disguise ${d.name}: ${note ? `${note.name} of ${ofNote(note)}` : "not reported"}`,
+        );
+    }
+    for (const n of cast)
+      if (
+        ofNote(n) &&
+        !c.disguises?.some((d) => d.name.test(n.name)) &&
+        c.personas?.[n.name] !== n.personaOf
+      )
+        problems.push(`false disguise: ${n.name} of ${ofNote(n)}`);
   }
   return problems;
 }

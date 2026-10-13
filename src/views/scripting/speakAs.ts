@@ -1,8 +1,8 @@
 // Speaking a line as a character or as one of their personas.
 //
-// A linked persona (`personaOwner`) is read in its character's voice, so a character and their
-// personas are one identity with one voice between them: moving a line inside it changes only the
-// effects it is heard through, never its speech.
+// A linked persona (`personaOwner`) is one identity with its character. One with no voice of its
+// own is read in its character's, so moving a line between them changes only the effects it is
+// heard through; one with a voice of its own needs new speech (`sameReading`).
 import { personaOwner } from "@/lib/cast";
 import type { Character, Segment } from "@/types";
 

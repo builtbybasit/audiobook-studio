@@ -61,10 +61,11 @@ const castOpts = computed(() =>
       label: c.name,
       color: c.color,
       group: c.major ? "Main cast" : "Also in the script",
-      hint: personaOwner(c, castStore.byName[props.bookId] ?? new Map())
-        ? castStore.fallbackLabel(props.bookId, c.name)
-        : c.voice
-          ? endpointsStore.voiceLabel(c.voice)
+      // a linked persona with no voice of their own is read in their character's
+      hint: c.voice
+        ? endpointsStore.voiceLabel(c.voice)
+        : personaOwner(c, castStore.byName[props.bookId] ?? new Map())
+          ? castStore.fallbackLabel(props.bookId, c.name)
           : "no voice yet",
       keywords: [c.aliases.join(" "), `${counts.value[c.name] ?? 0} lines`].join(" "),
     })),
@@ -213,7 +214,7 @@ function apply() {
               endpointsStore.voiceLabel(voice.ref)
             }}</b></span
           >
-          <!-- a linked persona has their character's voice, given or not: nothing to assign -->
+          <!-- a linked persona with no voice of their own has their character's -->
           <span v-else-if="voice?.from === 'persona'" class="text-zinc-500"
             >read in {{ voice.of }}’s voice<template v-if="voice.ref"
               >,

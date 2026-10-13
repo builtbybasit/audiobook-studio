@@ -27,6 +27,9 @@ export const keys = {
   chapterHeard: (bookId: string, chapterId: number) =>
     ["books", bookId, "heard", chapterId] as const,
   cast: (bookId: string) => ["books", bookId, "cast"] as const,
+  /** for each of these names, the chapters whose text names it */
+  mentions: (bookId: string, names: readonly string[]) =>
+    ["books", bookId, "mentions", ...names] as const,
   exports: (bookId: string) => ["books", bookId, "exports"] as const,
   /** what a book has spent and holds, from the server's ledger */
   spend: (bookId: string) => ["books", bookId, "spend"] as const,

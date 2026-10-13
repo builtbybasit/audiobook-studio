@@ -134,6 +134,8 @@ export const CharacterSchema = v.object({
   thoughts: unset(EffectIdSchema),
   /** the character they are a persona of, by name; null or absent = none */
   personaOf: unset(v.pipe(v.string(), v.trim(), v.nonEmpty())),
+  /** a disguise the scripting model found; kept through an edit that leaves the link alone */
+  masked: v.optional(v.boolean()),
 }) satisfies v.GenericSchema<unknown, Character>;
 
 export const LexEntrySchema = v.object({

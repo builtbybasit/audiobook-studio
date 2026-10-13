@@ -23,6 +23,7 @@ import { GENDER } from "@/lib/scriptReview";
 import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
 import { UiSelect, UiCheckbox, UiHint, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
+import SpoilerText from "@/components/SpoilerText.vue";
 import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
 import { Cloud as ThoughtIcon, Plus as AddIcon, VenetianMask as MaskIcon } from "@lucide/vue";
 import CastRecord from "@/views/cast/CastRecord.vue";
@@ -57,14 +58,15 @@ const editing = ref<string | null>(null);
 const draft = ref("");
 const total = computed(() => libraryStore.chaptersOf(bookId).length);
 const unreviewed = computed(() => cast.value.filter((c) => c.isNew).length);
-// a linked persona needs no voice of their own: they are read in their character's
+// a linked persona with no voice of their own is read in their character's (`voiced`)
 const voiced = computed(() => {
   const byName = castStore.byName[bookId] ?? new Map<string, Character>();
   return cast.value.filter((c) => isVoiced(c, byName)).length;
 });
 const colorOf = computed(() => new Map(cast.value.map((c) => [c.name, c.color])));
 
-// A linked persona's row sits under its character's, whatever the order (`nestPersonas`).
+// A linked persona's row sits under its character's, whatever the order (`nestPersonas`) — unless
+// the scripting model made the link, which stays a spoiler.
 const rows = computed(() => {
   const needle = q.value.toLowerCase();
   const byName = castStore.byName[bookId] ?? new Map<string, Character>();
@@ -77,7 +79,7 @@ const rows = computed(() => {
     )
     .filter((c) => !onlyNew.value || c.isNew)
     .map((c) => {
-      // the character a linked persona is of, whose voice they are read in, whatever their own
+      // the character a linked persona is of, whose voice they are read in when they have none
       const of = personaOwner(c, byName)?.name;
       return {
         c,
@@ -85,7 +87,7 @@ const rows = computed(() => {
         st: stats.value[c.name] ?? newStat(),
         voice: endpointsStore.resolveVoice(c.voice),
         // a speaker with no voice of their own borrows the Character voice or the Narrator's
-        borrowed: c.voice && !of ? null : castStore.effectiveVoice(bookId, c.name),
+        borrowed: c.voice ? null : castStore.effectiveVoice(bookId, c.name),
       };
     })
     .sort((a, b) =>
@@ -470,11 +472,17 @@ const duplicate = computed(
                     @blur="commit"
                   />
                   <b v-else class="cursor-text" @dblclick="startRename(c)">{{ c.name }}</b>
+                  <!-- a link the scripting model made says whose only when asked: a spoiler -->
                   <span
-                    v-if="of"
+                    v-if="of || c.masked"
                     class="inline-flex items-center gap-0.5 rounded bg-violet-500/10 px-1 text-[10px] text-violet-600 dark:text-violet-300"
-                    ><MaskIcon class="h-3 w-3" aria-hidden="true" />persona of {{ of }}</span
-                  >
+                    ><MaskIcon class="h-3 w-3" aria-hidden="true" /><template v-if="!of"
+                      >masked · identity unknown</template
+                    ><template v-else
+                      >persona of
+                      <SpoilerText :text="of" :hidden="!!c.masked" label="hidden · show" small
+                    /></template>
+                  </span>
                   <span
                     v-if="c.isNew"
                     class="rounded bg-amber-400/20 px-1 text-[10px] font-semibold text-amber-600"
@@ -527,24 +535,8 @@ const duplicate = computed(
                 </div>
               </td>
               <td class="py-1 pr-2">
-                <!-- a linked persona is read in their character's voice: named here, picked there -->
-                <div
-                  v-if="borrowed?.from === 'persona'"
-                  class="ui-select-trigger w-full cursor-default border-dashed bg-transparent py-0.5 text-xs italic text-zinc-500 dark:bg-transparent"
-                  :title="`A persona is read in ${borrowed.of}’s voice — change it on ${borrowed.of}’s row`"
-                >
-                  <span class="min-w-0 flex-1 truncate"
-                    >{{ borrowed.of }}’s voice<span
-                      v-if="borrowed.label"
-                      class="text-zinc-300 dark:text-zinc-600"
-                    >
-                      · {{ borrowed.label }}</span
-                    ></span
-                  >
-                </div>
                 <!-- VoicePicker's trigger, drawn as a plain button that opens the shared picker -->
                 <button
-                  v-else
                   type="button"
                   data-voice-anchor
                   aria-haspopup="dialog"
@@ -558,9 +550,13 @@ const duplicate = computed(
                   @click="voiceClick(c.name, $event)"
                 >
                   <span class="min-w-0 flex-1 truncate text-left">
+                    <!-- the voice a masked link borrows would name its wearer as surely -->
                     <template v-if="!c.voice"
-                      >{{ borrowed?.from === "character" ? "Character voice" : "Narrator’s voice"
-                      }}<span v-if="borrowed?.label" class="text-zinc-300 dark:text-zinc-600">
+                      >{{ castStore.fallbackLabel(bookId, c.name)
+                      }}<span
+                        v-if="borrowed?.label && !(c.masked && of)"
+                        class="text-zinc-300 dark:text-zinc-600"
+                      >
                         · {{ borrowed?.label }}</span
                       ></template
                     >
@@ -598,7 +594,7 @@ const duplicate = computed(
                     class="chip min-w-0 max-w-[7.5rem]"
                     :class="effectOf(c.effect) ? 'chip-on' : 'chip-off'"
                     :aria-label="`${c.name}’s effect`"
-                    :title="of ? `Worn after ${of}’s effect` : undefined"
+                    :title="of && !c.masked ? `Worn after ${of}’s effect` : undefined"
                     @click="editEffect({ kind: 'speaker', name: c.name, slot: 'effect' })"
                   >
                     <span class="truncate">{{ effectOf(c.effect)?.name ?? "None" }}</span>

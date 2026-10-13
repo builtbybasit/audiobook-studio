@@ -171,9 +171,9 @@ export const useCastStore = defineStore("cast", {
       }
       return out;
     },
-    // a linked persona is read in their character's voice, and a character with no voice of their
-    // own in the book's Character voice, or else the Narrator's — `speakerVoice`, the rule the
-    // narration job keeps too
+    // a linked persona with no voice of their own is read in their character's, and anyone else
+    // with none in the book's Character voice, or else the Narrator's — `speakerVoice`, the rule
+    // the narration job keeps too
     effectiveVoice(): (bookId: string, name: string) => EffectiveVoice {
       const endpointsStore = useEndpointsStore();
       const libraryStore = useLibraryStore();
@@ -199,7 +199,8 @@ export const useCastStore = defineStore("cast", {
     /**
      * What a speaker with no voice of their own is read in — "Character voice" or "Narrator’s
      * voice" — whether or not they have one now: what the empty choice in their picker means. A
-     * linked persona is read in their character's, whatever they are given: "Sunny’s voice".
+     * linked persona's is their character's, "Sunny’s voice" — or "Wearer’s voice" for a link
+     * the scripting model made (`masked`), whose character is a spoiler.
      */
     fallbackLabel(): (bookId: string, name: string) => string {
       const libraryStore = useLibraryStore();
@@ -214,7 +215,9 @@ export const useCastStore = defineStore("cast", {
         };
         const { from, of } = speakerVoice(name, bare, cv);
         return from === "persona"
-          ? `${of}’s voice`
+          ? c?.masked
+            ? "Wearer’s voice"
+            : `${of}’s voice`
           : from === "character"
             ? "Character voice"
             : "Narrator’s voice";
@@ -226,7 +229,7 @@ export const useCastStore = defineStore("cast", {
      * A speaker's own voice is named for them; a Character voice slot some speaker with no voice
      * of their own is read in is named "Character voice", or "Character voice (male)" by gender;
      * and the Narrator's row covers everyone who falls through to the Narrator's. A linked persona
-     * is read in their character's voice, which their character's row covers.
+     * with no voice of their own is read in their character's, which their character's row covers.
      */
     routingIssues(): (bookId: string) => RoutingIssue[] {
       const endpointsStore = useEndpointsStore();
@@ -251,13 +254,14 @@ export const useCastStore = defineStore("cast", {
             });
         };
         const byName = this.byName[bookId] ?? new Map<string, Character>();
-        const cast = (this.characters[bookId] ?? []).filter((c) => !personaOwner(c, byName));
+        const cast = this.characters[bookId] ?? [];
         for (const c of cast) if (c.voice) check(c.name, c.voice);
         const cv = libraryStore.bookById(bookId)?.characterVoice;
         if (cv) {
           const slots = new Set<ReturnType<typeof characterSlot>>();
           for (const c of cast)
-            if (!c.voice && c.name !== NARRATOR) slots.add(characterSlot(cv, c.gender));
+            if (!c.voice && c.name !== NARRATOR && !personaOwner(c, byName))
+              slots.add(characterSlot(cv, c.gender));
           for (const slot of slots) {
             const ref = cv[slot];
             if (ref) check(slot === "one" ? "Character voice" : `Character voice (${slot})`, ref);
@@ -466,6 +470,8 @@ export const useCastStore = defineStore("cast", {
       const c = this.characters[bookId]?.find((x) => x.name === name);
       if (!c) return Promise.resolve(false);
       Object.assign(c, patch);
+      // a link set or taken off by hand is the person's: the model's finding goes, as on the server
+      if ("personaOf" in patch) delete c.masked;
       return this._push(bookId, name);
     },
     /**
@@ -908,7 +914,17 @@ export const useCastStore = defineStore("cast", {
       const c = this.characters[bookId]?.find((x) => x.name === name);
       if (!c) return;
       const { name: _name, aliases: _aliases, ...rest } = patch;
+      // a link set or taken off by hand is the person's: the model's finding goes, as on the server
+      const relinked = "personaOf" in rest && rest.personaOf !== c.personaOf;
       Object.assign(c, rest);
+      if (relinked) delete c.masked;
+      await this._push(bookId, name);
+    },
+    /** Take the scripting model's "masked" finding off a speaker; their link, if any, stays. */
+    async unmask(bookId: string, name: string): Promise<void> {
+      const c = this.characters[bookId]?.find((x) => x.name === name);
+      if (!c?.masked) return;
+      delete c.masked;
       await this._push(bookId, name);
     },
     /** Give a speaker a voice, or take theirs away so they fall back to the Character voice or the
@@ -1072,8 +1088,8 @@ export const useCastStore = defineStore("cast", {
       const used: Partial<Record<Gender, number>> = {};
       const plan: AutoVoiceAssignment[] = [];
       const byName = this.byName[bookId] ?? new Map<string, Character>();
-      // a cast that has not been read yet has no one to assign; a linked persona is read in their
-      // character's voice, so a voice of their own would go unheard
+      // a cast that has not been read yet has no one to assign; a linked persona with no voice of
+      // their own is read in their character's, which is left for a person to change
       for (const c of this.characters[bookId] ?? []) {
         if (c.voice || c.name === "Narrator" || personaOwner(c, byName)) continue;
         const byG = byGender[c.gender];

@@ -56,7 +56,7 @@ async function once(target: ScriptTarget, c: LiveCase): Promise<Run> {
   const started = performance.now();
   let inputTokens = 0;
   try {
-    const { lines } = await endpointScriptingProvider().script({
+    const { lines, cast } = await endpointScriptingProvider().script({
       title: c.title,
       text: c.text,
       cast: c.cast,
@@ -69,13 +69,17 @@ async function once(target: ScriptTarget, c: LiveCase): Promise<Run> {
         chapter: { title: c.title, number: 1 },
         part: 1,
         parts: 1,
-        cast: c.cast.map((name) => ({ name, personaOf: c.personas?.[name] })),
+        cast: c.cast.map((name) => ({
+          name,
+          personaOf: c.personas?.[name],
+          masked: c.masked?.includes(name) || undefined,
+        })),
         excerpt: c.text,
         endpoint: { name: target.name, model: target.model },
       }),
       sent: (r) => (inputTokens += r.usage?.inputTokens ?? 0),
     });
-    return { ms: performance.now() - started, inputTokens, problems: problemsOf(c, lines) };
+    return { ms: performance.now() - started, inputTokens, problems: problemsOf(c, lines, cast) };
   } catch (e) {
     return { ms: performance.now() - started, inputTokens, problems: [`error: ${String(e)}`] };
   }

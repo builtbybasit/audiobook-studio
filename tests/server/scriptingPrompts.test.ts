@@ -19,7 +19,7 @@ import type {
   RequestRecord,
   Segment,
 } from "@/types";
-import { BUILT_IN_PROMPT, OUTPUT_FORMAT } from "@/lib/prompt";
+import { BUILT_IN_PROMPT, OUTPUT_FORMAT, type PromptCastMember } from "@/lib/prompt";
 import { scriptTelemetry } from "@/lib/scriptActivity";
 import { chapters, characters, effects, endpoints, requests } from "~/db/schema";
 import { profileKey } from "~/db/rows/endpoints";
@@ -534,6 +534,91 @@ describe("personas and line effects", () => {
       await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`)
     ).body;
     expect(segments.map((s) => s.effects)).toEqual([["phone", "echo"]]);
+  });
+});
+
+describe("a disguise the model finds", () => {
+  /** What the model says of the cast, chapter by chapter, with every line given to `speaker`. */
+  function revealing(said: Record<string, { speaker: string; cast: PromptCastMember[] }>) {
+    const inputs: ScriptInput[] = [];
+    const provider: ScriptingProvider = {
+      name: "Revealing (test)",
+      async script(input) {
+        inputs.push(input);
+        const { speaker, cast } = said[input.title];
+        return { lines: [{ type: "dialogue", speaker, text: input.text }], cast };
+      },
+    };
+    return { provider, inputs };
+  }
+
+  test("is marked masked, linked once the book says who wears it, and never relinked by hand's undoing", async () => {
+    const rec = revealing({
+      One: {
+        speaker: "the Black Mask",
+        cast: [
+          { name: "the Black Mask", masked: true },
+          // an established character is nobody's disguise on the model's say-so
+          { name: "Mara", personaOf: "Sunny" },
+        ],
+      },
+      Two: { speaker: "Lord of Shadows", cast: [{ name: "Lord of Shadows", personaOf: "Sunny" }] },
+      Three: { speaker: "Aria", cast: [{ name: "the Black Mask", personaOf: "Aria" }] },
+      Four: { speaker: "Aria", cast: [{ name: "the Black Mask", personaOf: "Aria" }] },
+    });
+    const api = testApi({ scripting: rec.provider });
+    const id = await shelved(api, ["One", "Two", "Three", "Four"]);
+    api.db
+      .insert(characters)
+      .values([
+        // the model once filed the disguise as one of Sunny's other names
+        { bookId: id, name: "Sunny", gender: "m", aliases: ["Lord of Shadows"], color: "#333" },
+        { bookId: id, name: "Mara", gender: "f", color: "#c33" },
+      ])
+      .run();
+    await put(api, { profiles: [openaiProfile({ maxChars: 0 })] });
+    const script = async (ids: number[]) => {
+      await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids, profile: "openai" }));
+      await api.runner.idle();
+    };
+    const cast = async () =>
+      new Map(
+        (await api.request<Cast>(`/api/books/${id}/cast`)).body.characters.map((c) => [c.name, c]),
+      );
+
+    await script([1, 2]);
+    let now = await cast();
+    expect(now.get("the Black Mask")).toMatchObject({ masked: true });
+    expect(now.get("the Black Mask")?.personaOf).toBeUndefined();
+    expect(now.get("Mara")?.personaOf).toBeUndefined();
+    expect(now.get("Lord of Shadows")).toMatchObject({ personaOf: "Sunny", masked: true });
+    expect(now.get("Sunny")?.aliases).toEqual([]);
+    // the next chapter's model is told the mask is still waiting for its wearer
+    const two = rec.inputs.find((i) => i.title === "Two")!;
+    expect(two.prompt!.user).toContain("the Black Mask (masked, identity unknown)");
+
+    // the reveal adds the wearer, and keeps the mask's own voice (a voice picked meanwhile)
+    const mask = { ...now.get("the Black Mask")!, voice: "ep/mask" };
+    await api.request(`/api/books/${id}/characters/the%20Black%20Mask`, {
+      ...jsonBody(mask),
+      method: "PUT",
+    });
+    expect((await cast()).get("the Black Mask")).toMatchObject({ masked: true, voice: "ep/mask" });
+    await script([3]);
+    now = await cast();
+    expect(now.get("Aria")).toBeDefined();
+    expect(now.get("the Black Mask")).toMatchObject({ personaOf: "Aria", masked: true });
+
+    // unlinked by hand: the finding is the person's now, and the next chapter leaves it be
+    const { personaOf: _, ...unlinked } = now.get("the Black Mask")!;
+    await api.request(`/api/books/${id}/characters/the%20Black%20Mask`, {
+      ...jsonBody(unlinked),
+      method: "PUT",
+    });
+    await script([4]);
+    now = await cast();
+    expect(now.get("the Black Mask")?.personaOf).toBeUndefined();
+    expect(now.get("the Black Mask")?.masked).toBeUndefined();
   });
 });
 

@@ -96,12 +96,10 @@ describe("renderPrompt", () => {
     expect(renderPrompt({ system: "", user: "{{excerpt}}" }, vars()).system).toBe(OUTPUT_FORMAT);
   });
 
-  test("the built-in rule 4 gives a persona's lines to the persona", () => {
-    const [rule4] = BUILT_IN_PROMPT.system.match(/^4\. [\s\S]*?(?=\n5\. )/m)!;
-    expect(rule4).toContain(
-      '\n   The one exception is a persona — a cast entry marked "persona of" another character:',
-    );
-    expect(rule4).toContain("Always write the persona's cast name, never one of its other names.");
+  test("the built-in rule 5 gives a persona's lines to the persona", () => {
+    const [rule5] = BUILT_IN_PROMPT.system.match(/^5\. [\s\S]*?(?=\n6\. )/m)!;
+    expect(rule5).toContain("A cast entry marked “persona of” is that character's disguise.");
+    expect(rule5).toContain("go to the persona's cast name");
   });
 });
 

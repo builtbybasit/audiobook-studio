@@ -65,7 +65,7 @@ before it, and each answer says what the next request will need:
   their gender and other names ("Havoc (male; also called the mercenary)"), so a "she said" can be
   narrowed down and "the Captain" is given the name the book already uses rather than becoming a new
   speaker. A persona says whose disguise it is ("Lord of Shadows (male; persona of Sunny)"), and the
-  built-in prompt's rule 4 gives the character's lines to the persona while the scene has them in
+  built-in prompt's rule 5 gives the character's lines to the persona while the scene has them in
   that identity. Descriptions go only with `{{cast.details}}`: a web novel's cast runs to hundreds,
   and every character of the prompt is sent, and billed, with every request.
 - **What the model learnt of them.** An answer's `cast` gives the gender, other names and a

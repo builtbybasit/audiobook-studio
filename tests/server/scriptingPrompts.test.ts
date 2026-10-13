@@ -21,7 +21,7 @@ import type {
 } from "@/types";
 import { BUILT_IN_PROMPT, OUTPUT_FORMAT, type PromptCastMember } from "@/lib/prompt";
 import { scriptTelemetry } from "@/lib/scriptActivity";
-import { chapters, characters, effects, endpoints, requests } from "~/db/schema";
+import { chapters, characters, effects, endpoints, requests, segments as lines } from "~/db/schema";
 import { profileKey } from "~/db/rows/endpoints";
 import { fakeScriptingProvider } from "~/providers/fake";
 import type { ScriptInput, ScriptingProvider } from "~/providers/scripting";
@@ -288,6 +288,20 @@ describe("a run's prompt", () => {
         color: "#c33",
       })
       .run();
+    // listed though the story never names her: she has a line in the chapter's script now
+    api.db
+      .insert(lines)
+      .values({
+        bookId: id,
+        chapterId: 1,
+        id: 1,
+        position: 0,
+        type: "dialogue",
+        speaker: "Mara",
+        text: "Hm.",
+        direction: "",
+      })
+      .run();
     const profile = openaiProfile({
       maxChars: 700,
       splitAt: "sentence",
@@ -502,6 +516,20 @@ describe("personas and line effects", () => {
         // of nobody in the cast, so of nobody
         { bookId: id, name: "Mask", personaOf: "Nobody", color: "#555" },
       ])
+      .run();
+    // so a speaker the text never names is listed: Mask has a line in the chapter's script now
+    api.db
+      .insert(lines)
+      .values({
+        bookId: id,
+        chapterId: 1,
+        id: 1,
+        position: 0,
+        type: "dialogue",
+        speaker: "Mask",
+        text: "Hm.",
+        direction: "",
+      })
       .run();
     api.db
       .insert(effects)
@@ -777,6 +805,49 @@ describe("what a reasoning model spent thinking", () => {
     );
     expect(scriptTelemetry(body.requests, openaiProfile({ reasoning: "high" })).reasoning).toEqual(
       high,
+    );
+  });
+});
+
+describe("the cast a request lists", () => {
+  test("is who the chapter names, who spoke just before, and every disguise — not the whole book", async () => {
+    const { provider, inputs } = recording();
+    const api = testApi({ scripting: provider });
+    const id = await shelved(api, ["One", "Two"]);
+    api.db
+      .insert(characters)
+      .values([
+        // named in every chapter of the story
+        { bookId: id, name: "Aurelie", gender: "f", color: "#111" },
+        // spoke in the chapter before
+        { bookId: id, name: "Mara", gender: "f", color: "#222" },
+        // neither
+        { bookId: id, name: "Kel", gender: "m", color: "#333" },
+        { bookId: id, name: "the Black Mask", masked: true, color: "#444" },
+      ])
+      .run();
+    api.db
+      .insert(lines)
+      .values({
+        bookId: id,
+        chapterId: 1,
+        id: 1,
+        position: 0,
+        type: "dialogue",
+        speaker: "Mara",
+        text: "Hm.",
+        direction: "",
+      })
+      .run();
+    await put(api, { profiles: [openaiProfile({ maxChars: 0 })] });
+    await api.request(
+      `/api/books/${id}/chapters/script`,
+      jsonBody({ ids: [2], profile: "openai" }),
+    );
+    await api.runner.idle();
+
+    expect(inputs[0].prompt!.user).toContain(
+      "Known cast: Aurelie (female), Mara (female), the Black Mask (masked, identity unknown)\n",
     );
   });
 });

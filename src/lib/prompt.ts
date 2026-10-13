@@ -274,12 +274,12 @@ export const PROMPT_TAGS: readonly PromptTag[] = [
   {
     name: "cast",
     about:
-      "The known speakers' names with gender, whose persona one is (or that a masked one's is unknown), and other names, comma-separated, or “(none yet)”",
+      "The speakers this chapter names, those who spoke in it or just before it, and every persona and masked figure: names with gender, whose persona one is (or that a masked one's is unknown), and other names, comma-separated, or “(none yet)”",
     scope: "chapter",
   },
   {
     name: "cast.details",
-    about: "One line per known speaker: name, gender, other names, description",
+    about: "One line per speaker {{cast}} lists: name, gender, other names, description",
     scope: "chapter",
   },
   {
@@ -339,7 +339,7 @@ export interface PromptVars {
   /** 1-based */
   part: number;
   parts: number;
-  /** the book's speakers; the Narrator and "Unknown" are left out of both cast tags */
+  /** the speakers the chapter needs (`chapterCast`); the Narrator and "Unknown" are left out of both cast tags */
   cast: readonly PromptCastMember[];
   excerpt: string;
   /** the end of the text before the excerpt, when it is not the chapter's first request */

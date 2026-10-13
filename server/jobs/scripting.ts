@@ -37,7 +37,7 @@ import {
   type PromptVars,
 } from "@/lib/prompt";
 import { tokenEstimate } from "@/lib/scripting";
-import { ensureSpeakers, learnCast, readSpeakers } from "~/db/cast";
+import { ensureSpeakers, learnCast, readChapterCast, readSpeakers } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { listEffects } from "~/db/effects";
 import { capture } from "~/db/history";
@@ -147,6 +147,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       const target = queued ? scriptTarget(db, queued.profile) : null;
       const speakers = readSpeakers(db, job.bookId);
       const cast = speakers.map((c) => c.name);
+      // what the prompt lists: the speakers this chapter is likely to need, not the whole book's
+      const listed = readChapterCast(db, job.bookId, job.chapterId, chapter.text);
       // The prompt the run was queued with; a run queued before prompts could be edited is sent
       // the built-in one, which is what it would have been sent then.
       const template = queued?.prompt ?? BUILT_IN_PROMPT;
@@ -170,7 +172,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         chapter: { title: chapter.title, number },
         part: i + 1,
         parts: chunks.length,
-        cast: speakers,
+        cast: listed,
         excerpt: chunks[i],
         before: beforeOf(chunks, i),
         recap,

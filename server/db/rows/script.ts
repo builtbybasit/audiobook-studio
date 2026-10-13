@@ -173,6 +173,7 @@ export function toSegment(row: SegmentRow, clipRows: readonly ClipRow[]): Segmen
   if (candidate) s.candidate = toSegmentAudio(candidate);
   if (row.sep != null) s.sep = row.sep;
   if (row.expressions != null) s.expressions = row.expressions;
+  if (row.effects?.length) s.effects = row.effects;
   return s;
 }
 
@@ -200,6 +201,7 @@ export function segmentValues(
     sep: s.sep ?? null,
     flag: s.flag ?? null,
     expressions: s.expressions ?? null,
+    effects: s.effects?.length ? s.effects : null,
   };
 }
 

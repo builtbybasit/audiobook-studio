@@ -251,6 +251,13 @@ export interface Character {
   effect?: string;
   /** their thought lines' effect: an effect's id or "none"; absent = the book's */
   thoughts?: ThoughtChoice;
+  /**
+   * The character this speaker is a persona of — a disguise or false identity of theirs (a mask,
+   * a name strangers know them by), by name. A linked persona speaks in that character's voice and
+   * effect, then its own effect; a name not in the cast (or its own) links nobody, and the persona
+   * keeps its own voice. Absent = a speaker in their own right.
+   */
+  personaOf?: string;
 }
 
 export interface BookProgress {

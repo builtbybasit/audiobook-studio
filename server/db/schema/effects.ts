@@ -12,6 +12,8 @@ export const effects = sqliteTable("effects", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   chain: text("chain", { mode: "json" }).$type<Step[]>().notNull(),
-  /** the order the effects are listed in */
+  /** the order the effects are listed in, and line effects are run in */
   position: integer("position"),
+  /** `Effect.useWhen`: the sentence that offers it to the scripting model; null = not offered */
+  useWhen: text("use_when"),
 });

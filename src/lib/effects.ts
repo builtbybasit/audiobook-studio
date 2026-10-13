@@ -1,6 +1,6 @@
 // Which effects a line is given, and the fingerprint of what was baked into its clip. Shared by the
 // server (narration, Re-apply) and the page (the "old sound" count), so both read it the same way.
-import type { Effect, SegmentType, Step, ThoughtChoice } from "@/types";
+import type { Character, Effect, SegmentType, Step, ThoughtChoice } from "@/types";
 
 /** What a line's effects are read from. */
 export interface EffectContext {
@@ -9,8 +9,8 @@ export interface EffectContext {
   library: ThoughtChoice;
   /** the book's own; null = follow the library */
   book: ThoughtChoice | null;
-  /** by speaker name; a speaker not in it follows the book and wears nothing */
-  cast: ReadonlyMap<string, { effect?: string; thoughts?: ThoughtChoice }>;
+  /** by speaker name; a speaker not in it follows the book, wears nothing and is nobody's persona */
+  cast: ReadonlyMap<string, Pick<Character, "effect" | "thoughts" | "personaOf">>;
 }
 
 /** The thought effect a speaker's thought lines get: speaker → book → library. */

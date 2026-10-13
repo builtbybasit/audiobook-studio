@@ -1,7 +1,7 @@
 // Which of a cast's names a line is written with: what a clip is sent as hints when it is checked
 // by ear. Pure over the text, so every way a name is written in a book is one row here.
 import { describe, expect, test } from "bun:test";
-import { nameWords, namesIn, NARRATOR } from "@/lib/cast";
+import { castNameFor, nameWords, namesIn, NARRATOR } from "@/lib/cast";
 
 const words = nameWords([
   { name: NARRATOR, aliases: ["Storyteller"] },
@@ -54,5 +54,44 @@ describe("the names a line is written with", () => {
     ["nobody", "The rain kept on.", []],
   ])("%s", (_, line, expected) => {
     expect(namesIn(line, words)).toEqual(expected);
+  });
+});
+
+describe("the cast member a scripting model meant", () => {
+  const cast = [
+    { name: NARRATOR, aliases: [] },
+    // seen in a real run: lines written by "Hero" became a second character beside him
+    { name: "Young Soldier", aliases: ["Hero"] },
+    { name: "Gentle-Voiced Slave", aliases: ["Scholar"] },
+    // that run's leftover: a character of the alias's name, until it is merged by hand
+    { name: "Scholar", aliases: [] },
+    { name: "Kel", aliases: ["the Captain"] },
+    { name: "Wren", aliases: ["the captain"] },
+  ];
+  const meant = (speaker: string) => castNameFor(speaker, cast);
+
+  test("by one of their other names, in any case", () => {
+    expect(meant("Hero")).toBe("Young Soldier");
+    expect(meant("hero")).toBe("Young Soldier");
+    expect(meant("young soldier")).toBe("Young Soldier");
+  });
+
+  test("is a name in the cast as written, before anyone's other name", () => {
+    expect(meant("Scholar")).toBe("Scholar");
+    expect(meant(NARRATOR)).toBe(NARRATOR);
+  });
+
+  test("leaves a name that is nobody's, or could be two members', as written", () => {
+    expect(meant("the Captain")).toBe("the Captain");
+    expect(meant("Unknown")).toBe("Unknown");
+    expect(meant("Soldier")).toBe("Soldier");
+    expect(meant("Heroes")).toBe("Heroes");
+  });
+
+  // A guard, not a habit: no run so far has copied the cast list's "(male; also called Hero)" into
+  // a speaker, but one that did would otherwise make a new character.
+  test("by a cast name with a bracket note after it", () => {
+    expect(meant("Young Soldier (male)")).toBe("Young Soldier");
+    expect(meant("Hero (male)")).toBe("Young Soldier");
   });
 });

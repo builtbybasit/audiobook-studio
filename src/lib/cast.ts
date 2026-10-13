@@ -2,8 +2,9 @@
 //
 // Shared by the seeded world, the cast store and the server's scripting job, because all three
 // bring speakers into a cast and a walk-on the model turned up has to look the same whichever of
-// them found it. And which of a cast's names a line is written with (`namesIn`), what a clip is
-// sent as hints when it is checked by ear. Nothing here reaches a store or the demo world.
+// them found it — and who a speaker the model named its own way is (`castNameFor`). And which of a
+// cast's names a line is written with (`namesIn`), what a clip is sent as hints when it is checked
+// by ear. Nothing here reaches a store or the demo world.
 import type { Character, CharacterVoice, Gender, VoiceRef } from "@/types";
 import { writtenWordsOf } from "@/lib/gaps";
 import type { PromptCastMember } from "@/lib/prompt";
@@ -190,6 +191,27 @@ export function sameReading(
     speakerVoice(from, cast, cv).ref === speakerVoice(to, cast, cv).ref &&
     (cast.get(from)?.style ?? "") === (cast.get(to)?.style ?? "")
   );
+}
+
+/**
+ * The cast member a scripting model meant by `speaker`, by name: a name in the cast is itself;
+ * otherwise one written as one of a member's other names ("Hero" for Young Soldier) or in another
+ * case is that member's. A bracket note after the name ("Young Soldier (male)") is dropped first —
+ * a guard: no model has been seen copying the cast list's notes in. Any other name, and one that
+ * could be two members', is left as written, so the job adds it as a walk-on rather than guessing
+ * whose line it is.
+ */
+export function castNameFor(
+  speaker: string,
+  cast: readonly Pick<PromptCastMember, "name" | "aliases">[],
+): string {
+  if (cast.some((c) => c.name === speaker)) return speaker;
+  const key = speaker.replace(/\s*\([^()]*\)$/, "").toLowerCase();
+  const named = cast.filter((c) => c.name.toLowerCase() === key);
+  const meant = named.length
+    ? named
+    : cast.filter((c) => c.aliases?.some((a) => a.toLowerCase() === key));
+  return meant.length === 1 ? meant[0].name : speaker;
 }
 
 // ---------- names in a line ----------

@@ -72,7 +72,11 @@ before it, and each answer says what the next request will need:
   one-sentence description of the speakers the excerpt says something new about. The run fills in
   only what the cast leaves blank — a gender or description set by hand, or by an earlier chapter,
   stands, and other names are only added — so a speaker arrives on the Cast page ready to give a
-  voice to. A name mentioned but never given a line is not added.
+  voice to. A name mentioned but never given a line is not added. A speaker written by one of a
+  member's other names ("Hero" for Young Soldier) or in another case is read as that member, lines
+  and note alike, rather than added as a new one (`castNameFor`); a name that could be two
+  members', or one the answer calls a disguise, is left as written. A character already in the
+  cast under that other name keeps getting its lines until it is merged on the Cast page.
 - **A disguise the model found.** A cast note may also say `personaOf`: whose disguise a speaker
   is, or `"unknown"` for a masked figure the book has not named. It is taken only for a speaker the
   same answer brought into the cast, or one already marked masked, and never once a person has

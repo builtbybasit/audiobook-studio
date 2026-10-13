@@ -622,6 +622,43 @@ describe("a disguise the model finds", () => {
   });
 });
 
+describe("a speaker the model names by another of their names", () => {
+  test("is the cast member it meant, and what it said of them fills in that member", async () => {
+    const provider: ScriptingProvider = {
+      name: "Other names (test)",
+      async script(input) {
+        return {
+          lines: [
+            { type: "dialogue", speaker: "Hero", text: input.text.slice(0, 20) },
+            { type: "dialogue", speaker: "Young Soldier", text: input.text.slice(20) },
+          ],
+          cast: [{ name: "Hero", description: "A young soldier, steady under fire." }],
+        };
+      },
+    };
+    const api = testApi({ scripting: provider });
+    const id = await shelved(api);
+    api.db
+      .insert(characters)
+      .values({ bookId: id, name: "Young Soldier", gender: "m", aliases: ["Hero"], color: "#333" })
+      .run();
+    await put(api, { profiles: [openaiProfile({ maxChars: 0 })] });
+    await api.request(
+      `/api/books/${id}/chapters/script`,
+      jsonBody({ ids: [1], profile: "openai" }),
+    );
+    await api.runner.idle();
+
+    const { characters: cast } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
+    expect(cast.map((c) => c.name)).toEqual(["Young Soldier"]);
+    expect(cast[0].description).toBe("A young soldier, steady under fire.");
+    const { segments } = (
+      await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`)
+    ).body;
+    expect(segments.map((s) => s.speaker)).toEqual(["Young Soldier", "Young Soldier"]);
+  });
+});
+
 describe("the connection test", () => {
   test("asks with the prompt the endpoint's runs would be sent", async () => {
     const rec = recording();

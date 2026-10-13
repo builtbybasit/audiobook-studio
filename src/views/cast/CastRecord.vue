@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// One speaker's full record — every field a speaker has but the voice, which the row above picks.
+// One speaker's full record — every field a speaker has but the voice, which the row above picks,
+// and who they are a persona of, or who their personas are.
 // The Cast table opens it under a row; it reads and writes the speaker through the cast store.
 import { ref, useId } from "vue";
 
@@ -10,10 +11,16 @@ import { sizeLabel } from "@/lib/audioFormat";
 import { GENDER } from "@/lib/scriptReview";
 import { UiHint, UiSelect, UiSwitch } from "@/ui";
 import SpoilerText from "@/components/SpoilerText.vue";
+import PersonaSection from "@/views/cast/persona/PersonaSection.vue";
 import { Plus as AddIcon, X as CloseIcon } from "@lucide/vue";
 import type { Character, Gender } from "@/types";
 
-const props = defineProps<{ bookId: string; c: Character }>();
+const props = defineProps<{
+  bookId: string;
+  c: Character;
+  /** a speaker's line count, or null while the book's scripts are not all read */
+  lines: (name: string) => number | null;
+}>();
 
 const castStore = useCastStore();
 const samplesStore = useSpeakerSamplesStore();
@@ -198,5 +205,12 @@ function addAlias(c: Character) {
         </form>
       </div>
     </div>
+    <PersonaSection
+      v-if="c.name !== 'Narrator'"
+      class="border-t border-zinc-200 pt-3 lg:col-span-2 dark:border-zinc-800"
+      :book-id="bookId"
+      :c="c"
+      :lines="lines"
+    />
   </div>
 </template>

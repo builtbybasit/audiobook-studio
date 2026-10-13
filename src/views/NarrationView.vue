@@ -15,6 +15,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { plural } from "@/lib/contents";
+import { voiced } from "@/lib/cast";
 import { isSpoken } from "@/lib/siteText";
 import { speechReadiness } from "@/lib/endpoints";
 import { runActionLabel, runSummary, SCOPE_LABEL, skipSummary } from "@/lib/runPlan";
@@ -151,7 +152,8 @@ const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScript
 /** The tab carries the cast's progress, so the Voices panel needs no summary line of its own. */
 const voices = computed(() => {
   const cast = castStore.charactersOf(bookId);
-  return { assigned: cast.filter((c) => c.voice).length, total: cast.length };
+  const byName = castStore.byName[bookId] ?? new Map();
+  return { assigned: cast.filter((c) => voiced(c, byName)).length, total: cast.length };
 });
 /**
  * The endpoints this book's speakers resolve to, and how many of them can take its lines — the

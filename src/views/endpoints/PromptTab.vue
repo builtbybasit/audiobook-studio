@@ -20,6 +20,7 @@ import { UiHint, UiToggleGroup } from "@/ui";
 import {
   NOTES_MAX_CHARS,
   libraryPrompt,
+  lineEffectsOf,
   notesProblems,
   profilePromptProblems,
   renderPrompt,
@@ -30,6 +31,7 @@ import {
 import { expressionNames } from "@/lib/expressions";
 import { isSimulated } from "@/lib/providers";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
+import { useEffects } from "@/queries";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 import {
@@ -46,6 +48,7 @@ const props = defineProps<{ u: UnifiedEndpoint }>();
 
 const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
+const { effects } = useEffects();
 const id = useId();
 
 const MODES = [
@@ -79,6 +82,7 @@ const preview = computed(() => {
     ...vars,
     endpoint: { ...vars.endpoint, notes: draft.value.notes },
     expressions: expressionNames(endpointsStore.endpoints),
+    lineEffects: lineEffectsOf(effects.value),
   });
 });
 

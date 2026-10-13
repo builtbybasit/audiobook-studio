@@ -1,7 +1,8 @@
 // The effects store against a server that answers when told to: an edit shows at once and goes out
 // behind it, coalesced; a refusal is said and read back over; a duplicate is named and placed; a
 // removal clears every choice of the effect here as the server does; and what changes a line's
-// sound has the book's old-sound count read again.
+// sound has the book's old-sound count read again. A line effect's sheet hears a line through it
+// in its place in the chain, and chooses nothing.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { narrator, newSpeaker } from "@/lib/cast";
 import { clone } from "@/lib/utils";
@@ -14,6 +15,7 @@ import { useEffectsStore } from "@/stores/effects";
 import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 import type { Book, Character, Effect, Step, ThoughtChoice } from "@/types";
+import { useChoice } from "@/views/cast/effects/choice";
 import { flush, testPinia, type TestPinia } from "./support/pinia";
 
 const gain = (db: number): Step[] => [{ plugin: "Gain", params: { gain_db: db }, on: true }];
@@ -216,5 +218,33 @@ describe("the old-sound count", () => {
     await flush();
     expect(calls.stale).toBe(4);
     expect(server.characters.find((c) => c.name === "Ana")!.effect).toBeUndefined();
+  });
+});
+
+describe("a line effect's sheet", () => {
+  const line = { key: "1:1", speaker: "Ana", text: "", url: "a.wav", duration: 1, baked: false };
+
+  test("plays a line through its speaker's effect, then the line effect, then the thought one", () => {
+    const choice = useChoice(
+      () => "b",
+      () => "line",
+      () => "",
+    );
+    const heard = (type: "dialogue" | "thought") =>
+      choice.effectsFor({ ...line, type }, "room").map((e) => e.id);
+    expect(heard("dialogue")).toEqual(["echo", "room"]);
+    expect(heard("thought")).toEqual(["echo", "room", "room"]);
+  });
+
+  test("chooses nothing: no speaker or book is changed", () => {
+    const choice = useChoice(
+      () => "b",
+      () => "line",
+      () => "",
+    );
+    choice.choose("echo");
+    expect(choice.current.value).toBe("none");
+    expect(choice.changed.value).toBeNull();
+    expect(useLibraryStore().books[0]!.thoughts).toBe("room");
   });
 });

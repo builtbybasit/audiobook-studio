@@ -12,12 +12,13 @@ import { remapExpressions } from "@/lib/expressions";
 import { scriptSignature } from "@/lib/scriptHistory";
 import { afterOf, beforeOf, bulkLabel, key, SKIP_SUMMARY, SKIP_TEXT } from "@/lib/scriptReview";
 import { isSiteText, isSpoken, TYPE_LABEL } from "@/lib/siteText";
-import { NARRATOR } from "@/lib/cast";
+import { NARRATOR, sameReading } from "@/lib/cast";
 import { clone } from "@/lib/utils";
 import type { ContentPart } from "@/lib/contents";
 import { fetchScript } from "@/queries/chapterScript";
 import { chapterPartsNow, chapterTextNow } from "@/queries/chapterText";
 import { fetchHistory } from "@/queries/history";
+import { staleMoved } from "@/queries/effects";
 import type {
   AudioStatus,
   BulkAction,
@@ -42,6 +43,9 @@ import { useHistoryStore } from "@/stores/history";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useUiStore } from "@/stores/ui";
+/** One line's change of who speaks it, or of its line effects (`retouchLines`); an empty list is none. */
+export type LineRetouch = { id: number } & Partial<Pick<Segment, "speaker" | "effects">>;
+
 /** A write in progress for one chapter, and whether another is owed once it lands. */
 interface PendingWrite {
   inFlight: boolean;
@@ -182,9 +186,17 @@ export const useScriptsStore = defineStore("scripts", {
      *  `applyBulk` then changes exactly the rows it counted. */
     bulkPreview(): (bookId: string, targets: BulkTarget[], action: BulkAction) => BulkPreview {
       const castStore = useCastStore();
+      const libraryStore = useLibraryStore();
 
       return (bookId, targets, action) => {
         const cast = castStore.charactersOf(bookId);
+        const byName = castStore.byName[bookId];
+        const cv = libraryStore.bookById(bookId)?.characterVoice;
+        // a new speaker read in the same voice and style keeps the clip (`retouchLines`)
+        const respeaks = (s: Segment) =>
+          action.kind !== "speaker" ||
+          !byName ||
+          !sameReading(s.speaker, action.speaker, byName, cv);
         const ordered = [...targets].sort((a, b) => a.chId - b.chId || a.segId - b.segId);
         const rows: BulkRow[] = [];
         const chapters = new Set<number>();
@@ -203,7 +215,8 @@ export const useScriptsStore = defineStore("scripts", {
           chapters.add(t.chId);
           const { changes, skip } = bulkOutcome(s, action);
           if (skip) skips.add(skip);
-          const willStale = changes && bulkInvalidates(action) && s.audio.status === "done";
+          const willStale =
+            changes && bulkInvalidates(action) && s.audio.status === "done" && respeaks(s);
           if (changes) changing++;
           if (willStale) stale++;
           rows.push({
@@ -273,14 +286,9 @@ export const useScriptsStore = defineStore("scripts", {
         });
       return n;
     },
+    /** Give one line another speaker: `retouchLines` for one line. */
     setSpeaker(bookId: string, chId: number, segId: number, speaker: string): void {
-      const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
-      if (s && s.speaker !== speaker) {
-        s.speaker = speaker;
-        s.edited = true;
-        this._markStale(bookId, chId, s);
-        this._commit(bookId, chId);
-      }
+      this.retouchLines(bookId, chId, [{ id: segId, speaker }]);
     },
     updateSegment(bookId: string, chId: number, segId: number, patch: Partial<Segment>): void {
       const s = this.segmentsOf(bookId, chId).find((x) => x.id === segId);
@@ -297,6 +305,48 @@ export const useScriptsStore = defineStore("scripts", {
         this._markStale(bookId, chId, s);
         this._commit(bookId, chId);
       }
+    },
+    /**
+     * Give lines another speaker, or other line effects, with one write for them all. Returns how
+     * many clips now need new speech.
+     *
+     * A clip goes stale only when its reading changes: a speaker read in another voice or with
+     * another style (`sameReading`). Moving a line between a character and their persona, or
+     * between any two speakers who share both, keeps its speech; only its sound — the effects it
+     * is heard through — may be old, which the server counts and Re-apply puts right, so the
+     * old-sound count is read again once the write lands. So is it after a change of effects.
+     */
+    retouchLines(bookId: string, chId: number, changes: readonly LineRetouch[]): number {
+      const castStore = useCastStore();
+      const libraryStore = useLibraryStore();
+
+      // a cast not read yet cannot say two speakers read alike: the clip is taken to need speech
+      const cast = castStore.byName[bookId];
+      const cv = libraryStore.bookById(bookId)?.characterVoice;
+      const lines = new Map(this.segmentsOf(bookId, chId).map((s) => [s.id, s]));
+      let changed = 0;
+      let respoken = 0;
+      for (const { id, speaker, effects } of changes) {
+        const s = lines.get(id);
+        if (!s) continue;
+        const moves = speaker != null && speaker !== s.speaker;
+        const retouches = !!effects && effects.join("\n") !== (s.effects ?? []).join("\n");
+        if (!moves && !retouches) continue;
+        if (moves && (!cast || !sameReading(s.speaker, speaker, cast, cv))) {
+          if (s.audio.status === "done") respoken++;
+          this._markStale(bookId, chId, s);
+        }
+        if (moves) s.speaker = speaker;
+        if (retouches && effects.length) s.effects = [...effects];
+        else if (retouches) delete s.effects;
+        s.edited = true;
+        changed++;
+      }
+      if (changed && !this._silent) {
+        this._commit(bookId, chId);
+        void this._settled(bookId, chId).then(() => staleMoved(bookId));
+      }
+      return respoken;
     },
     // ---------- site text ----------
     // A line marked as site text is left out of the audiobook without a word anywhere else saying
@@ -417,6 +467,8 @@ export const useScriptsStore = defineStore("scripts", {
       // chapter once, under its own name, so they are silenced rather than opening a session a
       // line. A flag writes only its line, so a flag batch is left to write each one.
       const batch = <T>(fn: () => T): T => (touchesAudio ? this.silence(fn) : fn());
+      /** speaker changes whose clip now needs new speech (`retouchLines`) */
+      let respoken = 0;
       batch(() => {
         for (const row of preview.rows) {
           if (!row.changes) continue;
@@ -436,7 +488,9 @@ export const useScriptsStore = defineStore("scripts", {
             after: "",
           };
           if (action.kind === "speaker")
-            this.setSpeaker(bookId, row.chId, row.segId, action.speaker);
+            respoken += this.retouchLines(bookId, row.chId, [
+              { id: row.segId, speaker: action.speaker },
+            ]);
           else if (action.kind === "direction")
             this.updateSegment(bookId, row.chId, row.segId, {
               direction: action.mode === "clear" ? "" : action.direction.trim(),
@@ -453,6 +507,11 @@ export const useScriptsStore = defineStore("scripts", {
       if (touchesAudio)
         for (const [chId, lines] of perChapter)
           this._commit(bookId, chId, { kind: "bulk", label: preview.label, lines });
+      // a new speaker may hear a line through other effects: read the old-sound count again
+      if (action.kind === "speaker")
+        void Promise.all([...perChapter.keys()].map((chId) => this._settled(bookId, chId))).then(
+          () => staleMoved(bookId),
+        );
       const revert = () => {
         const clean = new Set(chapters);
         let conflicts = 0;
@@ -497,7 +556,12 @@ export const useScriptsStore = defineStore("scripts", {
           );
       };
       // flagging says something about a clip; it does not change what would be sent to the endpoint
-      const stale = bulkInvalidates(action) ? before.filter((w) => w.status === "done").length : 0;
+      const stale =
+        action.kind === "speaker"
+          ? respoken
+          : bulkInvalidates(action)
+            ? before.filter((w) => w.status === "done").length
+            : 0;
       const changed = before.length;
       uiStore.toast(preview.label, {
         kind: "success",
@@ -542,6 +606,8 @@ export const useScriptsStore = defineStore("scripts", {
             ...(duration != null ? { duration } : {}),
           });
         this._commit(bookId, chId);
+        // the lines put back may be heard through other effects than the ones they had
+        void this._settled(bookId, chId).then(() => staleMoved(bookId));
       };
     },
     /** Cut a segment in two at character offset `at`. Returns the new segment's id. */

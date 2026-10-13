@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// The editor under an open line: its speaker, type and direction, its expressions, where it starts
-// and ends, its words, and the pause after it. What it acts on is the reader's editing state
+// The editor under an open line: its speaker, type and direction, who of a character and their
+// personas speaks it and its line effects (`LineControls`), its expressions, where it starts and
+// ends, its words, and the pause after it. What it acts on is the reader's editing state
 // (`segmentEditing.ts`), which the reader's keys act on too.
 import { computed, toRef } from "vue";
 import { directionOptions } from "@/lib/bulk";
@@ -10,6 +11,7 @@ import { PAUSE_STEPS, secs } from "@/lib/speech";
 import { isSiteText, TYPE_LABEL } from "@/lib/siteText";
 import { useScriptsStore } from "@/stores/scripts";
 import ExpressionEditor from "@/components/ExpressionEditor.vue";
+import LineControls from "@/views/scripting/LineControls.vue";
 import WordStrip from "@/components/WordStrip.vue";
 import { UiCombobox, UiSelect, UiTooltip } from "@/ui";
 import {
@@ -214,6 +216,12 @@ const sameSpeakerCount = (x: Segment) =>
         >
       </div>
     </label>
+    <LineControls
+      v-if="s.type === 'dialogue' || s.type === 'thought'"
+      :book-id="bookId"
+      :chapter-id="chapterId"
+      :segment="s"
+    />
     <ExpressionEditor
       :book-id="bookId"
       :chapter-id="chapterId"

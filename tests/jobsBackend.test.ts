@@ -834,6 +834,20 @@ describe("the cast with a server answering", () => {
     ).toEqual(tobinLines);
   });
 
+  test("removing a character unlinks their personas, and the undo links them back", async () => {
+    const { id } = await scriptedAndOpen();
+    const personaOf = (name: string) =>
+      castStore.charactersOf(id).find((c) => c.name === name)?.personaOf;
+    expect(castStore.addCharacter(id, "The Mask", "Mara")).toBe(true);
+    await castStore._castSettled(id);
+    expect(personaOf("The Mask")).toBe("Mara");
+    await castStore.deleteCharacter(id, "Mara");
+    expect(personaOf("The Mask")).toBeUndefined();
+    await toasts.at(-1)!.undo!();
+    await castStore._castSettled(id);
+    expect(personaOf("The Mask")).toBe("Mara");
+  });
+
   test("removing several speakers is one toast, and its one undo puts every line back", async () => {
     const { id } = await scriptedAndOpen();
     const linesOf = (name: string) =>

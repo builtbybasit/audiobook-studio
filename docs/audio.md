@@ -86,8 +86,8 @@ book, so the effect made for one book's ghost is there for the next
 - **Line effects**, on one line only (`Segment.effects`, by id): a phone call, telepathy, a voice
   through a mask. An effect with a `useWhen` — one sentence saying when a line is heard through it,
   "words sent mind to mind, not spoken aloud" — is offered to the scripting model, which may put
-  several on a line; any effect can be put on a line by hand. Old scripts get none until they are
-  scripted again.
+  several on a line; any effect can be put on a line by hand, from the chips in the line editor.
+  Old scripts get none until they are scripted again.
 - **The thought effect**, on a `thought` line only, so a character's thoughts — narrated in the same
   voice as what they say aloud — are heard from inside the head. It is chosen speaker → book → all
   books, each level following the next until one names an effect or `"none"`, which stops it there:

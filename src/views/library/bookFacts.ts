@@ -7,6 +7,7 @@ import { useLibraryStore } from "@/stores/library";
 
 import { computed, type ComputedRef, type MaybeRefOrGetter, toValue } from "vue";
 import { plural } from "@/lib/contents";
+import { voiced } from "@/lib/cast";
 import { nextStepOf, updateReason, type NextStep } from "@/views/library/shared";
 import type { BookProgress, ContentsSummary, ExportItem, JobKind } from "@/types";
 
@@ -47,7 +48,8 @@ export function bookFacts(id: string): BookFacts {
   const failedNarration = chapters.filter((c) => c.narration === "failed").length;
   const cast = castStore.charactersOf(id);
   const unreviewed = cast.filter((c) => c.isNew).length;
-  const unvoiced = cast.filter((c) => !c.voice && c.major).length;
+  const byName = castStore.byName[id] ?? new Map();
+  const unvoiced = cast.filter((c) => !voiced(c, byName) && c.major).length;
   const all = exportsStore.exportsOf(id);
   const done = all.filter((e) => e.status === "done");
   const latest = done.length ? done.reduce((a, b) => (b.version > a.version ? b : a)) : null;

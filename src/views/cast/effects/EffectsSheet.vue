@@ -6,7 +6,9 @@
 // The header is both views': who the sheet is for, and the line they try effects on — one of the
 // subject's own narrated lines, stepped through by its place among them and blurred until asked
 // for, since the line is there to be heard and the story not read ahead. A speaker's sheet switches
-// between their lines and their thoughts itself; the book's is about thoughts only.
+// between their lines and their thoughts itself; the book's is about thoughts only. A line
+// effect's sheet is the editor alone, on every narrated line: it is the scripting model that
+// puts the effect on a line, so there is nothing here to choose.
 import { computed, nextTick, ref, watch } from "vue";
 import { DialogTitle } from "reka-ui";
 import { ChevronLeft as PrevIcon, ChevronRight as NextIcon, X as CloseIcon } from "@lucide/vue";
@@ -38,7 +40,9 @@ const SLOTS = [
   { value: "thoughts", label: "Thoughts" },
 ];
 const name = computed(() => (props.subject?.kind === "speaker" ? props.subject.name : ""));
-const view = computed<ChoiceView>(() => (props.subject?.kind === "speaker" ? slot.value : "book"));
+const view = computed<ChoiceView>(() =>
+  props.subject?.kind === "speaker" ? slot.value : props.subject?.kind === "line" ? "line" : "book",
+);
 const color = computed(
   () => castStore.charactersOf(props.bookId).find((c) => c.name === name.value)?.color ?? "#a1a1aa",
 );
@@ -57,7 +61,9 @@ const lines = useTryLines(
       ? null
       : view.value === "book"
         ? { speaker: null, thoughts: true }
-        : { speaker: name.value, thoughts: view.value === "thoughts" },
+        : view.value === "line"
+          ? { speaker: null, thoughts: false }
+          : { speaker: name.value, thoughts: view.value === "thoughts" },
 );
 const idx = ref(0);
 /** the line's words are blurred until clicked: it is there to be heard, not read ahead */
@@ -85,9 +91,14 @@ function edit(id: string) {
   editId.value = id;
   void show("edit");
 }
+/** Out of the editor: to the list, or, on a line effect's sheet, which has none, closed. */
+function back() {
+  if (view.value === "line") open.value = false;
+  else void show("try");
+}
 // an effect removed while it is open (here or in another tab) leaves nothing to edit
 watch(editing, (e) => {
-  if (!e && mode.value === "edit") void show("try");
+  if (!e && mode.value === "edit") back();
 });
 
 const pasting = ref(false);
@@ -109,7 +120,7 @@ watch(
     choice.changed.value = null;
     if (s?.kind === "speaker") slot.value = s.slot;
     if (!o) previews.clear();
-    else if (s?.kind === "book" && s.effect) edit(s.effect);
+    else if ((s?.kind === "book" || s?.kind === "line") && s.effect) edit(s.effect);
   },
   { immediate: true },
 );
@@ -138,6 +149,16 @@ function setSlot(s: EffectSlot) {
             <UiHint
               label="the book’s thought effect"
               text="Every thought line gets it after its speaker’s own effect, unless the speaker has a thought effect of their own. ↑↓ move · Space play · Enter choose."
+            />
+          </template>
+          <template v-else-if="subject.kind === 'line'">
+            <DialogTitle class="font-semibold">Line effect</DialogTitle>
+            <span class="rounded bg-zinc-100 px-1 text-[10px] text-zinc-500 dark:bg-zinc-800"
+              >All books</span
+            >
+            <UiHint
+              label="a line effect"
+              text="Lines the scripting model puts it on hear it after their speaker’s own effect. Here each line plays as if it carried it. Space play."
             />
           </template>
           <template v-else>
@@ -197,7 +218,8 @@ function setSlot(s: EffectSlot) {
           />
         </p>
         <p v-if="!lines.length" class="text-xs text-zinc-500">
-          No narrated {{ view === "effect" ? "lines" : "thought lines" }} to try effects on yet.
+          No narrated {{ view === "effect" || view === "line" ? "lines" : "thought lines" }} to try
+          effects on yet.
         </p>
         <div v-if="subject.kind === 'speaker'">
           <UiToggleGroup
@@ -224,6 +246,7 @@ function setSlot(s: EffectSlot) {
             aria-label="Try effects on"
           >
             <TryList
+              v-if="view !== 'line'"
               :key="`${view}:${name}`"
               :book-id="bookId"
               :view="view"
@@ -253,7 +276,7 @@ function setSlot(s: EffectSlot) {
               :choice="choice"
               :self="{ bookId, view, name }"
               :previews="previews"
-              @back="show('try')"
+              @back="back"
               @edit="edit"
               @paste="pasting = true"
             />

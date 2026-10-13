@@ -11,12 +11,14 @@ import PromptEditor from "@/components/PromptEditor.vue";
 import { UiHint } from "@/ui";
 import {
   BUILT_IN_PROMPT,
+  lineEffectsOf,
   promptProblems,
   renderPrompt,
   sampleVars,
   unplacedNotes,
 } from "@/lib/prompt";
 import { expressionNames } from "@/lib/expressions";
+import { useEffects } from "@/queries";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 import {
@@ -29,6 +31,7 @@ import {
 
 const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
+const { effects } = useEffects();
 
 const draft = computed(() => libraryPromptOf(endpointsStore.prompt));
 const dirty = computed(() => libraryPromptDirty(endpointsStore.prompt));
@@ -70,6 +73,7 @@ const preview = computed(() => {
     ...vars,
     endpoint: { ...vars.endpoint, notes: p?.prompt?.notes },
     expressions: expressionNames(endpointsStore.endpoints),
+    lineEffects: lineEffectsOf(effects.value),
   });
 });
 

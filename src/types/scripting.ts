@@ -213,6 +213,8 @@ export interface PromptTrialResult {
     direction?: string;
     /** expression tags the model wrote into the line, as a run would keep them */
     tags?: ScriptedTag[];
+    /** the line effects the model named, as it wrote them; a run keeps only the library's */
+    effects?: string[];
   }[];
   /** the word-for-word check a run would hold them to */
   fidelity: { words: number; missing: number; added: number; examples: string[]; ok: boolean };

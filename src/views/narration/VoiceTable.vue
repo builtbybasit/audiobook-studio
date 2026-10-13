@@ -4,8 +4,8 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useScriptsStore } from "@/stores/scripts";
 
 // Cast → voice assignment. Main cast as cards; minor cast collapsed and falling back to the
-// Character voice or the Narrator's unless given one. Search, "unassigned only", auto-assign by
-// gender.
+// Character voice or the Narrator's unless given one. A linked persona is read in their
+// character's voice and has no picker here. Search, "unassigned only", auto-assign by gender.
 import { computed, ref } from "vue";
 
 import { SAMPLE_TITLE, useVoiceSample } from "@/composables/useVoiceSample";
@@ -26,6 +26,7 @@ import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "reka-ui
 import { DialogDescription, DialogTitle } from "reka-ui";
 import { GENDER } from "@/lib/scriptReview";
 import { plural } from "@/lib/contents";
+import { personaOwner, voiced } from "@/lib/cast";
 import type { Character, Gender } from "@/types";
 
 const props = defineProps<{ bookId: string }>();
@@ -44,12 +45,15 @@ const showMinor = ref(false);
 const assignOpen = ref(false);
 
 const all = computed(() => castStore.charactersOf(props.bookId));
+const byName = computed(() => castStore.byName[props.bookId] ?? new Map<string, Character>());
+/** The character a linked persona is read as, whose voice is theirs. */
+const ownerOf = (c: Character): string | undefined => personaOwner(c, byName.value)?.name;
 const counts = computed(() => scriptsStore.lineCounts(props.bookId));
 const match = (c: Character) =>
   (!q.value ||
     c.name.toLowerCase().includes(q.value.toLowerCase()) ||
     c.aliases.some((a) => a.toLowerCase().includes(q.value.toLowerCase()))) &&
-  (!unassignedOnly.value || !c.voice);
+  (!unassignedOnly.value || !voiced(c, byName.value));
 const major = computed(() => all.value.filter((c) => c.major || c.isNew).filter(match));
 const minor = computed(() =>
   all.value
@@ -61,7 +65,9 @@ const narrator = computed(() => all.value.find((c) => c.name === "Narrator"));
 /** What the minor cast with no voice of their own is read in, said once for all of them. */
 const minorFallback = computed(() => {
   const labels = new Set(
-    minor.value.filter((c) => !c.voice).map((c) => castStore.fallbackLabel(props.bookId, c.name)),
+    minor.value
+      .filter((c) => !voiced(c, byName.value))
+      .map((c) => castStore.fallbackLabel(props.bookId, c.name)),
   );
   return labels.size > 1 ? "Character or Narrator’s voice" : ([...labels][0] ?? "Narrator’s voice");
 });
@@ -165,7 +171,14 @@ function applyAssignments() {
           />
         </div>
         <div class="mt-2 flex items-center gap-1.5">
+          <span
+            v-if="ownerOf(c)"
+            class="min-w-0 flex-1 truncate text-xs text-zinc-500"
+            :title="`A persona of ${ownerOf(c)}: read in their voice. Unlink on the Cast page to give ${c.name} a voice of their own.`"
+            >{{ ownerOf(c) }}’s voice</span
+          >
           <VoicePicker
+            v-else
             :model-value="c.voice"
             @update:model-value="(v) => castStore.setVoice(bookId, c.name, v)"
             :book-id="bookId"
@@ -202,7 +215,7 @@ function applyAssignments() {
             or pick another voice</template
           ><template v-else-if="issueOf(c)!.kind === 'missing'"> · pick another voice</template>
         </div>
-        <div v-else-if="c.voice" class="mt-1 truncate text-[11px] text-zinc-400">
+        <div v-else-if="c.voice && !ownerOf(c)" class="mt-1 truncate text-[11px] text-zinc-400">
           on {{ endpointsStore.resolveVoice(c.voice)!.endpoint.name
           }}<template v-if="endpointsStore.resolveVoice(c.voice)!.endpoint.maxChars">
             · splits over
@@ -222,7 +235,7 @@ function applyAssignments() {
         />
         <b>Minor cast ({{ minor.length }})</b>
         <span class="text-xs text-zinc-500"
-          >{{ minor.filter((c) => c.voice).length }} assigned · rest use the
+          >{{ minor.filter((c) => voiced(c, byName)).length }} assigned · rest use the
           {{ minorFallback }}</span
         >
       </CollapsibleTrigger>
@@ -253,7 +266,14 @@ function applyAssignments() {
             </td>
             <td class="w-16 font-mono text-xs text-zinc-400">{{ counts[c.name] ?? 0 }} seg</td>
             <td class="w-56 py-1">
+              <span
+                v-if="ownerOf(c)"
+                class="block truncate text-xs text-zinc-500"
+                :title="`A persona of ${ownerOf(c)}: read in their voice. Unlink on the Cast page to give ${c.name} a voice of their own.`"
+                >{{ ownerOf(c) }}’s voice</span
+              >
               <VoicePicker
+                v-else
                 :model-value="c.voice"
                 @update:model-value="(v) => castStore.setVoice(bookId, c.name, v)"
                 :book-id="bookId"

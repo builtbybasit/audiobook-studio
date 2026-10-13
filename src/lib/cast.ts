@@ -106,6 +106,15 @@ export function personaOwner<C>(
 }
 
 /**
+ * Whether a speaker needs no voice assigned: they have one, or they are a linked persona, read in
+ * their character's. What the "voiced" counts and "unassigned" filters count.
+ */
+export const voiced = (
+  c: Pick<Character, "name" | "voice" | "personaOf">,
+  cast: Pick<ReadonlyMap<string, unknown>, "get">,
+): boolean => !!c.voice || !!personaOwner(c, cast);
+
+/**
  * Why `name` cannot be made a persona of `personaOf` in this cast, or null when they can. A persona
  * is of someone else in the cast who is not the Narrator and not a persona themselves, and a
  * speaker others are personas of cannot become one: one level only, so the voice rule never chains.
@@ -159,6 +168,25 @@ function voiceOf(
     if (ref) return { ref, from: "character" };
   }
   return { ref: cast.get(NARRATOR)?.voice ?? null, from: "narrator" };
+}
+
+/**
+ * Whether a line moved from speaker `from` to `to` is still read as its clip was: in the same voice
+ * (`speakerVoice`) and with the same delivery style, the two things a clip is judged by that come
+ * from its speaker (`compareReading`). Then the clip keeps its speech and only its effects may be
+ * old, for Re-apply. So it is between a character and a linked persona with no style of their own,
+ * and between any two speakers who share a voice and a style.
+ */
+export function sameReading(
+  from: string,
+  to: string,
+  cast: CastLookup,
+  cv: CharacterVoice | undefined,
+): boolean {
+  return (
+    speakerVoice(from, cast, cv).ref === speakerVoice(to, cast, cv).ref &&
+    (cast.get(from)?.style ?? "") === (cast.get(to)?.style ?? "")
+  );
 }
 
 // ---------- names in a line ----------

@@ -8,16 +8,20 @@
 // since only it knows which layers and which sample the preview is built from.
 //
 // What is not editable is shown anyway: the output format goes after the system prompt of every
-// request, and a prompt read without it would look like it asks for nothing in particular.
+// request, and a prompt read without it would look like it asks for nothing in particular. It is
+// shown as it is sent, with the library's line effects (any effect with a "Use when") offered in it.
 import { computed, nextTick, ref, useId } from "vue";
 import { RotateCcw as ResetIcon } from "@lucide/vue";
 import {
-  OUTPUT_FORMAT,
   PROMPT_MAX_CHARS,
   PROMPT_TAGS,
+  SCRIPT_MARKERS,
+  lineEffectsOf,
+  outputFormat,
   promptProblems,
   promptWarnings,
 } from "@/lib/prompt";
+import { useEffects } from "@/queries";
 import type { PromptTemplate, RenderedPrompt } from "@/types";
 import { UiHint } from "@/ui";
 
@@ -45,6 +49,10 @@ const id = useId();
 const els: Record<"system" | "user", HTMLTextAreaElement | null> = { system: null, user: null };
 /** Where a tag chip inserts: the textarea last focused, the user message until one is. */
 const last = ref<"system" | "user">("user");
+
+const { effects } = useEffects();
+const lineEffects = computed(() => lineEffectsOf(effects.value));
+const format = computed(() => outputFormat(SCRIPT_MARKERS[0], lineEffects.value));
 
 const template = computed<PromptTemplate>(() => ({ system: props.system, user: props.user }));
 const problems = computed(() => promptProblems(template.value));
@@ -212,9 +220,21 @@ const FIELDS = [
           voice can’t take is left out.</UiHint
         >
       </p>
+      <p class="mt-1.5 text-[11px] leading-relaxed text-zinc-500">
+        {{
+          lineEffects.length
+            ? `Line effects offered, for all books: ${lineEffects.map((e) => e.name).join(", ")}.`
+            : "No line effects are offered."
+        }}
+        <UiHint label="line effects"
+          >An effect with a “Use when” sentence is offered to the model, which may put it on a line
+          the text calls for, such as a voice heard over a phone. Set them under Line effects on any
+          book’s Cast page; they are the same for every book.</UiHint
+        >
+      </p>
       <pre
         class="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-white p-2 font-mono text-[11px] leading-relaxed text-zinc-600 dark:bg-zinc-950/50 dark:text-zinc-300"
-        >{{ OUTPUT_FORMAT }}</pre>
+        >{{ format }}</pre>
     </details>
 
     <details v-if="preview" class="rounded-lg bg-zinc-50 p-2.5 dark:bg-zinc-800/60">

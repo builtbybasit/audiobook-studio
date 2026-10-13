@@ -4,8 +4,9 @@
 // here; what the server keeps of an edit is `tests/server/scriptEdit.test.ts`'s. The write is
 // answered without being written, so the seeded demo is opened once and every test reads it as
 // seeded.
-import { afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
+import { newSpeaker } from "@/lib/cast";
 import { silenceOf } from "@/lib/speech";
 import { libraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
@@ -205,4 +206,50 @@ test("a paragraph break survives a split, and the join that undoes it puts the b
   expect(scriptsStore.segmentsOf("cliche", 1).find((s) => s.id === id)).toBeUndefined();
   expect(target.text).toBe(whole); // character for character, break included
   expect(target.sep).toBeUndefined();
+});
+
+describe("moving a line to another speaker", () => {
+  /** a narrated line, its speaker given a persona with no style and one with a style of their own */
+  function withPersonas() {
+    const a = narrated("cliche", 1).find((s) => s.speaker !== "Narrator" && s.audio.at)!;
+    const cast = (castStore.characters.cliche ??= []);
+    // the speaker as the clip was read: in its voice, with no style
+    if (!cast.some((c) => c.name === a.speaker))
+      cast.push({ ...newSpeaker(a.speaker, cast.length), voice: a.audio.voiceRef ?? null });
+    cast.push(
+      { ...newSpeaker("Lord of Shadows", cast.length), personaOf: a.speaker },
+      { ...newSpeaker("Grey Fox", cast.length), personaOf: a.speaker, style: "a rasping growl" },
+    );
+    return { a, was: a.speaker };
+  }
+
+  test("to a persona of the same voice and style keeps its speech", () => {
+    const { a } = withPersonas();
+    const chapter = libraryStore.chapter("cliche", 1)!.narration;
+    const drift = narrationStore.clipDrift("cliche", a);
+    scriptsStore.setSpeaker("cliche", 1, a.id, "Lord of Shadows");
+    expect(a.speaker).toBe("Lord of Shadows");
+    expect(a.edited).toBe(true);
+    expect(a.audio.status).toBe("done");
+    expect(libraryStore.chapter("cliche", 1)!.narration).toBe(chapter);
+    // the clip is judged the same way: nothing it was read with has moved
+    expect(drift).toEqual([]);
+    expect(narrationStore.clipDrift("cliche", a)).toEqual([]);
+  });
+
+  test("to a persona with a style of their own needs new speech", () => {
+    const { a } = withPersonas();
+    expect(scriptsStore.retouchLines("cliche", 1, [{ id: a.id, speaker: "Grey Fox" }])).toBe(1);
+    expect(a.audio.status).toBe("stale");
+    expect(narrationStore.clipDrift("cliche", a).join()).toContain("style");
+  });
+
+  test("line effects change without touching the clip; an empty list is none", () => {
+    const { a } = withPersonas();
+    scriptsStore.retouchLines("cliche", 1, [{ id: a.id, effects: ["phone", "mask"] }]);
+    expect(a.effects).toEqual(["phone", "mask"]);
+    expect(a.audio.status).toBe("done");
+    scriptsStore.retouchLines("cliche", 1, [{ id: a.id, effects: [] }]);
+    expect("effects" in a).toBe(false);
+  });
 });

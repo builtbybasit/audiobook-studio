@@ -439,6 +439,12 @@ const colorOf = (name: string): string =>
               ><template v-else>{{ piece.text }}</template></template
             ><span v-if="line.direction" class="ml-1 italic text-zinc-500"
               >— {{ line.direction }}</span
+            ><span
+              v-for="name in line.effects ?? []"
+              :key="name"
+              class="ml-1 rounded-full bg-violet-500/10 px-1.5 py-px text-[10px] text-violet-700 dark:text-violet-300"
+              title="A line effect the model named"
+              >{{ name }}</span
             ></span
           >
         </li>

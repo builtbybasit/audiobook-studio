@@ -872,25 +872,34 @@ export const useCastStore = defineStore("cast", {
     },
     /** A speaker typed in by hand, before any line is attributed to them — so they are not "new"
      *  in the review sense (nothing detected them, you did) and start as main cast. Returns false
-     *  when the name is taken; the caller should offer to merge instead. */
-    addCharacter(bookId: string, name: string): boolean {
+     *  when the name is taken; the caller should offer to merge instead. With `personaOf`, they
+     *  join as a persona of that character, which the server may refuse (`personaRefusal`). */
+    addCharacter(bookId: string, name: string, personaOf?: string): boolean {
       const uiStore = useUiStore();
 
       name = (name ?? "").trim();
       const cast = (this.characters[bookId] ??= []);
       if (!name || cast.some((c) => c.name === name)) return false;
-      const c: Character = { ...newSpeaker(name, cast.length), major: true, isNew: false };
+      const c: Character = {
+        ...newSpeaker(name, cast.length),
+        major: true,
+        isNew: false,
+        ...(personaOf ? { personaOf } : {}),
+      };
       cast.push(c);
       void this._push(bookId, name);
-      uiStore.toast(`Added “${name}”`, {
-        description:
-          "No lines are attributed to them yet — merge a detected name in, or re-script.",
-        undo: () => {
-          this.characters[bookId] = (this.characters[bookId] ?? []).filter((x) => x !== c);
-          // no lines were attributed, so taking them off again moves nothing
-          void this._delete(bookId, name);
+      uiStore.toast(
+        personaOf ? `Added “${name}” as a persona of ${personaOf}` : `Added “${name}”`,
+        {
+          description:
+            "No lines are attributed to them yet — merge a detected name in, or re-script.",
+          undo: () => {
+            this.characters[bookId] = (this.characters[bookId] ?? []).filter((x) => x !== c);
+            // no lines were attributed, so taking them off again moves nothing
+            void this._delete(bookId, name);
+          },
         },
-      });
+      );
       return true;
     },
     /** Patch the fields that are the speaker's own description of themselves — gender, notes,
@@ -1031,12 +1040,19 @@ export const useCastStore = defineStore("cast", {
       const c = this.characters[bookId]?.find((x) => x.name === name);
       if (!c) return null;
       const was = clone(c);
+      // the server unlinks their personas; the Undo links back those still unlinked
+      const personas = (this.characters[bookId] ?? [])
+        .filter((p) => p.personaOf === name && p.name !== name)
+        .map((p) => p.name);
       const result = await this._delete(bookId, name);
       if (!result) return null;
       return {
         lines: result.moved.reduce((sum, m) => sum + m.ids.length, 0),
         undo: async () => {
-          await this._attribute(bookId, was, result.moved, "put this speaker back");
+          if (!(await this._attribute(bookId, was, result.moved, "put this speaker back"))) return;
+          for (const p of personas)
+            if (!this.characters[bookId]?.find((x) => x.name === p)?.personaOf)
+              void this._patchSpeaker(bookId, p, { personaOf: name });
         },
       };
     },
@@ -1055,9 +1071,11 @@ export const useCastStore = defineStore("cast", {
       };
       const used: Partial<Record<Gender, number>> = {};
       const plan: AutoVoiceAssignment[] = [];
-      // a cast that has not been read yet has no one to assign
+      const byName = this.byName[bookId] ?? new Map<string, Character>();
+      // a cast that has not been read yet has no one to assign; a linked persona is read in their
+      // character's voice, so a voice of their own would go unheard
       for (const c of this.characters[bookId] ?? []) {
-        if (c.voice || c.name === "Narrator") continue;
+        if (c.voice || c.name === "Narrator" || personaOwner(c, byName)) continue;
         const byG = byGender[c.gender];
         const pool = byG?.length ? byG : all;
         const i = used[c.gender] ?? 0;

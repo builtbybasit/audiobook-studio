@@ -229,6 +229,32 @@ describe("a prompt trial", () => {
     expect(body.fidelity).toMatchObject({ ok: true, added: 0 });
   });
 
+  test("shows the line effects the model named on the lines it named them on", async () => {
+    const withEffects: Answer = (excerpt) => {
+      const [first, ...rest] = excerpt.split(" ");
+      return Response.json({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                lines: [
+                  { type: "narration", text: first, effects: ["Phone"] },
+                  { type: "narration", text: rest.join(" ") },
+                ],
+              }),
+            },
+            finish_reason: "stop",
+          },
+        ],
+        usage: USAGE,
+      });
+    };
+    const { trial } = await setup({ answer: withEffects });
+    const { body } = await trial();
+    expect(body.lines[0].effects).toEqual(["Phone"]);
+    expect(body.lines[1]).not.toHaveProperty("effects");
+  });
+
   test("writes nothing to the script, its history or the cast", async () => {
     const { api, id, trial, answerWith } = await setup();
     answerWith(() =>

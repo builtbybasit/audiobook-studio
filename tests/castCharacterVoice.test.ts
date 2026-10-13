@@ -4,7 +4,7 @@
 // hand — no server — since both are getters over what is already held.
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
-import { narrator, newSpeaker } from "@/lib/cast";
+import { narrator, newSpeaker, voiced } from "@/lib/cast";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
@@ -123,5 +123,21 @@ describe("a linked persona", () => {
     expect(cast.routingIssues("b").map((i) => i.name)).toEqual(["Mask"]);
     cast.characters.b.at(-1)!.voice = null;
     expect(cast.routingIssues("b").map((i) => i.name)).toEqual(["Character voice (male)"]);
+  });
+});
+
+describe("voiced", () => {
+  test("a linked persona is voiced when, and only when, their character is", () => {
+    const sunny: Character = { ...newSpeaker("Sunny", 1), voice: null };
+    const lord: Character = {
+      ...newSpeaker("Lord of Shadows", 2),
+      voice: "ep/own",
+      personaOf: "Sunny",
+    };
+    const cast = new Map([sunny, lord].map((c) => [c.name, c]));
+    expect(voiced(lord, cast)).toBe(false);
+    cast.set("Sunny", { ...sunny, voice: "ep/sunny" });
+    expect(voiced(lord, cast)).toBe(true);
+    expect(voiced({ ...lord, personaOf: "Nobody" }, cast)).toBe(true);
   });
 });

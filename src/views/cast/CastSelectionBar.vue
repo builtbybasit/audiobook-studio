@@ -14,13 +14,15 @@ const emit = defineEmits<{ clear: [] }>();
 const castStore = useCastStore();
 const { characters: cast } = useCast(props.bookId);
 
-// every speaker to merge into, built once per change of the cast rather than per selection
+// every speaker to merge into, built once per change of the cast rather than per selection; a
+// persona says whose, as their row does. The server carries or clears persona links on a merge.
 const castOpts = computed(() =>
   cast.value.map((c) => ({
     value: c.name,
     label: c.name,
     color: c.color,
     keywords: c.aliases.join(" "),
+    hint: c.personaOf ? `persona of ${c.personaOf}` : undefined,
   })),
 );
 const intoOpts = computed(() => castOpts.value.filter((o) => !props.selected.has(o.value)));

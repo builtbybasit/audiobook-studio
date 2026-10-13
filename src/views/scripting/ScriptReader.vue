@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { chapterName } from "@/lib/chapterNumber";
-import { useBookScripts, useChapterHistory } from "@/queries";
+import { useBookScripts, useChapterHistory, useEffects } from "@/queries";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
@@ -8,10 +8,11 @@ import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 
 // Script reader: narration flows as prose; dialogue and thought are lifted into cards with a
-// speaker pill and the voice direction. Right rail (toggleable, `ChapterCastRail`) = the cast *in
-// this chapter* with aliases, spoiler-hidden descriptions and inline rename; the rest of the cast is
-// collapsed. Any segment can be clicked to edit speaker / type / direction in place
-// (`SegmentEditor`). Typography via the Aa menu.
+// speaker pill (a persona's masked, with the line's effects after it, `LinePill`) and the voice
+// direction. Right rail (toggleable, `ChapterCastRail`) = the cast *in this chapter* with aliases,
+// spoiler-hidden descriptions and inline rename; the rest of the cast is collapsed. Any segment can
+// be clicked to edit speaker / type / direction in place (`SegmentEditor`). Typography via the Aa
+// menu.
 // The model's segment boundaries are not always right — two speakers in one segment, or a sentence cut
 // in half — so the editor can split a segment at any word gap (click the gap; sentence ends are marked)
 // and join it with its neighbour. Both invalidate the audio they touch and both are undoable.
@@ -32,6 +33,7 @@ import ScriptProfileSelect from "@/views/scripting/ScriptProfileSelect.vue";
 import CorrectionsNote from "@/views/scripting/CorrectionsNote.vue";
 import SegmentEditor from "@/views/scripting/SegmentEditor.vue";
 import ChapterCastRail from "@/views/scripting/ChapterCastRail.vue";
+import LinePill from "@/views/scripting/LinePill.vue";
 import ExpressionText from "@/components/ExpressionText.vue";
 import { secs } from "@/lib/speech";
 import { plural } from "@/lib/contents";
@@ -85,6 +87,8 @@ const router = useRouter();
 // Every scripted chapter's script, for what is counted across the book: the rest of the cast's
 // lines, the directions already in use, and the chapter the player moves on to.
 const bookScripts = useBookScripts(() => props.bookId);
+// the library's effects, for the names of the line effects on the cards and in the editor
+useEffects();
 const volume = computed(() => libraryStore.volumeOf(props.bookId, props.chapterId));
 const multiVolume = computed(() => libraryStore.volumesOf(props.bookId).length > 1);
 
@@ -729,13 +733,7 @@ watch(open, (v) => {
               @click="open = open === s.id ? null : s.id"
             >
               <div class="mb-1 flex items-center gap-2 font-sans text-xs leading-normal">
-                <span
-                  class="rounded-full px-2 py-0.5 font-medium"
-                  :style="{ background: colorOf(s.speaker) + '33', color: colorOf(s.speaker) }"
-                >
-                  <span class="opacity-70">{{ s.type === "thought" ? "…" : "“" }}</span>
-                  {{ s.speaker }}
-                </span>
+                <LinePill :book-id="bookId" :s="s" :color="colorOf(s.speaker)" />
                 <span
                   v-if="cast.find((c) => c.name === s.speaker)?.isNew"
                   class="rounded bg-amber-400/20 px-1 text-[10px] font-semibold text-amber-600"

@@ -384,9 +384,10 @@ prompt, and cached input is cheaper.
 
 **The output format is not editable.** The answer is parsed as `{"lines":[…],"cast":[…],"recap":"…"}`
 and its lines held word for word against the prose, so the format and the verbatim rule are added
-after the system prompt of every request; the editor shows them read-only. `cast` and `recap` are
-what a run [remembers between requests](scripting.md#what-a-run-remembers), and a prompt trial
-shows both under the lines. The format also says how to write an expression tag — `[[sigh]]`, or
+after the system prompt of every request; the editor shows them read-only, as a request sends them,
+with the line effects the library offers named above them. `cast` and `recap` are what a run
+[remembers between requests](scripting.md#what-a-run-remembers), and a prompt trial shows both
+under the lines. The format also says how to write an expression tag — `[[sigh]]`, or
 `<<sigh>>` for an excerpt that already has `[[` or `]]` in it — but only when the instructions ask
 for tags; the built-in prompt does not, so a prompt that wants them says so, e.g. "Add a tag for
 a sigh, laugh or gasp the prose shows, at most one per line, from: {{expressions}}". It always says
@@ -405,9 +406,10 @@ fingerprint of it, so two runs with different prompts can be told apart.
 **Try it on one chunk** sits under a book's prompt (with a chapter to pick, and the endpoint the
 Scripting page's runs use) and on an endpoint's Prompt tab (with a book and chapter to pick). It
 sends the prompt as it stands in the editor, saved or not, with one chunk of a real chapter cut as
-the endpoint cuts it, and shows what came back: the lines, the word-for-word check a run would hold
-them to (an answer a run would refuse is shown rather than refused), the time, the input, output and
-thinking tokens, the cost, and the two messages exactly as sent. Nothing is written — not the
+the endpoint cuts it, and shows what came back: the lines, with any line effects the model put on
+them as chips, the word-for-word check a run would hold them to (an answer a run would refuse is
+shown rather than refused), the time, the input, output and thinking tokens, the cost, and the two
+messages exactly as sent. Nothing is written — not the
 script, its history or the cast.
 
 The request is real: it is held to the book's budget at its worst case first and recorded in the

@@ -124,13 +124,12 @@ export const useEffectsStore = defineStore("effects", {
     },
     /**
      * A new effect at the end of the list, or right after `after`, once the server has given it its
-     * id; null if refused.
+     * id; offered as a line effect when given a `useWhen`. Null if refused.
      */
     async create(
       name: string,
       chain: Step[],
-      after?: string,
-      useWhen?: string,
+      { after, useWhen }: { after?: string; useWhen?: string } = {},
     ): Promise<Effect | null> {
       try {
         const effect = await effectsService().create(
@@ -255,7 +254,7 @@ export const useEffectsStore = defineStore("effects", {
       const source = this.byId.get(id);
       if (!source) return null;
       const name = duplicateName(source.name, new Set(this.effects.map((e) => e.name)));
-      return await this.create(name, source.chain, id, source.useWhen);
+      return await this.create(name, source.chain, { after: id, useWhen: source.useWhen });
     },
     /**
      * Everywhere an effect is chosen, in every book — what a delete or a shared edit names before it

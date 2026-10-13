@@ -24,13 +24,15 @@ import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
 import { UiSelect, UiCheckbox, UiHint, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
 import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
-import { Cloud as ThoughtIcon, Plus as AddIcon } from "@lucide/vue";
+import { Cloud as ThoughtIcon, Plus as AddIcon, VenetianMask as MaskIcon } from "@lucide/vue";
 import CastRecord from "@/views/cast/CastRecord.vue";
 import CastSelectionBar from "@/views/cast/CastSelectionBar.vue";
 import BookDefaults from "@/views/cast/BookDefaults.vue";
 import EffectsSheet from "@/views/cast/effects/EffectsSheet.vue";
 import ReapplyBar from "@/views/cast/effects/ReapplyBar.vue";
 import type { EffectSubject } from "@/views/cast/effects/subject";
+import { nestPersonas } from "@/views/cast/persona/rows";
+import { personaOwner, voiced as isVoiced } from "@/lib/cast";
 import type { Character, Gender } from "@/types";
 
 const castStore = useCastStore();
@@ -55,12 +57,18 @@ const editing = ref<string | null>(null);
 const draft = ref("");
 const total = computed(() => libraryStore.chaptersOf(bookId).length);
 const unreviewed = computed(() => cast.value.filter((c) => c.isNew).length);
-const voiced = computed(() => cast.value.filter((c) => c.voice).length);
+// a linked persona needs no voice of their own: they are read in their character's
+const voiced = computed(() => {
+  const byName = castStore.byName[bookId] ?? new Map<string, Character>();
+  return cast.value.filter((c) => isVoiced(c, byName)).length;
+});
 const colorOf = computed(() => new Map(cast.value.map((c) => [c.name, c.color])));
 
+// A linked persona's row sits under its character's, whatever the order (`nestPersonas`).
 const rows = computed(() => {
   const needle = q.value.toLowerCase();
-  return cast.value
+  const byName = castStore.byName[bookId] ?? new Map<string, Character>();
+  const sorted = cast.value
     .filter(
       (c) =>
         !needle ||
@@ -68,13 +76,18 @@ const rows = computed(() => {
         c.aliases.some((a) => a.toLowerCase().includes(needle)),
     )
     .filter((c) => !onlyNew.value || c.isNew)
-    .map((c) => ({
-      c,
-      st: stats.value[c.name] ?? newStat(),
-      voice: endpointsStore.resolveVoice(c.voice),
-      // a speaker with no voice of their own borrows the Character voice or the Narrator's
-      borrowed: c.voice ? null : castStore.effectiveVoice(bookId, c.name),
-    }))
+    .map((c) => {
+      // the character a linked persona is of, whose voice they are read in, whatever their own
+      const of = personaOwner(c, byName)?.name;
+      return {
+        c,
+        of,
+        st: stats.value[c.name] ?? newStat(),
+        voice: endpointsStore.resolveVoice(c.voice),
+        // a speaker with no voice of their own borrows the Character voice or the Narrator's
+        borrowed: c.voice && !of ? null : castStore.effectiveVoice(bookId, c.name),
+      };
+    })
     .sort((a, b) =>
       sort.value === "lines"
         ? b.st.lines - a.st.lines
@@ -82,7 +95,10 @@ const rows = computed(() => {
           ? (a.st.first ?? 999) - (b.st.first ?? 999)
           : a.c.name.localeCompare(b.c.name),
     );
+  return nestPersonas(sorted, byName);
 });
+/** A speaker's line count for their record, or null while the book's scripts are not all read. */
+const linesOf = (name: string) => (counted.value ? (stats.value[name]?.lines ?? 0) : null);
 
 // a run over the rows on screen, in their order; the Narrator has no box, so no run includes them
 const range = useRangeSelect(() =>
@@ -371,6 +387,7 @@ const duplicate = computed(
       :counted="counted"
       @thoughts="editEffect({ kind: 'book' })"
       @tune="(id) => editEffect({ kind: 'book', effect: id })"
+      @tune-line="(id) => editEffect({ kind: 'line', effect: id })"
     />
     <ReapplyBar :book-id="bookId" />
 
@@ -390,12 +407,13 @@ const duplicate = computed(
           </tr>
         </thead>
         <tbody>
-          <template v-for="{ c, st, voice, borrowed } in rows" :key="c.name">
+          <template v-for="{ c, st, voice, borrowed, of, nested } in rows" :key="c.name">
             <tr
               data-row
               :data-speaker="c.name"
               tabindex="0"
               class="border-t border-zinc-100 outline-none focus-visible:bg-zinc-100 dark:border-zinc-800/70 dark:focus-visible:bg-zinc-800"
+              :class="nested && 'bg-zinc-50/50 dark:bg-zinc-900/30'"
               @keydown="onRowKey($event, c)"
             >
               <td class="px-3">
@@ -407,7 +425,7 @@ const duplicate = computed(
                 />
               </td>
               <td class="py-2">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2" :class="nested && 'pl-5'">
                   <button
                     class="-ml-1 shrink-0 rounded p-0.5 text-zinc-400 hover:text-violet-500"
                     :aria-expanded="open === c.name"
@@ -433,6 +451,12 @@ const duplicate = computed(
                     </svg>
                   </button>
                   <span
+                    v-if="nested"
+                    class="-ml-1 text-zinc-300 dark:text-zinc-600"
+                    aria-hidden="true"
+                    >↳</span
+                  >
+                  <span
                     class="h-2.5 w-2.5 shrink-0 rounded-full"
                     :style="{ background: c.color }"
                   ></span>
@@ -446,6 +470,11 @@ const duplicate = computed(
                     @blur="commit"
                   />
                   <b v-else class="cursor-text" @dblclick="startRename(c)">{{ c.name }}</b>
+                  <span
+                    v-if="of"
+                    class="inline-flex items-center gap-0.5 rounded bg-violet-500/10 px-1 text-[10px] text-violet-600 dark:text-violet-300"
+                    ><MaskIcon class="h-3 w-3" aria-hidden="true" />persona of {{ of }}</span
+                  >
                   <span
                     v-if="c.isNew"
                     class="rounded bg-amber-400/20 px-1 text-[10px] font-semibold text-amber-600"
@@ -464,7 +493,11 @@ const duplicate = computed(
                   >
                 </div>
                 <!-- no description here: it is written from the whole book, and would spoil it -->
-                <div v-if="c.aliases.length" class="pl-4.5 text-[11px] text-zinc-500">
+                <div
+                  v-if="c.aliases.length"
+                  class="text-[11px] text-zinc-500"
+                  :class="nested ? 'pl-10' : 'pl-4.5'"
+                >
                   a.k.a. {{ c.aliases.join(", ") }}
                 </div>
               </td>
@@ -494,8 +527,24 @@ const duplicate = computed(
                 </div>
               </td>
               <td class="py-1 pr-2">
+                <!-- a linked persona is read in their character's voice: named here, picked there -->
+                <div
+                  v-if="borrowed?.from === 'persona'"
+                  class="ui-select-trigger w-full cursor-default border-dashed bg-transparent py-0.5 text-xs italic text-zinc-500 dark:bg-transparent"
+                  :title="`A persona is read in ${borrowed.of}’s voice — change it on ${borrowed.of}’s row`"
+                >
+                  <span class="min-w-0 flex-1 truncate"
+                    >{{ borrowed.of }}’s voice<span
+                      v-if="borrowed.label"
+                      class="text-zinc-300 dark:text-zinc-600"
+                    >
+                      · {{ borrowed.label }}</span
+                    ></span
+                  >
+                </div>
                 <!-- VoicePicker's trigger, drawn as a plain button that opens the shared picker -->
                 <button
+                  v-else
                   type="button"
                   data-voice-anchor
                   aria-haspopup="dialog"
@@ -549,6 +598,7 @@ const duplicate = computed(
                     class="chip min-w-0 max-w-[7.5rem]"
                     :class="effectOf(c.effect) ? 'chip-on' : 'chip-off'"
                     :aria-label="`${c.name}’s effect`"
+                    :title="of ? `Worn after ${of}’s effect` : undefined"
                     @click="editEffect({ kind: 'speaker', name: c.name, slot: 'effect' })"
                   >
                     <span class="truncate">{{ effectOf(c.effect)?.name ?? "None" }}</span>
@@ -599,7 +649,7 @@ const duplicate = computed(
             <tr v-if="open === c.name" class="bg-zinc-50/70 dark:bg-zinc-900/60">
               <td></td>
               <td colspan="6" class="px-1 py-3 pr-4">
-                <CastRecord :book-id="bookId" :c="c" />
+                <CastRecord :book-id="bookId" :c="c" :lines="linesOf" />
               </td>
             </tr>
           </template>

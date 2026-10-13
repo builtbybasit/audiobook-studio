@@ -205,10 +205,7 @@ Besides the lines, the answer has:
 Answer with JSON only, in this shape:
 {"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","aliases":["the lamplighter"],"description":"A young lamplighter, quick and wary."}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."}`;
 
-/**
- * The output format as almost every request is sent it, with no line effects offered, for the page
- * to show under the editor.
- */
+/** The output format as a request is sent it when the library offers no line effects. */
 export const OUTPUT_FORMAT = outputFormat(SCRIPT_MARKERS[0]);
 
 /** The prompt a library starts with, and what Reset puts back. */

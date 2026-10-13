@@ -28,8 +28,11 @@ export interface TryLine {
   baked: boolean;
 }
 
-/** Whose lines: one speaker's (all, or only their thoughts), or every thought line in the book. */
-export type LinesOf = { speaker: string; thoughts: boolean } | { speaker: null; thoughts: true };
+/** Whose lines: one speaker's or everyone's (`null`), all of them or only the thoughts. */
+export interface LinesOf {
+  speaker: string | null;
+  thoughts: boolean;
+}
 
 /** The narrated lines `of` asks for, in reading order; empty while `of` is null (sheet closed). */
 export function useTryLines(bookId: () => string, of: () => LinesOf | null) {

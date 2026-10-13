@@ -7,6 +7,10 @@
 // An effect belongs to the whole library, so an edit here reaches everyone who uses it. When
 // that is anyone besides this subject the header says who ("Also on …") and offers a copy to
 // edit instead. Delete asks first, naming everyone who loses it.
+//
+// Under the name, its "Use when" sentence: filled in, the effect is offered to the scripting model
+// as a line effect, for every book. On a line effect's sheet (`self.view` "line") nothing is chosen,
+// so there is no Use, and no list to go back to.
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { DialogTitle, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import {
@@ -63,6 +67,10 @@ function changed() {
 function rename(name: string) {
   effectsStore.update(props.effectId, { name });
 }
+function setUseWhen(useWhen: string) {
+  effectsStore.update(props.effectId, { useWhen });
+}
+const lineSheet = computed(() => props.self.view === "line");
 
 // ---------- who else it reaches ----------
 // Read once: the editor is made afresh for each effect, and the subject's own choice, the one thing
@@ -221,6 +229,7 @@ onUnmounted(() => {
     <div class="space-y-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800">
       <div class="flex items-center gap-2">
         <button
+          v-if="!lineSheet"
           class="btn-ghost btn-xs shrink-0 border border-zinc-300 font-medium dark:border-zinc-700"
           @click="emit('back')"
         >
@@ -237,7 +246,11 @@ onUnmounted(() => {
           class="shrink-0 rounded bg-violet-500/15 px-1.5 py-px text-[10px] font-semibold text-violet-700 dark:text-violet-300"
           >{{ source }}</span
         >
-        <button v-else class="btn-ghost btn-xs shrink-0" @click="choice.choose(effectId)">
+        <button
+          v-else-if="!lineSheet"
+          class="btn-ghost btn-xs shrink-0"
+          @click="choice.choose(effectId)"
+        >
           Use
         </button>
         <PopoverRoot v-model:open="menu">
@@ -258,6 +271,24 @@ onUnmounted(() => {
             </PopoverContent>
           </PopoverPortal>
         </PopoverRoot>
+      </div>
+      <div class="flex items-center gap-2 text-xs">
+        <label :for="`use-when-${effectId}`" class="shrink-0 text-zinc-500">Use when</label>
+        <input
+          :id="`use-when-${effectId}`"
+          :value="effect.useWhen ?? ''"
+          maxlength="300"
+          class="input min-w-0 flex-1 py-0.5 text-xs"
+          placeholder="e.g. heard through a phone or radio"
+          @input="setUseWhen(($event.target as HTMLInputElement).value)"
+        />
+        <span class="shrink-0 rounded bg-zinc-100 px-1 text-[10px] text-zinc-500 dark:bg-zinc-800"
+          >All books</span
+        >
+        <UiHint
+          label="use when"
+          text="Filled in, the scripting model may put this effect on a line whose words say so — a phone, a mask — in every book. Left blank, it is never offered."
+        />
       </div>
       <div v-if="others.length" class="flex items-center gap-2 text-xs text-zinc-500">
         <span class="min-w-0 flex-1 truncate" :title="others.join(', ')"
@@ -427,11 +458,11 @@ onUnmounted(() => {
     <p class="text-sm text-zinc-600 dark:text-zinc-300">
       <template v-if="losers === null">Where it is used couldn’t be checked.</template>
       <template v-else-if="losers.length">Used by {{ listed(losers, 6) }}.</template>
-      <template v-else>Nothing uses it.</template>
+      <template v-else>No speaker or book uses it.</template>
+      Script lines that carry it lose it.
       <UiHint
-        v-if="losers?.length"
         label="what deleting takes"
-        text="Speakers who used it go back to no effect, and their thoughts to the book’s. A book’s thoughts go back to all books’, and all books’ thoughts to none."
+        text="Speakers who used it go back to no effect, and their thoughts to the book’s. A book’s thoughts go back to all books’, and all books’ thoughts to none. Lines the scripting model put it on are heard without it."
       />
     </p>
     <div class="flex justify-end gap-2">

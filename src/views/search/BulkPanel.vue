@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
 import { plural } from "@/lib/contents";
+import { personaOwner } from "@/lib/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
@@ -60,7 +61,11 @@ const castOpts = computed(() =>
       label: c.name,
       color: c.color,
       group: c.major ? "Main cast" : "Also in the script",
-      hint: c.voice ? endpointsStore.voiceLabel(c.voice) : "no voice yet",
+      hint: personaOwner(c, castStore.byName[props.bookId] ?? new Map())
+        ? castStore.fallbackLabel(props.bookId, c.name)
+        : c.voice
+          ? endpointsStore.voiceLabel(c.voice)
+          : "no voice yet",
       keywords: [c.aliases.join(" "), `${counts.value[c.name] ?? 0} lines`].join(" "),
     })),
 );
@@ -208,6 +213,15 @@ function apply() {
               endpointsStore.voiceLabel(voice.ref)
             }}</b></span
           >
+          <!-- a linked persona has their character's voice, given or not: nothing to assign -->
+          <span v-else-if="voice?.from === 'persona'" class="text-zinc-500"
+            >read in {{ voice.of }}’s voice<template v-if="voice.ref"
+              >,
+              <b class="font-medium text-zinc-700 dark:text-zinc-300">{{
+                endpointsStore.voiceLabel(voice.ref)
+              }}</b></template
+            ></span
+          >
         </template>
 
         <template v-else-if="kind === 'direction'">
@@ -281,7 +295,7 @@ function apply() {
 
       <!-- the things that cost something -->
       <div
-        v-if="voice && !voice.own"
+        v-if="voice && !voice.own && voice.from !== 'persona'"
         class="mt-2 flex flex-wrap items-center gap-2 rounded bg-amber-400/10 px-2 py-1 text-amber-700 dark:text-amber-300"
       >
         <WarnIcon class="icon shrink-0" />

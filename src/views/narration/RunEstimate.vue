@@ -12,6 +12,7 @@ import { TriangleAlert as WarnIcon } from "@lucide/vue";
 // `money` keeps fractions of a cent visible: a two-clip run really does cost $0.000002, and
 // rounding that to "$0.00" is the same lie as showing an unknown rate as free.
 import { billingOf } from "@/lib/endpoints";
+import { voiced as isVoiced } from "@/lib/cast";
 import { billingUnitLabel, money } from "@/lib/pricing";
 import type { EndpointEstimate, NarrationEstimate, NarrationScope, RunPlan } from "@/types";
 // The plan, the estimate and the blockers are worked out by the view, not here: the run strip says
@@ -34,7 +35,9 @@ const scopes: { value: NarrationScope; label: string }[] = (
 ).map((value) => ({ value, label: SCOPE_LABEL[value] }));
 const cast = computed(() => castStore.charactersOf(props.bookId));
 const unread = computed(() => narrationStore.unreadNote(props.bookId, plan.value));
-const voiced = computed(() => cast.value.filter((c) => c.voice).length);
+const voiced = computed(
+  () => cast.value.filter((c) => isVoiced(c, castStore.byName[props.bookId] ?? new Map())).length,
+);
 const expressions = computed(() =>
   narrationStore.expressionIssues(
     props.bookId,

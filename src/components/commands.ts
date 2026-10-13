@@ -13,6 +13,7 @@
 import { useCastStore } from "@/stores/cast";
 import { numberCell } from "@/lib/chapterNumber";
 import { plural } from "@/lib/contents";
+import { personaOwner, voiced } from "@/lib/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
@@ -216,7 +217,11 @@ export function paletteCommands(router: Router, mod: string): Command[] {
           void router.push(`/book/${b}/narration`);
         },
       });
-    if (castStore.charactersOf(b).some((c) => !c.voice && c.name !== "Narrator"))
+    if (
+      castStore
+        .charactersOf(b)
+        .some((c) => !voiced(c, castStore.byName[b] ?? new Map()) && c.name !== "Narrator")
+    )
       out.push({
         id: "act-auto",
         group: "Actions",
@@ -374,7 +379,11 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         id: "sp-" + c.name,
         group: "Speakers",
         label: c.name,
-        hint: c.voice ? endpointsStore.voiceLabel(c.voice) : castStore.fallbackLabel(b, c.name),
+        // a linked persona is read in their character's voice, whatever they were given
+        hint:
+          c.voice && !personaOwner(c, castStore.byName[b] ?? new Map())
+            ? endpointsStore.voiceLabel(c.voice)
+            : castStore.fallbackLabel(b, c.name),
         color: c.color,
         keywords: `speaker cast ${c.aliases.join(" ")}`,
         run: go(`/book/${b}/cast`),

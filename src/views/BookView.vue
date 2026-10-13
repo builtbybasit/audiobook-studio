@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
-import { NARRATOR } from "@/lib/cast";
+import { NARRATOR, voiced } from "@/lib/cast";
 import { numberSpan } from "@/lib/chapterNumber";
 import { plural } from "@/lib/contents";
 import { money } from "@/lib/pricing";
@@ -69,7 +69,11 @@ const p = computed(() => libraryStore.progress(bookId));
 const { characters: cast } = useCast(bookId);
 useBookExports(bookId);
 const unreviewed = computed(() => cast.value.filter((c) => c.isNew).length);
-const unvoiced = computed(() => cast.value.filter((c) => !c.voice && c.major).length);
+const byName = computed(() => castStore.byName[bookId] ?? new Map());
+const unvoiced = computed(
+  () => cast.value.filter((c) => !voiced(c, byName.value) && c.major).length,
+);
+const voicedCount = computed(() => cast.value.filter((c) => voiced(c, byName.value)).length);
 const suggestions = computed(() => castStore.mergeSuggestions(bookId).length);
 const exportsHere = computed(() =>
   exportsStore.exports.filter((e) => e.bookId === bookId && e.status === "done"),
@@ -289,7 +293,7 @@ const next = computed(() =>
         <div class="mt-2 text-xs text-zinc-500">
           <span v-if="p.stale" class="text-amber-600">{{ p.stale }} stale · </span
           >{{ chapters.filter((c) => c.narration === "failed").length }} failed ·
-          {{ cast.filter((c) => c.voice).length }}/{{ cast.length }} voiced
+          {{ voicedCount }}/{{ cast.length }} voiced
         </div>
       </RouterLink>
       <RouterLink :to="`/book/${bookId}/export`" class="card p-4 hover:border-violet-400">
@@ -503,7 +507,7 @@ const next = computed(() =>
             <span v-if="suggestions" class="text-violet-500"
               >{{ suggestions }} merge suggestion{{ suggestions > 1 ? "s" : "" }} ·
             </span>
-            {{ cast.filter((c) => c.voice).length }} voiced
+            {{ voicedCount }} voiced
           </div>
         </RouterLink>
         <div class="card p-4">

@@ -14,11 +14,12 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { storedBookPrompt, useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
-import { useCast, useChapterText } from "@/queries";
+import { useCast, useChapterText, useEffects } from "@/queries";
 import {
   bookPromptProblems,
   describeOrigin,
   libraryPrompt,
+  lineEffectsOf,
   NOTES_MAX_CHARS,
   notesProblems,
   renderPrompt,
@@ -27,6 +28,7 @@ import {
 import { droppedNotes, withNotesLine, type NotesOwner } from "@/lib/promptNotes";
 import { expressionNames } from "@/lib/expressions";
 import { scriptParts } from "@/lib/scripting";
+import { personaOwner } from "@/lib/cast";
 import PromptEditor from "@/components/PromptEditor.vue";
 import PromptTrial from "@/components/PromptTrial.vue";
 import { UiSwitch } from "@/ui";
@@ -139,11 +141,13 @@ const { text } = useChapterText(
   "plain",
 );
 const { characters } = useCast(() => props.bookId);
+const { effects } = useEffects();
 const parts = computed(() => {
   const p = profile.value;
   const cut = p ? scriptParts(text.value, p) : [];
   return cut.length ? cut : [text.value];
 });
+const byName = computed(() => new Map(characters.value.map((c) => [c.name, c])));
 const preview = computed<RenderedPrompt | null>(() => {
   const b = book.value;
   const ch = chapter.value;
@@ -153,11 +157,13 @@ const preview = computed<RenderedPrompt | null>(() => {
     chapter: { title: ch.title, number: libraryStore.numberOf(props.bookId, ch.id) ?? ch.id },
     part: 1,
     parts: parts.value.length,
+    // a persona says whose it is only when that character is in the cast, as a run's request does
     cast: characters.value.map((c) => ({
       name: c.name,
       aliases: c.aliases,
       gender: c.gender,
       description: c.description,
+      ...(personaOwner(c, byName.value) ? { personaOf: c.personaOf } : {}),
     })),
     excerpt: parts.value[0] ?? "",
     endpoint: {
@@ -166,6 +172,7 @@ const preview = computed<RenderedPrompt | null>(() => {
       notes: profile.value?.prompt?.notes ?? "",
     },
     expressions: expressionNames(endpointsStore.endpoints),
+    lineEffects: lineEffectsOf(effects.value),
   });
 });
 const previewOf = computed(

@@ -8,7 +8,13 @@ import { scriptingPlan } from "@/lib/runPlan";
 import { jobsService } from "@/services/jobs";
 import { baseRates, ensurePricing, estimateRates } from "@/lib/pricing";
 import { resolvePrompt } from "@/lib/prompt";
-import { makeScriptSettings, profileErrors, scriptParts, tokenEstimator } from "@/lib/scripting";
+import {
+  DEFAULT_MAX_CHARS,
+  makeScriptSettings,
+  profileErrors,
+  scriptParts,
+  tokenEstimator,
+} from "@/lib/scripting";
 import { recentCacheRate, scriptTelemetry } from "@/lib/scriptActivity";
 import { isScripted } from "@/lib/scriptReview";
 import { chapterTextRead, loadChapterTexts } from "@/queries/chapterTexts";
@@ -358,7 +364,7 @@ export const useScriptingStore = defineStore("scripting", {
       const p = this.runProfile;
       if (!p) return void this.startRun(bookId, [chId]);
       const was = p.maxChars;
-      p.maxChars = Math.max(100, (p.maxChars || 6000) - 2000);
+      p.maxChars = Math.max(100, (p.maxChars || DEFAULT_MAX_CHARS) - 2000);
       if (!(await this.startRun(bookId, [chId], { quiet: true }))) {
         p.maxChars = was;
         return;

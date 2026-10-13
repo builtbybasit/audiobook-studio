@@ -516,7 +516,7 @@ const limitNote = computed(() => {
         <NumberSlider
           v-model="cut.maxChars"
           label="Maximum characters per request"
-          :initial-max="u.kind === 'scripting' ? 12000 : 4096"
+          :initial-max="u.kind === 'scripting' ? 40000 : 4096"
           unit="chars"
         />
         <p class="mt-1.5 text-[11px] text-zinc-500">

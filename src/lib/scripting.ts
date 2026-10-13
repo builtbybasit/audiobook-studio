@@ -38,6 +38,13 @@ export const REASONING_LEVELS: { value: ReasoningEffort; label: string; hint: st
  */
 export const makeScriptSettings = (): ScriptSettings => ({ profile: null });
 
+/**
+ * How much of a chapter one scripting request carries by default: about 3,300 words, so most
+ * chapters of a web novel go in one request, with the answer's own tokens (about as many again)
+ * inside the default output cap and the timeout below.
+ */
+export const DEFAULT_MAX_CHARS = 20000;
+
 export function newProfile(p: Partial<Profile> = {}): Profile {
   const profile: Profile = {
     id: crypto.randomUUID(),
@@ -50,11 +57,11 @@ export function newProfile(p: Partial<Profile> = {}): Profile {
     outPrice: 0,
     pricing: newPricing(),
     concurrency: 4,
-    maxChars: 6000,
+    maxChars: DEFAULT_MAX_CHARS,
     splitAt: "sentence",
-    maxOutputTokens: 4096,
+    maxOutputTokens: 16384,
     secPerChunk: 10,
-    timeoutSec: 120,
+    timeoutSec: 300,
     maxRetries: 3,
     cooldownSec: 10,
     spendLimit: null,

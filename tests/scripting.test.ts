@@ -352,7 +352,7 @@ describe("a run started from a button", () => {
     await endpointsStore.flushWrites();
     const saved = () =>
       api.request<{ profiles: { id: string; maxChars: number }[] }>("/api/endpoints");
-    expect((await saved()).body.profiles.find((x) => x.id === p.id)!.maxChars).toBe(6000);
+    expect((await saved()).body.profiles.find((x) => x.id === p.id)!.maxChars).toBe(20000);
 
     await scriptingStore.smallerChunks(book, 2);
     // the job was queued with the profile as the server held it at that moment
@@ -362,8 +362,8 @@ describe("a run started from a button", () => {
       }>(`/api/jobs?bookId=${book}`)
     ).body;
     const run = jobs.filter((j) => j.chapterId === 2).at(-1)!;
-    expect(run.scriptRun!.profile.maxChars).toBe(4000);
-    expect((await saved()).body.profiles.find((x) => x.id === p.id)!.maxChars).toBe(4000);
+    expect(run.scriptRun!.profile.maxChars).toBe(18000);
+    expect((await saved()).body.profiles.find((x) => x.id === p.id)!.maxChars).toBe(18000);
     expect(toasts.at(-1)!.description).toContain("for every book it scripts");
     await api.runner.idle();
     endpointsStore._detach();

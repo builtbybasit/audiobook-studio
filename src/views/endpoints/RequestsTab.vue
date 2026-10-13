@@ -544,7 +544,7 @@ const limitNote = computed(() => {
             label="Maximum output tokens"
             :min="1"
             :initial-max="16384"
-            unit="/ request"
+            unit="/ req"
           />
           <p class="mt-1.5 text-[11px] text-zinc-500">
             Reserved against the budget before each request is sent.

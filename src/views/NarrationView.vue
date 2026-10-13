@@ -261,7 +261,7 @@ const openedRequests = computed(() =>
             :run-disabled="!loaded"
             :run-note="runNote"
             :run-skipped="loaded ? skipSummary(run.plan) : ''"
-            :selectable="(c) => isScripted(c)"
+            :selectable="isScripted"
             @open="openChapter"
             @run="(ids) => narrationStore.startRun(bookId, ids, { scope })"
           />

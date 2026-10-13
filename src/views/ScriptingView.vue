@@ -18,6 +18,7 @@ import { useBookId } from "@/composables/useBookId";
 import { useOpenedChapter } from "@/composables/useOpenedChapter";
 import { plural } from "@/lib/contents";
 import { useCast, useChapterScript, useChapterTexts } from "@/queries";
+import type { Chapter } from "@/types";
 import { scriptExportUrl } from "@/services/library";
 
 const endpointsStore = useEndpointsStore();
@@ -50,6 +51,9 @@ const { unread } = useChapterTexts(
   () => [...new Set([...selected.value, opened.value])],
   "plain",
 );
+// One function for the picker's whole life: an inline one is a new prop on every render here, and
+// each chapter text that lands re-renders this page, so the picker re-ran every row each time.
+const notBusy = (c: Chapter) => !["running", "queued"].includes(c.scripting);
 // One plan behind the button's label, the line under it and the work the run queues.
 const plan = computed(() => scriptingStore.scriptPlan(bookId, selected.value));
 const estimate = computed(() => scriptingStore.scriptEstimateOf(bookId, plan.value));
@@ -124,7 +128,7 @@ function scriptFirst() {
             :run-note="runNote"
             :run-skipped="skipSummary(plan)"
             :run-disabled="!!estimate.blockers.length"
-            :selectable="(c) => !['running', 'queued'].includes(c.scripting)"
+            :selectable="notBusy"
             @open="openChapter"
             @run="(ids) => scriptingStore.startRun(bookId, ids)"
           />

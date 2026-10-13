@@ -67,6 +67,50 @@ const CODEX_OFF = [
   "sleep_tool",
 ];
 
+/**
+ * The answer's shape, held to by Codex's `--output-schema`: without it gpt-6-luna now and then
+ * writes JSON that does not parse, or stops halfway (68/80 bench runs right without it, 75/80
+ * with, and no broken answer). Strict, so every field is required and an optional one may be
+ * null; the parser reads null as absent. Word for word and the rest is still `checkedScript`'s.
+ */
+const ANSWER_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["lines", "cast", "recap"],
+  properties: {
+    lines: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["type", "speaker", "text", "direction", "effects"],
+        properties: {
+          type: { type: "string", enum: ["narration", "dialogue", "thought", "watermark", "note"] },
+          speaker: { type: "string" },
+          text: { type: "string" },
+          direction: { type: ["string", "null"] },
+          effects: { type: ["array", "null"], items: { type: "string" } },
+        },
+      },
+    },
+    cast: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "gender", "aliases", "description"],
+        properties: {
+          name: { type: "string" },
+          gender: { type: "string", enum: ["male", "female", "non-binary", "unknown"] },
+          aliases: { type: "array", items: { type: "string" } },
+          description: { type: "string" },
+        },
+      },
+    },
+    recap: { type: "string" },
+  },
+};
+
 /** What one run is: the command line, what goes on stdin, and a file it needs written first. */
 interface Invocation {
   argv: string[];
@@ -112,12 +156,14 @@ export function invocation(
         "--cd",
         dir,
         "--json",
+        "--output-schema",
+        join(dir, SCHEMA_FILE),
         "--output-last-message",
         join(dir, ANSWER_FILE),
         "-",
       ],
       stdin: prompt.user,
-      files: { [SYSTEM_FILE]: prompt.system },
+      files: { [SYSTEM_FILE]: prompt.system, [SCHEMA_FILE]: JSON.stringify(ANSWER_SCHEMA) },
     };
   return {
     argv: [
@@ -148,6 +194,7 @@ export function invocation(
 
 const ANSWER_FILE = "answer.txt";
 const SYSTEM_FILE = "system.txt";
+const SCHEMA_FILE = "schema.json";
 
 /** The most of what a tool printed worth putting in a message. */
 const SAID_CHARS = 300;

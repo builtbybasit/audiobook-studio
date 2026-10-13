@@ -160,7 +160,13 @@ const batchNote = computed(() => {
   return `Sending ${items} a request, the server's limit${atOnce}.`;
 });
 
+// a line to speak has no paragraph end inside it, so only a scripting endpoint is offered one
+const cutModes = computed(() =>
+  props.u.kind === "scripting" ? SPLIT_MODES : SPLIT_MODES.filter((m) => m.value !== "paragraph"),
+);
+
 const AT_LABEL: Record<SplitMode, string> = {
+  paragraph: "paragraph end",
   sentence: "sentence end",
   clause: "clause",
   word: "word",
@@ -536,7 +542,7 @@ const limitNote = computed(() => {
             <span class="block text-[11px] text-zinc-500"
               >Falls back to a finer boundary when none fits.</span
             ></span
-          ><UiSelect v-model="cut.splitAt" :options="SPLIT_MODES" class="w-44 shrink-0"
+          ><UiSelect v-model="cut.splitAt" :options="cutModes" class="w-44 shrink-0"
         /></label>
         <div v-if="u.profile" class="mt-3">
           <NumberSlider

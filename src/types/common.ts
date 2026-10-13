@@ -4,7 +4,7 @@
 export type Gender = "m" | "f" | "n" | "?";
 
 /** Where a too-long segment may be cut, in fallback order. */
-export type SplitMode = "sentence" | "clause" | "word" | "char";
+export type SplitMode = "paragraph" | "sentence" | "clause" | "word" | "char";
 
 /** `<endpointId>/<voiceId>` — a character stores this, not a bare voice id. */
 export type VoiceRef = string;

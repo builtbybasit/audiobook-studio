@@ -4,13 +4,20 @@
 // name and nothing else, so renaming one is a key change that has to move the lines with it —
 // that half lives in `server/db/script.ts` (`reattribute`) and the operations in
 // `server/cast/ops.ts` do the two together in one transaction.
-import { and, asc, eq, max } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, max, sql } from "drizzle-orm";
 
 import type { Character, LexEntry } from "@/types";
-import { NARRATOR, narrator, newSpeaker, personaOwner, personaRefusal } from "@/lib/cast";
+import {
+  NARRATOR,
+  chapterCast,
+  narrator,
+  newSpeaker,
+  personaOwner,
+  personaRefusal,
+} from "@/lib/cast";
 import type { PromptCastMember } from "@/lib/prompt";
 import type { Db, Tx } from "~/db/client";
-import { characters, lexiconEntries } from "~/db/schema";
+import { chapters, characters, lexiconEntries, segments } from "~/db/schema";
 import { characterValues, lexiconValues, toCharacter, toLexEntry } from "~/db/rows";
 
 export function readCast(db: Db | Tx, bookId: string): Character[] {
@@ -50,6 +57,43 @@ export function readSpeakers(db: Db | Tx, bookId: string): PromptCastMember[] {
       : {}),
     ...(masked ? { masked: true } : {}),
   }));
+}
+
+/** How many kept chapters before one count as just before it, for who may still be in the scene. */
+const RECENT_CHAPTERS = 3;
+
+/**
+ * The speakers a chapter's scripting prompt lists (`chapterCast`) for its text: who it names, who
+ * speaks in its script now or in the last few kept chapters before it, and every disguise. A run
+ * and a prompt trial both send it, so a trial's prompt is a run's.
+ */
+export function readChapterCast(
+  db: Db | Tx,
+  bookId: string,
+  chapterId: number,
+  text: string,
+): PromptCastMember[] {
+  const before = db
+    .select({ id: chapters.id })
+    .from(chapters)
+    .where(
+      and(
+        eq(chapters.bookId, bookId),
+        lt(chapters.id, chapterId),
+        sql`coalesce(${chapters.excluded}, 0) = 0`,
+      ),
+    )
+    .orderBy(desc(chapters.id))
+    .limit(RECENT_CHAPTERS)
+    .all()
+    .map((c) => c.id);
+  const recent = db
+    .selectDistinct({ speaker: segments.speaker })
+    .from(segments)
+    .where(and(eq(segments.bookId, bookId), inArray(segments.chapterId, [chapterId, ...before])))
+    .all()
+    .map((s) => s.speaker);
+  return chapterCast(readSpeakers(db, bookId), text, new Set(recent));
 }
 
 export function getCharacter(db: Db | Tx, bookId: string, name: string): Character | undefined {

@@ -1,7 +1,7 @@
 // Which of a cast's names a line is written with: what a clip is sent as hints when it is checked
 // by ear. Pure over the text, so every way a name is written in a book is one row here.
 import { describe, expect, test } from "bun:test";
-import { castNameFor, nameWords, namesIn, NARRATOR } from "@/lib/cast";
+import { castNameFor, chapterCast, nameWords, namesIn, NARRATOR } from "@/lib/cast";
 
 const words = nameWords([
   { name: NARRATOR, aliases: ["Storyteller"] },
@@ -93,5 +93,57 @@ describe("the cast member a scripting model meant", () => {
   test("by a cast name with a bracket note after it", () => {
     expect(meant("Young Soldier (male)")).toBe("Young Soldier");
     expect(meant("Hero (male)")).toBe("Young Soldier");
+  });
+});
+
+describe("the cast a chapter's prompt lists", () => {
+  const cast = [
+    { name: NARRATOR },
+    { name: "Sunny", aliases: ["Sunless"] },
+    { name: "Young Soldier", aliases: ["Hero"] },
+    { name: "Jet", aliases: ["Master Jet"] },
+    { name: "Caster" },
+    { name: "Lord of Shadows", personaOf: "Sunny" },
+    { name: "the Black Mask", masked: true },
+    { name: "Nephis" },
+    { name: "Kai" },
+  ];
+  const names = (text: string, recent: string[] = []) =>
+    chapterCast(cast, text, new Set(recent)).map((c) => c.name);
+
+  test("is who the chapter names, by a name or another name, in any case", () => {
+    expect(names("“Stand up,” HERO said. Master Jet sighed.")).toContain("Young Soldier");
+    expect(names("“Stand up,” HERO said. Master Jet sighed.")).toContain("Jet");
+    expect(names("the young soldier")).toContain("Young Soldier");
+  });
+
+  test("by a whole name only, never a word that starts or holds one", () => {
+    expect(names("Kaiser and the castersoft, Jetty.")).not.toContain("Kai");
+    expect(names("Kaiser and the castersoft, Jetty.")).not.toContain("Caster");
+    expect(names("Kaiser and the castersoft, Jetty.")).not.toContain("Jet");
+    expect(names("Kai's sword")).toContain("Kai");
+  });
+
+  test("keeps who spoke just before, though the chapter only says “he”", () => {
+    expect(names("He did not answer.", ["Caster"])).toContain("Caster");
+  });
+
+  test("keeps every disguise, and whoever wears one, for a reveal chapters later", () => {
+    expect(names("Nothing happens.")).toEqual([
+      NARRATOR,
+      "Sunny",
+      "Lord of Shadows",
+      "the Black Mask",
+    ]);
+  });
+
+  test("leaves out the rest, in the cast's order", () => {
+    expect(names("Nephis looked at Sunless.")).toEqual([
+      NARRATOR,
+      "Sunny",
+      "Lord of Shadows",
+      "the Black Mask",
+      "Nephis",
+    ]);
   });
 });

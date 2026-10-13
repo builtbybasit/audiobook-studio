@@ -214,6 +214,39 @@ export function castNameFor(
   return meant.length === 1 ? meant[0].name : speaker;
 }
 
+/**
+ * The part of a cast a chapter's scripting prompt lists (`{{cast}}`), in the cast's order: who the
+ * chapter names — a name or other name of theirs, whole, in any case; who spoke in it or just
+ * before it (`recent`), whom the text may call only "he"; and every disguise with whoever wears it,
+ * since a reveal can come long after. The rest of a long book's cast would only crowd the scene's.
+ */
+export function chapterCast<
+  T extends Pick<PromptCastMember, "name" | "aliases" | "personaOf" | "masked">,
+>(cast: readonly T[], text: string, recent: ReadonlySet<string>): T[] {
+  const lower = text.toLowerCase();
+  const word = (ch: string | undefined) => !!ch && /[\p{L}\p{N}]/u.test(ch);
+  const named = (name: string): boolean => {
+    const key = name.trim().toLowerCase();
+    for (let i = key ? lower.indexOf(key) : -1; i >= 0; i = lower.indexOf(key, i + 1))
+      if (!word(lower[i - 1]) && !word(lower[i + key.length])) return true;
+    return false;
+  };
+  const kept = new Set(
+    cast
+      .filter(
+        (c) =>
+          c.name === NARRATOR ||
+          c.personaOf ||
+          c.masked ||
+          recent.has(c.name) ||
+          [c.name, ...(c.aliases ?? [])].some(named),
+      )
+      .map((c) => c.name),
+  );
+  for (const c of cast) if (c.personaOf) kept.add(c.personaOf);
+  return cast.filter((c) => kept.has(c.name));
+}
+
 // ---------- names in a line ----------
 
 /** Words a speaker's name can start with that name nobody: "The man" must not hint every "The". */

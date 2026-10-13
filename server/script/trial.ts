@@ -29,7 +29,7 @@ import {
 } from "@/lib/prompt";
 import { expressionNames } from "@/lib/expressions";
 import { tokenEstimate } from "@/lib/scripting";
-import { readSpeakers } from "~/db/cast";
+import { readChapterCast, readSpeakers } from "~/db/cast";
 import type { Db } from "~/db/client";
 import { listEffects } from "~/db/effects";
 import { readEndpoints, readProfiles } from "~/db/endpoints";
@@ -76,7 +76,8 @@ export async function tryPrompt(
   if (!chapter || uid == null || body == null) throw notFound(`${book.title} has no such chapter`);
 
   // Cut as the endpoint cuts it, so part 3 here is part 3 of a run.
-  const chunks = chunksOf(plainText(body), profile);
+  const text = plainText(body);
+  const chunks = chunksOf(text, profile);
   const part = request.part ?? 1;
   if (part < 1 || part > chunks.length)
     throw badRequest(
@@ -97,8 +98,9 @@ export async function tryPrompt(
   ];
   if (problems.length) throw badRequest(`This prompt cannot be sent: ${problems.join(" ")}`);
 
-  // The speakers the book has now, as a run's request would be told them.
+  // The speakers the book has now, and those the prompt lists, as a run's request would be told them.
   const speakers = readSpeakers(db, bookId);
+  const listed = readChapterCast(db, bookId, request.chapterId, text);
   const vars: PromptVars = {
     book: { title: book.title, author: book.author ?? "", notes: layers.book?.notes ?? "" },
     chapter: {
@@ -108,7 +110,7 @@ export async function tryPrompt(
     },
     part,
     parts: chunks.length,
-    cast: speakers,
+    cast: listed,
     excerpt,
     before: beforeOf(chunks, part - 1),
     recap: library.previousRecap(db, bookId, request.chapterId),

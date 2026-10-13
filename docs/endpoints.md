@@ -371,9 +371,9 @@ where they are typed, with a button that adds the tag.
 the user message), `{{excerpt.before}}` (the last paragraphs of the chunk before, up to about 800
 characters; empty for a chapter's first request), `{{part}}` / `{{parts}}`, `{{chapter.title}}`,
 `{{chapter.number}}`, `{{previous.recap}}` (where the chapter before left off, as its model put
-it), `{{cast}}` (the known speakers' names, each with gender, whose persona it is, and other
-names), `{{cast.details}}`
-(one line per speaker, the description too), `{{book.title}}`, `{{book.author}}`,
+it), `{{cast}}` (the speakers the chapter is likely to need: names, each with gender, whose persona
+it is, and other names), `{{cast.details}}`
+(one line per such speaker, the description too), `{{book.title}}`, `{{book.author}}`,
 `{{book.notes}}`, `{{endpoint.name}}`, `{{endpoint.notes}}`, `{{model}}` and `{{expressions}}`
 (the tag names your speech endpoints list on their confirmed Expressions tabs, for a prompt that
 asks for [expression tags](audio.md#model-specific-expressions)). A line whose tags all come out empty is left out, so

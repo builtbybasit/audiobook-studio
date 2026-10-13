@@ -61,13 +61,21 @@ A model reads one chunk at a time, and a web novel's chapter often opens in the 
 conversation — "Then we go tonight." — without saying who speaks. So each request is sent what came
 before it, and each answer says what the next request will need:
 
-- **The cast, with what tells its members apart.** `{{cast}}` names every speaker the book has with
-  their gender and other names ("Havoc (male; also called the mercenary)"), so a "she said" can be
+- **The cast, with what tells its members apart.** `{{cast}}` names the speakers the chapter is
+  likely to need, with their gender and other names ("Havoc (male; also called the mercenary)"), so a "she said" can be
   narrowed down and "the Captain" is given the name the book already uses rather than becoming a new
   speaker. A persona says whose disguise it is ("Lord of Shadows (male; persona of Sunny)"), and the
   built-in prompt's rule 5 gives the character's lines to the persona while the scene has them in
   that identity. Descriptions go only with `{{cast.details}}`: a web novel's cast runs to hundreds,
   and every character of the prompt is sent, and billed, with every request.
+- **Only the chapter's part of the cast.** Both cast tags list who the chapter names (a name or
+  other name, whole, in any case), who speaks in its script now or in the 3 kept chapters before it
+  — whom the text may call only "he" — and every persona and masked figure with whoever wears one,
+  since a reveal can come long after (`chapterCast` in [src/lib/cast.ts](../src/lib/cast.ts),
+  `readChapterCast` in [server/db/cast.ts](../server/db/cast.ts)). The rest stay out: at 300
+  speakers the whole cast would be some 5,000 tokens a request, most of them people not in the
+  scene. A character back after a long gap, unnamed in the chapter, is left out and comes in as
+  "Unknown" or a new speaker, for the Cast page to merge.
 - **What the model learnt of them.** An answer's `cast` gives the gender, other names and a
   one-sentence description of the speakers the excerpt says something new about. The run fills in
   only what the cast leaves blank — a gender or description set by hand, or by an earlier chapter,

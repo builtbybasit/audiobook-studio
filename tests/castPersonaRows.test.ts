@@ -1,5 +1,6 @@
 // The Cast table's persona rows (`nestPersonas`): a linked persona sits right under its character
-// whatever the sort, and stands on its own when a search finds only the persona.
+// whatever the sort, and stands on its own when a search finds only the persona or the scripting
+// model made the link.
 import { expect, test } from "bun:test";
 
 import { nestPersonas } from "@/views/cast/persona/rows";
@@ -11,6 +12,7 @@ const cast = [
   { name: "Weaver", personaOf: "Sunny" },
   { name: "Nephis" },
   { name: "Stranger", personaOf: "Nobody" },
+  { name: "Veil", personaOf: "Nephis", masked: true },
 ];
 const byName = new Map(cast.map((c) => [c.name, c]));
 const rows = (...names: string[]) => names.map((n) => ({ c: byName.get(n)! }));
@@ -39,4 +41,8 @@ test("a chained link nests one level only, and drops no row", () => {
   ]);
   const r = ["A", "B", "C"].map((n) => ({ c: chain.get(n)! }));
   expect(order(nestPersonas(r, chain))).toEqual(["A", "C", "↳B"]);
+});
+
+test("a link the scripting model made keeps its own place: nesting it would spoil who wears it", () => {
+  expect(order(nestPersonas(rows("Veil", "Nephis"), byName))).toEqual(["Veil", "Nephis"]);
 });

@@ -311,10 +311,11 @@ export const useScriptsStore = defineStore("scripts", {
      * many clips now need new speech.
      *
      * A clip goes stale only when its reading changes: a speaker read in another voice or with
-     * another style (`sameReading`). Moving a line between a character and their persona, or
-     * between any two speakers who share both, keeps its speech; only its sound — the effects it
-     * is heard through — may be old, which the server counts and Re-apply puts right, so the
-     * old-sound count is read again once the write lands. So is it after a change of effects.
+     * another style (`sameReading`). Moving a line between a character and a voiceless persona of
+     * theirs, or between any two speakers who share both, keeps its speech; only its sound — the
+     * effects it is heard through — may be old, which the server counts and Re-apply puts right,
+     * so the old-sound count is read again once the write lands. So is it after a change of
+     * effects.
      */
     retouchLines(bookId: string, chId: number, changes: readonly LineRetouch[]): number {
       const castStore = useCastStore();

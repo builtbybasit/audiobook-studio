@@ -99,11 +99,11 @@ describe("routing issues", () => {
 
 describe("a linked persona", () => {
   beforeEach(() => {
-    // a voice and a gender of their own, which the link sets aside
-    cast.characters.b.push({ ...speaker("Mask", "m", "gone/v1"), personaOf: "Ana" });
+    // a gender of their own, which the link sets aside, and no voice
+    cast.characters.b.push({ ...speaker("Mask", "m"), personaOf: "Ana" });
   });
 
-  test("is read in their character's voice, whatever they are given", () => {
+  test("is read in their character's voice when they have none of their own", () => {
     book.characterVoice = byGender({ female: "ok/v1" });
     expect(cast.fallbackLabel("b", "Mask")).toBe("Ana’s voice");
     expect(cast.effectiveVoice("b", "Mask")).toMatchObject({
@@ -114,30 +114,46 @@ describe("a linked persona", () => {
     });
   });
 
-  test("is no routing issue of their own: their character's row covers them", () => {
+  test("keeps a voice of their own", () => {
+    cast.characters.b.at(-1)!.voice = "ok/v2";
+    expect(cast.effectiveVoice("b", "Mask")).toMatchObject({ ref: "ok/v2", own: true });
+  });
+
+  test("is no routing issue of their own while voiceless: their character's row covers them", () => {
     book.characterVoice = byGender({ male: "off/v1" });
     cast.characters.b[2].voice = "ok/v1";
-    // Mask's own voice is gone and Bo is voiced, so the male slot reads nobody but an unlinked Mask
+    // Bo is voiced, so the male slot reads nobody but an unlinked Mask
     expect(cast.routingIssues("b")).toEqual([]);
     cast.characters.b.at(-1)!.personaOf = "Nobody";
-    expect(cast.routingIssues("b").map((i) => i.name)).toEqual(["Mask"]);
-    cast.characters.b.at(-1)!.voice = null;
     expect(cast.routingIssues("b").map((i) => i.name)).toEqual(["Character voice (male)"]);
+    // a voice of their own is theirs to answer for, linked or not
+    cast.characters.b.at(-1)!.personaOf = "Ana";
+    cast.characters.b.at(-1)!.voice = "gone/v1";
+    expect(cast.routingIssues("b").map((i) => i.name)).toEqual(["Mask"]);
   });
 });
 
 describe("voiced", () => {
-  test("a linked persona is voiced when, and only when, their character is", () => {
+  test("a linked persona is voiced by a voice of their own, or else their character's", () => {
     const sunny: Character = { ...newSpeaker("Sunny", 1), voice: null };
     const lord: Character = {
       ...newSpeaker("Lord of Shadows", 2),
-      voice: "ep/own",
+      voice: null,
       personaOf: "Sunny",
     };
     const cast = new Map([sunny, lord].map((c) => [c.name, c]));
     expect(voiced(lord, cast)).toBe(false);
+    expect(voiced({ ...lord, voice: "ep/own" }, cast)).toBe(true);
     cast.set("Sunny", { ...sunny, voice: "ep/sunny" });
     expect(voiced(lord, cast)).toBe(true);
-    expect(voiced({ ...lord, personaOf: "Nobody" }, cast)).toBe(true);
+    expect(voiced({ ...lord, personaOf: "Nobody" }, cast)).toBe(false);
+  });
+});
+
+describe("a link the scripting model made", () => {
+  test("names no character in the empty choice: who wears the mask is a spoiler", () => {
+    cast.characters.b.push({ ...speaker("Mask", "m"), personaOf: "Ana", masked: true });
+    expect(cast.fallbackLabel("b", "Mask")).toBe("Wearer’s voice");
+    expect(cast.effectiveVoice("b", "Mask")).toMatchObject({ from: "persona", of: "Ana" });
   });
 });

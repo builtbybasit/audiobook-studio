@@ -22,7 +22,8 @@ const castOpts = computed(() =>
     label: c.name,
     color: c.color,
     keywords: c.aliases.join(" "),
-    hint: c.personaOf ? `persona of ${c.personaOf}` : undefined,
+    // a link the scripting model made is a spoiler
+    hint: c.personaOf && !c.masked ? `persona of ${c.personaOf}` : undefined,
   })),
 );
 const intoOpts = computed(() => castOpts.value.filter((o) => !props.selected.has(o.value)));

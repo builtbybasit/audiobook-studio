@@ -80,8 +80,8 @@ describe("the voice a speaker is read in", () => {
 });
 
 describe("the voice a persona is read in", () => {
-  // a persona of a woman, given a voice and a gender of their own that a link overrides
-  const lord = { ...speaker("Lord of Shadows", "m", "ep/lord"), personaOf: "Sunny" };
+  // a persona of a woman, with no voice of their own and a gender a link sets aside
+  const lord = { ...speaker("Lord of Shadows", "m"), personaOf: "Sunny" };
   const g = cv({ by: "gender", male: "ep/m", female: "ep/f" });
 
   test("is their character's own voice when linked", () => {
@@ -91,6 +91,12 @@ describe("the voice a persona is read in", () => {
       from: "persona",
       of: "Sunny",
     });
+  });
+
+  test("is their own when they have one, linked or not: a reveal changes nothing heard", () => {
+    const masked = { ...lord, voice: "ep/lord" };
+    const cast = castOf("ep/narr", speaker("Sunny", "f", "ep/sunny"), masked);
+    expect(speakerVoice("Lord of Shadows", cast, g)).toEqual({ ref: "ep/lord", from: "own" });
   });
 
   test("is the Character voice for their character's gender, or the Narrator's, when the character has none", () => {
@@ -104,11 +110,8 @@ describe("the voice a persona is read in", () => {
   });
 
   test("is their own while the link names nobody in the cast, or themselves", () => {
-    expect(speakerVoice("Lord of Shadows", castOf("ep/narr", lord), g)).toEqual({
-      ref: "ep/lord",
-      from: "own",
-    });
-    const self = { ...lord, voice: null, personaOf: "Lord of Shadows" };
+    expect(speakerVoice("Lord of Shadows", castOf("ep/narr", lord), g).ref).toBe("ep/m");
+    const self = { ...lord, personaOf: "Lord of Shadows" };
     expect(speakerVoice("Lord of Shadows", castOf("ep/narr", self), g).ref).toBe("ep/m");
   });
 

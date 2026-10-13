@@ -214,3 +214,22 @@ describe("under development's devtools, where each action gets a fresh `this`", 
     expect(writes).toBe(1);
   });
 });
+
+describe("the scripting model's masked finding", () => {
+  test("Not masked takes it off and leaves the link; a link changed by hand takes it too", async () => {
+    const cast = useCastStore();
+    server.characters.push(
+      { ...newSpeaker("Mask", 2), personaOf: "Ana", masked: true },
+      { ...newSpeaker("Veil", 3), masked: true },
+    );
+    cast._install("b", clone(server));
+    await cast.unmask("b", "Mask");
+    await cast.updateCharacter("b", "Veil", { personaOf: "Ana" });
+    await cast._castSettled("b");
+    const held = (n: string) => server.characters.find((c) => c.name === n)!;
+    expect(held("Mask")).toMatchObject({ personaOf: "Ana" });
+    expect(held("Mask").masked).toBeUndefined();
+    expect(held("Veil")).toMatchObject({ personaOf: "Ana" });
+    expect(held("Veil").masked).toBeUndefined();
+  });
+});

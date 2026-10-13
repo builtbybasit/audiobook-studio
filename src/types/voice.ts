@@ -66,8 +66,8 @@ export interface ResolvedVoice {
 }
 
 /**
- * Which voice actually renders a speaker, after a linked persona takes their character's and a
- * speaker with none falls back to the Character voice or the Narrator's.
+ * Which voice actually renders a speaker, after a linked persona with none of their own takes their
+ * character's and anyone else with none falls back to the Character voice or the Narrator's.
  */
 export interface EffectiveVoice {
   ref: VoiceRef | null;

@@ -3,13 +3,14 @@
 import { personaOwner } from "@/lib/cast";
 import type { Character } from "@/types";
 
-type Speaker = Pick<Character, "name" | "personaOf">;
+type Speaker = Pick<Character, "name" | "personaOf" | "masked">;
 
 /**
  * The rows as sorted and filtered, with each linked persona moved to sit under its character, in
  * the order the personas came; `nested` marks the ones that moved. A persona whose character is
- * not among the rows (a search found only the persona) keeps its own place, unnested. `cast` is
- * the whole book's, so a link is the one `personaOwner` reads, filtered or not.
+ * not among the rows (a search found only the persona) keeps its own place, unnested, and so does
+ * one the scripting model linked (`masked`): a row under Sunny's would say who wears the mask.
+ * `cast` is the whole book's, so a link is the one `personaOwner` reads, filtered or not.
  */
 export function nestPersonas<R extends { c: Speaker }>(
   rows: readonly R[],
@@ -18,7 +19,7 @@ export function nestPersonas<R extends { c: Speaker }>(
   const shown = new Map(rows.map((r) => [r.c.name, r]));
   const under = new Map<string, R[]>();
   for (const r of rows) {
-    const owner = personaOwner(r.c, cast);
+    const owner = r.c.masked ? undefined : personaOwner(r.c, cast);
     // one level only: a character who is a persona themselves takes nobody under them
     if (!owner || !shown.has(owner.name) || personaOwner(owner, cast)) continue;
     const list = under.get(owner.name);

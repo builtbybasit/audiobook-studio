@@ -81,8 +81,9 @@ book, so the effect made for one book's ghost is there for the next
 
 - **A speaker's own effect**, on every line of theirs: a radio voice, a giant, a ghost. None by
   default. A persona (a cast member whose `personaOf` names another, a disguise or false identity
-  of theirs) wears that character's own effect first, then its own; a `personaOf` naming nobody in
-  the cast, or the persona itself, links nobody.
+  of theirs) wears that character's own effect first, then its own, and is read in that
+  character's voice only while it has none of its own; a `personaOf` naming nobody in the cast, or
+  the persona itself, links nobody.
 - **Line effects**, on one line only (`Segment.effects`, by id): a phone call, telepathy, a voice
   through a mask. An effect with a `useWhen` — one sentence saying when a line is heard through it,
   "words sent mind to mind, not spoken aloud" — is offered to the scripting model, which may put

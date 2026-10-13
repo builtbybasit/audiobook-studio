@@ -354,6 +354,26 @@ export function getChapterBody(db: Db, bookId: string, chapterId: number): strin
     .get()?.body;
 }
 
+/**
+ * The chapters whose text names `name` as written — same case, a whole word or phrase, so
+ * "Shadow" is not found in "shadow" or "Shadowfall" — in book order. SQL finds the chapters that
+ * hold the letters at all and a Unicode-aware boundary check confirms them. Searched in the stored
+ * Markdown, where a name split by emphasis ("*Lord* of Shadows") is not found.
+ */
+export function chaptersMentioning(db: Db, bookId: string, name: string): number[] {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const word = new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, "u");
+  // ponytail: every candidate body is read and scanned; an FTS index if a common name gets slow
+  return db
+    .select({ id: chapterTexts.chapterId, body: chapterTexts.body })
+    .from(chapterTexts)
+    .where(and(eq(chapterTexts.bookId, bookId), sql`instr(${chapterTexts.body}, ${name}) > 0`))
+    .orderBy(asc(chapterTexts.chapterId))
+    .all()
+    .filter((c) => word.test(c.body))
+    .map((c) => c.id);
+}
+
 /** An id nobody is using: `moonlight-ledger`, then `-2`, `-3`, … */
 export function freeBookId(db: Db, base: string): string {
   const taken = new Set(

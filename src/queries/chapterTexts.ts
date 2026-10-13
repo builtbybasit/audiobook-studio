@@ -6,12 +6,12 @@
 // reads what it selects, and the store asks `chapterTextRead`, which tells a chapter not read yet
 // from one that is empty.
 import { computed, toValue, watch, type MaybeRefOrGetter } from "vue";
-import { useQueryCache } from "@pinia/colada";
+import { useQuery, useQueryCache } from "@pinia/colada";
 
 import { partsText, type ContentPart } from "@/lib/contents";
 import { textQuery } from "@/queries/chapterText";
 import { keys } from "@/queries/keys";
-import type { TextFormat } from "@/services/library";
+import { libraryService, type TextFormat } from "@/services/library";
 
 /**
  * Read every chapter in `chapterIds` as the list changes. A chapter already read is not read again:
@@ -87,3 +87,24 @@ export function chapterTextRead(
  * what the cache holds, so a read the cache lets go of is let go of here too.
  */
 const joined = new WeakMap<ContentPart[], string>();
+
+/**
+ * For each of `names`, the ids of the chapters whose text names it as written, in book order;
+ * empty until the read lands, and for no names. Read once per set of names: prose does not change
+ * under the app, and a renumbering invalidates everything under the book.
+ */
+export function useMentions(
+  bookId: MaybeRefOrGetter<string>,
+  names: MaybeRefOrGetter<readonly string[]>,
+) {
+  const query = useQuery(() => ({
+    key: keys.mentions(toValue(bookId), toValue(names)),
+    staleTime: Infinity,
+    enabled: toValue(names).length > 0,
+    query: () => libraryService().mentions(toValue(bookId), toValue(names)),
+  }));
+  return {
+    ...query,
+    byName: computed((): Record<string, number[]> => query.data.value ?? {}),
+  };
+}

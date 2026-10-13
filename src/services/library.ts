@@ -109,6 +109,11 @@ export interface LibraryService {
    * form would have a link's address and a table's pipes read aloud and charged for.
    */
   chapterText(bookId: string, chapterId: number, format?: TextFormat): Promise<string>;
+  /**
+   * For each of `names`, the ids of the chapters whose text names it as written — same case, a
+   * whole word or phrase — in book order.
+   */
+  mentions(bookId: string, names: readonly string[]): Promise<Record<string, number[]>>;
   /** The chapter's script as it stands on the server: empty until a scripting job has written one. */
   chapterScript(bookId: string, chapterId: number): Promise<ChapterScript>;
   /** What was heard of a chapter's current clips, by segment id (`HeardLine`). */
@@ -293,6 +298,15 @@ export class HttpLibraryService implements LibraryService {
       `/books/${seg(bookId)}/chapters/${chapterId}/text?format=${format}`,
     );
     return text;
+  }
+
+  async mentions(bookId: string, names: readonly string[]): Promise<Record<string, number[]>> {
+    const q = names.map((n) => `name=${encodeURIComponent(n)}`).join("&");
+    return (
+      await this.http.get<{ byName: Record<string, number[]> }>(
+        `/books/${seg(bookId)}/mentions?${q}`,
+      )
+    ).byName;
   }
 
   chapterScript(bookId: string, chapterId: number): Promise<ChapterScript> {

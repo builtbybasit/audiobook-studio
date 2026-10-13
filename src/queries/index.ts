@@ -7,7 +7,12 @@ export { keys } from "@/queries/keys";
 export { invalidate } from "@/queries/invalidate";
 export { fetchBook, fetchShelf, useBook, useBooks, useShelf } from "@/queries/library";
 export { useChapterText, chapterTextNow, chapterPartsNow } from "@/queries/chapterText";
-export { useChapterTexts, loadChapterTexts, chapterTextRead } from "@/queries/chapterTexts";
+export {
+  useChapterTexts,
+  loadChapterTexts,
+  chapterTextRead,
+  useMentions,
+} from "@/queries/chapterTexts";
 export {
   fetchScript,
   useBookScripts,

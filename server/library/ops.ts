@@ -72,6 +72,16 @@ export function chapterText(
   return format === "plain" ? plainText(body) : body;
 }
 
+/** For each of `names`, the chapters whose text names it as written (`library.chaptersMentioning`). */
+export function chaptersMentioning(
+  db: Db,
+  bookId: string,
+  names: readonly string[],
+): Record<string, number[]> {
+  requireBook(db, bookId);
+  return Object.fromEntries(names.map((n) => [n, library.chaptersMentioning(db, bookId, n)]));
+}
+
 // ---------- importing ----------
 
 export interface ImportInput {

@@ -70,7 +70,7 @@ beforeEach(() => {
 
 const CHAPTER = "A sentence.  Another clause, and words.\n\n" + "abcdefghij".repeat(30);
 
-test.each(["sentence", "clause", "word", "char"] as const)(
+test.each(["paragraph", "sentence", "clause", "word", "char"] as const)(
   "chunks cut at a %s boundary lose nothing and respect the chosen maximum",
   (splitAt) => {
     const parts = scriptParts(CHAPTER, newProfile({ model: "m", maxChars: 25, splitAt }));
@@ -78,6 +78,27 @@ test.each(["sentence", "clause", "word", "char"] as const)(
     expect(parts.filter((p) => p.length > 25 || p.length === 0)).toEqual([]);
   },
 );
+
+// Shadow Slave ch. 8: cut at the sentence end inside the bracket, the next request opened on
+// "Its clear ringing…]" and Haiku scripted the context before it as well, every time.
+test("a new profile cuts between paragraphs, never inside one", () => {
+  const item =
+    "[Silver Bell: a small memento of a long-lost home. Its clear ringing can be heard from miles away.]";
+  const text = `He summoned the runes.\n\n${item}\n\n'What a piece of crap,' Sunny thought.`;
+  const parts = scriptParts(text, newProfile({ model: "m", maxChars: 110 }));
+  expect(parts).toEqual([
+    "He summoned the runes.\n\n",
+    `${item}\n\n`,
+    "'What a piece of crap,' Sunny thought.",
+  ]);
+});
+
+test("a paragraph longer than the limit falls back to its sentence ends", () => {
+  const text = "One sentence here. Two sentence here.\n\nShort.";
+  expect(scriptParts(text, newProfile({ model: "m", maxChars: 25, splitAt: "paragraph" }))).toEqual(
+    ["One sentence here. ", "Two sentence here.\n\n", "Short."],
+  );
+});
 
 test("with no maximum, a chapter goes as one chunk", () => {
   expect(scriptParts(CHAPTER, newProfile({ model: "m", maxChars: 0 }))).toEqual([CHAPTER]);

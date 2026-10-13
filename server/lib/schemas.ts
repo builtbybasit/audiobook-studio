@@ -364,7 +364,7 @@ const Rate = v.nullable(v.pipe(v.number(), v.minValue(0)));
 const Id = v.pipe(v.string(), v.nonEmpty("must not be empty"));
 const Count = v.pipe(v.number(), v.integer(), v.minValue(0));
 const Percent = v.pipe(v.number(), v.minValue(0), v.maxValue(100));
-const SplitMode = v.picklist(["sentence", "clause", "word", "char"]);
+const SplitMode = v.picklist(["paragraph", "sentence", "clause", "word", "char"]);
 const BillingUnit = v.picklist(["chars", "bytes", "tokens", "audio-tokens", "minute", "request"]);
 const Rates = v.partial(
   v.object({

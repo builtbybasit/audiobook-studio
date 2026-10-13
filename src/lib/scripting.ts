@@ -58,7 +58,8 @@ export function newProfile(p: Partial<Profile> = {}): Profile {
     pricing: newPricing(),
     concurrency: 4,
     maxChars: DEFAULT_MAX_CHARS,
-    splitAt: "sentence",
+    // a request that opens mid-paragraph can read the paragraph's start, sent as context, as its own
+    splitAt: "paragraph",
     maxOutputTokens: 16384,
     secPerChunk: 10,
     timeoutSec: 300,
@@ -154,7 +155,7 @@ export function profileErrors(p: Profile): string[] {
       errors.push(`${label} must be a whole number of at least ${min}.`);
   if (![p.inPrice, p.outPrice].every((v) => Number.isFinite(v) && v >= 0))
     errors.push("Token prices must be zero or greater.");
-  if (!["sentence", "clause", "word", "char"].includes(p.splitAt))
+  if (!["paragraph", "sentence", "clause", "word", "char"].includes(p.splitAt))
     errors.push("Choose a valid cut boundary.");
   if (
     typeof p.id !== "string" ||

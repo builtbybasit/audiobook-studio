@@ -75,6 +75,9 @@ describe("Codex", () => {
     const [call] = cli.calls();
     expect(call.argv.slice(0, 3)).toEqual(["exec", "--model", "some-model"]);
     expect(call.argv).toContain('model_reasoning_effort="medium"');
+    // no team-of-agents section and no skills catalogue around the prompt
+    for (const set of ["agents.enabled=false", "skills.max_context_tokens=1"])
+      expect(call.argv).toContain(set);
     for (const flag of ["--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--json"])
       expect(call.argv).toContain(flag);
     expect(flagOf(call.argv, "--sandbox")).toBe("read-only");

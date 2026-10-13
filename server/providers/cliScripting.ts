@@ -90,6 +90,13 @@ export function invocation(
         `model_instructions_file=${JSON.stringify(join(dir, SYSTEM_FILE))}`,
         "--config",
         'web_search="disabled"',
+        // Codex still puts its own text around ours: a team-of-agents section (about 1.6k tokens)
+        // and the catalogue of every skill installed, its own and the user's (about 2.5k). The
+        // smallest budget the catalogue takes leaves it out.
+        "--config",
+        "agents.enabled=false",
+        "--config",
+        "skills.max_context_tokens=1",
         ...CODEX_OFF.flatMap((feature) => ["--disable", feature]),
         "--ephemeral",
         "--skip-git-repo-check",

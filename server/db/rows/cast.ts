@@ -21,6 +21,7 @@ export function toCharacter(row: CharacterRow): Character {
   if (row.effect != null) c.effect = row.effect;
   if (row.thoughts != null) c.thoughts = row.thoughts;
   if (row.personaOf != null) c.personaOf = row.personaOf;
+  if (row.masked) c.masked = true;
   return c;
 }
 
@@ -44,6 +45,7 @@ export function characterValues(
     effect: c.effect ?? null,
     thoughts: c.thoughts ?? null,
     personaOf: c.personaOf ?? null,
+    masked: c.masked ?? null,
     position,
   };
 }

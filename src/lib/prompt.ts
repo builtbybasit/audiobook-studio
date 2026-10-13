@@ -199,7 +199,7 @@ Text that is not the story still goes in the script, word for word, on lines of 
 When unsure whether something is the story, it is the story.
 
 Besides the lines, the answer has:
-- "cast": what the excerpt tells you about the characters who speak or think in it, for each one the known cast does not list or lists without it — "name" (as used for "speaker"), "gender" ("male", "female", "non-binary" or "unknown"), "aliases" (the other names, titles and nicknames the text calls them, e.g. "the Captain") and "description" (one short sentence: who they are, and how they sound when the text says). Leave out characters with nothing new; [] when there are none.
+- "cast": what the excerpt tells you about the characters who speak or think in it, for each one the known cast does not list or lists without it — "name" (as used for "speaker"), "gender" ("male", "female", "non-binary" or "unknown"), "aliases" (the other names, titles and nicknames the text calls them, e.g. "the Captain"), "description" (one short sentence: who they are, and how they sound when the text says) and "personaOf" (only for a disguise, see the rules: the name of the character who wears it, "unknown" when the text has not said, otherwise null — and for an entry marked "masked, identity unknown", the wearer's name once the text reveals it). Leave out characters with nothing new; [] when there are none.
 - "recap": one to three sentences on where the excerpt leaves off, for whoever scripts the text that follows it: who is present, including anyone who has not spoken; where they are; who spoke last and to whom; any question left unanswered; and what the text is calling each of them. Use the names from "speaker".
 
 Answer with JSON only, in this shape:
@@ -217,7 +217,7 @@ Rules:
 2. Words in quotation marks are dialogue; the line's text leaves the quotation marks out. Name who speaks from the tags, the back-and-forth of the conversation, and the text before the excerpt, which is there only to tell who is speaking or thinking at the start.
 3. Thoughts are “thought” lines: italics, “she thought”, “she told herself”, and the point-of-view character's unspoken reflections. Their speaker is the character thinking — usually the one whose point of view the scene follows.
 4. A character goes by one name all through the book. Resolve pronouns, titles and nicknames to the known cast's names, and write a known speaker's name exactly as the cast does; a new speaker goes by what the text calls them. Use “Unknown” only when nothing says who speaks. Never write a speaker into the text.
-5. A cast entry marked “persona of” is that character's disguise. While the scene has them in that identity, the words they say aloud — and those words replayed or quoted later — go to the persona's cast name; their thoughts, and what they say once the disguise is off, go to their own name. A masked figure the text has not identified is a new speaker.
+5. A persona is an identity a character hides behind — a mask, a false name — that the people around them do not know is theirs. A cast entry marked “persona of” is one: while the scene has them in that identity, the words they say aloud — and those words replayed or quoted later — go to the persona's cast name, even when the narration keeps calling them by their real name; their thoughts, and what they say once the disguise is off, go to their own name. A disguise the cast does not have yet is the same: a new speaker under the name it goes by, even when the narration says who wears it (“Hand it over,” Kel said behind the crow mask, as the Crow → speaker “Crow”, “personaOf” “Kel”). A masked or disguised figure the text has not identified is a new speaker too, whose “personaOf” is “unknown”. An entry marked “masked, identity unknown” is such a figure: when the text reveals who wears it, give that name as its “personaOf”, and from then on treat it like any persona.
 6. A direction is all the voice engine is told besides the words, and it knows nothing of the story: describe the sound — tone, pace, volume, breath — in a few words (“flat, tired refusal”, not “refusing his plan”). Keep the same wording while a mood holds; leave it out for plain delivery.
 7. Put a pause inside a line only for a real beat — trailing off, a hesitation, a breath before a reveal — never at an ordinary comma or the end of a sentence.
 
@@ -269,7 +269,7 @@ export const PROMPT_TAGS: readonly PromptTag[] = [
   {
     name: "cast",
     about:
-      "The known speakers' names with gender, whose persona one is, and other names, comma-separated, or “(none yet)”",
+      "The known speakers' names with gender, whose persona one is (or that a masked one's is unknown), and other names, comma-separated, or “(none yet)”",
     scope: "chapter",
   },
   {
@@ -323,6 +323,8 @@ export interface PromptCastMember {
   description?: string;
   /** the character this speaker is a persona of, when that character is in the cast */
   personaOf?: string;
+  /** a disguise the scripting model found (`Character.masked`); with no `personaOf`, its wearer is unknown */
+  masked?: boolean;
 }
 
 /** Everything a request's tags are filled from. */
@@ -356,13 +358,13 @@ function castOf(vars: PromptVars): PromptCastMember[] {
 }
 
 /**
- * "Mara (female; also called Mar)", "Lord of Shadows (male; persona of Sunny)": what tells a
- * speaker apart, without the description.
+ * "Mara (female; also called Mar)", "Lord of Shadows (male; persona of Sunny)", "the Black Mask
+ * (masked, identity unknown)": what tells a speaker apart, without the description.
  */
 function nameOf(c: PromptCastMember): string {
   const facts = [
     GENDER[c.gender ?? "?"],
-    c.personaOf ? `persona of ${c.personaOf}` : "",
+    c.personaOf ? `persona of ${c.personaOf}` : c.masked ? "masked, identity unknown" : "",
     c.aliases?.length ? `also called ${c.aliases.join(", ")}` : "",
   ].filter(Boolean);
   return `${c.name}${facts.length ? ` (${facts.join("; ")})` : ""}`;

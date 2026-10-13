@@ -73,6 +73,15 @@ before it, and each answer says what the next request will need:
   only what the cast leaves blank — a gender or description set by hand, or by an earlier chapter,
   stands, and other names are only added — so a speaker arrives on the Cast page ready to give a
   voice to. A name mentioned but never given a line is not added.
+- **A disguise the model found.** A cast note may also say `personaOf`: whose disguise a speaker
+  is, or `"unknown"` for a masked figure the book has not named. It is taken only for a speaker the
+  same answer brought into the cast, or one already marked masked, and never once a person has
+  linked or unlinked them (`learnCast`, `Character.masked`). "Unknown" puts the speaker in
+  `{{cast}}` as "masked, identity unknown", so the chapter that reveals the wearer — a hundred
+  chapters on — can link them; the wearer is added to the cast if they are not in it. A persona
+  keeps a voice of its own once linked, so a reveal changes nothing already heard, and the Cast page
+  keeps a link the model made behind a spoiler. A persona's record offers to re-script the chapters
+  that mention it.
 - **Where the chapter before left off.** An answer's `recap` says who is present (the silent ones
   too), where, who spoke last and to whom, and what is still unanswered. The chapter keeps its last
   request's recap, and the next chapter's requests send it as `{{previous.recap}}`. The nearest

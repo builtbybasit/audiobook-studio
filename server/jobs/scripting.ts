@@ -405,6 +405,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             tx,
             at.bookId,
             answers.flatMap((a) => a.cast ?? []),
+            new Set(added),
           );
           // a recap belongs to the script it came with: one written without leaves none
           library.setChapterRecap(tx, at.bookId, at.id, leftOff);

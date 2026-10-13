@@ -186,7 +186,8 @@ effect resets every choice of it in the same transaction
 `effects.use_when` (the sentence that offers an effect to the scripting model; null = not offered),
 `characters.persona_of` (the name of the character a persona is a disguise of) and
 `segments.effects` (a line's own effects, a JSON array of ids; null = none, and an effect removed is
-taken out of every array in the same transaction).
+taken out of every array in the same transaction). `0034_masked_personas` added
+`characters.masked` (a disguise the scripting model found; null = not one).
 
 ### Absent is not null
 

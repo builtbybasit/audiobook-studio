@@ -7,7 +7,7 @@
 import { and, asc, eq, max } from "drizzle-orm";
 
 import type { Character, LexEntry } from "@/types";
-import { NARRATOR, narrator, newSpeaker, personaOwner } from "@/lib/cast";
+import { NARRATOR, narrator, newSpeaker, personaOwner, personaRefusal } from "@/lib/cast";
 import type { PromptCastMember } from "@/lib/prompt";
 import type { Db, Tx } from "~/db/client";
 import { characters, lexiconEntries } from "~/db/schema";
@@ -37,16 +37,19 @@ export function readSpeakers(db: Db | Tx, bookId: string): PromptCastMember[] {
       gender: characters.gender,
       description: characters.description,
       personaOf: characters.personaOf,
+      masked: characters.masked,
     })
     .from(characters)
     .where(eq(characters.bookId, bookId))
     .all();
   const byName = new Map(rows.map((r) => [r.name, r]));
-  return rows.map(({ personaOf, ...c }) =>
-    personaOwner({ name: c.name, personaOf: personaOf ?? undefined }, byName)
-      ? { ...c, personaOf: personaOf! }
-      : c,
-  );
+  return rows.map(({ personaOf, masked, ...c }) => ({
+    ...c,
+    ...(personaOwner({ name: c.name, personaOf: personaOf ?? undefined }, byName)
+      ? { personaOf: personaOf! }
+      : {}),
+    ...(masked ? { masked: true } : {}),
+  }));
 }
 
 export function getCharacter(db: Db | Tx, bookId: string, name: string): Character | undefined {
@@ -127,22 +130,29 @@ export function ensureSpeakers(db: Db | Tx, bookId: string, names: Iterable<stri
 
 /**
  * Fill in what a scripting model learnt of the book's speakers — gender, other names, a
- * description — where the cast has nothing yet, and say whose entries changed.
+ * description, a disguise — where the cast has nothing yet, and say whose entries changed.
  *
  * It never overwrites: a gender or description a person set, or an earlier chapter brought, stands,
  * and other names are only ever added. An alias another speaker already goes by, as a name or an
  * alias, stays theirs. A note on someone the cast does not have — mentioned, but never given a
  * line — is dropped, as is anything said of the Narrator.
+ *
+ * A disguise is taken only for a speaker this answer brought in (`fresh`) or one the model marked
+ * masked before, and never one a person linked or unlinked: "unknown" marks it masked, a wearer's
+ * name links it (`personaOf`, adding the wearer when the cast has nobody of that name, and taking
+ * the disguise's name off the wearer's other names). A link `personaRefusal` would refuse is not
+ * made.
  */
 export function learnCast(
   db: Db | Tx,
   bookId: string,
   notes: readonly PromptCastMember[],
+  fresh: ReadonlySet<string> = new Set(),
 ): string[] {
   const cast = readCast(db, bookId);
   const byName = new Map(cast.map((c) => [c.name, c]));
   const taken = new Set(cast.flatMap((c) => [c.name, ...c.aliases]).map((n) => n.toLowerCase()));
-  const changed = new Set<string>();
+  const changed = new Map<string, Character>();
   for (const note of notes) {
     const c = byName.get(note.name);
     if (!c || c.name === NARRATOR) continue;
@@ -161,11 +171,33 @@ export function learnCast(
       taken.add(alias.toLowerCase());
       touched = true;
     }
-    if (!touched) continue;
-    upsertCharacter(db, bookId, c);
-    changed.add(c.name);
+    const open = !c.personaOf && (fresh.has(c.name) || c.masked);
+    if (open && note.personaOf) {
+      if (!byName.has(note.personaOf)) {
+        ensureSpeakers(db, bookId, [note.personaOf]);
+        const added = getCharacter(db, bookId, note.personaOf)!;
+        cast.push(added);
+        byName.set(added.name, added);
+      }
+      const wearer = byName.get(note.personaOf);
+      if (wearer && !personaRefusal(c.name, wearer.name, cast)) {
+        c.personaOf = wearer.name;
+        c.masked = true;
+        touched = true;
+        const kept = wearer.aliases.filter((a) => a.toLowerCase() !== c.name.toLowerCase());
+        if (kept.length < wearer.aliases.length) {
+          wearer.aliases = kept;
+          changed.set(wearer.name, wearer);
+        }
+      }
+    } else if (open && note.masked && !c.masked) {
+      c.masked = true;
+      touched = true;
+    }
+    if (touched) changed.set(c.name, c);
   }
-  return [...changed];
+  for (const c of changed.values()) upsertCharacter(db, bookId, c);
+  return [...changed.keys()];
 }
 
 // ---------- the pronunciation dictionary ----------

@@ -165,6 +165,7 @@ const CastNote = v.object({
   gender: v.optional(v.nullable(v.string())),
   aliases: v.optional(v.nullable(v.array(v.string()))),
   description: v.optional(v.nullable(v.string())),
+  personaOf: v.optional(v.unknown()),
 });
 
 /** The longest a line effect's name can be; anything longer is not one of the names offered. */
@@ -209,11 +210,15 @@ function castOf(said: unknown): PromptCastMember[] {
     const aliases = [
       ...new Set((read.output.aliases ?? []).map(oneLine).filter((a) => a && a !== name)),
     ];
+    // a disguise: whose it is, or that nobody knows yet; what is not a name says neither
+    const of = typeof read.output.personaOf === "string" ? oneLine(read.output.personaOf) : "";
+    const unknown = /^(?:unknown|someone unknown|\?)$/i.test(of);
     out.push({
       name,
       gender: genderOf(read.output.gender),
       aliases,
       description: oneLine(read.output.description ?? "").slice(0, DESCRIPTION_MAX),
+      ...(unknown ? { masked: true } : of && of !== name ? { personaOf: of } : {}),
     });
   }
   return out;

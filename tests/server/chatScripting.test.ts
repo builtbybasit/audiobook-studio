@@ -290,6 +290,33 @@ describe("a request", () => {
     expect(answer.recap).toBe("Mara let a stranger in; she spoke last.");
   });
 
+  test("reads a disguise: whose it is, that nobody knows yet, or nothing", async () => {
+    const { provider } = gateway(() =>
+      completion(
+        JSON.stringify({
+          lines: LINES,
+          cast: [
+            { name: "Lord of Shadows", personaOf: " Sunny " },
+            { name: "the Black Mask", personaOf: "Unknown" },
+            { name: "Mara", personaOf: null },
+            { name: "Kit", personaOf: "Kit" },
+            { name: "Tobiah", personaOf: { of: "Sunny" } },
+          ],
+        }),
+      ),
+    );
+    const answer = await provider.script(input());
+    expect(
+      answer.cast?.map(({ name, personaOf, masked }) => ({ name, personaOf, masked })),
+    ).toEqual([
+      { name: "Lord of Shadows", personaOf: "Sunny", masked: undefined },
+      { name: "the Black Mask", personaOf: undefined, masked: true },
+      { name: "Mara", personaOf: undefined, masked: undefined },
+      { name: "Kit", personaOf: undefined, masked: undefined },
+      { name: "Tobiah", personaOf: undefined, masked: undefined },
+    ]);
+  });
+
   test("an answer with a cast and recap it cannot read is still a script", async () => {
     const { provider } = gateway(() =>
       completion(JSON.stringify({ lines: LINES, cast: "Mara", recap: { who: "Mara" } })),

@@ -43,6 +43,8 @@ export const characters = sqliteTable(
     thoughts: text("thoughts"),
     /** `Character.personaOf`: the name of the character this one is a persona of; null = none */
     personaOf: text("persona_of"),
+    /** `Character.masked`: a disguise the scripting model found; null = not one */
+    masked: integer("masked", { mode: "boolean" }),
     /** the order the cast list reads in */
     position: integer("position").notNull().default(0),
   },

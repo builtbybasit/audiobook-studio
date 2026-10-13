@@ -51,16 +51,19 @@ function requireEffects(db: Db, c: Character): void {
  * about a speaker that moves no lines — gender, description, voice, delivery style, aliases, the
  * character they are a persona of, the merge suggestion being dismissed — arrives this way. A
  * persona link is checked when it changes (`personaRefusal`), so a speaker is never refused an
- * edit for a link they already had.
+ * edit for a link they already had; changing it also clears `masked`, the model's finding.
  */
 export function putCharacter(db: Db, bookId: string, name: string, c: Character): Character[] {
   requireBook(db, bookId);
   if (c.name !== name) throw badRequest("The speaker in the body is not the one in the path");
   requireEffects(db, c);
-  if (c.personaOf && c.personaOf !== cast.getCharacter(db, bookId, name)?.personaOf) {
+  const was = cast.getCharacter(db, bookId, name);
+  if (c.personaOf && c.personaOf !== was?.personaOf) {
     const why = personaRefusal(name, c.personaOf, cast.readCast(db, bookId));
     if (why) throw badRequest(why);
   }
+  // a person linked or unlinked them: the model's finding is theirs now, never to be redone
+  if (was && (c.personaOf ?? null) !== (was.personaOf ?? null)) delete c.masked;
   cast.upsertCharacter(db, bookId, c);
   return cast.readCast(db, bookId);
 }

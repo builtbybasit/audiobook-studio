@@ -21,7 +21,7 @@ import type {
 import type { Db } from "~/db/client";
 import { chapterHeard } from "~/jobs/check";
 import type { Runner } from "~/jobs/runner";
-import { IdParam } from "~/lib/http";
+import { BookParam, ChapterIds, IdParam } from "~/lib/http";
 import { SegmentSchema, VersionOriginSchema } from "~/lib/schemas";
 import { validate } from "~/lib/validate";
 import * as narration from "~/narration/ops";
@@ -57,6 +57,20 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     const { id, chapterId } = c.req.valid("param");
     return c.json(ops.chapterScript(db, id, chapterId) satisfies ChapterScript);
   });
+
+  /**
+   * Several chapters' scripts at once: `{ scripts: { [chapter]: { segments, revision } } }`, for a
+   * page that reads every script of a long book. A chapter the book does not have is left out.
+   */
+  app.get(
+    "/:id/scripts",
+    validate("param", BookParam),
+    validate("query", v.object({ id: ChapterIds })),
+    (c) => {
+      const scripts = ops.chapterScripts(db, c.req.valid("param").id, c.req.valid("query").id);
+      return c.json({ scripts } satisfies { scripts: Record<number, ChapterScript> });
+    },
+  );
 
   /** Replace the script with what a person made of it, naming the revision they read. */
   app.put(

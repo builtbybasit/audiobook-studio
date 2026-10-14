@@ -61,6 +61,21 @@ export function chapterScript(db: Db, bookId: string, chapterId: number): Chapte
   return { segments: readScript(db, bookId, chapterId), revision };
 }
 
+/** Several chapters' scripts at once, by id; a chapter the book does not have is left out. */
+export function chapterScripts(
+  db: Db,
+  bookId: string,
+  chapterIds: readonly number[],
+): Record<number, ChapterScript> {
+  requireBook(db, bookId);
+  const scripts: Record<number, ChapterScript> = {};
+  for (const id of chapterIds) {
+    const revision = scriptRevision(db, bookId, id);
+    if (revision != null) scripts[id] = { segments: readScript(db, bookId, id), revision };
+  }
+  return scripts;
+}
+
 export function chapterHistory(db: Db, bookId: string, chapterId: number): ChapterHistory {
   requireRevision(db, bookId, chapterId);
   return history.readHistory(db, bookId, chapterId);

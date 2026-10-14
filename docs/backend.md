@@ -674,6 +674,7 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `POST`   | `/api/books/:id/cover`                            | A JPEG or PNG as the book's own cover → the book                                                             |
 | `GET`    | `/api/books/:id/covers/:file`                     | A cover's bytes                                                                                              |
 | `GET`    | `/api/books/:id/chapters/:n/text`                 | A chapter's prose, as Markdown or plain                                                                      |
+| `GET`    | `/api/books/:id/texts?id=…`                       | Up to 500 chapters' prose in one read, as Markdown or plain; a chapter the book lacks is left out            |
 | `POST`   | `/api/books/:id/chapters/skip`, `include`, `keep` | Skip chapters, put them back, or keep a noted one                                                            |
 | `POST`   | `/api/books/:id/chapters/decisions`               | Put decisions back exactly as stated; what an Undo sends                                                     |
 | `POST`   | `/api/books/:id/chapters/script`                  | Queue a scripting job per chapter, as one run (202)                                                          |
@@ -681,6 +682,7 @@ report a JavaScript fault where it should say the server is unreachable. Every s
 | `POST`   | `/api/books/:id/chapters/narrate`                 | Queue a narration job per chapter, at a scope (202)                                                          |
 | `POST`   | `/api/books/:id/chapters/check`                   | Queue a check by ear per chapter, as one run (202); 400 with no transcription endpoint on                    |
 | `GET`    | `/api/books/:id/chapters/:n/script`               | A chapter's script, and its revision                                                                         |
+| `GET`    | `/api/books/:id/scripts?id=…`                     | Up to 500 chapters' scripts and revisions in one read; a chapter the book lacks is left out                  |
 | `PUT`    | `/api/books/:id/chapters/:n/script`               | Replace the script, naming the revision that was read                                                        |
 | `GET`    | `/api/books/:id/chapters/:n/heard`                | What a check by ear heard of the chapter's clips in the book, by line                                        |
 | `GET`    | `/api/books/:id/chapters/:n/history`              | The chapter's versions and how the script came to be                                                         |

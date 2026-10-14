@@ -75,6 +75,21 @@ export const IntParam = v.pipe(
 /** A chapter number or a volume id in a path: whole and positive. */
 export const IdParam = v.pipe(IntParam, v.minValue(1, "must be positive"));
 
+/** Most chapters one batch read names: a page asks for a long book in several. */
+export const MAX_BATCH = 500;
+
+/**
+ * The chapters a batch read names: `?id=…`, repeated for each. A query string carries one as a
+ * string and several as a list, so both are read as a list.
+ */
+export const ChapterIds = v.pipe(
+  v.union([v.string(), v.array(v.string())]),
+  v.transform((ids) => [ids].flat()),
+  v.array(IdParam),
+  v.minLength(1, "must name a chapter"),
+  v.maxLength(MAX_BATCH, `at most ${MAX_BATCH} chapters`),
+);
+
 /** A route under `/api/books/:id`: the book's id, which the operation looks up and refuses. */
 export const BookParam = v.object({ id: v.string() });
 

@@ -7,6 +7,7 @@ import { computed, toValue, type MaybeRefOrGetter } from "vue";
 import { useQuery, useQueryCache } from "@pinia/colada";
 
 import { partsText, type ContentPart } from "@/lib/contents";
+import { batchReads } from "@/queries/batch";
 import { keys } from "@/queries/keys";
 import { libraryService, type TextFormat } from "@/services/library";
 
@@ -17,8 +18,14 @@ async function readParts(
 ): Promise<ContentPart[]> {
   // The import recorded what it thought of a chapter as a note on the chapter itself, not as a
   // range inside the prose, so the server's text is one part.
-  return [{ text: await libraryService().chapterText(bookId, chapterId, format) }];
+  return [{ text: await readText(`${format}:${bookId}`, chapterId) }];
 }
+// a page reading hundreds of chapters reads them a few requests at a time
+const readText = batchReads((group, ids) => {
+  // a book's id has no colon in it (`BOOK_ID`)
+  const [format, bookId] = group.split(":") as [TextFormat, string];
+  return libraryService().chapterTexts(bookId, ids, format);
+});
 
 /** One chapter's prose as a query: what `useChapterText` watches and `useChapterTexts` reads. */
 export const textQuery = (bookId: string, chapterId: number, format: TextFormat) => ({

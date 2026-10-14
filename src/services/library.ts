@@ -116,6 +116,17 @@ export interface LibraryService {
   mentions(bookId: string, names: readonly string[]): Promise<Record<string, number[]>>;
   /** The chapter's script as it stands on the server: empty until a scripting job has written one. */
   chapterScript(bookId: string, chapterId: number): Promise<ChapterScript>;
+  /** Several chapters' prose in one read, by id; a chapter the book does not have is left out. */
+  chapterTexts(
+    bookId: string,
+    chapterIds: readonly number[],
+    format: TextFormat,
+  ): Promise<Record<number, string>>;
+  /** Several chapters' scripts in one read, by id; a chapter the book does not have is left out. */
+  chapterScripts(
+    bookId: string,
+    chapterIds: readonly number[],
+  ): Promise<Record<number, ChapterScript>>;
   /** What was heard of a chapter's current clips, by segment id (`HeardLine`). */
   chapterHeard(bookId: string, chapterId: number): Promise<ChapterHeard>;
   /** Read an EPUB into a new book waiting for its contents review. */
@@ -311,6 +322,31 @@ export class HttpLibraryService implements LibraryService {
 
   chapterScript(bookId: string, chapterId: number): Promise<ChapterScript> {
     return this.http.get<ChapterScript>(`/books/${seg(bookId)}/chapters/${chapterId}/script`);
+  }
+
+  async chapterTexts(
+    bookId: string,
+    chapterIds: readonly number[],
+    format: TextFormat,
+  ): Promise<Record<number, string>> {
+    const ids = chapterIds.map((id) => `id=${id}`).join("&");
+    return (
+      await this.http.get<{ texts: Record<number, string> }>(
+        `/books/${seg(bookId)}/texts?format=${format}&${ids}`,
+      )
+    ).texts;
+  }
+
+  async chapterScripts(
+    bookId: string,
+    chapterIds: readonly number[],
+  ): Promise<Record<number, ChapterScript>> {
+    const ids = chapterIds.map((id) => `id=${id}`).join("&");
+    return (
+      await this.http.get<{ scripts: Record<number, ChapterScript> }>(
+        `/books/${seg(bookId)}/scripts?${ids}`,
+      )
+    ).scripts;
   }
 
   async chapterHeard(bookId: string, chapterId: number): Promise<ChapterHeard> {

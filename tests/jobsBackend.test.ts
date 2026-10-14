@@ -310,7 +310,7 @@ describe("the queue with a server answering", () => {
     wireStores();
     await libraryStore.loadBook(id);
     expect(scriptsStore.segmentsOf(id, 1)).toEqual([]);
-    const path = `/api/books/${id}/chapters/1/script`;
+    const path = `/api/books/${id}/scripts?id=1`;
     pinia.run(() => useChapterScript(id, 1));
     await settle();
     expect(scriptsStore.segmentsOf(id, 1).length).toBeGreaterThan(0);
@@ -582,7 +582,8 @@ describe("editing a script with a server answering", () => {
         .slice(0, 2),
     ).toEqual(["Saved first.", "Saved second."]);
     // the read that was put off is made once the writes have landed
-    expect(asked.lastIndexOf(path)).toBeGreaterThan(asked.indexOf(path));
+    const read = `/api/books/${id}/scripts?id=1`;
+    expect(asked.lastIndexOf(read)).toBeGreaterThan(asked.indexOf(path));
     expect(scriptsStore._revision[key(id, 1)]).toBe(scriptRevision(api.db, id, 1)!);
   });
 
